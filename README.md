@@ -4,6 +4,8 @@ A commercial-grade, local-network (and cloud-ready) QR code digital menu system 
 
 Designed with a minimalist **Black (#111111)** and **Yellow (#FFC107)** UI.
 
+
+
 ---
 
 ## Version History
