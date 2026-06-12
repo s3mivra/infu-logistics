@@ -4885,6 +4885,7 @@ app.post('/api/users/login', loginLimiter, validate(loginSchema), async (req, re
 app.post('/api/auth/refresh', requireTrustedOrigin, async (req, res) => {
   try {
     const raw = req.cookies?.[REFRESH_COOKIE];
+    log.info({ hasCookie: !!raw, allCookies: Object.keys(req.cookies || {}) }, 'refresh attempt');
     if (!raw) return res.status(401).json({ success: false, error: 'No refresh session.' });
 
     const session = await RefreshSession.findOne({ tokenHash: hashToken(raw) });
