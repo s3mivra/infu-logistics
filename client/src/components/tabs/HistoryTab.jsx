@@ -3,6 +3,8 @@ import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, Trending
 import { usePagination } from '../../lib/usePagination';
 import Pager from '../Pager';
 
+const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+
 // ── HistoryTab — extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function HistoryTab({ ctx }) {
@@ -92,7 +94,7 @@ export default function HistoryTab({ ctx }) {
     ['Maribank/SeaBank', ['Maribank']],
     ['Other E-Wallet',   ['E-Wallet', 'Other E-Wallet']],
     ['GrabFood',         ['Grab Delivery']],
-    ['Foodpanda',        ['Foodpanda']],
+    ...(BUSINESS_TYPE === 'log' ? [['Lalamove', ['Lalamove']]] : [['Foodpanda', ['Foodpanda']]]),
     ['Manual/Direct',    ['Manual Delivery']],
   ];
   const sssColVal = (row, methods) => methods.reduce((s, m) => s + (row?.methods?.[m] || 0), 0);

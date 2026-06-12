@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { io } from 'socket.io-client';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff } from 'lucide-react';
 import QRCode from 'react-qr-code';
@@ -24,6 +24,7 @@ const TabFallback = () => (
 );
 const API_URL = import.meta.env.VITE_API_URL || 'http://192.168.100.2:5002';
 const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL || 'http://192.168.100.2:3000';
+const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 // Lazy-load the PDF libraries (jspdf + jspdf-autotable, ~600KB) only when a PDF is
 // actually generated — keeps them out of the initial dashboard load. Cached after
@@ -52,9 +53,17 @@ const COMP_REASON_LABELS = {
   EVENT_SPONSORSHIP:    'Event Sponsorship',
 };
 
+// Pass the in-memory access token on the socket handshake so the server can
+// verify the user's role and auto-place them in the right room (server-decided,
+// not client-declared — see io.use in server.js). The token is re-read on every
+// (re)connect, so a fresh token after a refresh is picked up automatically.
 const socket = io(API_URL, {
   transports: ['websocket'],
-  upgrade: false
+  upgrade: false,
+  auth: (cb) => {
+    try { cb({ token: auth.getToken?.() || '' }); }
+    catch { cb({ token: '' }); }
+  },
 });
 
 // New order arrives at kitchen — single sharp ding
@@ -213,7 +222,7 @@ export default function AdminDashboard() {
   const [sssGroup, setSssGroup] = useState('order'); // 'order' | 'day'
   // --- REFUND ---
   const [refundModal, setRefundModal] = useState(null);
-  const [refundForm, setRefundForm] = useState({ reason: '', refundAmount: '' });
+  const [refundForm, setRefundForm] = useState({ reason: '', refundAmount: '', inventoryAction: 'Restock' });
   const [refundSubmitting, setRefundSubmitting] = useState(false);
   // --- CLOCK IN/OUT ---
   const [clockStatus, setClockStatus] = useState({ isClockedIn: false, entry: null, onBreak: false, breakUsedMinutes: 0, breakRemainingMinutes: 60 });
@@ -256,6 +265,7 @@ export default function AdminDashboard() {
   const [stockHistory, setStockHistory] = useState([]);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [historyItemName, setHistoryItemName] = useState('');
+  const [historyItem, setHistoryItem] = useState(null);
 
   const [cashOnHand, setCashOnHand] = useState(0);
   // --- NEW LOGIN STATES ---
@@ -288,6 +298,8 @@ export default function AdminDashboard() {
   // --- INLINE PRICING STATES ---
   const [editPriceId, setEditPriceId] = useState(null);
   const [editPriceVal, setEditPriceVal] = useState('');
+  const [editCostId, setEditCostId] = useState(null);
+  const [editCostVal, setEditCostVal] = useState('');
 
   // --- ITEM-LEVEL DISCOUNT TRACKING ---
   const [discountedItems, setDiscountedItems] = useState({});
@@ -353,11 +365,15 @@ export default function AdminDashboard() {
   const [posSearch, setPosSearch] = useState('');
   const POS_PER_PAGE = 9;
   const [posCustomerName, setPosCustomerName] = useState('');
-  const [posTable, setPosTable] = useState('Dine-In');
+  // Optional client account link — when set, the order qualifies for that
+  // client's per-product discount overrides on the server side.
+  const [posClientId, setPosClientId] = useState('');
+  const [posTable, setPosTable] = useState(BUSINESS_TYPE === 'log' ? 'Pickup' : 'Dine-In');
   const [posPayment, setPosPayment] = useState('Cash');
   const [posSelectedProduct, setPosSelectedProduct] = useState(null);
   const [posActiveSize, setPosActiveSize] = useState(null);
   const [posActiveAddOns, setPosActiveAddOns] = useState([]);
+  const [posItemQty, setPosItemQty] = useState(1);
   const [posDiscountType, setPosDiscountType] = useState('flat'); // 'flat' | 'percent'
   const [posDiscountValue, setPosDiscountValue] = useState('');
   const [posCheckoutModal, setPosCheckoutModal] = useState(false);
@@ -472,6 +488,17 @@ export default function AdminDashboard() {
   // NEW: Inventory Pagination
   const [invPage, setInvPage] = useState(1);
   const invItemsPerPage = 12; // List items are small, we can fit 15
+
+  // Inventory search + filter + sort
+  const [invSearch, setInvSearch] = useState('');
+  const [invSort, setInvSort] = useState('name-asc');
+  const [invCategoryFilter, setInvCategoryFilter] = useState('');
+
+  // Reset to page 1 when search/filter/sort changes
+  useEffect(() => { setInvPage(1); }, [invSearch, invSort, invCategoryFilter]);
+
+  // Import progress (0-100, -1 = idle)
+  const [importProgress, setImportProgress] = useState(-1);
 
   // NEW: Orders Pagination
   const [ordersPage, setOrdersPage] = useState(1);
@@ -700,6 +727,31 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleInlineCostUpdate = async (productId, sizeIndex) => {
+    const product = products.find(p => p._id === productId);
+    if (!product) return;
+    const updatedProduct = { ...product };
+    const val = parseFloat(editCostVal);
+    if (sizeIndex === null) {
+      updatedProduct.costOverride = isNaN(val) ? undefined : val;
+    } else {
+      updatedProduct.sizes = updatedProduct.sizes.map((s, i) =>
+        i === sizeIndex ? { ...s, costOverride: isNaN(val) ? undefined : val } : s
+      );
+    }
+    try {
+      await apiFetch(`/api/products/${productId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedProduct)
+      });
+      setEditCostId(null);
+      fetchData();
+    } catch (err) {
+      console.error('Failed to update cost', err);
+    }
+  };
+
   const MENU_CACHE_KEY = 'semivra_menu_cache';
   const fetchData = async () => {
     // OFFLINE: hydrate the menu from the last cached snapshot so the POS still works.
@@ -894,6 +946,7 @@ export default function AdminDashboard() {
       if (data.success) {
         setStockHistory(data.history);
         setHistoryItemName(item.itemName);
+        setHistoryItem(item);
         setHistoryPage(1);
         setHistoryModalOpen(true);
       }
@@ -924,7 +977,200 @@ export default function AdminDashboard() {
     { accountCode: '540000', accountName: 'Complimentary Expense', type: 'Expense' }
   ];
 
-  useEffect(() => { if (isAuthenticated) fetchDiscounts(); }, [isAuthenticated]);
+  // ── Chart of Accounts (custom child accounts) ──────────────────────────────
+  const [coaAccounts, setCoaAccounts] = useState([]);
+  const [coaParent, setCoaParent]   = useState('');
+  const [coaNewName, setCoaNewName] = useState('');
+  const [coaEditId, setCoaEditId]   = useState(null);
+  const [coaEditName, setCoaEditName] = useState('');
+  const [coaBusy, setCoaBusy]       = useState(false);
+  const fetchCoa = useCallback(async () => {
+    try { const r = await apiFetch('/api/coa'); const d = await r.json(); if (d.success) setCoaAccounts(d.accounts); } catch { /* ignore */ }
+  }, []);
+  const addCoaChild = async () => {
+    if (!coaParent || !coaNewName.trim()) return alert('Pick a parent account and enter a name.');
+    setCoaBusy(true);
+    try {
+      const r = await apiFetch('/api/accounts', { method: 'POST', body: JSON.stringify({ parentCode: coaParent, name: coaNewName.trim() }) });
+      const d = await r.json();
+      if (d.success) { setCoaNewName(''); fetchCoa(); } else alert(d.error || 'Failed to add account.');
+    } catch { alert('Failed to add account.'); } finally { setCoaBusy(false); }
+  };
+  const renameCoaChild = async (id) => {
+    if (!coaEditName.trim()) return setCoaEditId(null);
+    try {
+      const r = await apiFetch(`/api/accounts/${id}`, { method: 'PUT', body: JSON.stringify({ name: coaEditName.trim() }) });
+      const d = await r.json();
+      if (d.success) { setCoaEditId(null); fetchCoa(); } else alert(d.error || 'Rename failed.');
+    } catch { alert('Rename failed.'); }
+  };
+  const deleteCoaChild = async (id) => {
+    if (!window.confirm('Delete this custom account? (Blocked if it has posted entries.)')) return;
+    try {
+      const r = await apiFetch(`/api/accounts/${id}`, { method: 'DELETE' });
+      const d = await r.json();
+      if (d.success) fetchCoa(); else alert(d.error || 'Delete failed.');
+    } catch { alert('Delete failed.'); }
+  };
+
+  // ── Closed accounting periods ───────────────────────────────────────────────
+  const [closedPeriods, setClosedPeriods] = useState([]);
+  const [periodCloseForm, setPeriodCloseForm] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() || 12, notes: '' });
+  const fetchClosedPeriods = useCallback(async () => {
+    try { const r = await apiFetch('/api/periods'); const d = await r.json(); if (d.success) setClosedPeriods(d.periods || []); } catch { /* ignore */ }
+  }, []);
+  const closePeriod = async () => {
+    const y = Number(periodCloseForm.year), m = Number(periodCloseForm.month);
+    if (!y || !m || m < 1 || m > 12) return alert('Pick a valid year and month.');
+    if (!window.confirm(`Lock ${y}-${String(m).padStart(2,'0')}? Back-dated journal entries into that month will be blocked.`)) return;
+    try {
+      const r = await apiFetch('/api/periods/close', { method: 'POST', body: JSON.stringify({ year: y, month: m, notes: periodCloseForm.notes }) });
+      const d = await r.json();
+      if (d.success) { fetchClosedPeriods(); setPeriodCloseForm({ ...periodCloseForm, notes: '' }); }
+      else alert(d.error || 'Failed to close period.');
+    } catch { alert('Network error closing period.'); }
+  };
+  const reopenPeriod = async (id) => {
+    if (!window.confirm('Reopen this period? Back-dated journal entries will be allowed again.')) return;
+    try {
+      const r = await apiFetch(`/api/periods/${id}/reopen`, { method: 'POST' });
+      const d = await r.json();
+      if (d.success) fetchClosedPeriods();
+      else alert(d.error || 'Failed to reopen.');
+    } catch { alert('Network error.'); }
+  };
+
+  // ── Tenancy backfill report ─────────────────────────────────────────────────
+  const [tenancyReport, setTenancyReport] = useState(null);
+  const [tenancyBusy, setTenancyBusy] = useState(false);
+  const fetchTenancyReport = useCallback(async () => {
+    try { const r = await apiFetch('/api/admin/tenancy-report'); const d = await r.json(); if (d.success) setTenancyReport(d); } catch { /* ignore */ }
+  }, []);
+  const runTenancyRebackfill = async () => {
+    if (!window.confirm('Stamp current businessType on every legacy doc that is missing it?')) return;
+    setTenancyBusy(true);
+    try {
+      const r = await apiFetch('/api/admin/tenancy-rebackfill', { method: 'POST' });
+      const d = await r.json();
+      if (d.success) { await fetchTenancyReport(); alert(`Stamped: Orders ${d.stamped.Order}, Products ${d.stamped.Product}, Inventory ${d.stamped.Inventory}, Categories ${d.stamped.Category}.`); }
+      else alert(d.error || 'Re-backfill failed.');
+    } finally { setTenancyBusy(false); }
+  };
+
+  // ── My permissions (from server) ────────────────────────────────────────────
+  const [myPermissions, setMyPermissions] = useState({ role: '', permissions: [], isWildcard: false });
+  const fetchMyPermissions = useCallback(async () => {
+    try { const r = await apiFetch('/api/me/permissions'); const d = await r.json(); if (d.success) setMyPermissions({ role: d.role, permissions: d.permissions || [], isWildcard: !!d.isWildcard }); } catch { /* ignore */ }
+  }, []);
+  const can = useCallback((perm) => myPermissions.isWildcard || myPermissions.permissions.includes(perm), [myPermissions]);
+
+  // ── Payment Method → Account Map ───────────────────────────────────────────
+  const [paymentMap, setPaymentMap] = useState({ defaults: {}, overrides: {}, effective: {} });
+  const fetchPaymentMap = useCallback(async () => {
+    try { const r = await apiFetch('/api/payment-method-map'); const d = await r.json(); if (d.success) setPaymentMap({ defaults: d.defaults || {}, overrides: d.overrides || {}, effective: d.effective || {} }); } catch { /* ignore */ }
+  }, []);
+  const savePaymentMapping = async (method, accountCode) => {
+    try {
+      const r = await apiFetch('/api/payment-method-map', { method: 'PUT', body: JSON.stringify({ method, accountCode }) });
+      const d = await r.json();
+      if (d.success) setPaymentMap(prev => ({ ...prev, effective: d.effective, overrides: { ...prev.overrides, [method]: accountCode } }));
+      else alert(d.error || 'Failed to save mapping.');
+    } catch { alert('Network error saving mapping.'); }
+  };
+  const resetPaymentMapping = async (method) => {
+    if (!window.confirm(`Reset "${method}" back to its default account?`)) return;
+    try {
+      const r = await apiFetch(`/api/payment-method-map/${encodeURIComponent(method)}`, { method: 'DELETE' });
+      const d = await r.json();
+      if (d.success) setPaymentMap(prev => {
+        const ov = { ...prev.overrides }; delete ov[method];
+        return { ...prev, effective: d.effective, overrides: ov };
+      });
+      else alert(d.error || 'Failed to reset.');
+    } catch { alert('Network error.'); }
+  };
+
+  // ── Audit log fetch ─────────────────────────────────────────────────────────
+  const [auditLogEntries, setAuditLogEntries] = useState([]);
+  const [auditLogPage, setAuditLogPage] = useState(1);
+  const [auditLogPages, setAuditLogPages] = useState(1);
+  const [auditLogFilter, setAuditLogFilter] = useState({ entity: '', actor: '' });
+  const fetchAuditLog = useCallback(async (page = 1) => {
+    try {
+      const qs = new URLSearchParams({ page: String(page), pageSize: '25' });
+      if (auditLogFilter.entity) qs.set('entity', auditLogFilter.entity);
+      if (auditLogFilter.actor)  qs.set('actor', auditLogFilter.actor);
+      const r = await apiFetch(`/api/audit-log?${qs.toString()}`);
+      const d = await r.json();
+      if (d.success) { setAuditLogEntries(d.entries || []); setAuditLogPage(d.page || 1); setAuditLogPages(d.pages || 1); }
+    } catch { /* ignore */ }
+  }, [auditLogFilter]);
+
+  // ── Derive selectable account lists (canonical + custom children) ───────────
+  // Used by every "Paid From / Charge To" dropdown across procurement, expenses,
+  // AR settle, and AP vendor payment so that adding a sub-account in the COA UI
+  // shows up everywhere automatically.
+  const accountsUnder = useCallback((parentCode) => {
+    const parentMatch = coaAccounts.find(a => a.code === parentCode);
+    const parent = parentMatch ? [{ code: parentMatch.code, name: parentMatch.name }] : [];
+    const children = coaAccounts
+      .filter(a => a.custom && a.parent === parentCode)
+      .map(a => ({ code: a.code, name: a.name }));
+    return [...parent, ...children];
+  }, [coaAccounts]);
+  const cashAndBankAccounts = useMemo(() => [
+    ...accountsUnder('111000'), ...accountsUnder('112000'), ...accountsUnder('113000'),
+  ], [accountsUnder]);
+  const apAccounts = useMemo(() => accountsUnder('220000'), [accountsUnder]);
+  const arAccounts = useMemo(() => accountsUnder('120000'), [accountsUnder]);
+  const procurementCreditAccounts = useMemo(() => [
+    ...cashAndBankAccounts, ...apAccounts,
+  ], [cashAndBankAccounts, apAccounts]);
+
+  // ── Client accounts list (for per-product per-client discount picker) ──
+  const [clientAccounts, setClientAccounts] = useState([]);
+  const fetchClientAccounts = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/client-accounts');
+      if (!r.ok) return; // non-superadmin gets 403 — silently skip
+      const d = await r.json();
+      if (d.success) setClientAccounts(d.clients || []);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { if (isAuthenticated) { fetchDiscounts(); fetchCoa(); fetchClientAccounts(); fetchClosedPeriods(); fetchPaymentMap(); fetchMyPermissions(); } }, [isAuthenticated]);
+
+  // ── Partial fulfillment (logistics) ────────────────────────────────────────
+  const [partialModal, setPartialModal] = useState(null);  // the order being split
+  const [partialQtys, setPartialQtys] = useState({});      // { [itemIndex]: fulfilledQty }
+  const [partialMode, setPartialMode] = useState('partial');// 'partial' | 'full'
+  const [partialPayment, setPartialPayment] = useState('Cash');
+  const [partialBusy, setPartialBusy] = useState(false);
+  const openPartial = (order) => {
+    setPartialModal(order);
+    setPartialMode('partial');
+    setPartialPayment(order.paymentMethod || 'Cash');
+    // Default: fulfill all that's still outstanding; operator lowers the short lines.
+    setPartialQtys(Object.fromEntries((order.items || []).map((it, i) => [i, (it.quantity || 0) - (it.fulfilledQty || 0)])));
+  };
+  const submitPartialFulfill = async () => {
+    if (!partialModal || partialBusy) return;
+    const fulfill = (partialModal.items || []).map((it, i) => {
+      const remaining = (it.quantity || 0) - (it.fulfilledQty || 0);
+      return { index: i, qty: Math.max(0, Math.min(remaining, Number(partialQtys[i] ?? remaining))) };
+    });
+    if (!fulfill.some(f => f.qty > 0)) return alert('Enter at least one unit to fulfill now.');
+    setPartialBusy(true);
+    try {
+      const res = await apiFetch(`/api/orders/${partialModal._id}/partial-fulfill`, {
+        method: 'POST',
+        body: JSON.stringify({ fulfill, paymentMode: partialMode, paymentMethod: partialPayment || 'Cash' }),
+      });
+      const d = await res.json();
+      if (d.success) { setPartialModal(null); fetchOrders(); fetchERPData?.(); alert(d.order?.status === 'Completed' ? 'Order fully fulfilled and completed.' : 'Partial fulfillment saved. Remaining stays on the same order.'); }
+      else alert(d.error || 'Partial fulfillment failed.');
+    } catch { alert('Partial fulfillment failed.'); } finally { setPartialBusy(false); }
+  };
   useEffect(() => { if (isAuthenticated) { fetchSettings(); fetchClockStatus(); fetchParked(); } }, [isAuthenticated]);
 
   // --- REAL-TIME AUTO REFRESH ---
@@ -951,7 +1197,12 @@ export default function AdminDashboard() {
     fetchUsers();
     requestNotificationPermission(); // ask once so new-order alerts can show in the installed app
 
-    // Join the correct room based on role so server can send targeted events
+    // Force a reconnect so the handshake picks up the fresh token from auth.getToken().
+    // Room placement is server-decided based on the verified JWT — no more
+    // client-declared role (which an attacker could spoof to elevate to manager).
+    try { socket.disconnect(); socket.connect(); } catch { /* ignore */ }
+    // Back-compat: the server now ignores this payload but we keep emitting it
+    // so older server builds during deploy don't drop the event.
     socket.emit('joinRoom', activeAdmin?.role || 'staff');
 
     const handleNewOrder    = (order) => {
@@ -984,8 +1235,9 @@ export default function AdminDashboard() {
   // --- MANUAL POS LOGIC ---
   const openProductModal = (product) => {
     setPosSelectedProduct(product);
-    setPosActiveSize(null); // Defaults to base size
+    setPosActiveSize(null);
     setPosActiveAddOns([]);
+    setPosItemQty(1);
   };
 
   const confirmPosItem = () => {
@@ -1019,7 +1271,7 @@ export default function AdminDashboard() {
       productId: posSelectedProduct._id,
       name: finalName,
       price: finalPrice,
-      quantity: 1,
+      quantity: Math.max(1, posItemQty),
       department,
       selectedAddOns: [...posActiveAddOns]
     };
@@ -1029,11 +1281,15 @@ export default function AdminDashboard() {
   };
 
   const posSubtotal = posCart.reduce((sum, item) => sum + ((item.price + item.selectedAddOns.reduce((s, a) => s + Number(a.price), 0)) * item.quantity), 0);
+  const posItemDiscountAmt = posCart.reduce((sum, item) => {
+    const base = (item.price + item.selectedAddOns.reduce((s, a) => s + Number(a.price), 0)) * item.quantity;
+    return sum + base * ((item.discountPercent || 0) / 100);
+  }, 0);
   const posDeliveryFeeNum = parseFloat(posDeliveryFee) || 0;
   const posDiscountAmt = posDiscountType === 'percent'
-    ? posSubtotal * (Math.min(100, parseFloat(posDiscountValue) || 0) / 100)
-    : Math.min(posSubtotal, parseFloat(posDiscountValue) || 0);
-  const posGrandTotal = Math.max(0, posSubtotal - posDiscountAmt + posDeliveryFeeNum);
+    ? (posSubtotal - posItemDiscountAmt) * (Math.min(100, parseFloat(posDiscountValue) || 0) / 100)
+    : Math.min(posSubtotal - posItemDiscountAmt, parseFloat(posDiscountValue) || 0);
+  const posGrandTotal = Math.max(0, posSubtotal - posItemDiscountAmt - posDiscountAmt + posDeliveryFeeNum);
   const posCashChange = Math.max(0, (parseFloat(posCashTendered) || 0) - posGrandTotal);
 
   const submitManualOrder = async () => {
@@ -1058,7 +1314,11 @@ export default function AdminDashboard() {
       items: posCart,
       table: posTable,
       customerName: posCustomerName,
-      paymentMethod: ['Grab Delivery', 'Foodpanda', 'Manual Delivery'].includes(posTable) ? posTable : 'Cash',
+      // Linking to a client account lets the server resolve per-client product
+      // discount overrides for this order. Optional — falls back to the
+      // product's default discountPercent when blank.
+      clientAccountId: posClientId || undefined,
+      paymentMethod: ['Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Lalamove'].includes(posTable) ? posTable : 'Cash',
       isComplimentary: false,
       sessionId: null,
       deliveryAddress: posDeliveryAddress,
@@ -1075,11 +1335,12 @@ export default function AdminDashboard() {
       setIsPosOpen(false);
       setPosCart([]);
       setPosCustomerName('');
+      setPosClientId('');
       setPosDeliveryAddress('');
       setPosCustomerPhone('');
       setPosDeliveryFee('');
       setPosScheduledTime('');
-      setPosTable('Dine-In');
+      setPosTable(BUSINESS_TYPE === 'log' ? 'Pickup' : 'Dine-In');
       setPosSearch('');
       setPosNotes('');
       setPosGuestCount(1);
@@ -1101,6 +1362,15 @@ export default function AdminDashboard() {
       });
       const data = await res.json();
       if (data.success) {
+        // Apply any manually-set per-item discounts from the POS cart
+        const cartWithDisc = posCart.filter(item => (item.discountPercent || 0) > 0);
+        if (cartWithDisc.length > 0 && data.order?._id) {
+          await apiFetch(`/api/orders/${data.order._id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ items: posCart.map(item => ({ discountPercent: item.discountPercent || 0 })) }),
+          });
+        }
+        if (BUSINESS_TYPE === 'log') fetchERPData();
         resetPosForm();
         fetchOrders();
       } else {
@@ -1130,17 +1400,18 @@ const updateStatus = async (orderId, newStatus) => {
     const payload = { status: newStatus };
 
     if (newStatus === 'Preparing') {
-      // 2. BULLETPROOF OVERRIDE: If it's a delivery, force it! Otherwise, use dropdown/existing.
-      if (order && ['Grab Delivery', 'Foodpanda', 'Manual Delivery'].includes(order.table)) {
-        payload.paymentMethod = order.table;
-      } else {
-        payload.paymentMethod = paymentSelections[orderId] || (order ? order.paymentMethod : 'Cash') || 'Cash';
-      }
+      // Payment is always operator-changeable. Use the dropdown selection if made,
+      // else default to the delivery channel (for delivery orders) or the order's method.
+      const isDeliveryTable = order && ['Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Lalamove'].includes(order.table);
+      payload.paymentMethod = paymentSelections[orderId]
+        || (isDeliveryTable ? order.table : null)
+        || (order ? order.paymentMethod : 'Cash') || 'Cash';
       // Include cash tendered for cash payments
       if (payload.paymentMethod === 'Cash' && cashTendered[orderId]) {
         payload.amountTendered = parseFloat(cashTendered[orderId]) || 0;
       }
     }
+
 
     // Play ready chime when order is called out to customer
     if (newStatus === 'Ready') playReadyChime();
@@ -1159,8 +1430,14 @@ const updateStatus = async (orderId, newStatus) => {
       const data = await res.json();
 
       if (!data.success) {
-        alert(data.error); // Show the exact error (e.g., "INSUFFICIENT STOCK")
-        fetchOrders(); // Revert the UI back to normal if the database rejected it
+        alert(data.error);
+        fetchOrders();
+      } else if (newStatus === 'Preparing' && BUSINESS_TYPE === 'log') {
+        const prepOrder = { ...order, ...payload, ...data.order };
+        // Logistics: only the billing statement is printed (no order slip).
+        printBillingStatement(prepOrder);
+      } else if (newStatus === 'Completed' && BUSINESS_TYPE === 'log') {
+        fetchERPData();
       }
     } catch (err) {
       console.error(err);
@@ -2026,6 +2303,17 @@ const updateStatus = async (orderId, newStatus) => {
   };
   const [qrSessionId, setQrSessionId] = useState(''); // Add this to your states at the top if needed
 
+  // Logistics: copy the client portal link instead of generating a table QR.
+  const handleCopyPortalLink = async () => {
+    const link = `${window.location.origin}/client/portal`;
+    try {
+      await navigator.clipboard.writeText(link);
+      alert(`Portal link copied:\n${link}`);
+    } catch {
+      window.prompt('Copy the client portal link:', link);
+    }
+  };
+
   const handleShowQR = async () => {
     try {
       const newTable = `T-${Date.now().toString(36).toUpperCase()}`;
@@ -2070,13 +2358,13 @@ const updateStatus = async (orderId, newStatus) => {
 
   const submitPhysicalCounts = async () => {
     try {
-      // Convert physical counts from DISPLAY units (kg/L/pcs) → BASE units (g/ml/pcs)
-      // before sending to the server. Server math operates on base units.
+      // Convert physical counts → BASE units (g/ml/pcs) before sending; server math
+      // operates on base units. LOG counts in packages (× packBase); FB in kg/L (× mult).
       const countsBase = {};
       for (const [id, val] of Object.entries(physicalCounts)) {
         if (val === '' || val === undefined || val === null) continue;
         const item = inventory.find(i => i._id === id);
-        const mult = item ? effectiveDisplay(item).mult : 1;
+        const mult = item ? (BUSINESS_TYPE === 'log' ? (itemDisplay(item).packBase || 1) : effectiveDisplay(item).mult) : 1;
         countsBase[id] = Number(val) * mult;
       }
       const res = await apiFetch(`/api/inventory/count`, {
@@ -2106,30 +2394,54 @@ const updateStatus = async (orderId, newStatus) => {
   };
 
   const addInventory = async () => {
-    if(!invForm.itemName || !invForm.packQty || !invForm.unitPerPack || !invForm.unit || !invForm.costPerPack) return alert("Please fill in all inventory fields.");
-    
-    const itemNameClean = invForm.itemName.trim();
-    const totalStockAdded = parseFloat(invForm.packQty) * parseFloat(invForm.unitPerPack);
-    const totalCost = parseFloat(invForm.packQty) * parseFloat(invForm.costPerPack);
-    
+    // log: unit is always pcs — use effective values without mutating state
+    const eff = BUSINESS_TYPE === 'log'
+      ? { ...invForm, unitPerPack: invForm.unitPerPack || '1', unit: 'pcs' }
+      : invForm;
+    if (!eff.itemName || !eff.packQty || !eff.costPerPack) return alert("Please fill in Item Name, Qty, and Price.");
+    if (BUSINESS_TYPE !== 'log' && (!eff.unitPerPack || !eff.unit)) return alert("Please fill in all inventory fields.");
+    const invFormEff = eff;
+
+    const qtyBought   = parseFloat(invFormEff.packQty);
+    const costPerPack = parseFloat(invFormEff.costPerPack);
+    if (isNaN(qtyBought) || qtyBought <= 0) return alert("Qty Bought must be a positive number.");
+    if (isNaN(costPerPack) || costPerPack <= 0) return alert("Price Paid Per Pack must be a positive number.");
+
+    let itemNameClean = invFormEff.itemName.trim();
+    const totalCost = qtyBought * costPerPack;
+
+    // log: auto-append weight/vol suffix to name for new items
+    const existingItemCheck = inventory.find(i => i.itemName.toLowerCase() === itemNameClean.toLowerCase());
+    if (BUSINESS_TYPE === 'log' && !existingItemCheck && invFormEff.unitPerPack && invFormEff.unit && invFormEff.unit !== 'pcs') {
+      const wvSuffix = `${invFormEff.unitPerPack}${invFormEff.unit}`;
+      if (!itemNameClean.toLowerCase().includes(wvSuffix.toLowerCase())) {
+        itemNameClean = `${itemNameClean} ${wvSuffix}`;
+      }
+    }
+
     // Check if the item already exists!
     const existingItem = inventory.find(i => i.itemName.toLowerCase() === itemNameClean.toLowerCase());
 
     // Resolve display unit → base unit + multiplier
-    // e.g. user picks "L" with 1L per pack at ₱70 → stored as 1000ml at ₱0.07/ml
-    const resolved = resolveUnitFE(invForm.unit);
+    const resolved = resolveUnitFE(invFormEff.unit);
     const baseUnit = resolved.base;
     const mult = resolved.mult;
-    const totalStockBase = totalStockAdded * mult;   // in base unit (g/ml/pcs)
-    const costPerDisplayUnit = parseFloat(invForm.costPerPack) / parseFloat(invForm.unitPerPack); // ₱ per displayUnit
-    const costPerBase = costPerDisplayUnit / mult;   // ₱ per base unit
+    const totalStockAdded = qtyBought * parseFloat(invFormEff.unitPerPack);
+    const totalStockBase = totalStockAdded * mult;
+    const costPerDisplayUnit = costPerPack / parseFloat(invFormEff.unitPerPack);
+    const costPerBase = costPerDisplayUnit / mult;
 
     if (existingItem) {
-      if (!window.confirm(`"${existingItem.itemName}" already exists in inventory. Do you want to RESTOCK it with ${totalStockAdded} ${invForm.unit}?`)) return;
-      // RESTOCK EXISTING ITEM — send base-unit values
+      // For log mode: use packBase from item name so "2 pcs of 377G" → 2×377=754g in DB
+      let restockBase = totalStockBase;
+      if (BUSINESS_TYPE === 'log') {
+        const pack = packInfo(existingItem);
+        restockBase = qtyBought * (pack.packBase || 1);
+      }
+      if (!window.confirm(`Restock "${existingItem.itemName}"?\n\nQty: +${qtyBought} pcs\nCost per pack: ₱${costPerPack.toFixed(2)}\nTotal cost: ₱${totalCost.toFixed(2)}`)) return;
       await apiFetch(`/api/inventory/restock/${existingItem._id}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ addedStock: totalStockBase, totalCost, expiryDate: invForm.expiryDate || null, creditAccount: invForm.creditAccount || '111000' })
+        body: JSON.stringify({ addedStock: restockBase, totalCost, expiryDate: invFormEff.expiryDate || null, creditAccount: invFormEff.creditAccount || '111000' })
       });
     } else {
       // ADD BRAND NEW ITEM
@@ -2193,13 +2505,37 @@ const updateStatus = async (orderId, newStatus) => {
     }
     return { unit: displayUnit, mult: mult || 1 };
   };
+  // LOG 1:1 — derive the pack size from the item name (e.g. "…250G", "…1L",
+  // "…500ML") so cost can be shown per pack ("₱200/250g") rather than per kg/L.
+  // unitCost is stored per base unit, so packCost = unitCost × packBaseUnits.
+  const PACK_RE = /(\d+(?:\.\d+)?)\s*(mg|kg|g|ml|cl|l|pcs|pc|pack|unit)\b/i;
+  const PACK_TO_BASE = { mg: 0.001, g: 1, kg: 1000, ml: 1, cl: 10, l: 1000, pcs: 1, pc: 1, pack: 1, unit: 1 };
+  const packInfo = (item) => {
+    const mt = (item.itemName || '').match(PACK_RE);
+    const baseFactor = PACK_TO_BASE[(item.unit || '').toLowerCase()] || 1;
+    if (mt) {
+      const val = parseFloat(mt[1]);
+      const f = PACK_TO_BASE[mt[2].toLowerCase()];
+      if (f !== undefined && val > 0) {
+        const packBase = val * (f / baseFactor);
+        return { packBase, label: `${mt[1]}${mt[2]}`, cost: (item.unitCost || 0) * packBase };
+      }
+    }
+    const { unit, mult } = effectiveDisplay(item);
+    return { packBase: mult, label: unit, cost: (item.unitCost || 0) * mult };
+  };
   // Convenience: { qty, unit, cost } already converted to display.
   const itemDisplay = (item) => {
     const { unit, mult } = effectiveDisplay(item);
+    const pack = packInfo(item);
     return {
       qty:  (item.stockQty || 0) / mult,
       unit,
-      cost: (item.unitCost || 0) * mult
+      cost: (item.unitCost || 0) * mult,
+      packCost: pack.cost,                                  // cost of one named pack (e.g. ₱200 for 250g)
+      packLabel: pack.label,                                // pack size label from the name (e.g. "250g")
+      packBase: pack.packBase,                              // base units in one package (e.g. 250)
+      packQty: pack.packBase ? (item.stockQty || 0) / pack.packBase : 0, // stock as a count of packages
     };
   };
   // Pretty currency
@@ -2209,17 +2545,22 @@ const updateStatus = async (orderId, newStatus) => {
   // BULK EXCEL/CSV IMPORT — Stock-take semantics
   // ============================================================
   const downloadImportTemplate = () => {
-    // Standard header: Code,Product,Qty Unit,Unit Cost,Expiry date
-    // Product may include trailing size hint (e.g. "Milk 1L" or "Sugar 1kg")
-    //   → cleaned name is used; trailing unit confirms the Qty Unit.
-    // Unit Cost = cost per displayUnit (e.g. ₱70 for 1L of milk = ₱70/L).
-    // Only kg / L / pcs are accepted as units.
-    const csv =
-      'Code,Product,Qty Unit,Unit Cost,Expiry date\n' +
-      ',Milk 1L,10 L,70,2026-12-31\n' +
-      ',Sugar 1kg,5 kg,100,\n' +
-      ',Coffee Beans 1kg,1 kg,800,2026-09-15\n' +
-      ',Cups (12oz),200 pcs,8,\n';
+    // LOG: each row is a packaged SKU. Put the pack size in the Product name
+    //   (…377G / …1L / …250G), Qty = number of packages (pure count, no unit),
+    //   Unit Cost = price per package. The importer multiplies the count by the
+    //   pack size and stores cost per base unit automatically.
+    // FB: Qty carries a unit (kg/L/pcs); Unit Cost = cost per display unit.
+    const csv = BUSINESS_TYPE === 'log'
+      ? 'Code,Product,Qty Unit,SRP,Unit Cost,Expiry date\n' +
+        ',ALASKA CONDENSED MILK 377G,100,77,50,\n' +
+        ',ALASKA BARISTA MILK 1L,100,89,50,\n' +
+        ',COMMERCIAL BLEND 1KG,100,950,200,\n' +
+        ',FILTER ETHIOPIA - LIMU G2 250G,100,900,200,2026-12-31\n'
+      : 'Code,Product,Qty Unit,Unit Cost,Expiry date\n' +
+        ',Milk 1L,10 L,70,2026-12-31\n' +
+        ',Sugar 1kg,5 kg,100,\n' +
+        ',Coffee Beans 1kg,1 kg,800,2026-09-15\n' +
+        ',Cups (12oz),200 pcs,8,\n';
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -2242,72 +2583,125 @@ const updateStatus = async (orderId, newStatus) => {
       //   Code, Product, Qty Unit, Unit Cost, Expiry date
       // Backwards-compat also accepts: itemName, displayUnit, qty, unitCost.
       // Product may contain trailing size hint like "Milk 1kg" or "Coke 1.5L" — we parse it.
-      const PACK_SIZE_RE = /\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|L|l|pcs|pc|piece|g|ml)\b\s*$/i;
+      // Matches trailing pack size in product name: "250G", "1KG", "750ML", "1.3KG", "2.5L"
+      const PACK_SIZE_RE = /\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|L|l|ml|pcs|pc|piece)\b\s*$/i;
       const normalise = (r) => {
         const lower = {};
         for (const [k, v] of Object.entries(r)) lower[String(k).toLowerCase().trim()] = v;
 
-        // Parse trailing pack-size from the Product column (e.g. "Milk 1kg" → name="Milk", hint=kg)
+        // Parse trailing pack-size from product name.
+        // Capture both the number AND unit so we can compute total stock and unit cost per display unit.
+        // e.g. "FILTER PHIL 250G" → packQty=250, packRawUnit='g' → hintedUnit='kg', packSizeInDisplay=0.25
+        // e.g. "MONIN STRAWBERRY 750ML" → packQty=750, packRawUnit='ml' → hintedUnit='L', packSizeInDisplay=0.75
         const rawProduct = String(lower.product || lower.itemname || lower.item || lower.name || '').trim();
         const sizeMatch = rawProduct.match(PACK_SIZE_RE);
-        let cleanedName = rawProduct, hintedUnit = '';
+        let cleanedName = rawProduct, hintedUnit = '', packSizeInDisplay = 1;
         if (sizeMatch) {
           cleanedName = rawProduct.replace(PACK_SIZE_RE, '').trim();
-          hintedUnit = sizeMatch[2];
-          // Normalise hinted unit
-          if (hintedUnit.toLowerCase() === 'l') hintedUnit = 'L';
-          else if (hintedUnit.toLowerCase() === 'kg') hintedUnit = 'kg';
-          else if (['pc', 'pcs', 'piece'].includes(hintedUnit.toLowerCase())) hintedUnit = 'pcs';
-          else if (hintedUnit.toLowerCase() === 'g') hintedUnit = 'kg';   // auto-promote g → kg display
-          else if (hintedUnit.toLowerCase() === 'ml') hintedUnit = 'L';   // auto-promote ml → L display
+          const packQty = parseFloat(sizeMatch[1]);
+          const rawU = sizeMatch[2].toLowerCase();
+          if (rawU === 'g') {
+            hintedUnit = 'kg'; packSizeInDisplay = packQty / 1000; // 250g → 0.25 kg
+          } else if (rawU === 'kg') {
+            hintedUnit = 'kg'; packSizeInDisplay = packQty;         // 1kg → 1 kg
+          } else if (rawU === 'ml') {
+            hintedUnit = 'L';  packSizeInDisplay = packQty / 1000; // 750ml → 0.75 L
+          } else if (rawU === 'l') {
+            hintedUnit = 'L';  packSizeInDisplay = packQty;         // 1L → 1 L
+          } else if (['pc', 'pcs', 'piece'].includes(rawU)) {
+            hintedUnit = 'pcs'; packSizeInDisplay = packQty;
+          }
         }
 
-        // "Qty Unit" may be combined ("10 L") or split as "Qty"/"Unit"
-        let qty = 0, unit = '';
+        // "Qty Unit" may be combined ("10 L") or just a number ("100") representing package count
+        let qty = 0, unitFromCol = '';
         const qtyUnitCell = String(lower['qty unit'] || lower['qty/unit'] || lower['quantity unit'] || '').trim();
         if (qtyUnitCell) {
           const m = qtyUnitCell.match(/^([0-9.,]+)\s*[|/\s]*\s*([A-Za-z]+)$/);
           if (m) {
             qty = parseFloat(m[1].replace(/,/g, '')) || 0;
-            unit = m[2];
+            unitFromCol = m[2];
+          } else {
+            const numOnly = parseFloat(qtyUnitCell.replace(/,/g, ''));
+            if (!isNaN(numOnly)) qty = numOnly;
           }
         }
         if (!qty) qty = parseFloat(lower.qty || lower.quantity || lower.stock || 0) || 0;
-        if (!unit) unit = String(lower.unit || lower.displayunit || '').trim();
-        // Promote any g/ml to kg/L (FORCED RULE)
-        if (unit.toLowerCase() === 'g')  unit = 'kg';
-        else if (unit.toLowerCase() === 'ml') unit = 'L';
-        else if (unit.toLowerCase() === 'l') unit = 'L';
-        // Fall back to product-hinted unit if Qty Unit column was missing
-        if (!unit && hintedUnit) unit = hintedUnit;
+        if (!unitFromCol) unitFromCol = String(lower.unit || lower.displayunit || '').trim();
+
+        // Normalise any unit that came directly from the column
+        if (unitFromCol.toLowerCase() === 'g') unitFromCol = 'kg';
+        else if (unitFromCol.toLowerCase() === 'ml') unitFromCol = 'L';
+        else if (unitFromCol.toLowerCase() === 'l') unitFromCol = 'L';
+
+        let unit = unitFromCol;
+
+        // When the Qty column is a pure package count (no unit in column), multiply by pack size.
+        // e.g. 100 packs × 0.25 kg/pack = 25 kg total.
+        if (!unitFromCol && hintedUnit && packSizeInDisplay > 0) {
+          qty = qty * packSizeInDisplay;
+          unit = hintedUnit;
+        } else if (!unit && hintedUnit) {
+          unit = hintedUnit;
+        }
 
         const exp = lower['expiry date'] || lower['expiry'] || lower['expirydate'] || '';
         const expStr = exp === '' || exp == null ? '' : String(exp).trim();
+
+        // SRP — strip ₱ symbol and commas
+        const rawSrp = String(lower.srp || lower['selling price'] || lower['retail price'] || '').replace(/[₱,\s]/g, '');
+        const srp = rawSrp ? parseFloat(rawSrp) : '';
+
+        // Excel unit cost is per package. Convert to cost per display unit.
+        // e.g. 200 per 250g pack → 200 / 0.25 kg = 800 per kg.
+        const rawUnitCost = lower['unit cost'] === '' || lower['unit cost'] == null
+          ? (lower.unitcost === '' || lower.unitcost == null ? '' : parseFloat(lower.unitcost))
+          : parseFloat(lower['unit cost']);
+        const unitCost = (rawUnitCost !== '' && !isNaN(rawUnitCost) && !unitFromCol && hintedUnit && packSizeInDisplay > 0)
+          ? rawUnitCost / packSizeInDisplay
+          : rawUnitCost;
 
         return {
           itemCode: String(lower.code || lower.itemcode || '').trim(),
           itemName: cleanedName,
           displayUnit: unit,
           qty,
-          unitCost: lower['unit cost'] === '' || lower['unit cost'] == null
-            ? (lower.unitcost === '' || lower.unitcost == null ? '' : parseFloat(lower.unitcost))
-            : parseFloat(lower['unit cost']),
+          unitCost,
           expiryDate: expStr,
+          srp,
         };
       };
 
       // Diff against current inventory for preview
+      // Track category from header rows (rows where code = category name, product = empty)
+      let currentCategory = '';
       const previewed = rows.map(raw => {
         const r = normalise(raw);
-        if (!r.itemName) return { ...r, _error: 'Missing itemName' };
-        const existing = inventory.find(inv => inv.itemName.toLowerCase() === r.itemName.toLowerCase());
+        // Category header row: no itemName but code column has a plain word (not a product code)
+        if (!r.itemName) {
+          const looksLikeCategoryHeader = r.itemCode && !/^[A-Z]\d+$/i.test(r.itemCode);
+          if (looksLikeCategoryHeader) {
+            currentCategory = r.itemCode;
+            return { ...r, _isCategory: true, category: r.itemCode };
+          }
+          return { ...r, _error: 'Missing itemName' };
+        }
+        r.category = currentCategory;
+        const existing = inventory.find(inv =>
+          (r.itemCode && inv.itemCode && inv.itemCode === r.itemCode) ||
+          inv.itemName.toLowerCase() === r.itemName.toLowerCase()
+        );
         const resolved = resolveUnitFE(r.displayUnit);
         const newBaseQty = r.qty * resolved.mult;
         if (existing) {
           const oldDisplay = itemDisplay(existing);
           const diff = newBaseQty - (existing.stockQty || 0);
           const diffDisplay = diff / resolved.mult;
-          return { ...r, _newItem: false, _existing: existing, _diff: diffDisplay, _oldDisplay: oldDisplay };
+          // Detect new expiry batch: import has expiry AND it differs from existing soonest expiry
+          const existingExpiry = existing.expiryDate ? String(existing.expiryDate).slice(0, 10) : '';
+          const importExpiry = r.expiryDate ? String(r.expiryDate).slice(0, 10) : '';
+          const isNewBatch = !!(importExpiry && existingExpiry && importExpiry !== existingExpiry);
+          return { ...r, _newItem: false, _existing: existing, _diff: diffDisplay, _oldDisplay: oldDisplay, _newBatch: isNewBatch };
         }
         return { ...r, _newItem: true, _diff: r.qty };
       });
@@ -2322,7 +2716,7 @@ const updateStatus = async (orderId, newStatus) => {
 
   const submitImport = async () => {
     if (importSubmitting) return;
-    const validRows = importRows.filter(r => !r._error && r.itemName && r.displayUnit);
+    const validRows = importRows.filter(r => !r._error && !r._isCategory && r.itemName && r.displayUnit);
     if (validRows.length === 0) return alert('No valid rows to import.');
     if (!window.confirm(
       `This will REPLACE current stock for ${validRows.length} item(s). ` +
@@ -2330,6 +2724,13 @@ const updateStatus = async (orderId, newStatus) => {
       `Differences will be booked as journal adjustments. Continue?`
     )) return;
     setImportSubmitting(true);
+    setImportProgress(0);
+    // Animate to ~88% while waiting for the server response
+    let prog = 0;
+    const progInterval = setInterval(() => {
+      prog = Math.min(88, prog + (88 - prog) * 0.07 + 0.4);
+      setImportProgress(Math.round(prog));
+    }, 120);
     try {
       const payload = {
         items: validRows.map(r => ({
@@ -2338,7 +2739,9 @@ const updateStatus = async (orderId, newStatus) => {
           displayUnit: r.displayUnit,
           qty: r.qty,
           unitCost: r.unitCost === '' || r.unitCost === undefined ? undefined : r.unitCost,
-          expiryDate: r.expiryDate || undefined
+          expiryDate: r.expiryDate || undefined,
+          category: r.category || undefined,
+          srp: r.srp === '' || r.srp === undefined ? undefined : r.srp,
         }))
       };
       const res = await apiFetch('/api/inventory/import', {
@@ -2347,6 +2750,9 @@ const updateStatus = async (orderId, newStatus) => {
       });
       const data = await res.json();
       if (data.success) {
+        clearInterval(progInterval);
+        setImportProgress(100);
+        await new Promise(r => setTimeout(r, 500)); // show 100% briefly
         const s = data.summary;
         alert(
           `Import complete.\n\n` +
@@ -2365,20 +2771,24 @@ const updateStatus = async (orderId, newStatus) => {
         alert(data.error || 'Import failed.');
       }
     } catch (err) {
+      clearInterval(progInterval);
       console.error('submitImport', err);
       alert('Network error during import.');
     } finally {
       setImportSubmitting(false);
+      setImportProgress(-1);
     }
   };
 
   const openEditInventory = (item) => {
     const eff = effectiveDisplay(item);
+    // LOG: cost & threshold are per package (₱200/250G, N pcs); FB: per display unit.
+    const costBasis = BUSINESS_TYPE === 'log' ? packInfo(item).packBase : eff.mult;
     setEditInvForm({
       itemName: item.itemName || '',
       unit: item.unit || '',
-      unitCost: ((item.unitCost || 0) * eff.mult).toFixed(2),                       // base ₱/ml → display ₱/L
-      lowStockThreshold: ((item.lowStockThreshold || 0) / eff.mult).toString(),     // base → display
+      unitCost: ((item.unitCost || 0) * costBasis).toFixed(2),                      // base → per-pack (log) / per-display (fb)
+      lowStockThreshold: ((item.lowStockThreshold || 0) / costBasis).toString(),    // base → packages (log) / display (fb)
       expiryDate: item.expiryDate ? new Date(item.expiryDate).toISOString().slice(0, 10) : '',
       expiryWarnDays: item.expiryWarnDays || 7,
       displayUnit: eff.unit
@@ -2399,11 +2809,16 @@ const updateStatus = async (orderId, newStatus) => {
       // Convert display-unit values (₱/L, threshold in L) → base storage (₱/ml, threshold in ml)
       const resolved = resolveUnitFE(editInvForm.displayUnit || editInvForm.unit);
       const mult = resolved.mult;
+      // LOG: the entered cost is per package — divide by the pack size parsed from the
+      // (possibly edited) name. FB: per display unit — divide by display multiplier.
+      const costBasis = BUSINESS_TYPE === 'log'
+        ? packInfo({ itemName: editInvForm.itemName.trim(), unit: resolved.base }).packBase
+        : mult;
       const payload = {
         itemName: editInvForm.itemName.trim(),
         unit: resolved.base,                            // base storage unit (g/ml/pcs)
-        unitCost: unitCostNum / mult,                   // convert ₱/displayUnit → ₱/baseUnit
-        lowStockThreshold: Math.max(0, parseFloat(editInvForm.lowStockThreshold) || 0) * mult, // display → base
+        unitCost: unitCostNum / costBasis,              // per-pack (log) / per-display (fb) → ₱/baseUnit
+        lowStockThreshold: Math.max(0, parseFloat(editInvForm.lowStockThreshold) || 0) * costBasis, // packages (log) / display (fb) → base
         expiryWarnDays: Math.max(1, parseInt(editInvForm.expiryWarnDays) || 7),
         expiryDate: editInvForm.expiryDate ? new Date(editInvForm.expiryDate).toISOString() : null,
         displayUnit: editInvForm.displayUnit || editInvForm.unit,
@@ -2824,13 +3239,13 @@ const updateStatus = async (orderId, newStatus) => {
     const data = await res.json();
     if (!data.success) { alert(data.error || 'Failed to save product.'); return; }
     setEditingProduct(null);
-    setFormData({ name: '', description: '', category: '', basePrice: '', baseSize: '', sizes: [], image: '', baseRecipe: [], addOns: [], modifierGroups: [], imageUrl: '' });
+    setFormData({ name: '', description: '', category: '', basePrice: '', discountPercent: 0, clientDiscounts: [], baseSize: '', sizes: [], image: '', baseRecipe: [], addOns: [], modifierGroups: [], imageUrl: '' });
     fetchData();
   };
   const deleteProduct = async (id) => { 
     if(window.confirm("Delete this product permanently?")) {
       await apiFetch(`/api/products/${id}`, { method: 'DELETE' }); 
-      if (editingProduct && editingProduct._id === id) { setEditingProduct(null); setFormData({ name: '', description: '', category: '', basePrice: '', baseSize: '', sizes: [], image: '', baseRecipe: [], addOns: [], modifierGroups: [], imageUrl: '' }); }
+      if (editingProduct && editingProduct._id === id) { setEditingProduct(null); setFormData({ name: '', description: '', category: '', basePrice: '', discountPercent: 0, clientDiscounts: [], baseSize: '', sizes: [], image: '', baseRecipe: [], addOns: [], modifierGroups: [], imageUrl: '' }); }
     }
   };
   
@@ -3175,7 +3590,7 @@ const updateStatus = async (orderId, newStatus) => {
     const COLS = [
       ['Cash', ['Cash']], ['Bank', ['Bank Transfer']], ['GCash', ['GCash']], ['Maya', ['Maya']],
       ['Maribank/SeaBank', ['Maribank']], ['Other E-Wallet', ['E-Wallet', 'Other E-Wallet']],
-      ['GrabFood', ['Grab Delivery']], ['Foodpanda', ['Foodpanda']], ['Manual/Direct', ['Manual Delivery']],
+      ['GrabFood', ['Grab Delivery']], ...(BUSINESS_TYPE === 'log' ? [['Lalamove', ['Lalamove']]] : [['Foodpanda', ['Foodpanda']]]), ['Manual/Direct', ['Manual Delivery']],
     ];
     const cv = (r, ms) => ms.reduce((s, m) => s + (r?.methods?.[m] || 0), 0);
     const head = ['Date', sssGroup === 'day' ? 'Orders' : 'Order ID', ...COLS.map(c => c[0]), 'Total'];
@@ -3199,9 +3614,9 @@ const updateStatus = async (orderId, newStatus) => {
     if (!refundModal || !refundForm.reason.trim()) return alert('Reason required.');
     setRefundSubmitting(true);
     try {
-      const res = await apiFetch(`/api/orders/${refundModal._id}/refund`, { method: 'POST', body: JSON.stringify({ reason: refundForm.reason, refundAmount: parseFloat(refundForm.refundAmount) || refundModal.total }) });
+      const res = await apiFetch(`/api/orders/${refundModal._id}/refund`, { method: 'POST', body: JSON.stringify({ reason: refundForm.reason, refundAmount: parseFloat(refundForm.refundAmount) || refundModal.total, inventoryAction: refundForm.inventoryAction }) });
       const d = await res.json();
-      if (d.success) { setRefundModal(null); setRefundForm({ reason: '', refundAmount: '' }); fetchOrders(); alert('Refund processed. Reversal journal created.'); }
+      if (d.success) { setRefundModal(null); setRefundForm({ reason: '', refundAmount: '', inventoryAction: 'Restock' }); fetchOrders(); alert('Refund processed. Reversal journal created.'); }
       else alert(d.error || 'Refund failed.');
     } catch { alert('Network error.'); }
     finally { setRefundSubmitting(false); }
@@ -3298,6 +3713,216 @@ const updateStatus = async (orderId, newStatus) => {
         alert(`Clocked out. Worked ${Math.floor(m/60)}h ${m%60}m${b ? ` (${b}m break)` : ''}.`);
       } else alert(d.error||'Clock-out failed.');
     } catch { alert('Network error.'); }
+  };
+
+  // ── Billing Statement print (log mode) ──────────────────────────────────────
+  const printBillingStatement = (order) => {
+    const BILL_NAME    = import.meta.env.VITE_BILLING_NAME    || BIZ_NAME;
+    const BILL_ADDR1   = import.meta.env.VITE_BILLING_ADDRESS1 || '';
+    const BILL_ADDR2   = import.meta.env.VITE_BILLING_ADDRESS2 || '';
+    const BILL_PHONE   = import.meta.env.VITE_BILLING_PHONE    || '';
+    const BILL_EMAIL   = import.meta.env.VITE_BILLING_EMAIL    || '';
+    const BILL_BANK    = import.meta.env.VITE_BILLING_BANK     || '';
+    const BILL_ACCT_NAME = import.meta.env.VITE_BILLING_ACCOUNT_NAME || '';
+    const BILL_ACCT_NO   = import.meta.env.VITE_BILLING_ACCOUNT_NO   || '';
+
+    const dateStr = new Date(order.createdAt || Date.now()).toLocaleDateString('en-PH', {
+      year: 'numeric', month: 'long', day: 'numeric'
+    });
+    const transactionNo = order.billingNumber || order.orderNumber || '—';
+
+    const itemRowsHTML = (order.items || []).map(item => {
+      const addOnTotal = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
+      const unitPrice  = item.price + addOnTotal;
+      const lineTotal  = unitPrice * item.quantity;
+      const addOnDesc  = (item.selectedAddOns || []).map(a => a.name).join(', ');
+      const desc       = item.name + (item.size ? ` (${item.size})` : '') + (addOnDesc ? ` + ${addOnDesc}` : '');
+      return `<tr>
+        <td class="code">${item.productCode || ''}</td>
+        <td class="desc">${desc}</td>
+        <td class="qty">${item.quantity}</td>
+        <td class="price">${(unitPrice).toFixed(2)}</td>
+        <td class="total">${lineTotal.toFixed(2)}</td>
+      </tr>`;
+    }).join('');
+
+    const subtotal    = order.subtotal   || order.total || 0;
+    const discount    = order.discount   || 0;
+    const deliveryFee = order.deliveryFee || 0;
+    const total       = order.total      || 0;
+
+    const isDelivery = ['Manual Delivery', 'Lalamove'].includes(order.table);
+
+    const html = `<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Billing Statement — ${transactionNo}</title>
+<style>
+  /* ── Page setup ── */
+  @page {
+    size: A4 portrait;
+    margin: 15mm 16mm 20mm;
+  }
+  /* Running header on continuation pages */
+  @page :first { margin-top: 15mm; }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #000; }
+
+  /* ── Header ── */
+  .header { text-align: center; margin-bottom: 10px; }
+  .header .biz  { font-size: 14pt; font-weight: bold; letter-spacing: 1px; }
+  .header .addr { font-size: 8.5pt; margin-top: 1px; color: #333; }
+  .title-wrap   { text-align: center; margin-bottom: 10px; }
+  .title        { display: inline-block; font-size: 13pt; font-weight: bold; border: 2px solid #000; padding: 3px 18px; }
+
+  /* ── Meta fields ── */
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 10px; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 6px 0; margin-bottom: 8px; }
+  .sub-grid  { display: grid; grid-template-columns: 1fr 1fr;    gap: 0 10px; margin-bottom: 8px; }
+  .section label { font-size: 7.5pt; text-transform: uppercase; font-weight: bold; color: #555; display: block; margin-bottom: 2px; }
+  .section .val  { font-size: 10pt; font-weight: bold; border-bottom: 1px solid #aaa; min-height: 16px; padding-bottom: 2px; }
+
+  /* ── Sched box ── */
+  .sched-box { background: #f6f6f6; border: 1px solid #ccc; padding: 5px 8px; font-size: 9pt; margin-bottom: 8px; break-inside: avoid; page-break-inside: avoid; }
+  .sched-box table { width: 100%; }
+  .sched-box td.lbl { font-weight: bold; width: 145px; }
+
+  /* ── Items table ── */
+  table.items { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+  /* thead repeats on every page */
+  table.items thead { display: table-header-group; }
+  table.items tfoot { display: table-footer-group; }
+  table.items thead th {
+    background: #000; color: #fff; font-size: 8.5pt;
+    padding: 4px 5px; text-align: left;
+    border-bottom: 2px solid #000;
+  }
+  table.items thead th.r { text-align: right; }
+  table.items tbody tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  table.items td {
+    padding: 3.5px 5px; border-bottom: 1px solid #e0e0e0;
+    font-size: 9pt; vertical-align: top;
+  }
+  table.items td.code  { width: 68px; font-family: monospace; font-size: 8pt; color: #444; }
+  table.items td.qty   { width: 36px; text-align: center; font-weight: bold; }
+  table.items td.price,
+  table.items td.total { width: 82px; text-align: right; font-family: monospace; }
+
+  /* ── Totals ── */
+  .totals-wrap { break-inside: avoid; page-break-inside: avoid; }
+  .totals-row  { display: flex; justify-content: flex-end; margin-bottom: 1px; }
+  .totals-row .tl { width: 150px; font-size: 9.5pt; padding: 1px 4px; }
+  .totals-row .tr { width: 90px; text-align: right; font-family: monospace; font-size: 9.5pt; padding: 1px 0; }
+  .totals-row.grand .tl,
+  .totals-row.grand .tr { font-size: 11pt; font-weight: bold; border-top: 2px solid #000; padding-top: 4px; margin-top: 2px; }
+
+  /* ── Footer block — keep together, push to new page if needed ── */
+  .footer-block { break-inside: avoid; page-break-inside: avoid; margin-top: 12px; }
+  .tcs { font-size: 8pt; border-top: 1px solid #ccc; padding-top: 7px; }
+  .tcs h4 { font-size: 8.5pt; font-weight: bold; margin-bottom: 4px; }
+  .tcs p  { margin-bottom: 2px; line-height: 1.45; }
+  .sigs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 14px; margin-top: 14px; }
+  .sig-block { text-align: center; }
+  .sig-block .line  { border-bottom: 1px solid #000; height: 34px; margin-bottom: 3px; }
+  .sig-block .label { font-size: 7.5pt; color: #333; }
+  .bank-info { margin-top: 10px; border: 1px solid #ccc; padding: 5px 8px; font-size: 8.5pt; line-height: 1.5; }
+  .bank-info strong { font-size: 9pt; }
+
+  @media print {
+    html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="biz">${BILL_NAME}</div>
+    ${BILL_ADDR1 ? `<div class="addr">${BILL_ADDR1}</div>` : ''}
+    ${BILL_ADDR2 ? `<div class="addr">${BILL_ADDR2}</div>` : ''}
+    ${BILL_PHONE ? `<div class="addr">${BILL_PHONE}</div>` : ''}
+  </div>
+
+  <div class="title-wrap"><div class="title">BILLING STATEMENT</div></div>
+
+  <p style="font-size:9pt;margin-bottom:8px;">Submitted date: <strong>${dateStr}</strong></p>
+
+  <div class="meta-grid">
+    <div class="section"><label>Invoice For</label><div class="val">${order.customerName || '&nbsp;'}</div></div>
+    <div class="section"><label>Payable To</label><div class="val">&nbsp;</div></div>
+    <div class="section"><label>Transaction No.</label><div class="val">${transactionNo}</div></div>
+  </div>
+
+  <div class="sub-grid">
+    <div class="section"><label>Terms of Payment</label><div class="val">${order.paymentMethod || '&nbsp;'}</div></div>
+    <div class="section"><label>Order Type</label><div class="val">${order.table || '&nbsp;'}</div></div>
+  </div>
+
+  ${order.scheduledTime || order.deliveryAddress || order.customerPhone ? `
+  <div class="sched-box">
+    <table>
+      ${order.scheduledTime   ? `<tr><td class="lbl">Scheduled ${isDelivery ? 'Delivery' : 'Pickup'} Time:</td><td>${order.scheduledTime}</td></tr>` : ''}
+      ${order.deliveryAddress ? `<tr><td class="lbl">Delivery Address:</td><td>${order.deliveryAddress}</td></tr>` : ''}
+      ${order.customerPhone   ? `<tr><td class="lbl">Contact No.:</td><td>${order.customerPhone}</td></tr>` : ''}
+    </table>
+  </div>` : ''}
+
+  <table class="items">
+    <thead>
+      <tr>
+        <th>Code</th>
+        <th>Description</th>
+        <th class="r" style="text-align:center">Qty</th>
+        <th class="r">Unit Price</th>
+        <th class="r">Total Price</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${itemRowsHTML}
+    </tbody>
+  </table>
+
+  <div class="totals-wrap">
+    <div class="totals-row"><div class="tl">Subtotal</div><div class="tr">${subtotal.toFixed(2)}</div></div>
+    <div class="totals-row"><div class="tl">Discount</div><div class="tr">${discount > 0 ? discount.toFixed(2) : '0.00'}</div></div>
+    <div class="totals-row"><div class="tl">Delivery Fee</div><div class="tr">${deliveryFee > 0 ? deliveryFee.toFixed(2) : '0.00'}</div></div>
+    <div class="totals-row grand"><div class="tl">TOTAL</div><div class="tr">${total.toFixed(2)}</div></div>
+  </div>
+
+  <div class="footer-block">
+    <div class="tcs">
+      <h4>Terms and Conditions</h4>
+      <p>1. Items may be returned or exchanged only under the following conditions:</p>
+      <p>&nbsp;&nbsp;&nbsp;a. Item is defective upon purchase.</p>
+      <p>&nbsp;&nbsp;&nbsp;b. Item has a shelf life of less than one (1) month upon purchase (near expiry).</p>
+      <p>&nbsp;&nbsp;&nbsp;c. Issue is reported within 24–48 hours from receipt of item(s).</p>
+      <p>2. Full payment is required and must be settled prior to delivery of item(s).</p>
+      <p>3. We accept bank deposits, cheques, and other approved payment methods.</p>
+      <p>4. All bank and cheque payments must be made payable to ${BILL_ACCT_NAME || BILL_NAME}.</p>
+      ${BILL_EMAIL ? `<p>For billing inquiries, contact us at ${BILL_PHONE} / ${BILL_EMAIL}.</p>` : ''}
+    </div>
+
+    <div class="sigs">
+      <div class="sig-block"><div class="line"></div><div class="label">PREPARED BY: Signature over Printed Name / Date</div></div>
+      <div class="sig-block"><div class="line"></div><div class="label">CHECKED BY: Signature over Printed Name / Date</div></div>
+      <div class="sig-block"><div class="line"></div><div class="label">RECEIVED BY: Signature over Printed Name / Date</div></div>
+    </div>
+
+    ${BILL_BANK ? `
+    <div class="bank-info">
+      <strong>Please deposit all payments to:</strong><br>
+      Bank: ${BILL_BANK} &nbsp;|&nbsp; Account Name: ${BILL_ACCT_NAME} &nbsp;|&nbsp; Account No.: ${BILL_ACCT_NO}<br>
+      Or pay directly at our office at ${BILL_NAME}.
+    </div>` : ''}
+  </div>
+</body></html>`;
+
+    const win = window.open('', '_blank', 'width=794,height=1123');
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => { win.focus(); win.print(); };
   };
 
   // ── Kitchen ticket print ─────────────────────────────────────────────────────
@@ -3738,11 +4363,46 @@ const updateStatus = async (orderId, newStatus) => {
   const currentProducts = products.slice(indexOfFirstItem, indexOfLastItem);
   const totalPages = Math.ceil(products.length / itemsPerPage);
 
+  // --- INVENTORY SEARCH / FILTER / SORT ---
+  const invFilteredSorted = (() => {
+    // Build itemCode → category map from products (set during import)
+    const codeToCategory = {};
+    for (const p of products) {
+      if (p.productCode && p.category) codeToCategory[p.productCode] = p.category;
+    }
+    const getInvCategory = (i) => i.category || codeToCategory[i.itemCode] || '';
+
+    let list = [...inventory];
+    // Search
+    if (invSearch.trim()) {
+      const q = invSearch.trim().toLowerCase();
+      list = list.filter(i =>
+        i.itemName?.toLowerCase().includes(q) ||
+        i.itemCode?.toLowerCase().includes(q)
+      );
+    }
+    // Category filter
+    if (invCategoryFilter) {
+      list = list.filter(i => getInvCategory(i).toLowerCase() === invCategoryFilter.toLowerCase());
+    }
+    // Sort
+    switch (invSort) {
+      case 'name-asc':  list.sort((a, b) => (a.itemName || '').localeCompare(b.itemName || '')); break;
+      case 'name-desc': list.sort((a, b) => (b.itemName || '').localeCompare(a.itemName || '')); break;
+      case 'qty-asc':   list.sort((a, b) => (a.stockQty || 0) - (b.stockQty || 0)); break;
+      case 'qty-desc':  list.sort((a, b) => (b.stockQty || 0) - (a.stockQty || 0)); break;
+      case 'price-asc': list.sort((a, b) => (a.unitCost || 0) - (b.unitCost || 0)); break;
+      case 'price-desc':list.sort((a, b) => (b.unitCost || 0) - (a.unitCost || 0)); break;
+      default: break;
+    }
+    return list;
+  })();
+
   // --- INVENTORY PAGINATION MATH ---
   const indexOfLastInv = invPage * invItemsPerPage;
   const indexOfFirstInv = indexOfLastInv - invItemsPerPage;
-  const currentInventory = inventory.slice(indexOfFirstInv, indexOfLastInv);
-  const totalInvPages = Math.ceil(inventory.length / invItemsPerPage);
+  const currentInventory = invFilteredSorted.slice(indexOfFirstInv, indexOfLastInv);
+  const totalInvPages = Math.ceil(invFilteredSorted.length / invItemsPerPage);
 
   // --- ORDERS PAGINATION MATH ---
   const indexOfLastOrder = ordersPage * ordersItemsPerPage;
@@ -3855,7 +4515,19 @@ const updateStatus = async (orderId, newStatus) => {
               {label}
               {activeTab === id && navMode === 'negotium' && <ChevronRight size={13} className="ml-auto" />}
             </button>
-          ))
+          )).concat([
+            // Superadmin-only deep link — opens the dedicated Command Center page
+            // (user, client-account, and tenant management). Lives outside the
+            // tabbed dashboard, so we navigate via window.location instead of setActiveTab.
+            <button key="command-center"
+              onClick={() => { closeFn?.(); window.location.assign('/admin/admin-panel'); }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm text-white/50 hover:text-white hover:bg-white/5"
+            >
+              <ShieldCheck size={16} className="text-brand" />
+              Command Center
+              <span className="ml-auto text-[8px] font-black uppercase tracking-widest bg-brand/15 border border-brand/30 text-brand px-1.5 py-0.5 rounded">Super</span>
+            </button>
+          ])
         ) : (
           <div className="flex items-center gap-2 px-4 py-2.5 text-red-400/50">
             <Lock size={13} />
@@ -3893,9 +4565,9 @@ const updateStatus = async (orderId, newStatus) => {
               {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
               {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
             </button>
-            <button onClick={e => { e.preventDefault(); handleShowQR(); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand/60 hover:text-brand hover:bg-brand/10 transition font-bold text-sm">
+            <button onClick={e => { e.preventDefault(); (BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR()); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand/60 hover:text-brand hover:bg-brand/10 transition font-bold text-sm">
               <QrCode size={15} />
-              Show QR
+              {BUSINESS_TYPE === 'log' ? 'Portal' : 'Show QR'}
             </button>
             <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition font-bold text-sm">
               <Settings size={15} />
@@ -3960,7 +4632,7 @@ const updateStatus = async (orderId, newStatus) => {
     users, activeAdmin, isSuperAdmin, canVoidRefund,
     // ── Core helpers ────────────────────────────────────────────────────────
     fetchOrders, fetchData, fetchERPData, fetchEODData,
-    apiFetch, updateStatus, printOrderSlip, handleVoidOrder,
+    apiFetch, updateStatus, printOrderSlip, printBillingStatement, handleVoidOrder,
     peso, BIZ_NAME, COMP_REASON_LABELS, API_URL, FRONTEND_URL,
     // ── Analytics ───────────────────────────────────────────────────────────
     analyticsData, analyticsLoading, fetchAnalytics, exportAnalyticsToPDF,
@@ -3968,6 +4640,28 @@ const updateStatus = async (orderId, newStatus) => {
     activeTab, setActiveTab, navMode,
     // ── Ledger sub-tabs ─────────────────────────────────────────────────────
     ledgerSubTab, setLedgerSubTab, jeForm, setJeForm, cashOnHand, standardAccounts,
+    // ── Chart of Accounts CRUD ──
+    coaAccounts, fetchCoa, coaParent, setCoaParent, coaNewName, setCoaNewName,
+    coaEditId, setCoaEditId, coaEditName, setCoaEditName, coaBusy,
+    addCoaChild, renameCoaChild, deleteCoaChild,
+    // ── Derived account lists for "Paid From / Charge To" dropdowns ──
+    cashAndBankAccounts, apAccounts, arAccounts, procurementCreditAccounts,
+    // ── Closed periods ──
+    closedPeriods, fetchClosedPeriods, closePeriod, reopenPeriod,
+    periodCloseForm, setPeriodCloseForm,
+    // ── Audit log ──
+    auditLogEntries, auditLogPage, auditLogPages, auditLogFilter, setAuditLogFilter, fetchAuditLog,
+    // ── Payment method → account map ──
+    paymentMap, fetchPaymentMap, savePaymentMapping, resetPaymentMapping,
+    // ── Tenancy & permissions ──
+    tenancyReport, tenancyBusy, fetchTenancyReport, runTenancyRebackfill,
+    myPermissions, can,
+    // ── Client accounts (for per-product per-client discount picker) ──
+    clientAccounts,
+    // ── Partial fulfillment ──
+    partialModal, setPartialModal, partialQtys, setPartialQtys,
+    partialMode, setPartialMode, partialPayment, setPartialPayment,
+    partialBusy, openPartial, submitPartialFulfill,
     pnlData, pnlRange, setPnlRange, fetchPnl, bsData, fetchBalanceSheet, reconcileInventory,
     pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF,
     bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF,
@@ -3985,11 +4679,11 @@ const updateStatus = async (orderId, newStatus) => {
     orderSearch, setOrderSearch,
     collapsedOrders, setCollapsedOrders, updatingOrders, cashTendered, setCashTendered,
     isPosOpen, setIsPosOpen, posCart, setPosCart, posCategory, setPosCategory, posPage, setPosPage,
-    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posTable, setPosTable,
+    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posTable, setPosTable,
     posPayment, setPosPayment, posSelectedProduct, setPosSelectedProduct,
-    posActiveSize, setPosActiveSize, posActiveAddOns, setPosActiveAddOns,
+    posActiveSize, setPosActiveSize, posActiveAddOns, setPosActiveAddOns, posItemQty, setPosItemQty,
     posDiscountType, setPosDiscountType, posDiscountValue, setPosDiscountValue,
-    posDiscountAmt, posGrandTotal, posSubtotal, posSubmitting,
+    posDiscountAmt, posItemDiscountAmt, posGrandTotal, posSubtotal, posSubmitting,
     posCheckoutModal, setPosCheckoutModal, posCashTendered, setPosCashTendered,
     posDeliveryAddress, setPosDeliveryAddress, posCustomerPhone, setPosCustomerPhone,
     posDeliveryFee, setPosDeliveryFee, posDeliveryFeeNum, posScheduledTime, setPosScheduledTime,
@@ -4000,8 +4694,10 @@ const updateStatus = async (orderId, newStatus) => {
     ordersPage, setOrdersPage, ordersItemsPerPage,
     // ── Inventory ───────────────────────────────────────────────────────────
     invSubTab, setInvSubTab, invForm, setInvForm, invPage, setInvPage, invItemsPerPage,
+    invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter,
+    importProgress,
     activeInventoryItem, setActiveInventoryItem, restockData, setRestockData,
-    stockHistory, setStockHistory, historyModalOpen, setHistoryModalOpen, historyItemName, setHistoryItemName,
+    stockHistory, setStockHistory, historyModalOpen, setHistoryModalOpen, historyItemName, setHistoryItemName, historyItem,
     physicalCounts, setPhysicalCounts, varianceReasons, setVarianceReasons,
     varianceNoteMode, setVarianceNoteMode,
     eodStatus, eodLockedAt, dailyMovement,
@@ -4011,7 +4707,7 @@ const updateStatus = async (orderId, newStatus) => {
     spoilageModal, setSpoilageModal, spoilageForm, setSpoilageForm, spoilageLoading,
     handleRestockSubmit, submitPhysicalCounts,
     // ── Inventory helpers ────────────────────────────────────────────────────
-    effectiveDisplay, itemDisplay, fetchStockHistory,
+    effectiveDisplay, itemDisplay, packInfo, fetchStockHistory,
     openEditInventory, deleteInventory, parseImportFile,
     printXReading, handleSaveAddOn,
     // ── History ─────────────────────────────────────────────────────────────
@@ -4021,8 +4717,9 @@ const updateStatus = async (orderId, newStatus) => {
     fetchShiftHistory, shiftFilter, setShiftFilter, exportDayToPDF,
     // ── Pricing ─────────────────────────────────────────────────────────────
     editPriceId, setEditPriceId, editPriceVal, setEditPriceVal,
+    editCostId, setEditCostId, editCostVal, setEditCostVal,
     pricingPage, setPricingPage, pricingItemsPerPage,
-    handleInlinePriceUpdate, discountForm, setDiscountForm,
+    handleInlinePriceUpdate, handleInlineCostUpdate, discountForm, setDiscountForm,
     // ── Audit ───────────────────────────────────────────────────────────────
     auditFilter, setAuditFilter, auditCancelPage, setAuditCancelPage,
     auditCompPage, setAuditCompPage, auditDiscPage, setAuditDiscPage,
@@ -4165,8 +4862,8 @@ const updateStatus = async (orderId, newStatus) => {
                 {queuedCount > 0 ? queuedCount : 'Off'}
               </span>
             )}
-            <button onClick={e => { e.preventDefault(); handleShowQR(); }} className="flex items-center gap-1.5 bg-brand/20 text-brand border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
-              <QrCode size={13} /> QR
+            <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="flex items-center gap-1.5 bg-brand/20 text-brand border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
+              <QrCode size={13} /> {BUSINESS_TYPE === 'log' ? 'Portal' : 'QR'}
             </button>
             <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="flex items-center gap-1.5 bg-white/5 text-white/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
               <Settings size={13} />
@@ -4440,15 +5137,12 @@ const updateStatus = async (orderId, newStatus) => {
               </div>
               <div>
                 <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Paid From *</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {[['1000','Cash on Hand'],['1010','Cash in Bank']].map(([code,label]) => (
-                    <button key={code} type="button"
-                      onClick={() => setRfNewForm({...rfNewForm, sourceAccount: code})}
-                      className={`flex items-center justify-center gap-2 px-3 py-3 rounded-xl border font-bold text-sm transition ${rfNewForm.sourceAccount === code ? 'border-brand bg-brand/20 text-brand' : 'border-white/10 bg-page-bg text-white/50 hover:border-white/30'}`}>
-                      {label}
-                    </button>
+                <select value={rfNewForm.sourceAccount} onChange={e => setRfNewForm({...rfNewForm, sourceAccount: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white font-bold outline-none focus:border-brand/60">
+                  {(cashAndBankAccounts || []).map(a => (
+                    <option key={a.code} value={a.code}>{a.name} ({a.code})</option>
                   ))}
-                </div>
+                </select>
                 <p className="text-white/30 text-[10px] mt-1">Where the float comes from — this account is credited (reduced) in the opening journal entry.</p>
               </div>
               <div>
@@ -4548,18 +5242,13 @@ const updateStatus = async (orderId, newStatus) => {
               </div>
               <div>
                 <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Get funds from *</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {[['1000','Cash on Hand','🏦'],['1010','Cash in Bank','🏧']].map(([code,label,icon]) => (
-                    <button key={code} type="button"
-                      onClick={() => setRfReplForm({...rfReplForm, sourceAccount: code})}
-                      className={`flex items-center gap-2 px-3 py-3 rounded-xl border font-bold text-sm transition ${rfReplForm.sourceAccount === code ? 'border-brand bg-brand/20 text-brand' : 'border-white/10 bg-page-bg text-white/50 hover:border-white/30'}`}>
-                      <span>{icon}</span> {label}
-                    </button>
+                <select value={rfReplForm.sourceAccount} onChange={e => setRfReplForm({...rfReplForm, sourceAccount: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white font-bold outline-none focus:border-brand/60">
+                  {(cashAndBankAccounts || []).map(a => (
+                    <option key={a.code} value={a.code}>{a.name} ({a.code})</option>
                   ))}
-                </div>
-                <p className="text-white/30 text-[10px] mt-1">
-                  {rfReplForm.sourceAccount === '1000' ? 'Cash from the register will be moved to the petty cash fund.' : 'A bank withdrawal will fund the petty cash.'}
-                </p>
+                </select>
+                <p className="text-white/30 text-[10px] mt-1">This account is credited (reduced) when the petty cash float is funded.</p>
               </div>
               <div>
                 <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Note</label>
@@ -4569,7 +5258,7 @@ const updateStatus = async (orderId, newStatus) => {
               </div>
               <div className="bg-brand/10 border border-brand/20 rounded-xl p-3 text-xs text-brand/80">
                 Journal entry that will be posted:<br/>
-                <span className="font-bold">DR Petty Cash / Revolving Fund &nbsp;|&nbsp; CR {rfReplForm.sourceAccount === '1010' ? 'Cash in Bank' : 'Cash on Hand'}</span>
+                <span className="font-bold">DR Petty Cash / Revolving Fund &nbsp;|&nbsp; CR {(cashAndBankAccounts || []).find(a => a.code === rfReplForm.sourceAccount)?.name || 'Cash on Hand'}</span>
               </div>
             </div>
             <div className="px-5 py-4 border-t border-white/8 shrink-0 flex gap-3">
@@ -4712,13 +5401,18 @@ const updateStatus = async (orderId, newStatus) => {
       {historyModalOpen && (() => {
         const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
         const pagedHistory = stockHistory.slice((historyPage - 1) * HIST_PAGE_SIZE, historyPage * HIST_PAGE_SIZE);
+        // For log mode: convert base-unit quantities to pcs using packBase from item name
+        const hPack = BUSINESS_TYPE === 'log' && historyItem ? packInfo(historyItem) : null;
+        const hBase = hPack?.packBase || 1;
+        const fmtQty = (n) => BUSINESS_TYPE === 'log' ? +(n / hBase).toFixed(4) : n;
+        const fmtCost = (c) => BUSINESS_TYPE === 'log' ? (c || 0) * hBase : (c || 0);
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
             <div className="bg-surface p-6 rounded-xl border border-gray-700 shadow-2xl flex flex-col max-w-2xl w-full max-h-[85vh]">
               <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-3 flex-shrink-0">
                 <div>
                   <h2 className="text-xl font-bold text-white">Stock Card: <span className="text-accent">{historyItemName}</span></h2>
-                  {stockHistory.length > 0 && <p className="text-[10px] text-gray-500 mt-0.5">{stockHistory.length} entries total</p>}
+                  {stockHistory.length > 0 && <p className="text-[10px] text-gray-500 mt-0.5">{stockHistory.length} entries total{BUSINESS_TYPE === 'log' ? ' · qty in pcs' : ''}</p>}
                 </div>
                 <button onClick={() => setHistoryModalOpen(false)} className="text-gray-400 hover:text-white font-bold text-xl">✕</button>
               </div>
@@ -4729,27 +5423,32 @@ const updateStatus = async (orderId, newStatus) => {
                     <tr className="text-gray-500 border-b border-gray-800 text-xs uppercase tracking-wider">
                       <th className="pb-2">Date</th>
                       <th className="pb-2">Type</th>
-                      <th className="pb-2 text-right">In/Out</th>
-                      <th className="pb-2 text-right">Unit Cost</th>
-                      <th className="pb-2 text-right">Balance</th>
+                      <th className="pb-2 text-right">In/Out ({BUSINESS_TYPE === 'log' ? 'pcs' : 'units'})</th>
+                      <th className="pb-2 text-right">Cost/Pack</th>
+                      <th className="pb-2 text-right">Balance ({BUSINESS_TYPE === 'log' ? 'pcs' : 'units'})</th>
                       <th className="pb-2 pl-4">Remarks / Ref</th>
                     </tr>
                   </thead>
                   <tbody>
                     {stockHistory.length === 0 ? (
                       <tr><td colSpan="6" className="py-4 text-center text-gray-500">No movement history recorded yet.</td></tr>
-                    ) : pagedHistory.map((log, idx) => (
+                    ) : pagedHistory.map((log, idx) => {
+                      const dispChange = fmtQty(log.qtyChange);
+                      const dispBalance = fmtQty(log.balanceAfter);
+                      const dispCost = fmtCost(log.unitCost);
+                      return (
                       <tr key={idx} className="border-b border-gray-800/50 hover:bg-page-bg/30">
                         <td className="py-2 text-gray-400 text-xs">{new Date(log.date).toLocaleString()}</td>
                         <td className="py-2 font-bold text-gray-300">{log.type}</td>
-                        <td className={`py-2 text-right font-mono font-bold ${log.qtyChange < 0 ? 'text-red-400' : 'text-green-400'}`}>
-                          {log.qtyChange > 0 ? `+${log.qtyChange}` : log.qtyChange}
+                        <td className={`py-2 text-right font-mono font-bold ${dispChange < 0 ? 'text-red-400' : 'text-green-400'}`}>
+                          {dispChange > 0 ? `+${dispChange}` : dispChange}
                         </td>
-                        <td className="py-2 text-right text-gray-400 font-mono text-xs">P{(log.unitCost || 0).toFixed(4)}</td>
-                        <td className="py-2 text-right text-accent font-bold font-mono">{log.balanceAfter}</td>
+                        <td className="py-2 text-right text-gray-400 font-mono text-xs">₱{dispCost.toFixed(2)}</td>
+                        <td className="py-2 text-right text-accent font-bold font-mono">{dispBalance}</td>
                         <td className="py-2 pl-4 text-gray-500 text-xs">{log.remarks || log.reference}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -4797,15 +5496,17 @@ const updateStatus = async (orderId, newStatus) => {
 
             {/* Summary chips */}
             {(() => {
-              const valid = importRows.filter(r => !r._error);
+              const valid = importRows.filter(r => !r._error && !r._isCategory);
               const newCount = valid.filter(r => r._newItem).length;
-              const upCount = valid.filter(r => !r._newItem && r._diff > 0).length;
-              const downCount = valid.filter(r => !r._newItem && r._diff < 0).length;
-              const sameCount = valid.filter(r => !r._newItem && r._diff === 0).length;
+              const batchCount = valid.filter(r => !r._newItem && r._newBatch).length;
+              const upCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff > 0).length;
+              const downCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff < 0).length;
+              const sameCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff === 0).length;
               const errCount = importRows.filter(r => r._error).length;
               return (
                 <div className="px-5 py-3 flex flex-wrap gap-2 border-b border-white/8 shrink-0">
                   <span className="text-[10px] font-black uppercase tracking-widest bg-blue-500/20 text-blue-300 px-2.5 py-1.5 rounded">NEW · {newCount}</span>
+                  {batchCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-purple-500/20 text-purple-300 px-2.5 py-1.5 rounded">NEW BATCH · {batchCount}</span>}
                   <span className="text-[10px] font-black uppercase tracking-widest bg-green-500/20 text-green-300 px-2.5 py-1.5 rounded">↑ INCREASE · {upCount}</span>
                   <span className="text-[10px] font-black uppercase tracking-widest bg-red-500/20 text-red-300 px-2.5 py-1.5 rounded">↓ DECREASE · {downCount}</span>
                   <span className="text-[10px] font-black uppercase tracking-widest bg-white/5 text-white/40 px-2.5 py-1.5 rounded">UNCHANGED · {sameCount}</span>
@@ -4829,19 +5530,30 @@ const updateStatus = async (orderId, newStatus) => {
                 </thead>
                 <tbody>
                   {importRows.map((r, i) => {
+                    if (r._isCategory) return (
+                      <tr key={i} className="bg-white/5">
+                        <td colSpan={7} className="px-4 py-2 text-white/50 font-black text-[10px] uppercase tracking-[0.2em]">{r.category}</td>
+                      </tr>
+                    );
                     const isErr = !!r._error;
                     const isNew = r._newItem;
+                    const isBatch = !isNew && !!r._newBatch;
                     const diff = Number(r._diff || 0);
-                    const valueDiff = (isNew ? r.qty : diff) * (r.unitCost === '' ? (r._existing?.unitCost ? r._existing.unitCost * (r._existing.unitMultiplier || 1) : 0) : Number(r.unitCost || 0));
+                    const valueDiff = (isNew || isBatch ? r.qty : diff) * (r.unitCost === '' ? (r._existing?.unitCost ? r._existing.unitCost * (r._existing.unitMultiplier || 1) : 0) : Number(r.unitCost || 0));
                     return (
-                      <tr key={i} className={`border-b border-white/5 ${isErr ? 'bg-red-500/10' : ''}`}>
-                        <td className="px-4 py-2.5 text-white font-bold">{r.itemName || <span className="text-red-300">(missing)</span>}</td>
+                      <tr key={i} className={`border-b border-white/5 ${isErr ? 'bg-red-500/10' : isBatch ? 'bg-purple-500/5' : ''}`}>
+                        <td className="px-4 py-2.5 text-white font-bold">
+                          {r.itemCode && <span className="text-white/30 font-mono text-[10px] mr-1.5">{r.itemCode}</span>}
+                          {r.itemName || <span className="text-red-300">(missing)</span>}
+                          {isBatch && r.expiryDate && <span className="ml-1.5 text-purple-300/60 text-[10px]">exp {r.expiryDate}</span>}
+                        </td>
                         <td className="px-2 py-2.5">
                           {isErr && <span className="text-[10px] font-black bg-red-500/30 text-red-200 px-1.5 py-0.5 rounded uppercase">{r._error}</span>}
                           {!isErr && isNew && <span className="text-[10px] font-black bg-blue-500/30 text-blue-200 px-1.5 py-0.5 rounded uppercase">NEW</span>}
-                          {!isErr && !isNew && diff > 0 && <span className="text-[10px] font-black bg-green-500/30 text-green-200 px-1.5 py-0.5 rounded uppercase">↑ INC</span>}
-                          {!isErr && !isNew && diff < 0 && <span className="text-[10px] font-black bg-red-500/30 text-red-200 px-1.5 py-0.5 rounded uppercase">↓ DEC</span>}
-                          {!isErr && !isNew && diff === 0 && <span className="text-[10px] font-black bg-white/10 text-white/40 px-1.5 py-0.5 rounded uppercase">SAME</span>}
+                          {!isErr && isBatch && <span className="text-[10px] font-black bg-purple-500/30 text-purple-200 px-1.5 py-0.5 rounded uppercase">NEW BATCH</span>}
+                          {!isErr && !isNew && !isBatch && diff > 0 && <span className="text-[10px] font-black bg-green-500/30 text-green-200 px-1.5 py-0.5 rounded uppercase">↑ INC</span>}
+                          {!isErr && !isNew && !isBatch && diff < 0 && <span className="text-[10px] font-black bg-red-500/30 text-red-200 px-1.5 py-0.5 rounded uppercase">↓ DEC</span>}
+                          {!isErr && !isNew && !isBatch && diff === 0 && <span className="text-[10px] font-black bg-white/10 text-white/40 px-1.5 py-0.5 rounded uppercase">SAME</span>}
                         </td>
                         <td className="px-2 py-2.5 text-right text-white/60 tabular-nums">{isNew || isErr ? '—' : `${r._oldDisplay.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r._oldDisplay.unit}`}</td>
                         <td className="px-2 py-2.5 text-right text-white font-bold tabular-nums">{isErr ? '—' : `${Number(r.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`}</td>
@@ -4857,9 +5569,57 @@ const updateStatus = async (orderId, newStatus) => {
               </table>
             </div>
 
+            {/* Progress bar */}
+            {importProgress >= 0 && (
+              <div className="px-5 pt-3 shrink-0">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-white/50">
+                    {importProgress < 100 ? 'Processing…' : 'Done!'}
+                  </span>
+                  <span className="text-[10px] font-mono text-white/50">{importProgress}%</span>
+                </div>
+                <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-150 ${importProgress === 100 ? 'bg-green-400' : 'bg-brand'}`}
+                    style={{ width: `${importProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="px-5 py-4 border-t border-white/8 flex items-center gap-3 shrink-0">
-              <button onClick={() => setImportModal(false)} className="flex-1 sm:flex-initial px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white font-bold text-xs uppercase tracking-wider transition min-h-[44px]">
+              <button onClick={() => setImportModal(false)} disabled={importSubmitting} className="flex-1 sm:flex-initial px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white font-bold text-xs uppercase tracking-wider transition min-h-[44px] disabled:opacity-40 disabled:pointer-events-none">
                 Cancel
+              </button>
+              <button onClick={async () => {
+                const { jsPDF, autoTable } = await loadPdfLibs();
+                const doc = new jsPDF('landscape');
+                doc.setFontSize(16); doc.text(`${BIZ_NAME} — Bulk Import Preview`, 14, 14);
+                doc.setFontSize(9); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 21);
+                const body = importRows.map(r => {
+                  const isErr = !!r._error;
+                  const isNew = r._newItem;
+                  const isBatch = !isNew && !!r._newBatch;
+                  const diff = Number(r._diff || 0);
+                  const status = isErr ? r._error : isNew ? 'NEW' : isBatch ? 'NEW BATCH' : diff > 0 ? '↑ INC' : diff < 0 ? '↓ DEC' : 'SAME';
+                  const current = isNew || isErr ? '—' : `${r._oldDisplay.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r._oldDisplay.unit}`;
+                  const next = isErr ? '—' : `${Number(r.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`;
+                  const delta = isErr || isNew ? '—' : (diff > 0 ? '+' : '') + diff.toLocaleString(undefined, { maximumFractionDigits: 3 });
+                  const cost = isErr || r.unitCost === '' ? '—' : `P${Number(r.unitCost).toFixed(2)}`;
+                  return [r.itemCode || '—', r.itemName || '(missing)', status, current, next, delta, cost];
+                });
+                autoTable(doc, {
+                  startY: 26,
+                  head: [['Code', 'Item Name', 'Status', 'Current', 'New Qty', 'Δ Diff', 'Unit Cost']],
+                  body,
+                  theme: 'grid',
+                  headStyles: { fillColor: [40, 40, 40] },
+                  styles: { fontSize: 8 },
+                  columnStyles: { 0: { cellWidth: 22 }, 2: { halign: 'center' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
+                });
+                doc.save(`import-preview-${new Date().toISOString().slice(0,10)}.pdf`);
+              }} className="px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white font-bold text-xs uppercase tracking-wider transition min-h-[44px]">
+                Export PDF
               </button>
               <button onClick={submitImport} disabled={importSubmitting || importRows.every(r => r._error)}
                 className="flex-1 px-5 py-3 rounded-xl bg-brand hover:bg-brand-dark text-white font-black text-sm uppercase tracking-widest transition shadow-elev-2 disabled:opacity-50 min-h-[44px] flex items-center justify-center gap-2">
@@ -4884,7 +5644,7 @@ const updateStatus = async (orderId, newStatus) => {
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 custom-scrollbar">
               <div className="bg-white/5 rounded-xl p-3 border border-white/8">
                 <p className="text-white/40 text-[10px] font-bold uppercase">Current Stock</p>
-                <p className="text-2xl text-brand font-black tabular-nums">{itemDisplay(editInvModal.item).qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} <span className="text-sm text-white/40 font-bold">{itemDisplay(editInvModal.item).unit}</span></p>
+                <p className="text-2xl text-brand font-black tabular-nums">{BUSINESS_TYPE === 'log' ? itemDisplay(editInvModal.item).packQty.toLocaleString(undefined, { maximumFractionDigits: 3 }) : itemDisplay(editInvModal.item).qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} <span className="text-sm text-white/40 font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : itemDisplay(editInvModal.item).unit}</span></p>
                 <p className="text-[10px] text-white/30 mt-1 italic">To change quantity, use Restock or Waste — not this form.</p>
               </div>
               <div>
@@ -4905,14 +5665,14 @@ const updateStatus = async (orderId, newStatus) => {
                   <p className="text-[9px] text-white/30 mt-1">Recipes still use precise base units internally.</p>
                 </div>
                 <div>
-                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Unit Cost (₱/{editInvForm.displayUnit || 'unit'})</label>
+                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Unit Cost (₱/{BUSINESS_TYPE === 'log' ? (packInfo({ itemName: editInvForm.itemName, unit: editInvForm.unit }).label || 'pack') : (editInvForm.displayUnit || 'unit')})</label>
                   <input type="number" min="0" step="0.01" value={editInvForm.unitCost} onChange={e => setEditInvForm({...editInvForm, unitCost: e.target.value})}
                     className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold tabular-nums outline-none focus:border-brand/60" />
                   <p className="text-[9px] text-yellow-400/70 mt-1">⚠ Will not retro-update existing COGS.</p>
                 </div>
               </div>
               <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Low Stock Threshold ({editInvForm.displayUnit || editInvForm.unit || 'unit'})</label>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Low Stock Threshold ({BUSINESS_TYPE === 'log' ? 'pcs' : (editInvForm.displayUnit || editInvForm.unit || 'unit')})</label>
                 <input type="number" min="0" value={editInvForm.lowStockThreshold} onChange={e => setEditInvForm({...editInvForm, lowStockThreshold: e.target.value})}
                   className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold tabular-nums outline-none focus:border-brand/60" />
                 <p className="text-[10px] text-white/30 mt-1">Alert when stock drops to or below. 0 = disable.</p>
@@ -4943,6 +5703,105 @@ const updateStatus = async (orderId, newStatus) => {
         </div>
       )}
 
+      {/* ── PARTIAL FULFILLMENT MODAL ─────────────────────────────────────── */}
+      {partialModal && (() => {
+        const items = partialModal.items || [];
+        const rem = (it) => (it.quantity || 0) - (it.fulfilledQty || 0);
+        const fNow = (it, i) => Math.max(0, Math.min(rem(it), Number(partialQtys[i] ?? rem(it))));
+        const fTotal = items.reduce((s, it, i) => s + (it.price || 0) * fNow(it, i), 0);
+        const rTotal = items.reduce((s, it, i) => s + (it.price || 0) * (rem(it) - fNow(it, i)), 0);
+        return (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-md w-full p-6 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-black text-white">Partial Fulfillment</h2>
+                <p className="text-xs text-gray-400 mt-0.5">{partialModal.orderNumber} · set fulfilled quantities</p>
+              </div>
+              <button onClick={() => setPartialModal(null)} className="text-gray-500 hover:text-white text-xl font-bold">✕</button>
+            </div>
+
+            <div className="space-y-2">
+              {items.map((it, i) => {
+                const remaining = rem(it);
+                const fq = fNow(it, i);
+                const short = remaining - fq;
+                if (remaining <= 0) return (
+                  <div key={i} className="bg-page-bg border border-white/8 rounded-xl px-3 py-2 opacity-50">
+                    <p className="text-sm font-bold text-white truncate">{it.name} <span className="text-emerald-400 text-[10px]">· fully fulfilled</span></p>
+                  </div>
+                );
+                return (
+                  <div key={i} className="bg-page-bg border border-white/8 rounded-xl px-3 py-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-white truncate">{it.name}</p>
+                        <p className="text-[10px] text-white/40">Remaining: {remaining} of {it.quantity} · ₱{(it.price||0).toFixed(2)} ea</p>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button onClick={() => setPartialQtys(p => ({ ...p, [i]: Math.max(0, fq - 1) }))} className="w-7 h-7 rounded-lg bg-white/5 text-white hover:bg-white/10 font-black">−</button>
+                        <input type="number" min="0" max={remaining} value={fq}
+                          onChange={e => setPartialQtys(p => ({ ...p, [i]: e.target.value }))}
+                          className="w-12 text-center bg-surface border border-white/10 rounded-lg py-1 text-white text-sm font-bold outline-none" />
+                        <button onClick={() => setPartialQtys(p => ({ ...p, [i]: Math.min(remaining, fq + 1) }))} className="w-7 h-7 rounded-lg bg-white/5 text-white hover:bg-white/10 font-black">+</button>
+                      </div>
+                    </div>
+                    {short > 0 && <p className="text-[10px] text-amber-400 mt-1 font-bold">{short} stays on this order (fulfill later)</p>}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="bg-page-bg border border-white/8 rounded-xl px-3 py-2 text-xs space-y-1">
+              <div className="flex justify-between text-white/70"><span>Fulfilled now</span><span className="font-mono font-bold text-white">₱{fTotal.toFixed(2)}</span></div>
+              <div className="flex justify-between text-white/70"><span>Remaining on order</span><span className="font-mono font-bold text-amber-400">₱{rTotal.toFixed(2)}</span></div>
+            </div>
+
+            <div>
+              <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1.5">Payment Method</label>
+              <select value={partialPayment} onChange={e => setPartialPayment(e.target.value)}
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm font-bold outline-none focus:border-brand/60">
+                <optgroup label="In-Store Payments">
+                  <option value="Cash">Cash</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                </optgroup>
+                <optgroup label="E-Wallets">
+                  <option value="GCash">GCash</option>
+                  <option value="Maya">Maya</option>
+                  <option value="Maribank">Maribank / Seabank</option>
+                  <option value="Other E-Wallet">Other E-Wallet</option>
+                </optgroup>
+                <optgroup label="Delivery Partners">
+                  <option value="Grab Delivery">Grab Delivery</option>
+                  <option value="Lalamove">Lalamove</option>
+                  <option value="Manual Delivery">Manual / Direct</option>
+                </optgroup>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1.5">Payment</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setPartialMode('partial')}
+                  className={`py-2.5 rounded-xl border text-xs font-bold transition ${partialMode === 'partial' ? 'bg-brand/20 border-brand/60 text-white' : 'bg-page-bg border-white/10 text-white/50'}`}>
+                  Pay partial only<br/><span className="text-[9px] font-normal opacity-70">₱{fTotal.toFixed(2)} now · rest billed later</span>
+                </button>
+                <button type="button" onClick={() => setPartialMode('full')}
+                  className={`py-2.5 rounded-xl border text-xs font-bold transition ${partialMode === 'full' ? 'bg-brand/20 border-brand/60 text-white' : 'bg-page-bg border-white/10 text-white/50'}`}>
+                  Pay full now<br/><span className="text-[9px] font-normal opacity-70">remaining prepaid (deposit)</span>
+                </button>
+              </div>
+            </div>
+
+            <button onClick={submitPartialFulfill} disabled={partialBusy}
+              className="w-full py-3 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand-dark transition disabled:opacity-50">
+              {partialBusy ? 'Processing…' : 'Fulfill & Set Aside Remaining'}
+            </button>
+          </div>
+        </div>
+        );
+      })()}
+
       {/* ── REFUND MODAL ──────────────────────────────────────────────────── */}
       {refundModal && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
@@ -4968,6 +5827,31 @@ const updateStatus = async (orderId, newStatus) => {
                 placeholder="e.g. Wrong order, product defect, customer complaint"
                 className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-brand/60 resize-none placeholder-white/20" />
             </div>
+            {(() => {
+              const amt = parseFloat(refundForm.refundAmount) || refundModal.total;
+              const isFull = Math.abs(amt - (refundModal.total || 0)) <= 0.01;
+              return (
+                <div>
+                  <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1">Inventory & COGS</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { v: 'Restock', label: 'Restock', hint: 'Goods returned' },
+                      { v: 'Spoilage', label: 'Spoilage', hint: 'Goods wasted' },
+                      { v: 'None', label: 'No change', hint: 'Cash only' },
+                    ].map(opt => (
+                      <button key={opt.v} type="button" disabled={!isFull}
+                        onClick={() => setRefundForm(p => ({ ...p, inventoryAction: opt.v }))}
+                        className={`flex flex-col items-center py-2 rounded-xl border text-[11px] font-bold transition disabled:opacity-40
+                          ${refundForm.inventoryAction === opt.v ? 'bg-brand/20 border-brand/60 text-white' : 'bg-page-bg border-gray-700 text-gray-400 hover:border-brand/40'}`}>
+                        {opt.label}
+                        <span className="text-[9px] font-normal text-white/30">{opt.hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {!isFull && <p className="text-[10px] text-amber-400/70 mt-1">Partial refunds adjust cash & revenue only — inventory/COGS unchanged.</p>}
+                </div>
+              );
+            })()}
             <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-2 text-xs text-red-300">
               ⚠ Returns ₱{(parseFloat(refundForm.refundAmount)||refundModal.total).toFixed(2)} to customer. Creates reversal journal entry. Cannot be undone.
             </div>
@@ -5061,10 +5945,10 @@ const updateStatus = async (orderId, newStatus) => {
             </div>
             <div className="bg-surface-2 rounded-xl p-3 text-sm flex justify-between">
               <span className="text-gray-400">Current Stock</span>
-              <span className="font-black text-white">{spoilageModal.item.stockQty} {spoilageModal.item.unit}</span>
+              <span className="font-black text-white">{BUSINESS_TYPE === 'log' ? itemDisplay(spoilageModal.item).packQty.toLocaleString(undefined, { maximumFractionDigits: 3 }) : spoilageModal.item.stockQty} {BUSINESS_TYPE === 'log' ? 'pcs' : spoilageModal.item.unit}</span>
             </div>
             <div>
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Quantity to Discard ({spoilageModal.item.unit})</label>
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Quantity to Discard ({BUSINESS_TYPE === 'log' ? 'pcs' : spoilageModal.item.unit})</label>
               <input type="number" min="0.001" step="any" placeholder="0.00" value={spoilageForm.qty}
                 onChange={e => setSpoilageForm(f => ({ ...f, qty: e.target.value }))}
                 className="w-full bg-surface-2 border border-orange-500/40 focus:border-orange-400 text-white py-2.5 px-3 rounded-xl outline-none font-black text-lg text-center"
@@ -5099,9 +5983,13 @@ const updateStatus = async (orderId, newStatus) => {
                 onClick={async () => {
                   setSpoilageLoading(true);
                   try {
+                    const spoilPack = BUSINESS_TYPE === 'log' ? packInfo(spoilageModal.item) : null;
+                    const spoilQtyBase = spoilPack
+                      ? parseFloat(spoilageForm.qty) * (spoilPack.packBase || 1)
+                      : parseFloat(spoilageForm.qty);
                     const res = await apiFetch(`/api/inventory/spoilage/${spoilageModal.item._id}`, {
                       method: 'POST',
-                      body: JSON.stringify({ qty: parseFloat(spoilageForm.qty), reason: spoilageForm.reason, note: spoilageForm.note })
+                      body: JSON.stringify({ qty: spoilQtyBase, reason: spoilageForm.reason, note: spoilageForm.note })
                     });
                     const data = await res.json();
                     if (data.success) { setSpoilageModal(null); fetchERPData(); }

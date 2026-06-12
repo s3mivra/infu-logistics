@@ -1,6 +1,8 @@
 import React from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 
+const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+
 // ── InventoryTab — extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function InventoryTab({ ctx }) {
@@ -34,9 +36,11 @@ export default function InventoryTab({ ctx }) {
     fetchStockHistory, filteredOrders, formData, getEstimatedStock, globalAddOns,
     groupedArchives, handleImageUpload, handleInlinePriceUpdate, handleRestockSubmit, handleSaveAddOn,
     handleSaveCategory, handleSaveProduct, handleVoidOrder, historyItemName, historyModalOpen,
-    historyPage, historySubTab, importModal, importRows, importSubmitting,
+    historyPage, historySubTab, importModal, importRows, importSubmitting, importProgress,
     invBadgeCount, invForm, invItemsPerPage, invPage, invSubTab,
-    inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, itemDisplay,
+    invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter,
+    inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, itemDisplay, packInfo,
+    procurementCreditAccounts,
     itemsPerPage, jeForm, journalEntries, ledgerSubTab, navMode,
     newDiscount, openEditInventory, openProductModal, orderFilter, orders,
     ordersItemsPerPage, ordersPage, parseImportFile, paymentSelections, peso,
@@ -118,6 +122,70 @@ export default function InventoryTab({ ctx }) {
               </div>
             </div>
 
+            {/* --- SEARCH / FILTER / SORT BAR --- */}
+            {invSubTab === 'live' && (() => {
+              const codeToCategory = {};
+              for (const p of products) { if (p.productCode && p.category) codeToCategory[p.productCode] = p.category; }
+              const getInvCat = (i) => i.category || codeToCategory[i.itemCode] || '';
+              const invCategories = [...new Set(inventory.map(i => getInvCat(i)).filter(Boolean))].sort();
+              return (
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {/* Search */}
+                  <div className="relative flex-1 min-w-[160px]">
+                    <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/30 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={invSearch}
+                      onChange={e => { setInvSearch(e.target.value); }}
+                      placeholder="Search items…"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg pl-8 pr-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-brand"
+                    />
+                    {invSearch && (
+                      <button onClick={() => setInvSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60">
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Category filter */}
+                  {invCategories.length > 0 && (
+                    <select
+                      value={invCategoryFilter}
+                      onChange={e => { setInvCategoryFilter(e.target.value); }}
+                      className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-brand"
+                    >
+                      <option value="">All Categories</option>
+                      {invCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  )}
+
+                  {/* Sort */}
+                  <select
+                    value={invSort}
+                    onChange={e => { setInvSort(e.target.value); }}
+                    className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-brand"
+                  >
+                    <option value="name-asc">Name A → Z</option>
+                    <option value="name-desc">Name Z → A</option>
+                    <option value="qty-asc">Qty Low → High</option>
+                    <option value="qty-desc">Qty High → Low</option>
+                    <option value="price-asc">Cost Low → High</option>
+                    <option value="price-desc">Cost High → Low</option>
+                  </select>
+
+                  {/* Active filter chips */}
+                  {(invSearch || invCategoryFilter || invSort !== 'name-asc') && (
+                    <button
+                      onClick={() => { setInvSearch(''); setInvCategoryFilter(''); setInvSort('name-asc'); }}
+                      className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/40 hover:text-white text-xs font-bold transition flex items-center gap-1"
+                    >
+                      <X size={11} /> Reset
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* --- TAB 1: LIVE STOCK (Clean & Read-Only) --- */}
             {invSubTab === 'live' && (
               <div className="overflow-x-auto">
@@ -165,12 +233,15 @@ export default function InventoryTab({ ctx }) {
                         <td className="py-3 font-bold text-white">
                           {item.itemName}
                           {isLow && <span className="ml-2 text-[9px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase animate-pulse">LOW</span>}
+                          {BUSINESS_TYPE === 'log' && !/\d/.test(itemDisplay(item).packLabel || '') && (
+                            <span title="No pack size in the name — add e.g. 250G / 1L / 500ML so cost shows per package" className="ml-2 text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1.5 py-0.5 rounded uppercase">SET SIZE</span>
+                          )}
                         </td>
                         {(() => { const d = itemDisplay(item); return (<>
-                        <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-white'}`}>{d.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
-                        <td className="py-3 text-right text-gray-500 text-xs font-mono tabular-nums">{item.lowStockThreshold > 0 ? (item.lowStockThreshold / effectiveDisplay(item).mult).toLocaleString(undefined, { maximumFractionDigits: 3 }) : '—'}</td>
-                        <td className="py-3 text-white pl-2 font-bold">{d.unit}</td>
-                        <td className="py-3 text-right text-white font-mono text-xs tabular-nums">{peso(d.cost)}<span className="text-white/40">/{d.unit}</span></td>
+                        <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-white'}`}>{(BUSINESS_TYPE === 'log' ? d.packQty : d.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
+                        <td className="py-3 text-right text-gray-500 text-xs font-mono tabular-nums">{item.lowStockThreshold > 0 ? (item.lowStockThreshold / (BUSINESS_TYPE === 'log' ? (itemDisplay(item).packBase || 1) : effectiveDisplay(item).mult)).toLocaleString(undefined, { maximumFractionDigits: 3 }) : '—'}</td>
+                        <td className="py-3 text-white pl-2 font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : d.unit}</td>
+                        <td className="py-3 text-right text-white font-mono text-xs tabular-nums">{BUSINESS_TYPE === 'log' ? (<>{peso(d.packCost)}<span className="text-white/40">/{d.packLabel}</span></>) : (<>{peso(d.cost)}<span className="text-white/40">/{d.unit}</span></>)}</td>
                         <td className="py-3 text-right text-white font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
                         </>); })()}
                         <td className="py-3 text-center">
@@ -193,8 +264,9 @@ export default function InventoryTab({ ctx }) {
                           <button onClick={() => {
                             const isExpired = expBadge && (expBadge.text.startsWith('EXPIRED') || expBadge.text === 'TODAY');
                             setSpoilageModal({ item });
+                            const autoQty = isExpired ? (BUSINESS_TYPE === 'log' ? itemDisplay(item).packQty : item.stockQty) : '';
                             setSpoilageForm({
-                              qty: isExpired ? item.stockQty.toString() : '',
+                              qty: isExpired ? autoQty.toString() : '',
                               reason: isExpired ? 'Spoilage' : '',
                               note: isExpired ? `Auto-flagged expired (${new Date(item.expiryDate).toLocaleDateString()})` : ''
                             });
@@ -224,8 +296,9 @@ export default function InventoryTab({ ctx }) {
                                     .map((b, originalIdx) => ({ ...b, _originalIdx: originalIdx }))
                                     .sort((a, b) => (a.expiryDate ? new Date(a.expiryDate) : Infinity) - (b.expiryDate ? new Date(b.expiryDate) : Infinity))
                                     .map((b, displayIdx) => {
-                                      const mult = item.unitMultiplier || 1;
-                                      const dispQty = (b.qty || 0) / mult;
+                                      const bPackBase = BUSINESS_TYPE === 'log' ? (packInfo(item).packBase || 1) : (item.unitMultiplier || 1);
+                                      const dispQty = (b.qty || 0) / bPackBase;
+                                      const bUnit = BUSINESS_TYPE === 'log' ? 'pcs' : (item.displayUnit || item.unit);
                                       const exp = b.expiryDate ? new Date(b.expiryDate) : null;
                                       const today = new Date(); today.setHours(0,0,0,0);
                                       const diffDays = exp ? Math.ceil((exp - today) / 86400000) : null;
@@ -242,7 +315,7 @@ export default function InventoryTab({ ctx }) {
                                           <td className="py-1.5 text-white/40 font-bold">
                                             {isOldest ? <span className="text-[9px] bg-brand/30 text-brand px-1.5 py-0.5 rounded font-black uppercase tracking-wider">NEXT</span> : `#${displayIdx + 1}`}
                                           </td>
-                                          <td className="py-1.5 text-right text-white font-bold tabular-nums">{dispQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {item.displayUnit || item.unit}</td>
+                                          <td className="py-1.5 text-right text-white font-bold tabular-nums">{dispQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {bUnit}</td>
                                           <td className={`py-1.5 pl-3 tabular-nums ${badge}`}>
                                             {exp ? exp.toLocaleDateString() : '—'}
                                             {diffDays !== null && <span className="ml-1.5 text-[10px] opacity-70">({diffDays < 0 ? `${Math.abs(diffDays)}d ago` : diffDays === 0 ? 'today' : `in ${diffDays}d`})</span>}
@@ -251,7 +324,7 @@ export default function InventoryTab({ ctx }) {
                                           <td className="py-1.5 pl-3 text-white/40 text-[10px]">{b.reference || '—'}</td>
                                           <td className="py-1.5 text-right">
                                             <button onClick={async () => {
-                                              if (!window.confirm(`Remove this batch (${dispQty} ${item.displayUnit || item.unit}, expires ${exp ? exp.toLocaleDateString() : 'n/a'})? This will NOT change stockQty — only the batch record.`)) return;
+                                              if (!window.confirm(`Remove this batch (${dispQty} ${bUnit}, expires ${exp ? exp.toLocaleDateString() : 'n/a'})? This will NOT change stockQty — only the batch record.`)) return;
                                               await apiFetch(`/api/inventory/${item._id}/batches/${b._originalIdx}`, { method: 'DELETE' });
                                               fetchERPData();
                                             }} className="text-red-400/60 hover:text-red-400 hover:bg-red-500/10 px-2 py-0.5 rounded transition text-[10px] font-black uppercase tracking-wider">
@@ -370,7 +443,10 @@ export default function InventoryTab({ ctx }) {
                     </thead>
                     <tbody className={isLocked ? 'opacity-50 pointer-events-none' : ''}>
                       {currentInventory.map(item => {
-                        const eff = effectiveDisplay(item);
+                        // LOG: count in whole packages (pcs); FB: count in kg/L/pcs.
+                        const eff = BUSINESS_TYPE === 'log'
+                          ? { mult: itemDisplay(item).packBase || 1, unit: 'pcs' }
+                          : effectiveDisplay(item);
                         const actualInputDisplay = physicalCounts[item._id]; // entered in display units
                         const hasInput = actualInputDisplay !== undefined && actualInputDisplay !== '';
                         // Convert input → base for variance math; everything financial stays in base.
@@ -573,7 +649,7 @@ export default function InventoryTab({ ctx }) {
                   return (
                   <div key={i._id} className="flex justify-between text-xs">
                     <span className="text-red-300 font-bold">{i.itemName}</span>
-                    <span className="text-red-400 font-mono tabular-nums">{d.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.unit} (min: {minDisp})</span>
+                    <span className="text-red-400 font-mono tabular-nums">{BUSINESS_TYPE === 'log' ? d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 }) : d.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {BUSINESS_TYPE === 'log' ? 'pcs' : d.unit} (min: {minDisp})</span>
                   </div>
                   );
                 })}
@@ -607,7 +683,7 @@ export default function InventoryTab({ ctx }) {
                     return (
                       <div key={i._id} className="flex justify-between text-xs items-center">
                         <span className={`font-bold ${color}`}>{i.itemName}</span>
-                        <span className={`tabular-nums ${color}`}>{d.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.unit} · <span className="font-black">{txt}</span></span>
+                        <span className={`tabular-nums ${color}`}>{BUSINESS_TYPE === 'log' ? d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 }) : d.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {BUSINESS_TYPE === 'log' ? 'pcs' : d.unit} · <span className="font-black">{txt}</span></span>
                       </div>
                     );
                   })}
@@ -641,10 +717,11 @@ export default function InventoryTab({ ctx }) {
                 )}
               </div>
               <div className="flex gap-2">
-                 <div className="w-1/3">
+                 <div className={BUSINESS_TYPE === 'log' ? 'w-full' : 'w-1/3'}>
                    <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Qty Bought</label>
                    <input type="number" placeholder="Cans/Packs" value={invForm.packQty} onChange={e => setInvForm({...invForm, packQty: e.target.value})} className="w-full bg-page-bg border border-gray-700 rounded p-2 text-white outline-none focus:border-accent" />
                  </div>
+                 {BUSINESS_TYPE !== 'log' && (<>
                  <div className="w-1/3">
                    <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Weight/Vol</label>
                    <input type="number" placeholder="Per Pack" value={invForm.unitPerPack} onChange={e => setInvForm({...invForm, unitPerPack: e.target.value})} className="w-full bg-page-bg border border-gray-700 rounded p-2 text-white outline-none focus:border-accent" />
@@ -659,8 +736,9 @@ export default function InventoryTab({ ctx }) {
                    </select>
                    <p className="text-[9px] text-gray-500 mt-1">Unit cost reads as ₱/{invForm.unit || 'unit'}.</p>
                  </div>
+                 </>)}
               </div>
-              
+
               {/* --- UPDATED PRICE SECTION WITH CASH VALIDATION --- */}
               {/* --- UPDATED PRICE SECTION WITH RED INPUT WARNING --- */}
               {(() => {
@@ -678,17 +756,56 @@ export default function InventoryTab({ ctx }) {
                       </span>
                     </div>
                     
-                    <input 
-                      type="number" 
-                      placeholder="e.g., 45.00" 
-                      value={invForm.costPerPack} 
-                      onChange={e => setInvForm({...invForm, costPerPack: e.target.value})} 
+                    <input
+                      type="number"
+                      placeholder="e.g., 45.00"
+                      value={invForm.costPerPack}
+                      onChange={e => setInvForm({...invForm, costPerPack: e.target.value})}
                       className={`w-full bg-page-bg border rounded p-2 outline-none transition-all ${
-                        isOverBudget 
-                        ? 'border-red-500  text-red-400 focus:border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.2)]' 
+                        isOverBudget
+                        ? 'border-red-500  text-red-400 focus:border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.2)]'
                         : 'border-gray-700 text-white focus:border-accent'
-                      }`} 
+                      }`}
                     />
+                    {/* log: price change indicator on restock — uses packBase from item name, no unitPerPack needed */}
+                    {BUSINESS_TYPE === 'log' && (() => {
+                      const existingItem = inventory.find(i => i.itemName.toLowerCase() === invForm.itemName.toLowerCase().trim());
+                      if (!existingItem || !invForm.costPerPack) return null;
+                      const pack = packInfo(existingItem);
+                      const packBase = pack.packBase || 1;
+                      const oldCostPerPack = (existingItem.unitCost || 0) * packBase;
+                      const newCostPerPack = parseFloat(invForm.costPerPack);
+                      if (!oldCostPerPack && !newCostPerPack) return null;
+                      const isUp = newCostPerPack > oldCostPerPack;
+                      const isSame = Math.abs(newCostPerPack - oldCostPerPack) < 0.005;
+                      // WAC preview: addedStock in base units = qty * packBase
+                      const addedStockBase = (parseFloat(invForm.packQty) || 0) * packBase;
+                      const addedCost = (parseFloat(invForm.packQty) || 0) * newCostPerPack;
+                      const wacBase = (existingItem.stockQty + addedStockBase) > 0
+                        ? (existingItem.stockQty * existingItem.unitCost + addedCost) / (existingItem.stockQty + addedStockBase)
+                        : 0;
+                      const wacPerPack = wacBase * packBase;
+                      return (
+                        <div className={`mt-1.5 rounded p-2 text-[10px] font-bold flex flex-col gap-0.5 ${isSame ? 'bg-white/5 border border-white/10' : isUp ? 'bg-red-500/10 border border-red-500/20' : 'bg-green-500/10 border border-green-500/20'}`}>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Previous cost/pack:</span>
+                            <span className="font-mono text-white">₱{oldCostPerPack.toFixed(2)}</span>
+                          </div>
+                          {!isSame && (
+                            <div className="flex justify-between">
+                              <span className={isUp ? 'text-red-400' : 'text-green-400'}>{isUp ? '▲ Price increase' : '▼ Price decrease'}</span>
+                              <span className={`font-mono ${isUp ? 'text-red-400' : 'text-green-400'}`}>{isUp ? '+' : ''}{(newCostPerPack - oldCostPerPack).toFixed(2)}</span>
+                            </div>
+                          )}
+                          {invForm.packQty && (
+                            <div className="flex justify-between border-t border-white/10 pt-0.5 mt-0.5">
+                              <span className="text-accent">New WAC/pack after restock:</span>
+                              <span className="font-mono text-accent">₱{wacPerPack.toFixed(2)}</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })()}
@@ -733,31 +850,43 @@ export default function InventoryTab({ ctx }) {
               </div>
               <p className="text-[9px] text-gray-600 -mt-2">For perishables. When restocking, soonest expiry across batches is kept (FEFO).</p>
 
-              {/* --- CREDIT ACCOUNT SELECTOR --- */}
+              {/* --- CREDIT ACCOUNT SELECTOR (dynamic from COA) --- */}
               <div>
                 <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Paid From / Charge To</label>
                 <select
-                  value={invForm.creditAccount || '111000'}
+                  value={invForm.creditAccount || ''}
                   onChange={e => setInvForm({...invForm, creditAccount: e.target.value})}
                   className="w-full bg-page-bg border border-gray-700 rounded p-2 text-white outline-none focus:border-accent text-sm"
                 >
-                  <option value="111000">Cash on Hand (111000)</option>
-                  <option value="112000">Cash in Bank (112000)</option>
-                  <option value="220000">Accounts Payable — Buy on Credit (220000)</option>
+                  <option value="" disabled>— Select payment source —</option>
+                  {(procurementCreditAccounts || []).map(a => (
+                    <option key={a.code} value={a.code}>
+                      {a.name} ({a.code}){String(a.code).startsWith('220') ? ' — Buy on Credit' : ''}
+                    </option>
+                  ))}
                 </select>
-                {invForm.creditAccount === '220000' && (
+                {String(invForm.creditAccount || '').startsWith('220') && (
                   <p className="text-[9px] text-yellow-500/80 mt-1">Goods received on credit. Settle later via Add Expense → AP payment.</p>
                 )}
+                <p className="text-[9px] text-gray-600 mt-1">Add sub-accounts under Cash/Bank/AP via Ledger → COA to extend this list.</p>
               </div>
 
-              {/* --- UPDATED SUBMIT BUTTON (DISABLED IF INSUFFICIENT FUNDS, unless using AP) --- */}
-              <button
-                onClick={addInventory}
-                disabled={invForm.creditAccount !== '220000' && cashOnHand < (invForm.packQty * invForm.costPerPack)}
-                className={`w-full font-bold py-3 rounded transition shadow-lg ${(invForm.creditAccount !== '220000' && cashOnHand < (invForm.packQty * invForm.costPerPack)) ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-accent text-white hover:bg-page-bg hover:text-accent shadow-accent/20'}`}
-              >
-                {(invForm.creditAccount !== '220000' && cashOnHand < (invForm.packQty * invForm.costPerPack)) ? 'Insufficient Funds' : 'Add to Stock'}
-              </button>
+              {/* --- SUBMIT BUTTON: only block when paying from a cash/bank account with insufficient funds.
+                   Any AP sub-account (220xxx) means buy-on-credit, so cash check doesn't apply. --- */}
+              {(() => {
+                const isApAccount = String(invForm.creditAccount || '').startsWith('220');
+                const totalCost = (parseFloat(invForm.packQty) || 0) * (parseFloat(invForm.costPerPack) || 0);
+                const blocked = !isApAccount && cashOnHand < totalCost;
+                return (
+                  <button
+                    onClick={addInventory}
+                    disabled={blocked}
+                    className={`w-full font-bold py-3 rounded transition shadow-lg ${blocked ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-accent text-white hover:bg-page-bg hover:text-accent shadow-accent/20'}`}
+                  >
+                    {blocked ? 'Insufficient Funds' : 'Add to Stock'}
+                  </button>
+                );
+              })()}
             </div>
           </div>
           </div>

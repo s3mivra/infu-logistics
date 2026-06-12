@@ -1,0 +1,991 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=1280"/>
+  <title>Semivra Libellus POS — UI Showcase</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --brand:#6f874d;--brand-dk:#5a6e3d;
+      --page:#0d0d0d;--surface:#1a1a1a;--surface2:#242424;
+      --fg:#f5f5f5;--fg2:#b4b4b4;--fg3:#666;
+      --danger:#ef4444;--success:#22c55e;--warning:#eab308;
+      --sidebar-w:200px;
+    }
+    body{font-family:'Inter',sans-serif;background:#000;color:var(--fg);min-height:100vh;overflow-x:hidden}
+
+    /* ── SCENE WRAPPER ─────────────────────────────────────── */
+    .scene{
+      width:1280px;margin:0 auto;background:var(--page);
+      border:1px solid rgba(255,255,255,.07);
+      border-radius:16px;overflow:hidden;
+      box-shadow:0 40px 120px rgba(0,0,0,.8);
+    }
+
+    /* ── TITLE BAR ─────────────────────────────────────────── */
+    .title-bar{
+      background:#111;border-bottom:1px solid rgba(255,255,255,.06);
+      display:flex;align-items:center;gap:8px;padding:10px 16px;
+    }
+    .dot{width:12px;height:12px;border-radius:50%}
+    .dot.r{background:#ef4444}.dot.y{background:#eab308}.dot.g{background:#22c55e}
+    .url-bar{
+      flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);
+      border-radius:6px;padding:4px 12px;font-size:12px;color:var(--fg3);
+      margin:0 12px;
+    }
+
+    /* ── APP SHELL ──────────────────────────────────────────── */
+    .app{display:flex;height:calc(100vh - 33px);min-height:680px}
+
+    /* ── SIDEBAR ────────────────────────────────────────────── */
+    .sidebar{
+      width:var(--sidebar-w);flex-shrink:0;
+      background:var(--surface);border-right:1px solid rgba(255,255,255,.06);
+      display:flex;flex-direction:column;padding:0;
+    }
+    .sb-brand{padding:14px 14px 12px;border-bottom:1px solid rgba(255,255,255,.06)}
+    .sb-brand .biz{font-size:13px;font-weight:800;letter-spacing:.02em}
+    .sb-brand .pos{font-size:10px;font-weight:600;color:var(--brand);letter-spacing:.08em}
+    .sb-brand .vat{font-size:9px;color:var(--fg3);margin-top:2px;letter-spacing:.06em;text-transform:uppercase}
+    .sb-section{font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--fg3);padding:14px 14px 4px}
+    .nav-btn{
+      display:flex;align-items:center;gap:9px;
+      padding:8px 14px;font-size:12px;font-weight:500;color:var(--fg2);
+      cursor:pointer;transition:background .1s,color .1s;border:none;background:none;
+      width:100%;text-align:left;
+    }
+    .nav-btn .ico{font-size:14px;width:16px;text-align:center;flex-shrink:0}
+    .nav-btn:hover{background:rgba(255,255,255,.04);color:var(--fg)}
+    .nav-btn.active{background:rgba(111,135,77,.15);color:var(--brand);font-weight:600}
+    .nav-btn.active .ico{color:var(--brand)}
+    .sb-bottom{margin-top:auto;border-top:1px solid rgba(255,255,255,.06);padding:10px 0}
+    .auto-close{padding:6px 14px;font-size:10px;color:var(--fg3)}
+    .auto-close span{color:var(--warning);font-weight:600}
+    .sb-user{
+      display:flex;align-items:center;gap:8px;padding:8px 14px;
+    }
+    .user-avatar{
+      width:28px;height:28px;border-radius:8px;background:var(--brand);
+      display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;
+    }
+    .user-name{font-size:12px;font-weight:600}
+    .user-role{font-size:9px;color:var(--brand);font-weight:700;letter-spacing:.06em}
+
+    /* ── MAIN CONTENT ───────────────────────────────────────── */
+    .main{flex:1;overflow:hidden;display:flex;flex-direction:column}
+
+    /* ══════════════════════════════════════════════════════════
+       ORDERS & POS VIEW
+    ══════════════════════════════════════════════════════════ */
+    .pos-topbar{
+      display:flex;align-items:center;gap:10px;
+      padding:10px 16px;border-bottom:1px solid rgba(255,255,255,.06);
+      background:var(--surface);flex-shrink:0;
+    }
+    .search-input{
+      flex:1;max-width:280px;background:var(--surface2);border:1px solid rgba(255,255,255,.08);
+      border-radius:8px;padding:6px 12px;font-size:12px;color:var(--fg2);
+      display:flex;align-items:center;gap:6px;
+    }
+    .view-tabs{display:flex;gap:4px;margin-left:auto}
+    .vtab{
+      padding:6px 14px;border-radius:7px;font-size:11px;font-weight:700;letter-spacing:.06em;
+      cursor:pointer;border:none;background:rgba(255,255,255,.05);color:var(--fg2);
+    }
+    .vtab.active{background:var(--brand);color:#fff}
+    .filter-bar{
+      display:flex;align-items:center;gap:8px;
+      padding:8px 16px;border-bottom:1px solid rgba(255,255,255,.05);
+      background:var(--page);flex-shrink:0;
+    }
+    .ftab{
+      padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;
+      border:none;background:rgba(255,255,255,.06);color:var(--fg2);cursor:pointer;
+    }
+    .ftab.active{background:rgba(111,135,77,.2);color:var(--brand);border:1px solid rgba(111,135,77,.3)}
+    .active-tables{font-size:11px;color:var(--fg3);margin-left:auto}
+    .table-pill{
+      display:inline-block;padding:3px 9px;border-radius:5px;font-size:10px;font-weight:700;
+      background:rgba(111,135,77,.2);color:var(--brand);border:1px solid rgba(111,135,77,.3);margin-left:6px;
+    }
+
+    .orders-grid{
+      flex:1;overflow-y:auto;padding:14px 16px;
+      display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;align-content:start;
+    }
+    .order-card{
+      background:var(--surface);border:1px solid rgba(255,255,255,.06);border-radius:12px;overflow:hidden;
+    }
+    .order-card.selected{border-color:rgba(111,135,77,.5)}
+    .oc-head{
+      display:flex;align-items:center;gap:6px;
+      padding:10px 12px 8px;border-bottom:1px solid rgba(255,255,255,.05);
+    }
+    .oc-id{font-size:11px;font-weight:800;letter-spacing:.01em}
+    .oc-table{font-size:10px;color:var(--fg2)}
+    .status-badge{
+      margin-left:auto;padding:2px 8px;border-radius:4px;font-size:9px;font-weight:800;letter-spacing:.06em;
+    }
+    .status-badge.pending{background:rgba(234,179,8,.15);color:var(--warning)}
+    .status-badge.completed{background:rgba(34,197,94,.15);color:var(--success)}
+    .status-badge.cancelled{background:rgba(239,68,68,.15);color:var(--danger)}
+    .oc-time{font-size:9px;color:var(--fg3)}
+    .oc-body{padding:10px 12px}
+    .section-tag{
+      font-size:9px;font-weight:800;letter-spacing:.1em;color:var(--fg3);
+      border:1px solid rgba(255,255,255,.08);border-radius:3px;
+      padding:1px 6px;display:inline-block;margin-bottom:8px;
+    }
+    .order-line{display:flex;align-items:baseline;gap:4px;font-size:12px;margin-bottom:4px}
+    .ol-qty{color:var(--fg2);min-width:18px}
+    .ol-name{flex:1;font-weight:500}
+    .ol-price{color:var(--brand);font-weight:700}
+    .oc-divider{border:none;border-top:1px solid rgba(255,255,255,.05);margin:8px 0}
+    .oc-totals{font-size:11px}
+    .oc-row{display:flex;justify-content:space-between;color:var(--fg2);margin-bottom:3px}
+    .oc-row.total{color:var(--fg);font-weight:800;font-size:13px;margin-top:6px}
+    .oc-footer{
+      padding:8px 12px;border-top:1px solid rgba(255,255,255,.05);
+      display:flex;gap:6px;
+    }
+    .oc-btn{
+      flex:1;padding:7px;border-radius:7px;font-size:11px;font-weight:700;text-align:center;
+      cursor:pointer;border:none;
+    }
+    .oc-btn.pay{background:var(--brand);color:#fff}
+    .oc-btn.void{background:rgba(239,68,68,.15);color:var(--danger);border:1px solid rgba(239,68,68,.25)}
+    .oc-btn.refund{background:rgba(234,179,8,.12);color:var(--warning);border:1px solid rgba(234,179,8,.2)}
+    .oc-btn.print{background:rgba(255,255,255,.06);color:var(--fg2)}
+
+    /* payment method row */
+    .pay-method{
+      display:flex;align-items:center;gap:6px;padding:6px 12px;
+      border-top:1px solid rgba(255,255,255,.05);font-size:11px;
+    }
+    .method-sel{
+      background:var(--surface2);border:1px solid rgba(255,255,255,.08);border-radius:6px;
+      padding:4px 8px;font-size:11px;color:var(--fg2);flex:1;
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       ANALYTICS VIEW
+    ══════════════════════════════════════════════════════════ */
+    .analytics-wrap{flex:1;overflow-y:auto;padding:20px 24px}
+    .analytics-top{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px}
+    .a-card{
+      background:var(--surface);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:18px 20px;
+    }
+    .a-card.green{background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.2)}
+    .a-label{font-size:10px;color:var(--fg2);font-weight:600;letter-spacing:.05em;margin-bottom:6px}
+    .a-value{font-size:28px;font-weight:900;letter-spacing:-.02em}
+    .a-value.g{color:var(--success)}
+    .a-value.b{color:var(--brand)}
+    .a-sub{font-size:11px;color:var(--fg2);margin-top:4px}
+    .a-sub.up{color:var(--success)}
+    .a-sub.warn{color:var(--warning)}
+
+    .best-sellers{
+      background:var(--surface);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:18px 20px;
+    }
+    .bs-title{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg2);margin-bottom:12px}
+    .bs-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+    .bs-row:last-child{border-bottom:none}
+    .bs-rank{font-size:11px;font-weight:700;color:var(--brand);min-width:24px}
+    .bs-name{flex:1;font-size:12px;font-weight:500}
+    .bs-count{font-size:12px;font-weight:700;color:var(--fg2)}
+
+    .analytics-mid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px}
+    .a-stat{
+      background:var(--surface);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:16px 20px;
+      display:flex;flex-direction:column;align-items:flex-start;
+    }
+    .a-stat-val{font-size:22px;font-weight:800;margin-bottom:2px}
+    .a-stat-label{font-size:11px;color:var(--fg2)}
+    .a-stat-sub{font-size:10px;color:var(--fg3);margin-top:2px}
+
+    .revenue-trend{
+      background:var(--surface);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:18px 20px;
+      margin-bottom:16px;
+    }
+    .rt-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+    .rt-title{font-size:12px;font-weight:700}
+    .export-btn{
+      font-size:10px;font-weight:700;padding:4px 10px;border-radius:6px;
+      background:rgba(111,135,77,.15);color:var(--brand);border:1px solid rgba(111,135,77,.3);cursor:pointer;
+    }
+    .rt-row{display:flex;align-items:center;gap:12px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+    .rt-row:last-child{border-bottom:none}
+    .rt-date{font-size:12px;color:var(--fg2);min-width:100px}
+    .rt-bar-wrap{flex:1;background:rgba(255,255,255,.04);border-radius:4px;height:6px;overflow:hidden}
+    .rt-bar{height:100%;background:var(--brand);border-radius:4px}
+    .rt-amount{font-size:12px;font-weight:700;min-width:80px;text-align:right}
+
+    .velocity-grid{
+      background:var(--surface);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:18px 20px;
+      margin-bottom:16px;
+    }
+    .vel-title{font-size:12px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:6px}
+    .vel-title::before{content:'⚡';color:var(--warning)}
+    .vel-row{
+      display:grid;grid-template-columns:1fr 80px 80px 80px 80px;gap:8px;
+      align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:11px;
+    }
+    .vel-row:last-child{border-bottom:none}
+    .vel-head{color:var(--fg3);font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+    .vel-name{font-weight:600}
+    .vel-val{text-align:right;color:var(--fg2)}
+    .vel-save{text-align:right;color:var(--success);font-weight:700;font-size:10px}
+
+    /* ══════════════════════════════════════════════════════════
+       INVENTORY VIEW
+    ══════════════════════════════════════════════════════════ */
+    .inv-wrap{display:flex;flex:1;overflow:hidden}
+    .inv-table-side{flex:1;overflow-y:auto;padding:16px}
+    .inv-header{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+    .inv-header h2{font-size:16px;font-weight:800}
+    .inv-btn{
+      padding:5px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;border:none;
+    }
+    .inv-btn.live{background:var(--brand);color:#fff}
+    .inv-btn.audit{background:rgba(255,255,255,.07);color:var(--fg2)}
+    .inv-btn.import{background:rgba(56,189,248,.12);color:#38bdf8;border:1px solid rgba(56,189,248,.2)}
+    .inv-btn.export{background:rgba(255,255,255,.05);color:var(--fg2)}
+    .inv-table{width:100%;border-collapse:collapse;font-size:12px}
+    .inv-table th{
+      text-align:left;padding:8px 10px;font-size:10px;font-weight:700;letter-spacing:.06em;
+      text-transform:uppercase;color:var(--fg3);border-bottom:1px solid rgba(255,255,255,.07);
+    }
+    .inv-table td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.04)}
+    .inv-table tr:hover td{background:rgba(255,255,255,.02)}
+    .stock-qty{font-weight:700}
+    .stock-qty.low{color:var(--danger)}
+    .stock-qty.ok{color:var(--fg)}
+    .inv-action{
+      padding:3px 8px;border-radius:5px;font-size:10px;font-weight:700;margin-right:3px;cursor:pointer;border:none;
+    }
+    .inv-action.hist{background:rgba(111,135,77,.15);color:var(--brand)}
+    .inv-action.edit{background:rgba(56,189,248,.12);color:#38bdf8}
+    .inv-action.low{background:rgba(234,179,8,.12);color:var(--warning)}
+    .inv-action.del{background:rgba(239,68,68,.12);color:var(--danger)}
+    .expiry-ok{color:var(--success);font-size:11px}
+    .expiry-warn{color:var(--warning);font-size:11px}
+
+    .inv-panel{
+      width:320px;flex-shrink:0;border-left:1px solid rgba(255,255,255,.06);
+      background:var(--surface);padding:18px;overflow-y:auto;
+    }
+    .inv-panel h3{font-size:13px;font-weight:800;margin-bottom:16px}
+    .field-group{margin-bottom:12px}
+    .field-label{font-size:10px;font-weight:700;color:var(--fg2);margin-bottom:4px;letter-spacing:.05em;text-transform:uppercase}
+    .field-input{
+      width:100%;background:var(--surface2);border:1px solid rgba(255,255,255,.08);
+      border-radius:7px;padding:7px 10px;font-size:12px;color:var(--fg);
+    }
+    .field-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .add-stock-btn{
+      width:100%;padding:10px;border-radius:8px;background:var(--brand);color:#fff;
+      font-weight:700;font-size:13px;border:none;cursor:pointer;margin-top:8px;
+    }
+
+    /* ── PAGE SELECTOR ──────────────────────────────────────── */
+    .page-nav{
+      display:flex;justify-content:center;gap:6px;padding:32px 0 16px;
+    }
+    .page-btn{
+      padding:8px 20px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;border:2px solid transparent;
+      background:var(--surface);color:var(--fg2);transition:all .15s;
+    }
+    .page-btn.active{background:var(--brand);color:#fff;border-color:var(--brand)}
+    .page-btn:hover:not(.active){background:var(--surface2);color:var(--fg)}
+
+    /* ── LABEL ──────────────────────────────────────────────── */
+    .showcase-label{
+      text-align:center;padding:40px 24px 16px;
+    }
+    .showcase-label h1{font-size:48px;font-weight:900;letter-spacing:-.03em;margin-bottom:10px}
+    .showcase-label h1 span{color:var(--brand)}
+    .showcase-label p{font-size:16px;color:var(--fg2);max-width:520px;margin:0 auto}
+    body{padding:40px 0 80px;background:#060606}
+
+    /* hide inactive views */
+    .view{display:none}
+    .view.active{display:flex;flex-direction:column;flex:1;overflow:hidden}
+  </style>
+</head>
+<body>
+
+<div class="showcase-label">
+  <h1>KASA LOKAL · <span>Semivra Libellus</span></h1>
+  <p>Restaurant POS &amp; Management System — real UI, sample data</p>
+</div>
+
+<div class="page-nav">
+  <button class="page-btn active" onclick="showView('pos')">Orders &amp; POS</button>
+  <button class="page-btn" onclick="showView('analytics')">Analytics</button>
+  <button class="page-btn" onclick="showView('inventory')">Inventory &amp; Stock</button>
+</div>
+
+<!-- ══════════════════ APP CHROME ══════════════════ -->
+<div style="padding:0 40px">
+<div class="scene">
+  <!-- Browser chrome -->
+  <div class="title-bar">
+    <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+    <div class="url-bar">localhost:3000 — Semivra Libellus POS</div>
+  </div>
+
+  <!-- App -->
+  <div class="app">
+
+    <!-- SIDEBAR (shared) -->
+    <div class="sidebar">
+      <div class="sb-brand">
+        <div class="biz">KASA LOKAL</div>
+        <div class="pos">SEMIVRA LIBELLUS</div>
+        <div class="vat">NON-VAT REGISTERED</div>
+      </div>
+      <div class="sb-section">Operations</div>
+      <button class="nav-btn" id="nav-pos" onclick="showView('pos')">
+        <span class="ico">🛒</span> Orders &amp; POS
+      </button>
+      <button class="nav-btn" id="nav-inventory" onclick="showView('inventory')">
+        <span class="ico">📦</span> Inventory &amp; Stock
+      </button>
+      <button class="nav-btn">
+        <span class="ico">🍽️</span> Menu Setup
+      </button>
+      <div class="sb-section">Management</div>
+      <button class="nav-btn">
+        <span class="ico">📅</span> Daily History &amp; Shifts
+      </button>
+      <button class="nav-btn" id="nav-analytics" onclick="showView('analytics')">
+        <span class="ico">📊</span> Analytics
+      </button>
+      <button class="nav-btn">
+        <span class="ico">💰</span> Accounting &amp; Ledger
+      </button>
+      <button class="nav-btn">
+        <span class="ico">🏷️</span> Pricing Control
+      </button>
+      <button class="nav-btn">
+        <span class="ico">📋</span> Audit Report
+      </button>
+      <div class="sb-bottom">
+        <div class="auto-close">AUTO-CLOSE <span>11h 08m 10s</span></div>
+        <button class="nav-btn">⏱ Clock In</button>
+        <button class="nav-btn">⚙️ Tools &amp; Settings</button>
+        <button class="nav-btn" style="color:var(--danger)">→ Log Out</button>
+        <div class="sb-user">
+          <div class="user-avatar">S</div>
+          <div>
+            <div class="user-name">Super Admin</div>
+            <div class="user-role">SUPERADMIN</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ORDERS & POS VIEW ──────────────────────────────── -->
+    <div class="view active" id="view-pos">
+      <div class="pos-topbar">
+        <div class="search-input">🔍 &nbsp; Search name or #order…</div>
+        <div class="view-tabs">
+          <button class="vtab active">ALL VIEW</button>
+          <button class="vtab">KITCHEN VIEW</button>
+          <button class="vtab">BAR VIEW</button>
+        </div>
+      </div>
+      <div class="filter-bar">
+        <button class="ftab active">ALL</button>
+        <button class="ftab">MANUAL ORDER</button>
+        <span class="active-tables">ACTIVE TABLES: <span class="table-pill">DINE-IN</span></span>
+      </div>
+      <div class="orders-grid">
+
+        <!-- Card 1 — PENDING -->
+        <div class="order-card selected">
+          <div class="oc-head">
+            <div>
+              <div class="oc-id">ORD-2026-A0102</div>
+              <div class="oc-table">Maria · (DINE-IN)</div>
+            </div>
+            <span class="status-badge pending">PENDING</span>
+            <div class="oc-time" style="margin-left:6px">08:24 AM</div>
+          </div>
+          <div class="oc-body">
+            <div class="section-tag">KITCHEN</div>
+            <div class="order-line"><span class="ol-qty">2x</span><span class="ol-name">Creamy Truffle Pasta</span><span class="ol-price">₱560</span></div>
+            <div class="order-line"><span class="ol-qty">1x</span><span class="ol-name">Caesar Salad</span><span class="ol-price">₱195</span></div>
+            <div class="section-tag" style="margin-top:8px">BAR</div>
+            <div class="order-line"><span class="ol-qty">2x</span><span class="ol-name">Latte</span><span class="ol-price">₱260</span></div>
+            <div class="order-line"><span class="ol-qty">1x</span><span class="ol-name">KL Coffee</span><span class="ol-price">₱120</span></div>
+            <hr class="oc-divider"/>
+            <div class="oc-totals">
+              <div class="oc-row"><span>Gross</span><span>₱1,135.00</span></div>
+              <div class="oc-row"><span>VAT (0%)</span><span>₱0.00</span></div>
+              <div class="oc-row"><span>Promo</span><span>-₱0.00</span></div>
+              <div class="oc-row total"><span>Total</span><span>₱1,135.00</span></div>
+            </div>
+          </div>
+          <div class="pay-method">
+            <select class="method-sel">
+              <option>Cash</option><option>GCash</option><option>Card</option>
+            </select>
+          </div>
+          <div class="oc-footer">
+            <button class="oc-btn pay">PAY &amp; SEND TO KITCHEN</button>
+            <button class="oc-btn void">DROP</button>
+          </div>
+        </div>
+
+        <!-- Card 2 — PENDING -->
+        <div class="order-card">
+          <div class="oc-head">
+            <div>
+              <div class="oc-id">ORD-2026-A0101</div>
+              <div class="oc-table">Juan · (DINE-IN)</div>
+            </div>
+            <span class="status-badge pending">PENDING</span>
+            <div class="oc-time" style="margin-left:6px">08:11 AM</div>
+          </div>
+          <div class="oc-body">
+            <div class="section-tag">BAR</div>
+            <div class="order-line"><span class="ol-qty">1x</span><span class="ol-name">Dubai Pistachio</span><span class="ol-price">₱180</span></div>
+            <div class="order-line"><span class="ol-qty">1x</span><span class="ol-name">Long Black</span><span class="ol-price">₱120</span></div>
+            <div class="section-tag" style="margin-top:8px">KITCHEN</div>
+            <div class="order-line"><span class="ol-qty">1x</span><span class="ol-name">Nachos Overload</span><span class="ol-price">₱245</span></div>
+            <hr class="oc-divider"/>
+            <div class="oc-totals">
+              <div class="oc-row"><span>Gross</span><span>₱545.00</span></div>
+              <div class="oc-row"><span>VAT (0%)</span><span>₱0.00</span></div>
+              <div class="oc-row total"><span>Total</span><span>₱545.00</span></div>
+            </div>
+          </div>
+          <div class="pay-method">
+            <select class="method-sel"><option>GCash</option><option>Cash</option></select>
+          </div>
+          <div class="oc-footer">
+            <button class="oc-btn pay">PAY &amp; SEND TO KITCHEN</button>
+            <button class="oc-btn void">DROP</button>
+          </div>
+        </div>
+
+        <!-- Card 3 — COMPLETED -->
+        <div class="order-card">
+          <div class="oc-head">
+            <div>
+              <div class="oc-id">ORD-2026-A0100</div>
+              <div class="oc-table">Ana · (DINE-IN)</div>
+            </div>
+            <span class="status-badge completed">COMPLETED</span>
+            <div class="oc-time" style="margin-left:6px">07:58 AM</div>
+          </div>
+          <div class="oc-body">
+            <div class="section-tag">BAR</div>
+            <div class="order-line"><span class="ol-qty">1x</span><span class="ol-name">Latte</span><span class="ol-price">₱130</span></div>
+            <div class="section-tag" style="margin-top:8px">KITCHEN</div>
+            <div class="order-line"><span class="ol-qty">1x</span><span class="ol-name">Creamy Truffle Pasta</span><span class="ol-price">₱280</span></div>
+            <hr class="oc-divider"/>
+            <div class="oc-totals">
+              <div class="oc-row"><span>Gross</span><span>₱410.00</span></div>
+              <div class="oc-row"><span>Payment</span><span style="color:var(--success)">Card</span></div>
+              <div class="oc-row"><span>Change</span><span>₱0.00</span></div>
+              <div class="oc-row total"><span>Total</span><span>₱410.00</span></div>
+            </div>
+          </div>
+          <div class="oc-footer">
+            <button class="oc-btn print">🖨 Receipt</button>
+            <button class="oc-btn void">VOID</button>
+            <button class="oc-btn refund">REFUND</button>
+          </div>
+        </div>
+
+        <!-- Card 4 — COMPLETED -->
+        <div class="order-card">
+          <div class="oc-head">
+            <div>
+              <div class="oc-id">ORD-2026-A0099</div>
+              <div class="oc-table">Ben · (DINE-IN)</div>
+            </div>
+            <span class="status-badge completed">COMPLETED</span>
+            <div class="oc-time" style="margin-left:6px">07:44 AM</div>
+          </div>
+          <div class="oc-body">
+            <div class="section-tag">BAR</div>
+            <div class="order-line"><span class="ol-qty">3x</span><span class="ol-name">KL Coffee</span><span class="ol-price">₱360</span></div>
+            <div class="order-line"><span class="ol-qty">1x</span><span class="ol-name">Dubai Pistachio</span><span class="ol-price">₱180</span></div>
+            <hr class="oc-divider"/>
+            <div class="oc-totals">
+              <div class="oc-row"><span>Gross</span><span>₱540.00</span></div>
+              <div class="oc-row"><span>Payment</span><span style="color:var(--success)">Cash</span></div>
+              <div class="oc-row total"><span>Total</span><span>₱540.00</span></div>
+            </div>
+          </div>
+          <div class="oc-footer">
+            <button class="oc-btn print">🖨 Receipt</button>
+            <button class="oc-btn void">VOID</button>
+            <button class="oc-btn refund">REFUND</button>
+          </div>
+        </div>
+
+        <!-- Card 5 — CANCELLED -->
+        <div class="order-card">
+          <div class="oc-head">
+            <div>
+              <div class="oc-id">ORD-2026-A0098</div>
+              <div class="oc-table">test offline · (DINE-IN)</div>
+            </div>
+            <span class="status-badge cancelled">CANCELLED</span>
+            <div class="oc-time" style="margin-left:6px">03:47 AM</div>
+          </div>
+          <div class="oc-body">
+            <div class="section-tag">BAR</div>
+            <div class="order-line"><span class="ol-qty">1x</span><span class="ol-name">Latte</span><span class="ol-price">₱130</span></div>
+            <hr class="oc-divider"/>
+            <div class="oc-totals">
+              <div class="oc-row"><span>Gross</span><span>₱130.00</span></div>
+              <div class="oc-row total"><span>Total</span><span>₱130.00</span></div>
+            </div>
+          </div>
+          <div class="oc-footer">
+            <button class="oc-btn print">🖨 Receipt</button>
+          </div>
+        </div>
+
+        <!-- Card 6 — PENDING (new) -->
+        <div class="order-card">
+          <div class="oc-head">
+            <div>
+              <div class="oc-id">ORD-2026-A0103</div>
+              <div class="oc-table">Carlo · (DINE-IN)</div>
+            </div>
+            <span class="status-badge pending">PENDING</span>
+            <div class="oc-time" style="margin-left:6px">08:31 AM</div>
+          </div>
+          <div class="oc-body">
+            <div class="section-tag">KITCHEN</div>
+            <div class="order-line"><span class="ol-qty">2x</span><span class="ol-name">Nachos Overload</span><span class="ol-price">₱490</span></div>
+            <div class="section-tag" style="margin-top:8px">BAR</div>
+            <div class="order-line"><span class="ol-qty">2x</span><span class="ol-name">Long Black</span><span class="ol-price">₱240</span></div>
+            <hr class="oc-divider"/>
+            <div class="oc-totals">
+              <div class="oc-row"><span>Gross</span><span>₱730.00</span></div>
+              <div class="oc-row total"><span>Total</span><span>₱730.00</span></div>
+            </div>
+          </div>
+          <div class="pay-method">
+            <select class="method-sel"><option>Cash</option><option>GCash</option></select>
+          </div>
+          <div class="oc-footer">
+            <button class="oc-btn pay">PAY &amp; SEND TO KITCHEN</button>
+            <button class="oc-btn void">DROP</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── ANALYTICS VIEW ─────────────────────────────────── -->
+    <div class="view" id="view-analytics">
+      <div class="analytics-wrap">
+
+        <!-- Top row: revenue + best day + best sellers -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px">
+          <div class="a-card">
+            <div class="a-label">NET REVENUE (ALL-TIME)</div>
+            <div class="a-value g">₱42,298.90</div>
+            <div class="a-sub">67 completed orders</div>
+            <div class="a-sub warn">+₱685.00 complimentary (excluded)</div>
+          </div>
+          <div class="a-card" style="background:rgba(111,135,77,.1);border-color:rgba(111,135,77,.25)">
+            <div class="a-label">BEST SALES DAY</div>
+            <div class="a-value b" style="font-size:32px">Fri, May 8</div>
+            <div class="a-sub up">₱33,834.80 EARNED</div>
+          </div>
+          <div class="best-sellers">
+            <div class="bs-title">TOP 5 BEST SELLERS</div>
+            <div class="bs-row"><span class="bs-rank">#1</span><span class="bs-name">Latte</span><span class="bs-count">58x</span></div>
+            <div class="bs-row"><span class="bs-rank">#2</span><span class="bs-name">Dubai Pistachio</span><span class="bs-count">11x</span></div>
+            <div class="bs-row"><span class="bs-rank">#3</span><span class="bs-name">Creamy Truffle Pasta with…</span><span class="bs-count">9x</span></div>
+            <div class="bs-row"><span class="bs-rank">#4</span><span class="bs-name">KL Coffee</span><span class="bs-count">8x</span></div>
+            <div class="bs-row"><span class="bs-rank">#5</span><span class="bs-name">Nachos Overload</span><span class="bs-count">7x</span></div>
+          </div>
+        </div>
+
+        <!-- Inventory value row -->
+        <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:14px;margin-bottom:16px">
+          <div class="a-card">
+            <div class="a-label">TOTAL INVENTORY VALUE</div>
+            <div class="a-value" style="font-size:34px">₱696,166.522</div>
+            <div class="a-sub">Cost of all stock on hand</div>
+          </div>
+          <div class="a-stat">
+            <div class="a-stat-val">56</div>
+            <div class="a-stat-label">SKUs tracked</div>
+          </div>
+          <div class="a-stat">
+            <div class="a-stat-val" style="color:var(--danger)">0</div>
+            <div class="a-stat-label">Out of stock</div>
+          </div>
+          <div class="a-stat">
+            <div class="a-stat-val b">₱12,431.545</div>
+            <div class="a-stat-label">AVG / SKU</div>
+          </div>
+        </div>
+
+        <!-- Revenue Trend + Velocity side by side -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div class="revenue-trend">
+            <div class="rt-head">
+              <div class="rt-title">Daily Revenue Trend</div>
+              <button class="export-btn">EXPORT ANALYTICS PDF</button>
+            </div>
+            <div class="rt-row">
+              <div class="rt-date">Sat, Jun 6</div>
+              <div class="rt-bar-wrap"><div class="rt-bar" style="width:3%"></div></div>
+              <div class="rt-amount">₱96.00</div>
+            </div>
+            <div class="rt-row">
+              <div class="rt-date">Fri, Jun 5</div>
+              <div class="rt-bar-wrap"><div class="rt-bar" style="width:22%"></div></div>
+              <div class="rt-amount">₱776.00</div>
+            </div>
+            <div class="rt-row">
+              <div class="rt-date">Wed, Jun 3</div>
+              <div class="rt-bar-wrap"><div class="rt-bar" style="width:10%"></div></div>
+              <div class="rt-amount">₱328.00</div>
+            </div>
+            <div class="rt-row">
+              <div class="rt-date">Fri, May 30</div>
+              <div class="rt-bar-wrap"><div class="rt-bar" style="width:36%"></div></div>
+              <div class="rt-amount">₱1,289.00</div>
+            </div>
+            <div class="rt-row">
+              <div class="rt-date">Mon, May 19</div>
+              <div class="rt-bar-wrap"><div class="rt-bar" style="width:42%"></div></div>
+              <div class="rt-amount">₱1,500.00</div>
+            </div>
+            <div class="rt-row">
+              <div class="rt-date">Sun, May 17</div>
+              <div class="rt-bar-wrap"><div class="rt-bar" style="width:100%"></div></div>
+              <div class="rt-amount">₱33,834.80</div>
+            </div>
+            <div class="rt-row">
+              <div class="rt-date">Sat, May 9</div>
+              <div class="rt-bar-wrap"><div class="rt-bar" style="width:14%"></div></div>
+              <div class="rt-amount">₱500.00</div>
+            </div>
+          </div>
+
+          <div class="velocity-grid">
+            <div class="vel-title">HIGH VELOCITY &amp; FORECAST</div>
+            <div class="vel-row vel-head">
+              <span>Item</span><span style="text-align:right">Qty</span><span style="text-align:right">Reorder</span><span style="text-align:right">On Hand</span><span style="text-align:right">Saving</span>
+            </div>
+            <div class="vel-row">
+              <div class="vel-name">Full Cream Milk</div>
+              <div class="vel-val">9d</div>
+              <div class="vel-val">0.12 L</div>
+              <div class="vel-val">0.87 L</div>
+              <div class="vel-save">+88%</div>
+            </div>
+            <div class="vel-row">
+              <div class="vel-name">Food Recipe</div>
+              <div class="vel-val">—</div>
+              <div class="vel-val">—</div>
+              <div class="vel-val">—</div>
+              <div class="vel-save">+100%</div>
+            </div>
+            <div class="vel-row">
+              <div class="vel-name">Filtered Water</div>
+              <div class="vel-val">34</div>
+              <div class="vel-val">4.56 pcs</div>
+              <div class="vel-val">586d</div>
+              <div class="vel-val" style="color:var(--fg3)">—</div>
+            </div>
+            <div class="vel-row">
+              <div class="vel-name">Broca Milk</div>
+              <div class="vel-val">6d</div>
+              <div class="vel-val">1.98 L</div>
+              <div class="vel-val">1.86 L</div>
+              <div class="vel-save">+91%</div>
+            </div>
+            <div class="vel-row">
+              <div class="vel-name">Quezon Milk Blend</div>
+              <div class="vel-val">6d</div>
+              <div class="vel-val">840g</div>
+              <div class="vel-val">5.2 L</div>
+              <div class="vel-save">+91%</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── INVENTORY VIEW ─────────────────────────────────── -->
+    <div class="view" id="view-inventory">
+      <div class="inv-wrap">
+        <div class="inv-table-side">
+          <div class="inv-header">
+            <h2>Inventory Hub</h2>
+            <button class="inv-btn live">LIVE STOCK</button>
+            <button class="inv-btn audit">COG AUDIT</button>
+            <button class="inv-btn import">⬆ IMPORT</button>
+            <button class="inv-btn audit">TEMPLATE</button>
+            <button class="inv-btn export">EXPORT PDF</button>
+          </div>
+          <table class="inv-table">
+            <thead>
+              <tr>
+                <th>Item Name</th>
+                <th>Live Qty</th>
+                <th>Threshold</th>
+                <th>Unit</th>
+                <th>Unit Cost</th>
+                <th>Total Value</th>
+                <th>Expiry</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>12oz Hot Paper Cup</td>
+                <td><span class="stock-qty ok">9,989</span></td>
+                <td>1</td><td>pcs</td>
+                <td>₱7.77</td><td>₱77,438.28</td>
+                <td class="expiry-ok">—</td>
+                <td>
+                  <button class="inv-action hist">History</button>
+                  <button class="inv-action edit">Edit</button>
+                  <button class="inv-action low">Low</button>
+                  <button class="inv-action del">Del</button>
+                </td>
+              </tr>
+              <tr>
+                <td>16oz Iced PET Cup</td>
+                <td><span class="stock-qty ok">8,932</span></td>
+                <td>1</td><td>pcs</td>
+                <td>₱4.20</td><td>₱37,514.40</td>
+                <td class="expiry-ok">—</td>
+                <td>
+                  <button class="inv-action hist">History</button>
+                  <button class="inv-action edit">Edit</button>
+                  <button class="inv-action low">Low</button>
+                  <button class="inv-action del">Del</button>
+                </td>
+              </tr>
+              <tr>
+                <td>8oz Hot Paper Cup</td>
+                <td><span class="stock-qty ok">8,076</span></td>
+                <td>1</td><td>pcs</td>
+                <td>₱3.65</td><td>₱29,477.40</td>
+                <td class="expiry-ok">—</td>
+                <td>
+                  <button class="inv-action hist">History</button>
+                  <button class="inv-action edit">Edit</button>
+                  <button class="inv-action low">Low</button>
+                  <button class="inv-action del">Del</button>
+                </td>
+              </tr>
+              <tr>
+                <td>Acasia Black Tea</td>
+                <td><span class="stock-qty low">33</span></td>
+                <td>1</td><td>L</td>
+                <td>₱50.00</td><td>₱1,650.00</td>
+                <td class="expiry-warn">Jul 2026</td>
+                <td>
+                  <button class="inv-action hist">History</button>
+                  <button class="inv-action edit">Edit</button>
+                  <button class="inv-action low">Low</button>
+                  <button class="inv-action del">Del</button>
+                </td>
+              </tr>
+              <tr>
+                <td>SB Banana Puree</td>
+                <td><span class="stock-qty ok">0.68</span></td>
+                <td>1</td><td>L</td>
+                <td>₱842.00</td><td>₱572.56</td>
+                <td class="expiry-warn">Dec 2026</td>
+                <td>
+                  <button class="inv-action hist">History</button>
+                  <button class="inv-action edit">Edit</button>
+                  <button class="inv-action low">Low</button>
+                  <button class="inv-action del">Del</button>
+                </td>
+              </tr>
+              <tr>
+                <td>SB Honey Peach syrup</td>
+                <td><span class="stock-qty ok">0.64</span></td>
+                <td>1</td><td>L</td>
+                <td>₱842.00</td><td>₱539.00</td>
+                <td class="expiry-warn">Nov 2026</td>
+                <td>
+                  <button class="inv-action hist">History</button>
+                  <button class="inv-action edit">Edit</button>
+                  <button class="inv-action low">Low</button>
+                  <button class="inv-action del">Del</button>
+                </td>
+              </tr>
+              <tr>
+                <td>SB Kiwi Syrup</td>
+                <td><span class="stock-qty ok">0.7</span></td>
+                <td>1</td><td>L</td>
+                <td>₱842.00</td><td>₱589.40</td>
+                <td class="expiry-ok">—</td>
+                <td>
+                  <button class="inv-action hist">History</button>
+                  <button class="inv-action edit">Edit</button>
+                  <button class="inv-action low">Low</button>
+                  <button class="inv-action del">Del</button>
+                </td>
+              </tr>
+              <tr>
+                <td>SB Lychee Syrup</td>
+                <td><span class="stock-qty ok">0.92</span></td>
+                <td>1</td><td>L</td>
+                <td>₱842.00</td><td>₱775.00</td>
+                <td class="expiry-ok">—</td>
+                <td>
+                  <button class="inv-action hist">History</button>
+                  <button class="inv-action edit">Edit</button>
+                  <button class="inv-action low">Low</button>
+                  <button class="inv-action del">Del</button>
+                </td>
+              </tr>
+              <tr>
+                <td>SB Mango Puree</td>
+                <td><span class="stock-qty ok">0.81</span></td>
+                <td>1</td><td>L</td>
+                <td>₱842.00</td><td>₱682.00</td>
+                <td class="expiry-ok">—</td>
+                <td>
+                  <button class="inv-action hist">History</button>
+                  <button class="inv-action edit">Edit</button>
+                  <button class="inv-action low">Low</button>
+                  <button class="inv-action del">Del</button>
+                </td>
+              </tr>
+              <tr>
+                <td>SB Passionfruit Syrup</td>
+                <td><span class="stock-qty ok">0.61</span></td>
+                <td>1</td><td>L</td>
+                <td>₱842.00</td><td>₱513.42</td>
+                <td class="expiry-ok">—</td>
+                <td>
+                  <button class="inv-action hist">History</button>
+                  <button class="inv-action edit">Edit</button>
+                  <button class="inv-action low">Low</button>
+                  <button class="inv-action del">Del</button>
+                </td>
+              </tr>
+              <tr>
+                <td>Salted Powder</td>
+                <td><span class="stock-qty low">6,406</span></td>
+                <td>1</td><td>kg</td>
+                <td>₱0.03</td><td>₱192.18</td>
+                <td class="expiry-ok">—</td>
+                <td>
+                  <button class="inv-action hist">History</button>
+                  <button class="inv-action edit">Edit</button>
+                  <button class="inv-action low">Low</button>
+                  <button class="inv-action del">Del</button>
+                </td>
+              </tr>
+              <tr>
+                <td>Biscoff Bases Paste</td>
+                <td><span class="stock-qty ok">0.23</span></td>
+                <td>1</td><td>L</td>
+                <td>₱842.00</td><td>₱193.66</td>
+                <td class="expiry-warn">Aug 2026</td>
+                <td>
+                  <button class="inv-action hist">History</button>
+                  <button class="inv-action edit">Edit</button>
+                  <button class="inv-action low">Low</button>
+                  <button class="inv-action del">Del</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;font-size:12px;color:var(--fg3)">
+            <button class="inv-btn audit">PREV</button>
+            <span>Page 1 of 5</span>
+            <button class="inv-btn live">NEXT</button>
+          </div>
+        </div>
+
+        <!-- Procurement Panel -->
+        <div class="inv-panel">
+          <h3>Procurement (Receive Inventory)</h3>
+          <div class="field-group">
+            <div class="field-label">Item Name</div>
+            <input class="field-input" placeholder="e.g., Condensed Milk" readonly/>
+          </div>
+          <div class="field-row">
+            <div class="field-group">
+              <div class="field-label">QTY Bought</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
+                <input class="field-input" placeholder="Cans/Pc" readonly/>
+                <input class="field-input" placeholder="Per Pack" readonly/>
+              </div>
+            </div>
+            <div class="field-group">
+              <div class="field-label">Unit</div>
+              <select class="field-input"><option>Select…</option><option>L</option><option>kg</option><option>pcs</option></select>
+            </div>
+          </div>
+          <div class="field-group">
+            <div class="field-label">PRICE PAID PER PACK/CAN</div>
+            <div style="font-size:10px;color:var(--brand);margin-bottom:4px">Available Cash: ₱1,720.00</div>
+            <input class="field-input" placeholder="e.g., 45.00" readonly/>
+          </div>
+          <div class="field-group">
+            <div class="field-label">LOW STOCK ALERT THRESHOLD (UNIT)</div>
+            <input class="field-input" placeholder="e.g., 500" readonly/>
+          </div>
+          <div class="field-row">
+            <div class="field-group">
+              <div class="field-label">Expiry Date</div>
+              <input class="field-input" placeholder="mm/dd/yyyy" readonly/>
+            </div>
+            <div class="field-group">
+              <div class="field-label">Warn (days before)</div>
+              <input class="field-input" value="7" readonly/>
+            </div>
+          </div>
+          <div class="field-group">
+            <div class="field-label">Pay from / Charge to</div>
+            <select class="field-input">
+              <option>Cash on Hand (11000)</option>
+              <option>Bank Account</option>
+              <option>Credit Card</option>
+            </select>
+          </div>
+          <button class="add-stock-btn">Add to Stock</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end .app -->
+</div><!-- end .scene -->
+</div><!-- end padding wrapper -->
+
+<script>
+  function showView(name) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.page-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('view-' + name).classList.add('active');
+    const navEl = document.getElementById('nav-' + name);
+    if (navEl) navEl.classList.add('active');
+    document.querySelectorAll('.page-btn').forEach(b => {
+      if (b.textContent.toLowerCase().includes(name === 'pos' ? 'orders' : name)) b.classList.add('active');
+    });
+  }
+</script>
+</body>
+</html>

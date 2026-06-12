@@ -1,6 +1,8 @@
 import React from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 
+const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+
 // ── ProductsTab — extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function ProductsTab({ ctx }) {
@@ -19,7 +21,7 @@ export default function ProductsTab({ ctx }) {
     applyComplimentary, applyDiscount, applyItemDiscount, arOutstanding, archiveDay,
     archivedOrders, auditCancelPage, auditCompPage, auditDiscPage, auditFilter,
     auditStaffPage, bsData, calcRecipeCost, cashOnHand, cashTendered,
-    catForm, categories, closeRfFund, collapsedOrders, compOverride,
+    catForm, categories, clientAccounts, closeRfFund, collapsedOrders, compOverride,
     compReasonNotes, compReasonTypes, compSelections, confirmPosItem, currentEntries,
     currentInventory, currentOrders, currentPage, currentPricingProducts, currentProducts,
     dailyMovement, deleteAddOn, deleteCategory, deleteInventory, deleteProduct,
@@ -127,7 +129,9 @@ export default function ProductsTab({ ctx }) {
                         setEditingProduct(p); 
                         setFormData({ 
                           name: p.name || '', category: p.category || '', description: p.description || '',
-                          basePrice: Number(p.basePrice || p.price || 0), baseSize: p.baseSize || '',
+                          basePrice: Number(p.basePrice || p.price || 0), discountPercent: Number(p.discountPercent || 0),
+                          clientDiscounts: (p.clientDiscounts || []).map(d => ({ clientId: String(d.clientId), percent: Number(d.percent || 0) })),
+                          baseSize: p.baseSize || '',
                           sizes: p.sizes || [], image: p.image || '', baseRecipe: p.baseRecipe || [], addOns: p.addOns || [],
                           modifierGroups: (p.modifierGroups || []).map(mg => (mg && mg._id) ? mg._id : mg),
                           imageUrl: (p.image || '').startsWith('http') ? p.image : ''
@@ -212,8 +216,8 @@ export default function ProductsTab({ ctx }) {
               </div>
             </div>
 
-            {/* 3. MANAGE GLOBAL ADD-ONS */}
-            <div className="mt-8 border-t border-white/8 pt-6">
+            {/* 3. MANAGE GLOBAL ADD-ONS — fb only */}
+            {BUSINESS_TYPE !== 'log' && <div className="mt-8 border-t border-white/8 pt-6">
               <h3 className="text-xl font-bold mb-4 text-white border-b border-white/8 pb-2">Manage Global Add-Ons (Sinkers, Shots)</h3>
               <form onSubmit={handleSaveAddOn} className="flex gap-3 mb-6">
                 <input
@@ -255,7 +259,7 @@ export default function ProductsTab({ ctx }) {
                   </div>
                 ))}
               </div>
-            </div>
+            </div>}
           </div>
 
           {/* RIGHT COLUMN: Add Product Form */}
@@ -298,6 +302,62 @@ export default function ProductsTab({ ctx }) {
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 font-bold">₱</span>
                       <input type="number" step="0.01" placeholder="Selling Price" value={formData.basePrice} onChange={e => setFormData({...formData, basePrice: parseFloat(e.target.value) || 0})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pl-8 text-white outline-none focus:border-brand font-bold" />
                     </div>
+                  </div>
+                  {/* Per-product discount — applies only to this product's line, not the whole order. */}
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="relative w-1/2">
+                      <input type="number" min="0" max="100" step="0.01" placeholder="Product Discount" value={formData.discountPercent || ''} onChange={e => setFormData({...formData, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pr-7 text-white outline-none focus:border-brand font-bold placeholder-white/20" />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 font-bold">%</span>
+                    </div>
+                    {formData.discountPercent > 0 && (
+                      <span className="text-[11px] text-emerald-400 font-bold">
+                        → ₱{((parseFloat(formData.basePrice) || 0) * (1 - formData.discountPercent / 100)).toFixed(2)} after discount
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-white/30 mb-3">Discount applies to this product only, on every order line — not the whole order. Overrides below apply when a specific client buys this product.</p>
+
+                  {/* Per-client overrides — a specific client's special rate on THIS product */}
+                  <div className="bg-page-bg/40 border border-white/8 rounded-xl p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs font-black text-white/70 uppercase tracking-wider">Per-Client Overrides</label>
+                      <button type="button"
+                        disabled={!clientAccounts?.length}
+                        onClick={() => setFormData({ ...formData, clientDiscounts: [...(formData.clientDiscounts || []), { clientId: '', percent: 0 }] })}
+                        className="text-[11px] font-black text-brand hover:text-white transition disabled:opacity-40">+ Add client</button>
+                    </div>
+                    {(!clientAccounts || clientAccounts.length === 0) && (
+                      <p className="text-[10px] text-white/30 italic">No client accounts yet — create one in the Client Accounts panel to assign a special discount.</p>
+                    )}
+                    {(formData.clientDiscounts || []).map((cd, idx) => (
+                      <div key={idx} className="flex items-center gap-2 mb-1.5">
+                        <select value={cd.clientId}
+                          onChange={e => {
+                            const list = [...(formData.clientDiscounts || [])];
+                            list[idx] = { ...list[idx], clientId: e.target.value };
+                            setFormData({ ...formData, clientDiscounts: list });
+                          }}
+                          className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white text-xs outline-none focus:border-brand">
+                          <option value="">Select client…</option>
+                          {(clientAccounts || []).map(c => (
+                            <option key={c._id} value={c._id}>{c.name || c.username} ({c.clientCode})</option>
+                          ))}
+                        </select>
+                        <div className="relative w-28">
+                          <input type="number" min="0" max="100" step="0.01" value={cd.percent}
+                            onChange={e => {
+                              const list = [...(formData.clientDiscounts || [])];
+                              list[idx] = { ...list[idx], percent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) };
+                              setFormData({ ...formData, clientDiscounts: list });
+                            }}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg pl-2 pr-6 py-1.5 text-white text-xs font-bold outline-none focus:border-brand" />
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-white/40 text-[10px] font-bold">%</span>
+                        </div>
+                        <button type="button"
+                          onClick={() => setFormData({ ...formData, clientDiscounts: (formData.clientDiscounts || []).filter((_, i) => i !== idx) })}
+                          className="text-red-400/70 hover:text-red-400 text-sm">✕</button>
+                      </div>
+                    ))}
                   </div>
                   
                   {(() => {
@@ -418,8 +478,8 @@ export default function ProductsTab({ ctx }) {
                   </div>
                 </div>
 
-                {/* --- REQUIRED MODIFIER GROUPS --- */}
-                {modifierGroups.length > 0 && (
+                {/* --- REQUIRED MODIFIER GROUPS — fb only --- */}
+                {BUSINESS_TYPE !== 'log' && modifierGroups.length > 0 && (
                   <div className="border-t border-white/8 pt-5 mt-4 mb-4">
                     <label className="text-sm font-black text-white/80 uppercase tracking-wider mb-1 block">Required Modifier Groups</label>
                     <p className="text-[10px] text-white/30 mb-3">Checked groups will be required before adding to cart (e.g. "Choose your milk").</p>
@@ -473,8 +533,8 @@ export default function ProductsTab({ ctx }) {
           </div>
           </div>
 
-          {/* ════════════ MODIFIER GROUPS MANAGEMENT ════════════ */}
-          <div className="bg-surface border border-white/8 shadow-md rounded-xl p-4 sm:p-6">
+          {/* ════════════ MODIFIER GROUPS MANAGEMENT — fb only ════════════ */}
+          {BUSINESS_TYPE !== 'log' && <div className="bg-surface border border-white/8 shadow-md rounded-xl p-4 sm:p-6">
             <h3 className="text-xl font-bold mb-1 text-white">Modifier Groups</h3>
             <p className="text-xs text-white/40 mb-4">Required choices on a product (e.g. "Choose your milk"). Attach them to products in the form above.</p>
             <div className="flex flex-col lg:flex-row gap-6">
@@ -539,7 +599,7 @@ export default function ProductsTab({ ctx }) {
                 </div>
               </div>
             </div>
-          </div>
+          </div>}
 
           {/* ════════════ COMBOS / BUNDLES (PRODUCT PROMOS) ════════════ */}
           <div className="bg-surface border border-white/8 shadow-md rounded-xl p-4 sm:p-6">

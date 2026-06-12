@@ -25,14 +25,14 @@ export default function PricingTab({ ctx }) {
     dailyMovement, deleteAddOn, deleteCategory, deleteInventory, deleteProduct,
     departmentFilter, discountForm, discountInputs, discountList, discounts,
     displayOrders, downloadImportTemplate, downloadJournalCsv, editInvForm, editInvModal,
-    editInvSubmitting, editPriceId, editPriceVal, editingCategory, editingProduct,
+    editInvSubmitting, editPriceId, editPriceVal, editCostId, setEditCostId, editCostVal, setEditCostVal, editingCategory, editingProduct,
     effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
     exportDayToPDF, exportInventoryToPDF, exportLedgerToPDF, fetchAnalytics, fetchArOutstanding,
     fetchBalanceSheet, fetchData, fetchEODData, fetchERPData, fetchExpenseCategories,
     fetchOrders, fetchPnl, fetchRfFunds, fetchRfTxs, fetchShiftHistory,
     fetchStockHistory, filteredOrders, formData, getEstimatedStock, globalAddOns,
-    groupedArchives, handleImageUpload, handleInlinePriceUpdate, handleRestockSubmit, handleSaveAddOn,
+    groupedArchives, handleImageUpload, handleInlinePriceUpdate, handleInlineCostUpdate, handleRestockSubmit, handleSaveAddOn,
     handleSaveCategory, handleSaveProduct, handleVoidOrder, historyItemName, historyModalOpen,
     historyPage, historySubTab, importModal, importRows, importSubmitting,
     invBadgeCount, invForm, invItemsPerPage, invPage, invSubTab,
@@ -103,18 +103,35 @@ export default function PricingTab({ ctx }) {
                   {products.length === 0 ? (
                     <tr><td colSpan={isSuperAdmin ? 7 : 6} className="py-4 text-center text-gray-500">No products found.</td></tr>
                   ) : currentPricingProducts.flatMap(p => {
-                    const baseCost = calcRecipeCost(p.baseRecipe);
+                    // Recipe cost first; if absent, fall back to the 1:1 logistics cost
+                    // (linked inventory unitCost × pack base units from the name).
+                    const PACK_RE = /(\d+(?:\.\d+)?)\s*(mg|kg|g|ml|cl|l|pcs|pc|pack|unit)\b/i;
+                    const UNIT = { mg: 0.001, g: 1, kg: 1000, ml: 1, cl: 10, l: 1000, pcs: 1, pc: 1, pack: 1, unit: 1 };
+                    const linkedCost = (prod) => {
+                      const inv = (inventory || []).find(i => i.itemCode === prod.productCode) || (inventory || []).find(i => i.itemName === prod.name);
+                      if (!inv) return 0;
+                      const m = (prod.name || '').match(PACK_RE);
+                      const bf = UNIT[(inv.unit || '').toLowerCase()] || 1;
+                      const packBase = m ? parseFloat(m[1]) * ((UNIT[m[2].toLowerCase()] || 1) / bf) : (inv.unitMultiplier || 1);
+                      return (inv.unitCost || 0) * packBase;
+                    };
+                    const baseCostCalc = calcRecipeCost(p.baseRecipe) || linkedCost(p);
+                    const baseCost = p.costOverride != null ? p.costOverride : baseCostCalc;
                     // We now track the exact productId and sizeIndex so the backend knows what to update
-                    const rows = [{ id: `${p._id}-base`, productId: p._id, sizeIndex: null, name: p.name, cat: p.category, size: p.baseSize || 'Regular', price: p.basePrice || p.price || 0, cost: baseCost, isBase: true, product: p }];
+                    const rows = [{ id: `${p._id}-base`, productId: p._id, sizeIndex: null, name: p.name, cat: p.category, size: p.baseSize || 'Regular', price: p.basePrice || p.price || 0, cost: baseCost, hasOverride: p.costOverride != null, isBase: true, product: p }];
                     if (p.sizes) {
                       p.sizes.forEach((s, idx) => {
-                        const szCost = calcRecipeCost(s.recipe?.length ? s.recipe : p.baseRecipe);
-                        rows.push({ id: `${p._id}-size-${idx}`, productId: p._id, sizeIndex: idx, name: '', cat: '', size: s.name, price: s.price, cost: szCost, isBase: false, product: p });
+                        const szCostCalc = calcRecipeCost(s.recipe?.length ? s.recipe : p.baseRecipe) || baseCostCalc;
+                        const szCost = s.costOverride != null ? s.costOverride : szCostCalc;
+                        rows.push({ id: `${p._id}-size-${idx}`, productId: p._id, sizeIndex: idx, name: '', cat: '', size: s.name, price: s.price, cost: szCost, hasOverride: s.costOverride != null, isBase: false, product: p });
                       });
                     }
                     return rows;
                   }).map((row) => {
-                    const margin = row.price > 0 && row.cost > 0 ? ((row.price - row.cost) / row.price) * 100 : null;
+                    // Margin shows even when there's no recipe — cost falls back to 0,
+                    // so margin = 100% for items priced without a cost layer (e.g. logistics
+                    // 1:1 SKUs whose cost lives on the inventory item, not a recipe).
+                    const margin = row.price > 0 ? ((row.price - (row.cost || 0)) / row.price) * 100 : null;
                     const isUnavailable = row.isBase && row.product.isAvailable === false;
                     return (
                     <tr key={row.id} className={`border-gray-800/50 hover:bg-page-bg/30 transition ${row.name !== '' ? 'border-t' : ''} ${isUnavailable ? 'opacity-50' : ''}`}>
@@ -152,9 +169,40 @@ export default function PricingTab({ ctx }) {
                         )}
                       </td>
 
-                      {/* Recipe Cost */}
-                      <td className={`py-2 text-right font-mono text-xs ${row.name !== '' ? 'pt-4' : ''} ${row.cost > 0 ? 'text-orange-400' : 'text-gray-600'}`}>
-                        {row.cost > 0 ? `₱${row.cost.toFixed(2)}` : <span className="text-gray-700 text-[10px]">no recipe</span>}
+                      {/* Recipe Cost — inline editable */}
+                      <td className={`py-2 text-right font-mono text-xs ${row.name !== '' ? 'pt-4' : ''}`}>
+                        {editCostId === row.id ? (
+                          <div className="flex justify-end items-center gap-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="0.00"
+                              className="w-20 bg-page-bg border border-orange-500/60 rounded px-2 py-1 text-white outline-none text-right text-xs"
+                              value={editCostVal}
+                              onChange={(e) => setEditCostVal(e.target.value)}
+                              autoFocus
+                              onKeyDown={(e) => { if (e.key === 'Enter') handleInlineCostUpdate(row.productId, row.sizeIndex); if (e.key === 'Escape') setEditCostId(null); }}
+                            />
+                            <button onClick={() => handleInlineCostUpdate(row.productId, row.sizeIndex)} className="text-green-400 hover:text-green-300"><Check size={12} /></button>
+                            <button onClick={() => setEditCostId(null)} className="text-red-400 hover:text-red-300 text-[10px]">✕</button>
+                          </div>
+                        ) : (
+                          <div
+                            className="cursor-pointer hover:bg-white/10 px-2 py-1 rounded inline-flex items-center gap-1.5 transition group"
+                            onClick={() => { setEditCostId(row.id); setEditCostVal(row.cost > 0 ? row.cost.toFixed(2) : ''); }}
+                          >
+                            {row.cost > 0 ? (
+                              <span className={row.hasOverride ? 'text-yellow-400' : 'text-orange-400'}>
+                                ₱{row.cost.toFixed(2)}
+                                {row.hasOverride && <span className="ml-1 text-[9px] text-yellow-600 font-bold">✎</span>}
+                              </span>
+                            ) : (
+                              <span className="text-gray-600 text-[10px]">set cost</span>
+                            )}
+                            {!row.hasOverride && <span className="text-[10px] text-gray-700 group-hover:text-orange-400">✎</span>}
+                          </div>
+                        )}
                       </td>
 
                       {/* Gross Margin */}

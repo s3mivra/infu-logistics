@@ -66,6 +66,8 @@ app.use(compression());
 
 // --- CORS CONFIG (env-driven for production, LAN auto-allow for dev) ---
 const IS_PROD = process.env.NODE_ENV === 'production';
+// 'fb' = food & beverage (QR ordering), 'log' = logistics (client-login ordering)
+const BUSINESS_TYPE = (process.env.BUSINESS_TYPE || 'fb').toLowerCase();
 const ENV_ORIGINS = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '')
   .split(',').map(s => s.trim()).filter(Boolean);
 const allowedOrigins = [
@@ -148,6 +150,39 @@ app.use(cookieParser());
 //   ARS JE         →  "ARS-ORD-2025-A0001"
 // Pass prefix='' to use orderNumber directly (no extra prefix needed for sales JEs).
 const mkRef = (prefix, suffix) => prefix ? `${prefix}-${suffix}` : suffix;
+
+// Logistics 1:1 mapping: a product with no BOM/recipe represents a stocked good
+// directly. Resolve the linked Inventory doc by matching itemCode === productCode
+// first, then falling back to itemName === product name. Returns the Mongoose doc
+// (or null). One sold unit consumes (unitMultiplier || 1) base units and books
+// COGS at unitCost (always per base unit).
+async function resolveLinkedInventory(product, productCode, session) {
+  const or = [];
+  if (productCode) or.push({ itemCode: productCode });
+  if (product?.productCode) or.push({ itemCode: product.productCode });
+  if (product?.name) or.push({ itemName: product.name });
+  if (!or.length) return null;
+  return Inventory.findOne({ $or: or }).session(session);
+}
+
+// Conversion factors into a canonical base (grams / millilitres / pieces).
+const UNIT_TO_BASE = { mg: 0.001, g: 1, kg: 1000, ml: 1, cl: 10, l: 1000, pcs: 1, pc: 1, pack: 1, unit: 1 };
+// Base units of stock consumed by ONE sold unit of a logistics 1:1 product.
+// The pack size is encoded in the product/inventory name (e.g. "…250G", "…1KG",
+// "…500ML") and converted into the inventory item's base unit (inv.unit). NOTE:
+// unitCost is per base unit, so COGS = baseUnitsPerSale × unitCost. Falls back to
+// one full display unit (unitMultiplier) only when no weight token is present.
+function baseUnitsPerSale(product, invItem) {
+  const src = `${product?.name || ''} ${product?.baseSize || ''} ${invItem?.itemName || ''}`;
+  const mt = src.match(/(\d+(?:\.\d+)?)\s*(mg|kg|g|ml|cl|l|pcs|pc|pack|unit)\b/i);
+  const invBaseFactor = UNIT_TO_BASE[(invItem?.unit || '').toLowerCase()] || 1;
+  if (mt) {
+    const val = parseFloat(mt[1]);
+    const f = UNIT_TO_BASE[mt[2].toLowerCase()];
+    if (f !== undefined && val > 0) return val * (f / invBaseFactor);
+  }
+  return invItem?.unitMultiplier || 1;
+}
 
 // Escape user input before interpolating into a RegExp — prevents regex injection
 // and ReDoS (catastrophic backtracking) when matching names case-insensitively.
@@ -271,7 +306,9 @@ const zRecipe = z.array(z.object({
 // (codes, isArchived, timestamps) so a client can never set them via create().
 const productSchema = z.object({
   name: zName, description: z.string().max(2000).optional(), category: z.string().trim().max(80).optional(),
-  basePrice: zMoney, baseSize: z.string().max(40).optional(), baseRecipe: zRecipe,
+  basePrice: zMoney, discountPercent: z.number().min(0).max(100).optional(),
+  clientDiscounts: z.array(z.object({ clientId: z.string(), percent: z.number().min(0).max(100) })).optional(),
+  baseSize: z.string().max(40).optional(), baseRecipe: zRecipe,
   sizes: z.array(z.object({ sizeCode: z.string().optional(), name: z.string().optional(), price: zMoney.optional(), recipe: zRecipe })).optional(),
   addOns: z.array(z.object({ name: z.string(), price: zMoney.optional(), recipe: zRecipe })).optional(),
   image: z.string().optional(), isAvailable: z.boolean().optional(),
@@ -320,12 +357,15 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Brute-force protection. Skip-successful=true means only failures count against
+// the bucket, so a legit user mistyping once then logging in normally is unaffected.
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,
+  max: 5,                   // 5 FAILED attempts per IP per window
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, error: 'Too many login attempts. Try again in 15 minutes.' }
+  skipSuccessfulRequests: true,
+  message: { success: false, error: 'Too many failed login attempts. Try again in 15 minutes.' }
 });
 
 const orderLimiter = rateLimit({
@@ -371,6 +411,20 @@ mongoose.connect(process.env.MONGO_URI, {
         { $set: { role: 'superadmin' } }
       );
       if (backfill.modifiedCount > 0) log.info(`✅ Backfilled role=superadmin on ${backfill.modifiedCount} legacy admin doc(s)`);
+
+      // ── ONE-TIME businessType BACKFILL ──────────────────────────────────
+      // Stamps every legacy Order/Product/Inventory/Category doc that lacks
+      // a businessType with the current env BUSINESS_TYPE. After this runs
+      // we can safely read-filter every list endpoint by businessType.
+      const bfFilter = { $or: [{ businessType: { $exists: false } }, { businessType: null }, { businessType: '' }] };
+      const [bO, bP, bI, bC] = await Promise.all([
+        Order.updateMany(bfFilter, { $set: { businessType: BUSINESS_TYPE } }),
+        Product.updateMany(bfFilter, { $set: { businessType: BUSINESS_TYPE } }),
+        Inventory.updateMany(bfFilter, { $set: { businessType: BUSINESS_TYPE } }),
+        Category.updateMany(bfFilter, { $set: { businessType: BUSINESS_TYPE } }),
+      ]);
+      const stampedTotal = (bO.modifiedCount || 0) + (bP.modifiedCount || 0) + (bI.modifiedCount || 0) + (bC.modifiedCount || 0);
+      if (stampedTotal > 0) log.info(`✅ Stamped businessType=${BUSINESS_TYPE} on ${stampedTotal} legacy doc(s) — Orders:${bO.modifiedCount} Products:${bP.modifiedCount} Inventory:${bI.modifiedCount} Categories:${bC.modifiedCount}`);
     } catch (err) {
       log.error({ err }, 'Seeding error');
     }
@@ -430,6 +484,15 @@ mongoose.connect(process.env.MONGO_URI, {
         await Counter.collection.updateOne({ _id: prefix }, { $max: { seq } }, { upsert: true });
       }
 
+      // Client accounts: CLT-AXXXX
+      const allClients = await ClientAccount.find({}, { clientCode: 1 }).lean();
+      let maxClientSeq = 0;
+      for (const c of allClients) {
+        const m = c.clientCode?.match(/^CLT-A(\d+)$/);
+        if (m) maxClientSeq = Math.max(maxClientSeq, parseInt(m[1], 10));
+      }
+      if (maxClientSeq > 0) await Counter.collection.updateOne({ _id: 'CLT' }, { $max: { seq: maxClientSeq } }, { upsert: true });
+
       log.info('Counters synced from existing data');
     } catch (err) {
       log.error({ err }, 'Counter sync error');
@@ -483,6 +546,56 @@ mongoose.connect(process.env.MONGO_URI, {
     return res.status(403).json({ success: false, error: 'Forbidden: Admin or Superadmin role required.' });
   };
 
+  // ── GRANULAR PERMISSIONS ───────────────────────────────────────────────────
+  // Per-role permission map. superadmin gets the wildcard (everything). Other
+  // roles enumerate exactly what they may do. Add a new permission key here
+  // and gate the endpoint with requirePermission('that:key').
+  const ROLE_PERMISSIONS = {
+    superadmin: ['*'],
+    admin: [
+      'orders:create', 'orders:read', 'orders:update', 'orders:void', 'orders:refund', 'orders:settle',
+      'inventory:read', 'inventory:restock', 'inventory:spoilage', 'inventory:edit',
+      'products:read', 'products:update', 'products:availability',
+      'reports:read', 'pos:operate',
+    ],
+    manager: [
+      'orders:create', 'orders:read', 'orders:update', 'orders:settle',
+      'inventory:read', 'inventory:restock', 'inventory:spoilage',
+      'products:read', 'products:availability',
+      'reports:read', 'pos:operate',
+    ],
+    finance: [
+      'orders:read', 'orders:settle',
+      'inventory:read',
+      'products:read',
+      'reports:read', 'ledger:read', 'ledger:journal',
+    ],
+    cashier: [
+      'orders:create', 'orders:read',
+      'inventory:read', 'products:read',
+      'pos:operate',
+    ],
+    staff: [
+      'orders:create', 'orders:read',
+      'inventory:read', 'products:read',
+      'pos:operate',
+    ],
+  };
+
+  // Caller has permission `key` (or the wildcard `*`).
+  const hasPermission = (user, key) => {
+    const role = String(user?.role || '').toLowerCase();
+    const perms = ROLE_PERMISSIONS[role] || [];
+    return perms.includes('*') || perms.includes(key);
+  };
+
+  // Express middleware factory. Use as: app.post('/api/...', verifyToken, requirePermission('orders:void'), handler).
+  // Falls back deny-by-default if role isn't in the map.
+  const requirePermission = (key) => (req, res, next) => {
+    if (hasPermission(req.user, key)) return next();
+    return res.status(403).json({ success: false, error: `Forbidden: missing permission "${key}".` });
+  };
+
   // Accepts valid JWT (staff/admin) OR active QR session (customer dine-in).
   const verifyOrderAuth = async (req, res, next) => {
     const authHeader = req.headers.authorization;
@@ -511,7 +624,10 @@ mongoose.connect(process.env.MONGO_URI, {
 // --- DATABASE SCHEMAS ---
 const CategorySchema = new mongoose.Schema({
   name: { type: String, required: true },
-  department: { type: String, enum: ['Kitchen', 'Bar'], default: 'Kitchen' }
+  department: { type: String, enum: ['Kitchen', 'Bar'], default: 'Kitchen' },
+  // Tenancy seed: which business type owns this category. Defaults to the env
+  // BUSINESS_TYPE on create. Old docs without this field still read fine.
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
 }, { timestamps: true });
 const Category = mongoose.model('Category', CategorySchema);
 // ── MODIFIER GROUPS ─────────────────────────────────────────────────────────
@@ -571,17 +687,28 @@ app.delete('/api/addons/:id', verifyToken, requireSuperAdmin, async (req, res) =
 });
 // 1. UPDATE THE PRODUCT SCHEMA (Add Recipes)
 const ProductSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
   productCode: String,
   name: { type: String, required: true, index: true },
   description: String,
   category: { type: String, index: true },
   basePrice: { type: Number, required: true },
+  // Per-product discount (%). Applies only to this product's order lines, not the
+  // whole order. 0 = no discount. Applies to ALL buyers by default.
+  discountPercent: { type: Number, default: 0 },
+  // Optional per-client overrides. When a logged-in client buys this product, the
+  // matching entry's percent is used instead of the default discountPercent. Lets
+  // you give a specific client a special rate on a specific product (pre-reg, VIP,
+  // bulk-buyer, etc.). Empty array = no overrides → falls back to discountPercent.
+  clientDiscounts: [{ clientId: String, percent: { type: Number, default: 0 } }],
   baseSize: String,
+  costOverride: Number,
   baseRecipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }],
   sizes: [{
     sizeCode: String,
     name: String,
     price: Number,
+    costOverride: Number,
     recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }]
   }],
   addOns: [{ name: String, price: Number, recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }] }],
@@ -613,6 +740,7 @@ const ComboSchema = new mongoose.Schema({
 const Combo = mongoose.model('Combo', ComboSchema);
 
 const OrderSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
   orderNumber: String,
   table: String,
   isArchived: { type: Boolean, default: false, index: true },
@@ -627,9 +755,12 @@ const OrderSchema = new mongoose.Schema({
   // Item Level Tracking
 items: [{
     productId: String,
+    productCode: String,
     name: String,
     price: Number,
     quantity: Number,
+    fulfilledQty: { type: Number, default: 0 },        // units fulfilled so far (partial fulfillment)
+    productDiscountPercent: { type: Number, default: 0 }, // per-product discount applied to this line
     selectedAddOns: [{ name: String, price: Number }],
     hasDiscount: { type: Boolean, default: true },
     department: { type: String, default: 'Kitchen' }, // <-- NEW: Routes to Kitchen or Bar
@@ -656,6 +787,10 @@ items: [{
   isVatExempt: { type: Boolean, default: true },
   // --- ENTERPRISE FIELDS ---
   cashier: { type: String, default: 'System', index: true },
+  // --- PARTIAL FULFILLMENT (logistics — single order, fulfilled in batches) ---
+  amountPaid:       { type: Number, default: 0 },        // cash/AR collected so far
+  depositRemaining: { type: Number, default: 0 },        // prepaid-but-unfulfilled value held as Customer Deposits
+  clientReceived:   { type: Boolean, default: false },   // client confirmed receipt from the portal
   transactionType: { type: String, enum: ['NORMAL', 'COMPLIMENTARY', 'REFUND', 'VOID'], default: 'NORMAL' },
   isComplimentary: { type: Boolean, default: false },
   employeeName: { type: String, default: '' },          // beneficiary (who the comp is for)
@@ -692,7 +827,14 @@ items: [{
   arSettledAt:      { type: Date },
   arSettledAmount:  { type: Number, default: 0 },
   arSettledMethod:  { type: String, default: '' },
-  arSettledNote:    { type: String, default: '' }
+  arSettledNote:    { type: String, default: '' },
+  // ── Logistics fields ──────────────────────────────────────────────────────
+  // billingNumber: monthly-reset sequential ref (YYYY-MM-XXXX), log mode only
+  billingNumber:   { type: String, default: '' },
+  termsOfPayment:  { type: String, default: '' },
+  // Client who placed the order (log mode; blank for fb/POS-originated orders)
+  clientId:        { type: String, default: '' },
+  clientUsername:  { type: String, default: '' },
 }, { timestamps: true });
 OrderSchema.index({ createdAt: -1 });
 OrderSchema.index({ status: 1, isArchived: 1 });
@@ -709,6 +851,7 @@ const QRSession = mongoose.model('QRSession', QRSessionSchema);
 
 // --- NEW ERP SCHEMAS ---
 const InventorySchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
   itemCode: String,
   itemName: String,
   stockQty: { type: Number, default: 0 },           // ALWAYS stored in base unit (g/ml/pcs) for recipe precision
@@ -821,12 +964,131 @@ const ownerUserIds = async () => {
   return owners.map(o => String(o._id));
 };
 
+// Owner identity for staff-report exclusion. Returns both _ids AND names so we
+// also filter out shifts/clock rows left behind by a PREVIOUS superadmin account
+// (orphaned cashierId that no longer matches the current owner _id).
+const ownerIdentity = async () => {
+  const owners = await User.find({ role: 'superadmin' }, { _id: 1, name: 1 }).lean();
+  return {
+    ids:   owners.map(o => String(o._id)),
+    names: owners.map(o => o.name).filter(Boolean),
+  };
+};
+
+// Helper: append a structured audit log entry. Uses the existing AuditLog
+// schema (userId/action/targetReference/details) — see model defined further
+// below. Wrapped in try/catch so accounting calls never fail because logging did,
+// but failures are surfaced to the application logger so silent loss is visible.
+async function logAudit(req, { action, entity, entityId, before, after, notes }) {
+  // Cap payload size so a freak large object can't bloat the audit collection.
+  const cap = (v) => {
+    if (v == null) return null;
+    try {
+      const s = JSON.stringify(v);
+      if (s.length <= 4000) return v;
+      return { _truncated: true, preview: s.slice(0, 4000) };
+    } catch (e) { return { _unserializable: String(e?.message || e) }; }
+  };
+  try {
+    const actor = req?.user || {};
+    await AuditLog.create({
+      userId: actor.name || 'system',
+      action: `${entity}_${(action || 'change').toUpperCase()}`,
+      targetReference: entityId ? String(entityId) : (entity || 'n/a'),
+      details: { entity, before: cap(before), after: cap(after), notes: notes || null, ip: req?.ip || null },
+    });
+  } catch (e) {
+    // Logging is best-effort, but never let a failure stay invisible.
+    try { (typeof log !== 'undefined' ? log.error : console.error)({ err: e, entity, action, entityId }, 'logAudit failed'); }
+    catch { console.error('logAudit failed:', e?.message || e); }
+  }
+}
+
+// --- PAYMENT METHOD → ACCOUNT MAP ──────────────────────────────────────────
+// Lets a finance manager route each POS payment method to a specific account.
+// Default mappings are seeded on first boot; superadmin can change them or
+// point a method at a custom child sub-account (e.g. "GCash → BPI E-Wallet 113001").
+const PaymentMethodMapSchema = new mongoose.Schema({
+  method:      { type: String, unique: true, index: true },  // 'Cash', 'GCash', 'Bank Transfer', etc.
+  accountCode: { type: String, required: true },             // any canonical or custom account code
+  updatedBy:   String,
+}, { timestamps: true });
+const PaymentMethodMap = mongoose.model('PaymentMethodMap', PaymentMethodMapSchema);
+
+// Default routing seeded on first boot. Overridable per-method via the UI.
+const DEFAULT_PAYMENT_ACCOUNT_MAP = {
+  'Cash':              '111000',
+  'Pickup':            '111000',
+  'Manual Delivery':   '111000',
+  'Lalamove':          '111000',
+  'Bank Transfer':     '112000',
+  'Cash in Bank':      '112000',
+  'GCash':             '113000',
+  'Maya':              '113000',
+  'Maribank':          '113000',
+  'E-Wallet':          '113000',
+  'Other E-Wallet':    '113000',
+  'On Account':        '220000',
+  'Grab Delivery':     '120000',
+  'Foodpanda':         '120000',
+};
+
+// In-memory cache; refreshed on every mutation. Avoids a DB lookup on every order.
+let PAYMENT_MAP_CACHE = { ...DEFAULT_PAYMENT_ACCOUNT_MAP };
+async function refreshPaymentMap() {
+  try {
+    const rows = await PaymentMethodMap.find().lean();
+    const next = { ...DEFAULT_PAYMENT_ACCOUNT_MAP };
+    for (const r of rows) if (r.method && r.accountCode) next[r.method] = r.accountCode;
+    PAYMENT_MAP_CACHE = next;
+  } catch { /* keep prior cache */ }
+}
+refreshPaymentMap();
+
+// Resolve a payment method to { code, name }. Falls back to Cash on Hand.
+function accountForPaymentMethod(method) {
+  const code = PAYMENT_MAP_CACHE[method] || '111000';
+  const meta = acctMeta(code);
+  return { code, name: meta?.name || 'Cash on Hand' };
+}
+
+// --- CLOSED ACCOUNTING PERIODS ──────────────────────────────────────────────
+// A period (year + month) once closed blocks all back-dated mutations to
+// journal entries / orders / inventory in that month. Reopening is allowed
+// for superadmin and is itself audited.
+const ClosedPeriodSchema = new mongoose.Schema({
+  year:      { type: Number, required: true, index: true },
+  month:     { type: Number, required: true, index: true }, // 1-12
+  closedBy:  String,
+  closedAt:  { type: Date, default: Date.now },
+  notes:     String,
+  reopenedBy: String,
+  reopenedAt: Date,
+  isOpen:    { type: Boolean, default: false, index: true },
+}, { timestamps: true });
+ClosedPeriodSchema.index({ year: 1, month: 1 }, { unique: true });
+const ClosedPeriod = mongoose.model('ClosedPeriod', ClosedPeriodSchema);
+
+// Check if a given date falls in a closed period. Returns the period doc if
+// closed, else null. Use this to gate any back-dated write.
+async function periodLockFor(date) {
+  if (!date) return null;
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return null;
+  const lock = await ClosedPeriod.findOne({
+    year: d.getFullYear(), month: d.getMonth() + 1, isOpen: false,
+  }).lean();
+  return lock || null;
+}
+
 // --- CHART OF ACCOUNTS ---
 const AccountSchema = new mongoose.Schema({
   code:          { type: String, unique: true },
   name:          String,
-  type:          String, // 'Asset' | 'Liability' | 'Income' | 'Expense'
+  type:          String, // 'asset' | 'liability' | 'equity' | 'revenue' | 'expense' …
   normalBalance: String, // 'Debit' | 'Credit'
+  parent:        String,            // parent account code (for custom child accounts)
+  custom:        { type: Boolean, default: false }, // user-created child account
 }, { timestamps: true });
 const Account = mongoose.model('Account', AccountSchema);
 
@@ -856,6 +1118,24 @@ const DEFAULT_ACCOUNTS = [
   }
 })();
 
+// In-memory meta for custom child accounts so reports (P&L / Balance Sheet) can
+// classify them. Each custom child inherits its canonical parent's behaviour
+// (type + cogs flag). Refreshed at boot and after every COA mutation.
+const CUSTOM_META = new Map();
+async function refreshCustomMeta() {
+  try {
+    const rows = await Account.find({ custom: true }).lean();
+    CUSTOM_META.clear();
+    for (const a of rows) {
+      const p = ACCOUNTS[a.parent] || {};
+      CUSTOM_META.set(a.code, { name: a.name, type: a.type || p.type, parent: a.parent, cogs: !!p.cogs });
+    }
+  } catch { /* non-fatal */ }
+}
+// Resolve account meta from the canonical chart, falling back to custom children.
+const acctMeta = (code) => ACCOUNTS[code] || CUSTOM_META.get(code) || null;
+refreshCustomMeta();
+
 const UserSchema = new mongoose.Schema({
   userCode: { type: String, index: true },
   name: { type: String, required: true, index: true },
@@ -863,6 +1143,19 @@ const UserSchema = new mongoose.Schema({
   role: { type: String, default: 'Staff' }
 }, { timestamps: true });
 const User = mongoose.model('User', UserSchema);
+
+// ── CLIENT ACCOUNTS (logistics mode only) ────────────────────────────────────
+// Pre-registered clients who log in to place orders directly (no QR scan).
+// Created/managed by superadmin. paymentMethod is pre-set per client.
+const ClientAccountSchema = new mongoose.Schema({
+  clientCode:    { type: String, index: true },                 // CLT-A0001
+  username:      { type: String, required: true, unique: true },
+  password:      { type: String, required: true },              // bcrypt-hashed
+  name:          { type: String, required: true },
+  paymentMethod: { type: String, default: 'Cash' },             // pre-set; can be overridden per order
+  isActive:      { type: Boolean, default: true },
+}, { timestamps: true });
+const ClientAccount = mongoose.model('ClientAccount', ClientAccountSchema);
 
 // Refresh-token session store — enables instant server-side revocation.
 // tokenHash = sha256(rawRefreshToken); the raw token lives only in the client's
@@ -894,6 +1187,118 @@ app.post('/api/roles', verifyToken, requireSuperAdmin, validate(roleSchema), asy
 app.delete('/api/roles/:id', verifyToken, async (req, res) => {
   await Role.findByIdAndDelete(req.params.id);
   res.json({ success: true });
+});
+
+// ── CLIENT ACCOUNTS (logistics mode only) ────────────────────────────────────
+
+// Client login — returns a short-lived JWT with role='client' and pre-set paymentMethod
+app.post('/api/client-auth/login', loginLimiter, async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ success: false, error: 'Username and password are required.' });
+    const client = await ClientAccount.findOne({ username: username.trim() });
+    if (!client || !client.isActive) return res.status(401).json({ success: false, error: 'Invalid credentials or account is inactive.' });
+    const match = await bcrypt.compare(password, client.password);
+    if (!match) return res.status(401).json({ success: false, error: 'Invalid credentials.' });
+    const token = jwt.sign(
+      { _id: client._id, clientId: String(client._id), username: client.username, name: client.name, role: 'client', paymentMethod: client.paymentMethod },
+      process.env.JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+    res.json({ success: true, token, client: { _id: String(client._id), clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// Logged-in client's own orders — drives the portal status sidebar.
+app.get('/api/client/orders', verifyToken, async (req, res) => {
+  try {
+    const clientId = req.user?.clientId || req.user?._id;
+    if (!clientId || req.user?.role !== 'client') {
+      return res.status(403).json({ success: false, error: 'Client session required.' });
+    }
+    const orders = await Order.find(
+      { clientId: String(clientId) },
+      { orderNumber: 1, billingNumber: 1, status: 1, total: 1, items: 1, paymentMethod: 1, createdAt: 1, transactionType: 1, clientReceived: 1 }
+    ).sort({ createdAt: -1 }).limit(30).lean();
+    res.json({ success: true, orders });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// Client confirms they received a completed order (portal "I received my order").
+app.post('/api/client/orders/:id/received', verifyToken, async (req, res) => {
+  try {
+    const clientId = req.user?.clientId || req.user?._id;
+    if (!clientId || req.user?.role !== 'client') return res.status(403).json({ success: false, error: 'Client session required.' });
+    const order = await Order.findOne({ _id: req.params.id, clientId: String(clientId) });
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+    if (!['Completed', 'Delivered', 'Picked Up'].includes(order.status)) {
+      return res.status(400).json({ success: false, error: 'Order is not ready yet.' });
+    }
+    order.clientReceived = true;
+    await order.save();
+    emitToOps('orderUpdated', order);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// CRUD for client accounts — superadmin only
+app.get('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const clients = await ClientAccount.find({}, { password: 0 }).sort({ createdAt: -1 });
+    res.json({ success: true, clients });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { username, password, name, paymentMethod } = req.body;
+    if (!username?.trim() || !password || !name?.trim()) {
+      return res.status(400).json({ success: false, error: 'username, password, and name are required.' });
+    }
+    const exists = await ClientAccount.findOne({ username: username.trim() });
+    if (exists) return res.status(409).json({ success: false, error: 'Username already taken.' });
+    const hashed = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    const clientCode = await generateNextSequence(ClientAccount, 'CLT', 'clientCode');
+    const client = await ClientAccount.create({ clientCode, username: username.trim(), password: hashed, name: name.trim(), paymentMethod: paymentMethod || 'Cash' });
+    res.json({ success: true, client: { _id: client._id, clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { username, password, name, paymentMethod, isActive } = req.body;
+    const update = {};
+    if (username) update.username = username.trim();
+    if (name) update.name = name.trim();
+    if (paymentMethod) update.paymentMethod = paymentMethod;
+    if (typeof isActive === 'boolean') update.isActive = isActive;
+    if (password) update.password = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    const client = await ClientAccount.findByIdAndUpdate(req.params.id, { $set: update }, { new: true, select: '-password' });
+    if (!client) return res.status(404).json({ success: false, error: 'Client account not found.' });
+    res.json({ success: true, client });
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ success: false, error: 'Username already taken.' });
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+app.delete('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    await ClientAccount.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
 });
 
 // 1. Minimal Audit Log Schema (New)
@@ -1117,7 +1522,8 @@ app.get('/api/inventory/history', verifyToken, async (req, res) => {
 });
 // Categories
 app.get('/api/categories', async (req, res) => {
-  const categories = await Category.find().lean();
+  // Tenancy: only return rows belonging to this server's business type.
+  const categories = await Category.find({ businessType: BUSINESS_TYPE }).lean();
   res.json({ success: true, categories });
 });
 
@@ -1205,30 +1611,65 @@ app.post('/api/sessions/:id/close', async (req, res) => {
 // Products
 app.get('/api/products', async (req, res) => {
   try {
-    // Exclude soft-deleted products
-    const products = await Product.find({ isArchived: { $ne: true } }).populate('modifierGroups').lean();
+    // Identify the caller so we can return the right shape:
+    //  • client JWT  → effectiveDiscountPercent for that client; raw overrides stripped
+    //  • admin/staff → keep clientDiscounts so the Products tab can show & re-save them
+    //  • anonymous   → product default discountPercent only; raw overrides stripped
+    let buyerClientId = '';
+    let isAdminCaller = false;
+    try {
+      const raw = req.headers.authorization?.replace(/^Bearer /, '') || req.cookies?.client_token || '';
+      if (raw) {
+        const dec = jwt.verify(raw, process.env.JWT_SECRET);
+        if (dec?.role === 'client') buyerClientId = String(dec.clientId || dec._id || '');
+        else if (dec?.role) isAdminCaller = true; // any non-client authenticated user is staff/admin
+      }
+    } catch { /* anonymous / invalid token — fall back to the default discount */ }
 
-    // Compute stockAvailable: false when any baseRecipe ingredient is at zero / missing
-    // Only run the inventory lookup if at least one product has a recipe
-    const hasRecipes = products.some(p => (p.baseRecipe || []).length > 0);
-    if (hasRecipes) {
-      const invItems = await Inventory.find({}, { _id: 1, stockQty: 1 }).lean();
-      const invMap = {};
-      invItems.forEach(i => { invMap[i._id.toString()] = i.stockQty; });
-      products.forEach(p => {
-        const recipe = p.baseRecipe || [];
-        if (recipe.length === 0) { p.stockAvailable = true; return; }
-        // Every linked ingredient must have enough stock to make at least one unit.
+    // Exclude soft-deleted products; tenancy-scoped to this server's businessType.
+    const products = await Product.find({ isArchived: { $ne: true }, businessType: BUSINESS_TYPE }).populate('modifierGroups').lean();
+    // Resolve the effective per-line discount for this caller.
+    products.forEach(p => {
+      let pct = Number(p.discountPercent || 0);
+      if (buyerClientId) {
+        const ov = (p.clientDiscounts || []).find(d => String(d.clientId) === buyerClientId);
+        if (ov) pct = Number(ov.percent || 0);
+      }
+      p.effectiveDiscountPercent = Math.max(0, Math.min(100, pct));
+      // Only strip raw overrides from non-admin responses. Admin / staff need
+      // them to power the edit form and the on-behalf client picker in POS;
+      // stripping made the form silently lose overrides on save (the form
+      // rendered as empty, then "Save" overwrote real data with [] ).
+      if (!isAdminCaller) delete p.clientDiscounts;
+    });
+
+    // Compute stockAvailable from live inventory.
+    //  • FB / recipe products: every linked ingredient must have enough stock.
+    //  • LOG / 1:1 products (no recipe): the product IS a stocked good — match the
+    //    linked inventory item by itemCode (then itemName) and require at least one
+    //    sellable unit (unitMultiplier base units) on hand.
+    const invItems = await Inventory.find({}, { _id: 1, itemCode: 1, itemName: 1, stockQty: 1, unitMultiplier: 1 }).lean();
+    const invById = {}, invByCode = {}, invByName = {};
+    invItems.forEach(i => {
+      invById[i._id.toString()] = i;
+      if (i.itemCode) invByCode[i.itemCode] = i;
+      if (i.itemName) invByName[i.itemName] = i;
+    });
+    products.forEach(p => {
+      const recipe = p.baseRecipe || [];
+      if (recipe.some(r => r.invId)) {
         p.stockAvailable = recipe.every(ing => {
           if (!ing.invId) return true;                  // unlinked — don't block the product
-          const qty = invMap[ing.invId];
+          const inv = invById[ing.invId];
           const need = Number(ing.qty) || 0;
-          return qty !== undefined && qty > 0 && qty >= need;
+          return inv && inv.stockQty > 0 && inv.stockQty >= need;
         });
-      });
-    } else {
-      products.forEach(p => { p.stockAvailable = true; });
-    }
+      } else {
+        // 1:1 logistics good: available when the linked stock covers one pack.
+        const inv = invByCode[p.productCode] || invByName[p.name];
+        p.stockAvailable = inv ? inv.stockQty >= baseUnitsPerSale(p, inv) : true;
+      }
+    });
 
     res.json({ success: true, products });
   } catch (err) {
@@ -1268,6 +1709,12 @@ app.put('/api/products/:id', verifyToken, async (req, res) => {
         details: { name: updatedProduct.name, oldPrice: existing.basePrice, newPrice: updatedProduct.basePrice }
       });
     }
+    // General edit audit — records every PUT for forensic trail.
+    await logAudit(req, {
+      action: 'update', entity: 'Product', entityId: req.params.id,
+      before: existing ? { name: existing.name, basePrice: existing.basePrice, category: existing.category, costOverride: existing.costOverride } : null,
+      after:  updatedProduct ? { name: updatedProduct.name, basePrice: updatedProduct.basePrice, category: updatedProduct.category, costOverride: updatedProduct.costOverride } : null,
+    });
     emitToAll('menuUpdated');
     res.json({ success: true, product: updatedProduct });
   } catch (err) {
@@ -1327,9 +1774,11 @@ app.delete('/api/products/:id', verifyToken, async (req, res) => {
 app.get('/api/orders', verifyToken, async (req, res) => {
   try {
     const { page, limit, search } = req.query;
-    const baseFilter = { isArchived: false, isParked: { $ne: true } };
+    // Tenancy filter — businessType: undefined still matches via $in so that any
+    // unbackfilled docs (shouldn't exist after startup migration) still show up.
+    const baseFilter = { isArchived: false, isParked: { $ne: true }, businessType: BUSINESS_TYPE };
     if (search && search.trim()) {
-      const rx = { $regex: search.trim(), $options: 'i' };
+      const rx = { $regex: escapeRegex(search.trim()), $options: 'i' };
       baseFilter.$or = [{ customerName: rx }, { orderNumber: rx }, { table: rx }];
     }
     const query = Order.find(baseFilter).sort({ createdAt: -1 }).lean();
@@ -1352,7 +1801,7 @@ app.get('/api/orders/archives', verifyToken, requireSuperAdmin, async (req, res)
     const { search, start, end, page = 1, limit: lim = 200 } = req.query;
     const filter = { isArchived: true };
     if (search?.trim()) {
-      const rx = { $regex: search.trim(), $options: 'i' };
+      const rx = { $regex: escapeRegex(search.trim()), $options: 'i' };
       filter.$or = [{ customerName: rx }, { orderNumber: rx }, { cashier: rx }, { table: rx }];
     }
     if (start || end) {
@@ -1426,7 +1875,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       if (existingOrder) return res.status(200).json({ success: true, order: existingOrder, message: "Duplicate prevented." });
     }
 
-    let { items, discountPercent = 0, discountFlat = 0, table, customerName, sessionId, isComplimentary = false, employeeName = '', orderNotes = '', guestCount = 1, payments: paymentsInput } = req.body;
+    let { items, discountPercent = 0, discountFlat = 0, table, customerName, sessionId, isComplimentary = false, employeeName = '', orderNotes = '', guestCount = 1, payments: paymentsInput, paymentMethod: bodyPaymentMethod, termsOfPayment } = req.body;
 
     // Block QR-originated orders when kitchen has toggled off (staff POS unaffected)
     if (req.qrSession) {
@@ -1434,7 +1883,24 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       const isOpen = qrSetting ? qrSetting.value !== false : true;
       if (!isOpen) return res.status(403).json({ success: false, error: 'Kitchen is currently closed. Please see staff at the counter.' });
     }
-    const cashier = req.user?.name || 'System';
+
+    // Client account ordering (logistics mode): extract pre-set payment method and identity
+    const isClientOrder = req.user?.role === 'client';
+    const clientPresetPayment = isClientOrder ? req.user.paymentMethod : null;
+    const cashier = isClientOrder ? (req.user.username || req.user.name || 'Client') : (req.user?.name || 'System');
+
+    // Admin POS on-behalf: an admin/staff can attach a client account to an
+    // order they're placing in person (`clientAccountId` in the body). When set,
+    // we resolve per-product per-client discount overrides as if that client
+    // bought it themselves. Ignored when the caller IS already a client (the
+    // JWT identity is canonical and can't be overridden client-side).
+    let onBehalfClientId = '';
+    if (!isClientOrder && req.body.clientAccountId) {
+      try {
+        const cli = await ClientAccount.findById(req.body.clientAccountId).lean();
+        if (cli && cli.isActive) onBehalfClientId = String(cli._id);
+      } catch { /* invalid id — ignore, fall back to default discount */ }
+    }
 
     let isVatExempt = true;
     // FIX 1: Safely default to Takeout if the table is null or empty
@@ -1466,19 +1932,24 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       const comboCompIds = items.filter(i => i.isCombo).flatMap(i => (i.comboItems || []).map(c => c.productId)).filter(Boolean);
       const allIds = [...new Set([...directIds, ...comboCompIds])];
       const [prods, cats] = await Promise.all([
-        allIds.length ? Product.find({ _id: { $in: allIds } }, { _id: 1, category: 1 }).lean() : [],
+        allIds.length ? Product.find({ _id: { $in: allIds } }, { _id: 1, category: 1, productCode: 1 }).lean() : [],
         Category.find({}, { name: 1, department: 1 }).lean()
       ]);
       const catDeptMap = Object.fromEntries(cats.map(c => [c.name, c.department || 'Kitchen']));
       const prodCatMap = Object.fromEntries(prods.map(p => [p._id.toString(), p.category]));
-      const deptOf = (pid) => { const cat = prodCatMap[pid]; return cat ? (catDeptMap[cat] || 'Kitchen') : null; };
+      const prodCodeMap = Object.fromEntries(prods.map(p => [p._id.toString(), p.productCode]));
+      const defaultDept = BUSINESS_TYPE === 'log' ? 'Storage Room' : 'Kitchen';
+      const deptOf = (pid) => { const cat = prodCatMap[pid]; return cat ? (catDeptMap[cat] || defaultDept) : null; };
       for (const item of items) {
+        if (item.productId && prodCodeMap[item.productId]) {
+          item.productCode = prodCodeMap[item.productId];
+        }
         if (item.isCombo && (item.comboItems || []).length) {
           const depts = item.comboItems.map(c => deptOf(c.productId)).filter(Boolean);
-          item.department = (depts.length > 0 && depts.every(d => d === 'Bar')) ? 'Bar' : 'Kitchen';
+          item.department = (depts.length > 0 && depts.every(d => d === 'Bar')) ? 'Bar' : defaultDept;
         } else {
           const d = deptOf(item.productId);
-          item.department = d || (item.department || 'Kitchen');
+          item.department = d || (item.department || defaultDept);
         }
       }
     }
@@ -1496,26 +1967,52 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     else if (discountPercent > 0) discountType = 'Promo';
     else if (flatDiscount > 0) discountType = 'Promo';
 
+    // Per-product (and optional per-client) discount lookup. Server-authoritative —
+    // never trust a client-side discount field. If the buyer is a logged-in client
+    // and the product has a matching clientDiscounts entry, that override wins.
+    const _prodIds = items.map(i => i.productId).filter(Boolean);
+    const _prodNames = items.map(i => i.name).filter(Boolean);
+    const _discProds = await Product.find(
+      { $or: [{ _id: { $in: _prodIds } }, { name: { $in: _prodNames } }] },
+      { _id: 1, name: 1, discountPercent: 1, clientDiscounts: 1 }
+    ).lean();
+    const _discById = new Map(_discProds.map(p => [String(p._id), p]));
+    const _discByName = new Map(_discProds.map(p => [p.name, p]));
+    // Buyer identity for per-client discount resolution. Authenticated client
+    // wins; otherwise we fall back to the admin-on-behalf clientAccountId.
+    const _buyerClientId = isClientOrder
+      ? String(req.user.clientId || req.user._id || '')
+      : (onBehalfClientId || '');
+    const productDiscPct = (item) => {
+      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+      if (!p) return 0;
+      // 1) per-client override beats the default when a client is buying
+      if (_buyerClientId) {
+        const ov = (p.clientDiscounts || []).find(d => String(d.clientId) === _buyerClientId);
+        if (ov) return Math.max(0, Math.min(100, Number(ov.percent || 0)));
+      }
+      return Math.max(0, Math.min(100, Number(p.discountPercent || 0)));
+    };
+
     const validatedItems = items.map(item => {
-      item.hasDiscount = true; 
+      item.hasDiscount = true;
       // Calculate Add-Ons Total
       const addOnTotal = (item.selectedAddOns || []).reduce((sum, a) => sum + Number(a.price || 0), 0);
       const itemBase = ((item.price || 0) + addOnTotal) * (item.quantity || 1);
       totalGross += itemBase;
-      
-      if (isComplimentary) {
-        totalDiscount += itemBase;
-      } else if (discountPercent > 0) {
-        const itemDisc = itemBase * (discountPercent / 100);
-        totalDiscount += itemDisc;
 
-        // If not exempt, add VAT on top of discounted amount
-        if (!isVatExempt && discountType !== 'SC/PWD') {
-          totalVat += (itemBase - itemDisc) * 0.12;
-        }
-      } else {
-        // Standard item
-        if (!isVatExempt) totalVat += (itemBase * 0); // VAT DISABLED
+      // Per-product discount applies to THIS line only.
+      const prodPct = productDiscPct(item);
+      const prodDisc = +(itemBase * prodPct / 100).toFixed(2);
+      item.productDiscountPercent = prodPct;
+      totalDiscount += prodDisc;
+      const lineBase = itemBase - prodDisc;   // base the order-level discount works on
+
+      if (isComplimentary) {
+        totalDiscount += lineBase;
+      } else if (discountPercent > 0) {
+        // Order-wide discount (SC/PWD / promo) on top of any product discount.
+        totalDiscount += lineBase * (discountPercent / 100);
       }
       return item;
     });
@@ -1532,11 +2029,29 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     const currentYear = new Date().getFullYear();
     const orderNumber = await generateNextSequence(Order, `ORD-${currentYear}`, 'orderNumber');
 
+    // Generate billing number for logistics mode (monthly-reset: YYYY-MM-XXXX)
+    let billingNumber = '';
+    if (BUSINESS_TYPE === 'log') {
+      const now = new Date();
+      const billingPrefix = `BIL-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const billingCounter = await Counter.findOneAndUpdate(
+        { _id: billingPrefix },
+        { $inc: { seq: 1 } },
+        { upsert: true, new: true }
+      );
+      billingNumber = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${billingCounter.seq.toString().padStart(4, '0')}`;
+    }
+
+    // Resolve payment method: client pre-set → body override → default Cash
+    const resolvedPaymentMethod = paymentsInput?.length > 0
+      ? (paymentsInput.length === 1 ? paymentsInput[0].method : 'Split')
+      : (bodyPaymentMethod || clientPresetPayment || 'Cash');
+
     const newOrder = await Order.create({
-      orderNumber, table, items: validatedItems, 
-      subtotal: totalGross, 
-      vatRate: vatRate, 
-      vatAmount: totalVat, 
+      orderNumber, table, items: validatedItems,
+      subtotal: totalGross,
+      vatRate: vatRate,
+      vatAmount: totalVat,
       discountPercent: isComplimentary ? 0 : discountPercent,
       discount: totalDiscount,
       total: finalTotal,
@@ -1545,11 +2060,12 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       transactionType: isComplimentary ? 'COMPLIMENTARY' : 'NORMAL',
       orderNotes: (orderNotes || '').trim().slice(0, 300),
       guestCount: Math.max(1, parseInt(guestCount) || 1),
+      paymentMethod: resolvedPaymentMethod,
+      ...(termsOfPayment && { termsOfPayment }),
+      ...(billingNumber && { billingNumber }),
+      ...(isClientOrder && { clientId: req.user._id || req.user.clientId || '', clientUsername: req.user.username || '' }),
       ...(idempotencyKey && { idempotencyKey }),
-      ...(paymentsInput?.length > 0 && {
-        payments: paymentsInput,
-        paymentMethod: paymentsInput.length === 1 ? paymentsInput[0].method : 'Split'
-      }),
+      ...(paymentsInput?.length > 0 && { payments: paymentsInput }),
     });
 
     emitToOps('newOrder', newOrder);
@@ -1702,24 +2218,30 @@ app.put('/api/orders/:id', verifyToken, async (req, res) => {
     let totalVat = 0;
     
     order.items.forEach(item => {
-      const price = item.price || 0; 
+      const price = item.price || 0;
       const qty = item.quantity || 1;
       const addOnTotal = (item.selectedAddOns || []).reduce((sum, a) => sum + Number(a.price || 0), 0);
       const itemBase = (price + addOnTotal) * qty;
-      
+
       totalGross += itemBase;
       const getsDiscount = item.hasDiscount !== false;
-      const isolatedItemDiscount = item.discountPercent || 0; // The new item-level tag
+      // Effective per-line discount: MAX of the server-resolved per-product /
+      // per-client discount (productDiscountPercent, set at order create) and
+      // the cashier per-item override (discountPercent). The MAX guarantees a
+      // status change can never silently strip a buyer's negotiated rate.
+      const prodPct = Number(item.productDiscountPercent || 0);
+      const cashierPct = Number(item.discountPercent || 0);
+      const linePct = Math.max(prodPct, cashierPct);
 
       if (order.isComplimentary) {
         totalDiscount += itemBase;
-      } else if (isolatedItemDiscount > 0) {
-        // OVERRIDE: If this item has an isolated discount (e.g. 20% PWD), apply ONLY this discount!
-        const itemDisc = itemBase * (isolatedItemDiscount / 100);
+      } else if (linePct > 0) {
+        // Per-line discount (product/client or cashier override) overrides the
+        // order-level discount for this line.
+        const itemDisc = itemBase * (linePct / 100);
         totalDiscount += itemDisc;
         if (!order.isVatExempt) totalVat += (itemBase - itemDisc) * 0; // VAT DISABLED
       } else if (getsDiscount && order.discountPercent > 0) {
-        // GLOBAL DISCOUNT: Apply only if the item doesn't have an isolated one
         if (order.isVatExempt || order.discountType === 'SC/PWD') {
           const scDisc = itemBase * (order.discountPercent / 100);
           totalDiscount += scDisc;
@@ -1770,11 +2292,17 @@ app.put('/api/orders/:id', verifyToken, async (req, res) => {
       }
     }
 
+    // Orders fulfilled in batches are posted by the partial-fulfill endpoint
+    // (inventory, COGS and revenue per round). Skip the standard engine so the
+    // sale isn't double-counted if such an order is completed via this route.
+    const wasPartiallyFulfilled = (order.items || []).some(it => (it.fulfilledQty || 0) > 0);
+
     // --- THE STRICT ERP ENGINE ---
-    if (status === 'Completed' && wasNotCompleted) {
+    if (status === 'Completed' && wasNotCompleted && !wasPartiallyFulfilled) {
       log.info(`\n[ERP ENGINE] Processing Order: ${order.orderNumber}...`);
       let totalCogs = 0;
       const stockCardBatch = [];
+      const depletedInvIds = new Set(); // track inventory items that hit 0 for auto-unavailable
 
       // BULK PRE-FETCH all products for this order in 2 queries (fix N+1)
       const itemProductIds = order.items.map(i => i.productId).filter(Boolean);
@@ -1823,6 +2351,7 @@ app.put('/api/orders/:id', verifyToken, async (req, res) => {
                 remarks: `Sold via Combo (${item.name} → ${comp.name})`
               });
               totalCogs += (invItem.unitCost * deductQty);
+              if (invItem.stockQty <= 0) depletedInvIds.add(String(ing.invId));
             }
           }
           continue; // combo fully handled
@@ -1839,10 +2368,37 @@ app.put('/api/orders/:id', verifyToken, async (req, res) => {
         if (!product) continue;
 
         let recipeToUse = product.baseRecipe || [];
-        const sizeMatch = item.name.match(/\(([^)]+)\)$/); 
+        const sizeMatch = item.name.match(/\(([^)]+)\)$/);
         if (sizeMatch) {
           const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
           if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
+        }
+
+        // LOGISTICS 1:1 FALLBACK — product has no recipe: treat it as a stocked
+        // good linked by code/name. Deduct (qty × unitMultiplier) base units and
+        // book COGS at unitCost. Skips cleanly if no matching inventory exists.
+        if (!recipeToUse.some(r => r.invId)) {
+          const linkInv = await resolveLinkedInventory(product, item.productCode, session);
+          if (linkInv) {
+            const deductQty = item.quantity * baseUnitsPerSale(product, linkInv);
+            const updated = await Inventory.findOneAndUpdate(
+              { _id: linkInv._id, stockQty: { $gte: deductQty } },
+              { $inc: { stockQty: -deductQty } },
+              { session, new: true }
+            );
+            if (!updated) {
+              await session.abortTransaction();
+              session.endSession();
+              return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Cannot fulfill order. [${linkInv.itemName}] would drop below zero. Please receive stock in the Procurement tab first.` });
+            }
+            stockCardBatch.push({
+              inventoryId: updated._id, itemName: updated.itemName, type: 'Sale',
+              reference: mkRef('', order.orderNumber), qtyChange: -deductQty, balanceAfter: updated.stockQty,
+              remarks: `Sold (${item.name})`
+            });
+            totalCogs += (linkInv.unitCost * deductQty);
+            if (updated.stockQty <= 0) depletedInvIds.add(String(updated._id));
+          }
         }
 
         for (const ing of recipeToUse) {
@@ -1876,6 +2432,7 @@ app.put('/api/orders/:id', verifyToken, async (req, res) => {
             remarks: `Sold via ${item.name}`
           });
           totalCogs += (invItem.unitCost * deductQty);
+          if (invItem.stockQty <= 0) depletedInvIds.add(String(ing.invId));
         }
         // DEDUCT ADD-ONS + MODIFIER-OPTION INVENTORY
         for (const selectedAddOn of (item.selectedAddOns || [])) {
@@ -1913,9 +2470,28 @@ app.put('/api/orders/:id', verifyToken, async (req, res) => {
                 remarks: `Sold via Add-on (${selectedAddOn.name})`
               });
               totalCogs += (invItem.unitCost * deductQty);
+              if (invItem.stockQty <= 0) depletedInvIds.add(String(ing.invId));
             }
           }
         }
+      }
+
+      // Auto-mark products unavailable when a required ingredient hits zero stock
+      if (depletedInvIds.size > 0) {
+        const ids = [...depletedInvIds];
+        await Product.updateMany(
+          {
+            isAvailable: true,
+            $or: [
+              { 'baseRecipe.invId': { $in: ids } },
+              { 'sizes.recipe.invId': { $in: ids } },
+              { 'addOns.recipe.invId': { $in: ids } },
+            ],
+          },
+          { $set: { isAvailable: false } }
+        );
+        emitToAll('menuUpdated');
+        log.info({ depletedInvIds: ids }, 'Auto-marked products unavailable due to depleted stock');
       }
 
       // Batch-insert all stock card entries in one round-trip
@@ -2078,6 +2654,28 @@ app.post('/api/orders/:id/void', verifyToken, requireSuperOrAdmin, async (req, r
         if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
       }
 
+      // LOGISTICS 1:1 FALLBACK — mirror the sale: reverse the linked stocked good.
+      if (!recipeToUse.some(r => r.invId)) {
+        const linkInv = await resolveLinkedInventory(product, item.productCode, session);
+        if (linkInv) {
+          const qtyUsed = item.quantity * baseUnitsPerSale(product, linkInv);
+          if (reason === 'Restock') {
+            const restored = await Inventory.findOneAndUpdate(
+              { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, new: true }
+            );
+            if (restored) {
+              totalCogs += (restored.unitCost * qtyUsed);
+              await StockCard.create([{
+                inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+                reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty, remarks: `Voided (${reason})`
+              }], { session });
+            }
+          } else {
+            totalCogs += (linkInv.unitCost * qtyUsed);
+          }
+        }
+      }
+
       for (const ing of recipeToUse) {
         if (!ing.invId) continue;
         const qtyUsed = ing.qty * item.quantity;
@@ -2211,7 +2809,9 @@ app.post('/api/orders/archive', verifyToken, async (req, res) => {
 // Inventory CRUD
 app.get('/api/inventory', verifyToken, async (req, res) => {
   const { page, limit: lim, search } = req.query;
-  const filter = search ? { itemName: { $regex: search, $options: 'i' } } : {};
+  // Tenancy: stamp businessType on the filter so each instance only sees its own.
+  // Escape the user-supplied search string to neutralise ReDoS / regex injection.
+  const filter = search ? { itemName: { $regex: escapeRegex(search), $options: 'i' }, businessType: BUSINESS_TYPE } : { businessType: BUSINESS_TYPE };
   if (page) {
     const pageNum = Math.max(1, parseInt(page) || 1);
     const pageSize = Math.min(100, parseInt(lim) || 50);
@@ -2243,10 +2843,15 @@ app.post('/api/inventory', verifyToken, async (req, res) => {
         unitCost: req.body.unitCost || 0
       }];
     }
+    // Resolve creditAccount against the full COA (canonical + custom). Allowed
+    // parents: 111 (Cash), 112 (Bank), 113 (E-Wallet), 220 (AP). Any sub-account
+    // under those parents works too — so users can route to specific cash drawers,
+    // bank accounts, or supplier-specific AP sub-ledgers added in the COA UI.
     const { creditAccount: rawCreditCode } = req.body;
-    const CREDIT_ACCOUNTS = { '111000': 'Cash on Hand', '112000': 'Cash in Bank', '220000': 'Accounts Payable' };
-    const creditCode = CREDIT_ACCOUNTS[rawCreditCode] ? rawCreditCode : '111000';
-    const creditName = CREDIT_ACCOUNTS[creditCode];
+    const isAllowedParent = (c) => /^(111|112|113|220)/.test(String(c || ''));
+    const resolved = acctMeta(rawCreditCode);
+    const creditCode = (resolved && isAllowedParent(rawCreditCode)) ? rawCreditCode : '111000';
+    const creditName = acctMeta(creditCode)?.name || 'Cash on Hand';
 
     const newItem = await Inventory.create(req.body);
 
@@ -2301,68 +2906,131 @@ app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, r
   } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
 
-// --- NEW: RESTOCK EXISTING INVENTORY (Weighted Average Cost) ---
+// --- RESTOCK EXISTING INVENTORY (Weighted Average Cost, transactional) ---
+// The whole flow — read stockQty/unitCost, compute WAC, save the item, write
+// the StockCard row, post the journal entry — runs inside a single Mongo
+// transaction. Two simultaneous restocks of the same SKU now serialise on the
+// inventory document instead of racing the WAC math. Retries on transient
+// transient errors (WriteConflict / TransientTransactionError).
 app.post('/api/inventory/restock/:id', verifyToken, async (req, res) => {
-  try {
-    const { addedStock, totalCost, expiryDate, creditAccount: rawCreditCode } = req.body;
-    const CREDIT_ACCOUNTS = { '111000': 'Cash on Hand', '112000': 'Cash in Bank', '220000': 'Accounts Payable' };
-    const creditCode = CREDIT_ACCOUNTS[rawCreditCode] ? rawCreditCode : '111000';
-    const creditName = CREDIT_ACCOUNTS[creditCode];
-    const item = await Inventory.findById(req.params.id);
-    if (!item) return res.status(404).json({ success: false, error: 'Item not found' });
+  const { addedStock, totalCost, expiryDate, creditAccount: rawCreditCode } = req.body;
+  const isAllowedParent = (c) => /^(111|112|113|220)/.test(String(c || ''));
+  const resolved = acctMeta(rawCreditCode);
+  const creditCode = (resolved && isAllowedParent(rawCreditCode)) ? rawCreditCode : '111000';
+  const creditName = acctMeta(creditCode)?.name || 'Cash on Hand';
 
-    // WEIGHTED AVERAGE COST MATH
-    const currentTotalValue = item.stockQty * item.unitCost;
-    const newTotalValue = currentTotalValue + totalCost;
-    const newStockQty = item.stockQty + addedStock;
-    const newUnitCost = newStockQty > 0 ? newTotalValue / newStockQty : 0;
+  const MAX_TXN_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_TXN_ATTEMPTS; attempt++) {
+    const session = await mongoose.startSession();
+    try {
+      let savedItem = null;
+      await session.withTransaction(async () => {
+        const item = await Inventory.findById(req.params.id).session(session);
+        if (!item) throw Object.assign(new Error('Item not found'), { httpStatus: 404 });
 
-    item.stockQty = newStockQty;
-    item.unitCost = newUnitCost;
+        // WAC (GAAP/IFRS). All values read inside the transaction — concurrent
+        // restocks block on this document until commit.
+        const currentTotalValue = item.stockQty * item.unitCost;
+        const newTotalValue = currentTotalValue + totalCost;
+        const newStockQty = item.stockQty + addedStock;
+        const newUnitCost = newStockQty > 0 ? newTotalValue / newStockQty : 0;
 
-    // Pre-generate a single reference for this restock (shared by StockCard + JournalEntry)
-    const rstRef = await mkSeqRef('INV-RST');
+        item.stockQty = newStockQty;
+        item.unitCost = newUnitCost;
 
-    // Multi-batch expiry: append the new batch and recompute soonest expiry.
-    if (expiryDate && addedStock > 0) {
-      item.expiryBatches = addBatch(item.expiryBatches || [], {
-        qty: addedStock,
-        expiryDate: new Date(expiryDate),
-        receivedAt: new Date(),
-        reference: rstRef,
-        unitCost: newUnitCost
+        const rstRef = await mkSeqRef('INV-RST');
+
+        if (expiryDate && addedStock > 0) {
+          item.expiryBatches = addBatch(item.expiryBatches || [], {
+            qty: addedStock,
+            expiryDate: new Date(expiryDate),
+            receivedAt: new Date(),
+            reference: rstRef,
+            unitCost: newUnitCost
+          });
+          item.expiryDate = soonestExpiry(item.expiryBatches);
+        }
+
+        await item.save({ session });
+        savedItem = item;
+
+        const batchUnitCost = addedStock > 0 ? totalCost / addedStock : 0;
+        await StockCard.create([{
+          inventoryId: item._id,
+          itemName: item.itemName,
+          type: 'Restock',
+          reference: rstRef,
+          qtyChange: addedStock,
+          unitCost: batchUnitCost,
+          balanceAfter: item.stockQty,
+          remarks: 'Restocked inventory'
+        }], { session });
+
+        if (totalCost > 0) {
+          const lines = [
+            { accountCode: '130000', accountName: 'Inventory Asset', debit: totalCost, credit: 0 },
+            { accountCode: creditCode, accountName: creditName,      debit: 0, credit: totalCost }
+          ];
+          await JournalEntry.create([{
+            reference: rstRef, description: `Restocked ${addedStock}${item.unit} of ${item.itemName}`,
+            lines, totalDebit: totalCost, totalCredit: totalCost
+          }], { session });
+        }
       });
-      item.expiryDate = soonestExpiry(item.expiryBatches);
+
+      emitToMgr('erpUpdated');
+      await logAudit(req, { action: 'restock', entity: 'Inventory', entityId: req.params.id, after: { addedStock, totalCost } });
+      return res.json({ success: true, item: savedItem });
+    } catch (error) {
+      // Standalone MongoDB without a replica set throws this — fall through to
+      // the legacy non-transactional path so dev environments still work.
+      const msg = String(error?.errorLabels || error?.message || '');
+      const isTransient = (error?.errorLabels || []).includes('TransientTransactionError') || /WriteConflict/i.test(msg);
+      if (isTransient && attempt < MAX_TXN_ATTEMPTS) {
+        continue; // retry
+      }
+      if (error?.httpStatus === 404) {
+        return res.status(404).json({ success: false, error: 'Item not found' });
+      }
+      const isUnsupported = /Transaction numbers are only allowed|Transactions are not supported/i.test(msg);
+      if (isUnsupported && attempt === 1) {
+        // Dev mode (no replica set) — fall back to non-transactional path.
+        log?.warn?.('Restock txn unsupported, falling back to non-transactional path.');
+        try {
+          const item = await Inventory.findById(req.params.id);
+          if (!item) return res.status(404).json({ success: false, error: 'Item not found' });
+          const currentTotalValue = item.stockQty * item.unitCost;
+          const newTotalValue = currentTotalValue + totalCost;
+          const newStockQty = item.stockQty + addedStock;
+          const newUnitCost = newStockQty > 0 ? newTotalValue / newStockQty : 0;
+          item.stockQty = newStockQty;
+          item.unitCost = newUnitCost;
+          const rstRef = await mkSeqRef('INV-RST');
+          if (expiryDate && addedStock > 0) {
+            item.expiryBatches = addBatch(item.expiryBatches || [], { qty: addedStock, expiryDate: new Date(expiryDate), receivedAt: new Date(), reference: rstRef, unitCost: newUnitCost });
+            item.expiryDate = soonestExpiry(item.expiryBatches);
+          }
+          await item.save();
+          const batchUnitCost = addedStock > 0 ? totalCost / addedStock : 0;
+          await StockCard.create({ inventoryId: item._id, itemName: item.itemName, type: 'Restock', reference: rstRef, qtyChange: addedStock, unitCost: batchUnitCost, balanceAfter: item.stockQty, remarks: 'Restocked inventory' });
+          if (totalCost > 0) {
+            const lines = [
+              { accountCode: '130000', accountName: 'Inventory Asset', debit: totalCost, credit: 0 },
+              { accountCode: creditCode, accountName: creditName, debit: 0, credit: totalCost },
+            ];
+            await JournalEntry.create({ reference: rstRef, description: `Restocked ${addedStock}${item.unit} of ${item.itemName}`, lines, totalDebit: totalCost, totalCredit: totalCost });
+          }
+          emitToMgr('erpUpdated');
+          await logAudit(req, { action: 'restock', entity: 'Inventory', entityId: req.params.id, after: { addedStock, totalCost, fallback: true } });
+          return res.json({ success: true, item });
+        } catch (fallbackErr) {
+          return res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : fallbackErr.message });
+        }
+      }
+      return res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : error.message });
+    } finally {
+      session.endSession();
     }
-
-    await item.save();
-
-    // --- NEW: WRITE THE RESTOCK TO THE STOCK CARD ---
-    // This is what the EOD Engine reads to calculate the "In" column!
-    await StockCard.create({
-      inventoryId: item._id,
-      itemName: item.itemName,
-      type: 'Restock',
-      reference: rstRef,
-      qtyChange: addedStock, // Positive because it is entering inventory
-      balanceAfter: item.stockQty,
-      remarks: 'Restocked inventory'
-    });
-
-    // AUTO-JOURNAL FOR RESTOCKING
-    if (totalCost > 0) {
-      const reference = rstRef;
-      const lines = [
-        { accountCode: '130000', accountName: 'Inventory Asset', debit: totalCost, credit: 0 },
-        { accountCode: creditCode, accountName: creditName,   debit: 0, credit: totalCost }
-      ];
-      await JournalEntry.create({ reference, description: `Restocked ${addedStock}${item.unit} of ${item.itemName}`, lines, totalDebit: totalCost, totalCredit: totalCost });
-    }
-
-    emitToMgr('erpUpdated');
-    res.json({ success: true, item });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -2564,6 +3232,10 @@ app.delete('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res
   try {
     const item = await Inventory.findByIdAndDelete(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Item not found.' });
+    await logAudit(req, {
+      action: 'delete', entity: 'Inventory', entityId: req.params.id,
+      before: { itemName: item.itemName, stockQty: item.stockQty, unit: item.unit, unitCost: item.unitCost },
+    });
     emitToMgr('erpUpdated');
     res.json({ success: true });
   } catch (err) {
@@ -2598,6 +3270,8 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       const row = items[i] || {};
       const itemCode = String(row.itemCode || row.code || '').trim();
       const itemName = String(row.itemName || row.product || row.name || '').trim();
+      const categoryName = String(row.category || '').trim();
+      const srp = row.srp !== undefined && row.srp !== '' ? parseFloat(row.srp) : null;
       // FORCED RULE: only kg / L / pcs displayed. Auto-promote g→kg, ml→L.
       let displayUnit = String(row.displayUnit || row.unit || '').trim();
       if (displayUnit.toLowerCase() === 'g')  displayUnit = 'kg';
@@ -2675,10 +3349,12 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         }], { session });
 
         if (Math.abs(valueImpact) > 0.001) {
+          // Stock-take increase = opening-balance / owner-funded stock → Owner's Capital
+          // (equity), not a P&L gain. Decrease = real variance loss → Spoilage expense.
           const lines = diff >= 0
             ? [
                 { accountCode: '130000', accountName: 'Inventory Asset', debit: valueImpact, credit: 0 },
-                { accountCode: '530000', accountName: 'Inventory Adjustment Gain', debit: 0, credit: valueImpact }
+                { accountCode: '310000', accountName: "Owner's Capital", debit: 0, credit: valueImpact }
               ]
             : [
                 { accountCode: '535000', accountName: 'Spoilage, Variance & Waste Expense', debit: valueImpact, credit: 0 },
@@ -2695,6 +3371,25 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         summary.updated++;
         if (diff > 0) { summary.increased++; summary.gainValue += valueImpact; }
         if (diff < 0) { summary.decreased++; summary.lossValue += valueImpact; }
+
+        // Sync product menu entry if category provided
+        if (categoryName) {
+          const cat = await Category.findOneAndUpdate(
+            { name: { $regex: new RegExp(`^${categoryName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
+            { $setOnInsert: { name: categoryName, department: 'Bar' } },
+            { upsert: true, new: true, session }
+          );
+          await Product.findOneAndUpdate(
+            { productCode: existing.itemCode },
+            { $set: {
+                name: existing.itemName,
+                category: cat.name,
+                ...(srp != null && !isNaN(srp) ? { basePrice: srp } : {}),
+                isAvailable: existing.stockQty > 0,
+            }, $setOnInsert: { basePrice: srp != null && !isNaN(srp) ? srp : 0 } },
+            { upsert: true, new: true, session }
+          );
+        }
       } else {
         // New item — onboard via Inventory Adjustment Gain (DR 1500 / CR 4200)
         const newCode = itemCode || await generateNextSequence(Inventory, 'RML', 'itemCode');
@@ -2728,9 +3423,11 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         }], { session });
 
         if (valueImpact > 0.001) {
+          // Opening-balance load: offset to Owner's Capital (equity), NOT a P&L gain —
+          // the owner funded this stock; loading it is a capital contribution, not income.
           const lines = [
             { accountCode: '130000', accountName: 'Inventory Asset', debit: valueImpact, credit: 0 },
-            { accountCode: '530000', accountName: 'Inventory Adjustment Gain', debit: 0, credit: valueImpact }
+            { accountCode: '310000', accountName: "Owner's Capital", debit: 0, credit: valueImpact }
           ];
           assertBalanced(lines, `IMPORT-NEW-${item.itemName}`);
           await JournalEntry.create([{
@@ -2742,12 +3439,32 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         summary.created++;
         summary.increased++;
         summary.gainValue += valueImpact;
+
+        // Create product menu entry if category provided
+        if (categoryName) {
+          const cat = await Category.findOneAndUpdate(
+            { name: { $regex: new RegExp(`^${categoryName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
+            { $setOnInsert: { name: categoryName, department: 'Bar' } },
+            { upsert: true, new: true, session }
+          );
+          const productExists = await Product.findOne({ productCode: item.itemCode }).session(session);
+          if (!productExists) {
+            await Product.create([{
+              productCode: item.itemCode,
+              name: item.itemName,
+              category: cat.name,
+              basePrice: srp != null && !isNaN(srp) ? srp : 0,
+              isAvailable: newBaseQty > 0,
+            }], { session });
+          }
+        }
       }
     }
 
     await session.commitTransaction();
     session.endSession();
     emitToMgr('erpUpdated');
+    emitToAll('menuUpdated');
     res.json({ success: true, summary });
   } catch (err) {
     await session.abortTransaction();
@@ -2770,24 +3487,27 @@ app.get('/api/journal', verifyToken, requireSuperAdmin, async (req, res) => {
 
 app.post('/api/journal', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { description, lines } = req.body;
-    
+    const { description, lines, date: requestedDate } = req.body;
+
     // Calculate totals to ensure it balances
     const totalDebit = lines.reduce((sum, line) => sum + Number(line.debit || 0), 0);
     const totalCredit = lines.reduce((sum, line) => sum + Number(line.credit || 0), 0);
-    
-    // Optional: backend validation for balancing
+
     if (Math.abs(totalDebit - totalCredit) > 0.01) {
       return res.status(400).json({ success: false, error: 'Debits must equal Credits' });
     }
 
+    // Period-lock guard: block back-dated entries into a closed period.
+    const lock = await periodLockFor(requestedDate || new Date());
+    if (lock) return res.status(423).json({ success: false, error: `Period ${lock.year}-${String(lock.month).padStart(2,'0')} is closed. Reopen the period first.` });
+
     const reference = await mkSeqRef('JRN');
+    const payload = { reference, description, lines, totalDebit, totalCredit };
+    if (requestedDate) payload.date = new Date(requestedDate);
+    const newEntry = await JournalEntry.create(payload);
+    await logAudit(req, { action: 'create', entity: 'JournalEntry', entityId: newEntry._id, after: { reference, description, totalDebit } });
 
-    const newEntry = await JournalEntry.create({
-      reference, description, lines, totalDebit, totalCredit
-    });
-
-    emitToMgr('erpUpdated'); // auto-refresh the general ledger
+    emitToMgr('erpUpdated');
     res.json({ success: true, entry: newEntry });
   } catch (err) {
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
@@ -2831,11 +3551,9 @@ app.post('/api/expenses', verifyToken, requireSuperAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid expense category.' });
     if (!description?.trim()) return res.status(400).json({ success: false, error: 'Description required.' });
 
-    // Pick the credit-side cash account
-    let credAcct = { code: '111000', name: 'Cash on Hand' };
-    if (paymentMethod === 'Bank Transfer' || paymentMethod === 'Cash in Bank') credAcct = { code: '112000', name: 'Cash in Bank' };
-    else if (['GCash', 'Maya', 'Maribank', 'E-Wallet', 'Other E-Wallet'].includes(paymentMethod)) credAcct = { code: '113000', name: 'E-Wallet' };
-    else if (paymentMethod === 'On Account') credAcct = { code: '220000', name: 'Accounts Payable' };
+    // Pick the credit-side account via the configurable payment-method map.
+    // Manager can route "GCash" to a custom sub-account (e.g. BPI E-Wallet 113001) via Ledger UI.
+    const credAcct = accountForPaymentMethod(paymentMethod);
 
     const cat = EXPENSE_CATEGORIES.find(c => c.code === categoryCode);
     const acct = ACCOUNTS[categoryCode];
@@ -2885,9 +3603,8 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     if (amt > order.total + 0.01)
       return res.status(400).json({ success: false, error: `Settlement amount exceeds outstanding A/R (₱${order.total.toFixed(2)}).` });
 
-    let debitAcct = { code: '111000', name: 'Cash on Hand' };
-    if (paymentMethod === 'Bank Transfer' || paymentMethod === 'Cash in Bank') debitAcct = { code: '112000', name: 'Cash in Bank' };
-    else if (['GCash', 'Maya', 'Maribank', 'E-Wallet'].includes(paymentMethod)) debitAcct = { code: '113000', name: 'E-Wallet' };
+    // Debit-side account from configurable payment-method map.
+    const debitAcct = accountForPaymentMethod(paymentMethod);
 
     const reference = mkRef('ARS', order.orderNumber);
 
@@ -2985,9 +3702,11 @@ app.post('/api/finance/ap-payment', verifyToken, requireSuperAdmin, async (req, 
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Amount must be positive.' });
 
-    const VALID_SRC = { '111000': 'Cash on Hand', '112000': 'Cash in Bank' };
-    const srcCode = VALID_SRC[payFromAccount] ? payFromAccount : '111000';
-    const srcName = VALID_SRC[srcCode];
+    // Accept any cash/bank/e-wallet account (canonical or custom sub-account).
+    const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
+    const srcMeta = acctMeta(payFromAccount);
+    const srcCode = (srcMeta && isCashLike(payFromAccount)) ? payFromAccount : '111000';
+    const srcName = acctMeta(srcCode)?.name || 'Cash on Hand';
 
     const desc = description?.trim() || `AP payment${vendorName ? ` to ${vendorName}` : ''}`;
     const reference = await mkSeqRef('AP-PAY');
@@ -3041,7 +3760,7 @@ app.get('/api/reports/pnl', verifyToken, requireSuperAdmin, async (req, res) => 
 
     for (const r of agg) {
       const code = r._id;
-      const meta = ACCOUNTS[code];
+      const meta = acctMeta(code);
       const balance = (r.totalCredit || 0) - (r.totalDebit || 0); // revenue = credit-balance
       const expBalance = (r.totalDebit || 0) - (r.totalCredit || 0); // expense = debit-balance
 
@@ -3127,7 +3846,7 @@ app.get('/api/reports/pnl-monthly', verifyToken, requireSuperAdmin, async (req, 
     const accounts = {};
     for (const r of agg) {
       const { code, ym } = r._id;
-      const meta = ACCOUNTS[code];
+      const meta = acctMeta(code);
       const section = sectionOf(code, meta);
       if (!section) continue;
       const amt = (section === 'revenue' || section === 'otherincome') ? (r.credit - r.debit) : (r.debit - r.credit);
@@ -3192,7 +3911,7 @@ app.get('/api/reports/balance-sheet', verifyToken, requireSuperAdmin, async (req
 
     for (const r of agg) {
       const code = r._id;
-      const meta = ACCOUNTS[code];
+      const meta = acctMeta(code);
       if (!meta) continue;
       const debit = r.totalDebit || 0;
       const credit = r.totalCredit || 0;
@@ -3269,7 +3988,7 @@ app.get('/api/reports/balance-sheet-monthly', verifyToken, requireSuperAdmin, as
     const acct = {};            // code -> { meta, changes: {ym: signedDelta} }
     const earnings = {};        // ym -> net income delta
     for (const r of agg) {
-      const { code, ym } = r._id; const meta = ACCOUNTS[code]; if (!meta) continue;
+      const { code, ym } = r._id; const meta = acctMeta(code); if (!meta) continue;
       if (meta.type === 'asset') (acct[code] ??= { meta, changes: {} }).changes[ym] = (acct[code].changes[ym] || 0) + (r.debit - r.credit);
       else if (meta.type === 'liability' || meta.type === 'equity') (acct[code] ??= { meta, changes: {} }).changes[ym] = (acct[code].changes[ym] || 0) + (r.credit - r.debit);
       else {
@@ -3350,22 +4069,47 @@ const emitToOps  = (evt, data) => io.to('cashier').to('kitchen').emit(evt, data)
 const emitToAll  = (evt, data) => io.emit(evt, data);                               // menu / archive — everyone
 const emitToMgr  = (evt, data) => io.to('manager').emit(evt, data);                 // ledger/ERP — superadmin only
 
+// Verify JWT on the socket handshake. The client passes the access token via
+// auth.token (preferred) or the Authorization header. Unauthenticated
+// connections are still allowed for public surfaces (customer menu, QR session)
+// but they don't get room membership for sensitive broadcasts.
+io.use((socket, next) => {
+  try {
+    const raw =
+      socket.handshake.auth?.token ||
+      (socket.handshake.headers?.authorization || '').replace(/^Bearer /, '') ||
+      '';
+    if (!raw) { socket.data.user = null; return next(); }
+    const decoded = jwt.verify(raw, process.env.JWT_SECRET);
+    socket.data.user = decoded;        // { _id, name, role, ... }
+    return next();
+  } catch (err) {
+    // Invalid / expired token — treat as anonymous rather than refusing the
+    // connection, so public surfaces keep working without auth.
+    socket.data.user = null;
+    return next();
+  }
+});
+
 io.on('connection', (socket) => {
-  log.info({ sid: socket.id }, 'Device connected');
+  const user = socket.data.user || null;
+  const role = String(user?.role || '').toLowerCase();
+  log.info({ sid: socket.id, role: role || 'anonymous' }, 'Device connected');
 
-  // Client sends its role after auth so we place it in the right room
-  socket.on('joinRoom', (role) => {
-    // Every authenticated user joins 'cashier' (they all need order updates)
-    socket.join('cashier');
-    if (role === 'superadmin') socket.join('manager');
-    if (role === 'kitchen')    socket.join('kitchen');
-    log.info({ sid: socket.id, role }, 'Joined rooms');
-  });
+  // Auto-room placement based on the verified JWT. The client no longer
+  // controls which rooms it joins — the server decides from the token's role.
+  if (user) {
+    socket.join('cashier'); // every authenticated user gets order updates
+    if (role === 'superadmin' || role === 'admin') socket.join('manager');
+    if (role === 'kitchen') socket.join('kitchen');
+  }
 
-  socket.on('updateOrderStatus', async ({ orderId, status }) => {
-    // Database update intentionally removed — HTTP PUT handles all mutations.
-    // This stub is kept so old clients don't throw an unhandled-event warning.
-  });
+  // Back-compat shim: ignore client-declared roles for room placement so an
+  // attacker can't elevate by spoofing the joinRoom payload. The verified
+  // handshake already placed them correctly above.
+  socket.on('joinRoom', () => { /* intentionally no-op; rooms are server-decided */ });
+
+  socket.on('updateOrderStatus', async () => { /* stub — HTTP PUT handles all mutations */ });
 
   socket.on('disconnect', () => {
     log.info({ sid: socket.id }, 'Device disconnected');
@@ -3507,17 +4251,19 @@ const validateOrderMath = (order) => {
     expectedGross += itemBase;
 
     const getsDiscount = item.hasDiscount !== false;
-    const isolatedItemDiscount = item.discountPercent || 0; // The new item-level tag
+    // Same MAX rule as the totals recalc — server-resolved per-product/per-client
+    // discount and the cashier per-item override coexist; take the higher.
+    const prodPct = Number(item.productDiscountPercent || 0);
+    const cashierPct = Number(item.discountPercent || 0);
+    const linePct = Math.max(prodPct, cashierPct);
 
     if (order.isComplimentary) {
-      expectedDiscount += itemBase; 
-    } else if (isolatedItemDiscount > 0) {
-      // OVERRIDE: If this item has an isolated discount (e.g. 20% PWD), apply ONLY this discount!
-      const itemDisc = itemBase * (isolatedItemDiscount / 100);
+      expectedDiscount += itemBase;
+    } else if (linePct > 0) {
+      const itemDisc = itemBase * (linePct / 100);
       expectedDiscount += itemDisc;
       if (!order.isVatExempt) expectedVat += (itemBase - itemDisc) * 0; // VAT DISABLED
     } else if (getsDiscount && order.discountPercent > 0) {
-      // GLOBAL DISCOUNT: Apply only if the item doesn't have an isolated one
       if (order.isVatExempt || order.discountType === 'SC/PWD') {
         expectedDiscount += itemBase * (order.discountPercent / 100);
       } else {
@@ -3614,7 +4360,7 @@ app.post('/api/shifts/end', verifyToken, async (req, res) => {
 // --- BANK DEPOSIT ROUTES ---
 app.post('/api/bank-deposits', verifyToken, async (req, res) => {
   try {
-    const { shiftId, amount, reference } = req.body;
+    const { shiftId, amount, reference, sourceAccount: rawSrc, destAccount: rawDest } = req.body;
     const depositAmount = parseFloat(amount);
     if (isNaN(depositAmount) || depositAmount <= 0)
       return res.status(400).json({ success: false, error: 'Invalid deposit amount.' });
@@ -3632,13 +4378,24 @@ app.post('/api/bank-deposits', verifyToken, async (req, res) => {
     if (depositAmount > maxDeposit + 0.01)
       return res.status(400).json({ success: false, error: `Cannot reduce drawer below starting fund (₱${shift.startingCash.toFixed(2)}).` });
 
+    // Resolve source (cash) and destination (bank) accounts from COA.
+    // Source MUST be a cash account (111xxx); dest MUST be a bank account (112xxx).
+    const isCashSrc  = (c) => /^111/.test(String(c || ''));
+    const isBankDest = (c) => /^112/.test(String(c || ''));
+    const srcMeta  = acctMeta(rawSrc);
+    const destMeta = acctMeta(rawDest);
+    const srcCode  = (srcMeta  && isCashSrc(rawSrc))   ? rawSrc  : '111000';
+    const destCode = (destMeta && isBankDest(rawDest)) ? rawDest : '112000';
+    const srcName  = acctMeta(srcCode)?.name  || 'Cash on Hand';
+    const destName = acctMeta(destCode)?.name || 'Cash in Bank';
+
     const depRef = reference ? reference : await mkSeqRef('DEP');
     const je = await JournalEntry.create({
       reference: depRef,
       description: `Bank deposit — ${shift.cashierName}${reference ? ` (${reference})` : ''}`,
       lines: [
-        { accountCode: '112000', accountName: 'Cash in Bank', debit: depositAmount, credit: 0 },
-        { accountCode: '111000', accountName: 'Cash on Hand',  debit: 0, credit: depositAmount },
+        { accountCode: destCode, accountName: destName, debit: depositAmount, credit: 0 },
+        { accountCode: srcCode,  accountName: srcName,  debit: 0, credit: depositAmount },
       ],
       totalDebit: depositAmount,
       totalCredit: depositAmount,
@@ -3686,6 +4443,277 @@ app.get('/api/accounts', verifyToken, async (req, res) => {
   }
 });
 
+// ── CHART OF ACCOUNTS (canonical + custom child accounts) ─────────────────────
+// Debit-normal classes: assets (1), cost-of-sales / expenses (5,6,7,9). The rest
+// (liabilities 2, equity 3, revenue 4, other income 8) are credit-normal.
+const normalBalanceForCode = (code) => (/^[15679]/.test(String(code)) ? 'Debit' : 'Credit');
+
+// Full chart: canonical headers/leaves merged with user-created custom children.
+app.get('/api/coa', verifyToken, async (req, res) => {
+  try {
+    const custom = await Account.find({ custom: true }).sort({ code: 1 }).lean();
+    const canonical = Object.entries(ACCOUNTS).map(([code, a]) => ({
+      code, name: a.name, type: a.type, parent: a.parent || null,
+      isParent: !!a.isParent, custom: false,
+    }));
+    const customMapped = custom.map(a => ({
+      _id: a._id, code: a.code, name: a.name, type: a.type,
+      parent: a.parent || null, isParent: false, custom: true,
+    }));
+    res.json({ success: true, accounts: [...canonical, ...customMapped] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// Create a custom child account under a chosen parent (superadmin only).
+app.post('/api/accounts', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { parentCode, name } = req.body;
+    const parent = ACCOUNTS[parentCode];
+    if (!parent) return res.status(400).json({ success: false, error: 'Choose a valid parent account.' });
+    if (!name?.trim()) return res.status(400).json({ success: false, error: 'Account name is required.' });
+
+    // Generate a unique child code: parent's first 3 digits + 3-digit sequence
+    // (e.g. parent 640000 → 640001, 640002 …). Sorts directly under the parent.
+    const base = String(parentCode).slice(0, 3);
+    const taken = new Set([
+      ...Object.keys(ACCOUNTS),
+      ...(await Account.find({ code: { $regex: `^${base}` } }, { code: 1 }).lean()).map(a => a.code),
+    ]);
+    let code = null;
+    for (let i = 1; i <= 999; i++) {
+      const cand = base + String(i).padStart(3, '0');
+      if (!taken.has(cand)) { code = cand; break; }
+    }
+    if (!code) return res.status(400).json({ success: false, error: 'No free code under this parent.' });
+
+    const account = await Account.create({
+      code, name: name.trim(), type: parent.type, parent: parentCode,
+      custom: true, normalBalance: normalBalanceForCode(code),
+    });
+    await refreshCustomMeta();
+    res.json({ success: true, account });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// Rename a custom child account (canonical accounts are immutable).
+app.put('/api/accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name?.trim()) return res.status(400).json({ success: false, error: 'Account name is required.' });
+    const acct = await Account.findById(req.params.id);
+    if (!acct || !acct.custom) return res.status(404).json({ success: false, error: 'Custom account not found.' });
+    acct.name = name.trim();
+    await acct.save();
+    await refreshCustomMeta();
+    res.json({ success: true, account: acct });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// Delete a custom child account — blocked if any journal entry already posted to it.
+app.delete('/api/accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const acct = await Account.findById(req.params.id);
+    if (!acct || !acct.custom) return res.status(404).json({ success: false, error: 'Custom account not found.' });
+    const used = await JournalEntry.exists({ 'lines.accountCode': acct.code });
+    if (used) return res.status(409).json({ success: false, error: 'Account has posted journal entries — cannot delete. It can be left unused.' });
+    const before = acct.toObject();
+    await Account.deleteOne({ _id: acct._id });
+    await refreshCustomMeta();
+    await logAudit(req, { action: 'delete', entity: 'Account', entityId: acct._id, before });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// ── CLOSED PERIODS — list, close, reopen ──────────────────────────────────────
+app.get('/api/periods', verifyToken, async (req, res) => {
+  try {
+    const periods = await ClosedPeriod.find().sort({ year: -1, month: -1 }).lean();
+    res.json({ success: true, periods });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+app.post('/api/periods/close', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const year = parseInt(req.body.year, 10);
+    const month = parseInt(req.body.month, 10);
+    if (!year || !month || month < 1 || month > 12) {
+      return res.status(400).json({ success: false, error: 'year (YYYY) and month (1-12) required.' });
+    }
+    const notes = (req.body.notes || '').slice(0, 500);
+    // Refuse if a future month or current month before EOM
+    const now = new Date();
+    const lastDay = new Date(year, month, 0, 23, 59, 59);
+    if (lastDay > now) return res.status(400).json({ success: false, error: 'Cannot close a period that has not ended yet.' });
+
+    const upsert = await ClosedPeriod.findOneAndUpdate(
+      { year, month },
+      { year, month, isOpen: false, closedBy: req.user?.name || 'system', closedAt: new Date(), notes },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    await logAudit(req, { action: 'close', entity: 'Period', entityId: `${year}-${String(month).padStart(2,'0')}`, after: { year, month }, notes });
+    res.json({ success: true, period: upsert });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+app.post('/api/periods/:id/reopen', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const p = await ClosedPeriod.findById(req.params.id);
+    if (!p) return res.status(404).json({ success: false, error: 'Period not found.' });
+    if (p.isOpen) return res.json({ success: true, period: p });
+    p.isOpen = true;
+    p.reopenedBy = req.user?.name || 'system';
+    p.reopenedAt = new Date();
+    await p.save();
+    await logAudit(req, { action: 'reopen', entity: 'Period', entityId: p._id, after: { year: p.year, month: p.month } });
+    res.json({ success: true, period: p });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// ── ROLES + PERMISSIONS read ──────────────────────────────────────────────────
+// Client uses this to hide buttons/tabs the current role can't act on, while
+// the server still enforces with requirePermission on every gated endpoint.
+app.get('/api/me/permissions', verifyToken, async (req, res) => {
+  try {
+    const role = String(req.user?.role || '').toLowerCase();
+    const perms = ROLE_PERMISSIONS[role] || [];
+    res.json({ success: true, role, permissions: perms, isWildcard: perms.includes('*') });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// ── TENANCY BACKFILL VERIFICATION ─────────────────────────────────────────────
+// Returns per-collection counts of docs missing or having a non-matching
+// businessType. A healthy system shows zeros across all rows.
+app.get('/api/admin/tenancy-report', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const missing = { $or: [{ businessType: { $exists: false } }, { businessType: null }, { businessType: '' }] };
+    const wrong = { businessType: { $exists: true, $nin: [null, '', BUSINESS_TYPE] } };
+    const [oMiss, oWrong, pMiss, pWrong, iMiss, iWrong, cMiss, cWrong] = await Promise.all([
+      Order.countDocuments(missing),     Order.countDocuments(wrong),
+      Product.countDocuments(missing),   Product.countDocuments(wrong),
+      Inventory.countDocuments(missing), Inventory.countDocuments(wrong),
+      Category.countDocuments(missing),  Category.countDocuments(wrong),
+    ]);
+    const rows = [
+      { collection: 'Order',     missingBusinessType: oMiss, otherBusinessType: oWrong },
+      { collection: 'Product',   missingBusinessType: pMiss, otherBusinessType: pWrong },
+      { collection: 'Inventory', missingBusinessType: iMiss, otherBusinessType: iWrong },
+      { collection: 'Category',  missingBusinessType: cMiss, otherBusinessType: cWrong },
+    ];
+    const isClean = rows.every(r => r.missingBusinessType === 0 && r.otherBusinessType === 0);
+    res.json({ success: true, currentBusinessType: BUSINESS_TYPE, rows, isClean });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// Manual re-run of the stamping migration. Idempotent — only touches docs missing the field.
+app.post('/api/admin/tenancy-rebackfill', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const flt = { $or: [{ businessType: { $exists: false } }, { businessType: null }, { businessType: '' }] };
+    const [bO, bP, bI, bC] = await Promise.all([
+      Order.updateMany(flt, { $set: { businessType: BUSINESS_TYPE } }),
+      Product.updateMany(flt, { $set: { businessType: BUSINESS_TYPE } }),
+      Inventory.updateMany(flt, { $set: { businessType: BUSINESS_TYPE } }),
+      Category.updateMany(flt, { $set: { businessType: BUSINESS_TYPE } }),
+    ]);
+    const stamped = { Order: bO.modifiedCount, Product: bP.modifiedCount, Inventory: bI.modifiedCount, Category: bC.modifiedCount };
+    await logAudit(req, { action: 'rebackfill', entity: 'Tenancy', entityId: BUSINESS_TYPE, after: stamped });
+    res.json({ success: true, stamped });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// ── PAYMENT METHOD → ACCOUNT MAP CRUD ────────────────────────────────────────
+// GET returns the live effective map (defaults + overrides).
+app.get('/api/payment-method-map', verifyToken, async (req, res) => {
+  try {
+    const overrides = await PaymentMethodMap.find().lean();
+    res.json({
+      success: true,
+      defaults: DEFAULT_PAYMENT_ACCOUNT_MAP,
+      overrides: Object.fromEntries(overrides.map(o => [o.method, o.accountCode])),
+      effective: { ...PAYMENT_MAP_CACHE },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// Upsert a single mapping. Validates the code resolves against the COA.
+app.put('/api/payment-method-map', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { method, accountCode } = req.body;
+    if (!method || !accountCode) return res.status(400).json({ success: false, error: 'method and accountCode are required.' });
+    if (!acctMeta(accountCode)) return res.status(400).json({ success: false, error: `Unknown account code ${accountCode}.` });
+    const before = await PaymentMethodMap.findOne({ method }).lean();
+    const doc = await PaymentMethodMap.findOneAndUpdate(
+      { method },
+      { method, accountCode, updatedBy: req.user?.name || 'system' },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    await refreshPaymentMap();
+    await logAudit(req, { action: 'update', entity: 'PaymentMethodMap', entityId: method, before, after: doc });
+    res.json({ success: true, mapping: doc, effective: { ...PAYMENT_MAP_CACHE } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// Reset a single mapping back to its default.
+app.delete('/api/payment-method-map/:method', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const before = await PaymentMethodMap.findOneAndDelete({ method: req.params.method }).lean();
+    await refreshPaymentMap();
+    await logAudit(req, { action: 'delete', entity: 'PaymentMethodMap', entityId: req.params.method, before });
+    res.json({ success: true, effective: { ...PAYMENT_MAP_CACHE } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// ── AUDIT LOG read ────────────────────────────────────────────────────────────
+// Filterable by action prefix (e.g. 'ORDER', 'INVENTORY', 'PRODUCT'), exact
+// action, actor name, and date range. Sorted newest-first, paginated.
+app.get('/api/audit-log', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(100, parseInt(req.query.pageSize, 10) || 25);
+    const filter = {};
+    if (req.query.entity)      filter.action = { $regex: `^${req.query.entity}_`, $options: 'i' };
+    if (req.query.action)      filter.action = req.query.action;
+    if (req.query.actor)       filter.userId = req.query.actor;
+    if (req.query.from || req.query.to) {
+      filter.timestamp = {};
+      if (req.query.from) filter.timestamp.$gte = new Date(req.query.from);
+      if (req.query.to)   filter.timestamp.$lte = new Date(req.query.to);
+    }
+    const [total, entries] = await Promise.all([
+      AuditLog.countDocuments(filter),
+      AuditLog.find(filter).sort({ timestamp: -1 }).skip((page - 1) * pageSize).limit(pageSize).lean(),
+    ]);
+    res.json({ success: true, entries, total, page, pageSize, pages: Math.ceil(total / pageSize) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
 // Get active shift for the logged-in cashier
 app.get('/api/shifts/current', verifyToken, async (req, res) => {
   try {
@@ -3710,6 +4738,123 @@ app.post('/api/orders/:id/partial-delivery', verifyToken, async (req, res) => {
     emitToOps('orderUpdated', order);
     res.json({ success: true, order });
   } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// --- PARTIAL FULFILLMENT (logistics) — ONE order, fulfilled in batches --------
+// Fulfill some units now; the order stays a single sale and moves to
+// 'Partially Fulfilled' until every unit is delivered, then 'Completed'.
+// `fulfill` = [{ index, qty }] where qty is the units to fulfill THIS round.
+// Payment modes (chosen per round):
+//   • 'partial' — collect only for the units fulfilled now.
+//   • 'full'    — collect the whole remaining goods value now; the not-yet-fulfilled
+//                 portion is held as Customer Deposits and recognized as revenue on
+//                 later rounds (no new charge then).
+app.post('/api/orders/:id/partial-fulfill', verifyToken, async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const { fulfill, paymentMode, paymentMethod } = req.body;
+    const mode = paymentMode === 'full' ? 'full' : 'partial';
+    const order = await Order.findById(req.params.id).session(session);
+    if (!order) { await session.abortTransaction(); session.endSession(); return res.status(404).json({ success: false, error: 'Order not found.' }); }
+    if (order.isComplimentary) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Complimentary orders cannot be partially fulfilled.' }); }
+    if (!['Pending', 'Preparing', 'Ready', 'Partially Fulfilled'].includes(order.status)) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Only open orders can be partially fulfilled.' }); }
+
+    // Net (post-product-discount) unit price drives revenue so totals match order.total.
+    const netUnit = (it) => +((it.price || 0) * (1 - (it.productDiscountPercent || 0) / 100)).toFixed(4);
+
+    // Units to fulfill this round per line, clamped to what's still outstanding.
+    const wantMap = new Map((fulfill || []).map(f => [Number(f.index), Math.max(0, Number(f.qty) || 0)]));
+    const deltas = [];
+    let deltaValue = 0;
+    order.items.forEach((it, i) => {
+      const remaining = (it.quantity || 0) - (it.fulfilledQty || 0);
+      const want = Math.min(remaining, wantMap.has(i) ? wantMap.get(i) : remaining);
+      if (want > 0) { deltas.push({ i, want }); deltaValue += netUnit(it) * want; }
+    });
+    deltaValue = +deltaValue.toFixed(2);
+    if (deltas.length === 0 || deltaValue <= 0) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Nothing to fulfill this round.' }); }
+
+    // Deduct inventory + COGS for the units fulfilled now (logistics 1:1 model).
+    let totalCogs = 0; const stockCardBatch = [];
+    for (const { i, want } of deltas) {
+      const it = order.items[i];
+      const product = it.productId
+        ? await Product.findById(it.productId).session(session)
+        : await Product.findOne({ name: it.name }).session(session);
+      const linkInv = await resolveLinkedInventory(product, it.productCode, session);
+      if (!linkInv) continue;
+      const deduct = want * baseUnitsPerSale(product, linkInv);
+      const upd = await Inventory.findOneAndUpdate(
+        { _id: linkInv._id, stockQty: { $gte: deduct } },
+        { $inc: { stockQty: -deduct } },
+        { session, new: true }
+      );
+      if (!upd) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for ${linkInv.itemName}.` }); }
+      totalCogs += linkInv.unitCost * deduct;
+      stockCardBatch.push({ inventoryId: upd._id, itemName: upd.itemName, type: 'Sale', reference: mkRef('', order.orderNumber), qtyChange: -deduct, balanceAfter: upd.stockQty, remarks: `Partial fulfillment (${it.name})` });
+    }
+    if (stockCardBatch.length) await StockCard.insertMany(stockCardBatch, { session });
+
+    const goodsTotal = +order.items.reduce((s, it) => s + netUnit(it) * (it.quantity || 0), 0).toFixed(2);
+    const cash = debitAccountFor(paymentMethod || order.paymentMethod || 'Cash');
+    const lines = [];
+
+    // 1) Recognize revenue already prepaid (from the deposit) first.
+    const fromDeposit = +Math.min(order.depositRemaining || 0, deltaValue).toFixed(2);
+    if (fromDeposit > 0) {
+      lines.push({ accountCode: '260000', accountName: 'Customer Deposits', debit: fromDeposit, credit: 0 });
+      lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: fromDeposit });
+      order.depositRemaining = +(order.depositRemaining - fromDeposit).toFixed(2);
+    }
+
+    // 2) Collect cash for the rest. In 'full' mode, take the entire remaining
+    //    unpaid goods value now and park the not-yet-earned part as a deposit.
+    const needRevenue = +(deltaValue - fromDeposit).toFixed(2);
+    if (needRevenue > 0.005) {
+      const remainingUnpaid = +(goodsTotal - (order.amountPaid || 0)).toFixed(2);
+      const collectNow = mode === 'full' ? remainingUnpaid : needRevenue;
+      lines.push({ accountCode: cash.code, accountName: cash.name, debit: collectNow, credit: 0 });
+      lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: needRevenue });
+      const toDeposit = +(collectNow - needRevenue).toFixed(2);
+      if (toDeposit > 0.005) {
+        lines.push({ accountCode: '260000', accountName: 'Customer Deposits', debit: 0, credit: toDeposit });
+        order.depositRemaining = +((order.depositRemaining || 0) + toDeposit).toFixed(2);
+      }
+      order.amountPaid = +((order.amountPaid || 0) + collectNow).toFixed(2);
+    }
+
+    // 3) COGS for the units fulfilled now.
+    if (totalCogs > 0) {
+      lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: +totalCogs.toFixed(2), credit: 0 });
+      lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: +totalCogs.toFixed(2) });
+    }
+
+    const reference = `${order.orderNumber}-PF${Date.now().toString(36).toUpperCase()}`;
+    const totalDebit = +lines.reduce((s, l) => s + l.debit, 0).toFixed(2);
+    const totalCredit = +lines.reduce((s, l) => s + l.credit, 0).toFixed(2);
+    assertBalanced(lines, reference);
+    await JournalEntry.create([{ reference, description: `Partial fulfillment (${mode === 'full' ? 'pay full' : 'pay partial'}) — ${order.orderNumber}`, lines, totalDebit, totalCredit }], { session });
+
+    // Apply fulfilled units and advance status on the SAME order.
+    for (const { i, want } of deltas) order.items[i].fulfilledQty = (order.items[i].fulfilledQty || 0) + want;
+    order.markModified('items');
+    const allFulfilled = order.items.every(it => (it.fulfilledQty || 0) >= (it.quantity || 0));
+    order.status = allFulfilled ? 'Completed' : 'Partially Fulfilled';
+    if (paymentMethod) order.paymentMethod = paymentMethod;
+    await order.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
+    emitToMgr('erpUpdated');
+    emitToOps('orderUpdated', order);
+    res.json({ success: true, order });
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    log.error({ err }, 'POST /api/orders/:id/partial-fulfill failed');
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
 });
@@ -3887,8 +5032,10 @@ app.patch('/api/users/me/password', verifyToken, async (req, res) => {
 app.get('/api/shifts', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const { page = 1, limit: lim = 20, cashier } = req.query;
-    const filter = { cashierId: { $nin: await ownerUserIds() } }; // hide the owner's shifts
-    if (cashier) filter.cashierName = { $regex: cashier, $options: 'i' };
+    const owner = await ownerIdentity();
+    // Hide the owner's shifts — by _id and by name (catches orphaned superadmin ids).
+    const filter = { cashierId: { $nin: owner.ids }, cashierName: { $nin: owner.names } };
+    if (cashier) filter.cashierName = { $regex: cashier, $options: 'i', $nin: owner.names };
     const pageNum = Math.max(1, parseInt(page) || 1);
     const pageSize = Math.min(100, parseInt(lim) || 20);
     const [shifts, total] = await Promise.all([
@@ -4073,7 +5220,7 @@ app.get('/api/analytics/dashboard', verifyToken, async (req, res) => {
 
       // 7. Inventory (needed for velocity + stock KPIs) — include unit fields so the
       //    UI can display kg/L/pcs correctly (effectiveDisplay needs unit/displayUnit/unitMultiplier).
-      Inventory.find({}, { itemName: 1, stockQty: 1, unitCost: 1, unit: 1, displayUnit: 1, unitMultiplier: 1 }).lean(),
+      Inventory.find({}, { itemCode: 1, itemName: 1, stockQty: 1, unitCost: 1, unit: 1, displayUnit: 1, unitMultiplier: 1 }).lean(),
     ]);
 
     // ── Today KPIs ─────────────────────────────────────────────────────────────
@@ -4112,8 +5259,11 @@ app.get('/api/analytics/dashboard', verifyToken, async (req, res) => {
     // ── Raw-material velocity (weighted ADU: 70% last-7d, 30% last-30d) ────────
     // These use small time-scoped order sets — not the full history
     const [products] = await Promise.all([
-      Product.find({}, { name: 1, baseRecipe: 1, sizes: 1 }).lean(),
+      Product.find({}, { name: 1, productCode: 1, baseRecipe: 1, sizes: 1 }).lean(),
     ]);
+    // LOG 1:1: inventory keyed by code/name to back recipe-less products.
+    const invByCodeVel = {}, invByNameVel = {};
+    inventoryItems.forEach(i => { if (i.itemCode) invByCodeVel[i.itemCode] = i; if (i.itemName) invByNameVel[i.itemName] = i; });
 
     const computeUsage = (subset) => {
       const usage = {};
@@ -4130,6 +5280,15 @@ app.get('/api/analytics/dashboard', verifyToken, async (req, res) => {
           if (sm) {
             const sz = (product.sizes || []).find(s => s.name === sm[1]);
             if (sz?.recipe?.length) recipe = sz.recipe;
+          }
+          if (!recipe.some(r => r.invId)) {
+            // 1:1 logistics good: the product itself is the consumed stock item.
+            const inv = invByCodeVel[product.productCode] || invByNameVel[product.name];
+            if (inv) {
+              if (!usage[inv.itemName]) usage[inv.itemName] = { name: inv.itemName, qtyUsed: 0, unit: inv.unit, currentStock: inv.stockQty };
+              usage[inv.itemName].qtyUsed += (orderItem.quantity || 0) * baseUnitsPerSale(product, inv);
+            }
+            return;
           }
           recipe.forEach(ing => {
             if (!usage[ing.name]) {
@@ -4242,6 +5401,14 @@ function reportLinesForItem(item, prods, prodMap, invMap) {
   const recipeCost = (recipe) => (recipe || []).reduce((s, ing) => {
     const iv = invMap[ing.invId]; return s + (iv ? (ing.qty || 0) * (iv.unitCost || 0) : 0);
   }, 0);
+  // COGS for one unit: recipe cost if the product has a BOM, else the LOG 1:1
+  // fallback — the product IS a stocked good (matched by code/name), so one unit
+  // costs unitCost × unitMultiplier. invMap is keyed by _id AND itemCode/itemName.
+  const lineCost = (recipe, product) => {
+    if ((recipe || []).some(r => r.invId)) return recipeCost(recipe);
+    const inv = product && (invMap[product.productCode] || invMap[product.name]);
+    return inv ? (inv.unitCost || 0) * baseUnitsPerSale(product, inv) : 0;
+  };
   const qty = item.quantity || 0;
 
   if (item.isCombo && (item.comboItems || []).length) {
@@ -4258,7 +5425,7 @@ function reportLinesForItem(item, prods, prodMap, invMap) {
       const share = weightTotal > 0 ? (c.stand * c.cqty) / weightTotal : 1 / comps.length;
       return {
         name: c.name || 'Unknown', category: c.product?.category || 'Uncategorized',
-        qty: c.cqty * qty, revenue: comboRevenue * share, cogs: recipeCost(c.recipe) * c.cqty * qty,
+        qty: c.cqty * qty, revenue: comboRevenue * share, cogs: lineCost(c.recipe, c.product) * c.cqty * qty,
       };
     });
   }
@@ -4271,7 +5438,7 @@ function reportLinesForItem(item, prods, prodMap, invMap) {
   if (sm && prod?.sizes) { const sz = prod.sizes.find(s => s.name === sm[1]); if (sz?.recipe?.length) recipe = sz.recipe; }
   return [{
     name: base || 'Unknown', category: prod?.category || 'Uncategorized',
-    qty, revenue: ((item.price || 0) + aoT) * qty, cogs: recipeCost(recipe) * qty,
+    qty, revenue: ((item.price || 0) + aoT) * qty, cogs: lineCost(recipe, prod) * qty,
   }];
 }
 
@@ -4288,10 +5455,11 @@ app.get('/api/reports/menu-engineering', verifyToken, requireSuperAdmin, async (
     const [ordersData, prods, invItems] = await Promise.all([
       Order.find(match, { items: 1 }).lean(),
       Product.find({}, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1 }).lean(),
-      Inventory.find({}, { _id: 1, unitCost: 1 }).lean(),
+      Inventory.find({}, { _id: 1, itemCode: 1, itemName: 1, unitCost: 1, unitMultiplier: 1 }).lean(),
     ]);
     const prodMap = Object.fromEntries(prods.map(p => [p._id.toString(), p]));
-    const invMap = Object.fromEntries(invItems.map(i => [i._id.toString(), i]));
+    const invMap = {};
+    invItems.forEach(i => { invMap[i._id.toString()] = i; if (i.itemCode) invMap[i.itemCode] = i; if (i.itemName) invMap[i.itemName] = i; });
     const stat = {};
     for (const o of ordersData) {
       for (const it of (o.items || [])) {
@@ -4322,9 +5490,9 @@ app.get('/api/reports/menu-engineering', verifyToken, requireSuperAdmin, async (
 // ── REPORT: CASHIER VARIANCE TREND ───────────────────────────────────────────
 app.get('/api/reports/cashier-variance', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const ownerIds = await ownerUserIds();
+    const owner = await ownerIdentity();
     const agg = await Shift.aggregate([
-      { $match: { status: { $in: ['Closed', 'Reconciled'] }, variance: { $ne: null }, cashierId: { $nin: ownerIds } } },
+      { $match: { status: { $in: ['Closed', 'Reconciled'] }, variance: { $ne: null }, cashierId: { $nin: owner.ids }, cashierName: { $nin: owner.names } } },
       { $group: {
         _id: '$cashierName',
         shifts: { $sum: 1 },
@@ -4345,12 +5513,15 @@ app.get('/api/reports/purchase-order', verifyToken, requireSuperAdmin, async (re
     const days = Math.max(1, parseInt(req.query.days) || 7); // cover N days of supply
     const since = new Date(Date.now() - 30 * 86400000);
     const [inv, orders, products] = await Promise.all([
-      Inventory.find({}, { itemName: 1, stockQty: 1, unit: 1, unitCost: 1, lowStockThreshold: 1, displayUnit: 1, unitMultiplier: 1 }).lean(),
+      Inventory.find({}, { itemCode: 1, itemName: 1, stockQty: 1, unit: 1, unitCost: 1, lowStockThreshold: 1, displayUnit: 1, unitMultiplier: 1 }).lean(),
       Order.find({ status: 'Completed', createdAt: { $gte: since } }, { items: 1 }).lean(),
-      Product.find({}, { _id: 1, name: 1, baseRecipe: 1, sizes: 1 }).lean(),
+      Product.find({}, { _id: 1, name: 1, productCode: 1, baseRecipe: 1, sizes: 1 }).lean(),
     ]);
     const prodMap = Object.fromEntries(products.map(p => [p._id.toString(), p]));
-    // 30-day usage per inventory id
+    // LOG 1:1: resolve the inventory doc that backs a recipe-less product (by code/name).
+    const invByCode = {}, invByName = {};
+    inv.forEach(i => { if (i.itemCode) invByCode[i.itemCode] = i; if (i.itemName) invByName[i.itemName] = i; });
+    // 30-day usage per inventory id (base units)
     const usage = {};
     for (const o of orders) {
       for (const it of (o.items || [])) {
@@ -4360,7 +5531,13 @@ app.get('/api/reports/purchase-order', verifyToken, requireSuperAdmin, async (re
         let recipe = prod.baseRecipe || [];
         const sm = (it.name || '').match(/\(([^)]+)\)$/);
         if (sm) { const sz = prod.sizes?.find(s => s.name === sm[1]); if (sz?.recipe?.length) recipe = sz.recipe; }
-        for (const ing of recipe) { if (ing.invId) usage[ing.invId] = (usage[ing.invId] || 0) + (ing.qty || 0) * (it.quantity || 0); }
+        if (recipe.some(r => r.invId)) {
+          for (const ing of recipe) { if (ing.invId) usage[ing.invId] = (usage[ing.invId] || 0) + (ing.qty || 0) * (it.quantity || 0); }
+        } else {
+          // 1:1 logistics good: one sold unit consumes unitMultiplier base units.
+          const linked = invByCode[prod.productCode] || invByName[prod.name];
+          if (linked) usage[linked._id.toString()] = (usage[linked._id.toString()] || 0) + (it.quantity || 0) * baseUnitsPerSale(prod, linked);
+        }
       }
     }
     const lines = inv.map(i => {
@@ -4410,10 +5587,11 @@ app.get('/api/reports/profit-by-category', verifyToken, requireSuperAdmin, async
     const [ordersData, prods, invItems] = await Promise.all([
       Order.find(match, { items: 1 }).lean(),
       Product.find({}, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1 }).lean(),
-      Inventory.find({}, { _id: 1, unitCost: 1 }).lean(),
+      Inventory.find({}, { _id: 1, itemCode: 1, itemName: 1, unitCost: 1, unitMultiplier: 1 }).lean(),
     ]);
     const prodMap  = Object.fromEntries(prods.map(p => [p._id.toString(), p]));
-    const invMap   = Object.fromEntries(invItems.map(i => [i._id.toString(), i]));
+    const invMap   = {};
+    invItems.forEach(i => { invMap[i._id.toString()] = i; if (i.itemCode) invMap[i.itemCode] = i; if (i.itemName) invMap[i.itemName] = i; });
     const stats    = {};
     for (const order of ordersData) {
       for (const item of (order.items || [])) {
@@ -4506,7 +5684,7 @@ app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req,
   const session = await mongoose.startSession();
   try {
     session.startTransaction();
-    const { reason, refundAmount } = req.body;
+    const { reason, refundAmount, inventoryAction } = req.body;
     if (!reason?.trim()) return res.status(400).json({ success: false, error: 'Reason required.' });
     const order = await Order.findById(req.params.id).session(session);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
@@ -4520,12 +5698,109 @@ app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req,
       { accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: amt,  credit: 0   },
       { accountCode: creditAcct.code, accountName: creditAcct.name,  debit: 0,    credit: amt },
     ];
+
+    // --- INVENTORY / COGS REVERSAL ---
+    // Only a FULL refund touches inventory & COGS (partial refunds adjust cash/revenue only).
+    // Operator chooses per refund: 'Restock' (goods returned, put stock back & reverse COGS)
+    // or 'Spoilage' (goods unusable, move COGS → waste expense). Complimentary orders carry
+    // no COGS reversal here (cost was already expensed at completion).
+    const isFullRefund = Math.abs(amt - order.total) <= 0.01;
+    const invAction = inventoryAction === 'Restock' || inventoryAction === 'Spoilage' ? inventoryAction : 'None';
+    if (isFullRefund && invAction !== 'None' && !order.isComplimentary) {
+      let totalCogs = 0;
+      for (const item of order.items) {
+        const product = await Product.findById(item.productId).populate('modifierGroups').session(session);
+        if (!product) continue;
+
+        let recipeToUse = product.baseRecipe || [];
+        const sizeMatch = item.name.match(/\(([^)]+)\)$/);
+        if (sizeMatch) {
+          const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+          if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
+        }
+
+        // LOGISTICS 1:1 FALLBACK — product has no recipe: reverse the linked stocked good.
+        if (!recipeToUse.some(r => r.invId)) {
+          const linkInv = await resolveLinkedInventory(product, item.productCode, session);
+          if (linkInv) {
+            const qtyUsed = item.quantity * baseUnitsPerSale(product, linkInv);
+            if (invAction === 'Restock') {
+              const restored = await Inventory.findOneAndUpdate(
+                { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, new: true }
+              );
+              if (restored) {
+                totalCogs += (restored.unitCost * qtyUsed);
+                await StockCard.create([{
+                  inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+                  reference, qtyChange: qtyUsed, balanceAfter: restored.stockQty,
+                  remarks: `Refunded (Restock) — ${item.name}`
+                }], { session });
+              }
+            } else {
+              totalCogs += (linkInv.unitCost * qtyUsed);
+            }
+          }
+        }
+
+        // Collect every ingredient line: base recipe + add-on / modifier-option recipes.
+        const recipes = [{ recipe: recipeToUse, label: item.name }];
+        for (const selectedAddOn of (item.selectedAddOns || [])) {
+          let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
+          if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
+            const [grpName, optName] = selectedAddOn.name.split(': ');
+            const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
+            resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
+          }
+          if (resolvedRecipe?.length) recipes.push({ recipe: resolvedRecipe, label: `Add-on (${selectedAddOn.name})` });
+        }
+
+        for (const { recipe, label } of recipes) {
+          for (const ing of recipe) {
+            if (!ing.invId) continue;
+            const qtyUsed = ing.qty * item.quantity;
+            if (invAction === 'Restock') {
+              const restored = await Inventory.findOneAndUpdate(
+                { _id: ing.invId },
+                { $inc: { stockQty: qtyUsed } },
+                { session, new: true }
+              );
+              if (!restored) continue;
+              totalCogs += (restored.unitCost * qtyUsed);
+              await StockCard.create([{
+                inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+                reference, qtyChange: qtyUsed, balanceAfter: restored.stockQty,
+                remarks: `Refunded (Restock) — ${label}`
+              }], { session });
+            } else {
+              const invItem = await Inventory.findById(ing.invId).session(session);
+              if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
+            }
+          }
+        }
+      }
+
+      if (totalCogs > 0) {
+        if (invAction === 'Restock') {
+          // Goods back on the shelf: DR Inventory / CR COGS
+          lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: totalCogs, credit: 0 });
+          lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: 0, credit: totalCogs });
+        } else {
+          // Goods unusable: reclass COGS → Spoilage (inventory stays gone)
+          lines.push({ accountCode: '535000', accountName: 'Spoilage, Variance & Waste Expense', debit: totalCogs, credit: 0 });
+          lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: 0, credit: totalCogs });
+        }
+      }
+    }
+
+    const totalDebit = lines.reduce((s, l) => s + l.debit, 0);
+    const totalCredit = lines.reduce((s, l) => s + l.credit, 0);
     assertBalanced(lines, reference);
-    await JournalEntry.create([{ date: new Date(), reference, description: `Refund — ${order.orderNumber}: ${reason}`, lines, totalDebit: amt, totalCredit: amt }], { session });
+    await JournalEntry.create([{ date: new Date(), reference, description: `Refund — ${order.orderNumber}: ${reason}`, lines, totalDebit, totalCredit }], { session });
     order.transactionType = 'REFUND';
+    order.status = 'Refunded';
     order.voidReason = `REFUND: ${reason}`;
     await order.save({ session });
-    await AuditLog.create({ userId: req.user?.name, action: 'ORDER_REFUNDED', targetReference: order.orderNumber, details: { reason, refundAmount: amt, refundedBy: req.user?.name } });
+    await AuditLog.create({ userId: req.user?.name, action: 'ORDER_REFUNDED', targetReference: order.orderNumber, details: { reason, refundAmount: amt, inventoryAction: isFullRefund ? invAction : 'None (partial)', refundedBy: req.user?.name } });
     await session.commitTransaction(); session.endSession();
     emitToOps('orderUpdated', order); emitToMgr('erpUpdated');
     res.json({ success: true, order });
@@ -4639,9 +5914,11 @@ app.get('/api/clock/status', verifyToken, async (req, res) => {
 app.get('/api/clock/entries', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const { page = 1, limit: lim = 30, date, staff } = req.query;
-    const filter = { staffId: { $nin: await ownerUserIds() } }; // hide the owner
+    const owner = await ownerIdentity();
+    // Hide the owner — by _id and by name (catches orphaned superadmin ids).
+    const filter = { staffId: { $nin: owner.ids }, staffName: { $nin: owner.names } };
     if (date) filter.date = date;
-    if (staff) filter.staffName = { $regex: staff, $options: 'i' };
+    if (staff) filter.staffName = { $regex: staff, $options: 'i', $nin: owner.names };
     const pageNum = Math.max(1, parseInt(page) || 1);
     const pageSize = Math.min(100, parseInt(lim) || 30);
     const [entries, total] = await Promise.all([
@@ -4697,10 +5974,11 @@ app.post('/api/revolving-funds', verifyToken, requireSuperAdmin, async (req, res
     if (!name || !initialAmount || Number(initialAmount) <= 0)
       return res.status(400).json({ success: false, error: 'Fund name and a positive initial amount are required.' });
 
-    // "Paid from" — the cash account the fund is seeded out of (not from thin air).
-    const validSources = { '111000': 'Cash on Hand', '112000': 'Cash in Bank' };
-    const srcCode = validSources[sourceAccount] ? sourceAccount : '111000';
-    const srcName = validSources[srcCode];
+    // "Paid from" — any cash/bank/e-wallet account (canonical or custom sub-account).
+    const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
+    const srcMeta = acctMeta(sourceAccount);
+    const srcCode = (srcMeta && isCashLike(sourceAccount)) ? sourceAccount : '111000';
+    const srcName = acctMeta(srcCode)?.name || 'Cash on Hand';
     const amt = Number(initialAmount);
 
     const fund = await RevolvingFund.create({
@@ -4790,10 +6068,11 @@ app.post('/api/revolving-funds/:id/replenish', verifyToken, requireSuperAdmin, a
     if (!fund || !fund.isActive) return res.status(404).json({ success: false, error: 'Fund not found.' });
 
     const { amount, note, sourceAccount } = req.body;
-    // sourceAccount: '111000' = Cash on Hand (default), '112000' = Cash in Bank
-    const validSources = { '111000': 'Cash on Hand', '112000': 'Cash in Bank' };
-    const srcCode = validSources[sourceAccount] ? sourceAccount : '111000';
-    const srcName = validSources[srcCode];
+    // sourceAccount: any cash/bank/e-wallet account (canonical or custom sub-account).
+    const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
+    const srcMeta = acctMeta(sourceAccount);
+    const srcCode = (srcMeta && isCashLike(sourceAccount)) ? sourceAccount : '111000';
+    const srcName = acctMeta(srcCode)?.name || 'Cash on Hand';
 
     // If amount not specified, replenish back to full initialAmount
     const shortfall = +(fund.initialAmount - fund.currentBalance).toFixed(2);

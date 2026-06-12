@@ -52,10 +52,15 @@ describe('ledger.debitAccountFor (Non-Cash → A/R policy)', () => {
     expect(debitAccountFor('E-Wallet').code).toBe('120000');
     expect(debitAccountFor('Other E-Wallet').code).toBe('120000');
   });
-  it('Delivery partners book as A/R until settled', () => {
+  it('Aggregator delivery partners book as A/R until settled', () => {
     expect(debitAccountFor('Grab Delivery').code).toBe('120000');
     expect(debitAccountFor('Foodpanda').code).toBe('120000');
-    expect(debitAccountFor('Manual Delivery').code).toBe('120000');
+  });
+  it('COD channels collected in hand book straight to Cash on Hand', () => {
+    // Own-rider / pickup / Lalamove COD = cash physically collected on delivery.
+    expect(debitAccountFor('Pickup').code).toBe('111000');
+    expect(debitAccountFor('Manual Delivery').code).toBe('111000');
+    expect(debitAccountFor('Lalamove').code).toBe('111000');
   });
   it('Unknown payment methods default to A/R (safe — requires explicit settlement)', () => {
     expect(debitAccountFor('Bitcoin').code).toBe('120000');

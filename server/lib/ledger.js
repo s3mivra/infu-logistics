@@ -27,8 +27,11 @@ export function assertBalanced(lines, ctx = '') {
 // Every other channel (Bank, E-Wallet, Delivery Partners) books as Accounts
 // Receivable (1200) until the merchant verifies the money has landed and
 // settles the receivable via /api/orders/:id/settle-ar.
+// Payments collected in hand immediately → Cash on Hand (111000).
+// Delivery platforms and bank transfers → Accounts Receivable (120000) until settled.
+const CASH_ON_HAND_METHODS = new Set(['Cash', 'Pickup', 'Manual Delivery', 'Lalamove']);
 export function debitAccountFor(paymentMethod) {
-  if (paymentMethod === 'Cash') return { code: '111000', name: 'Cash on Hand' };
+  if (CASH_ON_HAND_METHODS.has(paymentMethod)) return { code: '111000', name: 'Cash on Hand' };
   return { code: '120000', name: 'Accounts Receivable' };
 }
 

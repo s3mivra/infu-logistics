@@ -83,7 +83,56 @@ export default function LedgerTab({ ctx }) {
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
     menuEngineering, fetchMenuEngineering, cashierVariance, fetchCashierVariance, purchaseOrder, fetchPurchaseOrder,
     exportPnlPDF, exportBalanceSheetPDF, exportPurchaseOrderPDF, reconcileInventory,
+    coaAccounts, fetchCoa, coaParent, setCoaParent, coaNewName, setCoaNewName,
+    coaEditId, setCoaEditId, coaEditName, setCoaEditName, coaBusy,
+    addCoaChild, renameCoaChild, deleteCoaChild,
+    cashAndBankAccounts, apAccounts, arAccounts,
+    closedPeriods, fetchClosedPeriods, closePeriod, reopenPeriod,
+    periodCloseForm, setPeriodCloseForm,
+    auditLogEntries, auditLogPage, auditLogPages, auditLogFilter, setAuditLogFilter, fetchAuditLog,
+    paymentMap, fetchPaymentMap, savePaymentMapping, resetPaymentMapping,
+    tenancyReport, tenancyBusy, fetchTenancyReport, runTenancyRebackfill,
+    myPermissions,
   } = ctx;
+
+  // Parents the operator can add children under = canonical posting/header accounts.
+  const coaParents = (coaAccounts || []).filter(a => !a.custom);
+  const coaChildrenOf = (code) => (coaAccounts || []).filter(a => a.custom && a.parent === code);
+  // Journal-entry account picker = standard accounts + any custom child accounts.
+  const jeAccounts = [
+    ...standardAccounts,
+    ...(coaAccounts || []).filter(a => a.custom).map(a => ({ accountCode: a.code, accountName: a.name })),
+  ];
+
+  // ── AR / AP aging helpers ──────────────────────────────────────────────────
+  const agingBuckets = (items, getDate, getAmt) => {
+    const now = Date.now();
+    const b = { c: 0, d60: 0, d90: 0, over: 0 };
+    (items || []).forEach(item => {
+      const days = Math.floor((now - new Date(getDate(item)).getTime()) / 86400000);
+      const amt  = getAmt(item);
+      if      (days <= 30) b.c    += amt;
+      else if (days <= 60) b.d60  += amt;
+      else if (days <= 90) b.d90  += amt;
+      else                 b.over += amt;
+    });
+    return b;
+  };
+
+  // FIFO: allocate payments (totalDebit) to oldest AP credits first → residual = outstanding
+  const apCreditEntries = (() => {
+    if (!apData?.recent) return [];
+    const credits = apData.recent
+      .filter(e => e.credit > 0)
+      .map(e => ({ ...e }))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    let remaining = apData.totalDebit || 0;
+    return credits.map(e => {
+      if (remaining <= 0)           { return { ...e, outstandingAmt: e.credit }; }
+      if (remaining >= e.credit)    { remaining -= e.credit; return { ...e, outstandingAmt: 0 }; }
+      const o = e.credit - remaining; remaining = 0; return { ...e, outstandingAmt: o };
+    }).filter(e => e.outstandingAmt > 0.005);
+  })();
 
   // ── Report-table pagination (client-side, 10 rows/page) ──
   const arPage   = usePagination(arOutstanding?.orders, 10);
@@ -102,6 +151,7 @@ export default function LedgerTab({ ctx }) {
           <div className="flex gap-2 overflow-x-auto custom-scrollbar pb-1 bg-surface border border-white/8 rounded-2xl p-2">
             {[
               ['journal',   'Journal',          FileText],
+              ['coa',       'Chart of Accounts', Settings],
               ['pnl',       'Profit & Loss',    TrendingUp],
               ['pnlmonthly','Monthly P&L',      BarChart3],
               ['balance',   'Balance Sheet',    BarChart2],
@@ -114,6 +164,10 @@ export default function LedgerTab({ ctx }) {
               ['variance',  'Cashier Variance', Users],
               ['po',        'Purchase Order',   Package],
               ['revolving', 'Revolving Funds',  RefreshCw],
+              ['periods',   'Period Lock',      Lock],
+              ['audit',     'Audit Log',        ShieldCheck],
+              ['payroute',  'Payment Routing',  CreditCard],
+              ['tenancy',   'Tenancy Health',   ShieldCheck],
               ['expenses',  'Add Expense',      Plus]
             ].map(([id, label, Icon]) => (
               <button
@@ -121,6 +175,11 @@ export default function LedgerTab({ ctx }) {
                 onClick={() => {
                   if (id === 'expenses') { fetchExpenseCategories(); setExpenseModal(true); return; }
                   setLedgerSubTab(id);
+                  if (id === 'coa') fetchCoa();
+                  if (id === 'periods') fetchClosedPeriods();
+                  if (id === 'audit') fetchAuditLog(1);
+                  if (id === 'payroute') fetchPaymentMap();
+                  if (id === 'tenancy') fetchTenancyReport();
                   if (id === 'pnl' && !pnlData) fetchPnl();
                   if (id === 'pnlmonthly' && !pnlMonthly) fetchPnlMonthly();
                   if (id === 'balance' && !bsData) fetchBalanceSheet();
@@ -140,6 +199,69 @@ export default function LedgerTab({ ctx }) {
               </button>
             ))}
           </div>
+
+          {ledgerSubTab === 'coa' && (
+            <div className="max-w-3xl space-y-5">
+              {/* Add child account */}
+              <div className="bg-surface border border-white/8 rounded-2xl p-5">
+                <h3 className="text-lg font-black text-white mb-1">Add Sub-Account</h3>
+                <p className="text-xs text-white/40 mb-4">Create a custom child account under any parent. It inherits the parent's classification and becomes usable in journal entries and reports.</p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <select value={coaParent} onChange={e => setCoaParent(e.target.value)}
+                    className="flex-1 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm font-bold outline-none focus:border-brand/60">
+                    <option value="">Select parent account…</option>
+                    {coaParents.map(p => (
+                      <option key={p.code} value={p.code}>{p.code} · {p.name}{p.isParent ? ' (header)' : ''}</option>
+                    ))}
+                  </select>
+                  <input type="text" placeholder="New account name" value={coaNewName}
+                    onChange={e => setCoaNewName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') addCoaChild(); }}
+                    className="flex-1 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm font-bold outline-none focus:border-brand/60 placeholder-white/25" />
+                  <button onClick={addCoaChild} disabled={coaBusy}
+                    className="bg-brand text-white font-black text-xs uppercase tracking-widest px-5 py-2.5 rounded-xl hover:bg-brand-dark transition disabled:opacity-50">
+                    <Plus size={14} className="inline -mt-0.5" /> Add
+                  </button>
+                </div>
+              </div>
+
+              {/* Existing custom accounts grouped by parent */}
+              <div className="bg-surface border border-white/8 rounded-2xl p-5">
+                <h3 className="text-lg font-black text-white mb-4">Custom Sub-Accounts</h3>
+                {coaParents.filter(p => coaChildrenOf(p.code).length > 0).length === 0 ? (
+                  <p className="text-sm text-white/30 italic">No custom accounts yet. Add one above.</p>
+                ) : coaParents.filter(p => coaChildrenOf(p.code).length > 0).map(p => (
+                  <div key={p.code} className="mb-4 last:mb-0">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-1.5">{p.code} · {p.name}</p>
+                    <div className="space-y-1.5">
+                      {coaChildrenOf(p.code).map(c => (
+                        <div key={c._id} className="flex items-center gap-2 bg-page-bg border border-white/8 rounded-xl px-3 py-2">
+                          <span className="font-mono text-xs text-brand/80 w-16 shrink-0">{c.code}</span>
+                          {coaEditId === c._id ? (
+                            <>
+                              <input autoFocus value={coaEditName} onChange={e => setCoaEditName(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') renameCoaChild(c._id); if (e.key === 'Escape') setCoaEditId(null); }}
+                                className="flex-1 bg-surface border border-brand/40 rounded-lg px-2 py-1 text-white text-sm outline-none" />
+                              <button onClick={() => renameCoaChild(c._id)} className="text-green-400 hover:text-green-300 text-xs font-black uppercase">Save</button>
+                              <button onClick={() => setCoaEditId(null)} className="text-white/40 hover:text-white text-xs">Cancel</button>
+                            </>
+                          ) : (
+                            <>
+                              <span className="flex-1 text-sm font-bold text-white">{c.name}</span>
+                              <button onClick={() => { setCoaEditId(c._id); setCoaEditName(c.name); }} title="Rename"
+                                className="text-blue-300/70 hover:text-blue-300 p-1"><Edit size={13} /></button>
+                              <button onClick={() => deleteCoaChild(c._id)} title="Delete"
+                                className="text-red-400/70 hover:text-red-400 p-1"><Trash2 size={13} /></button>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {ledgerSubTab === 'journal' && (
         <div className="flex flex-col xl:flex-row gap-8">
@@ -173,13 +295,13 @@ export default function LedgerTab({ ctx }) {
                       </button>
                     </div>
                     <select value={line.accountCode} onChange={(e) => {
-                      const acc = standardAccounts.find(a => a.accountCode === e.target.value);
+                      const acc = jeAccounts.find(a => a.accountCode === e.target.value);
                       const newLines = [...jeForm.lines];
                       newLines[idx] = { ...line, accountCode: acc.accountCode, accountName: acc.accountName };
                       setJeForm({...jeForm, lines: newLines});
                     }} className="w-full bg-page-bg border border-gray-600 rounded p-2 text-sm text-white">
                       <option value="">Select Account...</option>
-                      {standardAccounts.map(acc => <option key={acc.accountCode} value={acc.accountCode}>{acc.accountCode} - {acc.accountName}</option>)}
+                      {jeAccounts.map(acc => <option key={acc.accountCode} value={acc.accountCode}>{acc.accountCode} - {acc.accountName}</option>)}
                     </select>
                     <div className="flex gap-2">
                       <input type="number" placeholder="Debit" value={line.debit} onChange={e => { const nl = [...jeForm.lines]; nl[idx].debit = e.target.value; nl[idx].credit = ''; setJeForm({...jeForm, lines: nl}); }} className="w-1/2 bg-page-bg border border-gray-600 rounded p-2 text-sm text-white placeholder-gray-500" />
@@ -586,6 +708,27 @@ export default function LedgerTab({ ctx }) {
                 </div>
               </div>
 
+              {/* AR Aging Summary */}
+              {arOutstanding.orders.length > 0 && (() => {
+                const ab = agingBuckets(arOutstanding.orders, o => o.createdAt, o => o.total);
+                const buckets = [
+                  { label: 'Current', sub: '0–30 days', amt: ab.c,    color: 'text-green-400',  bg: 'bg-green-500/10 border-green-500/20' },
+                  { label: '31–60',   sub: 'days',       amt: ab.d60,  color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' },
+                  { label: '61–90',   sub: 'days',       amt: ab.d90,  color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20' },
+                  { label: '91+',     sub: 'days',       amt: ab.over, color: 'text-red-400',    bg: 'bg-red-500/10 border-red-500/20' },
+                ];
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {buckets.map(b => (
+                      <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.bg}`}>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-white/40">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
+                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-white/20'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
               {arOutstanding.orders.length === 0 ? (
                 <div className="py-16 text-center text-white/30 font-bold uppercase tracking-widest text-sm">No outstanding A/R 🎉</div>
               ) : (
@@ -597,34 +740,43 @@ export default function LedgerTab({ ctx }) {
                         <th className="text-left py-3">Customer</th>
                         <th className="text-left py-3">Channel</th>
                         <th className="text-left py-3">Date</th>
+                        <th className="text-left py-3">Age</th>
                         <th className="text-right py-3">Amount</th>
                         <th className="text-right py-3">Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {arPage.pageItems.map(o => (
-                        <tr key={o._id} className="border-b border-white/5 hover:bg-white/5 transition">
-                          <td className="py-3 text-white font-bold">{o.orderNumber}</td>
-                          <td className="py-3 text-white/70">{o.customerName}</td>
-                          <td className="py-3"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/20 text-brand px-2 py-1 rounded">{o.paymentMethod}</span></td>
-                          <td className="py-3 text-white/50 text-xs">{new Date(o.createdAt).toLocaleDateString()}</td>
-                          <td className="py-3 text-right text-white tabular-nums font-bold">₱{o.total.toFixed(2)}</td>
-                          <td className="py-3 text-right">
-                            <button onClick={() => {
-                              // Smart-default deposit channel based on original payment method
-                              let defaultMethod = 'Cash on Hand';
-                              if (o.paymentMethod === 'Bank Transfer') defaultMethod = 'Bank Transfer';
-                              else if (['GCash','Maya','Maribank','E-Wallet','Other E-Wallet'].includes(o.paymentMethod)) defaultMethod = o.paymentMethod === 'Other E-Wallet' ? 'GCash' : o.paymentMethod;
-                              else if (['Grab Delivery','Foodpanda','Manual Delivery'].includes(o.paymentMethod)) defaultMethod = 'Bank Transfer';
-                              setSettleModal({ order: o });
-                              setSettleForm({ amount: o.total.toFixed(2), paymentMethod: defaultMethod, note: '' });
-                            }}
-                              className="bg-brand text-white px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
-                              Settle
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {arPage.pageItems.map(o => {
+                        const days = Math.floor((Date.now() - new Date(o.createdAt).getTime()) / 86400000);
+                        const ageBadge = days <= 30
+                          ? 'bg-green-500/15 text-green-400'
+                          : days <= 60 ? 'bg-yellow-500/15 text-yellow-400'
+                          : days <= 90 ? 'bg-orange-500/15 text-orange-400'
+                          : 'bg-red-500/15 text-red-400';
+                        return (
+                          <tr key={o._id} className="border-b border-white/5 hover:bg-white/5 transition">
+                            <td className="py-3 text-white font-bold">{o.orderNumber}</td>
+                            <td className="py-3 text-white/70">{o.customerName}</td>
+                            <td className="py-3"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/20 text-brand px-2 py-1 rounded">{o.paymentMethod}</span></td>
+                            <td className="py-3 text-white/50 text-xs">{new Date(o.createdAt).toLocaleDateString()}</td>
+                            <td className="py-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${ageBadge}`}>{days}d</span></td>
+                            <td className="py-3 text-right text-white tabular-nums font-bold">₱{o.total.toFixed(2)}</td>
+                            <td className="py-3 text-right">
+                              <button onClick={() => {
+                                let defaultMethod = 'Cash on Hand';
+                                if (o.paymentMethod === 'Bank Transfer') defaultMethod = 'Bank Transfer';
+                                else if (['GCash','Maya','Maribank','E-Wallet','Other E-Wallet'].includes(o.paymentMethod)) defaultMethod = o.paymentMethod === 'Other E-Wallet' ? 'GCash' : o.paymentMethod;
+                                else if (['Grab Delivery','Foodpanda','Manual Delivery'].includes(o.paymentMethod)) defaultMethod = 'Bank Transfer';
+                                setSettleModal({ order: o });
+                                setSettleForm({ amount: o.total.toFixed(2), paymentMethod: defaultMethod, note: '' });
+                              }}
+                                className="bg-brand text-white px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
+                                Settle
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                   <Pager {...arPage} label="orders" />
@@ -687,8 +839,9 @@ export default function LedgerTab({ ctx }) {
                         <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Pay From *</label>
                         <select value={apPayForm.payFromAccount} onChange={e => setApPayForm(p => ({...p, payFromAccount: e.target.value}))}
                           className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white font-bold outline-none focus:border-brand/60">
-                          <option value="111000">Cash on Hand (111000)</option>
-                          <option value="112000">Cash in Bank (112000)</option>
+                          {(cashAndBankAccounts || []).map(a => (
+                            <option key={a.code} value={a.code}>{a.name} ({a.code})</option>
+                          ))}
                         </select>
                       </div>
                       <div>
@@ -714,6 +867,66 @@ export default function LedgerTab({ ctx }) {
                   </div>
                 </div>
               )}
+
+              {/* AP Aging */}
+              {apCreditEntries.length > 0 && (() => {
+                const ab = agingBuckets(apCreditEntries, e => e.date, e => e.outstandingAmt);
+                const buckets = [
+                  { label: 'Current', sub: '0–30 days', amt: ab.c,    color: 'text-green-400',  bg: 'bg-green-500/10 border-green-500/20' },
+                  { label: '31–60',   sub: 'days',       amt: ab.d60,  color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' },
+                  { label: '61–90',   sub: 'days',       amt: ab.d90,  color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20' },
+                  { label: '91+',     sub: 'days',       amt: ab.over, color: 'text-red-400',    bg: 'bg-red-500/10 border-red-500/20' },
+                ];
+                return (
+                  <div className="bg-surface border border-white/8 rounded-xl overflow-hidden">
+                    <div className="px-5 py-3 border-b border-white/8 flex items-center gap-2">
+                      <AlertTriangle size={14} className="text-white/50"/>
+                      <h3 className="text-sm font-black text-white uppercase tracking-wider">A/P Aging</h3>
+                      <span className="ml-auto text-[10px] bg-white/8 text-white/40 px-2 py-0.5 rounded-full font-bold">FIFO — oldest paid first</span>
+                    </div>
+                    <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {buckets.map(b => (
+                        <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.bg}`}>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-white/40">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
+                          <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-white/20'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="overflow-x-auto border-t border-white/8">
+                      <table className="w-full text-left text-xs min-w-[480px]">
+                        <thead className="text-white/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                          <tr>
+                            <th className="px-5 py-2.5">Date</th>
+                            <th className="px-5 py-2.5">Reference</th>
+                            <th className="px-5 py-2.5">Description</th>
+                            <th className="px-5 py-2.5 text-center">Age</th>
+                            <th className="px-5 py-2.5 text-right">Outstanding</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {apCreditEntries.map((e, i) => {
+                            const days = Math.floor((Date.now() - new Date(e.date).getTime()) / 86400000);
+                            const ageBadge = days <= 30
+                              ? 'bg-green-500/15 text-green-400'
+                              : days <= 60 ? 'bg-yellow-500/15 text-yellow-400'
+                              : days <= 90 ? 'bg-orange-500/15 text-orange-400'
+                              : 'bg-red-500/15 text-red-400';
+                            return (
+                              <tr key={e._id || i} className={`border-b border-white/5 hover:bg-white/3 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'}`}>
+                                <td className="px-5 py-2.5 text-white/40 whitespace-nowrap">{new Date(e.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: '2-digit' })}</td>
+                                <td className="px-5 py-2.5 font-mono text-white/60 whitespace-nowrap">{e.reference}</td>
+                                <td className="px-5 py-2.5 text-white/70 truncate max-w-[200px]">{e.description}</td>
+                                <td className="px-5 py-2.5 text-center"><span className={`text-[10px] font-black px-2 py-0.5 rounded ${ageBadge}`}>{days}d</span></td>
+                                <td className="px-5 py-2.5 text-right text-red-400 font-mono tabular-nums font-bold">₱{e.outstandingAmt.toFixed(2)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Recent AP Journal Entries */}
               <div className="bg-surface border border-white/8 rounded-xl overflow-hidden">
@@ -1170,6 +1383,280 @@ export default function LedgerTab({ ctx }) {
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ── PERIOD LOCK ─────────────────────────────────────────────── */}
+          {ledgerSubTab === 'periods' && (
+            <div className="bg-surface border border-white/8 rounded-2xl p-6 space-y-6">
+              <div>
+                <h3 className="text-xl font-black text-white flex items-center gap-2"><Lock size={18} className="text-brand"/> Closed Accounting Periods</h3>
+                <p className="text-white/40 text-xs font-bold uppercase tracking-widest mt-1">Lock a month to prevent back-dated journal entries</p>
+              </div>
+
+              <div className="bg-page-bg border border-white/8 rounded-xl p-4">
+                <h4 className="text-sm font-black text-white uppercase tracking-wider mb-3">Close a Period</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                  <div>
+                    <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Year</label>
+                    <input type="number" min="2000" max="2100" value={periodCloseForm.year}
+                      onChange={e => setPeriodCloseForm({...periodCloseForm, year: e.target.value})}
+                      className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-white font-bold outline-none focus:border-brand/60"/>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Month</label>
+                    <select value={periodCloseForm.month}
+                      onChange={e => setPeriodCloseForm({...periodCloseForm, month: e.target.value})}
+                      className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-white font-bold outline-none focus:border-brand/60">
+                      {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
+                        <option key={m} value={m}>{new Date(2000, m-1, 1).toLocaleString(undefined, { month: 'long' })}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Notes (optional)</label>
+                    <input type="text" placeholder="e.g. Q2 books closed by finance" value={periodCloseForm.notes}
+                      onChange={e => setPeriodCloseForm({...periodCloseForm, notes: e.target.value})}
+                      className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-white outline-none focus:border-brand/60"/>
+                  </div>
+                </div>
+                <button onClick={closePeriod} className="mt-3 w-full bg-brand text-white font-black py-3 rounded-lg uppercase tracking-widest text-sm hover:bg-brand/90 transition">
+                  Lock Period
+                </button>
+                <p className="text-[10px] text-white/40 mt-2">Once locked, journal entries dated in this month are rejected. Superadmin can reopen below.</p>
+              </div>
+
+              <div>
+                <h4 className="text-sm font-black text-white uppercase tracking-wider mb-3">History</h4>
+                {(closedPeriods || []).length === 0 ? (
+                  <p className="text-white/40 text-sm italic">No periods locked yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {closedPeriods.map(p => {
+                      const label = `${p.year}-${String(p.month).padStart(2,'0')}`;
+                      const isLocked = !p.isOpen;
+                      return (
+                        <div key={p._id} className={`flex items-center justify-between rounded-xl p-3 border ${isLocked ? 'bg-red-500/5 border-red-500/20' : 'bg-white/5 border-white/10'}`}>
+                          <div className="flex items-center gap-3 min-w-0">
+                            {isLocked ? <Lock size={14} className="text-red-400"/> : <Unlock size={14} className="text-white/40"/>}
+                            <div className="min-w-0">
+                              <p className="text-white font-black text-sm">{label} <span className={`text-[10px] ml-1 font-black uppercase tracking-widest ${isLocked ? 'text-red-400' : 'text-white/40'}`}>{isLocked ? 'Locked' : 'Reopened'}</span></p>
+                              <p className="text-[10px] text-white/40 truncate">{isLocked ? `Closed by ${p.closedBy} · ${new Date(p.closedAt).toLocaleString()}` : `Reopened by ${p.reopenedBy} · ${new Date(p.reopenedAt).toLocaleString()}`}{p.notes ? ` · ${p.notes}` : ''}</p>
+                            </div>
+                          </div>
+                          {isLocked && (
+                            <button onClick={() => reopenPeriod(p._id)} className="text-[10px] uppercase tracking-widest font-black bg-white/5 hover:bg-white/10 text-white/70 hover:text-white px-3 py-1.5 rounded-lg transition">
+                              Reopen
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── PAYMENT ROUTING ───────────────────────────────────────────── */}
+          {ledgerSubTab === 'payroute' && (() => {
+            const methods = Array.from(new Set([
+              ...Object.keys(paymentMap?.defaults || {}),
+              ...Object.keys(paymentMap?.effective || {}),
+            ])).sort();
+            // Group eligible target accounts by parent (cash, bank, e-wallet, AR, AP)
+            const allEligible = [
+              ...(cashAndBankAccounts || []),
+              ...(arAccounts || []),
+              ...(apAccounts || []),
+            ];
+            return (
+              <div className="bg-surface border border-white/8 rounded-2xl p-6 space-y-4">
+                <div>
+                  <h3 className="text-xl font-black text-white flex items-center gap-2"><CreditCard size={18} className="text-brand"/> Payment Method Routing</h3>
+                  <p className="text-white/40 text-xs font-bold uppercase tracking-widest mt-1">Map each POS payment method to a specific account (custom sub-accounts welcome)</p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="text-white/40 border-b border-white/10 text-[10px] uppercase tracking-widest">
+                        <th className="pb-2">Payment Method</th>
+                        <th className="pb-2">Default</th>
+                        <th className="pb-2">Currently Routes To</th>
+                        <th className="pb-2 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {methods.map(m => {
+                        const def = paymentMap?.defaults?.[m] || '111000';
+                        const eff = paymentMap?.effective?.[m] || def;
+                        const isOverride = paymentMap?.overrides?.[m];
+                        const effName = (allEligible.find(a => a.code === eff)?.name) || (coaAccounts.find(a => a.code === eff)?.name) || eff;
+                        return (
+                          <tr key={m} className="border-b border-white/5 hover:bg-page-bg/30">
+                            <td className="py-2 text-white font-bold text-sm">{m}</td>
+                            <td className="py-2 text-white/40 text-xs font-mono">{def}</td>
+                            <td className="py-2">
+                              <select value={eff} onChange={e => savePaymentMapping(m, e.target.value)}
+                                className="bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-white text-xs font-bold outline-none focus:border-brand/60">
+                                {allEligible.map(a => (
+                                  <option key={a.code} value={a.code}>{a.name} ({a.code})</option>
+                                ))}
+                              </select>
+                              <span className="ml-2 text-[10px] text-white/30">{effName}</span>
+                              {isOverride && <span className="ml-2 text-[9px] uppercase tracking-widest font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">Override</span>}
+                            </td>
+                            <td className="py-2 text-right">
+                              {isOverride && (
+                                <button onClick={() => resetPaymentMapping(m)} className="text-[10px] uppercase tracking-widest font-black bg-white/5 hover:bg-white/10 text-white/60 hover:text-white px-3 py-1 rounded-lg transition">Reset</button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[10px] text-white/40">Changes take effect immediately for new orders and settlements. Past journal entries are not modified.</p>
+              </div>
+            );
+          })()}
+
+          {/* ── AUDIT LOG ──────────────────────────────────────────────────── */}
+          {ledgerSubTab === 'audit' && (
+            <div className="bg-surface border border-white/8 rounded-2xl p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-xl font-black text-white flex items-center gap-2"><ShieldCheck size={18} className="text-brand"/> Audit Log</h3>
+                  <p className="text-white/40 text-xs font-bold uppercase tracking-widest mt-1">Forensic trail of edits, voids, deletes</p>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  <select value={auditLogFilter.entity}
+                    onChange={e => setAuditLogFilter({...auditLogFilter, entity: e.target.value})}
+                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-bold outline-none focus:border-brand/60">
+                    <option value="">All Entities</option>
+                    <option value="PRODUCT">Product</option>
+                    <option value="ORDER">Order</option>
+                    <option value="INVENTORY">Inventory</option>
+                    <option value="ACCOUNT">Account</option>
+                    <option value="PERIOD">Period</option>
+                    <option value="JOURNALENTRY">Journal Entry</option>
+                  </select>
+                  <input type="text" placeholder="Actor name" value={auditLogFilter.actor}
+                    onChange={e => setAuditLogFilter({...auditLogFilter, actor: e.target.value})}
+                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-brand/60"/>
+                  <button onClick={() => fetchAuditLog(1)} className="bg-brand text-white font-black px-4 py-2 rounded-lg uppercase tracking-widest text-xs hover:bg-brand/90 transition">
+                    Query
+                  </button>
+                </div>
+              </div>
+
+              {(auditLogEntries || []).length === 0 ? (
+                <p className="text-white/40 text-sm italic text-center py-8">No audit entries match. Click Query to load.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="text-white/40 border-b border-white/10 text-[10px] uppercase tracking-widest">
+                        <th className="pb-2">When</th>
+                        <th className="pb-2">Actor</th>
+                        <th className="pb-2">Action</th>
+                        <th className="pb-2">Reference</th>
+                        <th className="pb-2">Details</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {auditLogEntries.map((e, idx) => (
+                        <tr key={e._id || idx} className="border-b border-white/5 hover:bg-page-bg/30">
+                          <td className="py-2 text-white/60 text-xs whitespace-nowrap">{new Date(e.timestamp).toLocaleString()}</td>
+                          <td className="py-2 text-white font-bold text-xs">{e.userId}</td>
+                          <td className="py-2 text-brand font-bold text-xs">{e.action}</td>
+                          <td className="py-2 text-white/60 text-xs font-mono">{e.targetReference}</td>
+                          <td className="py-2 text-white/40 text-[10px] max-w-md truncate" title={JSON.stringify(e.details)}>
+                            {e.details ? JSON.stringify(e.details).slice(0, 80) + (JSON.stringify(e.details).length > 80 ? '…' : '') : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {auditLogPages > 1 && (
+                <div className="flex justify-between items-center border-t border-white/8 pt-3">
+                  <button onClick={() => fetchAuditLog(Math.max(1, auditLogPage - 1))} disabled={auditLogPage === 1}
+                    className="px-4 py-1.5 rounded-lg bg-white/5 text-white/60 text-xs font-bold uppercase tracking-widest disabled:opacity-30 hover:bg-white/10 transition">← Prev</button>
+                  <span className="text-white/40 text-xs font-bold tracking-widest">PAGE {auditLogPage} / {auditLogPages}</span>
+                  <button onClick={() => fetchAuditLog(Math.min(auditLogPages, auditLogPage + 1))} disabled={auditLogPage === auditLogPages}
+                    className="px-4 py-1.5 rounded-lg bg-white/5 text-white/60 text-xs font-bold uppercase tracking-widest disabled:opacity-30 hover:bg-white/10 transition">Next →</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── TENANCY HEALTH + MY PERMISSIONS ───────────────────────────── */}
+          {ledgerSubTab === 'tenancy' && (
+            <div className="bg-surface border border-white/8 rounded-2xl p-6 space-y-6">
+              <div>
+                <h3 className="text-xl font-black text-white flex items-center gap-2"><ShieldCheck size={18} className="text-brand"/> Tenancy Health</h3>
+                <p className="text-white/40 text-xs font-bold uppercase tracking-widest mt-1">Verify every doc is stamped with this server's business type</p>
+              </div>
+
+              {!tenancyReport ? (
+                <p className="text-white/40 text-sm italic">Loading report…</p>
+              ) : (
+                <>
+                  <div className="bg-page-bg border border-white/8 rounded-xl p-4">
+                    <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold mb-1">Current Business Type</p>
+                    <p className="text-2xl font-black text-brand">{tenancyReport.currentBusinessType}</p>
+                    <p className={`mt-2 text-[10px] uppercase tracking-widest font-black ${tenancyReport.isClean ? 'text-green-400' : 'text-amber-400'}`}>
+                      {tenancyReport.isClean ? '✓ Clean — all docs stamped' : '⚠ Some docs need attention'}
+                    </p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="text-white/40 border-b border-white/10 text-[10px] uppercase tracking-widest">
+                          <th className="pb-2">Collection</th>
+                          <th className="pb-2 text-right">Missing businessType</th>
+                          <th className="pb-2 text-right">Other businessType</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tenancyReport.rows.map(r => (
+                          <tr key={r.collection} className="border-b border-white/5">
+                            <td className="py-2 text-white font-bold">{r.collection}</td>
+                            <td className={`py-2 text-right font-mono tabular-nums ${r.missingBusinessType > 0 ? 'text-amber-400 font-black' : 'text-white/40'}`}>{r.missingBusinessType.toLocaleString()}</td>
+                            <td className={`py-2 text-right font-mono tabular-nums ${r.otherBusinessType > 0 ? 'text-red-400 font-black' : 'text-white/40'}`}>{r.otherBusinessType.toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={fetchTenancyReport} className="bg-white/5 hover:bg-white/10 text-white/70 hover:text-white font-bold px-4 py-2 rounded-lg uppercase tracking-widest text-xs transition">
+                      Refresh
+                    </button>
+                    <button onClick={runTenancyRebackfill} disabled={tenancyBusy}
+                      className="bg-brand text-white font-black px-4 py-2 rounded-lg uppercase tracking-widest text-xs hover:bg-brand/90 transition disabled:opacity-50">
+                      {tenancyBusy ? 'Running…' : 'Run Re-Backfill'}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-white/40">"Other businessType" docs belong to another tenant on the same database. Re-backfill only stamps docs missing the field — it never overwrites an existing different value.</p>
+                </>
+              )}
+
+              {/* My role + permissions card */}
+              <div className="bg-page-bg border border-white/8 rounded-xl p-4">
+                <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold mb-1">My Role</p>
+                <p className="text-xl font-black text-brand">{myPermissions?.role || 'unknown'} {myPermissions?.isWildcard && <span className="ml-2 text-[10px] font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded align-middle">Wildcard</span>}</p>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {(myPermissions?.isWildcard ? ['*'] : (myPermissions?.permissions || [])).map(p => (
+                    <span key={p} className="text-[10px] uppercase tracking-widest font-bold bg-white/5 text-white/70 px-2 py-1 rounded border border-white/10">{p}</span>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 

@@ -1,6 +1,8 @@
 import React from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 
+const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+
 // ── OrdersTab — extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function OrdersTab({ ctx }) {
@@ -40,12 +42,13 @@ export default function OrdersTab({ ctx }) {
     itemsPerPage, jeForm, journalEntries, ledgerSubTab, navMode,
     newDiscount, openEditInventory, openProductModal, orderFilter, orders,
     ordersItemsPerPage, ordersPage, parseImportFile, paymentSelections, peso,
-    physicalCounts, pnlData, pnlRange, posActiveAddOns, posActiveSize,
+    physicalCounts, pnlData, pnlRange, posActiveAddOns, posActiveSize, posItemQty, setPosItemQty,
     posCart, posCashTendered, posCategory, posCheckoutModal, posCustomerName,
+    posClientId, setPosClientId, clientAccounts,
     posCustomerPhone, posDeliveryAddress, posDeliveryFee, posDeliveryFeeNum, posDiscountAmt,
-    posDiscountType, posDiscountValue, posGrandTotal, posSubmitting, posPage, posPayment,
+    posDiscountType, posDiscountValue, posItemDiscountAmt, posGrandTotal, posSubmitting, posPage, posPayment,
     posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable,
-    pricingItemsPerPage, pricingPage, printOrderSlip, printXReading, products,
+    pricingItemsPerPage, pricingPage, printOrderSlip, printBillingStatement, printXReading, products,
     removeAddOnFromOrder, removeComplimentary, removeMaterial, removeSize, restockData,
     rfActiveFund, rfDisbForm, rfDisbModal, rfDisbSubmitting, rfFunds,
     rfLoading, rfNewForm, rfNewModal, rfNewSubmitting, rfReplForm,
@@ -63,7 +66,7 @@ export default function OrdersTab({ ctx }) {
     posNotes, setPosNotes, posGuestCount, setPosGuestCount,
     posPayments, setPosPayments,
     modifierGroups, printKitchenTicket,
-    refundModal, setRefundModal, handleRefund,
+    refundModal, setRefundModal, handleRefund, openPartial,
     combos, addComboToPosCart,
     parkedOrders, parkedModalOpen, setParkedModalOpen, fetchParked, parkCurrentOrder, resumeParked,
     setPnlRange, setPosActiveAddOns, setPosActiveSize, setPosCart, setPosCashTendered,
@@ -221,22 +224,50 @@ export default function OrdersTab({ ctx }) {
 
                   {/* Customer info */}
                   <div className="px-4 pt-4 pb-3 border-b border-white/8 bg-page-bg/60 shrink-0 space-y-2">
+                    {/* Client account picker — when set, server applies that client's per-product discount overrides. */}
+                    {(clientAccounts || []).length > 0 && (
+                      <select value={posClientId || ''}
+                        onChange={e => {
+                          const id = e.target.value;
+                          setPosClientId(id);
+                          // Auto-fill the customer name from the chosen client (admin can still edit).
+                          if (id) {
+                            const c = clientAccounts.find(a => String(a._id) === id);
+                            if (c && !posCustomerName) setPosCustomerName(c.name || c.username || '');
+                          }
+                        }}
+                        className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white/80 font-bold text-sm outline-none focus:border-brand/60 transition">
+                        <option value="">— Walk-in / no client account —</option>
+                        {clientAccounts.map(c => (
+                          <option key={c._id} value={c._id}>{c.name || c.username} ({c.clientCode})</option>
+                        ))}
+                      </select>
+                    )}
                     <input type="text" placeholder="Customer / Driver Name *" value={posCustomerName} onChange={e => setPosCustomerName(e.target.value)}
                       className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold placeholder-white/25 outline-none focus:border-brand/60 text-sm transition" />
                     <select value={posTable} onChange={e => setPosTable(e.target.value)}
                       className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white/80 font-bold text-sm outline-none focus:border-brand/60 transition">
-                      <option value="Dine-In">🍽 Dine-In</option>
-                      <option value="Takeout">🥡 Takeout</option>
-                      <option value="Pickup">📦 Pickup</option>
-                      <option value="Manual Delivery">🛵 Manual Delivery</option>
-                      <option value="Grab Delivery">🟢 Grab Delivery</option>
-                      <option value="Foodpanda">🐼 Foodpanda</option>
+                      {BUSINESS_TYPE === 'log' ? (<>
+                        <option value="Walk In">🚶 Walk In</option>
+                        <option value="Pickup">📦 Pickup</option>
+                        <option value="Manual Delivery">🛵 Manual Delivery</option>
+                        <option value="Grab Delivery">🟢 Grab Delivery</option>
+                        <option value="Lalamove">🚚 Lalamove</option>
+                      </>) : (<>
+                        <option value="Walk In">🚶 Walk In</option>
+                        <option value="Dine-In">🍽 Dine-In</option>
+                        <option value="Takeout">🥡 Takeout</option>
+                        <option value="Pickup">📦 Pickup</option>
+                        <option value="Manual Delivery">🛵 Manual Delivery</option>
+                        <option value="Grab Delivery">🟢 Grab Delivery</option>
+                        <option value="Foodpanda">🐼 Foodpanda</option>
+                      </>)}
                     </select>
-                    {(posTable === 'Manual Delivery' || posTable === 'Pickup') && (
+                    {(posTable === 'Manual Delivery' || posTable === 'Pickup' || posTable === 'Lalamove') && (
                       <div className="space-y-2 border border-brand/20 rounded-xl p-2.5 bg-brand/5">
                         <input type="tel" placeholder="Phone Number *" value={posCustomerPhone} onChange={e => setPosCustomerPhone(e.target.value)}
                           className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50" />
-                        {posTable === 'Manual Delivery' && (
+                        {(posTable === 'Manual Delivery' || posTable === 'Lalamove') && (
                           <input type="text" placeholder="Delivery Address *" value={posDeliveryAddress} onChange={e => setPosDeliveryAddress(e.target.value)}
                             className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50" />
                         )}
@@ -260,7 +291,9 @@ export default function OrdersTab({ ctx }) {
                       </div>
                     ) : posCart.map((item, idx) => {
                       const addOnTotal = item.selectedAddOns.reduce((s, a) => s + Number(a.price), 0);
-                      const lineTotal = (item.price + addOnTotal) * item.quantity;
+                      const lineBase = (item.price + addOnTotal) * item.quantity;
+                      const lineDisc = lineBase * ((item.discountPercent || 0) / 100);
+                      const lineTotal = lineBase - lineDisc;
                       return (
                         <div key={idx} className="bg-page-bg/50 p-3 rounded-xl border border-white/8 flex justify-between items-start">
                           <div className="flex-1 pr-2 min-w-0">
@@ -274,9 +307,20 @@ export default function OrdersTab({ ctx }) {
                               <span className="font-black text-sm text-white w-6 text-center">{item.quantity}</span>
                               <button onClick={() => setPosCart(posCart.map((c, i) => i === idx ? {...c, quantity: c.quantity + 1} : c))}
                                 className="w-8 h-8 bg-white/8 hover:bg-brand/30 rounded-lg text-white font-black flex items-center justify-center transition text-base active:scale-90">+</button>
+                              <div className="relative ml-1">
+                                <input
+                                  type="number" min="0" max="100" step="1"
+                                  placeholder="0"
+                                  value={item.discountPercent || ''}
+                                  onChange={e => setPosCart(posCart.map((c, i) => i === idx ? {...c, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))} : c))}
+                                  className="w-14 bg-white/5 border border-white/10 rounded-lg pl-2 pr-5 py-1 text-white text-xs font-bold outline-none focus:border-brand/60 placeholder-white/20 tabular-nums"
+                                />
+                                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-white/30 text-[10px] font-bold pointer-events-none">%</span>
+                              </div>
                             </div>
                           </div>
                           <div className="flex flex-col items-end gap-1 shrink-0">
+                            {lineDisc > 0 && <p className="text-[10px] text-green-400 font-bold tabular-nums">-₱{lineDisc.toFixed(2)}</p>}
                             <p className="font-black text-brand text-sm tabular-nums">₱{lineTotal.toFixed(2)}</p>
                             <button onClick={() => setPosCart(posCart.filter((_, i) => i !== idx))}
                               className="w-8 h-8 flex items-center justify-center text-red-400/60 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition active:scale-90">
@@ -294,9 +338,14 @@ export default function OrdersTab({ ctx }) {
                       <div className="flex justify-between text-xs text-white/40 font-bold">
                         <span>Subtotal</span><span>₱{posSubtotal.toFixed(2)}</span>
                       </div>
+                      {posItemDiscountAmt > 0 && (
+                        <div className="flex justify-between text-xs text-green-400 font-bold">
+                          <span>Item Discounts</span><span>−₱{posItemDiscountAmt.toFixed(2)}</span>
+                        </div>
+                      )}
                       {posDiscountAmt > 0 && (
                         <div className="flex justify-between text-xs text-green-400 font-bold">
-                          <span>Discount</span><span>−₱{posDiscountAmt.toFixed(2)}</span>
+                          <span>Order Discount</span><span>−₱{posDiscountAmt.toFixed(2)}</span>
                         </div>
                       )}
                       {posDeliveryFeeNum > 0 && (
@@ -322,7 +371,15 @@ export default function OrdersTab({ ctx }) {
                         disabled={posSubmitting}
                         className="flex-1 py-4 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active:scale-98 transition shadow-lg shadow-brand/20 flex items-center justify-center gap-2 min-h-[56px] disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
                       >
-                        <ShoppingCart size={18}/> {posSubmitting ? 'Placing…' : <>Place Order — ₱<span className="tabular-nums">{posGrandTotal.toFixed(2)}</span></>}
+                        <ShoppingCart size={18}/>
+                        {posSubmitting ? (
+                          'Placing…'
+                        ) : (() => {
+                          const itemCount = posCart.reduce((s, c) => s + (c.quantity || 0), 0);
+                          if (itemCount === 0) return 'Cart Empty';
+                          const label = itemCount === 1 ? '1 Item' : `${itemCount} Items`;
+                          return (<>Place Order · {label} · ₱<span className="tabular-nums">{posGrandTotal.toFixed(2)}</span></>);
+                        })()}
                       </button>
                     </div>
                   </div>
@@ -381,7 +438,16 @@ export default function OrdersTab({ ctx }) {
                         )}
                       </div>
 
-                      <div className="flex gap-3 mt-4 pt-4 border-t border-gray-800 shrink-0">
+                      <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-800 shrink-0">
+                        <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Quantity</span>
+                        <div className="flex items-center gap-3">
+                          <button onClick={() => setPosItemQty(q => Math.max(1, q - 1))} className="w-9 h-9 rounded-lg bg-page-bg border border-gray-700 text-white text-lg font-black hover:border-accent hover:text-accent transition flex items-center justify-center">−</button>
+                          <span className="w-8 text-center text-white font-black text-lg">{posItemQty}</span>
+                          <button onClick={() => setPosItemQty(q => q + 1)} className="w-9 h-9 rounded-lg bg-page-bg border border-gray-700 text-white text-lg font-black hover:border-accent hover:text-accent transition flex items-center justify-center">+</button>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3 mt-3 shrink-0">
                         <button onClick={() => setPosSelectedProduct(null)} className="flex-1 py-4 bg-page-bg border border-gray-700 text-white hover:text-accent font-bold rounded-xl uppercase tracking-wider text-xs transition">Cancel</button>
                         <button onClick={confirmPosItem} className="flex-1 py-4 bg-accent text-white hover:bg-brand-dark font-black rounded-xl uppercase tracking-wider text-xs shadow-lg shadow-accent/20 transition">Add to Cart</button>
                       </div>
@@ -413,7 +479,7 @@ export default function OrdersTab({ ctx }) {
                     )}
                   </div>
                   <div className="flex gap-2 overflow-x-auto">
-                    {['All', 'Kitchen', 'Bar'].map(dept => (
+                    {(BUSINESS_TYPE === 'log' ? ['All', 'Storage Room'] : ['All', 'Kitchen', 'Bar']).map(dept => (
                       <button
                         key={dept}
                         onClick={() => setDepartmentFilter(dept)}
@@ -494,11 +560,13 @@ export default function OrdersTab({ ctx }) {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                   {displayOrders.length === 0 ? (
-                    <div className="col-span-full text-center py-12 text-gray-500 font-bold uppercase tracking-widest">No orders in {departmentFilter} queue.</div>
+                    <div className="col-span-full text-center py-12 text-gray-500 font-bold uppercase tracking-widest">No orders in {departmentFilter === 'All' ? 'any' : departmentFilter} queue.</div>
                   ) : displayOrders.map(order => {
                     // Items scoped to current department view (or all items when in All view)
                     const viewItems      = departmentFilter !== 'All'
-                      ? order.items.filter(i => (i.department || 'Kitchen') === departmentFilter)
+                      ? (BUSINESS_TYPE === 'log'
+                          ? order.items
+                          : order.items.filter(i => (i.department || 'Kitchen') === departmentFilter))
                       : order.items;
                     const allDelivered   = order.items.length > 0 && order.items.every(i => i.itemStatus === 'Delivered');
                     const deliveredCount = viewItems.filter(i => i.itemStatus === 'Delivered').length;
@@ -515,12 +583,13 @@ export default function OrdersTab({ ctx }) {
                       order.status === 'Ready'               ? 'border-l-blue-500' :
                       order.status === 'Partially Delivered' ? 'border-l-orange-500' :
                       order.status === 'Preparing'           ? 'border-l-yellow-500' :
+                      order.status === 'Refunded'            ? 'border-l-purple-500' :
                       (order.status === 'Cancelled' || order.status === 'Voided') ? 'border-l-gray-600' :
                       'border-l-red-500';
                     return (
                       <div key={order._id} className={`bg-surface rounded-xl border border-l-4 flex flex-col shadow-lg transition-all
                         ${allDeptDone && order.status !== 'Completed' ? 'border-green-500/40 border-l-green-500' : `border-white/5 ${statusBorderColor}`}
-                        ${(order.status === 'Cancelled' || order.status === 'Voided') ? 'opacity-60' : ''}`}>
+                        ${(order.status === 'Cancelled' || order.status === 'Voided' || order.status === 'Refunded') ? 'opacity-60' : ''}`}>
 
                         {/* HEADER — only chevron collapses */}
                         <div className="flex justify-between items-center px-4 pt-4 pb-3 gap-2">
@@ -550,6 +619,7 @@ export default function OrdersTab({ ctx }) {
                                 order.status === 'Ready'               ? 'bg-blue-500/15 text-blue-400' :
                                 order.status === 'Partially Delivered' ? 'bg-orange-500/15 text-orange-400' :
                                 order.status === 'Completed'           ? 'bg-green-500/15 text-green-400' :
+                                order.status === 'Refunded'            ? 'bg-purple-500/15 text-purple-400' :
                                 'bg-gray-500/15 text-gray-500'
                               }`}>{order.status}</span>
                               <span className="text-gray-600 text-[9px]">{new Date(order.createdAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
@@ -564,9 +634,16 @@ export default function OrdersTab({ ctx }) {
                             <button onClick={() => printKitchenTicket(order)} className="p-1.5 bg-white/5 text-orange-400/60 rounded-lg hover:bg-orange-500/10 hover:text-orange-400 transition" title="Kitchen Ticket (no prices)">
                               <ChefHat size={13} />
                             </button>
-                            <button onClick={() => printOrderSlip(order)} className="p-1.5 bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition" title="Print Receipt">
-                              <Printer size={13} />
-                            </button>
+                            {BUSINESS_TYPE !== 'log' && (
+                              <button onClick={() => printOrderSlip(order)} className="p-1.5 bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition" title="Print Receipt">
+                                <Printer size={13} />
+                              </button>
+                            )}
+                            {BUSINESS_TYPE === 'log' && (
+                              <button onClick={() => printBillingStatement(order)} className="p-1.5 bg-white/5 text-blue-400/70 rounded-lg hover:bg-blue-500/10 hover:text-blue-300 transition" title="Print Billing Statement">
+                                <FileText size={13} />
+                              </button>
+                            )}
                             <button
                               onClick={() => setCollapsedOrders(prev => ({ ...prev, [order._id]: !prev[order._id] }))}
                               className="p-1.5 bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition"
@@ -606,8 +683,10 @@ export default function OrdersTab({ ctx }) {
                         {!collapsedOrders[order._id] && (
                           <div className="px-4 pb-4 flex flex-col gap-3 border-t border-white/5 pt-3">
                             <div className="space-y-2 max-h-56 overflow-y-auto custom-scrollbar pr-1">
-                              {['Kitchen', 'Bar'].map(dept => {
-                                const deptItems = order.items.map((item, idx) => ({ ...item, originalIdx: idx })).filter(i => (i.department || 'Kitchen') === dept);
+                              {(BUSINESS_TYPE === 'log' ? ['Storage Room'] : ['Kitchen', 'Bar']).map(dept => {
+                                const deptItems = BUSINESS_TYPE === 'log'
+                                  ? order.items.map((item, idx) => ({ ...item, originalIdx: idx }))
+                                  : order.items.map((item, idx) => ({ ...item, originalIdx: idx })).filter(i => (i.department || 'Kitchen') === dept);
                                 if (deptItems.length === 0) return null;
                                 if (departmentFilter !== 'All' && departmentFilter !== dept) return null;
                                 return (
@@ -643,22 +722,50 @@ export default function OrdersTab({ ctx }) {
                                                 )}
                                               </>
                                             ) : (
-                                              <div className="flex flex-col items-end">
-                                                {item.discountPercent > 0 ? (
-                                                  <>
-                                                    <span className="text-gray-600 line-through text-[10px] font-mono">
-                                                      P{((item.price + (item.selectedAddOns?.reduce((s, a) => s + Number(a.price), 0) || 0)) * item.quantity).toFixed(2)}
-                                                    </span>
-                                                    <span className="text-accent font-mono font-bold text-xs">
-                                                      P{(((item.price + (item.selectedAddOns?.reduce((s, a) => s + Number(a.price), 0) || 0)) * item.quantity) * (1 - item.discountPercent / 100)).toFixed(2)}
-                                                    </span>
-                                                  </>
-                                                ) : (
-                                                  <span className="text-gray-400 font-mono text-xs">
-                                                    P{((item.price + (item.selectedAddOns?.reduce((s, a) => s + Number(a.price), 0) || 0)) * item.quantity).toFixed(2)}
-                                                  </span>
-                                                )}
-                                              </div>
+                                              (() => {
+                                                // Effective discount = MAX of per-product/per-client discount
+                                                // (server-resolved, saved as productDiscountPercent) and the
+                                                // per-item cashier override (discountPercent). We show the
+                                                // higher one so the customer always gets the better rate.
+                                                const lineGross = (item.price + (item.selectedAddOns?.reduce((s, a) => s + Number(a.price), 0) || 0)) * item.quantity;
+                                                const prodPct  = Number(item.productDiscountPercent || 0);
+                                                const itemPct  = Number(item.discountPercent || 0);
+                                                const effPct   = Math.max(prodPct, itemPct);
+                                                const isClientRate = prodPct > 0 && prodPct >= itemPct;
+                                                return (
+                                                  <div className="flex flex-col items-end gap-0.5">
+                                                    {effPct > 0 ? (
+                                                      <>
+                                                        <span className="text-gray-600 line-through text-[10px] font-mono">
+                                                          P{lineGross.toFixed(2)}
+                                                        </span>
+                                                        <span className="text-accent font-mono font-bold text-xs">
+                                                          P{(lineGross * (1 - effPct / 100)).toFixed(2)}
+                                                        </span>
+                                                        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${isClientRate ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'}`}>
+                                                          {isClientRate ? `Client −${effPct}%` : `−${effPct}%`}
+                                                        </span>
+                                                      </>
+                                                    ) : (
+                                                      <span className="text-gray-400 font-mono text-xs">
+                                                        P{lineGross.toFixed(2)}
+                                                      </span>
+                                                    )}
+                                                    {order.status === 'Pending' && (
+                                                      <div className="relative mt-0.5">
+                                                        <input
+                                                          type="number" min="0" max="100" step="1"
+                                                          placeholder="0"
+                                                          value={item.discountPercent || ''}
+                                                          onChange={e => applyItemDiscount(order._id, item.originalIdx, e.target.value)}
+                                                          className="w-14 bg-white/5 border border-white/10 rounded pl-1.5 pr-5 py-0.5 text-white text-[10px] font-bold outline-none focus:border-brand/60 placeholder-white/20 tabular-nums"
+                                                        />
+                                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-white/30 text-[9px] font-bold pointer-events-none">%</span>
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })()
                                             )}
                                           </div>
                                         </div>
@@ -875,8 +982,10 @@ export default function OrdersTab({ ctx }) {
 
                             <div className={`flex flex-col gap-2 ${isUpdating ? 'opacity-50 pointer-events-none' : ''}`}>
                               {order.status === 'Pending' && departmentFilter === 'All' && (() => {
-                                const isDelivery = ['Grab Delivery', 'Foodpanda', 'Manual Delivery'].includes(order.table);
-                                const displayPayment = isDelivery ? order.table : (paymentSelections[order._id] || order.paymentMethod || 'Cash');
+                                const isDelivery = ['Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Lalamove'].includes(order.table);
+                                // Payment is always changeable. Default to the order's natural
+                                // method (delivery channel for delivery orders, else its set method).
+                                const displayPayment = paymentSelections[order._id] || (isDelivery ? order.table : (order.paymentMethod || 'Cash'));
                                 if (isComp) {
                                   return (
                                     <div className="flex flex-col w-full gap-2">
@@ -905,9 +1014,8 @@ export default function OrdersTab({ ctx }) {
                                     <div className="flex flex-col w-full gap-2">
                                       <select
                                         value={displayPayment}
-                                        disabled={isDelivery}
                                         onChange={(e) => setPaymentSelections(prev => ({ ...prev, [order._id]: e.target.value }))}
-                                        className={`w-full border rounded-lg p-2 text-sm font-bold outline-none transition ${isDelivery ? 'bg-page-bg text-gray-400 border-white/10 cursor-not-allowed' : 'bg-page-bg text-white border-white/10 focus:border-accent/50'}`}
+                                        className="w-full border rounded-lg p-2 text-sm font-bold outline-none transition bg-page-bg text-white border-white/10 focus:border-accent/50"
                                       >
                                         <optgroup label="In-Store Payments">
                                           <option value="Cash">Cash</option>
@@ -920,8 +1028,11 @@ export default function OrdersTab({ ctx }) {
                                           <option value="Other E-Wallet">Other E-Wallet</option>
                                         </optgroup>
                                         <optgroup label="Delivery Partners">
-                                          <option value="Grab Delivery">GrabFood</option>
-                                          <option value="Foodpanda">Foodpanda</option>
+                                          <option value="Grab Delivery">Grab Delivery</option>
+                                          {BUSINESS_TYPE === 'log'
+                                            ? <option value="Lalamove">Lalamove</option>
+                                            : <option value="Foodpanda">Foodpanda</option>
+                                          }
                                           <option value="Manual Delivery">Manual/Direct</option>
                                         </optgroup>
                                       </select>
@@ -952,8 +1063,9 @@ export default function OrdersTab({ ctx }) {
                                         <button
                                           disabled={isUnderpaid}
                                           onClick={() => {
-                                            if (isDelivery && paymentSelections[order._id] !== order.table) {
-                                              setPaymentSelections(prev => ({ ...prev, [order._id]: order.table }));
+                                            // Seed the selection with the default so it persists even if untouched.
+                                            if (paymentSelections[order._id] === undefined) {
+                                              setPaymentSelections(prev => ({ ...prev, [order._id]: displayPayment }));
                                             }
                                             setTimeout(() => updateStatus(order._id, 'Preparing'), 0);
                                           }}
@@ -963,9 +1075,33 @@ export default function OrdersTab({ ctx }) {
                                         </button>
                                         <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-white font-black text-xs transition uppercase border border-red-500/20">Drop</button>
                                       </div>
+                                      {BUSINESS_TYPE === 'log' && (order.items?.length > 0) && (
+                                        <button onClick={() => openPartial(order)} className="w-full bg-amber-500/10 text-amber-400 py-2 rounded-lg hover:bg-amber-500 hover:text-white font-black text-[11px] transition uppercase tracking-widest border border-amber-500/20">
+                                          Partial Fulfill
+                                        </button>
+                                      )}
                                     </div>
                                   );
                                 })();
+                              })()}
+
+                              {order.status === 'Partially Fulfilled' && departmentFilter === 'All' && (() => {
+                                const totalQty = (order.items || []).reduce((s, it) => s + (it.quantity || 0), 0);
+                                const doneQty = (order.items || []).reduce((s, it) => s + (it.fulfilledQty || 0), 0);
+                                return (
+                                  <div className="flex flex-col gap-2">
+                                    <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                                      <Package size={12} className="text-amber-400 flex-shrink-0" />
+                                      <span className="text-amber-400 text-[10px] font-black uppercase tracking-widest">
+                                        Partially fulfilled · {doneQty}/{totalQty} units{order.depositRemaining > 0 ? ' · prepaid' : ''}
+                                      </span>
+                                    </div>
+                                    <button onClick={() => openPartial(order)} className="w-full bg-accent text-white py-2.5 rounded-lg hover:bg-accentShadow font-black text-xs uppercase tracking-widest transition">
+                                      Fulfill Remaining
+                                    </button>
+                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2 px-4 rounded-lg hover:bg-red-500 hover:text-white font-black text-[11px] transition uppercase border border-red-500/20">Drop Remaining</button>
+                                  </div>
+                                );
                               })()}
 
                               {order.status === 'Preparing' && (
@@ -980,7 +1116,7 @@ export default function OrdersTab({ ctx }) {
                                     // Kitchen / Bar view: scope progress to this dept only
                                     allDeptDone ? (
                                       <div className="flex items-center justify-center gap-2 bg-green-500/10 border border-green-500/20 text-green-400 rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
-                                        <CheckCircle size={11} /> All {departmentFilter} Items Done
+                                        <CheckCircle size={11} /> All {departmentFilter === 'All' ? '' : departmentFilter + ' '}Items Done
                                       </div>
                                     ) : (
                                       <div className="flex items-center justify-center bg-black/20 border border-white/5 text-gray-500 rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">

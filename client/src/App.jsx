@@ -5,6 +5,8 @@ const CustomerMenu = lazy(() => import('./pages/CustomerMenu'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const SuperAdminPanel = lazy(() => import('./pages/SuperAdminPanel'));
 const QRCodeComponent = lazy(() => import('./components/QRCode'));
+const ClientLogin = lazy(() => import('./pages/ClientLogin'));
+const ClientOrderPage = lazy(() => import('./pages/ClientOrderPage'));
 //fix
 class ErrorBoundary extends Component {
   state = { error: null };
@@ -49,6 +51,11 @@ function App() {
             <Route path="/admin" element={<AdminDashboard />} />
             <Route path="/admin/admin-panel" element={<SuperAdminPanel />} />
             <Route path="/generate-qr" element={<QRCodeComponent />} />
+            <Route path="/client-login" element={<ClientLogin />} />
+            <Route path="/client-order" element={<ClientOrderPage />} />
+            {/* Logistics client portal */}
+            <Route path="/client/portal" element={<ClientLogin />} />
+            <Route path="/client/portal/:userid" element={<ClientOrderPage />} />
           </Routes>
         </Suspense>
       </Router>
