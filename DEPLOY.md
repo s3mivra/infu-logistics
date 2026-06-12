@@ -1,0 +1,151 @@
+# Semivra POS — Production Deployment Runbook
+
+Actionable checklist for going live. Allow ~30 minutes.
+
+---
+
+## Pre-Flight (one-time, before first deploy)
+
+| # | Task | Command | Done |
+|---|------|---------|------|
+| 1 | Provision MongoDB Atlas cluster (M10+ recommended for built-in backups) | — | ☐ |
+| 2 | Whitelist your server's IP in Atlas Network Access | — | ☐ |
+| 3 | Create a database user with `readWrite` on `semivra` DB | — | ☐ |
+| 4 | Get a server / VPS with Docker + Docker Compose installed | — | ☐ |
+| 5 | Point your domain DNS A record at the server IP | — | ☐ |
+| 6 | Install TLS cert (Caddy / Traefik / Cloudflare proxy recommended) | — | ☐ |
+| 7 | Install `mongodb-database-tools` on the server (for backups) | `apt install mongodb-database-tools` | ☐ |
+
+---
+
+## Day-1 Deployment
+
+### 1. Clone + generate environment
+```bash
+git clone <your-repo-url> semivra
+cd semivra
+make setup            # generates server/.env with strong JWT_SECRET + ADMIN_PASS
+```
+**Important:** record the `ADMIN_PASS` printed by `make setup` — it's the only way to log in for the first time.
+
+### 2. Build + start the stack
+```bash
+make deploy
+```
+This runs `docker compose up -d --build`. Wait ~30 seconds for both containers to report healthy.
+
+### 3. Verify health
+```bash
+make health
+```
+You should see: `{"status":"ok","db":"connected","uptime":N,"timestamp":"..."}`
+
+### 4. First login
+- Open `https://your-domain.com/admin`
+- Username: `Super Admin`
+- Password: from step 1
+- **Immediately:** go to Superadmin Panel → change password
+
+### 5. Configure uptime monitoring
+Point your monitor (UptimeRobot, Pingdom, BetterStack) at:
+```
+GET https://your-domain.com:5002/health
+```
+Expected 200 with body `"status":"ok"`. Alert on anything else.
+
+### 6. Schedule daily backups
+Add to crontab on the server:
+```bash
+crontab -e
+```
+Append:
+```
+0 2 * * * cd /path/to/semivra && bash scripts/backup-mongo.sh >> /var/log/semivra-backup.log 2>&1
+```
+This runs at 02:00 UTC daily, keeps last 30 days locally. To also push to S3:
+```bash
+# Add to server/.env
+BACKUP_S3_BUCKET=your-bucket-name
+```
+
+### 7. Smoke test (do NOT skip)
+- [ ] Login as Super Admin
+- [ ] Add 1 category, 1 product (with image)
+- [ ] Add 1 inventory item with stock
+- [ ] Create a manual POS order → pay cash → complete it
+- [ ] Verify the journal entry exists: Ledger → Journal
+- [ ] Verify cash on hand updated
+- [ ] Run a P&L for today → should show ₱X revenue, ₱X COGS
+- [ ] Print receipt (`Ctrl+P` on order)
+- [ ] End Shift → confirm reconciliation flow
+
+If any step fails, do not open for business. Check `make logs`.
+
+---
+
+## Week-1 Verification
+
+Run these checks during the first week of operation.
+
+| # | Check | How |
+|---|-------|-----|
+| 1 | EOD flow works with real cash | End a real shift, compare drawer count to system Expected |
+| 2 | Delivery payout settlement is correct | When Grab payout arrives, settle via A/R tab and verify Cash on Hand increases by payout amount |
+| 3 | P&L matches manual spot-check | Add up cash sales manually for 1 day; confirm matches P&L "Sales Revenue" |
+| 4 | Backups actually run | Check `ls -lh backups/` shows yesterday's file |
+| 5 | Backup is restorable | Pick a day, `make restore`, restore to a test DB, verify journal entry count matches |
+| 6 | Backup cashier trained | Have a second person run a full shift from login → 5 orders → end shift |
+
+---
+
+## Operations Cheat Sheet
+
+| Goal | Command |
+|------|---------|
+| See running status | `make status` |
+| Tail logs | `make logs` or `make logs-api` |
+| Check health | `make health` |
+| Restart after a config change | `make restart` |
+| Run a one-off backup right now | `make backup` |
+| Restore from a backup | `make restore` |
+| Stop everything | `make stop` |
+| Prune backups > 30 days | `make prune` |
+| Run unit tests | `make test` |
+
+---
+
+## Incident Response
+
+### "API is down" (health returns 503 or no response)
+1. `make status` — are both containers running?
+2. `make logs-api` — what's the last error?
+3. If MongoDB is the issue: check Atlas dashboard
+4. If app crashed: `make restart` (container will auto-restart, but force a restart for a clean state)
+5. If config corrupt: `cp server/.env.bak server/.env && make restart`
+
+### "Numbers look wrong"
+1. Go to Ledger → Balance Sheet → check "✓ Balanced" indicator at bottom
+2. If unbalanced: there's a corrupted journal entry. Export CSV via P&L → CSV button
+3. Open in Excel, find rows where DR ≠ CR
+4. Manually fix in `make backup` → manually edit → `make restore` (or contact the dev who wrote this)
+
+### "Need to restore yesterday's data"
+1. `make restore`
+2. Pick yesterday's backup from the list
+3. Type `restore` to confirm
+4. Verify via `/api/finance/balances` and Balance Sheet
+
+---
+
+## Environment Variables Reference
+
+| Var | Required | Notes |
+|---|---|---|
+| `MONGO_URI` | ✅ | Atlas connection string |
+| `JWT_SECRET` | ✅ | 64 hex chars (auto-generated by `make setup`) |
+| `ALLOWED_ORIGINS` | ✅ prod | Comma-separated list of allowed frontend origins |
+| `ADMIN_PASS` | ✅ first boot | Initial Super Admin password |
+| `NODE_ENV` | prod | Must be `production` to disable LAN auto-CORS |
+| `PORT` | optional | Default `5002` |
+| `LOG_LEVEL` | optional | `info` (default), `debug`, `warn`, `error` |
+| `BACKUP_S3_BUCKET` | optional | If set, backups also upload to S3 |

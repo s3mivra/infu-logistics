@@ -1,11 +1,42 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { io } from 'socket.io-client';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck } from 'lucide-react';
-import jsPDF from 'jspdf';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff } from 'lucide-react';
 import QRCode from 'react-qr-code';
-import autoTable from 'jspdf-autotable';
+import { usePwa } from '../lib/usePwa';
+import { queueOrder, requestNotificationPermission, notify, queueClock, getQueuedClock, flushClockQueue } from '../lib/pwa';
+import * as auth from '../lib/auth';
+// Tabs are lazy-loaded so only the active tab's code ships on first dashboard
+// paint; the rest load on demand when the operator opens them.
+const AnalyticsTab  = lazy(() => import('../components/tabs/AnalyticsTab'));
+const OrdersTab     = lazy(() => import('../components/tabs/OrdersTab'));
+const HistoryTab    = lazy(() => import('../components/tabs/HistoryTab'));
+const InventoryTab  = lazy(() => import('../components/tabs/InventoryTab'));
+const LedgerTab     = lazy(() => import('../components/tabs/LedgerTab'));
+const PricingTab    = lazy(() => import('../components/tabs/PricingTab'));
+const AuditTab      = lazy(() => import('../components/tabs/AuditTab'));
+const ProductsTab   = lazy(() => import('../components/tabs/ProductsTab'));
+
+// Small fallback shown while a tab chunk loads.
+const TabFallback = () => (
+  <div className="p-12 flex items-center justify-center text-white/40 text-sm gap-2">
+    <RefreshCw size={16} className="animate-spin" /> Loading…
+  </div>
+);
 const API_URL = import.meta.env.VITE_API_URL || 'http://192.168.100.2:5002';
 const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL || 'http://192.168.100.2:3000';
+const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+
+// Lazy-load the PDF libraries (jspdf + jspdf-autotable, ~600KB) only when a PDF is
+// actually generated — keeps them out of the initial dashboard load. Cached after
+// first use. Every export/print fn does: const { jsPDF, autoTable } = await loadPdfLibs();
+let _pdfLibsPromise = null;
+const loadPdfLibs = () => {
+  if (!_pdfLibsPromise) {
+    _pdfLibsPromise = Promise.all([import('jspdf'), import('jspdf-autotable')])
+      .then(([m1, m2]) => ({ jsPDF: m1.default, autoTable: m2.default }));
+  }
+  return _pdfLibsPromise;
+};
 
 const COMP_REASON_LABELS = {
   VIP_CUSTOMER:         'VIP Customer',
@@ -22,9 +53,17 @@ const COMP_REASON_LABELS = {
   EVENT_SPONSORSHIP:    'Event Sponsorship',
 };
 
+// Pass the in-memory access token on the socket handshake so the server can
+// verify the user's role and auto-place them in the right room (server-decided,
+// not client-declared — see io.use in server.js). The token is re-read on every
+// (re)connect, so a fresh token after a refresh is picked up automatically.
 const socket = io(API_URL, {
   transports: ['websocket'],
-  upgrade: false
+  upgrade: false,
+  auth: (cb) => {
+    try { cb({ token: auth.getToken?.() || '' }); }
+    catch { cb({ token: '' }); }
+  },
 });
 
 // New order arrives at kitchen — single sharp ding
@@ -91,7 +130,19 @@ function MidnightCountdown() {
 
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Kasa Lokal').toUpperCase();
 
+// Money formatter for jsPDF output. The built-in PDF fonts have no ₱ glyph
+// (it renders as "±"), so PDFs use plain comma-grouped numbers with negatives
+// in accounting parentheses, e.g. 44,427.00 and (2,666.10).
+const pdfMoney = (n) => {
+  const v = Number(n) || 0;
+  const s = Math.abs(v).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return v < 0 ? `(${s})` : s;
+};
+
 export default function AdminDashboard() {
+  // PWA runtime: connectivity, install prompt, offline order queue
+  const { isOnline, installable, install, queuedCount, refreshQueue, syncQueue } = usePwa();
+
   const [paymentSelections, setPaymentSelections] = useState({});
 
   const [activeTab, setActiveTab] = useState('orders');
@@ -110,8 +161,8 @@ export default function AdminDashboard() {
   
   const [editingProduct, setEditingProduct] = useState(null);
   const [formData, setFormData] = useState({ 
-    name: '', description: '', category: '', basePrice: '', baseSize: '', sizes: [], image: '', 
-    baseRecipe: [], addOns: []
+    name: '', description: '', category: '', basePrice: '', baseSize: '', sizes: [], image: '',
+    baseRecipe: [], addOns: [], modifierGroups: [], imageUrl: ''
   });
   const [catForm, setCatForm] = useState({ name: '', department: 'Kitchen' });
   const [editingCategory, setEditingCategory] = useState(null);
@@ -120,15 +171,101 @@ export default function AdminDashboard() {
 
   const [inventory, setInventory] = useState([]);
   const [journalEntries, setJournalEntries] = useState([]);
-  const [invForm, setInvForm] = useState({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '' });
+  const [invForm, setInvForm] = useState({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000' });
+  // --- INVENTORY EDIT MODAL ---
+  const [editInvModal, setEditInvModal] = useState(null);   // { item } | null
+  const [editInvForm, setEditInvForm] = useState({ itemName: '', unit: '', unitCost: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, displayUnit: '' });
+  const [editInvSubmitting, setEditInvSubmitting] = useState(false);
+  // --- BULK EXCEL IMPORT ---
+  const [importModal, setImportModal] = useState(false);
+  const [importRows, setImportRows] = useState([]);       // [{ itemName, displayUnit, qty, unitCost, _diff, _newItem, _existing }]
+  const [importSubmitting, setImportSubmitting] = useState(false);
+  // --- EXPIRY BATCHES EXPAND STATE ---
+  const [expandedBatchRows, setExpandedBatchRows] = useState({}); // { [itemId]: bool }
 
   const [physicalCounts, setPhysicalCounts] = useState({});
-  const [restockData, setRestockData] = useState({ addedStock: '', totalCost: '' });
+  const [restockData, setRestockData] = useState({ addedStock: '', totalCost: '', creditAccount: '111000' });
+  // --- ORDER SEARCH ---
+  const [orderSearch, setOrderSearch] = useState('');
+  // --- ORDER NOTES (POS) ---
+  const [posNotes, setPosNotes] = useState('');
+  // --- POS GUEST COUNT ---
+  const [posGuestCount, setPosGuestCount] = useState(1);
+  // --- MODIFIER GROUPS ---
+  const [modifierGroups, setModifierGroups] = useState([]);
+  // --- MULTI-PAYMENT ---
+  const [posPayments, setPosPayments] = useState([]);
+  // --- ARCHIVE SEARCH + DATE FILTER ---
+  const [archiveSearch, setArchiveSearch] = useState('');
+  const [archiveDateRange, setArchiveDateRange] = useState({ start: '', end: '' });
+  const [archiveTotal, setArchiveTotal] = useState(0);
+  // --- CASH DENOMINATION BREAKDOWN ---
+  const DENOMS = [1000, 500, 200, 100, 50, 20, 10, 5, 1];
+  const [denomCounts, setDenomCounts] = useState({});
+  const denomTotal = DENOMS.reduce((s, d) => s + (parseFloat(denomCounts[d]) || 0) * d, 0);
+  // --- PROFIT BY CATEGORY ---
+  const [profitByCategory, setProfitByCategory] = useState(null);
+  // --- SYSTEM SETTINGS (QR toggle, etc.) ---
+  const [systemSettings, setSystemSettings] = useState({ isAcceptingQROrders: true, autoCloseEnabled: true });
+  // --- SALES BY PAYMENT ---
+  const [salesByPayment, setSalesByPayment] = useState(null);
+  const [sbpRange, setSbpRange] = useState({
+    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10),
+    end: new Date().toISOString().slice(0,10)
+  });
+  // --- SUMMARY SALES (by channel: cash / e-wallet / bank / delivery) ---
+  const [salesSummary, setSalesSummary] = useState(null);
+  const [sssRange, setSssRange] = useState({
+    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10),
+    end: new Date().toISOString().slice(0,10)
+  });
+  const [sssGroup, setSssGroup] = useState('order'); // 'order' | 'day'
+  // --- REFUND ---
+  const [refundModal, setRefundModal] = useState(null);
+  const [refundForm, setRefundForm] = useState({ reason: '', refundAmount: '', inventoryAction: 'Restock' });
+  const [refundSubmitting, setRefundSubmitting] = useState(false);
+  // --- CLOCK IN/OUT ---
+  const [clockStatus, setClockStatus] = useState({ isClockedIn: false, entry: null, onBreak: false, breakUsedMinutes: 0, breakRemainingMinutes: 60 });
+  const [clockStatusLoaded, setClockStatusLoaded] = useState(false); // gates the clock-in screen until status is known
+  const [clockModalOpen, setClockModalOpen] = useState(false);
+  const [clockEntries, setClockEntries] = useState([]);
+  const [clockEntriesTotal, setClockEntriesTotal] = useState(0);
+  const [clockEntriesPage, setClockEntriesPage] = useState(1);
+  // --- MODIFIER GROUP EDITOR ---
+  const [editingModifier, setEditingModifier] = useState(null); // group being edited, or null
+  const [modForm, setModForm] = useState({ name: '', isRequired: true, minSelect: 1, maxSelect: 1, options: [] });
+  // --- COMBOS / BUNDLES (PRODUCT PROMOS) ---
+  const [combos, setCombos] = useState([]);
+  const [editingCombo, setEditingCombo] = useState(null);
+  const [comboForm, setComboForm] = useState({ name: '', description: '', price: '', image: '', items: [] });
+  // --- PARKED ORDERS / OPEN TABS ---
+  const [parkedOrders, setParkedOrders] = useState([]);
+  const [parkedModalOpen, setParkedModalOpen] = useState(false);
+  // --- REPORTS: menu engineering, cashier variance, purchase order ---
+  const [menuEngineering, setMenuEngineering] = useState(null);
+  const [cashierVariance, setCashierVariance] = useState(null);
+  const [purchaseOrder, setPurchaseOrder] = useState(null);
+  // --- CHANGE PASSWORD MODAL ---
+  const [changePwModal, setChangePwModal] = useState(false);
+  const [changePwForm, setChangePwForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [changePwLoading, setChangePwLoading] = useState(false);
+  const [changePwError, setChangePwError] = useState('');
+  // --- AUDIT LOGS ---
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [auditLogsPage, setAuditLogsPage] = useState(1);
+  const [auditLogsTotal, setAuditLogsTotal] = useState(0);
+  const AUDIT_LOGS_PAGE_SIZE = 25;
+  // --- AP OUTSTANDING ---
+  const [apData, setApData] = useState(null);
+  const [apPayModal, setApPayModal] = useState(false);
+  const [apPayForm, setApPayForm] = useState({ amount: '', payFromAccount: '111000', description: '', vendorName: '' });
+  const [apPaySubmitting, setApPaySubmitting] = useState(false);
   const [activeInventoryItem, setActiveInventoryItem] = useState(null); // For the restock modal
 
   const [stockHistory, setStockHistory] = useState([]);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [historyItemName, setHistoryItemName] = useState('');
+  const [historyItem, setHistoryItem] = useState(null);
 
   const [cashOnHand, setCashOnHand] = useState(0);
   // --- NEW LOGIN STATES ---
@@ -161,6 +298,8 @@ export default function AdminDashboard() {
   // --- INLINE PRICING STATES ---
   const [editPriceId, setEditPriceId] = useState(null);
   const [editPriceVal, setEditPriceVal] = useState('');
+  const [editCostId, setEditCostId] = useState(null);
+  const [editCostVal, setEditCostVal] = useState('');
 
   // --- ITEM-LEVEL DISCOUNT TRACKING ---
   const [discountedItems, setDiscountedItems] = useState({});
@@ -170,25 +309,31 @@ export default function AdminDashboard() {
   const [depositLoading, setDepositLoading] = useState(false);
   const [depositError, setDepositError] = useState('');
 
-  // Restore active admin from JWT on page refresh (no separate kasa_admin key needed)
-  const [activeAdmin, setActiveAdmin] = useState(() => {
-    const token = localStorage.getItem('semivra_token');
-    if (!token) return null;
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      // Reject expired tokens immediately
-      if (payload.exp && payload.exp * 1000 < Date.now()) { localStorage.removeItem('semivra_token'); return null; }
-      return { _id: payload._id, name: payload.name, role: payload.role, userCode: payload.userCode };
-    } catch { return null; }
-  });
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    const token = localStorage.getItem('semivra_token');
-    if (!token) return false;
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      return !payload.exp || payload.exp * 1000 > Date.now();
-    } catch { return false; }
-  });
+  // Auth state starts empty (access token lives in memory, not localStorage).
+  // On mount we silently call /api/auth/refresh; the httpOnly refresh cookie mints
+  // a fresh access token if the session is still valid (see bootstrap effect below).
+  const [activeAdmin, setActiveAdmin] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authBootstrapping, setAuthBootstrapping] = useState(true);
+
+  // Silent-refresh bootstrap: restore the session from the refresh cookie on load.
+  useEffect(() => {
+    let cancelled = false;
+    auth.refreshSession(API_URL).then((data) => {
+      if (cancelled) return;
+      if (data?.user) {
+        setActiveAdmin(data.user); setIsAuthenticated(true);
+      } else if (!navigator.onLine) {
+        // OFFLINE on reload: the refresh cookie can't reach the server. Fall back to
+        // the last signed-in user so the installed app keeps working (degraded mode:
+        // reads come from cache, writes are queued and synced when back online).
+        const u = auth.getUser();
+        if (u) { setActiveAdmin(u); setIsAuthenticated(true); }
+      }
+      setAuthBootstrapping(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // --- SHIFT STATES ---
   const [startingCash, setStartingCash] = useState(() => localStorage.getItem('semivra_last_actual_cash') || '');
@@ -213,18 +358,126 @@ export default function AdminDashboard() {
   // --- MANUAL POS STATES ---
   const [isPosOpen, setIsPosOpen] = useState(false);
   const [posCart, setPosCart] = useState([]);
+  const [posSubmitting, setPosSubmitting] = useState(false); // disables Place Order while in flight
+  const posSubmittingRef = useRef(false);                    // synchronous double-tap guard
   const [posCategory, setPosCategory] = useState('All');
   const [posPage, setPosPage] = useState(1);
-  const POS_PER_PAGE = 8;
+  const [posSearch, setPosSearch] = useState('');
+  const POS_PER_PAGE = 9;
   const [posCustomerName, setPosCustomerName] = useState('');
-  const [posTable, setPosTable] = useState('Takeout'); // Takeout, Grab Delivery, Foodpanda
+  // Optional client account link — when set, the order qualifies for that
+  // client's per-product discount overrides on the server side.
+  const [posClientId, setPosClientId] = useState('');
+  const [posTable, setPosTable] = useState(BUSINESS_TYPE === 'log' ? 'Pickup' : 'Dine-In');
   const [posPayment, setPosPayment] = useState('Cash');
   const [posSelectedProduct, setPosSelectedProduct] = useState(null);
   const [posActiveSize, setPosActiveSize] = useState(null);
   const [posActiveAddOns, setPosActiveAddOns] = useState([]);
+  const [posItemQty, setPosItemQty] = useState(1);
+  const [posDiscountType, setPosDiscountType] = useState('flat'); // 'flat' | 'percent'
+  const [posDiscountValue, setPosDiscountValue] = useState('');
+  const [posCheckoutModal, setPosCheckoutModal] = useState(false);
+  const [posCashTendered, setPosCashTendered] = useState('');
+  // --- DELIVERY DETAIL STATES ---
+  const [posDeliveryAddress, setPosDeliveryAddress] = useState('');
+  const [posCustomerPhone, setPosCustomerPhone] = useState('');
+  const [posDeliveryFee, setPosDeliveryFee] = useState('');
+  const [posScheduledTime, setPosScheduledTime] = useState('');
+  // --- SPOILAGE MODAL STATE ---
+  const [spoilageModal, setSpoilageModal] = useState(null); // { item }
+  const [spoilageForm, setSpoilageForm] = useState({ qty: '', reason: '', note: '' });
+  const [spoilageLoading, setSpoilageLoading] = useState(false);
+  // --- SHIFT HISTORY STATE ---
+  const [shiftHistory, setShiftHistory] = useState([]);
+  const [shiftHistoryPage, setShiftHistoryPage] = useState(1);
+  const [shiftHistoryTotal, setShiftHistoryTotal] = useState(0);
+  const SHIFT_HIST_PAGE_SIZE = 15;
+  // --- HISTORY SUB-TAB ---
+  const [historySubTab, setHistorySubTab] = useState('daily'); // 'daily' | 'shifts'
+  // --- LEDGER SUB-TABS + FINANCE DATA ---
+  const [ledgerSubTab, setLedgerSubTab] = useState('journal'); // 'journal' | 'pnl' | 'balance' | 'ar' | 'expenses'
+  const [pnlData, setPnlData] = useState(null);
+  const [pnlRange, setPnlRange] = useState({
+    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10),
+    end: new Date().toISOString().slice(0,10)
+  });
+  // Monthly P&L (per-month columns + ratios; period & matrix views)
+  const [pnlMonthly, setPnlMonthly] = useState(null);
+  const [pnlmRange, setPnlmRange] = useState({
+    start: new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10),
+    end: new Date().toISOString().slice(0,10)
+  });
+  const [pnlmView, setPnlmView] = useState('period'); // 'period' | 'matrix'
+  const [bsData, setBsData] = useState(null);
+  // Monthly Balance Sheet (per-month-end columns + ratios; period & matrix views)
+  const [bsMonthly, setBsMonthly] = useState(null);
+  const [bsmRange, setBsmRange] = useState({
+    start: new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10),
+    end: new Date().toISOString().slice(0,10)
+  });
+  const [bsmView, setBsmView] = useState('period');
+  const [arOutstanding, setArOutstanding] = useState({ orders: [], totalOutstanding: 0 });
+  const [expenseModal, setExpenseModal] = useState(false);
+  const [expenseCategories, setExpenseCategories] = useState([]);
+  const [expenseForm, setExpenseForm] = useState({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', date: new Date().toISOString().slice(0,10) });
+  const [expenseSubmitting, setExpenseSubmitting] = useState(false);
+  const [settleModal, setSettleModal] = useState(null); // { order }
+  const [settleForm, setSettleForm] = useState({ amount: '', paymentMethod: 'Cash on Hand', note: '' });
+  const [settleSubmitting, setSettleSubmitting] = useState(false);
+
+  // --- SERVER-SIDE ANALYTICS ---
+  const [analyticsData, setAnalyticsData]     = useState(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const fetchAnalytics = async () => {
+    if (analyticsLoading) return;
+    setAnalyticsLoading(true);
+    try {
+      const res  = await apiFetch('/api/analytics/dashboard');
+      const data = await res.json();
+      if (data.success) setAnalyticsData(data);
+    } catch (err) { console.error('fetchAnalytics', err); }
+    finally { setAnalyticsLoading(false); }
+  };
+
+  // --- REVOLVING FUND STATES ---
+  const [rfFunds, setRfFunds] = useState([]);
+  const [rfLoading, setRfLoading] = useState(false);
+  const [rfActiveFund, setRfActiveFund] = useState(null);      // selected fund for transactions
+  const [rfTxs, setRfTxs] = useState([]);
+  const [rfTxTotal, setRfTxTotal] = useState(0);
+  const [rfTxPage, setRfTxPage] = useState(1);
+  const [rfTxPages, setRfTxPages] = useState(1);
+  const [rfNewModal, setRfNewModal] = useState(false);
+  const [rfNewForm, setRfNewForm] = useState({ name: '', initialAmount: '', description: '', sourceAccount: '111000' });
+  const [rfNewSubmitting, setRfNewSubmitting] = useState(false);
+  const [rfDisbModal, setRfDisbModal] = useState(false);
+  const [rfDisbForm, setRfDisbForm] = useState({ amount: '', description: '', categoryCode: '760000' });
+  const [rfDisbSubmitting, setRfDisbSubmitting] = useState(false);
+  const [rfReplModal, setRfReplModal] = useState(false);
+  const [rfReplForm, setRfReplForm] = useState({ amount: '', note: '', sourceAccount: '111000' });
+  const [rfReplSubmitting, setRfReplSubmitting] = useState(false);
+
+  // --- IN-APP ORDER TOAST (no browser popup) ---
+  const [orderToasts, setOrderToasts] = useState([]); // [{ id, orderNumber, table, ts }]
+  const pushOrderToast = (order) => {
+    const id = Date.now();
+    setOrderToasts(prev => [...prev.slice(-2), { id, orderNumber: order.orderNumber, table: order.table, ts: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+    setTimeout(() => setOrderToasts(prev => prev.filter(t => t.id !== id)), 5000);
+  };
 
   // --- FULLSCREEN LOGIC ---
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Collapse the sidebar's utility tools (Fullscreen/QR/Password/toggles/Install)
+  // to reclaim space. Persisted so the choice sticks across reloads.
+  const [opsToolsOpen, setOpsToolsOpen] = useState(() => {
+    try { return localStorage.getItem('semivra_ops_tools_open') === '1'; } catch { return false; }
+  });
+  const toggleOpsTools = () => setOpsToolsOpen(v => {
+    const next = !v;
+    try { localStorage.setItem('semivra_ops_tools_open', next ? '1' : '0'); } catch { /* ignore */ }
+    return next;
+  });
 
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
 
@@ -235,6 +488,17 @@ export default function AdminDashboard() {
   // NEW: Inventory Pagination
   const [invPage, setInvPage] = useState(1);
   const invItemsPerPage = 12; // List items are small, we can fit 15
+
+  // Inventory search + filter + sort
+  const [invSearch, setInvSearch] = useState('');
+  const [invSort, setInvSort] = useState('name-asc');
+  const [invCategoryFilter, setInvCategoryFilter] = useState('');
+
+  // Reset to page 1 when search/filter/sort changes
+  useEffect(() => { setInvPage(1); }, [invSearch, invSort, invCategoryFilter]);
+
+  // Import progress (0-100, -1 = idle)
+  const [importProgress, setImportProgress] = useState(-1);
 
   // NEW: Orders Pagination
   const [ordersPage, setOrdersPage] = useState(1);
@@ -275,26 +539,15 @@ export default function AdminDashboard() {
   // Use this wrapper for ALL fetch requests to the backend API.
   // It automatically attaches the JWT token from memory.
   // Add 'async' right here 👇
+  // Delegates to the shared auth helper: attaches the in-memory access token,
+  // auto-injects JSON content-type, and silently refreshes + retries once on 401.
+  // A persistent 401 (refresh also failed) tears down the local session.
   const apiFetch = async (endpoint, options = {}) => {
-    if (!options.headers) options.headers = {};
-    const token = localStorage.getItem('semivra_token');
-    if (token) {
-      options.headers['Authorization'] = `Bearer ${token}`;
-    }
-    
-    // FIX 1: Auto-inject JSON header so Discounts and VAT are read by the backend
-    if (options.body && typeof options.body === 'string' && !options.headers['Content-Type']) {
-      options.headers['Content-Type'] = 'application/json';
-    }
-    
-    // FIX 2: Strip out API_URL if it was accidentally passed in to prevent double URLs
-    const cleanEndpoint = endpoint.replace(API_URL, '');
-    const response = await fetch(`${API_URL}${cleanEndpoint}`, options);
-    
+    const response = await auth.apiFetch(API_URL, endpoint, options);
     if (response.status === 401) {
       setIsAuthenticated(false);
       setActiveAdmin(null);
-      localStorage.removeItem('semivra_token');
+      auth.clearToken();
     }
     return response;
   };
@@ -306,6 +559,7 @@ export default function AdminDashboard() {
       const res = await fetch(`${API_URL}/api/users/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(loginForm)
       });
       const data = await res.json();
@@ -324,7 +578,8 @@ export default function AdminDashboard() {
         return;
       }
 
-      localStorage.setItem('semivra_token', data.token);
+      auth.setToken(data.token);
+      auth.setUser(data.user); // persist identity for offline use
       setIsAuthenticated(true);
       setActiveAdmin(data.user);
 
@@ -350,14 +605,17 @@ export default function AdminDashboard() {
 
   // Opens the End-of-Shift modal (does NOT clear session yet)
   const handleLogout = () => {
+    // Owner/superadmin isn't a tracked cashier — no register count required; log out directly.
+    if (activeAdmin?.role === 'superadmin') { performLogout(); return; }
     setShiftReconcile({ actualCash: '', result: null });
     setShiftEndModal(true);
   };
 
   // Called when cashier confirms End-of-Shift cash count
   const handleEndShift = async () => {
-    const actual = parseFloat(shiftReconcile.actualCash);
-    if (isNaN(actual) || actual < 0) return alert('Please enter a valid cash amount.');
+    // Use denomination total if bills were counted; fall back to manual entry
+    const actual = denomTotal > 0 ? denomTotal : parseFloat(shiftReconcile.actualCash);
+    if (isNaN(actual) || actual < 0) return alert('Please count your bills or enter a cash amount.');
     setShiftEndLoading(true);
     try {
       const res = await apiFetch('/api/shifts/end', {
@@ -403,8 +661,14 @@ export default function AdminDashboard() {
   };
 
   // Final logout — clears all session data
-  const performLogout = () => {
-    localStorage.removeItem('semivra_token');
+  const performLogout = async () => {
+    // Auto clock-out so staff aren't left "clocked in" after ending their shift.
+    // Must run BEFORE the session is revoked (apiFetch still has a valid token here).
+    if (clockStatus.isClockedIn) {
+      try { await apiFetch('/api/clock/out', { method: 'POST', body: '{}' }); } catch { /* non-blocking */ }
+    }
+    auth.logout(API_URL); // revoke refresh session server-side + clear cookie
+    auth.clearToken();
     setIsAuthenticated(false);
     setActiveAdmin(null);
     setLoginForm({ name: '', password: '' });
@@ -463,24 +727,70 @@ export default function AdminDashboard() {
     }
   };
 
-  const fetchData = async () => {
+  const handleInlineCostUpdate = async (productId, sizeIndex) => {
+    const product = products.find(p => p._id === productId);
+    if (!product) return;
+    const updatedProduct = { ...product };
+    const val = parseFloat(editCostVal);
+    if (sizeIndex === null) {
+      updatedProduct.costOverride = isNaN(val) ? undefined : val;
+    } else {
+      updatedProduct.sizes = updatedProduct.sizes.map((s, i) =>
+        i === sizeIndex ? { ...s, costOverride: isNaN(val) ? undefined : val } : s
+      );
+    }
     try {
-      // Fetch Products
-      const pRes = await apiFetch(`/api/products`);
-      if (pRes.ok) setProducts((await pRes.json()).products || []);
-      
-      // Fetch Categories
-      const cRes = await apiFetch(`/api/categories`);
-      if (cRes.ok) setCategories((await cRes.json()).categories || []);
-      
-      // Fetch Discounts
-      const dRes = await apiFetch(`/api/discounts`);
-      if (dRes.ok) setDiscounts((await dRes.json()).discounts || []);
+      await apiFetch(`/api/products/${productId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedProduct)
+      });
+      setEditCostId(null);
+      fetchData();
+    } catch (err) {
+      console.error('Failed to update cost', err);
+    }
+  };
 
-      // Fetch Global Add-Ons
-      const aRes = await apiFetch(`/api/addons`);
-      if (aRes.ok) setGlobalAddOns((await aRes.json()).addons || []);
-      
+  const MENU_CACHE_KEY = 'semivra_menu_cache';
+  const fetchData = async () => {
+    // OFFLINE: hydrate the menu from the last cached snapshot so the POS still works.
+    if (!navigator.onLine) {
+      try {
+        const c = JSON.parse(localStorage.getItem(MENU_CACHE_KEY) || 'null');
+        if (c) {
+          setProducts(c.products || []); setCategories(c.categories || []);
+          setDiscounts(c.discounts || []); setGlobalAddOns(c.addons || []);
+          setModifierGroups(c.modifierGroups || []); setCombos(c.combos || []);
+        }
+      } catch { /* ignore */ }
+      return;
+    }
+    try {
+      const get = async (url, key) => { const r = await apiFetch(url); return r.ok ? ((await r.json())[key] || []) : null; };
+      const products       = await get('/api/products', 'products');
+      const categories     = await get('/api/categories', 'categories');
+      const discounts      = await get('/api/discounts', 'discounts');
+      const addons         = await get('/api/addons', 'addons');
+      const modifierGroups = await get('/api/modifier-groups', 'groups');
+      const combos         = await get('/api/combos?all=1', 'combos');
+
+      if (products)       setProducts(products);
+      if (categories)     setCategories(categories);
+      if (discounts)      setDiscounts(discounts);
+      if (addons)         setGlobalAddOns(addons);
+      if (modifierGroups) setModifierGroups(modifierGroups);
+      if (combos)         setCombos(combos);
+
+      // Cache a snapshot for offline use (keep prior values for any part that failed).
+      try {
+        const prev = JSON.parse(localStorage.getItem(MENU_CACHE_KEY) || '{}');
+        localStorage.setItem(MENU_CACHE_KEY, JSON.stringify({
+          products: products ?? prev.products, categories: categories ?? prev.categories,
+          discounts: discounts ?? prev.discounts, addons: addons ?? prev.addons,
+          modifierGroups: modifierGroups ?? prev.modifierGroups, combos: combos ?? prev.combos,
+        }));
+      } catch { /* quota / private mode — ignore */ }
     } catch (err) { console.error('Failed to fetch menu data', err); }
   };
 
@@ -555,11 +865,59 @@ export default function AdminDashboard() {
 
       // Archives endpoint requires superadmin — skip for staff to avoid forced logout via 403
       if (activeAdmin?.role === 'superadmin') {
-        const archRes = await apiFetch(`/api/orders/archives?t=${cacheBuster}`, { cache: 'no-store' });
-        if (archRes.ok) setArchivedOrders((await archRes.json()).archives || []);
+        const archParams = new URLSearchParams({ t: cacheBuster });
+        if (archiveSearch) archParams.set('search', archiveSearch);
+        if (archiveDateRange.start) archParams.set('start', archiveDateRange.start);
+        if (archiveDateRange.end) archParams.set('end', archiveDateRange.end);
+        const archRes = await apiFetch(`/api/orders/archives?${archParams.toString()}`, { cache: 'no-store' });
+        if (archRes.ok) { const d = await archRes.json(); setArchivedOrders(d.archives || []); setArchiveTotal(d.total || 0); }
       }
     } catch (err) { console.error('Failed to fetch orders', err); }
   };
+
+  // Sends one queued offline order. The stable queue-entry id is the idempotency
+  // key, so replaying a half-sent order won't create a duplicate. Returns true on
+  // success so the queue drops it; false/throw keeps it for the next attempt.
+  const sendQueuedOrder = async (entry) => {
+    try {
+      const res = await apiFetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': entry.id },
+        body: JSON.stringify(entry.payload),
+      });
+      const data = await res.json();
+      return !!data.success;
+    } catch { return false; }
+  };
+
+  // Replay a queued offline clock event against the server, backdating it to when
+  // it actually happened (`at`) so payroll hours stay accurate.
+  const sendQueuedClock = async (e) => {
+    const path = e.type === 'out' ? '/api/clock/out' : '/api/clock/in';
+    try {
+      const res = await apiFetch(path, { method: 'POST', body: JSON.stringify({ at: e.at }) });
+      const d = await res.json().catch(() => ({}));
+      return res.ok && d.success !== false;
+    } catch { return false; }
+  };
+
+  const flushOfflineQueue = () => {
+    if (!navigator.onLine || !isAuthenticated) return;
+    syncQueue(sendQueuedOrder).then(({ sent }) => { if (sent > 0) fetchOrders(); });
+    if (getQueuedClock().length > 0) {
+      flushClockQueue(sendQueuedClock).then(({ sent }) => { if (sent > 0) fetchClockStatus(); });
+    }
+  };
+
+  // Auto-flush the offline order queue: on reconnect/login, whenever the queue
+  // grows (e.g. a mid-request failure while still "online"), and on a periodic
+  // safety-net timer so nothing is ever stranded.
+  useEffect(() => {
+    if (isOnline && isAuthenticated && queuedCount > 0) flushOfflineQueue();
+    const id = setInterval(() => { if (queuedCount > 0) flushOfflineQueue(); }, 30000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnline, isAuthenticated, queuedCount]);
 
   const injectOwnerCapital = async () => {
     const amountStr = prompt("Enter amount of capital to inject from Owner's Equity:");
@@ -569,8 +927,8 @@ export default function AdminDashboard() {
     const jePayload = {
       description: 'Owner Capital Injection',
       lines: [
-        { accountCode: '1000', accountName: 'Cash on Hand', debit: amount, credit: 0 },
-        { accountCode: '3000', accountName: 'Owner Equity', debit: 0, credit: amount }
+        { accountCode: '111000', accountName: 'Cash on Hand', debit: amount, credit: 0 },
+        { accountCode: '310000', accountName: 'Owner Equity', debit: 0, credit: amount }
       ]
     };
 
@@ -588,6 +946,7 @@ export default function AdminDashboard() {
       if (data.success) {
         setStockHistory(data.history);
         setHistoryItemName(item.itemName);
+        setHistoryItem(item);
         setHistoryPage(1);
         setHistoryModalOpen(true);
       }
@@ -603,22 +962,216 @@ export default function AdminDashboard() {
   });
 
   const standardAccounts = [
-    { accountCode: '1000', accountName: 'Cash on Hand', type: 'Asset' },
-    { accountCode: '1010', accountName: 'Cash in Bank', type: 'Asset' },
-    { accountCode: '1015', accountName: 'E-Wallet', type: 'Asset' },
-    { accountCode: '1200', accountName: 'Accounts Receivable', type: 'Asset' },
-    { accountCode: '1500', accountName: 'Inventory Asset', type: 'Asset' },
-    { accountCode: '2000', accountName: 'Accounts Payable', type: 'Liability' },
-    { accountCode: '2100', accountName: 'VAT Payable', type: 'Liability' },
-    { accountCode: '3000', accountName: 'Owner Equity', type: 'Equity' },
-    { accountCode: '4000', accountName: 'Sales Revenue', type: 'Revenue' },
-    { accountCode: '4150', accountName: 'Sales Returns', type: 'Revenue' },
-    { accountCode: '5000', accountName: 'Cost of Goods Sold', type: 'Expense' },
-    { accountCode: '6000', accountName: 'Operating Expenses', type: 'Expense' },
-    { accountCode: '6100', accountName: 'Complimentary Expense', type: 'Expense' }
+    { accountCode: '111000', accountName: 'Cash on Hand', type: 'Asset' },
+    { accountCode: '112000', accountName: 'Cash in Bank', type: 'Asset' },
+    { accountCode: '113000', accountName: 'E-Wallet', type: 'Asset' },
+    { accountCode: '120000', accountName: 'Accounts Receivable', type: 'Asset' },
+    { accountCode: '130000', accountName: 'Inventory Asset', type: 'Asset' },
+    { accountCode: '220000', accountName: 'Accounts Payable', type: 'Liability' },
+    { accountCode: '230000', accountName: 'Taxes Payable', type: 'Liability' },
+    { accountCode: '310000', accountName: 'Owner Equity', type: 'Equity' },
+    { accountCode: '410000', accountName: 'Sales Revenue', type: 'Revenue' },
+    { accountCode: '440000', accountName: 'Sales Returns', type: 'Revenue' },
+    { accountCode: '510000', accountName: 'Cost of Goods Sold', type: 'Expense' },
+    { accountCode: '600000', accountName: 'Operating Expenses', type: 'Expense' },
+    { accountCode: '540000', accountName: 'Complimentary Expense', type: 'Expense' }
   ];
 
-  useEffect(() => { if (isAuthenticated) fetchDiscounts(); }, [isAuthenticated]);
+  // ── Chart of Accounts (custom child accounts) ──────────────────────────────
+  const [coaAccounts, setCoaAccounts] = useState([]);
+  const [coaParent, setCoaParent]   = useState('');
+  const [coaNewName, setCoaNewName] = useState('');
+  const [coaEditId, setCoaEditId]   = useState(null);
+  const [coaEditName, setCoaEditName] = useState('');
+  const [coaBusy, setCoaBusy]       = useState(false);
+  const fetchCoa = useCallback(async () => {
+    try { const r = await apiFetch('/api/coa'); const d = await r.json(); if (d.success) setCoaAccounts(d.accounts); } catch { /* ignore */ }
+  }, []);
+  const addCoaChild = async () => {
+    if (!coaParent || !coaNewName.trim()) return alert('Pick a parent account and enter a name.');
+    setCoaBusy(true);
+    try {
+      const r = await apiFetch('/api/accounts', { method: 'POST', body: JSON.stringify({ parentCode: coaParent, name: coaNewName.trim() }) });
+      const d = await r.json();
+      if (d.success) { setCoaNewName(''); fetchCoa(); } else alert(d.error || 'Failed to add account.');
+    } catch { alert('Failed to add account.'); } finally { setCoaBusy(false); }
+  };
+  const renameCoaChild = async (id) => {
+    if (!coaEditName.trim()) return setCoaEditId(null);
+    try {
+      const r = await apiFetch(`/api/accounts/${id}`, { method: 'PUT', body: JSON.stringify({ name: coaEditName.trim() }) });
+      const d = await r.json();
+      if (d.success) { setCoaEditId(null); fetchCoa(); } else alert(d.error || 'Rename failed.');
+    } catch { alert('Rename failed.'); }
+  };
+  const deleteCoaChild = async (id) => {
+    if (!window.confirm('Delete this custom account? (Blocked if it has posted entries.)')) return;
+    try {
+      const r = await apiFetch(`/api/accounts/${id}`, { method: 'DELETE' });
+      const d = await r.json();
+      if (d.success) fetchCoa(); else alert(d.error || 'Delete failed.');
+    } catch { alert('Delete failed.'); }
+  };
+
+  // ── Closed accounting periods ───────────────────────────────────────────────
+  const [closedPeriods, setClosedPeriods] = useState([]);
+  const [periodCloseForm, setPeriodCloseForm] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() || 12, notes: '' });
+  const fetchClosedPeriods = useCallback(async () => {
+    try { const r = await apiFetch('/api/periods'); const d = await r.json(); if (d.success) setClosedPeriods(d.periods || []); } catch { /* ignore */ }
+  }, []);
+  const closePeriod = async () => {
+    const y = Number(periodCloseForm.year), m = Number(periodCloseForm.month);
+    if (!y || !m || m < 1 || m > 12) return alert('Pick a valid year and month.');
+    if (!window.confirm(`Lock ${y}-${String(m).padStart(2,'0')}? Back-dated journal entries into that month will be blocked.`)) return;
+    try {
+      const r = await apiFetch('/api/periods/close', { method: 'POST', body: JSON.stringify({ year: y, month: m, notes: periodCloseForm.notes }) });
+      const d = await r.json();
+      if (d.success) { fetchClosedPeriods(); setPeriodCloseForm({ ...periodCloseForm, notes: '' }); }
+      else alert(d.error || 'Failed to close period.');
+    } catch { alert('Network error closing period.'); }
+  };
+  const reopenPeriod = async (id) => {
+    if (!window.confirm('Reopen this period? Back-dated journal entries will be allowed again.')) return;
+    try {
+      const r = await apiFetch(`/api/periods/${id}/reopen`, { method: 'POST' });
+      const d = await r.json();
+      if (d.success) fetchClosedPeriods();
+      else alert(d.error || 'Failed to reopen.');
+    } catch { alert('Network error.'); }
+  };
+
+  // ── Tenancy backfill report ─────────────────────────────────────────────────
+  const [tenancyReport, setTenancyReport] = useState(null);
+  const [tenancyBusy, setTenancyBusy] = useState(false);
+  const fetchTenancyReport = useCallback(async () => {
+    try { const r = await apiFetch('/api/admin/tenancy-report'); const d = await r.json(); if (d.success) setTenancyReport(d); } catch { /* ignore */ }
+  }, []);
+  const runTenancyRebackfill = async () => {
+    if (!window.confirm('Stamp current businessType on every legacy doc that is missing it?')) return;
+    setTenancyBusy(true);
+    try {
+      const r = await apiFetch('/api/admin/tenancy-rebackfill', { method: 'POST' });
+      const d = await r.json();
+      if (d.success) { await fetchTenancyReport(); alert(`Stamped: Orders ${d.stamped.Order}, Products ${d.stamped.Product}, Inventory ${d.stamped.Inventory}, Categories ${d.stamped.Category}.`); }
+      else alert(d.error || 'Re-backfill failed.');
+    } finally { setTenancyBusy(false); }
+  };
+
+  // ── My permissions (from server) ────────────────────────────────────────────
+  const [myPermissions, setMyPermissions] = useState({ role: '', permissions: [], isWildcard: false });
+  const fetchMyPermissions = useCallback(async () => {
+    try { const r = await apiFetch('/api/me/permissions'); const d = await r.json(); if (d.success) setMyPermissions({ role: d.role, permissions: d.permissions || [], isWildcard: !!d.isWildcard }); } catch { /* ignore */ }
+  }, []);
+  const can = useCallback((perm) => myPermissions.isWildcard || myPermissions.permissions.includes(perm), [myPermissions]);
+
+  // ── Payment Method → Account Map ───────────────────────────────────────────
+  const [paymentMap, setPaymentMap] = useState({ defaults: {}, overrides: {}, effective: {} });
+  const fetchPaymentMap = useCallback(async () => {
+    try { const r = await apiFetch('/api/payment-method-map'); const d = await r.json(); if (d.success) setPaymentMap({ defaults: d.defaults || {}, overrides: d.overrides || {}, effective: d.effective || {} }); } catch { /* ignore */ }
+  }, []);
+  const savePaymentMapping = async (method, accountCode) => {
+    try {
+      const r = await apiFetch('/api/payment-method-map', { method: 'PUT', body: JSON.stringify({ method, accountCode }) });
+      const d = await r.json();
+      if (d.success) setPaymentMap(prev => ({ ...prev, effective: d.effective, overrides: { ...prev.overrides, [method]: accountCode } }));
+      else alert(d.error || 'Failed to save mapping.');
+    } catch { alert('Network error saving mapping.'); }
+  };
+  const resetPaymentMapping = async (method) => {
+    if (!window.confirm(`Reset "${method}" back to its default account?`)) return;
+    try {
+      const r = await apiFetch(`/api/payment-method-map/${encodeURIComponent(method)}`, { method: 'DELETE' });
+      const d = await r.json();
+      if (d.success) setPaymentMap(prev => {
+        const ov = { ...prev.overrides }; delete ov[method];
+        return { ...prev, effective: d.effective, overrides: ov };
+      });
+      else alert(d.error || 'Failed to reset.');
+    } catch { alert('Network error.'); }
+  };
+
+  // ── Audit log fetch ─────────────────────────────────────────────────────────
+  const [auditLogEntries, setAuditLogEntries] = useState([]);
+  const [auditLogPage, setAuditLogPage] = useState(1);
+  const [auditLogPages, setAuditLogPages] = useState(1);
+  const [auditLogFilter, setAuditLogFilter] = useState({ entity: '', actor: '' });
+  const fetchAuditLog = useCallback(async (page = 1) => {
+    try {
+      const qs = new URLSearchParams({ page: String(page), pageSize: '25' });
+      if (auditLogFilter.entity) qs.set('entity', auditLogFilter.entity);
+      if (auditLogFilter.actor)  qs.set('actor', auditLogFilter.actor);
+      const r = await apiFetch(`/api/audit-log?${qs.toString()}`);
+      const d = await r.json();
+      if (d.success) { setAuditLogEntries(d.entries || []); setAuditLogPage(d.page || 1); setAuditLogPages(d.pages || 1); }
+    } catch { /* ignore */ }
+  }, [auditLogFilter]);
+
+  // ── Derive selectable account lists (canonical + custom children) ───────────
+  // Used by every "Paid From / Charge To" dropdown across procurement, expenses,
+  // AR settle, and AP vendor payment so that adding a sub-account in the COA UI
+  // shows up everywhere automatically.
+  const accountsUnder = useCallback((parentCode) => {
+    const parentMatch = coaAccounts.find(a => a.code === parentCode);
+    const parent = parentMatch ? [{ code: parentMatch.code, name: parentMatch.name }] : [];
+    const children = coaAccounts
+      .filter(a => a.custom && a.parent === parentCode)
+      .map(a => ({ code: a.code, name: a.name }));
+    return [...parent, ...children];
+  }, [coaAccounts]);
+  const cashAndBankAccounts = useMemo(() => [
+    ...accountsUnder('111000'), ...accountsUnder('112000'), ...accountsUnder('113000'),
+  ], [accountsUnder]);
+  const apAccounts = useMemo(() => accountsUnder('220000'), [accountsUnder]);
+  const arAccounts = useMemo(() => accountsUnder('120000'), [accountsUnder]);
+  const procurementCreditAccounts = useMemo(() => [
+    ...cashAndBankAccounts, ...apAccounts,
+  ], [cashAndBankAccounts, apAccounts]);
+
+  // ── Client accounts list (for per-product per-client discount picker) ──
+  const [clientAccounts, setClientAccounts] = useState([]);
+  const fetchClientAccounts = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/client-accounts');
+      if (!r.ok) return; // non-superadmin gets 403 — silently skip
+      const d = await r.json();
+      if (d.success) setClientAccounts(d.clients || []);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { if (isAuthenticated) { fetchDiscounts(); fetchCoa(); fetchClientAccounts(); fetchClosedPeriods(); fetchPaymentMap(); fetchMyPermissions(); } }, [isAuthenticated]);
+
+  // ── Partial fulfillment (logistics) ────────────────────────────────────────
+  const [partialModal, setPartialModal] = useState(null);  // the order being split
+  const [partialQtys, setPartialQtys] = useState({});      // { [itemIndex]: fulfilledQty }
+  const [partialMode, setPartialMode] = useState('partial');// 'partial' | 'full'
+  const [partialPayment, setPartialPayment] = useState('Cash');
+  const [partialBusy, setPartialBusy] = useState(false);
+  const openPartial = (order) => {
+    setPartialModal(order);
+    setPartialMode('partial');
+    setPartialPayment(order.paymentMethod || 'Cash');
+    // Default: fulfill all that's still outstanding; operator lowers the short lines.
+    setPartialQtys(Object.fromEntries((order.items || []).map((it, i) => [i, (it.quantity || 0) - (it.fulfilledQty || 0)])));
+  };
+  const submitPartialFulfill = async () => {
+    if (!partialModal || partialBusy) return;
+    const fulfill = (partialModal.items || []).map((it, i) => {
+      const remaining = (it.quantity || 0) - (it.fulfilledQty || 0);
+      return { index: i, qty: Math.max(0, Math.min(remaining, Number(partialQtys[i] ?? remaining))) };
+    });
+    if (!fulfill.some(f => f.qty > 0)) return alert('Enter at least one unit to fulfill now.');
+    setPartialBusy(true);
+    try {
+      const res = await apiFetch(`/api/orders/${partialModal._id}/partial-fulfill`, {
+        method: 'POST',
+        body: JSON.stringify({ fulfill, paymentMode: partialMode, paymentMethod: partialPayment || 'Cash' }),
+      });
+      const d = await res.json();
+      if (d.success) { setPartialModal(null); fetchOrders(); fetchERPData?.(); alert(d.order?.status === 'Completed' ? 'Order fully fulfilled and completed.' : 'Partial fulfillment saved. Remaining stays on the same order.'); }
+      else alert(d.error || 'Partial fulfillment failed.');
+    } catch { alert('Partial fulfillment failed.'); } finally { setPartialBusy(false); }
+  };
+  useEffect(() => { if (isAuthenticated) { fetchSettings(); fetchClockStatus(); fetchParked(); } }, [isAuthenticated]);
 
   // --- REAL-TIME AUTO REFRESH ---
   // Effect 1: ERP/EOD sub-tab listeners — uses named callbacks so .off() is scoped
@@ -642,8 +1195,23 @@ export default function AdminDashboard() {
     fetchData();
     fetchERPData();
     fetchUsers();
+    requestNotificationPermission(); // ask once so new-order alerts can show in the installed app
 
-    const handleNewOrder    = (order) => { setOrders(prev => [order, ...prev]); playKitchenDing(); };
+    // Force a reconnect so the handshake picks up the fresh token from auth.getToken().
+    // Room placement is server-decided based on the verified JWT — no more
+    // client-declared role (which an attacker could spoof to elevate to manager).
+    try { socket.disconnect(); socket.connect(); } catch { /* ignore */ }
+    // Back-compat: the server now ignores this payload but we keep emitting it
+    // so older server builds during deploy don't drop the event.
+    socket.emit('joinRoom', activeAdmin?.role || 'staff');
+
+    const handleNewOrder    = (order) => {
+      setOrders(prev => [order, ...prev]); playKitchenDing(); pushOrderToast(order);
+      // OS notification (mainly useful when the app is backgrounded/installed)
+      if (typeof document !== 'undefined' && document.hidden) {
+        notify('New order', `${order.orderNumber || ''} · ${order.table || 'Takeout'}${order.customerName ? ' · ' + order.customerName : ''}`.trim());
+      }
+    };
     const handleOrderUpdate = (updated) => setOrders(prev => prev.map(o => o._id === updated._id ? updated : o));
     const handleMenuUpdate  = () => fetchData();
     const handleArchived    = () => fetchOrders();
@@ -667,13 +1235,26 @@ export default function AdminDashboard() {
   // --- MANUAL POS LOGIC ---
   const openProductModal = (product) => {
     setPosSelectedProduct(product);
-    setPosActiveSize(null); // Defaults to base size
+    setPosActiveSize(null);
     setPosActiveAddOns([]);
+    setPosItemQty(1);
   };
 
   const confirmPosItem = () => {
     if (!posSelectedProduct) return;
-    
+
+    // Validate required modifier groups
+    const unmetGroups = (posSelectedProduct.modifierGroups || []).filter(mg => {
+      const group = typeof mg === 'object' ? mg : modifierGroups.find(g => g._id === mg);
+      if (!group || !group.isRequired) return false;
+      const selected = posActiveAddOns.filter(a => a.name.startsWith(group.name + ': ')).length;
+      return selected < (group.minSelect || 1);
+    });
+    if (unmetGroups.length > 0) {
+      const names = unmetGroups.map(mg => typeof mg === 'object' ? mg.name : modifierGroups.find(g => g._id === mg)?.name || mg).join(', ');
+      return alert(`Please make a selection for: ${names}`);
+    }
+
     let finalPrice = posSelectedProduct.basePrice || posSelectedProduct.price || 0;
     let finalName = posSelectedProduct.name;
     
@@ -690,7 +1271,7 @@ export default function AdminDashboard() {
       productId: posSelectedProduct._id,
       name: finalName,
       price: finalPrice,
-      quantity: 1,
+      quantity: Math.max(1, posItemQty),
       department,
       selectedAddOns: [...posActiveAddOns]
     };
@@ -699,35 +1280,113 @@ export default function AdminDashboard() {
     setPosSelectedProduct(null);
   };
 
-  const submitManualOrder = async () => {
-    if (posCart.length === 0) return alert("Cart is empty!");
-    if (!posCustomerName) return alert("Please enter Customer / Driver Name");
+  const posSubtotal = posCart.reduce((sum, item) => sum + ((item.price + item.selectedAddOns.reduce((s, a) => s + Number(a.price), 0)) * item.quantity), 0);
+  const posItemDiscountAmt = posCart.reduce((sum, item) => {
+    const base = (item.price + item.selectedAddOns.reduce((s, a) => s + Number(a.price), 0)) * item.quantity;
+    return sum + base * ((item.discountPercent || 0) / 100);
+  }, 0);
+  const posDeliveryFeeNum = parseFloat(posDeliveryFee) || 0;
+  const posDiscountAmt = posDiscountType === 'percent'
+    ? (posSubtotal - posItemDiscountAmt) * (Math.min(100, parseFloat(posDiscountValue) || 0) / 100)
+    : Math.min(posSubtotal - posItemDiscountAmt, parseFloat(posDiscountValue) || 0);
+  const posGrandTotal = Math.max(0, posSubtotal - posItemDiscountAmt - posDiscountAmt + posDeliveryFeeNum);
+  const posCashChange = Math.max(0, (parseFloat(posCashTendered) || 0) - posGrandTotal);
 
+  const submitManualOrder = async () => {
+    // Synchronous double-tap guard — blocks a second submit before React re-renders.
+    if (posSubmittingRef.current) return;
+    if (posCart.length === 0) return alert("Cart is empty!");
+    if (!posCustomerName) return alert("Please enter Customer / Driver Name.");
+    const isDelivery = posTable === 'Manual Delivery';
+    const isPickup = posTable === 'Pickup';
+    if (isDelivery && !posDeliveryAddress) return alert("Please enter delivery address.");
+    if ((isDelivery || isPickup) && !posCustomerPhone) return alert("Please enter customer phone number.");
+
+    posSubmittingRef.current = true;
+    setPosSubmitting(true);
+    // Idempotency key so even if two requests slip through (retry/proxy), the
+    // server returns the same order instead of creating a duplicate.
+    const idemKey = (crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
+    // Manual orders are PLACED as Pending — payment/checkout happens later from
+    // the Orders "All view" when the order is completed (same as dine-in/QR).
     const payload = {
       items: posCart,
       table: posTable,
       customerName: posCustomerName,
-      paymentMethod: ['Grab Delivery', 'Foodpanda', 'Manual Delivery'].includes(posTable) ? posTable : 'Cash',
-      discountPercent: 0,
+      // Linking to a client account lets the server resolve per-client product
+      // discount overrides for this order. Optional — falls back to the
+      // product's default discountPercent when blank.
+      clientAccountId: posClientId || undefined,
+      paymentMethod: ['Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Lalamove'].includes(posTable) ? posTable : 'Cash',
       isComplimentary: false,
-      sessionId: null
+      sessionId: null,
+      deliveryAddress: posDeliveryAddress,
+      customerPhone: posCustomerPhone,
+      deliveryFee: posDeliveryFeeNum,
+      scheduledTime: posScheduledTime,
+      dispatchStatus: (isDelivery || isPickup) ? 'Preparing' : '',
+      orderNotes: posNotes.trim(),
+      guestCount: Math.max(1, parseInt(posGuestCount) || 1),
     };
+
+    // Reset the POS form back to a clean slate after a successful (or queued) order.
+    const resetPosForm = () => {
+      setIsPosOpen(false);
+      setPosCart([]);
+      setPosCustomerName('');
+      setPosClientId('');
+      setPosDeliveryAddress('');
+      setPosCustomerPhone('');
+      setPosDeliveryFee('');
+      setPosScheduledTime('');
+      setPosTable(BUSINESS_TYPE === 'log' ? 'Pickup' : 'Dine-In');
+      setPosSearch('');
+      setPosNotes('');
+      setPosGuestCount(1);
+    };
+
+    // OFFLINE: if the device is offline, queue the order locally and move on.
+    if (!navigator.onLine) {
+      queueOrder(payload, idemKey);
+      refreshQueue();
+      resetPosForm();
+      alert('You are offline. Order saved and will sync automatically when the connection returns.');
+      posSubmittingRef.current = false; setPosSubmitting(false);
+      return;
+    }
 
     try {
       const res = await apiFetch(`/api/orders`, {
-        method: 'POST', body: JSON.stringify(payload)
+        method: 'POST', headers: { 'Idempotency-Key': idemKey }, body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (data.success) {
-        setIsPosOpen(false);
-        setPosCart([]);
-        setPosCustomerName('');
-        fetchOrders(); // Refresh the grid!
+        // Apply any manually-set per-item discounts from the POS cart
+        const cartWithDisc = posCart.filter(item => (item.discountPercent || 0) > 0);
+        if (cartWithDisc.length > 0 && data.order?._id) {
+          await apiFetch(`/api/orders/${data.order._id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ items: posCart.map(item => ({ discountPercent: item.discountPercent || 0 })) }),
+          });
+        }
+        if (BUSINESS_TYPE === 'log') fetchERPData();
+        resetPosForm();
+        fetchOrders();
       } else {
         alert(data.error);
       }
     } catch (e) {
+      // Network died mid-request — queue it under the SAME idempotency key so the
+      // replay can't duplicate an order the server may have already received.
       console.error(e);
+      queueOrder(payload, idemKey);
+      refreshQueue();
+      resetPosForm();
+      alert('Connection lost. Order saved and will sync automatically when the connection returns.');
+    } finally {
+      posSubmittingRef.current = false;
+      setPosSubmitting(false);
     }
   };
 
@@ -741,17 +1400,18 @@ const updateStatus = async (orderId, newStatus) => {
     const payload = { status: newStatus };
 
     if (newStatus === 'Preparing') {
-      // 2. BULLETPROOF OVERRIDE: If it's a delivery, force it! Otherwise, use dropdown/existing.
-      if (order && ['Grab Delivery', 'Foodpanda', 'Manual Delivery'].includes(order.table)) {
-        payload.paymentMethod = order.table;
-      } else {
-        payload.paymentMethod = paymentSelections[orderId] || (order ? order.paymentMethod : 'Cash') || 'Cash';
-      }
+      // Payment is always operator-changeable. Use the dropdown selection if made,
+      // else default to the delivery channel (for delivery orders) or the order's method.
+      const isDeliveryTable = order && ['Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Lalamove'].includes(order.table);
+      payload.paymentMethod = paymentSelections[orderId]
+        || (isDeliveryTable ? order.table : null)
+        || (order ? order.paymentMethod : 'Cash') || 'Cash';
       // Include cash tendered for cash payments
       if (payload.paymentMethod === 'Cash' && cashTendered[orderId]) {
         payload.amountTendered = parseFloat(cashTendered[orderId]) || 0;
       }
     }
+
 
     // Play ready chime when order is called out to customer
     if (newStatus === 'Ready') playReadyChime();
@@ -770,8 +1430,14 @@ const updateStatus = async (orderId, newStatus) => {
       const data = await res.json();
 
       if (!data.success) {
-        alert(data.error); // Show the exact error (e.g., "INSUFFICIENT STOCK")
-        fetchOrders(); // Revert the UI back to normal if the database rejected it
+        alert(data.error);
+        fetchOrders();
+      } else if (newStatus === 'Preparing' && BUSINESS_TYPE === 'log') {
+        const prepOrder = { ...order, ...payload, ...data.order };
+        // Logistics: only the billing statement is printed (no order slip).
+        printBillingStatement(prepOrder);
+      } else if (newStatus === 'Completed' && BUSINESS_TYPE === 'log') {
+        fetchERPData();
       }
     } catch (err) {
       console.error(err);
@@ -913,6 +1579,342 @@ const updateStatus = async (orderId, newStatus) => {
       console.error(err);
     }
   };
+  const fetchShiftHistory = async (page = 1) => {
+    if (activeAdmin?.role !== 'superadmin') return;
+    try {
+      const res = await apiFetch(`/api/shifts?page=${page}&limit=${SHIFT_HIST_PAGE_SIZE}`);
+      const data = await res.json();
+      if (data.success) { setShiftHistory(data.shifts); setShiftHistoryTotal(data.total); setShiftHistoryPage(page); }
+    } catch (err) { console.error('fetchShiftHistory', err); }
+  };
+
+  // ===== FINANCE FETCHERS =====
+  const fetchPnl = async () => {
+    if (activeAdmin?.role !== 'superadmin') return;
+    try {
+      const res = await apiFetch(`/api/reports/pnl?start=${pnlRange.start}&end=${pnlRange.end}`);
+      const data = await res.json();
+      if (data.success) setPnlData(data);
+    } catch (err) { console.error('fetchPnl', err); }
+  };
+  const fetchPnlMonthly = async () => {
+    if (activeAdmin?.role !== 'superadmin') return;
+    try {
+      const res = await apiFetch(`/api/reports/pnl-monthly?start=${pnlmRange.start}&end=${pnlmRange.end}`);
+      const data = await res.json();
+      if (data.success) setPnlMonthly(data);
+    } catch (err) { console.error('fetchPnlMonthly', err); }
+  };
+  const exportPnlMonthlyPDF = async () => {
+    if (!pnlMonthly) return alert('Load the Monthly P&L first.');
+    const { jsPDF, autoTable } = await loadPdfLibs();
+    const m = pnlMonthly;
+    const doc = new jsPDF(pnlmView === 'matrix' ? 'landscape' : 'portrait');
+    doc.setFontSize(16); doc.text(`${BIZ_NAME} — Profit & Loss`, 14, 14);
+    doc.setFontSize(9); doc.text(`${pnlmRange.start} to ${pnlmRange.end}  ·  ${pnlmView === 'matrix' ? 'Monthly' : 'Period'}`, 14, 20);
+    const SECTIONS = [['revenue','REVENUE'],['contra','LESS: DISCOUNTS/RETURNS'],['cogs','COST OF SALES'],['opex','OPERATING EXPENSES'],['otherincome','OTHER INCOME'],['otherexpense','OTHER EXPENSES']];
+    const nr = m.grandTotals.netRevenue || 0;
+    if (pnlmView === 'matrix') {
+      const head = ['Account', ...m.months, 'Total'];
+      const body = [];
+      for (const [sec, label] of SECTIONS) {
+        body.push([{ content: label, colSpan: head.length, styles: { fontStyle: 'bold', fillColor: [236,241,227] } }]);
+        m.accounts.filter(a => a.section === sec).forEach(a => body.push([`  ${a.code} ${a.name}`, ...m.months.map(mm => pdfMoney(a.byMonth[mm] || 0)), pdfMoney(a.total)]));
+      }
+      body.push(['NET INCOME', ...m.months.map(mm => pdfMoney(m.monthTotals.netIncome[mm] || 0)), pdfMoney(m.grandTotals.netIncome)]);
+      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 6 }, headStyles: { fillColor: [111,135,77] } });
+    } else {
+      const head = ['Account', 'Amount', '% Rev', '% Parent'];
+      const parentTotals = {};
+      m.accounts.forEach(a => { parentTotals[a.parentCode] = (parentTotals[a.parentCode] || 0) + a.total; });
+      const body = [];
+      for (const [sec, label] of SECTIONS) {
+        const rows = m.accounts.filter(a => a.section === sec);
+        if (!rows.length) continue;
+        body.push([{ content: label, colSpan: 4, styles: { fontStyle: 'bold', fillColor: [236,241,227] } }]);
+        rows.forEach(a => body.push([`  ${a.code} ${a.name}`, pdfMoney(a.total), nr ? `${(a.total/nr*100).toFixed(1)}%` : '—', parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '—']));
+      }
+      body.push(['NET INCOME', pdfMoney(m.grandTotals.netIncome), nr ? `${(m.grandTotals.netIncome/nr*100).toFixed(1)}%` : '—', '']);
+      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 8 }, headStyles: { fillColor: [111,135,77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } } });
+    }
+    doc.save(`PnL-${pnlmRange.start}_to_${pnlmRange.end}.pdf`);
+  };
+  const fetchBsMonthly = async () => {
+    if (activeAdmin?.role !== 'superadmin') return;
+    try {
+      const res = await apiFetch(`/api/reports/balance-sheet-monthly?start=${bsmRange.start}&end=${bsmRange.end}`);
+      const data = await res.json();
+      if (data.success) setBsMonthly(data);
+    } catch (err) { console.error('fetchBsMonthly', err); }
+  };
+  const exportBsMonthlyPDF = async () => {
+    if (!bsMonthly) return alert('Load the Monthly Balance Sheet first.');
+    const { jsPDF, autoTable } = await loadPdfLibs();
+    const b = bsMonthly;
+    const doc = new jsPDF(bsmView === 'matrix' ? 'landscape' : 'portrait');
+    doc.setFontSize(16); doc.text(`${BIZ_NAME} — Balance Sheet`, 14, 14);
+    doc.setFontSize(9); doc.text(`${bsmRange.start} to ${bsmRange.end}  ·  ${bsmView === 'matrix' ? 'Monthly' : 'As of ' + b.asOf}`, 14, 20);
+    const SECTIONS = [['assets','ASSETS'],['liabilities','LIABILITIES'],['equity','EQUITY']];
+    const totalAssets = b.monthTotals.assets[b.asOf] || 0;
+    if (bsmView === 'matrix') {
+      const head = ['Account', ...b.months];
+      const body = [];
+      for (const [sec, label] of SECTIONS) {
+        body.push([{ content: label, colSpan: head.length, styles: { fontStyle: 'bold', fillColor: [236,241,227] } }]);
+        b[sec].forEach(a => body.push([`  ${a.code} ${a.name}`, ...b.months.map(mm => pdfMoney(a.byMonth[mm] || 0))]));
+        body.push([`  Total ${label}`, ...b.months.map(mm => pdfMoney(b.monthTotals[sec][mm] || 0))]);
+      }
+      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 6 }, headStyles: { fillColor: [111,135,77] } });
+    } else {
+      const head = ['Account', 'Amount', '% Assets', '% Parent'];
+      const parentTotals = {};
+      [...b.assets, ...b.liabilities, ...b.equity].forEach(a => { parentTotals[a.parentCode] = (parentTotals[a.parentCode] || 0) + a.total; });
+      const body = [];
+      for (const [sec, label] of SECTIONS) {
+        body.push([{ content: label, colSpan: 4, styles: { fontStyle: 'bold', fillColor: [236,241,227] } }]);
+        b[sec].forEach(a => body.push([`  ${a.code} ${a.name}`, pdfMoney(a.total), totalAssets ? `${(a.total/totalAssets*100).toFixed(1)}%` : '—', parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '—']));
+        body.push([`  Total ${label}`, pdfMoney(b.monthTotals[sec][b.asOf] || 0), '', '']);
+      }
+      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 8 }, headStyles: { fillColor: [111,135,77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } } });
+    }
+    doc.save(`BalanceSheet-${bsmRange.start}_to_${bsmRange.end}.pdf`);
+  };
+  const fetchBalanceSheet = async () => {
+    if (activeAdmin?.role !== 'superadmin') return;
+    try {
+      const res = await apiFetch(`/api/reports/balance-sheet`);
+      const data = await res.json();
+      if (data.success) setBsData(data);
+    } catch (err) { console.error('fetchBalanceSheet', err); }
+  };
+  // Resolve negative/incorrect book inventory by reconciling 130000 to actual on-hand value.
+  const reconcileInventory = async () => {
+    if (!window.confirm('Reconcile book Inventory (130000) to the ACTUAL on-hand value (Σ stock × unit cost)?\n\nThis posts a balancing journal entry offset to Owner\'s Capital — use it to set opening inventory / fix a negative inventory balance.')) return;
+    try {
+      const res = await apiFetch('/api/inventory/revalue', { method: 'POST', body: JSON.stringify({ offsetAccount: '310000' }) });
+      const d = await res.json();
+      if (!d.success) return alert(d.error || 'Reconcile failed.');
+      if (d.diff === 0) alert('Inventory already matches on-hand value — nothing to adjust.');
+      else alert(`Inventory reconciled.\n\nActual on-hand:  ₱${d.onHand.toFixed(2)}\nWas (book):      ₱${d.book.toFixed(2)}\nAdjustment:      ${d.diff >= 0 ? '+' : ''}₱${d.diff.toFixed(2)}`);
+      fetchBalanceSheet(); if (pnlMonthly) fetchPnlMonthly(); if (bsMonthly) fetchBsMonthly(); fetchERPData();
+    } catch { alert('Network error.'); }
+  };
+  const fetchArOutstanding = async () => {
+    if (activeAdmin?.role !== 'superadmin') return;
+    try {
+      const res = await apiFetch(`/api/finance/ar-outstanding`);
+      const data = await res.json();
+      if (data.success) setArOutstanding({ orders: data.orders, totalOutstanding: data.totalOutstanding });
+    } catch (err) { console.error('fetchArOutstanding', err); }
+  };
+  // ── REVOLVING FUND FETCHERS ─────────────────────────────────────────────────
+  const fetchRfFunds = async () => {
+    if (activeAdmin?.role !== 'superadmin') return;
+    setRfLoading(true);
+    try {
+      const res = await apiFetch('/api/revolving-funds');
+      const data = await res.json();
+      if (data.success) setRfFunds(data.funds);
+    } catch (err) { console.error('fetchRfFunds', err); }
+    finally { setRfLoading(false); }
+  };
+
+  const fetchRfTxs = async (fundId, page = 1) => {
+    if (activeAdmin?.role !== 'superadmin') return;
+    try {
+      const res = await apiFetch(`/api/revolving-funds/${fundId}/transactions?page=${page}&limit=20`);
+      const data = await res.json();
+      if (data.success) {
+        setRfTxs(data.txs);
+        setRfTxTotal(data.total);
+        setRfTxPage(data.page);
+        setRfTxPages(data.pages);
+      }
+    } catch (err) { console.error('fetchRfTxs', err); }
+  };
+
+  const submitRfNew = async () => {
+    if (rfNewSubmitting) return;
+    const amt = parseFloat(rfNewForm.initialAmount);
+    if (!rfNewForm.name.trim()) return alert('Fund name is required.');
+    if (!amt || amt <= 0) return alert('Enter a valid initial amount.');
+    setRfNewSubmitting(true);
+    try {
+      const res = await apiFetch('/api/revolving-funds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: rfNewForm.name.trim(), initialAmount: amt, description: rfNewForm.description, sourceAccount: rfNewForm.sourceAccount }),
+      });
+      const data = await res.json();
+      if (!data.success) return alert(data.error || 'Failed to create fund.');
+      setRfNewModal(false);
+      setRfNewForm({ name: '', initialAmount: '', description: '', sourceAccount: '111000' });
+      await fetchRfFunds();
+    } catch (err) { alert('Network error.'); }
+    finally { setRfNewSubmitting(false); }
+  };
+
+  const submitRfDisb = async () => {
+    if (rfDisbSubmitting || !rfActiveFund) return;
+    const amt = parseFloat(rfDisbForm.amount);
+    if (!amt || amt <= 0) return alert('Enter a valid amount.');
+    if (!rfDisbForm.description.trim()) return alert('Description is required.');
+    setRfDisbSubmitting(true);
+    try {
+      const res = await apiFetch(`/api/revolving-funds/${rfActiveFund._id}/disburse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: amt, description: rfDisbForm.description.trim(), categoryCode: rfDisbForm.categoryCode }),
+      });
+      const data = await res.json();
+      if (!data.success) return alert(data.error || 'Disbursement failed.');
+      setRfDisbModal(false);
+      setRfDisbForm({ amount: '', description: '', categoryCode: '760000' });
+      // Update local fund balance without full refetch
+      setRfFunds(prev => prev.map(f => f._id === data.fund._id ? data.fund : f));
+      setRfActiveFund(data.fund);
+      await fetchRfTxs(rfActiveFund._id, 1);
+    } catch (err) { alert('Network error.'); }
+    finally { setRfDisbSubmitting(false); }
+  };
+
+  const submitRfRepl = async () => {
+    if (rfReplSubmitting || !rfActiveFund) return;
+    setRfReplSubmitting(true);
+    try {
+      const body = { note: rfReplForm.note, sourceAccount: rfReplForm.sourceAccount };
+      if (rfReplForm.amount) body.amount = parseFloat(rfReplForm.amount);
+      const res = await apiFetch(`/api/revolving-funds/${rfActiveFund._id}/replenish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!data.success) return alert(data.error || 'Replenishment failed.');
+      setRfReplModal(false);
+      setRfReplForm({ amount: '', note: '', sourceAccount: '111000' });
+      setRfFunds(prev => prev.map(f => f._id === data.fund._id ? data.fund : f));
+      setRfActiveFund(data.fund);
+      await fetchRfTxs(rfActiveFund._id, 1);
+    } catch (err) { alert('Network error.'); }
+    finally { setRfReplSubmitting(false); }
+  };
+
+  const closeRfFund = async (fundId) => {
+    if (!window.confirm('Close this revolving fund? This cannot be undone.')) return;
+    try {
+      const res = await apiFetch(`/api/revolving-funds/${fundId}/close`, { method: 'PATCH' });
+      const data = await res.json();
+      if (!data.success) return alert(data.error || 'Failed.');
+      setRfFunds(prev => prev.filter(f => f._id !== fundId));
+      if (rfActiveFund?._id === fundId) { setRfActiveFund(null); setRfTxs([]); }
+    } catch (err) { alert('Network error.'); }
+  };
+  // ────────────────────────────────────────────────────────────────────────────
+
+  const fetchExpenseCategories = async () => {
+    if (activeAdmin?.role !== 'superadmin' || expenseCategories.length > 0) return;
+    try {
+      const res = await apiFetch(`/api/expenses/categories`);
+      const data = await res.json();
+      if (data.success) setExpenseCategories(data.categories);
+    } catch (err) { console.error('fetchExpenseCategories', err); }
+  };
+  const submitExpense = async () => {
+    if (expenseSubmitting) return;
+    if (!expenseForm.amount || parseFloat(expenseForm.amount) <= 0) return alert('Enter a valid amount.');
+    if (!expenseForm.categoryCode) return alert('Select a category.');
+    if (!expenseForm.description?.trim()) return alert('Description is required.');
+    setExpenseSubmitting(true);
+    try {
+      const res = await apiFetch(`/api/expenses`, { method: 'POST', body: JSON.stringify(expenseForm) });
+      const data = await res.json();
+      if (data.success) {
+        setExpenseModal(false);
+        setExpenseForm({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', date: new Date().toISOString().slice(0,10) });
+        if (typeof fetchAccountingData === 'function') fetchAccountingData();
+        if (ledgerSubTab === 'pnl') fetchPnl();
+        if (ledgerSubTab === 'balance') fetchBalanceSheet();
+        alert('Expense recorded.');
+      } else {
+        alert(data.error || 'Failed to record expense.');
+      }
+    } catch (err) {
+      alert('Network error.');
+    } finally {
+      setExpenseSubmitting(false);
+    }
+  };
+  const submitArSettlement = async () => {
+    if (settleSubmitting || !settleModal?.order) return;
+    const amt = parseFloat(settleForm.amount);
+    if (!amt || amt <= 0) return alert('Enter a valid amount.');
+    setSettleSubmitting(true);
+    try {
+      const res = await apiFetch(`/api/orders/${settleModal.order._id}/settle-ar`, {
+        method: 'POST',
+        body: JSON.stringify({ amount: amt, paymentMethod: settleForm.paymentMethod, note: settleForm.note })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSettleModal(null);
+        setSettleForm({ amount: '', paymentMethod: 'Cash on Hand', note: '' });
+        fetchArOutstanding();
+        alert('A/R settled successfully.');
+      } else {
+        alert(data.error || 'Failed to settle A/R.');
+      }
+    } catch (err) {
+      alert('Network error.');
+    } finally {
+      setSettleSubmitting(false);
+    }
+  };
+  const downloadJournalCsv = async () => {
+    if (activeAdmin?.role !== 'superadmin') return;
+    try {
+      const res = await apiFetch(`/api/journal/export?start=${pnlRange.start}&end=${pnlRange.end}`);
+      const text = await res.text();
+      const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `journal_${pnlRange.start}_to_${pnlRange.end}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (err) { alert('CSV export failed.'); }
+  };
+
+  const printXReading = async () => {
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    const today = new Date().toLocaleDateString();
+    const now = new Date().toLocaleTimeString();
+    doc.setFontSize(16); doc.text(`${BIZ_NAME}`, 105, 18, { align: 'center' });
+    doc.setFontSize(10); doc.text('NON-VAT REGISTERED', 105, 24, { align: 'center' });
+    doc.text(`X-READING — ${today} ${now}`, 105, 30, { align: 'center' });
+    doc.setFontSize(9);
+    doc.text('(Mid-Shift Summary — Register NOT Closed)', 105, 36, { align: 'center' });
+    const todayOrds = orders.filter(o => o.status === 'Completed');
+    const gross = todayOrds.reduce((s, o) => s + o.subtotal, 0);
+    const disc = todayOrds.reduce((s, o) => s + (o.discount || 0), 0);
+    const net = gross - disc;
+    const cashSales = todayOrds.filter(o => o.paymentMethod === 'Cash').reduce((s, o) => s + o.total, 0);
+    autoTable(doc, {
+      startY: 42,
+      head: [['Description', 'Amount']],
+      body: [
+        ['Gross Sales', `P${gross.toFixed(2)}`],
+        ['Less: Discounts', `(P${disc.toFixed(2)})`],
+        ['Net Sales', `P${net.toFixed(2)}`],
+        ['Cash Sales', `P${cashSales.toFixed(2)}`],
+        ['Non-Cash Sales', `P${(net - cashSales).toFixed(2)}`],
+        ['Orders Completed', `${todayOrds.length}`],
+      ],
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [111, 135, 77] },
+    });
+    doc.save(`X-Reading-${today.replace(/\//g, '-')}.pdf`);
+  };
+
   const archiveDay = async () => {
     if (!window.confirm("Are you sure you want to close the day? This will archive everything.")) return;
     
@@ -1013,15 +2015,19 @@ const updateStatus = async (orderId, newStatus) => {
   <div class="center">
     <div class="store">${BIZ_NAME}</div>
     <div class="addr">Angeles City, Pampanga</div>
+    <div class="addr" style="font-weight:bold;margin-top:2px;">NON-VAT REGISTERED</div>
   </div>
   <div class="dash"></div>
   ${compSection}
   <table class="meta">
     <tr><td>Order #</td><td><strong>${order.orderNumber || '—'}</strong></td></tr>
-    <tr><td>Table</td><td>${order.table || '—'}</td></tr>
+    <tr><td>Type</td><td>${order.table || '—'}</td></tr>
     <tr><td>Date</td><td>${dateStr}</td></tr>
     ${order.cashier && order.cashier !== 'System' ? `<tr><td>Cashier</td><td>${order.cashier}</td></tr>` : ''}
     ${order.customerName && order.customerName !== 'Guest' ? `<tr><td>Name</td><td>${order.customerName}</td></tr>` : ''}
+    ${order.customerPhone ? `<tr><td>Phone</td><td>${order.customerPhone}</td></tr>` : ''}
+    ${order.deliveryAddress ? `<tr><td>Address</td><td>${order.deliveryAddress}</td></tr>` : ''}
+    ${order.scheduledTime ? `<tr><td>Sched</td><td>${order.scheduledTime}</td></tr>` : ''}
     ${!order.isComplimentary ? `<tr><td>Payment</td><td>${order.paymentMethod || 'Cash'}</td></tr>` : ''}
   </table>
   <div class="dash"></div>
@@ -1031,12 +2037,15 @@ const updateStatus = async (orderId, newStatus) => {
   <div class="dash"></div>
   <table>
     <tr><td colspan="2">Subtotal</td><td class="amt">&#x20B1;${subTotal.toFixed(2)}</td></tr>
+    ${(order.deliveryFee || 0) > 0 ? `<tr><td colspan="2">Delivery Fee</td><td class="amt">&#x20B1;${Number(order.deliveryFee).toFixed(2)}</td></tr>` : ''}
     ${discRow}
     ${totalBlock}
   </table>
+  ${order.orderNotes ? `<div class="dash"></div><div style="font-size:10px;font-weight:bold;text-align:center;">📝 SPECIAL INSTRUCTIONS</div><div style="font-size:10px;text-align:center;margin:2px 0 0;">${order.orderNotes}</div>` : ''}
   ${order.isComplimentary ? '<div class="dash"></div><div class="nopay">NO PAYMENT REQUIRED</div>' : ''}
   <div class="footer">
     <div>Thank you for dining with us!</div>
+    <div style="margin-top:2px;font-weight:bold;">This is a Non-VAT Transaction</div>
     <div style="margin-top:3px">&#8212; ${BIZ_NAME} &#8212;</div>
   </div>
 </body></html>`;
@@ -1147,13 +2156,121 @@ const updateStatus = async (orderId, newStatus) => {
       }
     }
 
-    // === 2. HTML POPUP (works on any browser / device) ===
+    // === 2. TRY WebSerial (USB thermal printer, Chrome / Edge only) ===
+    if (navigator.serial) {
+      try {
+        // Try to reuse a previously opened port first (stored on window)
+        let port = window._thermalPort;
+        if (!port || port.readable === null) {
+          port = await navigator.serial.requestPort();
+          window._thermalPort = port;
+        }
+        if (!port.writable) await port.open({ baudRate: 9600 });
+
+        const enc = new TextEncoder();
+        const buf = [];
+        const b   = (arr) => buf.push(...arr);
+        const tx  = (str) => b(Array.from(enc.encode(str)));
+        const SEP   = '--------------------------------\n';
+        const INIT  = [0x1b, 0x40];
+        const CENTER= [0x1b, 0x61, 0x01];
+        const LEFT  = [0x1b, 0x61, 0x00];
+        const BOLD1 = [0x1b, 0x45, 0x01];
+        const BOLD0 = [0x1b, 0x45, 0x00];
+        const LF    = [0x0a];
+
+        b(INIT); b(CENTER); b(BOLD1); tx(`${BIZ_NAME}\n`); b(BOLD0);
+        tx('Angeles City, Pampanga\nNON-VAT REGISTERED\n'); tx(SEP);
+
+        if (order.isComplimentary) {
+          b(BOLD1); tx('** COMPLIMENTARY ORDER **\n'); b(BOLD0);
+          if (order.complimentaryReasonType) tx(`${COMP_REASON_LABELS[order.complimentaryReasonType] || ''}\n`);
+          if (order.complimentaryApprovedBy) tx(`Approved: ${order.complimentaryApprovedBy}\n`);
+          tx(SEP);
+        }
+
+        b(LEFT);
+        tx(`Order: ${order.orderNumber || '—'}\n`);
+        tx(`Table: ${order.table || '—'}\n`);
+        tx(`Date:  ${new Date(order.createdAt || Date.now()).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}\n`);
+        if (order.cashier && order.cashier !== 'System') tx(`By:    ${order.cashier}\n`);
+        if (!order.isComplimentary) tx(`Pay:   ${order.paymentMethod || 'Cash'}\n`);
+        tx(SEP);
+
+        order.items.forEach(item => {
+          const addOnTotal = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
+          const lineTotal  = (item.price + addOnTotal) * item.quantity;
+          const nameCol    = item.name.substring(0, 16).padEnd(16);
+          b(BOLD1);
+          tx(`${String(item.quantity).padStart(2)}x ${nameCol} P${lineTotal.toFixed(2).padStart(7)}\n`);
+          b(BOLD0);
+          (item.selectedAddOns || []).forEach(a => {
+            tx(`   + ${a.name.substring(0, 14).padEnd(14)} P${Number(a.price || 0).toFixed(2).padStart(7)}\n`);
+          });
+        });
+
+        b(CENTER); tx(SEP);
+        const sub = order.subtotal || 0, disc = order.discount || 0, tot = order.total || 0;
+        if (!order.isComplimentary && disc > 0) { tx(`Subtotal: P${sub.toFixed(2)}\n`); tx(`Discount: -P${disc.toFixed(2)}\n`); }
+        b(BOLD1);
+        order.isComplimentary ? tx(`AMOUNT DUE: P0.00\n** NO PAYMENT REQUIRED **\n`) : tx(`TOTAL: P${tot.toFixed(2)}\n`);
+        b(BOLD0);
+        if (!order.isComplimentary && (order.amountTendered || 0) > 0 && order.paymentMethod === 'Cash') {
+          tx(`Cash:   P${(order.amountTendered || 0).toFixed(2)}\n`);
+          b(BOLD1); tx(`Change: P${(order.changeDue || 0).toFixed(2)}\n`); b(BOLD0);
+        }
+        tx(SEP); b(CENTER); tx('Thank you for dining with us!\n');
+        const feedLines = Math.max(4, 8 - Math.floor(order.items.length / 2));
+        for (let i = 0; i < feedLines; i++) b(LF);
+
+        const data   = new Uint8Array(buf);
+        const writer = port.writable.getWriter();
+        const sleep  = (ms) => new Promise(r => setTimeout(r, ms));
+        for (let i = 0; i < data.length; i += 256) { await writer.write(data.slice(i, i + 256)); await sleep(60); }
+        writer.releaseLock();
+        return; // Success — skip HTML fallback
+      } catch (err) {
+        window._thermalPort = null; // Reset cached port on error
+        if (err.name !== 'NotFoundError') console.warn('WebSerial print failed, falling back:', err.message);
+      }
+    }
+
+    // === 3. HIDDEN IFRAME auto-print (no popup dialog on most configs) ===
     const html = buildReceiptHTML();
-    const win  = window.open('', '_blank', 'width=380,height=620,toolbar=0,location=0,menubar=0,status=0,scrollbars=1');
-    if (!win) return alert('Allow popups for this site to use the print dialog.');
-    win.document.write(html);
-    win.document.close();
-    setTimeout(() => { win.focus(); win.print(); }, 300);
+    try {
+      // Remove any stale iframe from a previous print
+      const old = document.getElementById('__receipt_iframe__');
+      if (old) old.remove();
+
+      const iframe = document.createElement('iframe');
+      iframe.id = '__receipt_iframe__';
+      iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:1px;border:0;';
+      document.body.appendChild(iframe);
+      iframe.contentDocument.open();
+      iframe.contentDocument.write(html);
+      iframe.contentDocument.close();
+
+      // Wait for content to render then auto-print
+      iframe.onload = () => {
+        try {
+          iframe.contentWindow.focus();
+          iframe.contentWindow.print();
+        } catch(e) { /* fall through */ }
+        // Clean up after 30s
+        setTimeout(() => { try { iframe.remove(); } catch(e){} }, 30000);
+      };
+      // Trigger manually in case onload already fired
+      setTimeout(() => {
+        try {
+          if (document.getElementById('__receipt_iframe__')) {
+            iframe.contentWindow.focus();
+            iframe.contentWindow.print();
+          }
+        } catch(e) {}
+      }, 400);
+    } catch (fallbackErr) {
+      console.error('iframe print failed:', fallbackErr);
+    }
   };
 
   // --- 🚨 SAFE VOID & REFUND SYSTEM ---
@@ -1186,6 +2303,17 @@ const updateStatus = async (orderId, newStatus) => {
   };
   const [qrSessionId, setQrSessionId] = useState(''); // Add this to your states at the top if needed
 
+  // Logistics: copy the client portal link instead of generating a table QR.
+  const handleCopyPortalLink = async () => {
+    const link = `${window.location.origin}/client/portal`;
+    try {
+      await navigator.clipboard.writeText(link);
+      alert(`Portal link copied:\n${link}`);
+    } catch {
+      window.prompt('Copy the client portal link:', link);
+    }
+  };
+
   const handleShowQR = async () => {
     try {
       const newTable = `T-${Date.now().toString(36).toUpperCase()}`;
@@ -1215,26 +2343,36 @@ const updateStatus = async (orderId, newStatus) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           addedStock: Number(restockData.addedStock),
-          totalCost: Number(restockData.totalCost)
+          totalCost: Number(restockData.totalCost),
+          creditAccount: restockData.creditAccount || '111000',
         })
       });
       if (res.ok) {
         alert("Stock received. Weighted Average Cost updated!");
         setActiveInventoryItem(null);
-        setRestockData({ addedStock: '', totalCost: '' });
+        setRestockData({ addedStock: '', totalCost: '', creditAccount: '111000' });
         fetchERPData(); // Re-fetch inventory
       }
     } catch (err) { console.error("Restock failed", err); }
   };
 
-const submitPhysicalCounts = async () => {
+  const submitPhysicalCounts = async () => {
     try {
+      // Convert physical counts → BASE units (g/ml/pcs) before sending; server math
+      // operates on base units. LOG counts in packages (× packBase); FB in kg/L (× mult).
+      const countsBase = {};
+      for (const [id, val] of Object.entries(physicalCounts)) {
+        if (val === '' || val === undefined || val === null) continue;
+        const item = inventory.find(i => i._id === id);
+        const mult = item ? (BUSINESS_TYPE === 'log' ? (itemDisplay(item).packBase || 1) : effectiveDisplay(item).mult) : 1;
+        countsBase[id] = Number(val) * mult;
+      }
       const res = await apiFetch(`/api/inventory/count`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          counts: physicalCounts,
-          reasons: varianceReasons, // <-- NEW: Send the reasons to the backend!
+        body: JSON.stringify({
+          counts: countsBase,
+          reasons: varianceReasons,
           adminName: activeAdmin ? activeAdmin.name : 'System Admin'
         })
       });
@@ -1256,37 +2394,455 @@ const submitPhysicalCounts = async () => {
   };
 
   const addInventory = async () => {
-    if(!invForm.itemName || !invForm.packQty || !invForm.unitPerPack || !invForm.unit || !invForm.costPerPack) return alert("Please fill in all inventory fields.");
-    
-    const itemNameClean = invForm.itemName.trim();
-    const totalStockAdded = parseFloat(invForm.packQty) * parseFloat(invForm.unitPerPack);
-    const totalCost = parseFloat(invForm.packQty) * parseFloat(invForm.costPerPack);
-    
+    // log: unit is always pcs — use effective values without mutating state
+    const eff = BUSINESS_TYPE === 'log'
+      ? { ...invForm, unitPerPack: invForm.unitPerPack || '1', unit: 'pcs' }
+      : invForm;
+    if (!eff.itemName || !eff.packQty || !eff.costPerPack) return alert("Please fill in Item Name, Qty, and Price.");
+    if (BUSINESS_TYPE !== 'log' && (!eff.unitPerPack || !eff.unit)) return alert("Please fill in all inventory fields.");
+    const invFormEff = eff;
+
+    const qtyBought   = parseFloat(invFormEff.packQty);
+    const costPerPack = parseFloat(invFormEff.costPerPack);
+    if (isNaN(qtyBought) || qtyBought <= 0) return alert("Qty Bought must be a positive number.");
+    if (isNaN(costPerPack) || costPerPack <= 0) return alert("Price Paid Per Pack must be a positive number.");
+
+    let itemNameClean = invFormEff.itemName.trim();
+    const totalCost = qtyBought * costPerPack;
+
+    // log: auto-append weight/vol suffix to name for new items
+    const existingItemCheck = inventory.find(i => i.itemName.toLowerCase() === itemNameClean.toLowerCase());
+    if (BUSINESS_TYPE === 'log' && !existingItemCheck && invFormEff.unitPerPack && invFormEff.unit && invFormEff.unit !== 'pcs') {
+      const wvSuffix = `${invFormEff.unitPerPack}${invFormEff.unit}`;
+      if (!itemNameClean.toLowerCase().includes(wvSuffix.toLowerCase())) {
+        itemNameClean = `${itemNameClean} ${wvSuffix}`;
+      }
+    }
+
     // Check if the item already exists!
     const existingItem = inventory.find(i => i.itemName.toLowerCase() === itemNameClean.toLowerCase());
 
+    // Resolve display unit → base unit + multiplier
+    const resolved = resolveUnitFE(invFormEff.unit);
+    const baseUnit = resolved.base;
+    const mult = resolved.mult;
+    const totalStockAdded = qtyBought * parseFloat(invFormEff.unitPerPack);
+    const totalStockBase = totalStockAdded * mult;
+    const costPerDisplayUnit = costPerPack / parseFloat(invFormEff.unitPerPack);
+    const costPerBase = costPerDisplayUnit / mult;
+
     if (existingItem) {
-      if (!window.confirm(`"${existingItem.itemName}" already exists in inventory. Do you want to RESTOCK it with ${totalStockAdded}${invForm.unit}?`)) return;
-      
-      // RESTOCK EXISTING ITEM
-      await apiFetch(`/api/inventory/restock/${existingItem._id}`, { 
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ addedStock: totalStockAdded, totalCost }) 
+      // For log mode: use packBase from item name so "2 pcs of 377G" → 2×377=754g in DB
+      let restockBase = totalStockBase;
+      if (BUSINESS_TYPE === 'log') {
+        const pack = packInfo(existingItem);
+        restockBase = qtyBought * (pack.packBase || 1);
+      }
+      if (!window.confirm(`Restock "${existingItem.itemName}"?\n\nQty: +${qtyBought} pcs\nCost per pack: ₱${costPerPack.toFixed(2)}\nTotal cost: ₱${totalCost.toFixed(2)}`)) return;
+      await apiFetch(`/api/inventory/restock/${existingItem._id}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addedStock: restockBase, totalCost, expiryDate: invFormEff.expiryDate || null, creditAccount: invFormEff.creditAccount || '111000' })
       });
     } else {
       // ADD BRAND NEW ITEM
-      const costPerMicroUnit = parseFloat(invForm.costPerPack) / parseFloat(invForm.unitPerPack);
-      const payload = { itemName: itemNameClean, stockQty: totalStockAdded, unit: invForm.unit, unitCost: costPerMicroUnit };
-      
+      const payload = {
+        itemName: itemNameClean,
+        stockQty: totalStockBase,
+        unit: baseUnit,
+        unitCost: costPerBase,
+        lowStockThreshold: (parseFloat(invForm.lowStockThreshold) || 0) * mult, // threshold also enters in displayUnit
+        expiryDate: invForm.expiryDate || null,
+        expiryWarnDays: parseInt(invForm.expiryWarnDays) || 7,
+        displayUnit: invForm.unit,
+        unitMultiplier: mult
+      };
+
+      payload.creditAccount = invForm.creditAccount || '111000';
       const res = await apiFetch(`/api/inventory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await res.json();
       if (!data.success) return alert(data.error);
     }
 
-    setInvForm({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '' });
+    setInvForm({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000' });
     fetchERPData();
   };
   const deleteInventory = async (id) => { if(window.confirm('Delete inventory item?')) { await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' }); fetchERPData(); } };
+
+  // --- OPEN EDIT INVENTORY MODAL: pre-fill from item ---
+  // ============================================================
+  // UNITS DISPLAY HELPER — base ↔ display conversion (mirrors server/lib/units.js)
+  // ============================================================
+  const UNIT_TABLE = {
+    g:   { base: 'g',   mult: 1 },
+    kg:  { base: 'g',   mult: 1000 },
+    ml:  { base: 'ml',  mult: 1 },
+    L:   { base: 'ml',  mult: 1000 },
+    pcs: { base: 'pcs', mult: 1 },
+  };
+  const resolveUnitFE = (u) => {
+    if (!u) return { base: 'pcs', mult: 1 };
+    const k = String(u).trim();
+    if (UNIT_TABLE[k]) return UNIT_TABLE[k];
+    const low = k.toLowerCase();
+    if (['l','liter','litre'].includes(low)) return UNIT_TABLE.L;
+    if (['kg','kilogram'].includes(low))     return UNIT_TABLE.kg;
+    if (['g','gram'].includes(low))          return UNIT_TABLE.g;
+    if (['ml','milliliter'].includes(low))   return UNIT_TABLE.ml;
+    if (['pcs','pc','piece'].includes(low))  return UNIT_TABLE.pcs;
+    return { base: k, mult: 1 };
+  };
+  // Effective display unit + multiplier for any inventory item.
+  // FORCED RULE: never display g or ml — auto-promote to kg / L.
+  // Returns { unit, mult } — use everywhere that needs to convert base ↔ display.
+  const effectiveDisplay = (item) => {
+    const baseUnit = item.unit || '';
+    let displayUnit = item.displayUnit;
+    let mult = (item.unitMultiplier && item.unitMultiplier > 0) ? item.unitMultiplier : null;
+    if (!displayUnit || displayUnit === 'g' || displayUnit === 'ml') {
+      if (baseUnit === 'g')        { displayUnit = 'kg';  mult = mult || 1000; }
+      else if (baseUnit === 'ml')  { displayUnit = 'L';   mult = mult || 1000; }
+      else                          { displayUnit = baseUnit || 'pcs'; mult = mult || 1; }
+    }
+    return { unit: displayUnit, mult: mult || 1 };
+  };
+  // LOG 1:1 — derive the pack size from the item name (e.g. "…250G", "…1L",
+  // "…500ML") so cost can be shown per pack ("₱200/250g") rather than per kg/L.
+  // unitCost is stored per base unit, so packCost = unitCost × packBaseUnits.
+  const PACK_RE = /(\d+(?:\.\d+)?)\s*(mg|kg|g|ml|cl|l|pcs|pc|pack|unit)\b/i;
+  const PACK_TO_BASE = { mg: 0.001, g: 1, kg: 1000, ml: 1, cl: 10, l: 1000, pcs: 1, pc: 1, pack: 1, unit: 1 };
+  const packInfo = (item) => {
+    const mt = (item.itemName || '').match(PACK_RE);
+    const baseFactor = PACK_TO_BASE[(item.unit || '').toLowerCase()] || 1;
+    if (mt) {
+      const val = parseFloat(mt[1]);
+      const f = PACK_TO_BASE[mt[2].toLowerCase()];
+      if (f !== undefined && val > 0) {
+        const packBase = val * (f / baseFactor);
+        return { packBase, label: `${mt[1]}${mt[2]}`, cost: (item.unitCost || 0) * packBase };
+      }
+    }
+    const { unit, mult } = effectiveDisplay(item);
+    return { packBase: mult, label: unit, cost: (item.unitCost || 0) * mult };
+  };
+  // Convenience: { qty, unit, cost } already converted to display.
+  const itemDisplay = (item) => {
+    const { unit, mult } = effectiveDisplay(item);
+    const pack = packInfo(item);
+    return {
+      qty:  (item.stockQty || 0) / mult,
+      unit,
+      cost: (item.unitCost || 0) * mult,
+      packCost: pack.cost,                                  // cost of one named pack (e.g. ₱200 for 250g)
+      packLabel: pack.label,                                // pack size label from the name (e.g. "250g")
+      packBase: pack.packBase,                              // base units in one package (e.g. 250)
+      packQty: pack.packBase ? (item.stockQty || 0) / pack.packBase : 0, // stock as a count of packages
+    };
+  };
+  // Pretty currency
+  const peso = (n) => `₱${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  // ============================================================
+  // BULK EXCEL/CSV IMPORT — Stock-take semantics
+  // ============================================================
+  const downloadImportTemplate = () => {
+    // LOG: each row is a packaged SKU. Put the pack size in the Product name
+    //   (…377G / …1L / …250G), Qty = number of packages (pure count, no unit),
+    //   Unit Cost = price per package. The importer multiplies the count by the
+    //   pack size and stores cost per base unit automatically.
+    // FB: Qty carries a unit (kg/L/pcs); Unit Cost = cost per display unit.
+    const csv = BUSINESS_TYPE === 'log'
+      ? 'Code,Product,Qty Unit,SRP,Unit Cost,Expiry date\n' +
+        ',ALASKA CONDENSED MILK 377G,100,77,50,\n' +
+        ',ALASKA BARISTA MILK 1L,100,89,50,\n' +
+        ',COMMERCIAL BLEND 1KG,100,950,200,\n' +
+        ',FILTER ETHIOPIA - LIMU G2 250G,100,900,200,2026-12-31\n'
+      : 'Code,Product,Qty Unit,Unit Cost,Expiry date\n' +
+        ',Milk 1L,10 L,70,2026-12-31\n' +
+        ',Sugar 1kg,5 kg,100,\n' +
+        ',Coffee Beans 1kg,1 kg,800,2026-09-15\n' +
+        ',Cups (12oz),200 pcs,8,\n';
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'semivra-inventory-template.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const parseImportFile = async (file) => {
+    if (!file) return;
+    try {
+      const XLSX = await import('xlsx');
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      if (rows.length === 0) return alert('No rows found in the file.');
+
+      // Normalise column names (case-insensitive). Standard header:
+      //   Code, Product, Qty Unit, Unit Cost, Expiry date
+      // Backwards-compat also accepts: itemName, displayUnit, qty, unitCost.
+      // Product may contain trailing size hint like "Milk 1kg" or "Coke 1.5L" — we parse it.
+      // Matches trailing pack size in product name: "250G", "1KG", "750ML", "1.3KG", "2.5L"
+      const PACK_SIZE_RE = /\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|L|l|ml|pcs|pc|piece)\b\s*$/i;
+      const normalise = (r) => {
+        const lower = {};
+        for (const [k, v] of Object.entries(r)) lower[String(k).toLowerCase().trim()] = v;
+
+        // Parse trailing pack-size from product name.
+        // Capture both the number AND unit so we can compute total stock and unit cost per display unit.
+        // e.g. "FILTER PHIL 250G" → packQty=250, packRawUnit='g' → hintedUnit='kg', packSizeInDisplay=0.25
+        // e.g. "MONIN STRAWBERRY 750ML" → packQty=750, packRawUnit='ml' → hintedUnit='L', packSizeInDisplay=0.75
+        const rawProduct = String(lower.product || lower.itemname || lower.item || lower.name || '').trim();
+        const sizeMatch = rawProduct.match(PACK_SIZE_RE);
+        let cleanedName = rawProduct, hintedUnit = '', packSizeInDisplay = 1;
+        if (sizeMatch) {
+          cleanedName = rawProduct.replace(PACK_SIZE_RE, '').trim();
+          const packQty = parseFloat(sizeMatch[1]);
+          const rawU = sizeMatch[2].toLowerCase();
+          if (rawU === 'g') {
+            hintedUnit = 'kg'; packSizeInDisplay = packQty / 1000; // 250g → 0.25 kg
+          } else if (rawU === 'kg') {
+            hintedUnit = 'kg'; packSizeInDisplay = packQty;         // 1kg → 1 kg
+          } else if (rawU === 'ml') {
+            hintedUnit = 'L';  packSizeInDisplay = packQty / 1000; // 750ml → 0.75 L
+          } else if (rawU === 'l') {
+            hintedUnit = 'L';  packSizeInDisplay = packQty;         // 1L → 1 L
+          } else if (['pc', 'pcs', 'piece'].includes(rawU)) {
+            hintedUnit = 'pcs'; packSizeInDisplay = packQty;
+          }
+        }
+
+        // "Qty Unit" may be combined ("10 L") or just a number ("100") representing package count
+        let qty = 0, unitFromCol = '';
+        const qtyUnitCell = String(lower['qty unit'] || lower['qty/unit'] || lower['quantity unit'] || '').trim();
+        if (qtyUnitCell) {
+          const m = qtyUnitCell.match(/^([0-9.,]+)\s*[|/\s]*\s*([A-Za-z]+)$/);
+          if (m) {
+            qty = parseFloat(m[1].replace(/,/g, '')) || 0;
+            unitFromCol = m[2];
+          } else {
+            const numOnly = parseFloat(qtyUnitCell.replace(/,/g, ''));
+            if (!isNaN(numOnly)) qty = numOnly;
+          }
+        }
+        if (!qty) qty = parseFloat(lower.qty || lower.quantity || lower.stock || 0) || 0;
+        if (!unitFromCol) unitFromCol = String(lower.unit || lower.displayunit || '').trim();
+
+        // Normalise any unit that came directly from the column
+        if (unitFromCol.toLowerCase() === 'g') unitFromCol = 'kg';
+        else if (unitFromCol.toLowerCase() === 'ml') unitFromCol = 'L';
+        else if (unitFromCol.toLowerCase() === 'l') unitFromCol = 'L';
+
+        let unit = unitFromCol;
+
+        // When the Qty column is a pure package count (no unit in column), multiply by pack size.
+        // e.g. 100 packs × 0.25 kg/pack = 25 kg total.
+        if (!unitFromCol && hintedUnit && packSizeInDisplay > 0) {
+          qty = qty * packSizeInDisplay;
+          unit = hintedUnit;
+        } else if (!unit && hintedUnit) {
+          unit = hintedUnit;
+        }
+
+        const exp = lower['expiry date'] || lower['expiry'] || lower['expirydate'] || '';
+        const expStr = exp === '' || exp == null ? '' : String(exp).trim();
+
+        // SRP — strip ₱ symbol and commas
+        const rawSrp = String(lower.srp || lower['selling price'] || lower['retail price'] || '').replace(/[₱,\s]/g, '');
+        const srp = rawSrp ? parseFloat(rawSrp) : '';
+
+        // Excel unit cost is per package. Convert to cost per display unit.
+        // e.g. 200 per 250g pack → 200 / 0.25 kg = 800 per kg.
+        const rawUnitCost = lower['unit cost'] === '' || lower['unit cost'] == null
+          ? (lower.unitcost === '' || lower.unitcost == null ? '' : parseFloat(lower.unitcost))
+          : parseFloat(lower['unit cost']);
+        const unitCost = (rawUnitCost !== '' && !isNaN(rawUnitCost) && !unitFromCol && hintedUnit && packSizeInDisplay > 0)
+          ? rawUnitCost / packSizeInDisplay
+          : rawUnitCost;
+
+        return {
+          itemCode: String(lower.code || lower.itemcode || '').trim(),
+          itemName: cleanedName,
+          displayUnit: unit,
+          qty,
+          unitCost,
+          expiryDate: expStr,
+          srp,
+        };
+      };
+
+      // Diff against current inventory for preview
+      // Track category from header rows (rows where code = category name, product = empty)
+      let currentCategory = '';
+      const previewed = rows.map(raw => {
+        const r = normalise(raw);
+        // Category header row: no itemName but code column has a plain word (not a product code)
+        if (!r.itemName) {
+          const looksLikeCategoryHeader = r.itemCode && !/^[A-Z]\d+$/i.test(r.itemCode);
+          if (looksLikeCategoryHeader) {
+            currentCategory = r.itemCode;
+            return { ...r, _isCategory: true, category: r.itemCode };
+          }
+          return { ...r, _error: 'Missing itemName' };
+        }
+        r.category = currentCategory;
+        const existing = inventory.find(inv =>
+          (r.itemCode && inv.itemCode && inv.itemCode === r.itemCode) ||
+          inv.itemName.toLowerCase() === r.itemName.toLowerCase()
+        );
+        const resolved = resolveUnitFE(r.displayUnit);
+        const newBaseQty = r.qty * resolved.mult;
+        if (existing) {
+          const oldDisplay = itemDisplay(existing);
+          const diff = newBaseQty - (existing.stockQty || 0);
+          const diffDisplay = diff / resolved.mult;
+          // Detect new expiry batch: import has expiry AND it differs from existing soonest expiry
+          const existingExpiry = existing.expiryDate ? String(existing.expiryDate).slice(0, 10) : '';
+          const importExpiry = r.expiryDate ? String(r.expiryDate).slice(0, 10) : '';
+          const isNewBatch = !!(importExpiry && existingExpiry && importExpiry !== existingExpiry);
+          return { ...r, _newItem: false, _existing: existing, _diff: diffDisplay, _oldDisplay: oldDisplay, _newBatch: isNewBatch };
+        }
+        return { ...r, _newItem: true, _diff: r.qty };
+      });
+
+      setImportRows(previewed);
+      setImportModal(true);
+    } catch (err) {
+      console.error('parseImportFile', err);
+      alert('Failed to parse file. Make sure it is a valid .xlsx, .xls, or .csv with columns: itemName, displayUnit, qty, unitCost');
+    }
+  };
+
+  const submitImport = async () => {
+    if (importSubmitting) return;
+    const validRows = importRows.filter(r => !r._error && !r._isCategory && r.itemName && r.displayUnit);
+    if (validRows.length === 0) return alert('No valid rows to import.');
+    if (!window.confirm(
+      `This will REPLACE current stock for ${validRows.length} item(s). ` +
+      `New items will be created. ` +
+      `Differences will be booked as journal adjustments. Continue?`
+    )) return;
+    setImportSubmitting(true);
+    setImportProgress(0);
+    // Animate to ~88% while waiting for the server response
+    let prog = 0;
+    const progInterval = setInterval(() => {
+      prog = Math.min(88, prog + (88 - prog) * 0.07 + 0.4);
+      setImportProgress(Math.round(prog));
+    }, 120);
+    try {
+      const payload = {
+        items: validRows.map(r => ({
+          itemCode: r.itemCode || undefined,
+          itemName: r.itemName,
+          displayUnit: r.displayUnit,
+          qty: r.qty,
+          unitCost: r.unitCost === '' || r.unitCost === undefined ? undefined : r.unitCost,
+          expiryDate: r.expiryDate || undefined,
+          category: r.category || undefined,
+          srp: r.srp === '' || r.srp === undefined ? undefined : r.srp,
+        }))
+      };
+      const res = await apiFetch('/api/inventory/import', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.success) {
+        clearInterval(progInterval);
+        setImportProgress(100);
+        await new Promise(r => setTimeout(r, 500)); // show 100% briefly
+        const s = data.summary;
+        alert(
+          `Import complete.\n\n` +
+          `Created: ${s.created}\n` +
+          `Updated: ${s.updated}\n` +
+          `Items increased: ${s.increased}\n` +
+          `Items decreased: ${s.decreased}\n` +
+          `Inventory gain: ₱${(s.gainValue || 0).toFixed(2)}\n` +
+          `Inventory loss: ₱${(s.lossValue || 0).toFixed(2)}\n` +
+          (s.errors?.length ? `\nWarnings:\n- ${s.errors.join('\n- ')}` : '')
+        );
+        setImportModal(false);
+        setImportRows([]);
+        fetchERPData();
+      } else {
+        alert(data.error || 'Import failed.');
+      }
+    } catch (err) {
+      clearInterval(progInterval);
+      console.error('submitImport', err);
+      alert('Network error during import.');
+    } finally {
+      setImportSubmitting(false);
+      setImportProgress(-1);
+    }
+  };
+
+  const openEditInventory = (item) => {
+    const eff = effectiveDisplay(item);
+    // LOG: cost & threshold are per package (₱200/250G, N pcs); FB: per display unit.
+    const costBasis = BUSINESS_TYPE === 'log' ? packInfo(item).packBase : eff.mult;
+    setEditInvForm({
+      itemName: item.itemName || '',
+      unit: item.unit || '',
+      unitCost: ((item.unitCost || 0) * costBasis).toFixed(2),                      // base → per-pack (log) / per-display (fb)
+      lowStockThreshold: ((item.lowStockThreshold || 0) / costBasis).toString(),    // base → packages (log) / display (fb)
+      expiryDate: item.expiryDate ? new Date(item.expiryDate).toISOString().slice(0, 10) : '',
+      expiryWarnDays: item.expiryWarnDays || 7,
+      displayUnit: eff.unit
+    });
+    setEditInvModal({ item });
+  };
+
+  // --- SUBMIT EDIT: PUT /api/inventory/:id (metadata only — stock changes via Restock / Spoilage) ---
+  const submitEditInventory = async () => {
+    if (editInvSubmitting || !editInvModal?.item) return;
+    if (!editInvForm.itemName?.trim()) return alert('Item name is required.');
+    if (!editInvForm.unit?.trim()) return alert('Unit is required.');
+    const unitCostNum = parseFloat(editInvForm.unitCost);
+    if (Number.isNaN(unitCostNum) || unitCostNum < 0) return alert('Unit cost must be a non-negative number.');
+
+    setEditInvSubmitting(true);
+    try {
+      // Convert display-unit values (₱/L, threshold in L) → base storage (₱/ml, threshold in ml)
+      const resolved = resolveUnitFE(editInvForm.displayUnit || editInvForm.unit);
+      const mult = resolved.mult;
+      // LOG: the entered cost is per package — divide by the pack size parsed from the
+      // (possibly edited) name. FB: per display unit — divide by display multiplier.
+      const costBasis = BUSINESS_TYPE === 'log'
+        ? packInfo({ itemName: editInvForm.itemName.trim(), unit: resolved.base }).packBase
+        : mult;
+      const payload = {
+        itemName: editInvForm.itemName.trim(),
+        unit: resolved.base,                            // base storage unit (g/ml/pcs)
+        unitCost: unitCostNum / costBasis,              // per-pack (log) / per-display (fb) → ₱/baseUnit
+        lowStockThreshold: Math.max(0, parseFloat(editInvForm.lowStockThreshold) || 0) * costBasis, // packages (log) / display (fb) → base
+        expiryWarnDays: Math.max(1, parseInt(editInvForm.expiryWarnDays) || 7),
+        expiryDate: editInvForm.expiryDate ? new Date(editInvForm.expiryDate).toISOString() : null,
+        displayUnit: editInvForm.displayUnit || editInvForm.unit,
+        unitMultiplier: mult
+      };
+      const res = await apiFetch(`/api/inventory/${editInvModal.item._id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.success) {
+        setEditInvModal(null);
+        fetchERPData();
+      } else {
+        alert(data.error || 'Failed to update item.');
+      }
+    } catch (err) {
+      console.error('submitEditInventory', err);
+      alert('Network error.');
+    } finally {
+      setEditInvSubmitting(false);
+    }
+  };
 
 // ==========================================
   //   PDF EXPORT ENGINE
@@ -1301,8 +2857,8 @@ const submitPhysicalCounts = async () => {
       const res = await apiFetch(`/api/inventory/history`);
       const data = await res.json();
       const allHistory = data.success ? data.history : [];
-      const doc = new jsPDF('landscape');
-      doc.setFontSize(18); doc.text("Daily Inventory & Movement Report", 14, 15);
+      const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+      doc.setFontSize(18); doc.text(`${BIZ_NAME} — Daily Inventory & Movement Report`, 14, 15);
       const todayStr = new Date().toLocaleDateString();
       doc.setFontSize(10); doc.text(`Date: ${todayStr} | Generated: ${new Date().toLocaleString()}`, 14, 22);
       
@@ -1334,10 +2890,10 @@ const submitPhysicalCounts = async () => {
     } catch (err) { alert("Failed to generate PDF: " + err.message); }
   };
 
-  const exportLedgerToPDF = () => {
+  const exportLedgerToPDF = async () => {
     if (journalEntries.length === 0) return alert("No entries to export.");
-    const doc = new jsPDF();
-    doc.setFontSize(18); doc.text("General Ledger Report", 14, 15);
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    doc.setFontSize(18); doc.text(`${BIZ_NAME} — General Ledger Report`, 14, 15);
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 22);
     let currentY = 30;
     journalEntries.forEach(entry => {
@@ -1358,12 +2914,12 @@ const submitPhysicalCounts = async () => {
   };
 
   // 1. COMPLETE SALES HISTORY (Master Summary + Daily Breakdown)
-  const exportAllToPDF = () => {
+  const exportAllToPDF = async () => {
     const allOrders = [...orders.filter(o => o.status !== 'Pending' && o.status !== 'Preparing' && o.status !== 'Ready'), ...archivedOrders].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
     if (allOrders.length === 0) return alert("No orders to export.");
     
-    const doc = new jsPDF('landscape');
-    doc.setFontSize(18); doc.text("Complete Sales History", 14, 15);
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    doc.setFontSize(18); doc.text(`${BIZ_NAME} — Complete Sales History`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
     
@@ -1467,10 +3023,10 @@ const submitPhysicalCounts = async () => {
   };
 
   // 2. EXPORT SPECIFIC DAY 
-  const exportDayToPDF = (dateString, dayOrders) => {
+  const exportDayToPDF = async (dateString, dayOrders) => {
     if (dayOrders.length === 0) return alert("No orders to export.");
-    const doc = new jsPDF('landscape');
-    doc.setFontSize(18); doc.text(`Sales Report: ${dateString}`, 14, 15);
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    doc.setFontSize(18); doc.text(`${BIZ_NAME} — Sales Report: ${dateString}`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
     
@@ -1534,13 +3090,13 @@ const submitPhysicalCounts = async () => {
   };
 
   // 3. DAILY SALES SUMMARY (Analytics Trend Export)
-  const exportAnalyticsToPDF = () => {
+  const exportAnalyticsToPDF = async () => {
     // STRICT FILTER: Analytics must ONLY track Completed orders. Voided orders must never touch analytics.
     const allCompletedOrders = [...orders.filter(o => o.status === 'Completed'), ...archivedOrders.filter(o => o.status === 'Completed')].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
     if (allCompletedOrders.length === 0) return alert("No analytics data to export.");
     
-    const doc = new jsPDF('landscape');
-    doc.setFontSize(18); doc.text("Daily Sales Trend & Summary", 14, 15);
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    doc.setFontSize(18); doc.text(`${BIZ_NAME} — Analytics Report`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
     
@@ -1565,16 +3121,51 @@ const submitPhysicalCounts = async () => {
       startY: 28, head: [['Date', 'Orders', 'Gross Sales (VAT-Inc)', 'VATable Sales', 'VAT-Exempt (PWD/SC)', 'VAT (12%)', 'Discounts', 'Net Sales']],
       body: summaryBody, theme: 'grid', headStyles: { fillColor: [40, 40, 40] }
     });
-    doc.save(`Daily_Sales_Trend_${new Date().toISOString().split('T')[0]}.pdf`);
+
+    // ── Inventory analytics sections (display units: kg/L/pcs) ──
+    const ad = analyticsData || {};
+    const du = (item) => effectiveDisplay(item || {});
+    const sect = (title, head, body, fill) => {
+      if (!body.length) return;
+      doc.setFontSize(12); doc.text(title, 14, doc.lastAutoTable.finalY + 8);
+      autoTable(doc, { startY: doc.lastAutoTable.finalY + 11, head: [head], body, theme: 'grid', styles: { fontSize: 8 }, headStyles: { fillColor: fill } });
+    };
+
+    // High Velocity & Forecast
+    sect('High Velocity & Forecast', ['Item', 'Daily Burn', 'Lasts', 'Buy 1wk', 'Buy 1mo', 'Trend'],
+      (ad.mostUsedStock || []).map(i => { const d = du(i); return [
+        i.name, `${((i.dailyAvg||0)/d.mult).toFixed(2)} ${d.unit}`,
+        (!isFinite(i.daysLeft) ? '∞' : `${i.daysLeft}d`),
+        `${((i.weeklyNeed||0)/d.mult).toFixed(2)} ${d.unit}`,
+        `${((i.monthlyNeed||0)/d.mult).toFixed(2)} ${d.unit}`,
+        `${i.trend > 0.1 ? 'rising' : i.trend < -0.1 ? 'easing' : 'stable'} ${Math.abs((i.trend||0)*100).toFixed(0)}%`,
+      ]; }), [180, 130, 30]);
+
+    // Low Stock (Risk)
+    sect('Low Stock (Risk)', ['Item', 'On Hand', 'Days of Supply'],
+      (ad.lowestStock || []).map(i => { const d = du(i); return [
+        i.itemName, `${(Number(i.stockQty||0)/d.mult).toFixed(2)} ${d.unit}`,
+        (i.daysOfSupply <= 0 ? 'OUT' : `~${Math.floor(i.daysOfSupply)}d`),
+      ]; }), [180, 50, 50]);
+
+    // Overstock Watch
+    sect('Overstock Watch', ['Item', 'On Hand', 'Days of Supply', 'Tied-up Capital (PHP)'],
+      (ad.highestStock || []).map(i => { const d = du(i); return [
+        i.itemName, `${(Number(i.stockQty||0)/d.mult).toFixed(2)} ${d.unit}`,
+        (isFinite(i.daysOfSupply) ? `~${Math.floor(i.daysOfSupply)}d` : '∞'),
+        pdfMoney(i.tiedUpCapital || 0),
+      ]; }), [90, 90, 90]);
+
+    doc.save(`Analytics_Report_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
-  const exportMonthlyToPDF = () => {
+  const exportMonthlyToPDF = async () => {
     // STRICT FILTER: Only Completed orders.
     const allCompletedOrders = [...orders.filter(o => o.status === 'Completed'), ...archivedOrders.filter(o => o.status === 'Completed')].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
     if (allCompletedOrders.length === 0) return alert("No orders to export.");
     
-    const doc = new jsPDF();
-    doc.setFontSize(18); doc.text("Monthly Sales Summary", 14, 15);
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    doc.setFontSize(18); doc.text(`${BIZ_NAME} — Monthly Sales Summary`, 14, 15);
     const groupedByMonth = {};
     allCompletedOrders.forEach(o => {
       const month = new Date(o.createdAt).toLocaleString('default', { month: 'long', year: 'numeric' });
@@ -1638,17 +3229,23 @@ const submitPhysicalCounts = async () => {
     e.preventDefault();
     const method = editingProduct ? 'PUT' : 'POST';
     const url = editingProduct ? `/api/products/${editingProduct._id}` : `/api/products`;
-    const res = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) });
+    // Normalize modifierGroups to just IDs before sending
+    const payload = {
+      ...formData,
+      modifierGroups: (formData.modifierGroups||[]).map(id => (id && id._id) ? id._id : id),
+      image: formData.imageUrl?.trim() || formData.image, // URL overrides uploaded base64
+    };
+    const res = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await res.json();
     if (!data.success) { alert(data.error || 'Failed to save product.'); return; }
     setEditingProduct(null);
-    setFormData({ name: '', description: '', category: '', basePrice: '', baseSize: '', sizes: [], image: '', baseRecipe: [] });
+    setFormData({ name: '', description: '', category: '', basePrice: '', discountPercent: 0, clientDiscounts: [], baseSize: '', sizes: [], image: '', baseRecipe: [], addOns: [], modifierGroups: [], imageUrl: '' });
     fetchData();
   };
   const deleteProduct = async (id) => { 
     if(window.confirm("Delete this product permanently?")) {
       await apiFetch(`/api/products/${id}`, { method: 'DELETE' }); 
-      if (editingProduct && editingProduct._id === id) { setEditingProduct(null); setFormData({ name: '', description: '', category: '', basePrice: '', baseSize: '', sizes: [], image: '', baseRecipe: [] }); }
+      if (editingProduct && editingProduct._id === id) { setEditingProduct(null); setFormData({ name: '', description: '', category: '', basePrice: '', discountPercent: 0, clientDiscounts: [], baseSize: '', sizes: [], image: '', baseRecipe: [], addOns: [], modifierGroups: [], imageUrl: '' }); }
     }
   };
   
@@ -1693,7 +3290,836 @@ const submitPhysicalCounts = async () => {
     return minServings === Infinity ? 0 : minServings;
   };
 
-  const filteredOrders = orders.filter(o => orderFilter === 'All' ? true : o.status === orderFilter);
+  // ── Modifier Groups ─────────────────────────────────────────────────────────
+  const fetchModifierGroups = async () => {
+    try { const res = await apiFetch('/api/modifier-groups'); if (res.ok) setModifierGroups((await res.json()).groups || []); }
+    catch (err) { console.error('fetchModifierGroups', err); }
+  };
+
+  // ── Modifier Group editor (create / update / delete) ─────────────────────────
+  const saveModifierGroup = async () => {
+    if (!modForm.name.trim()) return alert('Group name is required.');
+    if (!modForm.options.length || modForm.options.some(o => !o.name.trim())) return alert('Add at least one named option.');
+    const method = editingModifier ? 'PUT' : 'POST';
+    const url = editingModifier ? `/api/modifier-groups/${editingModifier._id}` : '/api/modifier-groups';
+    const payload = {
+      name: modForm.name.trim(),
+      isRequired: !!modForm.isRequired,
+      minSelect: Math.max(0, parseInt(modForm.minSelect) || 0),
+      maxSelect: Math.max(1, parseInt(modForm.maxSelect) || 1),
+      options: modForm.options.map(o => ({ name: o.name.trim(), price: parseFloat(o.price) || 0, recipe: o.recipe || [] })),
+    };
+    const res = await apiFetch(url, { method, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!data.success) return alert(data.error || 'Failed to save modifier group.');
+    setEditingModifier(null);
+    setModForm({ name: '', isRequired: true, minSelect: 1, maxSelect: 1, options: [] });
+    fetchModifierGroups();
+  };
+  const editModifierGroup = (g) => {
+    setEditingModifier(g);
+    setModForm({ name: g.name, isRequired: g.isRequired, minSelect: g.minSelect, maxSelect: g.maxSelect,
+      options: (g.options || []).map(o => ({ name: o.name, price: o.price || 0, recipe: o.recipe || [] })) });
+  };
+  const deleteModifierGroup = async (id) => {
+    if (!window.confirm('Delete this modifier group? Products using it will lose the requirement.')) return;
+    await apiFetch(`/api/modifier-groups/${id}`, { method: 'DELETE' });
+    if (editingModifier?._id === id) { setEditingModifier(null); setModForm({ name: '', isRequired: true, minSelect: 1, maxSelect: 1, options: [] }); }
+    fetchModifierGroups();
+  };
+
+  // ── Combos / Bundles (Product Promos) ────────────────────────────────────────
+  const fetchCombos = async () => {
+    try { const res = await apiFetch('/api/combos?all=1'); if (res.ok) setCombos((await res.json()).combos || []); }
+    catch (err) { console.error('fetchCombos', err); }
+  };
+  const saveCombo = async () => {
+    if (!comboForm.name.trim()) return alert('Combo name is required.');
+    if (!(parseFloat(comboForm.price) > 0)) return alert('Enter a positive combo price.');
+    if (!comboForm.items.length) return alert('Add at least one component product.');
+    const method = editingCombo ? 'PUT' : 'POST';
+    const url = editingCombo ? `/api/combos/${editingCombo._id}` : '/api/combos';
+    const payload = {
+      name: comboForm.name.trim(), description: comboForm.description, price: parseFloat(comboForm.price),
+      image: comboForm.image, isActive: true,
+      items: comboForm.items.map(i => ({ productId: i.productId, name: i.name, sizeName: i.sizeName || '', quantity: Math.max(1, parseInt(i.quantity) || 1) })),
+    };
+    const res = await apiFetch(url, { method, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!data.success) return alert(data.error || 'Failed to save combo.');
+    setEditingCombo(null);
+    setComboForm({ name: '', description: '', price: '', image: '', items: [] });
+    fetchCombos();
+  };
+  const editCombo = (c) => {
+    setEditingCombo(c);
+    setComboForm({ name: c.name, description: c.description || '', price: c.price, image: c.image || '', items: c.items || [] });
+  };
+  const deleteCombo = async (id) => {
+    if (!window.confirm('Delete this combo?')) return;
+    await apiFetch(`/api/combos/${id}`, { method: 'DELETE' });
+    if (editingCombo?._id === id) { setEditingCombo(null); setComboForm({ name: '', description: '', price: '', image: '', items: [] }); }
+    fetchCombos();
+  };
+  // Add a combo to the POS cart as a single line that carries its components.
+  const addComboToPosCart = (combo) => {
+    setPosCart(prev => [...prev, {
+      productId: combo._id, name: combo.name, price: combo.price, quantity: 1,
+      department: 'Kitchen', selectedAddOns: [], isCombo: true,
+      comboItems: (combo.items || []).map(i => ({ productId: i.productId, name: i.name, sizeName: i.sizeName || '', quantity: i.quantity || 1 })),
+    }]);
+  };
+
+  // ── Parked Orders / Open Tabs ─────────────────────────────────────────────────
+  const fetchParked = async () => {
+    try { const res = await apiFetch('/api/orders/parked'); if (res.ok) setParkedOrders((await res.json()).parked || []); }
+    catch (err) { console.error('fetchParked', err); }
+  };
+  const parkCurrentOrder = async () => {
+    if (posCart.length === 0) return alert('Cart is empty — nothing to park.');
+    const res = await apiFetch('/api/orders/park', { method: 'POST', body: JSON.stringify({
+      items: posCart, customerName: posCustomerName || 'Guest', table: posTable, orderNotes: posNotes, guestCount: posGuestCount,
+    }) });
+    const data = await res.json();
+    if (!data.success) return alert(data.error || 'Failed to park order.');
+    setPosCart([]); setPosCustomerName(''); setPosNotes(''); setPosGuestCount(1);
+    setIsPosOpen(false);
+    await fetchParked();        // refresh the parked list + dropdown count
+    setOrderFilter('Parked');   // jump straight to the Parked view so it's visible
+    alert('Order parked. It is now under the "Parked" filter — tap Resume to ring it up.');
+  };
+  const resumeParked = async (id) => {
+    const res = await apiFetch(`/api/orders/parked/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!data.success) return alert(data.error || 'Failed to resume.');
+    const o = data.order;
+    setPosCart(o.items || []);
+    setPosCustomerName(o.customerName === 'Guest' ? '' : o.customerName);
+    setPosTable(o.table || 'Dine-In');
+    setPosNotes(o.orderNotes || '');
+    setPosGuestCount(o.guestCount || 1);
+    setParkedModalOpen(false);
+    setIsPosOpen(true);
+    fetchParked();
+  };
+
+  // ── Reports ───────────────────────────────────────────────────────────────────
+  const fetchMenuEngineering = async () => {
+    try { const res = await apiFetch('/api/reports/menu-engineering'); const d = await res.json(); if (d.success) setMenuEngineering(d); }
+    catch (err) { console.error('fetchMenuEngineering', err); }
+  };
+  const fetchCashierVariance = async () => {
+    try { const res = await apiFetch('/api/reports/cashier-variance'); const d = await res.json(); if (d.success) setCashierVariance(d); }
+    catch (err) { console.error('fetchCashierVariance', err); }
+  };
+  const fetchPurchaseOrder = async () => {
+    try {
+      const res = await apiFetch('/api/reports/purchase-order?days=7');
+      const d = await res.json();
+      if (d.success) setPurchaseOrder(d);
+      else alert(d.error || 'Failed to generate purchase order.');
+    } catch (err) { console.error('fetchPurchaseOrder', err); alert('Network error generating purchase order.'); }
+  };
+
+  // Purchase Order → PDF in the requested "Product | Qty Unit" format
+  const exportPurchaseOrderPDF = async () => {
+    if (!purchaseOrder || !(purchaseOrder.lines || []).length) return alert('Generate a purchase order first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    const today = new Date().toLocaleDateString('en-PH');
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('PURCHASE ORDER', 105, 22, { align: 'center' });
+    doc.setFontSize(9);  doc.text(`${today}  ·  covers ~${purchaseOrder.coverDays || 7} days`, 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Product', 'Qty Unit']],
+      body: (purchaseOrder.lines || []).map(l => [
+        l.itemName + (l.lowStock ? '  (LOW)' : ''),
+        `${l.suggestedOrder} ${l.displayUnit}`,
+      ]),
+      styles: { fontSize: 10 },
+      headStyles: { fillColor: [111, 135, 77] },
+      columnStyles: { 1: { halign: 'right' } },
+    });
+    const y = doc.lastAutoTable.finalY + 8;
+    doc.setFontSize(10);
+    doc.text(`Estimated Total (PHP): ${pdfMoney(purchaseOrder.totalEstCost || 0)}`, 14, y);
+    doc.save(`Purchase-Order-${today.replace(/\//g, '-')}.pdf`);
+  };
+
+  // Profit & Loss → PDF (replaces CSV export)
+  const exportPnlPDF = async () => {
+    if (!pnlData) return alert('Run the P&L report first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    const range = `${pnlRange.start} to ${pnlRange.end}`;
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('PROFIT & LOSS STATEMENT (Non-VAT)', 105, 22, { align: 'center' });
+    doc.setFontSize(9);  doc.text(range, 105, 28, { align: 'center' });
+    const section = (title, rows, startY) => {
+      autoTable(doc, {
+        startY,
+        head: [[title, 'Amount (PHP)']],
+        body: rows.length ? rows.map(r => [r.accountName || r.name || r.label || '', pdfMoney(r.amount ?? r.total)]) : [['—', pdfMoney(0)]],
+        styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] },
+        columnStyles: { 1: { halign: 'right' } },
+      });
+      return doc.lastAutoTable.finalY + 4;
+    };
+    let y = 34;
+    y = section('Revenue', pnlData.revenue || [], y);
+    y = section('Cost of Goods Sold', pnlData.cogs || [], y);
+    y = section('Operating Expenses', pnlData.opex || pnlData.expenses || [], y);
+    // Summary totals — negatives shown in parentheses, no ± / ₱ glyph issues.
+    const t = pnlData.totals || {};
+    autoTable(doc, {
+      startY: y,
+      head: [['Summary', 'Amount (PHP)']],
+      body: [
+        ['Gross Profit', pdfMoney(t.grossProfit)],
+        ['Net Income', pdfMoney(t.netIncome)],
+        ...(t.netMargin !== undefined ? [['Net Margin', `${Number(t.netMargin).toFixed(1)}%`]] : []),
+      ],
+      styles: { fontSize: 10, fontStyle: 'bold' }, headStyles: { fillColor: [61, 74, 42] },
+      columnStyles: { 1: { halign: 'right' } },
+    });
+    doc.save(`Profit-Loss-${pnlRange.start}_to_${pnlRange.end}.pdf`);
+  };
+
+  const exportBalanceSheetPDF = async () => {
+    if (!bsData) return alert('Load the Balance Sheet first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    const asOf = bsData.asOf ? new Date(bsData.asOf).toLocaleDateString() : new Date().toLocaleDateString();
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('BALANCE SHEET (Non-VAT)', 105, 22, { align: 'center' });
+    doc.setFontSize(9);  doc.text(`As of ${asOf}`, 105, 28, { align: 'center' });
+    const rowName = (r) => r.accountName || r.name || r.label || '';
+    const rowAmt = (r) => pdfMoney(r.amount ?? r.balance ?? r.total ?? 0);
+    const section = (title, rows, total, startY) => {
+      autoTable(doc, {
+        startY,
+        head: [[title, 'Amount (PHP)']],
+        body: [
+          ...(rows && rows.length ? rows.map(r => [rowName(r), rowAmt(r)]) : [['—', pdfMoney(0)]]),
+          [`Total ${title}`, pdfMoney(total ?? 0)],
+        ],
+        styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] },
+        columnStyles: { 1: { halign: 'right' } },
+        didParseCell: (d) => { if (d.row.index === (rows?.length || 1)) d.cell.styles.fontStyle = 'bold'; },
+      });
+      return doc.lastAutoTable.finalY + 4;
+    };
+    const t = bsData.totals || {};
+    let y = 34;
+    y = section('Assets', bsData.assets, t.assets, y);
+    y = section('Liabilities', bsData.liabilities, t.liabilities, y);
+    y = section('Equity', bsData.equity, t.equity, y);
+    const balanced = Math.abs((t.assets || 0) - ((t.liabilities || 0) + (t.equity || 0))) < 0.01;
+    autoTable(doc, {
+      startY: y,
+      head: [['Accounting Equation', '']],
+      body: [
+        ['Assets', pdfMoney(t.assets)],
+        ['Liabilities + Equity', pdfMoney((t.liabilities || 0) + (t.equity || 0))],
+        ['Status', balanced ? 'BALANCED' : 'OUT OF BALANCE'],
+      ],
+      styles: { fontSize: 10, fontStyle: 'bold' }, headStyles: { fillColor: [61, 74, 42] },
+      columnStyles: { 1: { halign: 'right' } },
+    });
+    doc.save(`Balance-Sheet-${asOf.replace(/\//g, '-')}.pdf`);
+  };
+
+  // ── Settings / QR toggle ────────────────────────────────────────────────────
+  const fetchSettings = async () => {
+    try { const res = await apiFetch('/api/settings'); const d = await res.json(); if (d.success) setSystemSettings(p => ({ ...p, ...d.settings })); }
+    catch (err) { console.error('fetchSettings', err); }
+  };
+  const toggleQROrders = async () => {
+    try {
+      const res = await apiFetch('/api/settings/isAcceptingQROrders', { method: 'PATCH', body: JSON.stringify({ value: !systemSettings.isAcceptingQROrders }) });
+      const d = await res.json(); if (d.success) fetchSettings();
+    } catch (err) { console.error('toggleQROrders', err); }
+  };
+  // Superadmin-only: enable/disable the automatic midnight close & day archive.
+  const toggleAutoClose = async () => {
+    const next = systemSettings.autoCloseEnabled === false; // currently off → turning on
+    if (!next && !window.confirm('Disable automatic midnight close?\n\nThe day will stay OPEN past midnight and a superadmin must close & archive it manually.')) return;
+    try {
+      const res = await apiFetch('/api/settings/autoCloseEnabled', { method: 'PATCH', body: JSON.stringify({ value: next }) });
+      const d = await res.json(); if (d.success) fetchSettings();
+    } catch (err) { console.error('toggleAutoClose', err); }
+  };
+
+  // ── Profit by category ──────────────────────────────────────────────────────
+  const fetchProfitByCategory = async () => {
+    try { const res = await apiFetch('/api/reports/profit-by-category'); const d = await res.json(); if (d.success) setProfitByCategory(d); }
+    catch (err) { console.error('fetchProfitByCategory', err); }
+  };
+
+  // ── Sales by payment ─────────────────────────────────────────────────────────
+  const fetchSalesByPayment = async () => {
+    try { const res = await apiFetch(`/api/reports/sales-by-payment?start=${sbpRange.start}&end=${sbpRange.end}`); const d = await res.json(); if (d.success) setSalesByPayment(d); }
+    catch (err) { console.error('fetchSalesByPayment', err); }
+  };
+
+  // ── Summary Sales (channel breakdown: cash / e-wallet / bank / delivery) ──────
+  const fetchSalesSummary = async () => {
+    try { const res = await apiFetch(`/api/reports/sales-summary?start=${sssRange.start}&end=${sssRange.end}`); const d = await res.json(); if (d.success) setSalesSummary(d); }
+    catch (err) { console.error('fetchSalesSummary', err); }
+  };
+  // Roll per-order rows up to per-day rows (client-side), merging channel + method detail.
+  const sssRows = useMemo(() => {
+    const rows = salesSummary?.rows || [];
+    if (sssGroup === 'order') return rows;
+    const byDay = {};
+    for (const r of rows) {
+      const day = new Date(r.date).toLocaleDateString('en-CA'); // YYYY-MM-DD
+      if (!byDay[day]) byDay[day] = { date: r.date, orderNumber: null, count: 0, cash: 0, ewallet: 0, bank: 0, delivery: 0, total: 0, methods: {} };
+      const t = byDay[day];
+      t.count++; t.cash += r.cash; t.ewallet += r.ewallet; t.bank += r.bank; t.delivery += r.delivery; t.total += r.total;
+      for (const [m, a] of Object.entries(r.methods || {})) t.methods[m] = (t.methods[m] || 0) + a;
+    }
+    return Object.values(byDay).sort((a, b) => new Date(a.date) - new Date(b.date));
+  }, [salesSummary, sssGroup]);
+
+  const exportSalesSummaryPDF = async () => {
+    if (!salesSummary) return alert('Load the Summary Sales report first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    doc.setFontSize(16); doc.text(`${BIZ_NAME} — Sales Summary`, 14, 14);
+    doc.setFontSize(9); doc.text(`${sssRange.start} to ${sssRange.end}  ·  ${sssGroup === 'day' ? 'Per Day' : 'Per Order'}`, 14, 20);
+    // Fixed columns (match the on-screen Summary Sales table).
+    const tm = salesSummary.totals?.methods || {};
+    const COLS = [
+      ['Cash', ['Cash']], ['Bank', ['Bank Transfer']], ['GCash', ['GCash']], ['Maya', ['Maya']],
+      ['Maribank/SeaBank', ['Maribank']], ['Other E-Wallet', ['E-Wallet', 'Other E-Wallet']],
+      ['GrabFood', ['Grab Delivery']], ...(BUSINESS_TYPE === 'log' ? [['Lalamove', ['Lalamove']]] : [['Foodpanda', ['Foodpanda']]]), ['Manual/Direct', ['Manual Delivery']],
+    ];
+    const cv = (r, ms) => ms.reduce((s, m) => s + (r?.methods?.[m] || 0), 0);
+    const head = ['Date', sssGroup === 'day' ? 'Orders' : 'Order ID', ...COLS.map(c => c[0]), 'Total'];
+    const body = sssRows.map(r => [
+      new Date(r.date).toLocaleDateString(),
+      sssGroup === 'day' ? String(r.count) : r.orderNumber,
+      ...COLS.map(([, ms]) => pdfMoney(cv(r, ms))),
+      pdfMoney(r.total),
+    ]);
+    const t = salesSummary.totals || {};
+    autoTable(doc, {
+      startY: 24, head: [head], body,
+      foot: [[ 'TOTALS', '', ...COLS.map(([, ms]) => pdfMoney(ms.reduce((s, m) => s + (tm[m] || 0), 0))), pdfMoney(t.total) ]],
+      styles: { fontSize: 7 }, headStyles: { fillColor: [111,135,77] }, footStyles: { fillColor: [61,74,42], textColor: 255 },
+    });
+    doc.save(`Sales-Summary_${sssRange.start}_to_${sssRange.end}.pdf`);
+  };
+
+  // ── Refund ──────────────────────────────────────────────────────────────────
+  const handleRefund = async () => {
+    if (!refundModal || !refundForm.reason.trim()) return alert('Reason required.');
+    setRefundSubmitting(true);
+    try {
+      const res = await apiFetch(`/api/orders/${refundModal._id}/refund`, { method: 'POST', body: JSON.stringify({ reason: refundForm.reason, refundAmount: parseFloat(refundForm.refundAmount) || refundModal.total, inventoryAction: refundForm.inventoryAction }) });
+      const d = await res.json();
+      if (d.success) { setRefundModal(null); setRefundForm({ reason: '', refundAmount: '', inventoryAction: 'Restock' }); fetchOrders(); alert('Refund processed. Reversal journal created.'); }
+      else alert(d.error || 'Refund failed.');
+    } catch { alert('Network error.'); }
+    finally { setRefundSubmitting(false); }
+  };
+
+  // ── Clock in/out ─────────────────────────────────────────────────────────────
+  // Apply any queued offline clock events on top of a base status so the gate /
+  // button reflect the staff member's optimistic state until the queue syncs.
+  const applyQueuedClock = (base) => {
+    let s = { ...base };
+    for (const e of getQueuedClock()) {
+      if (e.type === 'in')  s = { ...s, isClockedIn: true,  onBreak: false };
+      if (e.type === 'out') s = { ...s, isClockedIn: false, onBreak: false };
+    }
+    return s;
+  };
+  const CLOCK_STATE_KEY = 'semivra_clock_state';
+  const fetchClockStatus = async () => {
+    // OFFLINE: rebuild status from the last cached server snapshot + queued events.
+    if (!navigator.onLine) {
+      try {
+        const cached = JSON.parse(localStorage.getItem(CLOCK_STATE_KEY) || 'null')
+          || { isClockedIn: false, entry: null, onBreak: false, breakUsedMinutes: 0, breakRemainingMinutes: 60 };
+        setClockStatus(applyQueuedClock(cached));
+      } catch { /* ignore */ }
+      finally { setClockStatusLoaded(true); }
+      return;
+    }
+    try {
+      const res = await apiFetch('/api/clock/status'); const d = await res.json();
+      if (d.success) {
+        const st = {
+          isClockedIn: d.isClockedIn, entry: d.entry,
+          onBreak: !!d.onBreak, breakStartedAt: d.breakStartedAt || null,
+          breakUsedMinutes: d.breakUsedMinutes || 0, breakRemainingMinutes: d.breakRemainingMinutes ?? 60,
+        };
+        setClockStatus(st);
+        try { localStorage.setItem(CLOCK_STATE_KEY, JSON.stringify(st)); } catch { /* ignore */ }
+      }
+    }
+    catch (err) { console.error('fetchClockStatus', err); }
+    finally { setClockStatusLoaded(true); }
+  };
+  const fetchClockEntries = async (page = 1) => {
+    try { const res = await apiFetch(`/api/clock/entries?page=${page}&limit=30`); const d = await res.json(); if (d.success) { setClockEntries(d.entries||[]); setClockEntriesTotal(d.total||0); setClockEntriesPage(page); } }
+    catch (err) { console.error('fetchClockEntries', err); }
+  };
+  const handleClockIn = async () => {
+    if (!navigator.onLine) {
+      queueClock('in');
+      setClockStatus((s) => ({ ...s, isClockedIn: true, onBreak: false }));
+      alert('Clocked in (offline — will sync when back online).');
+      return;
+    }
+    try { const res = await apiFetch('/api/clock/in', { method: 'POST', body: '{}' }); const d = await res.json(); if (d.success) { fetchClockStatus(); alert('Clocked in.'); } else alert(d.error||'Clock-in failed.'); }
+    catch { alert('Network error.'); }
+  };
+  // Pressing the clock button while working opens the choice modal (break vs end shift).
+  const handleClockButton = () => {
+    if (!clockStatus.isClockedIn) return handleClockIn();
+    if (clockStatus.onBreak) return endBreak();      // currently on break → resume
+    setClockModalOpen(true);                          // working → show options
+  };
+  const startBreak = async () => {
+    try {
+      const res = await apiFetch('/api/clock/break/start', { method: 'POST', body: '{}' });
+      const d = await res.json();
+      if (d.success) { setClockModalOpen(false); fetchClockStatus(); }
+      else alert(d.error || 'Could not start break.');
+    } catch { alert('Network error.'); }
+  };
+  const endBreak = async () => {
+    try {
+      const res = await apiFetch('/api/clock/break/end', { method: 'POST', body: '{}' });
+      const d = await res.json();
+      if (d.success) { fetchClockStatus(); } else alert(d.error || 'Could not end break.');
+    } catch { alert('Network error.'); }
+  };
+  const handleClockOut = async () => {
+    if (!navigator.onLine) {
+      queueClock('out');
+      setClockStatus((s) => ({ ...s, isClockedIn: false, onBreak: false }));
+      setClockModalOpen(false);
+      alert('Clocked out (offline — will sync when back online).');
+      return;
+    }
+    try {
+      const res = await apiFetch('/api/clock/out', { method: 'POST', body: '{}' });
+      const d = await res.json();
+      if (d.success) {
+        setClockModalOpen(false); fetchClockStatus();
+        const m = d.entry?.workedMinutes ?? d.entry?.durationMinutes ?? 0;
+        const b = d.entry?.breakMinutes || 0;
+        alert(`Clocked out. Worked ${Math.floor(m/60)}h ${m%60}m${b ? ` (${b}m break)` : ''}.`);
+      } else alert(d.error||'Clock-out failed.');
+    } catch { alert('Network error.'); }
+  };
+
+  // ── Billing Statement print (log mode) ──────────────────────────────────────
+  const printBillingStatement = (order) => {
+    const BILL_NAME    = import.meta.env.VITE_BILLING_NAME    || BIZ_NAME;
+    const BILL_ADDR1   = import.meta.env.VITE_BILLING_ADDRESS1 || '';
+    const BILL_ADDR2   = import.meta.env.VITE_BILLING_ADDRESS2 || '';
+    const BILL_PHONE   = import.meta.env.VITE_BILLING_PHONE    || '';
+    const BILL_EMAIL   = import.meta.env.VITE_BILLING_EMAIL    || '';
+    const BILL_BANK    = import.meta.env.VITE_BILLING_BANK     || '';
+    const BILL_ACCT_NAME = import.meta.env.VITE_BILLING_ACCOUNT_NAME || '';
+    const BILL_ACCT_NO   = import.meta.env.VITE_BILLING_ACCOUNT_NO   || '';
+
+    const dateStr = new Date(order.createdAt || Date.now()).toLocaleDateString('en-PH', {
+      year: 'numeric', month: 'long', day: 'numeric'
+    });
+    const transactionNo = order.billingNumber || order.orderNumber || '—';
+
+    const itemRowsHTML = (order.items || []).map(item => {
+      const addOnTotal = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
+      const unitPrice  = item.price + addOnTotal;
+      const lineTotal  = unitPrice * item.quantity;
+      const addOnDesc  = (item.selectedAddOns || []).map(a => a.name).join(', ');
+      const desc       = item.name + (item.size ? ` (${item.size})` : '') + (addOnDesc ? ` + ${addOnDesc}` : '');
+      return `<tr>
+        <td class="code">${item.productCode || ''}</td>
+        <td class="desc">${desc}</td>
+        <td class="qty">${item.quantity}</td>
+        <td class="price">${(unitPrice).toFixed(2)}</td>
+        <td class="total">${lineTotal.toFixed(2)}</td>
+      </tr>`;
+    }).join('');
+
+    const subtotal    = order.subtotal   || order.total || 0;
+    const discount    = order.discount   || 0;
+    const deliveryFee = order.deliveryFee || 0;
+    const total       = order.total      || 0;
+
+    const isDelivery = ['Manual Delivery', 'Lalamove'].includes(order.table);
+
+    const html = `<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Billing Statement — ${transactionNo}</title>
+<style>
+  /* ── Page setup ── */
+  @page {
+    size: A4 portrait;
+    margin: 15mm 16mm 20mm;
+  }
+  /* Running header on continuation pages */
+  @page :first { margin-top: 15mm; }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #000; }
+
+  /* ── Header ── */
+  .header { text-align: center; margin-bottom: 10px; }
+  .header .biz  { font-size: 14pt; font-weight: bold; letter-spacing: 1px; }
+  .header .addr { font-size: 8.5pt; margin-top: 1px; color: #333; }
+  .title-wrap   { text-align: center; margin-bottom: 10px; }
+  .title        { display: inline-block; font-size: 13pt; font-weight: bold; border: 2px solid #000; padding: 3px 18px; }
+
+  /* ── Meta fields ── */
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 10px; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 6px 0; margin-bottom: 8px; }
+  .sub-grid  { display: grid; grid-template-columns: 1fr 1fr;    gap: 0 10px; margin-bottom: 8px; }
+  .section label { font-size: 7.5pt; text-transform: uppercase; font-weight: bold; color: #555; display: block; margin-bottom: 2px; }
+  .section .val  { font-size: 10pt; font-weight: bold; border-bottom: 1px solid #aaa; min-height: 16px; padding-bottom: 2px; }
+
+  /* ── Sched box ── */
+  .sched-box { background: #f6f6f6; border: 1px solid #ccc; padding: 5px 8px; font-size: 9pt; margin-bottom: 8px; break-inside: avoid; page-break-inside: avoid; }
+  .sched-box table { width: 100%; }
+  .sched-box td.lbl { font-weight: bold; width: 145px; }
+
+  /* ── Items table ── */
+  table.items { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+  /* thead repeats on every page */
+  table.items thead { display: table-header-group; }
+  table.items tfoot { display: table-footer-group; }
+  table.items thead th {
+    background: #000; color: #fff; font-size: 8.5pt;
+    padding: 4px 5px; text-align: left;
+    border-bottom: 2px solid #000;
+  }
+  table.items thead th.r { text-align: right; }
+  table.items tbody tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  table.items td {
+    padding: 3.5px 5px; border-bottom: 1px solid #e0e0e0;
+    font-size: 9pt; vertical-align: top;
+  }
+  table.items td.code  { width: 68px; font-family: monospace; font-size: 8pt; color: #444; }
+  table.items td.qty   { width: 36px; text-align: center; font-weight: bold; }
+  table.items td.price,
+  table.items td.total { width: 82px; text-align: right; font-family: monospace; }
+
+  /* ── Totals ── */
+  .totals-wrap { break-inside: avoid; page-break-inside: avoid; }
+  .totals-row  { display: flex; justify-content: flex-end; margin-bottom: 1px; }
+  .totals-row .tl { width: 150px; font-size: 9.5pt; padding: 1px 4px; }
+  .totals-row .tr { width: 90px; text-align: right; font-family: monospace; font-size: 9.5pt; padding: 1px 0; }
+  .totals-row.grand .tl,
+  .totals-row.grand .tr { font-size: 11pt; font-weight: bold; border-top: 2px solid #000; padding-top: 4px; margin-top: 2px; }
+
+  /* ── Footer block — keep together, push to new page if needed ── */
+  .footer-block { break-inside: avoid; page-break-inside: avoid; margin-top: 12px; }
+  .tcs { font-size: 8pt; border-top: 1px solid #ccc; padding-top: 7px; }
+  .tcs h4 { font-size: 8.5pt; font-weight: bold; margin-bottom: 4px; }
+  .tcs p  { margin-bottom: 2px; line-height: 1.45; }
+  .sigs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 14px; margin-top: 14px; }
+  .sig-block { text-align: center; }
+  .sig-block .line  { border-bottom: 1px solid #000; height: 34px; margin-bottom: 3px; }
+  .sig-block .label { font-size: 7.5pt; color: #333; }
+  .bank-info { margin-top: 10px; border: 1px solid #ccc; padding: 5px 8px; font-size: 8.5pt; line-height: 1.5; }
+  .bank-info strong { font-size: 9pt; }
+
+  @media print {
+    html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="biz">${BILL_NAME}</div>
+    ${BILL_ADDR1 ? `<div class="addr">${BILL_ADDR1}</div>` : ''}
+    ${BILL_ADDR2 ? `<div class="addr">${BILL_ADDR2}</div>` : ''}
+    ${BILL_PHONE ? `<div class="addr">${BILL_PHONE}</div>` : ''}
+  </div>
+
+  <div class="title-wrap"><div class="title">BILLING STATEMENT</div></div>
+
+  <p style="font-size:9pt;margin-bottom:8px;">Submitted date: <strong>${dateStr}</strong></p>
+
+  <div class="meta-grid">
+    <div class="section"><label>Invoice For</label><div class="val">${order.customerName || '&nbsp;'}</div></div>
+    <div class="section"><label>Payable To</label><div class="val">&nbsp;</div></div>
+    <div class="section"><label>Transaction No.</label><div class="val">${transactionNo}</div></div>
+  </div>
+
+  <div class="sub-grid">
+    <div class="section"><label>Terms of Payment</label><div class="val">${order.paymentMethod || '&nbsp;'}</div></div>
+    <div class="section"><label>Order Type</label><div class="val">${order.table || '&nbsp;'}</div></div>
+  </div>
+
+  ${order.scheduledTime || order.deliveryAddress || order.customerPhone ? `
+  <div class="sched-box">
+    <table>
+      ${order.scheduledTime   ? `<tr><td class="lbl">Scheduled ${isDelivery ? 'Delivery' : 'Pickup'} Time:</td><td>${order.scheduledTime}</td></tr>` : ''}
+      ${order.deliveryAddress ? `<tr><td class="lbl">Delivery Address:</td><td>${order.deliveryAddress}</td></tr>` : ''}
+      ${order.customerPhone   ? `<tr><td class="lbl">Contact No.:</td><td>${order.customerPhone}</td></tr>` : ''}
+    </table>
+  </div>` : ''}
+
+  <table class="items">
+    <thead>
+      <tr>
+        <th>Code</th>
+        <th>Description</th>
+        <th class="r" style="text-align:center">Qty</th>
+        <th class="r">Unit Price</th>
+        <th class="r">Total Price</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${itemRowsHTML}
+    </tbody>
+  </table>
+
+  <div class="totals-wrap">
+    <div class="totals-row"><div class="tl">Subtotal</div><div class="tr">${subtotal.toFixed(2)}</div></div>
+    <div class="totals-row"><div class="tl">Discount</div><div class="tr">${discount > 0 ? discount.toFixed(2) : '0.00'}</div></div>
+    <div class="totals-row"><div class="tl">Delivery Fee</div><div class="tr">${deliveryFee > 0 ? deliveryFee.toFixed(2) : '0.00'}</div></div>
+    <div class="totals-row grand"><div class="tl">TOTAL</div><div class="tr">${total.toFixed(2)}</div></div>
+  </div>
+
+  <div class="footer-block">
+    <div class="tcs">
+      <h4>Terms and Conditions</h4>
+      <p>1. Items may be returned or exchanged only under the following conditions:</p>
+      <p>&nbsp;&nbsp;&nbsp;a. Item is defective upon purchase.</p>
+      <p>&nbsp;&nbsp;&nbsp;b. Item has a shelf life of less than one (1) month upon purchase (near expiry).</p>
+      <p>&nbsp;&nbsp;&nbsp;c. Issue is reported within 24–48 hours from receipt of item(s).</p>
+      <p>2. Full payment is required and must be settled prior to delivery of item(s).</p>
+      <p>3. We accept bank deposits, cheques, and other approved payment methods.</p>
+      <p>4. All bank and cheque payments must be made payable to ${BILL_ACCT_NAME || BILL_NAME}.</p>
+      ${BILL_EMAIL ? `<p>For billing inquiries, contact us at ${BILL_PHONE} / ${BILL_EMAIL}.</p>` : ''}
+    </div>
+
+    <div class="sigs">
+      <div class="sig-block"><div class="line"></div><div class="label">PREPARED BY: Signature over Printed Name / Date</div></div>
+      <div class="sig-block"><div class="line"></div><div class="label">CHECKED BY: Signature over Printed Name / Date</div></div>
+      <div class="sig-block"><div class="line"></div><div class="label">RECEIVED BY: Signature over Printed Name / Date</div></div>
+    </div>
+
+    ${BILL_BANK ? `
+    <div class="bank-info">
+      <strong>Please deposit all payments to:</strong><br>
+      Bank: ${BILL_BANK} &nbsp;|&nbsp; Account Name: ${BILL_ACCT_NAME} &nbsp;|&nbsp; Account No.: ${BILL_ACCT_NO}<br>
+      Or pay directly at our office at ${BILL_NAME}.
+    </div>` : ''}
+  </div>
+</body></html>`;
+
+    const win = window.open('', '_blank', 'width=794,height=1123');
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => { win.focus(); win.print(); };
+  };
+
+  // ── Kitchen ticket print ─────────────────────────────────────────────────────
+  const printKitchenTicket = (order) => {
+    const win = window.open('', '_blank', 'width=320,height=600');
+    if (!win) return alert('Pop-up blocked — allow pop-ups for this site.');
+    // Escape all dynamic values — customerName / orderNotes / item names can be
+    // customer-supplied (QR menu) and are written into raw HTML below.
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const items = (order.items||[]).map(item => `
+      <div class="item">
+        <span class="qty">${esc(item.quantity)}×</span>
+        <span class="name">${esc(item.name)}</span>
+        ${item.isCombo ? (item.comboItems||[]).map(c=>`<div class="addon">• ${c.quantity>1?esc(c.quantity)+'× ':''}${esc(c.name)}${c.sizeName?` (${esc(c.sizeName)})`:''}</div>`).join('') : ''}
+        ${(item.selectedAddOns||[]).map(a=>`<div class="addon">+ ${esc(a.name)}</div>`).join('')}
+      </div>`).join('');
+    win.document.write(`<!DOCTYPE html><html><head><style>
+      body { font-family:monospace; width:72mm; font-size:14px; }
+      .header { text-align:center; border-bottom:3px solid #000; padding-bottom:6px; margin-bottom:8px; }
+      .order-num { font-size:28px; font-weight:bold; }
+      .tbl { font-size:16px; font-weight:bold; }
+      .item { margin:8px 0; padding:4px 0; border-bottom:1px dashed #ccc; }
+      .qty { font-weight:bold; font-size:18px; margin-right:6px; }
+      .name { font-size:16px; font-weight:bold; }
+      .addon { font-size:12px; padding-left:24px; color:#555; }
+      .notes { margin-top:8px; padding:6px; border:2px solid #000; font-size:13px; font-weight:bold; }
+      @media print { @page { size:80mm auto; margin:3mm; } }
+    </style></head><body>
+      <div class="header">
+        <div class="order-num">${esc(order.orderNumber)}</div>
+        <div class="tbl">${esc(order.table||'Takeout')} · ${esc(order.customerName||'Guest')}</div>
+        <div style="font-size:11px">${new Date(order.createdAt||Date.now()).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'})}</div>
+      </div>
+      ${items}
+      ${order.orderNotes ? `<div class="notes">📝 ${esc(order.orderNotes)}</div>` : ''}
+    </body></html>`);
+    win.document.close();
+    setTimeout(() => { win.print(); win.close(); }, 300);
+  };
+
+  // ── Z-Reading PDF ─────────────────────────────────────────────────────────────
+  const printZReading = async () => {
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    const today = new Date().toLocaleDateString('en-PH');
+    const now   = new Date().toLocaleTimeString('en-PH');
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('NON-VAT REGISTERED', 105, 21, { align: 'center' });
+    doc.setFontSize(12); doc.text('Z-READING', 105, 28, { align: 'center' });
+    doc.setFontSize(9);  doc.text(`${today}  ${now}  —  OFFICIAL END-OF-DAY REPORT`, 105, 34, { align: 'center' });
+    const completed  = archivedOrders.filter(o => o.status === 'Completed');
+    const voided     = archivedOrders.filter(o => o.status === 'Voided');
+    const cancelled  = archivedOrders.filter(o => o.status === 'Cancelled');
+    const comps      = completed.filter(o => o.isComplimentary);
+    const regular    = completed.filter(o => !o.isComplimentary);
+    const gross      = regular.reduce((s,o) => s+(o.subtotal||0), 0);
+    const discounts  = regular.reduce((s,o) => s+(o.discount||0), 0);
+    const payMethods = {};
+    regular.forEach(o => { const m = o.paymentMethod||'Cash'; if (!payMethods[m]) payMethods[m]={count:0,total:0}; payMethods[m].count++; payMethods[m].total+=(o.total||0); });
+    doc.setFontSize(8); doc.setTextColor(120); doc.text('All amounts in PHP. Negatives shown in (parentheses).', 105, 38, { align: 'center' }); doc.setTextColor(0);
+    autoTable(doc, {
+      startY: 42,
+      head: [['Summary', 'Amount (PHP)']],
+      body: [
+        ['Gross Sales',      pdfMoney(gross)],
+        ['Less: Discounts',  pdfMoney(-discounts)],
+        ['Net Sales',        pdfMoney(gross - discounts)],
+        ['Complimentary',    pdfMoney(-comps.reduce((s,o)=>s+(o.subtotal||0),0))],
+        ['Orders Completed', String(completed.length)],
+        ['Orders Voided',    String(voided.length)],
+        ['Orders Cancelled', String(cancelled.length)],
+      ],
+      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] },
+      columnStyles: { 1: { halign: 'right' } },
+    });
+    autoTable(doc, {
+      startY: doc.lastAutoTable.finalY + 6,
+      head: [['Payment Method', 'Orders', 'Amount (PHP)']],
+      body: Object.entries(payMethods).map(([m, d]) => [m, String(d.count), pdfMoney(d.total)]),
+      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] },
+      columnStyles: { 1: { halign: 'center' }, 2: { halign: 'right' } },
+    });
+    doc.save(`Z-Reading-${today.replace(/\//g,'-')}.pdf`);
+  };
+
+  // Toggle a product's manual availability flag (86 on/off). Superadmin only.
+  const toggleProductAvailability = async (product) => {
+    try {
+      const next = !(product.isAvailable !== false); // default true → toggle to false
+      const res = await apiFetch(`/api/products/${product._id}/availability`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isAvailable: next }),
+      });
+      if (res.ok) fetchData(); // refresh products
+      else alert('Failed to update availability.');
+    } catch (err) { console.error('toggleProductAvailability', err); }
+  };
+
+  // ── Change Password ────────────────────────────────────────────────────────
+  const handleChangePassword = async () => {
+    setChangePwError('');
+    const { currentPassword, newPassword, confirmPassword } = changePwForm;
+    if (!currentPassword || !newPassword || !confirmPassword) return setChangePwError('All fields are required.');
+    if (newPassword.length < 6) return setChangePwError('New password must be at least 6 characters.');
+    if (newPassword !== confirmPassword) return setChangePwError('New passwords do not match.');
+    setChangePwLoading(true);
+    try {
+      const res = await apiFetch('/api/users/me/password', {
+        method: 'PATCH',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert('Password changed successfully.');
+        setChangePwModal(false);
+        setChangePwForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      } else {
+        setChangePwError(data.error || 'Failed to change password.');
+      }
+    } catch { setChangePwError('Network error. Please try again.'); }
+    finally { setChangePwLoading(false); }
+  };
+
+  // ── Fetch Audit Logs ───────────────────────────────────────────────────────
+  const fetchAuditLogs = async (page = 1) => {
+    try {
+      const res = await apiFetch(`/api/audit-logs?page=${page}&limit=${AUDIT_LOGS_PAGE_SIZE}`);
+      const data = await res.json();
+      if (data.success) { setAuditLogs(data.logs); setAuditLogsTotal(data.total); setAuditLogsPage(page); }
+    } catch (err) { console.error('fetchAuditLogs', err); }
+  };
+
+  // ── Fetch AP Outstanding ───────────────────────────────────────────────────
+  const fetchApData = async () => {
+    try {
+      const res = await apiFetch('/api/finance/ap-outstanding');
+      const data = await res.json();
+      if (data.success) setApData(data);
+    } catch (err) { console.error('fetchApData', err); }
+  };
+
+  const submitApPayment = async () => {
+    const amt = parseFloat(apPayForm.amount);
+    if (!amt || amt <= 0) return alert('Enter a valid amount.');
+    setApPaySubmitting(true);
+    try {
+      const res = await apiFetch('/api/finance/ap-payment', {
+        method: 'POST',
+        body: JSON.stringify(apPayForm),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert('AP payment recorded.');
+        setApPayModal(false);
+        setApPayForm({ amount: '', payFromAccount: '111000', description: '', vendorName: '' });
+        fetchApData();
+      } else alert(data.error || 'Failed to record payment.');
+    } catch { alert('Network error.'); }
+    finally { setApPaySubmitting(false); }
+  };
+
+  // The "Parked" filter shows held tabs (separate collection); all other filters
+  // work against the active orders board.
+  const filteredOrders = (orderFilter === 'Parked' ? parkedOrders : orders).filter(o => {
+    const statusOk = (orderFilter === 'All' || orderFilter === 'Parked') ? true : o.status === orderFilter;
+    if (!statusOk) return false;
+    if (!orderSearch.trim()) return true;
+    const q = orderSearch.trim().toLowerCase();
+    return (
+      (o.customerName || '').toLowerCase().includes(q) ||
+      (o.orderNumber  || '').toLowerCase().includes(q) ||
+      (o.table        || '').toLowerCase().includes(q)
+    );
+  });
+
+  // ── Inventory badge count (hoisted so it can be used in sidebar AND ctx) ──
+  const invBadgeCount = (() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const low     = inventory.filter(i => i.lowStockThreshold > 0 && i.stockQty <= i.lowStockThreshold).length;
+    const expired = inventory.filter(i => i.expiryDate && i.stockQty > 0 && new Date(i.expiryDate) < today).length;
+    const soon    = inventory.filter(i => {
+      if (!i.expiryDate || i.stockQty <= 0) return false;
+      const days = Math.ceil((new Date(i.expiryDate) - today) / 86400000);
+      return days >= 0 && days <= (i.expiryWarnDays || 7);
+    }).length;
+    return low + expired + soon;
+  })();
+  const invBadgeColor = (() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const expired = inventory.filter(i => i.expiryDate && i.stockQty > 0 && new Date(i.expiryDate) < today).length;
+    const low     = inventory.filter(i => i.lowStockThreshold > 0 && i.stockQty <= i.lowStockThreshold).length;
+    const soon    = inventory.filter(i => {
+      if (!i.expiryDate || i.stockQty <= 0) return false;
+      const days = Math.ceil((new Date(i.expiryDate) - today) / 86400000);
+      return days >= 0 && days <= (i.expiryWarnDays || 7);
+    }).length;
+    return expired > 0 ? 'bg-red-500 animate-pulse' : low > 0 ? 'bg-red-500' : soon > 0 ? 'bg-orange-500' : 'bg-red-500';
+  })();
   const todayCompleted = orders.filter(o => o.status === 'Completed');
   const todayComplimentary = todayCompleted.filter(o => o.isComplimentary);
   const todayCompAmount = todayComplimentary.reduce((sum, o) => sum + o.subtotal, 0);
@@ -1844,6 +4270,19 @@ const submitPhysicalCounts = async () => {
     return true;
   });
 
+  // While the silent refresh is resolving, show a neutral splash instead of
+  // briefly flashing the login screen for an already-authenticated user.
+  if (authBootstrapping) {
+    return (
+      <div className="min-h-screen bg-page-bg flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4 text-white/60">
+          <RefreshCw size={32} className="animate-spin text-brand" />
+          <span className="text-sm">Restoring session…</span>
+        </div>
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-page-bg flex flex-col lg:flex-row">
@@ -1924,11 +4363,46 @@ const submitPhysicalCounts = async () => {
   const currentProducts = products.slice(indexOfFirstItem, indexOfLastItem);
   const totalPages = Math.ceil(products.length / itemsPerPage);
 
+  // --- INVENTORY SEARCH / FILTER / SORT ---
+  const invFilteredSorted = (() => {
+    // Build itemCode → category map from products (set during import)
+    const codeToCategory = {};
+    for (const p of products) {
+      if (p.productCode && p.category) codeToCategory[p.productCode] = p.category;
+    }
+    const getInvCategory = (i) => i.category || codeToCategory[i.itemCode] || '';
+
+    let list = [...inventory];
+    // Search
+    if (invSearch.trim()) {
+      const q = invSearch.trim().toLowerCase();
+      list = list.filter(i =>
+        i.itemName?.toLowerCase().includes(q) ||
+        i.itemCode?.toLowerCase().includes(q)
+      );
+    }
+    // Category filter
+    if (invCategoryFilter) {
+      list = list.filter(i => getInvCategory(i).toLowerCase() === invCategoryFilter.toLowerCase());
+    }
+    // Sort
+    switch (invSort) {
+      case 'name-asc':  list.sort((a, b) => (a.itemName || '').localeCompare(b.itemName || '')); break;
+      case 'name-desc': list.sort((a, b) => (b.itemName || '').localeCompare(a.itemName || '')); break;
+      case 'qty-asc':   list.sort((a, b) => (a.stockQty || 0) - (b.stockQty || 0)); break;
+      case 'qty-desc':  list.sort((a, b) => (b.stockQty || 0) - (a.stockQty || 0)); break;
+      case 'price-asc': list.sort((a, b) => (a.unitCost || 0) - (b.unitCost || 0)); break;
+      case 'price-desc':list.sort((a, b) => (b.unitCost || 0) - (a.unitCost || 0)); break;
+      default: break;
+    }
+    return list;
+  })();
+
   // --- INVENTORY PAGINATION MATH ---
   const indexOfLastInv = invPage * invItemsPerPage;
   const indexOfFirstInv = indexOfLastInv - invItemsPerPage;
-  const currentInventory = inventory.slice(indexOfFirstInv, indexOfLastInv);
-  const totalInvPages = Math.ceil(inventory.length / invItemsPerPage);
+  const currentInventory = invFilteredSorted.slice(indexOfFirstInv, indexOfLastInv);
+  const totalInvPages = Math.ceil(invFilteredSorted.length / invItemsPerPage);
 
   // --- ORDERS PAGINATION MATH ---
   const indexOfLastOrder = ordersPage * ordersItemsPerPage;
@@ -1950,6 +4424,30 @@ const submitPhysicalCounts = async () => {
   const totalPricingPages = Math.ceil(products.length / pricingItemsPerPage);
 
   const isSuperAdmin = activeAdmin?.role === 'superadmin';
+  // Void / refund are allowed for superadmin OR admin (case-insensitive).
+  const canVoidRefund = ['superadmin', 'admin'].includes(String(activeAdmin?.role || '').toLowerCase());
+
+  // CLOCK-IN GATE: every non-superadmin must clock in before using the POS.
+  // (Superadmin/owner is exempt.) Shown once the clock status is known so we
+  // don't flash this screen at an already-clocked-in user on load.
+  if (!isSuperAdmin && clockStatusLoaded && !clockStatus.isClockedIn) {
+    return (
+      <div className="min-h-screen bg-page-bg flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-20 h-20 bg-brand/15 border border-brand/30 rounded-3xl flex items-center justify-center mb-6">
+          <Clock size={40} className="text-brand" />
+        </div>
+        <h1 className="text-white text-2xl font-black mb-1">Clock in to start</h1>
+        <p className="text-white/50 text-sm mb-8 max-w-xs">Hi {activeAdmin?.name} — you must clock in before taking orders or using the system.</p>
+        <button onClick={handleClockIn}
+          className="bg-brand text-white px-10 py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-brand/90 active:scale-98 transition shadow-lg shadow-brand/20 min-h-[56px] flex items-center gap-2">
+          <Clock size={18} /> Clock In
+        </button>
+        <button onClick={performLogout} className="mt-5 text-white/40 hover:text-white/70 text-xs font-bold uppercase tracking-wider transition">
+          Log out
+        </button>
+      </div>
+    );
+  }
 
   // Sidebar nav content (inlined twice: desktop + mobile)
   const renderSidebarNav = (closeFn) => (
@@ -1971,38 +4469,45 @@ const submitPhysicalCounts = async () => {
         <p className="text-[10px] text-white/25 font-bold uppercase tracking-[0.25em] mt-0.5">
           SEMIVRA <span className="text-brand/80">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span>
         </p>
+        <span className="inline-block mt-1.5 text-[8px] font-black bg-brand/15 border border-brand/30 text-brand px-2 py-0.5 rounded-full uppercase tracking-widest">NON-VAT REGISTERED</span>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
+      <nav className="p-3 space-y-0.5 lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
         <p className="text-[9px] text-white/20 font-bold uppercase tracking-[0.2em] px-4 pt-2 pb-1">Operations</p>
         {[
-          { id: 'orders', label: 'Live Orders', icon: ShoppingCart },
-          { id: 'inventory', label: 'Inventory', icon: Package },
+          { id: 'orders', label: 'Orders & POS', icon: ShoppingCart },
+          { id: 'inventory', label: 'Inventory & Stock', icon: Package },
           { id: 'products', label: 'Menu Setup', icon: Settings },
-        ].map(({ id, label, icon: Icon }) => (
-          <button key={id}
-            onClick={() => { setActiveTab(id); setNavMode('libellus'); closeFn?.(); }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
-              ${activeTab === id && navMode === 'libellus' ? 'bg-brand text-white shadow-sm' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
-          >
-            <Icon size={16} />
-            {label}
-            {activeTab === id && navMode === 'libellus' && <ChevronRight size={13} className="ml-auto" />}
-          </button>
-        ))}
+        ].map(({ id, label, icon: Icon }) => {
+          // invBadgeCount and invBadgeColor are hoisted to component scope above
+          const badgeCount = id === 'inventory' ? invBadgeCount : 0;
+          const badgeColor = id === 'inventory' ? invBadgeColor : 'bg-red-500';
+          return (
+            <button key={id}
+              onClick={() => { setActiveTab(id); setNavMode('libellus'); closeFn?.(); }}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
+                ${activeTab === id && navMode === 'libellus' ? 'bg-brand text-white shadow-sm' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+            >
+              <Icon size={16} />
+              {label}
+              {badgeCount > 0 && <span className={`ml-auto text-[9px] text-white font-black px-1.5 py-0.5 rounded-full ${badgeColor}`}>{badgeCount}</span>}
+              {activeTab === id && navMode === 'libellus' && badgeCount === 0 && <ChevronRight size={13} className="ml-auto" />}
+            </button>
+          );
+        })}
 
         <p className="text-[9px] text-white/20 font-bold uppercase tracking-[0.2em] px-4 pt-4 pb-1">Management</p>
         {isSuperAdmin ? (
           [
-            { id: 'history', label: 'History', icon: Clock },
+            { id: 'history', label: 'Daily History & Shifts', icon: Clock },
             { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-            { id: 'ledger', label: 'Accounting', icon: FileText },
-            { id: 'pricing', label: 'Pricing', icon: DollarSign },
+            { id: 'ledger', label: 'Accounting & Ledger', icon: FileText },
+            { id: 'pricing', label: 'Pricing Control', icon: DollarSign },
             { id: 'audit', label: 'Audit Report', icon: ShieldCheck },
           ].map(({ id, label, icon: Icon }) => (
             <button key={id}
-              onClick={() => { setActiveTab(id); setNavMode('negotium'); closeFn?.(); }}
+              onClick={() => { setActiveTab(id); setNavMode('negotium'); closeFn?.(); if (id === 'analytics') fetchAnalytics(); }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
                 ${activeTab === id && navMode === 'negotium' ? 'bg-brand text-white shadow-sm' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
             >
@@ -2010,7 +4515,19 @@ const submitPhysicalCounts = async () => {
               {label}
               {activeTab === id && navMode === 'negotium' && <ChevronRight size={13} className="ml-auto" />}
             </button>
-          ))
+          )).concat([
+            // Superadmin-only deep link — opens the dedicated Command Center page
+            // (user, client-account, and tenant management). Lives outside the
+            // tabbed dashboard, so we navigate via window.location instead of setActiveTab.
+            <button key="command-center"
+              onClick={() => { closeFn?.(); window.location.assign('/admin/admin-panel'); }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm text-white/50 hover:text-white hover:bg-white/5"
+            >
+              <ShieldCheck size={16} className="text-brand" />
+              Command Center
+              <span className="ml-auto text-[8px] font-black uppercase tracking-widest bg-brand/15 border border-brand/30 text-brand px-1.5 py-0.5 rounded">Super</span>
+            </button>
+          ])
         ) : (
           <div className="flex items-center gap-2 px-4 py-2.5 text-red-400/50">
             <Lock size={13} />
@@ -2025,17 +4542,66 @@ const submitPhysicalCounts = async () => {
           <span className="text-[10px] text-white/25 font-bold uppercase tracking-wider">Auto-Close</span>
           <MidnightCountdown />
         </div>
-        <button onClick={toggleFullScreen} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition font-bold text-sm">
-          {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
-          {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+        {/* Clock In/Out/Break — always visible (frequent, critical action) */}
+        <button onClick={handleClockButton}
+          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20' : clockStatus.isClockedIn ? 'text-green-400 bg-green-500/10 hover:bg-green-500/20' : 'text-white/40 hover:text-white hover:bg-white/5'}`}>
+          <Clock size={15} />
+          {clockStatus.onBreak
+            ? `On Break — tap to resume`
+            : clockStatus.isClockedIn
+              ? `Clocked In · ${clockStatus.entry ? Math.round((Date.now()-new Date(clockStatus.entry.clockIn))/60000) : 0}m`
+              : 'Clock In'}
         </button>
-        <button onClick={e => { e.preventDefault(); handleShowQR(); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand/60 hover:text-brand hover:bg-brand/10 transition font-bold text-sm">
-          <QrCode size={15} />
-          Show QR
+
+        {/* Collapsible utility tools — Fullscreen / QR / Password / toggles / Install */}
+        <button onClick={toggleOpsTools}
+          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition font-bold text-[11px] uppercase tracking-wider">
+          {opsToolsOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+          Tools &amp; Settings
         </button>
+        {opsToolsOpen && (
+          <div className="space-y-0.5">
+            <button onClick={toggleFullScreen} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition font-bold text-sm">
+              {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+              {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+            </button>
+            <button onClick={e => { e.preventDefault(); (BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR()); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand/60 hover:text-brand hover:bg-brand/10 transition font-bold text-sm">
+              <QrCode size={15} />
+              {BUSINESS_TYPE === 'log' ? 'Portal' : 'Show QR'}
+            </button>
+            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition font-bold text-sm">
+              <Settings size={15} />
+              Change Password
+            </button>
+            {/* QR Orders toggle (superadmin only) */}
+            {isSuperAdmin && (
+              <button onClick={toggleQROrders}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${systemSettings.isAcceptingQROrders ? 'text-green-400/70 hover:text-green-400 hover:bg-green-500/10' : 'text-red-400 bg-red-500/10 hover:bg-red-500/20'}`}>
+                {systemSettings.isAcceptingQROrders ? <Unlock size={15} /> : <Lock size={15} />}
+                {systemSettings.isAcceptingQROrders ? 'QR Orders: OPEN' : 'QR Orders: CLOSED'}
+              </button>
+            )}
+            {/* Auto midnight close toggle (superadmin only) */}
+            {isSuperAdmin && (
+              <button onClick={toggleAutoClose}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${systemSettings.autoCloseEnabled !== false ? 'text-green-400/70 hover:text-green-400 hover:bg-green-500/10' : 'text-yellow-400 bg-yellow-500/10 hover:bg-yellow-500/20'}`}>
+                <Clock size={15} />
+                {systemSettings.autoCloseEnabled !== false ? 'Auto Close: ON' : 'Auto Close: OFF (manual)'}
+              </button>
+            )}
+            {/* Install as app (only when the browser offers it) */}
+            {installable && (
+              <button onClick={() => { install(); closeFn?.(); }}
+                className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand/70 hover:text-brand hover:bg-brand/10 transition font-bold text-sm">
+                <Download size={15} />
+                Install App
+              </button>
+            )}
+          </div>
+        )}
         <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-red-400/60 hover:text-red-400 hover:bg-red-500/10 transition font-bold text-sm">
           <LogOut size={15} />
-          End Shift
+          {isSuperAdmin ? 'Log Out' : 'End Shift'}
         </button>
         <div className="px-3 py-2 border-t border-white/5 mt-1">
           <div className="flex items-center gap-3 p-2 rounded-xl bg-white/5">
@@ -2052,29 +4618,228 @@ const submitPhysicalCounts = async () => {
     </>
   );
 
+
+  // ── Computed pagination variables exposed to ctx ─────────────────────────────
+  // (already computed above in pagination math section; aliased here for clarity)
+  // These are referenced directly by the tab files.
+
+  // ── CTX: bundle state + handlers for tab components ─────────────────────────
+  // Only include identifiers that are actually defined at this scope.
+  // Tab files receive undefined for any key not in this object (harmless).
+  const ctx = {
+    // ── Shared data ─────────────────────────────────────────────────────────
+    orders, archivedOrders, products, categories, inventory, discounts, globalAddOns,
+    users, activeAdmin, isSuperAdmin, canVoidRefund,
+    // ── Core helpers ────────────────────────────────────────────────────────
+    fetchOrders, fetchData, fetchERPData, fetchEODData,
+    apiFetch, updateStatus, printOrderSlip, printBillingStatement, handleVoidOrder,
+    peso, BIZ_NAME, COMP_REASON_LABELS, API_URL, FRONTEND_URL,
+    // ── Analytics ───────────────────────────────────────────────────────────
+    analyticsData, analyticsLoading, fetchAnalytics, exportAnalyticsToPDF,
+    // ── Navigation ──────────────────────────────────────────────────────────
+    activeTab, setActiveTab, navMode,
+    // ── Ledger sub-tabs ─────────────────────────────────────────────────────
+    ledgerSubTab, setLedgerSubTab, jeForm, setJeForm, cashOnHand, standardAccounts,
+    // ── Chart of Accounts CRUD ──
+    coaAccounts, fetchCoa, coaParent, setCoaParent, coaNewName, setCoaNewName,
+    coaEditId, setCoaEditId, coaEditName, setCoaEditName, coaBusy,
+    addCoaChild, renameCoaChild, deleteCoaChild,
+    // ── Derived account lists for "Paid From / Charge To" dropdowns ──
+    cashAndBankAccounts, apAccounts, arAccounts, procurementCreditAccounts,
+    // ── Closed periods ──
+    closedPeriods, fetchClosedPeriods, closePeriod, reopenPeriod,
+    periodCloseForm, setPeriodCloseForm,
+    // ── Audit log ──
+    auditLogEntries, auditLogPage, auditLogPages, auditLogFilter, setAuditLogFilter, fetchAuditLog,
+    // ── Payment method → account map ──
+    paymentMap, fetchPaymentMap, savePaymentMapping, resetPaymentMapping,
+    // ── Tenancy & permissions ──
+    tenancyReport, tenancyBusy, fetchTenancyReport, runTenancyRebackfill,
+    myPermissions, can,
+    // ── Client accounts (for per-product per-client discount picker) ──
+    clientAccounts,
+    // ── Partial fulfillment ──
+    partialModal, setPartialModal, partialQtys, setPartialQtys,
+    partialMode, setPartialMode, partialPayment, setPartialPayment,
+    partialBusy, openPartial, submitPartialFulfill,
+    pnlData, pnlRange, setPnlRange, fetchPnl, bsData, fetchBalanceSheet, reconcileInventory,
+    pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF,
+    bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF,
+    arOutstanding, fetchArOutstanding,
+    expenseModal, setExpenseModal, expenseCategories, fetchExpenseCategories,
+    settleModal, setSettleModal, settleForm, setSettleForm, settleSubmitting, setSettleSubmitting,
+    // ── Revolving funds ─────────────────────────────────────────────────────
+    rfFunds, rfLoading, rfActiveFund, setRfActiveFund, rfTxs, rfTxTotal, rfTxPage, rfTxPages,
+    rfNewModal, setRfNewModal, rfNewForm, setRfNewForm, rfNewSubmitting,
+    rfDisbModal, setRfDisbModal, rfDisbForm, setRfDisbForm, rfDisbSubmitting,
+    rfReplModal, setRfReplModal, rfReplForm, setRfReplForm, rfReplSubmitting,
+    fetchRfFunds, fetchRfTxs, submitRfNew, submitRfDisb, submitRfRepl, closeRfFund,
+    // ── Orders & POS ────────────────────────────────────────────────────────
+    filteredOrders, displayOrders, orderFilter, setOrderFilter, departmentFilter, setDepartmentFilter,
+    orderSearch, setOrderSearch,
+    collapsedOrders, setCollapsedOrders, updatingOrders, cashTendered, setCashTendered,
+    isPosOpen, setIsPosOpen, posCart, setPosCart, posCategory, setPosCategory, posPage, setPosPage,
+    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posTable, setPosTable,
+    posPayment, setPosPayment, posSelectedProduct, setPosSelectedProduct,
+    posActiveSize, setPosActiveSize, posActiveAddOns, setPosActiveAddOns, posItemQty, setPosItemQty,
+    posDiscountType, setPosDiscountType, posDiscountValue, setPosDiscountValue,
+    posDiscountAmt, posItemDiscountAmt, posGrandTotal, posSubtotal, posSubmitting,
+    posCheckoutModal, setPosCheckoutModal, posCashTendered, setPosCashTendered,
+    posDeliveryAddress, setPosDeliveryAddress, posCustomerPhone, setPosCustomerPhone,
+    posDeliveryFee, setPosDeliveryFee, posDeliveryFeeNum, posScheduledTime, setPosScheduledTime,
+    compSelections, setCompSelections, compOverride, setCompOverride,
+    compReasonTypes, setCompReasonTypes, compReasonNotes, setCompReasonNotes,
+    paymentSelections, setPaymentSelections,
+    submitManualOrder, openProductModal, confirmPosItem,
+    ordersPage, setOrdersPage, ordersItemsPerPage,
+    // ── Inventory ───────────────────────────────────────────────────────────
+    invSubTab, setInvSubTab, invForm, setInvForm, invPage, setInvPage, invItemsPerPage,
+    invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter,
+    importProgress,
+    activeInventoryItem, setActiveInventoryItem, restockData, setRestockData,
+    stockHistory, setStockHistory, historyModalOpen, setHistoryModalOpen, historyItemName, setHistoryItemName, historyItem,
+    physicalCounts, setPhysicalCounts, varianceReasons, setVarianceReasons,
+    varianceNoteMode, setVarianceNoteMode,
+    eodStatus, eodLockedAt, dailyMovement,
+    invBadgeCount, expandedBatchRows, setExpandedBatchRows,
+    editInvModal, setEditInvModal, editInvForm, setEditInvForm, editInvSubmitting,
+    importModal, setImportModal, importRows, setImportRows, importSubmitting,
+    spoilageModal, setSpoilageModal, spoilageForm, setSpoilageForm, spoilageLoading,
+    handleRestockSubmit, submitPhysicalCounts,
+    // ── Inventory helpers ────────────────────────────────────────────────────
+    effectiveDisplay, itemDisplay, packInfo, fetchStockHistory,
+    openEditInventory, deleteInventory, parseImportFile,
+    printXReading, handleSaveAddOn,
+    // ── History ─────────────────────────────────────────────────────────────
+    historySubTab, setHistorySubTab, groupedArchives, expandedDays, toggleDay,
+    expandedOrderLists, toggleOrderList, historyPage, setHistoryPage, HIST_PAGE_SIZE,
+    shiftHistory, shiftHistoryPage, setShiftHistoryPage, shiftHistoryTotal, SHIFT_HIST_PAGE_SIZE,
+    fetchShiftHistory, shiftFilter, setShiftFilter, exportDayToPDF,
+    // ── Pricing ─────────────────────────────────────────────────────────────
+    editPriceId, setEditPriceId, editPriceVal, setEditPriceVal,
+    editCostId, setEditCostId, editCostVal, setEditCostVal,
+    pricingPage, setPricingPage, pricingItemsPerPage,
+    handleInlinePriceUpdate, handleInlineCostUpdate, discountForm, setDiscountForm,
+    // ── Audit ───────────────────────────────────────────────────────────────
+    auditFilter, setAuditFilter, auditCancelPage, setAuditCancelPage,
+    auditCompPage, setAuditCompPage, auditDiscPage, setAuditDiscPage,
+    auditStaffPage, setAuditStaffPage, AUDIT_PAGE_SIZE,
+    // ── Products / Menu ─────────────────────────────────────────────────────
+    editingProduct, setEditingProduct, formData, setFormData,
+    catForm, setCatForm, editingCategory, setEditingCategory,
+    discountList, newDiscount, setNewDiscount, addOnForm, setAddOnForm,
+    currentPage, setCurrentPage, itemsPerPage,
+    // ── Computed pagination slices ───────────────────────────────────────────
+    currentProducts, totalPages,
+    currentInventory, totalInvPages,
+    currentOrders, totalOrdersPages,
+    currentEntries, totalAccountingPages,
+    currentPricingProducts, totalPricingPages,
+    // ── Per-page constants ───────────────────────────────────────────────────
+    POS_PER_PAGE,
+    // ── Additional data state ────────────────────────────────────────────────
+    journalEntries, setJournalEntries,
+    // ── Additional handlers ──────────────────────────────────────────────────
+    archiveDay, addInventory,
+    downloadImportTemplate, downloadJournalCsv,
+    exportInventoryToPDF, exportLedgerToPDF, exportAllToPDF,
+    handleSaveProduct, handleSaveCategory, toggleProductAvailability,
+    // ── Change Password ──────────────────────────────────────────────────────
+    changePwModal, setChangePwModal, changePwForm, setChangePwForm, changePwLoading, changePwError, handleChangePassword,
+    // ── Modifier Groups ──────────────────────────────────────────────────────
+    modifierGroups, fetchModifierGroups,
+    editingModifier, setEditingModifier, modForm, setModForm,
+    saveModifierGroup, editModifierGroup, deleteModifierGroup,
+    // ── Combos / Bundles ─────────────────────────────────────────────────────
+    combos, editingCombo, setEditingCombo, comboForm, setComboForm,
+    saveCombo, editCombo, deleteCombo, addComboToPosCart,
+    // ── Parked Orders ────────────────────────────────────────────────────────
+    parkedOrders, parkedModalOpen, setParkedModalOpen, fetchParked, parkCurrentOrder, resumeParked,
+    // ── Reports ──────────────────────────────────────────────────────────────
+    menuEngineering, fetchMenuEngineering, cashierVariance, fetchCashierVariance, purchaseOrder, fetchPurchaseOrder,
+    exportPnlPDF, exportBalanceSheetPDF, exportPurchaseOrderPDF,
+    // ── Multi-Payment ────────────────────────────────────────────────────────
+    posPayments, setPosPayments, posGuestCount, setPosGuestCount,
+    // ── Archive Search ───────────────────────────────────────────────────────
+    archiveSearch, setArchiveSearch, archiveDateRange, setArchiveDateRange, archiveTotal,
+    // ── Denomination Breakdown + Z-Reading ──────────────────────────────────
+    DENOMS, denomCounts, setDenomCounts, denomTotal, printZReading,
+    // ── Profit by Category ───────────────────────────────────────────────────
+    profitByCategory, fetchProfitByCategory,
+    // ── System Settings / QR Toggle ─────────────────────────────────────────
+    systemSettings, toggleQROrders,
+    // ── Sales by Payment ─────────────────────────────────────────────────────
+    salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
+    // ── Summary Sales (channel breakdown) ────────────────────────────────────
+    salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
+    // ── Refund ───────────────────────────────────────────────────────────────
+    refundModal, setRefundModal, refundForm, setRefundForm, refundSubmitting, handleRefund,
+    // ── Clock In/Out ─────────────────────────────────────────────────────────
+    clockStatus, clockEntries, clockEntriesTotal, clockEntriesPage,
+    fetchClockStatus, fetchClockEntries, handleClockIn, handleClockOut,
+    clockModalOpen, setClockModalOpen, handleClockButton, startBreak, endBreak,
+    // ── Kitchen Ticket ───────────────────────────────────────────────────────
+    printKitchenTicket,
+    // ── Audit Logs ──────────────────────────────────────────────────────────
+    auditLogs, auditLogsPage, auditLogsTotal, AUDIT_LOGS_PAGE_SIZE, fetchAuditLogs,
+    // ── AP Outstanding ──────────────────────────────────────────────────────
+    apData, fetchApData, apPayModal, setApPayModal, apPayForm, setApPayForm, apPaySubmitting, submitApPayment,
+    // ── Order Notes ─────────────────────────────────────────────────────────
+    posNotes, setPosNotes,
+    deleteProduct, deleteCategory, deleteAddOn,
+    updateSize, removeSize, addSize, addMaterialToRecipe, updateMaterialQty, removeMaterial,
+    calcRecipeCost, getEstimatedStock, handleImageUpload,
+    // ── Orders interactive handlers ──────────────────────────────────────────
+    updateItemStatus, removeAddOnFromOrder,
+    applyComplimentary, removeComplimentary,
+    applyDiscount, applyItemDiscount, toggleVat,
+    discountInputs, setDiscountInputs,
+    scpwdOpen, setScpwdOpen,
+    isStatusMenuOpen, setIsStatusMenuOpen,
+    // ── Ledger pagination ────────────────────────────────────────────────────
+    accountingPage, setAccountingPage, accountingItemsPerPage,
+    setRfTxs,
+  };
+
   return (
     <div className="min-h-screen bg-page-bg flex text-white">
+
+      {/* ── IN-APP ORDER TOASTS (sound plays on newOrder; this shows the visual) ── */}
+      {orderToasts.length > 0 && (
+        <div className="fixed top-4 right-4 z-[99999] flex flex-col gap-2 pointer-events-none">
+          {orderToasts.map(t => (
+            <div key={t.id}
+              className="flex items-center gap-3 bg-brand text-white px-4 py-3 rounded-2xl shadow-lg shadow-brand/30 animate-fade-in min-w-[220px]">
+              <Bell size={16} className="shrink-0 animate-bounce"/>
+              <div>
+                <p className="font-black text-sm leading-none">New Order! #{t.orderNumber}</p>
+                <p className="text-white/70 text-xs mt-0.5">{t.table} · {t.ts}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Mobile overlay */}
       {dashDrawerOpen && (
         <div className="lg:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" onClick={() => setDashDrawerOpen(false)} />
       )}
 
-      {/* Mobile drawer */}
-      <aside className={`lg:hidden fixed top-0 left-0 h-full w-64 bg-sidebar-bg z-50 flex flex-col border-r border-white/5 transition-transform duration-300 ${dashDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      {/* Mobile drawer — capped width on small phones, scrollable on short screens */}
+      <aside className={`lg:hidden fixed top-0 left-0 h-full w-72 max-w-[85vw] bg-sidebar-bg z-50 flex flex-col border-r border-white/5 overflow-y-auto overscroll-contain transition-transform duration-300 ${dashDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {renderSidebarNav(() => setDashDrawerOpen(false))}
       </aside>
 
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex flex-col w-64 flex-shrink-0 bg-sidebar-bg border-r border-white/5 h-screen sticky top-0 overflow-y-auto">
+      <aside className="hidden lg:flex flex-col w-64 flex-shrink-0 bg-sidebar-bg border-r border-white/5 h-screen sticky top-0 overflow-hidden">
         {renderSidebarNav()}
       </aside>
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
 
-        {/* Mobile top bar */}
-        <header className="lg:hidden flex items-center gap-3 px-4 h-16 bg-sidebar-bg border-b border-white/5 flex-shrink-0">
+        {/* Mobile top bar — sticky so the menu button is always reachable */}
+        <header className="lg:hidden sticky top-0 z-30 flex items-center gap-3 px-4 h-16 bg-sidebar-bg border-b border-white/5 flex-shrink-0">
           <button
             onClick={() => setDashDrawerOpen(true)}
             className="p-2 rounded-xl text-white/50 hover:text-white hover:bg-white/10 transition"
@@ -2084,15 +4849,27 @@ const submitPhysicalCounts = async () => {
             <Menu size={21} />
           </button>
           <div className="flex-1 min-w-0">
-            <p className="font-black text-white text-sm uppercase tracking-widest truncate">{BIZ_NAME}</p>
+            <div className="flex items-center gap-2">
+              <p className="font-black text-white text-sm uppercase tracking-widest truncate">{BIZ_NAME}</p>
+              <span className="text-[8px] font-black bg-brand/20 border border-brand/30 text-brand px-1.5 py-0.5 rounded-full uppercase tracking-widest flex-shrink-0">NON-VAT</span>
+            </div>
             <p className="text-brand text-[10px] font-bold uppercase truncate">{activeAdmin?.name} · {navMode === 'libellus' ? 'Operations' : 'Management'}</p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={e => { e.preventDefault(); handleShowQR(); }} className="flex items-center gap-1.5 bg-brand/20 text-brand border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
-              <QrCode size={13} /> QR
+            {(!isOnline || queuedCount > 0) && (
+              <span className={`flex items-center gap-1 px-2 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider ${isOnline ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30' : 'bg-red-500/15 text-red-400 border border-red-500/30'}`}>
+                {isOnline ? <RefreshCw size={12} className={queuedCount > 0 ? 'animate-spin' : ''} /> : <WifiOff size={12} />}
+                {queuedCount > 0 ? queuedCount : 'Off'}
+              </span>
+            )}
+            <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="flex items-center gap-1.5 bg-brand/20 text-brand border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
+              <QrCode size={13} /> {BUSINESS_TYPE === 'log' ? 'Portal' : 'QR'}
+            </button>
+            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="flex items-center gap-1.5 bg-white/5 text-white/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
+              <Settings size={13} />
             </button>
             <button onClick={handleLogout} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 border border-red-500/20 px-3 py-2 rounded-xl font-bold text-xs hover:bg-red-500/20 transition">
-              End Shift
+              {isSuperAdmin ? 'Log Out' : 'End Shift'}
             </button>
           </div>
         </header>
@@ -2100,13 +4877,38 @@ const submitPhysicalCounts = async () => {
         {/* Content */}
         <div className="flex-1 p-4 lg:p-6">
 
+      {/* ── OFFLINE / SYNC BANNER ─────────────────────────────────────────── */}
+      {(!isOnline || queuedCount > 0) && (
+        <div className={`mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border ${isOnline ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
+          {isOnline ? <CloudOff size={18} className="shrink-0" /> : <WifiOff size={18} className="shrink-0" />}
+          <div className="flex-1 min-w-0">
+            <p className="font-black text-sm leading-tight">
+              {isOnline
+                ? `Syncing ${queuedCount} offline order${queuedCount === 1 ? '' : 's'}…`
+                : 'You are offline — orders are saved locally'}
+            </p>
+            <p className="text-xs opacity-70 leading-tight mt-0.5">
+              {isOnline
+                ? 'Queued orders are being sent to the server automatically.'
+                : `New orders are queued and will sync when the connection returns.${queuedCount > 0 ? ` (${queuedCount} waiting)` : ''}`}
+            </p>
+          </div>
+          {isOnline && queuedCount > 0 && (
+            <button onClick={() => syncQueue(sendQueuedOrder).then(({ sent }) => { if (sent > 0) fetchOrders(); })}
+              className="shrink-0 flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition">
+              <RefreshCw size={12} /> Sync now
+            </button>
+          )}
+        </div>
+      )}
+
       {/* QR MODAL (Fixed z-index and flex shrinking issues) */}
       {showQR && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-surface p-6 md:p-8 rounded-xl border border-gray-700 shadow-2xl flex flex-col items-center max-w-sm w-full relative max-h-[95vh] overflow-y-auto custom-scrollbar">
             <button onClick={() => setShowQR(false)} className="absolute top-4 right-4 text-gray-400 hover:text-white font-bold text-2xl shrink-0">✕</button>
             <h2 className="text-2xl font-bold mb-1 text-white shrink-0">Customer QR</h2>
-            <div className="bg-dark px-6 py-2 rounded-full border border-gray-700 mb-6 mt-2 flex items-center gap-2 shrink-0">
+            <div className="bg-page-bg px-6 py-2 rounded-full border border-gray-700 mb-6 mt-2 flex items-center gap-2 shrink-0">
               <span className="text-gray-400 text-sm font-bold uppercase tracking-wider">Session ID:</span>
               <span className="text-accent font-black text-lg">{autoTableId}</span>
             </div>
@@ -2121,13 +4923,13 @@ const submitPhysicalCounts = async () => {
             
             <button 
               onClick={(e) => { e.preventDefault(); handleShowQR(); }} 
-              className="mt-6 w-full bg-surface border border-accent text-accent font-bold py-3 rounded-md hover:bg-accent hover:text-dark transition uppercase tracking-widest text-sm shrink-0"
+              className="mt-6 w-full bg-surface border border-accent text-accent font-bold py-3 rounded-md hover:bg-accent hover:text-white transition uppercase tracking-widest text-sm shrink-0"
             >
               Generate Next QR
             </button>
             <button 
               onClick={() => setShowQR(false)} 
-              className="mt-3 w-full bg-dark border border-gray-600 text-accent font-bold py-3 rounded-md hover:bg-accent hover:text-dark transition text-sm shrink-0"
+              className="mt-3 w-full bg-page-bg border border-gray-600 text-accent font-bold py-3 rounded-md hover:bg-accent hover:text-white transition text-sm shrink-0"
             >
               Close
             </button>
@@ -2234,21 +5036,31 @@ const submitPhysicalCounts = async () => {
                   <p className="text-gray-400 text-sm mt-1">Count your register before logging out.</p>
                 </div>
 
-                <div>
-                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Actual Cash in Register</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-accent font-black text-lg pointer-events-none">₱</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="0.00"
-                      value={shiftReconcile.actualCash}
-                      onChange={e => setShiftReconcile(prev => ({ ...prev, actualCash: e.target.value }))}
-                      className="w-full bg-surface-2 border-2 border-brand/40 focus:border-brand text-center text-white py-3 pl-8 rounded-xl outline-none font-black text-xl"
-                      autoFocus
-                    />
+                {/* Bill/coin denomination breakdown */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Count Your Bills & Coins</label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {DENOMS.map(d => (
+                      <div key={d} className="flex items-center gap-1.5 bg-surface-2 rounded-xl px-2.5 py-2 border border-white/5">
+                        <span className="text-white/50 font-bold text-xs w-10 shrink-0">₱{d}</span>
+                        <input type="number" min="0" placeholder="0"
+                          value={denomCounts[d] || ''}
+                          onChange={e => setDenomCounts(p => ({ ...p, [d]: e.target.value }))}
+                          className="w-full bg-transparent text-white text-right font-black text-sm tabular-nums outline-none"
+                        />
+                      </div>
+                    ))}
                   </div>
+                  <div className="flex justify-between items-center bg-brand/10 border border-brand/30 rounded-xl px-4 py-2.5">
+                    <span className="text-brand font-black uppercase tracking-wider text-xs">Total Count</span>
+                    <span className="text-brand font-black text-xl tabular-nums">₱{denomTotal.toFixed(2)}</span>
+                  </div>
+                  <p className="text-[10px] text-white/30 text-center">Or type total directly:</p>
+                  <input type="number" min="0" step="0.01" placeholder="0.00"
+                    value={shiftReconcile.actualCash}
+                    onChange={e => setShiftReconcile(prev => ({ ...prev, actualCash: e.target.value }))}
+                    className="w-full bg-surface-2 border border-white/10 text-center text-white py-2 rounded-xl outline-none font-bold text-sm"
+                  />
                 </div>
 
                 <div className="flex gap-3">
@@ -2280,2456 +5092,327 @@ const submitPhysicalCounts = async () => {
       )}
 
       {/* --- ANALYTICS DASHBOARD TAB --- */}
-      {activeTab === 'analytics' && (
-        <div className="flex flex-col gap-6 w-full max-w-7xl mx-auto animate-fade-in">
-          
-          {/* TOP ROW: High-Level Metrics */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-brand-dark border border-brand/20 rounded-xl p-6 shadow-lg shadow-brand/5 flex flex-col justify-center">
-              <p className="text-white/70 text-xs font-bold uppercase tracking-wider mb-1">Net Revenue (All-Time)</p>
-              <p className="text-4xl font-black text-white mb-1">P{totalAllTimeRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-              <p className="text-sm text-white/80 font-medium">{allCompletedOrders.length} completed orders</p>
-              {totalAllTimeComplimentary > 0 && <p className="text-xs text-white/50 font-semibold mt-1">+P{totalAllTimeComplimentary.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} complimentary (excluded)</p>}
-            </div>
-            
-            <div className="bg-surface border border-gray-800 rounded-xl p-6 flex flex-col justify-center">
-              <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Best Sales Day</p>
-              <p className="text-3xl font-black text-white mb-2">{bestDay.date}</p>
-              <p className="text-sm text-green-400 font-bold uppercase tracking-widest">P{bestDay.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Earned</p>
-            </div>
-
-            <div className="bg-surface border border-gray-800 rounded-xl p-6 overflow-hidden relative">
-              <h3 className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-4">Top 5 Best Sellers</h3>
-              <div className="space-y-3 relative z-10">
-                {topProducts.length === 0 ? (
-                  <p className="text-gray-600 text-sm italic">No sales data yet.</p>
-                ) : topProducts.map((p, i) => (
-                  <div key={i} className="flex justify-between items-center text-sm">
-                    <span className="font-bold text-gray-200 truncate pr-4">#{i+1} {p.name}</span>
-                    <span className="text-accent font-black bg-accent/10 px-2 py-0.5 rounded">{p.qty}x</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* INVENTORY VALUE CARD */}
-          {(() => {
-            const totalInventoryValue = inventory.reduce((sum, item) => sum + (item.stockQty * (item.unitCost || 0)), 0);
-            const totalSkus = inventory.length;
-            const zeroStockCount = inventory.filter(i => i.stockQty <= 0).length;
-            return (
-              <div className="bg-surface border border-white/8 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-10">
-                <div className="flex-1">
-                  <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Total Inventory Value</p>
-                  <p className="text-3xl font-black text-white">₱{totalInventoryValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                  <p className="text-white/30 text-xs font-medium mt-1">Cost of all stock on hand</p>
-                </div>
-                <div className="flex gap-6 sm:gap-10 shrink-0">
-                  <div className="flex flex-col items-center">
-                    <p className="text-2xl font-black text-white">{totalSkus}</p>
-                    <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider mt-0.5">SKUs Tracked</p>
-                  </div>
-                  <div className="flex flex-col items-center">
-                    <p className={`text-2xl font-black ${zeroStockCount > 0 ? 'text-red-400' : 'text-green-400'}`}>{zeroStockCount}</p>
-                    <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider mt-0.5">Out of Stock</p>
-                  </div>
-                  <div className="flex flex-col items-center">
-                    <p className="text-2xl font-black text-white">
-                      ₱{totalSkus > 0 ? (totalInventoryValue / totalSkus).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
-                    </p>
-                    <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider mt-0.5">Avg / SKU</p>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* BOTTOM ROW: Daily Trend & Stock Movement */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            
-            {/* Daily Sales List */}
-            <div className="bg-surface border border-gray-800 rounded-xl p-6 flex flex-col max-h-96">
-              <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-2">
-                <h3 className="text-white font-bold">Daily Revenue Trend</h3>
-                <button onClick={exportAnalyticsToPDF} className="text-[10px] bg-brand/10 border border-brand/30 text-brand px-3 py-1.5 rounded hover:bg-brand hover:text-page-bg transition font-bold uppercase tracking-wider">
-                  Export Trend
-                </button>
-              </div>
-              <div className="overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-700 flex-1 space-y-2">
-                {dailyRevenueList.length === 0 ? (
-                  <p className="text-gray-600 text-sm text-center py-4">No daily data available.</p>
-                ) : [...dailyRevenueList].reverse().map((day, i) => {
-                  const percentageOfBest = (day.revenue / bestDay.revenue) * 100;
-                  return (
-                    <div key={i} className="flex flex-col mb-3">
-                      <div className="flex justify-between text-sm mb-1">
-                        <span className="text-gray-300 font-semibold">{day.date}</span>
-                        <span className="text-white font-bold">P{day.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                      </div>
-                      <div className="w-full bg-dark rounded-full h-2">
-                        <div className={`h-2 rounded-full ${day.revenue === bestDay.revenue ? 'bg-accent' : 'bg-gray-600'}`} style={{ width: `${percentageOfBest}%` }}></div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-            {/* Inventory Alerts & Velocity */}
-            <div className="grid grid-cols-1 gap-4">
-              {/* --- High Velocity & Forecast (Weighted ADU Algorithm) --- */}
-              <div className="bg-surface border border-accent/30 rounded-xl p-5 flex flex-col shadow-lg shadow-accent/5">
-                <h3 className="text-accent text-sm font-bold uppercase tracking-wider mb-4 border-b border-accent/20 pb-2 flex items-center gap-2">
-                  <Zap size={14} className="text-accent" /> High Velocity & Forecast
-                </h3>
-                <div className="space-y-4">
-                  {mostUsedStock.length === 0 ? (
-                    <p className="text-gray-600 text-xs">No sales data yet — complete orders to populate.</p>
-                  ) : mostUsedStock.map((item, idx) => (
-                    <div key={idx} className="flex flex-col border-b border-accent/10 pb-3 last:border-0 last:pb-0">
-                      {/* Name + trend badge */}
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-gray-200 font-bold text-sm truncate pr-2">{item.name}</span>
-                        <span className={`flex items-center gap-0.5 text-[10px] font-black px-2 py-0.5 rounded ${item.trend > 0.1 ? 'bg-red-900/40 text-red-400' : item.trend < -0.1 ? 'bg-green-900/30 text-green-400' : 'bg-accent/10 text-accent'}`}>
-                          {item.trend > 0.1 ? <ArrowUp size={10} /> : item.trend < -0.1 ? <ArrowDown size={10} /> : null}
-                          {Math.abs(item.trend * 100).toFixed(0)}% {item.trend > 0.1 ? 'rising' : item.trend < -0.1 ? 'easing' : 'stable'}
-                        </span>
-                      </div>
-                      {/* Metrics grid */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                        <div className="bg-dark p-2 rounded flex flex-col items-center border border-gray-800/50">
-                          <p className="text-[8px] text-gray-500 uppercase font-bold tracking-widest mb-1 text-center leading-tight">Daily Burn</p>
-                          <p className="text-xs font-black text-black">{item.dailyAvg.toFixed(2)}<span className="text-[9px] text-gray-500 ml-0.5">{item.unit}</span></p>
-                        </div>
-                        <div className="bg-dark p-2 rounded flex flex-col items-center border border-gray-800/50">
-                          <p className="text-[8px] text-gray-500 uppercase font-bold tracking-widest mb-1 text-center leading-tight">Lasts</p>
-                          <p className={`text-xs font-black ${item.daysLeft <= 3 ? 'text-red-600 animate-pulse' : item.daysLeft <= 7 ? 'text-yellow-600' : 'text-green-700'}`}>
-                            {item.daysLeft === Infinity || isNaN(item.daysLeft) ? '∞' : `${item.daysLeft}d`}
-                          </p>
-                        </div>
-                        <div className="bg-dark p-2 rounded flex flex-col items-center border border-gray-800/50">
-                          <p className="text-[8px] text-gray-500 uppercase font-bold tracking-widest mb-1 text-center leading-tight">Buy 1wk</p>
-                          <p className="text-xs font-bold text-black">{item.weeklyNeed.toLocaleString()}<span className="text-[9px] text-gray-500 ml-0.5">{item.unit}</span></p>
-                        </div>
-                        <div className="bg-dark p-2 rounded flex flex-col items-center border border-gray-800/50">
-                          <p className="text-[8px] text-gray-500 uppercase font-bold tracking-widest mb-1 text-center leading-tight">Buy 1mo</p>
-                          <p className="text-xs font-bold text-black">{item.monthlyNeed.toLocaleString()}<span className="text-[9px] text-gray-500 ml-0.5">{item.unit}</span></p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Low Stock — days of supply, not raw qty */}
-                <div className="bg-surface border border-red-900/30 rounded-xl p-5 flex flex-col">
-                  <h3 className="text-red-400 text-sm font-bold uppercase tracking-wider mb-4 border-b border-red-900/30 pb-2 flex items-center gap-2">
-                    <AlertTriangle size={13} className="text-red-400" /> Low Stock (Risk)
-                  </h3>
-                  <div className="space-y-3">
-                    {lowestStock.length === 0 ? (
-                      <p className="text-gray-600 text-xs">All tracked items have adequate supply.</p>
-                    ) : lowestStock.map(item => (
-                      <div key={item._id} className="flex justify-between items-center text-sm">
-                        <div className="flex flex-col min-w-0 pr-2">
-                          <span className="text-gray-300 truncate font-semibold">{item.itemName}</span>
-                          <span className="text-gray-600 text-[10px]">{item.stockQty.toFixed(2)} {item.unit} left</span>
-                        </div>
-                        <span className={`font-black text-xs whitespace-nowrap px-2 py-1 rounded ${item.daysOfSupply <= 3 ? 'bg-red-900/40 text-red-400 animate-pulse' : item.daysOfSupply <= 7 ? 'bg-yellow-900/30 text-yellow-400' : 'bg-orange-900/20 text-orange-400'}`}>
-                          {item.daysOfSupply <= 0 ? 'OUT' : `~${Math.floor(item.daysOfSupply)}d left`}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Overstock — capital tied up, not raw qty */}
-                <div className="bg-surface border border-gray-800 rounded-xl p-5 flex flex-col">
-                  <h3 className="text-gray-400 text-sm font-bold uppercase tracking-wider mb-4 border-b border-gray-800 pb-2 flex items-center gap-2">
-                    <BarChart2 size={13} /> Overstock Watch
-                  </h3>
-                  <div className="space-y-3">
-                    {highestStock.length === 0 ? (
-                      <p className="text-gray-600 text-xs">No items exceed 30 days of supply.</p>
-                    ) : highestStock.map(item => (
-                      <div key={item._id} className="flex justify-between items-center text-sm">
-                        <div className="flex flex-col min-w-0 pr-2">
-                          <span className="text-gray-300 truncate font-semibold">{item.itemName}</span>
-                          <span className="text-gray-600 text-[10px]">{item.stockQty.toFixed(2)} {item.unit}</span>
-                        </div>
-                        <div className="flex flex-col items-end gap-0.5">
-                          <span className="text-gray-400 font-bold text-xs whitespace-nowrap">
-                            {isFinite(item.daysOfSupply) ? `~${Math.floor(item.daysOfSupply)}d supply` : '∞ supply'}
-                          </span>
-                          {item.tiedUpCapital > 0 && (
-                            <span className="text-orange-400 text-[10px] font-mono">₱{item.tiedUpCapital.toFixed(0)} tied</span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {activeTab === 'analytics' && <Suspense fallback={<TabFallback />}><AnalyticsTab ctx={ctx} /></Suspense>}
 
       {/* --- ACTIVE ORDERS TAB (Kitchen & Bar View) --- */}
       {/* --- ACTIVE ORDERS TAB (Kitchen & Bar View) --- */}
-      {activeTab === 'orders' && (() => {
-        // ---   KITCHEN & BAR ROUTING LOGIC ---
-        const displayOrders = filteredOrders.filter(order => {
-          if (departmentFilter === 'Kitchen') {
-            return order.items.some(item => (item.department || 'Kitchen') === 'Kitchen');
-          }
-          if (departmentFilter === 'Bar') {
-            return order.items.some(item => item.department === 'Bar');
-          }
-          return true;
-        });
-
-        return (
-          <div className="w-full">
-            {isPosOpen ? (
-              /* ========================================== */
-              /* 🛒 INLINE MANUAL CASHIER POS 🛒            */
-              /* ========================================== */
-              <div className="flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-180px)] w-full animate-fade-in">
-                
-                {/* LEFT: Product Grid */}
-                <div className="flex-1 flex flex-col min-h-[500px] lg:min-h-0 bg-surface border border-gray-800 rounded-xl overflow-hidden shadow-lg">
-                  <div className="p-4 border-b border-gray-800 bg-dark shadow-sm shrink-0 flex justify-between items-center">
-                    <h2 className="text-xl font-black text-accent tracking-widest uppercase flex items-center">
-                      <ShoppingCart size={20} className="mr-2 text-accent" /> POS Register
-                    </h2>
-                    <button onClick={() => setIsPosOpen(false)} className="text-red-500 hover:text-white font-bold px-4 py-2 bg-red-900/20 hover:bg-red-600 rounded uppercase text-xs tracking-wider transition flex items-center gap-1">
-                      <ChevronLeft size={14} /> Back to Orders
-                    </button>
-                  </div>
-                  
-                  <div className="p-3 border-b border-gray-800 bg-dark/50 flex gap-2 overflow-x-auto custom-scrollbar shrink-0">
-                    <button onClick={() => { setPosCategory('All'); setPosPage(1); }} className={`px-4 py-2 rounded font-bold whitespace-nowrap text-xs uppercase tracking-wider transition ${posCategory === 'All' ? 'bg-accent text-dark' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>All</button>
-                    {categories.map(c => (
-                      <button key={c._id} onClick={() => { setPosCategory(c.name); setPosPage(1); }} className={`px-4 py-2 rounded font-bold whitespace-nowrap text-xs uppercase tracking-wider transition ${posCategory === c.name ? 'bg-accent text-dark' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>{c.name}</button>
-                    ))}
-                  </div>
-
-                  {(() => {
-                    const posFiltered = products.filter(p => posCategory === 'All' || p.category === posCategory);
-                    const posTotalPages = Math.ceil(posFiltered.length / POS_PER_PAGE);
-                    const posPaged = posFiltered.slice((posPage - 1) * POS_PER_PAGE, posPage * POS_PER_PAGE);
-                    return (
-                      <div className="flex-1 flex flex-col min-h-0">
-                        <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-4 content-start custom-scrollbar">
-                          {posPaged.map(p => (
-                            <button
-                              key={p._id}
-                              onClick={() => openProductModal(p)}
-                              className="bg-dark border border-gray-700 rounded-xl p-3 flex flex-col items-center text-center hover:border-accent hover:bg-white/5 transition shadow-sm group"
-                            >
-                              {p.image ? (
-                                <img src={p.image} className="w-16 h-16 object-cover rounded-lg mb-2 group-hover:scale-105 transition-transform" />
-                              ) : (
-                                <div className="w-16 h-16 bg-gray-800 rounded-lg mb-2 flex items-center justify-center text-xs text-gray-500">No Img</div>
-                              )}
-                              <span className="font-bold text-sm text-black line-clamp-2 leading-tight w-full">{p.name}</span>
-                              <span className="text-accent font-black mt-auto pt-1 text-sm">₱{Number(p.basePrice || p.price || 0).toFixed(2)}</span>
-                            </button>
-                          ))}
-                        </div>
-                        {posTotalPages > 1 && (
-                          <div className="shrink-0 flex items-center justify-between px-4 py-2 border-t border-gray-800 bg-dark/50">
-                            <button
-                              onClick={() => setPosPage(p => Math.max(1, p - 1))}
-                              disabled={posPage === 1}
-                              className="px-3 py-1.5 rounded font-bold text-xs uppercase tracking-wider bg-gray-800 text-gray-400 hover:text-white disabled:opacity-30 transition flex items-center gap-1"
-                            >
-                              <ChevronLeft size={14} /> Prev
-                            </button>
-                            <span className="text-xs text-gray-400 font-bold">Page {posPage} / {posTotalPages}</span>
-                            <button
-                              onClick={() => setPosPage(p => Math.min(posTotalPages, p + 1))}
-                              disabled={posPage === posTotalPages}
-                              className="px-3 py-1.5 rounded font-bold text-xs uppercase tracking-wider bg-gray-800 text-gray-400 hover:text-white disabled:opacity-30 transition flex items-center gap-1"
-                            >
-                              Next <ChevronRight size={14} />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </div>
-
-                {/* RIGHT: Cart & Checkout */}
-                <div className="w-full lg:w-96 flex flex-col shrink-0 h-[500px] lg:h-full bg-surface border border-gray-800 rounded-xl overflow-hidden shadow-lg min-h-0">
-                  <div className="p-4 border-b border-gray-800 bg-dark shrink-0">
-                    <input type="text" placeholder="Customer / Driver Name" value={posCustomerName} onChange={e => setPosCustomerName(e.target.value)} className="w-full bg-dark border border-gray-700 p-2.5 rounded-lg text-black font-bold mb-3 outline-none focus:border-accent text-sm" />
-                    <div className="flex gap-2">
-                      {/* FIX: Removed the Payment Dropdown. Now it just takes the Table/Delivery type! */}
-                      <select value={posTable} onChange={e => setPosTable(e.target.value)} className="w-full bg-dark border border-gray-700 p-2 rounded-lg text-xs font-bold text-black outline-none">
-                        <option value="Takeout">Takeout</option>
-                        <option value="Grab Delivery">Grab Delivery</option>
-                        <option value="Foodpanda">Foodpanda</option>
-                        <option value="Manual Delivery">Manual/Direct</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar bg-dark/30">
-                    {posCart.length === 0 ? (
-                      <div className="h-full flex items-center justify-center">
-                        <p className="text-white font-bold uppercase tracking-widest text-xs">Cart is Empty</p>
-                      </div>
-                    ) : posCart.map((item, idx) => {
-                      const addOnTotal = item.selectedAddOns.reduce((s, a) => s + Number(a.price), 0);
-                      const lineTotal = (item.price + addOnTotal) * item.quantity;
-                      return (
-                        <div key={idx} className="bg-surface p-3 rounded-lg border border-gray-800 flex justify-between items-start shadow-sm">
-                          <div className="flex-1 pr-2 min-w-0">
-                            <p className="font-bold text-white text-sm truncate">{item.name}</p>
-                            {item.selectedAddOns.map((a, i) => <p key={i} className="text-[10px] text-gray-400 truncate">+ {a.name} (₱{a.price})</p>)}
-                            <div className="flex items-center gap-2 mt-2">
-                              <button onClick={() => setPosCart(posCart.map((c, i) => i === idx ? {...c, quantity: Math.max(1, c.quantity - 1)} : c))} className="w-6 h-6 bg-gray-800 hover:bg-gray-700 rounded text-white font-bold flex items-center justify-center transition">-</button>
-                              <span className="font-black text-sm w-6 text-center">{item.quantity}</span>
-                              <button onClick={() => setPosCart(posCart.map((c, i) => i === idx ? {...c, quantity: c.quantity + 1} : c))} className="w-6 h-6 bg-gray-800 hover:bg-gray-700 rounded text-white font-bold flex items-center justify-center transition">+</button>
-                            </div>
-                          </div>
-                          <div className="flex flex-col items-end gap-1 shrink-0">
-                            <p className="font-black text-accent text-sm">₱{lineTotal.toFixed(2)}</p>
-                            <button onClick={() => setPosCart(posCart.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-400 p-1 bg-red-900/10 rounded mt-1"><Trash2 size={14}/></button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="p-4 border-t border-gray-800 bg-dark shrink-0 z-10">
-                    <div className="flex justify-between items-center mb-3">
-                      <span className="text-gray-400 font-bold uppercase tracking-widest text-xs">Total</span>
-                      <span className="text-2xl font-black text-black">
-                        ₱{posCart.reduce((sum, item) => sum + ((item.price + item.selectedAddOns.reduce((s, a)=>s+Number(a.price), 0)) * item.quantity), 0).toFixed(2)}
-                      </span>
-                    </div>
-                    <button onClick={submitManualOrder} className="w-full py-4 bg-accent text-dark font-black rounded-xl uppercase tracking-widest text-xs hover:bg-black transition shadow-lg shadow-accent/20">
-                      Submit Order
-                    </button>
-                  </div>
-                </div>
-
-                {/* OPTIONS MODAL (Still an overlay so it dims the screen) */}
-                {posSelectedProduct && (
-                  <div className="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
-                    <div className="bg-surface p-6 rounded-xl border border-gray-700 max-w-sm w-full shadow-2xl flex flex-col max-h-[90vh]">
-                      
-                      <div className="shrink-0 mb-4 border-b border-gray-800 pb-4">
-                        <h3 className="text-2xl font-black text-white leading-tight">{posSelectedProduct.name}</h3>
-                        <p className="text-xs text-gray-400 uppercase tracking-widest mt-1">Configure Options</p>
-                      </div>
-                      
-                      <div className="overflow-y-auto custom-scrollbar flex-1 pr-2 pb-2">
-                        
-                        {/* --- SIZES (Now ALWAYS shows, even if only 1 size exists) --- */}
-                        <div className="mb-6">
-                          <label className="text-xs font-bold text-gray-400 mb-2 block uppercase tracking-wider">Size Selection</label>
-                          <div className="grid grid-cols-2 gap-3">
-                            {/* FIX: Now correctly displays the Base Price instead of +P0 */}
-                            <button onClick={() => setPosActiveSize(null)} className={`py-3 rounded-lg font-bold text-sm border transition ${posActiveSize === null ? 'bg-accent/20 border-accent text-accent' : 'bg-dark border-gray-700 text-black hover:border-gray-500'}`}>
-                              {posSelectedProduct.baseSize || 'Regular'} <span className="block text-xs mt-1 opacity-70">₱{Number(posSelectedProduct.basePrice || posSelectedProduct.price || 0).toFixed(2)}</span>
-                            </button>
-                            {(posSelectedProduct.sizes || []).map((s, idx) => (
-                              <button key={idx} onClick={() => setPosActiveSize(idx)} className={`py-3 rounded-lg font-bold text-sm border transition ${posActiveSize === idx ? 'bg-accent/20 border-accent text-accent' : 'bg-dark border-gray-700 text-black hover:border-gray-500'}`}>
-                                {s.name} <span className="block text-xs mt-1 opacity-70">₱{Number(s.price).toFixed(2)}</span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* --- EXTRAS --- */}
-                        {(posSelectedProduct.addOns?.length > 0) && (
-                          <div>
-                            <label className="text-xs font-bold text-gray-400 mb-2 block uppercase tracking-wider">Add Extras</label>
-                            <div className="space-y-3">
-                              {(posSelectedProduct.addOns || []).map((addon, idx) => {
-                                const isSelected = posActiveAddOns.some(a => a.name === addon.name);
-                                return (
-                                  <label key={idx} className={`flex items-center justify-between p-3 rounded-lg cursor-pointer border transition ${isSelected ? 'bg-accent/10 border-accent/50' : 'bg-dark border-gray-700 hover:bg-gray-800'}`}>
-                                    <div className="flex items-center gap-3">
-                                      <input type="checkbox" checked={isSelected} onChange={(e) => {
-                                        if (e.target.checked) setPosActiveAddOns([...posActiveAddOns, { name: addon.name, price: addon.price }]);
-                                        else setPosActiveAddOns(posActiveAddOns.filter(a => a.name !== addon.name));
-                                      }} className="w-5 h-5 accent-accent rounded" />
-                                      <span className={`text-sm font-bold ${isSelected ? 'text-white' : 'text-black'}`}>{addon.name}</span>
-                                    </div>
-                                    <span className="text-xs text-accent font-black">+₱{addon.price}</span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex gap-3 mt-4 pt-4 border-t border-gray-800 shrink-0">
-                        <button onClick={() => setPosSelectedProduct(null)} className="flex-1 py-4 bg-dark border border-gray-700 text-black hover:text-accent font-bold rounded-xl uppercase tracking-wider text-xs transition">Cancel</button>
-                        <button onClick={confirmPosItem} className="flex-1 py-4 bg-accent text-dark hover:bg-white font-black rounded-xl uppercase tracking-wider text-xs shadow-lg shadow-accent/20 transition">Add to Cart</button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              /* ========================================== */
-              /* 📋 STANDARD ORDERS GRID 📋                 */
-              /* ========================================== */
-              <>
-                <div className="flex justify-between items-center mb-6 bg-surface-2 p-3 rounded-xl border border-white/10 shadow-sm relative flex-wrap gap-4">
-                  <div className="flex gap-2 overflow-x-auto">
-                    {['All', 'Kitchen', 'Bar'].map(dept => (
-                      <button 
-                        key={dept} 
-                        onClick={() => setDepartmentFilter(dept)} 
-                        className={`px-6 py-2 rounded-lg text-sm font-black uppercase tracking-widest transition whitespace-nowrap ${departmentFilter === dept ? 'bg-brand text-white shadow-md shadow-brand/20' : 'bg-transparent text-white/50 hover:text-brand'}`}
-                      >
-                        {dept} View
-                      </button>
-                    ))}
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <div className="relative">
-                      <button 
-                        onClick={() => setIsStatusMenuOpen(!isStatusMenuOpen)}
-                        className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-lg font-bold uppercase tracking-wider text-xs hover:bg-gray-800 transition shadow-md"
-                      >
-                        <Menu size={16} /> {orderFilter}
-                      </button>
-                      
-                      {isStatusMenuOpen && (
-                        <div className="absolute right-0 top-full mt-2 w-48 bg-surface-2 border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col">
-                          {['All', 'Pending', 'Preparing', 'Completed', 'Cancelled'].map(filter => (
-                            <button 
-                              key={filter} 
-                              onClick={() => { setOrderFilter(filter); setIsStatusMenuOpen(false); }} 
-                              className={`px-4 py-3 text-left text-sm font-bold transition hover:bg-white/5 ${orderFilter === filter ? 'bg-brand/10 text-brand border-l-4 border-brand' : 'text-white/70 border-l-4 border-transparent'}`}
-                            >
-                              {filter}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    
-                    <button 
-                      onClick={() => setIsPosOpen(true)}
-                      className="px-6 py-2 bg-transparent text-brand border border-brand/40 rounded-lg text-sm font-black uppercase tracking-widest hover:bg-brand hover:text-page-bg transition shadow-md whitespace-nowrap flex items-center gap-2"
-                    >
-                      <Plus size={16} /> Manual Order
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  {displayOrders.length === 0 ? (
-                    <div className="col-span-full text-center py-12 text-gray-500 font-bold uppercase tracking-widest">No orders in {departmentFilter} queue.</div>
-                  ) : displayOrders.map(order => {
-                    // Items scoped to current department view (or all items when in All view)
-                    const viewItems      = departmentFilter !== 'All'
-                      ? order.items.filter(i => (i.department || 'Kitchen') === departmentFilter)
-                      : order.items;
-                    const allDelivered   = order.items.length > 0 && order.items.every(i => i.itemStatus === 'Delivered');
-                    const deliveredCount = viewItems.filter(i => i.itemStatus === 'Delivered').length;
-                    const allDeptDone    = viewItems.length > 0 && viewItems.every(i => i.itemStatus === 'Finished' || i.itemStatus === 'Delivered');
-                    const deptDoneCount  = viewItems.filter(i => i.itemStatus === 'Finished' || i.itemStatus === 'Delivered').length;
-                    const isUpdating = !!updatingOrders[order._id];
-                    const compEntry = compOverride[order._id];
-                    const isComp = compEntry !== undefined ? compEntry.isComplimentary : order.isComplimentary;
-                    const compEmpName = compEntry !== undefined ? compEntry.employeeName : (order.employeeName || '');
-                    const displayDiscount = isComp ? order.subtotal : (order.discount || 0);
-                    const displayTotal = isComp ? 0 : order.total;
-                    const statusBorderColor =
-                      order.status === 'Completed'           ? 'border-l-green-600' :
-                      order.status === 'Ready'               ? 'border-l-blue-500' :
-                      order.status === 'Partially Delivered' ? 'border-l-orange-500' :
-                      order.status === 'Preparing'           ? 'border-l-yellow-500' :
-                      (order.status === 'Cancelled' || order.status === 'Voided') ? 'border-l-gray-600' :
-                      'border-l-red-500';
-                    return (
-                      <div key={order._id} className={`bg-surface rounded-xl border border-white/5 border-l-4 ${statusBorderColor} flex flex-col shadow-lg transition-all ${(order.status === 'Cancelled' || order.status === 'Voided') ? 'opacity-60' : ''}`}>
-
-                        {/* HEADER — only chevron collapses */}
-                        <div className="flex justify-between items-center px-4 pt-4 pb-3 gap-2">
-                          <div className="flex flex-col min-w-0 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-white font-black text-sm">{order.orderNumber}</span>
-                              {order.customerName && (
-                                <span className="text-[11px] bg-white/10 text-gray-300 px-2 py-0.5 rounded font-semibold">{order.customerName}</span>
-                              )}
-                              {order.table && <span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">({order.table})</span>}
-                            </div>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                                order.status === 'Pending'             ? 'bg-red-500/15 text-red-400' :
-                                order.status === 'Preparing'           ? 'bg-yellow-500/15 text-yellow-400' :
-                                order.status === 'Ready'               ? 'bg-blue-500/15 text-blue-400' :
-                                order.status === 'Partially Delivered' ? 'bg-orange-500/15 text-orange-400' :
-                                order.status === 'Completed'           ? 'bg-green-500/15 text-green-400' :
-                                'bg-gray-500/15 text-gray-500'
-                              }`}>{order.status}</span>
-                              <span className="text-gray-600 text-[9px]">{new Date(order.createdAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1 flex-shrink-0">
-                            <button onClick={() => printOrderSlip(order)} className="p-1.5 bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition" title="Print">
-                              <Printer size={13} />
-                            </button>
-                            <button
-                              onClick={() => setCollapsedOrders(prev => ({ ...prev, [order._id]: !prev[order._id] }))}
-                              className="p-1.5 bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition"
-                            >
-                              {collapsedOrders[order._id] ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
-                            </button>
-                          </div>
-                        </div>
-
-                        {!collapsedOrders[order._id] && (
-                          <div className="px-4 pb-4 flex flex-col gap-3 border-t border-white/5 pt-3">
-                            <div className="space-y-2 max-h-56 overflow-y-auto custom-scrollbar pr-1">
-                              {['Kitchen', 'Bar'].map(dept => {
-                                const deptItems = order.items.map((item, idx) => ({ ...item, originalIdx: idx })).filter(i => (i.department || 'Kitchen') === dept);
-                                if (deptItems.length === 0) return null;
-                                if (departmentFilter !== 'All' && departmentFilter !== dept) return null;
-                                return (
-                                  <div key={dept} className="bg-black/20 rounded-lg p-2.5 border border-white/5">
-                                    <h4 className="text-[9px] uppercase text-gray-500 font-black mb-2 tracking-widest">{dept}</h4>
-                                    {deptItems.map(item => (
-                                      <div key={item.originalIdx} className="mb-2 last:mb-0">
-                                        <div className="flex justify-between items-start gap-2">
-                                          <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                                            <span className={`font-semibold text-sm leading-tight ${item.itemStatus === 'Delivered' ? 'text-gray-600 line-through' : 'text-white'}`}>
-                                              {item.quantity}x {item.name}
-                                            </span>
-                                          </div>
-                                          <div className="flex items-center gap-1 flex-shrink-0">
-                                            {(order.status === 'Preparing' || order.status === 'Ready') ? (
-                                              <>
-                                                {item.itemStatus === 'Received' && (
-                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Preparing')} className="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 hover:bg-yellow-500 hover:text-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition">Prep</button>
-                                                )}
-                                                {item.itemStatus === 'Preparing' && (
-                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Finished')} className="bg-accent/10 text-accent border border-accent/20 hover:bg-accent hover:text-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition">Finish</button>
-                                                )}
-                                                {item.itemStatus === 'Finished' && departmentFilter === 'All' && (
-                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Delivered')} className="bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500 hover:text-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition flex items-center gap-1">
-                                                    <Truck size={9} /> Give
-                                                  </button>
-                                                )}
-                                                {item.itemStatus === 'Finished' && departmentFilter !== 'All' && (
-                                                  <span className="text-accent text-[10px] font-black uppercase flex items-center gap-0.5"><CheckCircle size={10} /> Done</span>
-                                                )}
-                                                {item.itemStatus === 'Delivered' && (
-                                                  <span className="text-green-500/50 text-[10px] font-black uppercase flex items-center gap-0.5"><Check size={9} /> Given</span>
-                                                )}
-                                              </>
-                                            ) : (
-                                              <div className="flex flex-col items-end">
-                                                {item.discountPercent > 0 ? (
-                                                  <>
-                                                    <span className="text-gray-600 line-through text-[10px] font-mono">
-                                                      P{((item.price + (item.selectedAddOns?.reduce((s, a) => s + Number(a.price), 0) || 0)) * item.quantity).toFixed(2)}
-                                                    </span>
-                                                    <span className="text-accent font-mono font-bold text-xs">
-                                                      P{(((item.price + (item.selectedAddOns?.reduce((s, a) => s + Number(a.price), 0) || 0)) * item.quantity) * (1 - item.discountPercent / 100)).toFixed(2)}
-                                                    </span>
-                                                  </>
-                                                ) : (
-                                                  <span className="text-gray-400 font-mono text-xs">
-                                                    P{((item.price + (item.selectedAddOns?.reduce((s, a) => s + Number(a.price), 0) || 0)) * item.quantity).toFixed(2)}
-                                                  </span>
-                                                )}
-                                              </div>
-                                            )}
-                                          </div>
-                                        </div>
-                                        {item.selectedAddOns && item.selectedAddOns.length > 0 && (
-                                          <div className="pl-5 mt-1 space-y-0.5">
-                                            {item.selectedAddOns.map((addon, aIdx) => (
-                                              <div key={aIdx} className="flex justify-between items-center text-[10px] text-gray-600">
-                                                <span className="flex items-center gap-1">
-                                                  <ChevronRight size={8} className="flex-shrink-0" /> {addon.name} <span className="opacity-70">(+P{addon.price})</span>
-                                                </span>
-                                                {order.status === 'Pending' && (
-                                                  <button onClick={() => removeAddOnFromOrder(order, item.originalIdx, aIdx)} className="text-gray-600 hover:text-red-400 transition p-0.5 rounded">
-                                                    <X size={10} />
-                                                  </button>
-                                                )}
-                                              </div>
-                                            ))}
-                                          </div>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                );
-                              })}
-                            </div>
-
-                            {order.status === 'Pending' && departmentFilter === 'All' && (
-                              <div className="flex flex-col gap-1.5 border-t border-white/5 pt-2.5">
-                                {isComp ? (
-                                  /* ── APPLIED STATE: audit badge ── */
-                                  <div className="flex items-start gap-2 bg-white/3 border border-white/8 rounded-lg p-2">
-                                    <Gift size={11} className="text-gray-500 flex-shrink-0 mt-0.5" />
-                                    <div className="flex-1 min-w-0 space-y-0.5">
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-gray-400 text-[10px] font-black uppercase tracking-wider">Complimentary</span>
-                                        {order.complimentaryReferenceNumber && (
-                                          <span className="text-gray-600 text-[9px] font-mono">{order.complimentaryReferenceNumber}</span>
-                                        )}
-                                      </div>
-                                      <div className="text-gray-500 text-[9px]">
-                                        <span className="text-gray-600">Reason:</span> {COMP_REASON_LABELS[order.complimentaryReasonType] || '—'}
-                                      </div>
-                                      {order.complimentaryReasonNote && (
-                                        <div className="text-gray-600 text-[9px] italic truncate">&ldquo;{order.complimentaryReasonNote}&rdquo;</div>
-                                      )}
-                                      <div className="text-gray-600 text-[9px]">
-                                        <span className="text-gray-700">For:</span> {compEmpName} &nbsp;·&nbsp; <span className="text-gray-700">By:</span> {order.complimentaryApprovedBy || activeAdmin?.name || '—'}
-                                      </div>
-                                      {order.complimentaryApprovedAt && (
-                                        <div className="text-gray-700 text-[9px]">{new Date(order.complimentaryApprovedAt).toLocaleString()}</div>
-                                      )}
-                                    </div>
-                                    <button onClick={() => removeComplimentary(order._id)} className="flex-shrink-0 bg-red-500 hover:bg-red-600 text-white p-1 rounded font-black transition" title="Remove Complimentary">
-                                      <X size={11} />
-                                    </button>
-                                  </div>
-                                ) : (
-                                  /* ── PENDING STATE: input form ── */
-                                  <div className="flex flex-col gap-1.5">
-                                    <div className="flex items-center gap-1.5">
-                                      <Gift size={10} className="text-gray-500 flex-shrink-0" />
-                                      <span className="text-gray-500 text-[9px] font-bold uppercase tracking-wider">Mark Complimentary</span>
-                                    </div>
-                                    {/* Reason type — REQUIRED */}
-                                    <select
-                                      className="w-full bg-surface-2 border border-white/10 text-gray-200 text-[10px] rounded p-1.5 outline-none font-semibold"
-                                      value={compReasonTypes[order._id] || ''}
-                                      onChange={(e) => setCompReasonTypes(prev => ({ ...prev, [order._id]: e.target.value }))}
-                                    >
-                                      <option value="">— Select Reason Type (required) —</option>
-                                      {Object.entries(COMP_REASON_LABELS).map(([key, label]) => (
-                                        <option key={key} value={key}>{label}</option>
-                                      ))}
-                                    </select>
-                                    {/* Optional note */}
-                                    <input
-                                      type="text"
-                                      placeholder="Additional note (optional)..."
-                                      className="w-full bg-surface-2 border border-white/10 text-gray-300 text-[10px] rounded p-1.5 outline-none"
-                                      value={compReasonNotes[order._id] || ''}
-                                      onChange={(e) => setCompReasonNotes(prev => ({ ...prev, [order._id]: e.target.value }))}
-                                    />
-                                    {/* Beneficiary override + apply button */}
-                                    <div className="flex items-center gap-1.5">
-                                      <select
-                                        className="flex-1 min-w-0 bg-surface-2 border border-white/10 text-gray-400 text-[9px] rounded p-1.5 outline-none"
-                                        value={compSelections[order._id] || ''}
-                                        onChange={(e) => setCompSelections({ ...compSelections, [order._id]: e.target.value })}
-                                      >
-                                        <option value="">For: {activeAdmin?.name || 'You'} (default)</option>
-                                        {users.map(u => <option key={u._id} value={u.name}>For: {u.name}</option>)}
-                                      </select>
-                                      <button
-                                        onClick={() => applyComplimentary(order._id)}
-                                        className="flex-shrink-0 bg-yellow-500 hover:bg-yellow-400 text-black px-2.5 py-1.5 rounded font-black text-[10px] uppercase tracking-wider transition flex items-center gap-1"
-                                      >
-                                        <Check size={11} /> Apply
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
-                            {departmentFilter === 'All' && (<div className="bg-black/30 rounded-lg p-3 space-y-1.5">
-                              {order.status === 'Completed' && order.paymentMethod && (
-                                <div className="flex justify-between text-[11px] text-gray-500">
-                                  <span>Payment</span>
-                                  <span className="font-mono text-brand/80 font-bold">{order.paymentMethod}</span>
-                                </div>
-                              )}
-                              <div className="flex justify-between text-[11px] text-gray-500">
-                                <span>Gross</span><span className="font-mono">P{order.subtotal.toFixed(2)}</span>
-                              </div>
-                              <div className="flex justify-between items-center text-[11px] text-gray-500">
-                                <div className="flex items-center gap-2">
-                                  <span>VAT ({order.vatRate > 0 ? (order.vatRate * 100).toFixed(0) : 0}%)</span>
-                                  {order.status === 'Pending' && (
-                                    <button onClick={() => toggleVat(order._id, order.vatRate)} className="bg-white/5 hover:bg-white/10 text-accent px-1.5 py-0.5 rounded text-[9px] uppercase font-black transition border border-white/10">
-                                      {order.vatRate > 0 ? 'Off' : 'On'}
-                                    </button>
-                                  )}
-                                </div>
-                                <span className="font-mono">P{order.vatAmount.toFixed(2)}</span>
-                              </div>
-                              {(() => {
-                                const promoDiscounts = discounts.filter(d => !d.name.toLowerCase().match(/pwd|senior/));
-                                const scpwdDiscounts = discounts.filter(d => d.name.toLowerCase().match(/pwd|senior/));
-                                const hasScpwd = order.items.some(i => i.discountPercent > 0);
-                                const hasPromo = order.discountPercent > 0 && order.discountType !== 'SC/PWD';
-                                return (
-                                  <>
-                                    <div className="flex justify-between items-center text-[11px] text-gray-500 border-b border-white/5 pb-1.5">
-                                      <div className="flex items-center gap-2 flex-1 pr-2">
-                                        <span className="whitespace-nowrap uppercase tracking-wider text-[9px]">Promo</span>
-                                        {order.status === 'Pending' && (
-                                          hasScpwd ? (
-                                            <span className="text-[9px] text-white/20 italic ml-auto">SC/PWD active</span>
-                                          ) : (
-                                            <div className="flex gap-1 items-center flex-1 justify-end">
-                                              <select
-                                                className="w-full max-w-[110px] bg-dark border border-white/10 rounded px-1 text-[10px] text-black outline-none h-6"
-                                                value={discountInputs[order._id] || ''}
-                                                onChange={(e) => setDiscountInputs(prev => ({ ...prev, [order._id]: e.target.value }))}
-                                              >
-                                                <option value="">No promo</option>
-                                                {promoDiscounts.map(d => <option key={d._id} value={d.percentage}>{d.name} ({d.percentage}%)</option>)}
-                                              </select>
-                                              <button onClick={() => applyDiscount(order._id)} className="bg-accent/10 hover:bg-accent text-accent hover:text-black px-2 rounded font-black transition h-6 flex items-center border border-accent/20"><Check size={12} /></button>
-                                              {order.discountPercent > 0 && order.discountType !== 'SC/PWD' && (
-                                                <button onClick={() => applyDiscount(order._id, true)} className="bg-red-500/10 text-red-400 px-2 rounded font-black h-6 border border-red-500/20 flex items-center"><X size={12} /></button>
-                                              )}
-                                            </div>
-                                          )
-                                        )}
-                                      </div>
-                                      <span className="text-red-400 whitespace-nowrap font-mono">-P{displayDiscount.toFixed(2)}</span>
-                                    </div>
-                                    {scpwdDiscounts.length > 0 && order.status === 'Pending' && (
-                                      <div className="border-b border-white/5 pb-1.5 space-y-1">
-                                        {hasPromo ? (
-                                          <span className="text-[9px] uppercase tracking-wider text-white/20 italic">SC/PWD — Promo active</span>
-                                        ) : (
-                                          <>
-                                            <button
-                                              onClick={() => setScpwdOpen(prev => ({ ...prev, [order._id]: !prev[order._id] }))}
-                                              className="text-[9px] uppercase tracking-wider text-accent font-black flex items-center gap-1 hover:opacity-80 transition"
-                                            >
-                                              SC/PWD (per item) {scpwdOpen[order._id] ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-                                            </button>
-                                            {scpwdOpen[order._id] && (
-                                              <div className="max-h-[130px] overflow-y-auto custom-scrollbar space-y-1.5 pt-0.5 pr-1">
-                                                {order.items.map((item, idx) => (
-                                                  <div key={idx} className="flex items-center gap-2">
-                                                    <span className="text-[11px] text-gray-400 font-semibold flex-1 truncate min-w-0">{item.quantity}x {item.name}</span>
-                                                    <select
-                                                      className="bg-dark border border-white/10 rounded text-[10px] text-black outline-none px-1 py-0.5 h-6 cursor-pointer flex-shrink-0"
-                                                      value={item.discountPercent || ''}
-                                                      onChange={(e) => applyItemDiscount(order._id, idx, e.target.value)}
-                                                    >
-                                                      <option value="">No disc</option>
-                                                      {scpwdDiscounts.map(d => (
-                                                        <option key={d._id} value={d.percentage}>{d.name} ({d.percentage}%)</option>
-                                                      ))}
-                                                    </select>
-                                                    {item.discountPercent > 0 && (
-                                                      <span className="text-accent font-mono text-[10px] whitespace-nowrap flex-shrink-0">-{item.discountPercent}%</span>
-                                                    )}
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            )}
-                                          </>
-                                        )}
-                                      </div>
-                                    )}
-                                  </>
-                                );
-                              })()}
-                              <div className="flex justify-between font-black text-base pt-1 border-t border-white/10">
-                                <span className="text-white">Total</span>
-                                <span className="text-accent font-mono tracking-wider">P{displayTotal.toFixed(2)}</span>
-                              </div>
-                            </div>)}
-
-                            <div className={`flex flex-col gap-2 ${isUpdating ? 'opacity-50 pointer-events-none' : ''}`}>
-                              {order.status === 'Pending' && departmentFilter === 'All' && (() => {
-                                const isDelivery = ['Grab Delivery', 'Foodpanda', 'Manual Delivery'].includes(order.table);
-                                const displayPayment = isDelivery ? order.table : (paymentSelections[order._id] || order.paymentMethod || 'Cash');
-                                if (isComp) {
-                                  return (
-                                    <div className="flex flex-col w-full gap-2">
-                                      <div className="flex items-center justify-center gap-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg py-2.5 px-3">
-                                        <Gift size={12} className="text-yellow-400" />
-                                        <span className="text-yellow-400 text-[10px] font-black uppercase tracking-widest">No Payment — Complimentary</span>
-                                      </div>
-                                      <div className="flex gap-2">
-                                        <button
-                                          onClick={() => updateStatus(order._id, 'Preparing')}
-                                          className="flex-1 bg-yellow-500 text-black py-2.5 rounded-lg hover:bg-yellow-400 font-black text-xs uppercase tracking-widest transition"
-                                        >
-                                          Send to Kitchen
-                                        </button>
-                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-white font-black text-xs transition uppercase border border-red-500/20">Drop</button>
-                                      </div>
-                                    </div>
-                                  );
-                                }
-                                return (() => {
-                                  const isCash = displayPayment === 'Cash';
-                                  const tendered = parseFloat(cashTendered[order._id] || '0') || 0;
-                                  const changeDue = isCash && tendered > 0 ? tendered - displayTotal : null;
-                                  const isUnderpaid = isCash && tendered > 0 && tendered < displayTotal;
-                                  return (
-                                    <div className="flex flex-col w-full gap-2">
-                                      <select
-                                        value={displayPayment}
-                                        disabled={isDelivery}
-                                        onChange={(e) => setPaymentSelections(prev => ({ ...prev, [order._id]: e.target.value }))}
-                                        className={`w-full border rounded-lg p-2 text-sm font-bold outline-none transition ${isDelivery ? 'bg-dark text-gray-400 border-white/10 cursor-not-allowed' : 'bg-dark text-black border-white/10 focus:border-accent/50'}`}
-                                      >
-                                        <optgroup label="In-Store Payments">
-                                          <option value="Cash">Cash</option>
-                                          <option value="Bank Transfer">Bank Transfer</option>
-                                        </optgroup>
-                                        <optgroup label="E-Wallets">
-                                          <option value="GCash">GCash</option>
-                                          <option value="Maya">Maya</option>
-                                          <option value="Maribank">Maribank / Seabank</option>
-                                          <option value="Other E-Wallet">Other E-Wallet</option>
-                                        </optgroup>
-                                        <optgroup label="Delivery Partners">
-                                          <option value="Grab Delivery">GrabFood</option>
-                                          <option value="Foodpanda">Foodpanda</option>
-                                          <option value="Manual Delivery">Manual/Direct</option>
-                                        </optgroup>
-                                      </select>
-                                      {isCash && (
-                                        <div className="flex flex-col gap-1">
-                                          <div className="flex items-center gap-2">
-                                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest whitespace-nowrap">Cash In</span>
-                                            <input
-                                              type="number"
-                                              min="0"
-                                              step="0.01"
-                                              placeholder={`≥ P${displayTotal.toFixed(2)}`}
-                                              value={cashTendered[order._id] || ''}
-                                              onChange={(e) => setCashTendered(prev => ({ ...prev, [order._id]: e.target.value }))}
-                                              className="flex-1 bg-white/5 border border-white/10 focus:border-accent/50 rounded-lg px-2 py-1.5 text-sm font-mono text-white outline-none"
-                                              aria-label="Cash tendered"
-                                            />
-                                          </div>
-                                          {changeDue !== null && (
-                                            <div className={`flex justify-between text-xs font-black px-1 ${isUnderpaid ? 'text-red-400' : 'text-green-400'}`}>
-                                              <span>{isUnderpaid ? 'SHORT' : 'CHANGE'}</span>
-                                              <span className="font-mono">P{Math.abs(changeDue).toFixed(2)}</span>
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-                                      <div className="flex gap-2">
-                                        <button
-                                          disabled={isUnderpaid}
-                                          onClick={() => {
-                                            if (isDelivery && paymentSelections[order._id] !== order.table) {
-                                              setPaymentSelections(prev => ({ ...prev, [order._id]: order.table }));
-                                            }
-                                            setTimeout(() => updateStatus(order._id, 'Preparing'), 0);
-                                          }}
-                                          className={`flex-1 py-2.5 rounded-lg font-black text-xs uppercase tracking-widest transition ${isUnderpaid ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-accent text-black hover:bg-accentShadow'}`}
-                                        >
-                                          Pay & Send to Kitchen
-                                        </button>
-                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-white font-black text-xs transition uppercase border border-red-500/20">Drop</button>
-                                      </div>
-                                    </div>
-                                  );
-                                })();
-                              })()}
-
-                              {order.status === 'Preparing' && (
-                                <div className="flex flex-col gap-2">
-                                  {deliveredCount > 0 && (
-                                    <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">
-                                      <Truck size={12} className="text-green-400 flex-shrink-0" />
-                                      <span className="text-green-400 text-[10px] font-black uppercase tracking-widest">{deliveredCount}/{viewItems.length} Given to Customer</span>
-                                    </div>
-                                  )}
-                                  {departmentFilter !== 'All' ? (
-                                    // Kitchen / Bar view: scope progress to this dept only
-                                    allDeptDone ? (
-                                      <div className="flex items-center justify-center gap-2 bg-green-500/10 border border-green-500/20 text-green-400 rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
-                                        <CheckCircle size={11} /> All {departmentFilter} Items Done
-                                      </div>
-                                    ) : (
-                                      <div className="flex items-center justify-center bg-black/20 border border-white/5 text-gray-500 rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
-                                        In Preparation... ({deptDoneCount}/{viewItems.length})
-                                      </div>
-                                    )
-                                  ) : allDelivered ? (
-                                    <button onClick={() => updateStatus(order._id, 'Completed')} className="w-full bg-green-600 text-white py-2.5 rounded-lg hover:bg-green-500 font-black uppercase tracking-widest text-xs transition flex items-center justify-center gap-2">
-                                      <CheckCircle size={13} /> Complete Order
-                                    </button>
-                                  ) : order.items.every(i => i.itemStatus === 'Finished' || i.itemStatus === 'Delivered') ? (
-                                    <div className="flex items-center justify-center gap-2 bg-blue-500/10 border border-blue-500/20 text-blue-400 rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
-                                      <Truck size={11} /> Give items above to complete
-                                    </div>
-                                  ) : (
-                                    <div className="flex items-center justify-center bg-black/20 border border-white/5 text-gray-500 rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
-                                      In Preparation...
-                                    </div>
-                                  )}
-                                  {departmentFilter === 'All' && !allDelivered && (
-                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="w-full bg-red-500/10 text-red-400 py-2 rounded-lg hover:bg-red-500 hover:text-white font-black text-xs transition uppercase border border-red-500/20">Drop Order</button>
-                                  )}
-                                </div>
-                              )}
-
-                              {order.status === 'Ready' && departmentFilter === 'All' && (
-                                <div className="flex flex-col gap-2">
-                                  {deliveredCount > 0 && (
-                                    <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">
-                                      <Truck size={12} className="text-green-400 flex-shrink-0" />
-                                      <span className="text-green-400 text-[10px] font-black uppercase tracking-widest">{deliveredCount}/{order.items.length} Given</span>
-                                    </div>
-                                  )}
-                                  <div className="flex gap-2">
-                                    <button onClick={() => updateStatus(order._id, 'Completed')} className="flex-1 bg-green-600 text-white py-2.5 rounded-lg hover:bg-green-500 font-black uppercase tracking-widest text-xs transition">Mark All Delivered</button>
-                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-3 rounded-lg hover:bg-red-500 hover:text-white font-black text-xs transition uppercase border border-red-500/20">Drop</button>
-                                  </div>
-                                  <button
-                                    onClick={async () => {
-                                      try {
-                                        const res = await apiFetch(`/api/orders/${order._id}/partial-delivery`, { method: 'POST' });
-                                        const data = await res.json();
-                                        if (!data.success) alert(data.error);
-                                      } catch (err) { console.error(err); }
-                                    }}
-                                    className="w-full bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 py-2 rounded-lg hover:bg-yellow-500/20 font-bold text-xs uppercase tracking-widest transition"
-                                  >
-                                    Give Partial — More Items Coming
-                                  </button>
-                                </div>
-                              )}
-
-                              {order.status === 'Partially Delivered' && departmentFilter === 'All' && (
-                                <div className="flex flex-col gap-2">
-                                  <div className="flex items-center justify-center gap-2 bg-orange-500/10 border border-orange-500/20 rounded-lg py-2">
-                                    <Clock size={13} className="text-orange-400" />
-                                    <span className="text-orange-400 text-[10px] font-black uppercase tracking-widest">Partially Delivered</span>
-                                  </div>
-                                  <button onClick={() => updateStatus(order._id, 'Completed')} className="w-full bg-green-600 text-white py-2.5 rounded-lg hover:bg-green-500 font-black uppercase tracking-widest text-xs transition">
-                                    Deliver Remaining Items
-                                  </button>
-                                </div>
-                              )}
-
-                              {order.status === 'Completed' && departmentFilter === 'All' && (
-                                <button onClick={() => handleVoidOrder(order._id)} className="w-full bg-red-500/10 border border-red-500/20 text-red-400 py-2 rounded-lg hover:bg-red-500 hover:text-white font-bold text-xs uppercase tracking-widest transition">
-                                  Void / Refund Order
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
-        );
-      })()}
+      {activeTab === 'orders' && <Suspense fallback={<TabFallback />}><OrdersTab ctx={ctx} /></Suspense>}
 
       {/* --- SALES HISTORY & REGISTER TAB --- */}
-      {activeTab === 'history' && (() => {
-        // Filter calculations based on the Shift Dropdown
-        const todayShiftOrders = todayCompleted.filter(o => shiftFilter === 'All' || o.cashier === shiftFilter);
-        const shiftPaid = todayShiftOrders.filter(o => !o.isComplimentary);
-        const shiftComp = todayShiftOrders.filter(o => o.isComplimentary);
-        const shiftGross = todayShiftOrders.reduce((sum, o) => sum + o.subtotal, 0); // ALL incl. comp
-        const shiftDisc = todayShiftOrders.reduce((sum, o) => o.isComplimentary ? sum + o.subtotal : sum + (o.discount || 0), 0); // comp = 100% discount
-        const shiftRevenue = shiftGross - shiftDisc; // Net Sales (cash collected only)
-        const shiftCompAmount = shiftComp.reduce((sum, o) => sum + o.subtotal, 0);
-        const shiftVat = shiftPaid.reduce((sum, o) => sum + o.vatAmount, 0);
-
-        return (
-        <div className="w-full max-w-4xl mx-auto flex flex-col gap-6">
-          <div className="bg-accent border border-accentShadow rounded-xl p-6 shadow-xl shadow-accent/5">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-dark font-black tracking-widest uppercase text-sm flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-dark animate-pulse"></span> Active Register
-              </h3>
-              <select className="bg-dark text-black p-2 rounded text-xs font-bold outline-none border border-gray-700 shadow-sm" value={shiftFilter} onChange={e => setShiftFilter(e.target.value)}>
-                <option value="All">All Shifts (Store Total)</option>
-                {users.map(u => <option key={u._id} value={u.name}>{u.name}'s Shift</option>)}
-              </select>
-            </div>
-            
-            <div className="space-y-4 mb-6">
-              <div>
-                <p className="text-dark text-xs font-bold uppercase tracking-wider mb-1">Net Sales</p>
-                <p className="text-4xl font-black text-white">P{shiftRevenue.toFixed(2)}</p>
-                <p className="text-dark text-[10px] font-semibold mt-1">Gross P{shiftGross.toFixed(2)} &minus; Discounts P{shiftDisc.toFixed(2)}</p>
-                {shiftCompAmount > 0 && (
-                  <p className="text-gray-300 text-[10px] font-bold mt-0.5">+P{shiftCompAmount.toFixed(2)} complimentary (not collected)</p>
-                )}
-              </div>
-              <div className="flex justify-between border-t border-dark pt-4">
-                <div>
-                  <p className="text-dark text-[10px] font-bold uppercase tracking-wider">Completed Orders</p>
-                  <p className="text-lg font-bold text-dark">{todayShiftOrders.length}</p>
-                  {shiftComp.length > 0 && <p className="text-[9px] text-gray-300 font-bold">{shiftComp.length} complimentary</p>}
-                </div>
-                <div className="text-right">
-                  <p className="text-dark text-[10px] font-bold uppercase tracking-wider">VAT Collected</p>
-                  <p className="text-lg font-bold text-gray-300">P{shiftVat.toFixed(2)}</p>
-                </div>
-              </div>
-            </div>
-            <button onClick={archiveDay} className="w-full bg-red-600 border border-red-600 text-dark hover:bg-dark hover:text-red-600 font-bold py-3 rounded-lg transition text-sm">
-              Close Register & Archive Day
-            </button>
-          </div>
-
-          <div className="bg-surface border border-gray-800 rounded-xl p-1 overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-dark/20 rounded-t-xl">
-              <h3 className="text-gray-300 font-bold text-sm tracking-wider uppercase">Sales History</h3>
-              <button onClick={exportAllToPDF} className="text-[10px] bg-accent border border-gray-600 text-gray-300 px-3 py-1.5 rounded hover:bg-dark hover:text-accent transition font-bold uppercase tracking-wider">
-                Export All
-              </button>
-            </div>
-            
-            <div className="max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
-              {Object.keys(groupedArchives).length === 0 ? (
-                <p className="text-gray-600 text-sm p-6 text-center">No past days archived.</p>
-              ) : (
-                Object.entries(groupedArchives).map(([date, data]) => (
-                  <div key={date} className="border-b border-gray-800/50 last:border-0">
-                    <button onClick={() => toggleDay(date)} className="w-full flex justify-between items-center p-4 hover:bg-dark/50 transition text-left">
-                      <span className="font-bold text-sm text-gray-200">{date}</span>
-                      <div className="flex items-center gap-3">
-                        <span className="text-accent font-bold">P{data.revenue.toFixed(2)}</span>
-                        {expandedDays[date] ? <ChevronUp size={14} className="text-gray-500" /> : <ChevronDown size={14} className="text-gray-500" />}
-                      </div>
-                    </button>
-                    
-                    {expandedDays[date] && (
-                      <div className="p-4 bg-dark/30 border-t border-gray-800/30 flex flex-col gap-4">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div><p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Orders</p><p className="text-sm font-semibold">{data.orders.filter(o => o.status === 'Completed').length}</p></div>
-                          <div><p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">VAT</p><p className="text-sm font-semibold">P{data.vat.toFixed(2)}</p></div>
-                          <div className="col-span-2"><p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Discounts</p><p className="text-sm font-semibold text-red-400">-P{data.discounts.toFixed(2)}</p></div>
-                        </div>
-
-                        <div className="border-t border-gray-800/30 pt-3 mt-1">
-                          <div className="flex justify-between items-center">
-                            <button onClick={() => toggleOrderList(date)} className="flex items-center gap-2 text-xs font-bold text-gray-400 hover:text-white transition">
-                              <span>{expandedOrderLists[date] ? 'Hide Orders' : 'View All Orders'}</span>
-                              {expandedOrderLists[date] ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                            </button>
-                            <button onClick={() => exportDayToPDF(date, data.orders)} className="text-[10px] bg-surface-2 border border-white/10 text-white/60 px-2 py-1 rounded hover:bg-white/10 hover:text-white transition font-bold uppercase tracking-wider">
-                              Export Day
-                            </button>
-                          </div>
-
-                          {expandedOrderLists[date] && (
-                            <div className="mt-3 space-y-3 max-h-60 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-gray-700">
-                              {data.orders.map(order => (
-                                <div key={order._id} className="bg-dark/50 p-3 rounded border border-gray-800/50">
-                                  <div className="flex justify-between items-center mb-2 border-b border-gray-800/50 pb-2">
-                                    <span className="font-bold text-sm text-accent">{order.orderNumber}</span>
-                                    <div className="flex items-center gap-2">
-                                      <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${order.status === 'Cancelled' ? 'bg-red-900/50 text-red-400' : 'bg-green-900/50 text-green-400'}`}>{order.status}</span>
-                                      <span className="text-xs font-bold text-white">P{order.total.toFixed(2)}</span>
-                                    </div>
-                                  </div>
-                                  <div className="space-y-1">
-                                    {order.items.map((item, idx) => (
-                                      <div key={idx} className="flex justify-between text-[11px] text-white">
-                                        <span>{item.quantity}x {item.name}</span><span>P{(item.price * item.quantity).toFixed(2)}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                  {(order.discount > 0 || order.vatAmount > 0) && (
-                                    <div className="mt-2 pt-2 border-t border-gray-800/50 flex justify-between text-[10px] text-gray-500">
-                                      <span>VAT: P{order.vatAmount.toFixed(2)}</span>
-                                      {order.discount > 0 && <span className="text-red-400">Disc: -P{order.discount.toFixed(2)}</span>}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-        ); // <--- This closes the return() statement
-      })()}
+      {activeTab === 'history' && <Suspense fallback={<TabFallback />}><HistoryTab ctx={ctx} /></Suspense>}
 
 
       {/* --- INVENTORY TAB --- */}
-      {activeTab === 'inventory' && (
-        <div className="flex flex-col xl:flex-row gap-8">
-          
-          {/* LEFT COLUMN: Main Tables */}
-          <div className="flex-1 bg-accent border border-accentShadow rounded-xl p-6 flex flex-col h-fit">
-            
-            {/* Header & Sub-Tabs */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 border-b border-dark pb-4">
-              <h3 className="text-xl font-bold text-white">Inventory Hub</h3>
-              
-              {/* --- NEW: THE SUB-TAB TOGGLE --- */}
-              <div className="flex bg-dark p-1 rounded-lg shadow-inner">
-                <button 
-                  onClick={() => setInvSubTab('live')}
-                  className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'live' ? 'bg-accent text-dark shadow-md' : 'text-gray-400 hover:text-accent'}`}
-                >
-                  Live Stock
-                </button>
-                <button 
-                  onClick={() => { setInvSubTab('eod'); fetchEODData(); }}
-                  className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition flex items-center gap-2 ${invSubTab === 'eod' ? 'bg-red-600 text-white shadow-md shadow-red-500/20' : 'text-gray-400 hover:text-red-400'}`}
-                >
-                  <span className={`w-2 h-2 rounded-full ${invSubTab === 'eod' ? 'bg-white animate-pulse' : 'bg-red-500'}`}></span>
-                  EOD Audit
-                </button>
-              </div>
-              
-              <button onClick={exportInventoryToPDF} className="text-[10px] bg-accent border border-dark text-white px-3 py-1.5 rounded hover:bg-dark hover:text-accent transition font-bold uppercase tracking-wider">
-                Export PDF
-              </button>
-            </div>
+      {activeTab === 'inventory' && <Suspense fallback={<TabFallback />}><InventoryTab ctx={ctx} /></Suspense>}
 
-            {/* --- TAB 1: LIVE STOCK (Clean & Read-Only) --- */}
-            {invSubTab === 'live' && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="text-dark border-b border-dark">
-                      <th className="pb-3">Item Name</th>
-                      <th className="pb-3 text-right">Live System Qty</th>
-                      <th className="pb-3">Unit</th>
-                      <th className="pb-3 text-right">Unit Cost</th>
-                      <th className="pb-3 text-right">Total Value</th>
-                      <th className="pb-3 text-center">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {currentInventory.map(item => (
-                      <tr key={item._id} className="border-b border-gray-800/50 hover:bg-dark/30 transition">
-                        <td className="py-3 font-bold text-dark">{item.itemName}</td>
-                        <td className={`py-3 text-right font-bold ${item.stockQty < 10 ? 'text-red-400' : 'text-dark'}`}>{item.stockQty.toLocaleString()}</td>
-                        <td className="py-3 text-dark pl-2">{item.unit}</td>
-                        <td className="py-3 text-right text-dark font-mono text-xs">P{(item.unitCost || 0).toFixed(4)}</td>
-                        <td className="py-3 text-right text-dark font-bold font-mono text-xs">P{(item.stockQty * (item.unitCost || 0)).toFixed(2)}</td>
-                        <td className="py-3 text-center space-x-2">
-                          <button onClick={() => fetchStockHistory(item)} className="text-accent bg-dark hover:bg-accent hover:text-white text-xs font-bold px-2 py-1 bg-accent/10 rounded transition">History</button>
-                          <button onClick={() => deleteInventory(item._id)} className="text-red-500 hover:text-red-400 text-xs font-bold px-2 py-1 bg-red-900 rounded transition">Del</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {/* --- INVENTORY PAGINATION CONTROLS --- */}
-              {totalInvPages > 1 && (
-                <div className="flex justify-between items-center bg-dark p-3 rounded-lg border border-gray-800 mt-4">
-                  <button 
-                    onClick={() => setInvPage(prev => Math.max(prev - 1, 1))}
-                    disabled={invPage === 1}
-                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === 1 ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
-                  >
-                    <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
-                  </button>
-                  <span className="text-gray-400 text-xs font-bold tracking-widest">
-                    PAGE <span className="text-accent text-sm">{invPage}</span> OF {totalInvPages}
-                  </span>
-                  <button 
-                    onClick={() => setInvPage(prev => Math.min(prev + 1, totalInvPages))}
-                    disabled={invPage === totalInvPages}
-                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === totalInvPages ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
-                  >
-                    <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
-                  </button>
-                </div>
-              )}
-              </div>
-            )}
+      {/* --- ACCOUNTING & LEDGER TAB --- */}
+      {activeTab === 'ledger' && <Suspense fallback={<TabFallback />}><LedgerTab ctx={ctx} /></Suspense>}
 
-            {/* --- TAB 2: EOD AUDIT (Enterprise Financial Control) --- */}
-            {invSubTab === 'eod' && (() => {
-              const itemsCounted = inventory.filter(i => physicalCounts[i._id] !== undefined && physicalCounts[i._id] !== '').length;
-              const isComplete = itemsCounted === inventory.length;
-              const itemsWithVariance = inventory.filter(i => physicalCounts[i._id] !== undefined && physicalCounts[i._id] !== '' && Number(physicalCounts[i._id]) !== i.stockQty);
-              const netVarianceQty = itemsWithVariance.reduce((sum, i) => sum + (Number(physicalCounts[i._id]) - i.stockQty), 0);
-              const netImpact = itemsWithVariance.reduce((sum, i) => sum + ((Number(physicalCounts[i._id]) - i.stockQty) * (i.unitCost || 0)), 0);
+      {/* ===== REVOLVING FUND MODALS ===== */}
 
-              const isLocked = eodStatus === 'LOCKED';
-
-              return (
-                <div className="overflow-x-auto flex flex-col h-full animate-in fade-in duration-300 relative pb-24">
-                  
-                  {/* --- INTELLIGENT EOD HEADER --- */}
-                  <div className={`flex justify-between items-center p-4 rounded-lg border mb-4 shadow-inner ${isLocked ? 'bg-green-900/10 border-green-900/30' : 'bg-dark border-accent'}`}>
-                    <div>
-                      <h4 className="text-black font-black uppercase tracking-wider text-sm flex items-center gap-2">
-                        {isLocked ? (
-                          <>EOD Locked</>
-                        ) : (
-                          <><span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span> EOD Audit (Open)</>
-                        )}
-                      </h4>
-                      <p className={`text-xs mt-1 ${isLocked ? 'text-dark font-bold' : 'text-black'}`}>
-                        {isLocked 
-                          ? `Daily inventory was securely locked on ${new Date(eodLockedAt).toLocaleTimeString()}`
-                          : `Audit physical stock, assign variance reasons, and lock daily financial impact.`}
-                      </p>
-                    </div>
-
-                    {/* NEW REOPEN BUTTON */}
-                    {isLocked && (
-                      <button
-                        onClick={async () => {
-                          if(window.confirm("WARNING: Reopening the day allows new sales, which will alter your ending inventory. Are you sure?")) {
-                            await apiFetch(`/api/inventory/eod/reopen`, { method: 'POST' });
-                            fetchEODData(); // Refresh the tab
-                          }
-                        }}
-                        className="bg-dark border border-gray-600 text-accent hover:text-white hover:border-red-500 px-4 py-2 rounded text-xs font-bold uppercase transition"
-                      >
-                        Reopen Register
-                      </button>
-                    )}
-                  </div>
-
-                  <table className="w-full text-left text-sm mb-4">
-                    <thead>
-                      <tr className="text-dark border-b border-dark text-xs uppercase tracking-wider">
-                        <th className="pb-3 w-1/4">Item & Context</th>
-                        <th className="pb-3 text-right">System End</th>
-                        <th className="pb-3 text-center">Physical Count</th>
-                        <th className="pb-3 text-right">Variance</th>
-                        <th className="pb-3 text-right pr-2">Impact (₱)</th>
-                      </tr>
-                    </thead>
-                    <tbody className={isLocked ? 'opacity-50 pointer-events-none' : ''}>
-                      {currentInventory.map(item => {
-                        const actualInput = physicalCounts[item._id];
-                        const hasInput = actualInput !== undefined && actualInput !== '';
-                        const variance = hasInput ? Number(actualInput) - item.stockQty : 0;
-                        const financialImpact = variance * (item.unitCost || 0);
-
-                        const formattedImpact = financialImpact < 0 ? `-₱${Math.abs(financialImpact).toFixed(2)}` : `₱${financialImpact.toFixed(2)}`;
-
-                        // --- REAL MOVEMENT MATH ---
-                        const realIn = dailyMovement[item._id]?.in || 0;
-                        const realOut = dailyMovement[item._id]?.out || 0;
-                        // Since System End = Start + In - Out, then Start = System End - In + Out
-                        const calculatedStart = item.stockQty - realIn + realOut;
-
-                        return (
-                          <tr key={item._id} className={`border-b border-gray-800/50 hover:bg-dark/30 transition ${hasInput && variance !== 0 ? 'bg-red-900/5' : ''}`}>
-                            
-                            <td className="py-4">
-                              <p className="font-bold text-dark">{item.itemName}</p>
-                              <p className="text-[10px] text-dark font-mono mt-1">
-                                Start: {calculatedStart.toLocaleString()} | <span className="text-black">In: {realIn.toLocaleString()}</span> | <span className="text-black">Out: {realOut.toLocaleString()}</span>
-                              </p>
-                              
-                              {hasInput && variance !== 0 && !isLocked && (
-                                <div className="mt-2 space-y-1.5">
-                                  {varianceNoteMode[item._id] ? (
-                                    <div className="flex flex-col gap-1">
-                                      <div className="flex items-center gap-1">
-                                        <span className="text-[9px] text-gray-400 uppercase font-bold tracking-wider">Note</span>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setVarianceNoteMode({...varianceNoteMode, [item._id]: false});
-                                            setVarianceReasons({...varianceReasons, [item._id]: ''});
-                                          }}
-                                          className="text-[9px] text-gray-500 hover:text-white ml-auto"
-                                        >← back</button>
-                                      </div>
-                                      <textarea
-                                        rows={2}
-                                        placeholder="Describe reason..."
-                                        value={varianceReasons[item._id] || ''}
-                                        onChange={(e) => setVarianceReasons({...varianceReasons, [item._id]: e.target.value})}
-                                        className="w-full max-w-[220px] bg-dark border border-gray-600 text-black text-[10px] rounded p-1.5 outline-none focus:border-accent resize-none"
-                                      />
-                                    </div>
-                                  ) : (
-                                    <select
-                                      value={varianceReasons[item._id] || ''}
-                                      onChange={(e) => {
-                                        if (e.target.value === '__note__') {
-                                          setVarianceNoteMode({...varianceNoteMode, [item._id]: true});
-                                          setVarianceReasons({...varianceReasons, [item._id]: ''});
-                                        } else {
-                                          setVarianceReasons({...varianceReasons, [item._id]: e.target.value});
-                                        }
-                                      }}
-                                      className={`w-full max-w-[200px] bg-dark border text-[10px] rounded p-1 outline-none ${variance > 0 ? 'border-green-700/60 text-green-700 focus:border-green-500' : 'border-red-900/60 text-red-500 focus:border-red-500'}`}
-                                    >
-                                      <option value="" disabled>Select Reason...</option>
-                                      {variance > 0 ? (
-                                        <>
-                                          <option value="Previous Miscount">Previous Miscount</option>
-                                          <option value="__note__">Add Note...</option>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <option value="Damaged/Spoiled">Damaged / Spoiled</option>
-                                          <option value="Prep Waste">Preparation Waste</option>
-                                          <option value="Previous Miscount">Previous Miscount</option>
-                                          <option value="Unaccounted Loss">Unaccounted / Suspected Theft</option>
-                                          <option value="__note__">Add Note...</option>
-                                        </>
-                                      )}
-                                    </select>
-                                  )}
-                                </div>
-                              )}
-                            </td>
-
-                            <td className="py-4 text-right text-dark font-mono text-sm">
-                              {item.stockQty.toLocaleString()} <span className="text-[10px] text-dark">{item.unit}</span>
-                            </td>
-
-                            <td className="py-4 text-center align-top pt-5">
-                              <input 
-                                type="number" 
-                                placeholder={isLocked ? "LOCKED" : "Count..."} 
-                                disabled={isLocked}
-                                className={`w-24 bg-dark border rounded p-1.5 outline-none text-center text-sm font-mono transition mx-auto
-                                  ${isLocked ? 'border-gray-800 text-gray-600 bg-gray-900/20' :
-                                    hasInput && variance < 0 ? 'border-red-500 text-black shadow-[0_0_10px_rgba(239,68,68,0.1)]' :
-                                    hasInput && variance > 0 ? 'border-green-500 text-black' :
-                                    hasInput && variance === 0 ? 'border-gray-600 text-black' :
-                                    'border-gray-700 text-black focus:border-accent'}`
-                                }
-                                value={hasInput ? actualInput : ''}
-                                onChange={(e) => setPhysicalCounts({...physicalCounts, [item._id]: e.target.value})}
-                              />
-                            </td>
-
-                            <td className={`py-4 text-right font-black font-mono text-sm align-top pt-6 ${variance < 0 ? 'text-red-300' : variance > 0 ? 'text-green-500' : 'text-dark'}`}>
-                              {hasInput ? (variance > 0 ? `+${variance}` : variance) : '-'}
-                            </td>
-
-                            <td className={`py-4 text-right font-mono text-xs pr-2 font-bold align-top pt-6 ${financialImpact < 0 ? 'text-red-300' : financialImpact > 0 ? 'text-green-400' : 'text-dark'}`}>
-                              {hasInput ? formattedImpact : '-'}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                  {/* --- INVENTORY PAGINATION CONTROLS --- */}
-                  {totalInvPages > 1 && (
-                    <div className="flex justify-between items-center bg-dark p-3 rounded-lg border border-gray-800 mt-4">
-                      <button 
-                        onClick={() => setInvPage(prev => Math.max(prev - 1, 1))}
-                        disabled={invPage === 1}
-                        className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === 1 ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
-                      >
-                        <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
-                      </button>
-                      <span className="text-gray-400 text-xs font-bold tracking-widest">
-                        PAGE <span className="text-accent text-sm">{invPage}</span> OF {totalInvPages}
-                      </span>
-                      <button 
-                        onClick={() => setInvPage(prev => Math.min(prev + 1, totalInvPages))}
-                        disabled={invPage === totalInvPages}
-                        className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === totalInvPages ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
-                      >
-                        <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
-                      </button>
-                    </div>
-                  )}
-
-                  {/* SUMMARY FOOTER */}
-                  {!isLocked && (
-                    <div className="absolute bottom-0 left-0 right-0 bg-surface border-t border-gray-800 p-4 flex justify-between items-center rounded-b-xl">
-                      <div className="flex gap-6">
-                        <div>
-                          <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Audit Status</p>
-                          <p className={`text-sm font-black flex items-center gap-1 ${isComplete ? 'text-green-400' : 'text-yellow-500'}`}>
-                            {isComplete ? <><CheckCircle size={13} /> All Items Counted</> : <><AlertTriangle size={13} /> {itemsCounted} / {inventory.length} Counted</>}
-                          </p>
-                        </div>
-                        <div className="border-l border-gray-800 pl-6">
-                          <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Net Variance</p>
-                          <p className="text-sm font-black text-gray-300">
-                            {`${netVarianceQty > 0 ? '+' : ''}${netVarianceQty} Items`}
-                          </p>
-                        </div>
-                        <div className="border-l border-gray-800 pl-6">
-                          <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-1">Total Financial Impact</p>
-                          <p className={`text-sm font-black ${netImpact < 0 ? 'text-red-500' : netImpact > 0 ? 'text-green-500' : 'text-gray-300'}`}>
-                            {netImpact < 0 ? `-₱${Math.abs(netImpact).toFixed(2)}` : `₱${netImpact.toFixed(2)}`}
-                          </p>
-                        </div>
-                      </div>
-                      
-                      <button 
-                        disabled={!isComplete}
-                        onClick={() => {
-                          const missingReasons = itemsWithVariance.filter(i => !varianceReasons[i._id]);
-                          if (missingReasons.length > 0) return alert("Please assign a reason for all items with variances before submitting.");
-                          if(window.confirm(`LOCK END OF DAY?\n\nItems with variance: ${itemsWithVariance.length}\nTotal Financial Impact: ${netImpact < 0 ? '-' : ''}₱${Math.abs(netImpact).toFixed(2)}\n\nThis will update your permanent system stock to match your physical counts. Proceed?`)) {
-                            submitPhysicalCounts();
-                          }
-                        }} 
-                        className={`px-8 py-3 rounded font-black uppercase tracking-wider text-xs shadow-lg transition
-                          ${!isComplete ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-500 shadow-red-500/20'}`}
-                      >
-                        {isComplete ? 'Submit & Lock EOD' : 'Incomplete Audit'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-          {/* RIGHT COLUMN: Procurement Panel */}
-          <div className="w-full xl:w-96 bg-surface border border-gray-800 rounded-xl p-6 h-fit">
-            <h3 className="text-lg font-bold text-white mb-4 border-b border-gray-800 pb-2">Procurement (Receive Inventory)</h3>
-            <div className="space-y-4">
+      {/* NEW FUND MODAL */}
+      {rfNewModal && (
+        <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm" onClick={e => { if (e.target === e.currentTarget) setRfNewModal(false); }}>
+          <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 shrink-0">
               <div>
-                <label className="text-xs text-gray-400 block mb-1">Item Name</label>
-                <input 
-                  type="text" 
-                  list="inventory-names" 
-                  placeholder="e.g., Condensed Milk" 
-                  value={invForm.itemName} 
-                  onChange={e => {
-                    const typed = e.target.value;
-                    const match = inventory.find(i => i.itemName.toLowerCase() === typed.toLowerCase());
-                    setInvForm({...invForm, itemName: typed, unit: match ? match.unit : invForm.unit});
-                  }} 
-                  className="w-full bg-dark border border-gray-700 rounded p-2 text-black outline-none focus:border-accent" 
-                />
-                <datalist id="inventory-names">
-                  {inventory.map(inv => <option key={inv._id} value={inv.itemName} />)}
-                </datalist>
-                
-                {inventory.some(i => i.itemName.toLowerCase() === invForm.itemName.toLowerCase().trim()) && (
-                  <p className="text-[10px] text-accent font-bold mt-1 uppercase tracking-wider">★ Existing Item: Will be Restocked</p>
-                )}
+                <h2 className="text-white font-black text-lg">New Revolving Fund</h2>
+                <p className="text-white/30 text-xs font-bold uppercase tracking-widest mt-0.5">Set up a petty cash pool</p>
               </div>
-              <div className="flex gap-2">
-                 <div className="w-1/3">
-                   <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Qty Bought</label>
-                   <input type="number" placeholder="Cans/Packs" value={invForm.packQty} onChange={e => setInvForm({...invForm, packQty: e.target.value})} className="w-full bg-dark border border-gray-700 rounded p-2 text-black outline-none focus:border-accent" />
-                 </div>
-                 <div className="w-1/3">
-                   <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Weight/Vol</label>
-                   <input type="number" placeholder="Per Pack" value={invForm.unitPerPack} onChange={e => setInvForm({...invForm, unitPerPack: e.target.value})} className="w-full bg-dark border border-gray-700 rounded p-2 text-black outline-none focus:border-accent" />
-                 </div>
-                 <div className="w-1/3">
-                   <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Unit</label>
-                   <select value={invForm.unit} onChange={e => setInvForm({...invForm, unit: e.target.value})} className="w-full bg-dark border border-gray-700 rounded p-2 text-black outline-none focus:border-accent">
-                     <option value="" disabled>Select...</option>
-                     <option value="g">Grams (g)</option>
-                     <option value="ml">mL (ml)</option>
-                     <option value="pcs">Pieces (pcs)</option>
-                   </select>
-                 </div>
+              <button onClick={() => setRfNewModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition"><X size={16}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 custom-scrollbar">
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Fund Name *</label>
+                <input type="text" placeholder="e.g. Kasa Lokal Petty Cash" value={rfNewForm.name}
+                  onChange={e => setRfNewForm({...rfNewForm, name: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white outline-none focus:border-brand/60 placeholder-white/20"/>
               </div>
-              
-              {/* --- UPDATED PRICE SECTION WITH CASH VALIDATION --- */}
-              {/* --- UPDATED PRICE SECTION WITH RED INPUT WARNING --- */}
-              {(() => {
-                const totalPurchaseCost = (parseFloat(invForm.packQty) || 0) * (parseFloat(invForm.costPerPack) || 0);
-                const isOverBudget = cashOnHand < totalPurchaseCost;
-
-                return (
-                  <div>
-                    <div className="flex justify-between items-end mb-1">
-                      <label className={`text-[10px] uppercase font-bold transition-colors ${isOverBudget ? 'text-red-400' : 'text-gray-400'}`}>
-                        Price Paid Per Pack/Can (P)
-                      </label>
-                      <span className={`text-[10px] font-bold tracking-wider ${isOverBudget ? 'text-red-400 animate-pulse' : 'text-green-400'}`}>
-                        Available Cash: ₱{cashOnHand.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                    
-                    <input 
-                      type="number" 
-                      placeholder="e.g., 45.00" 
-                      value={invForm.costPerPack} 
-                      onChange={e => setInvForm({...invForm, costPerPack: e.target.value})} 
-                      className={`w-full bg-dark border rounded p-2 outline-none transition-all ${
-                        isOverBudget 
-                        ? 'border-red-500  text-red-400 focus:border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.2)]' 
-                        : 'border-gray-700 text-black focus:border-accent'
-                      }`} 
-                    />
-                  </div>
-                );
-              })()}
-              
-              {(invForm.packQty && invForm.unitPerPack && invForm.costPerPack && invForm.unit) && (
-                <div className="bg-dark/50 p-3 rounded border border-gray-700 text-sm">
-                  <p className="text-black font-bold mb-1">System will save to inventory:</p>
-                  <div className="flex justify-between font-bold text-white mb-1">
-                    <span>Total Stock Added:</span>
-                    <span className="text-dark">{(invForm.packQty * invForm.unitPerPack).toLocaleString()} {invForm.unit}</span>
-                  </div>
-                  <div className="flex justify-between font-bold text-dark mb-1">
-                    <span>Cost per {invForm.unit}:</span>
-                    <span className="text-dark">P{(invForm.costPerPack / invForm.unitPerPack).toFixed(4)}</span>
-                  </div>
-                  
-                  {/* --- NEW: TOTAL COST ROW --- */}
-                  <div className="flex justify-between font-bold text-white border-t border-gray-700 pt-2 mt-2">
-                    <span>Total Purchase Cost:</span>
-                    <span className={cashOnHand < (invForm.packQty * invForm.costPerPack) ? "text-red-400" : "text-black"}>
-                      P{(invForm.packQty * invForm.costPerPack).toFixed(2)}
-                    </span>
-                  </div>
-                </div>
-              )}
-              
-              {/* --- UPDATED SUBMIT BUTTON (DISABLED IF INSUFFICIENT FUNDS) --- */}
-              <button 
-                onClick={addInventory} 
-                disabled={cashOnHand < (invForm.packQty * invForm.costPerPack)}
-                className={`w-full font-bold py-3 rounded transition shadow-lg ${cashOnHand < (invForm.packQty * invForm.costPerPack) ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-accent text-dark hover:bg-dark hover:text-accent shadow-accent/20'}`}
-              >
-                {cashOnHand < (invForm.packQty * invForm.costPerPack) ? 'Insufficient Funds' : 'Add to Stock'}
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Initial Amount (₱) *</label>
+                <input type="number" min="0" step="1" placeholder="e.g. 5000" value={rfNewForm.initialAmount}
+                  onChange={e => setRfNewForm({...rfNewForm, initialAmount: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white text-xl font-black tabular-nums outline-none focus:border-brand/60"/>
+                <p className="text-white/30 text-[10px] mt-1">This is the fixed float amount. The source account below will be reduced by this amount in the journal.</p>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Paid From *</label>
+                <select value={rfNewForm.sourceAccount} onChange={e => setRfNewForm({...rfNewForm, sourceAccount: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white font-bold outline-none focus:border-brand/60">
+                  {(cashAndBankAccounts || []).map(a => (
+                    <option key={a.code} value={a.code}>{a.name} ({a.code})</option>
+                  ))}
+                </select>
+                <p className="text-white/30 text-[10px] mt-1">Where the float comes from — this account is credited (reduced) in the opening journal entry.</p>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Purpose / Notes</label>
+                <textarea rows={2} placeholder="What is this fund used for?" value={rfNewForm.description}
+                  onChange={e => setRfNewForm({...rfNewForm, description: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white outline-none focus:border-brand/60 resize-none placeholder-white/20"/>
+              </div>
+            </div>
+            <div className="px-5 py-4 border-t border-white/8 shrink-0 flex gap-3">
+              <button onClick={() => setRfNewModal(false)} className="flex-1 bg-white/5 text-white/60 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
+              <button onClick={submitRfNew} disabled={rfNewSubmitting}
+                className="flex-1 bg-brand text-white rounded-xl py-3 font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">
+                {rfNewSubmitting ? 'Creating…' : 'Create Fund'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* --- ACCOUNTING & LEDGER TAB --- */}
-      {activeTab === 'ledger' && (
-        <div className="flex flex-col xl:flex-row gap-8">
-          
-          {/* LEFT COLUMN: Balances & New Entry Form */}
-          <div className="w-full xl:w-1/3 space-y-6">
-            
-            {/* --- LIVE CASH ON HAND --- */}
-            <div className="bg-accent border border-accent/30 rounded-xl p-6 shadow-lg shadow-accent/5">
-              <p className="text-black text-xs font-bold uppercase tracking-wider mb-1">Live Cash on Hand</p>
-              <p className="text-4xl font-black text-dark">P{cashOnHand.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+      {/* DISBURSE MODAL */}
+      {rfDisbModal && rfActiveFund && (
+        <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm" onClick={e => { if (e.target === e.currentTarget) setRfDisbModal(false); }}>
+          <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 shrink-0">
+              <div>
+                <h2 className="text-white font-black text-lg">Disburse from Fund</h2>
+                <p className="text-white/30 text-xs font-bold uppercase tracking-widest mt-0.5">
+                  {rfActiveFund.name} · Available: <span className="text-brand">₱{rfActiveFund.currentBalance.toFixed(2)}</span>
+                </p>
+              </div>
+              <button onClick={() => setRfDisbModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition"><X size={16}/></button>
             </div>
-
-            <div className="bg-surface border border-gray-800 rounded-xl p-6 h-fit">
-              <h3 className="text-xl font-bold mb-4 text-accent border-b border-gray-800 pb-2">New Journal Entry</h3>
-              <div className="space-y-4">
-                <input type="text" placeholder="Description / Memo" value={jeForm.description} onChange={e => setJeForm({...jeForm, description: e.target.value})} className="w-full bg-dark border border-gray-700 rounded p-2 text-black outline-none" />
-                {jeForm.lines.map((line, idx) => (
-                  <div key={idx} className="bg-accent p-3 rounded border border-gray-700 space-y-2">
-                    <select value={line.accountCode} onChange={(e) => {
-                      const acc = standardAccounts.find(a => a.accountCode === e.target.value);
-                      const newLines = [...jeForm.lines];
-                      newLines[idx] = { ...line, accountCode: acc.accountCode, accountName: acc.accountName };
-                      setJeForm({...jeForm, lines: newLines});
-                    }} className="w-full bg-dark border border-gray-600 rounded p-2 text-sm text-black">
-                      <option value="">Select Account...</option>
-                      {standardAccounts.map(acc => <option key={acc.accountCode} value={acc.accountCode}>{acc.accountCode} - {acc.accountName}</option>)}
-                    </select>
-                    <div className="flex gap-2">
-                      <input type="number" placeholder="Debit" value={line.debit} onChange={e => { const nl = [...jeForm.lines]; nl[idx].debit = e.target.value; nl[idx].credit = ''; setJeForm({...jeForm, lines: nl}); }} className="w-1/2 bg-dark border border-gray-600 rounded p-2 text-sm text-black placeholder-gray-500" />
-                      <input type="number" placeholder="Credit" value={line.credit} onChange={e => { const nl = [...jeForm.lines]; nl[idx].credit = e.target.value; nl[idx].debit = ''; setJeForm({...jeForm, lines: nl}); }} className="w-1/2 bg-dark border border-gray-600 rounded p-2 text-sm text-black placeholder-gray-500" />
-                    </div>
-                  </div>
-                ))}
-                <button onClick={() => setJeForm({...jeForm, lines: [...jeForm.lines, {accountCode:'', accountName:'', debit:'', credit:''}]})} className="text-xs text-accent hover:text-white">+ Add Line</button>
-                <div className="border-t border-gray-800 pt-4 mt-4 flex justify-between items-center">
-                  <div className="text-xs text-gray-400">
-                    Debits: {jeForm.lines.reduce((s, l) => s + Number(l.debit||0), 0)} <br/>
-                    Credits: {jeForm.lines.reduce((s, l) => s + Number(l.credit||0), 0)}
-                  </div>
-                  <button onClick={async () => {
-                    await apiFetch(`/api/journal`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(jeForm) });
-                    setJeForm({ description: '', lines: [{accountCode:'', accountName:'', debit:'', credit:''}, {accountCode:'', accountName:'', debit:'', credit:''}] });
-                    fetchERPData();
-                  }} className="bg-accent text-dark font-bold py-2 px-4 rounded hover:bg-dark hover:text-accent transition shadow-lg shadow-accent/20">Post Entry</button>
-                </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 custom-scrollbar">
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Amount (₱) *</label>
+                <input type="number" min="0" step="0.01" placeholder="0.00" value={rfDisbForm.amount}
+                  onChange={e => setRfDisbForm({...rfDisbForm, amount: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white text-xl font-black tabular-nums outline-none focus:border-danger/60"/>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">What was it spent on? *</label>
+                <input type="text" placeholder="e.g. Printer ink, cleaning supplies…" value={rfDisbForm.description}
+                  onChange={e => setRfDisbForm({...rfDisbForm, description: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white outline-none focus:border-danger/60 placeholder-white/20"/>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Expense Category</label>
+                <select value={rfDisbForm.categoryCode} onChange={e => setRfDisbForm({...rfDisbForm, categoryCode: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white outline-none focus:border-danger/60">
+                  <option value="630000">Rent</option>
+                  <option value="640000">Utilities (Electricity / Water / Internet)</option>
+                  <option value="610000">Salaries & Wages</option>
+                  <option value="650000">Supplies (Non-Inventory)</option>
+                  <option value="660000">Marketing & Advertising</option>
+                  <option value="680000">Repairs & Maintenance</option>
+                  <option value="720000">Bank Charges</option>
+                  <option value="760000">Other Operating Expense</option>
+                </select>
+              </div>
+              <div className="bg-danger/10 border border-danger/20 rounded-xl p-3 text-xs text-danger/80">
+                This will deduct from the revolving fund balance and post a journal entry:<br/>
+                <span className="font-bold">DR Expense / CR Petty Cash / Revolving Fund</span>
               </div>
             </div>
-          </div>
-
-          {/* RIGHT COLUMN: General Ledger */}
-          <div className="flex-1 bg-surface border border-gray-800 rounded-xl p-6">
-            <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-2">
-              <h3 className="text-xl font-bold text-white">General Ledger</h3>
-              <button onClick={exportLedgerToPDF} className="text-[10px] bg-accent border border-gray-600 text-gray-300 px-3 py-1.5 rounded hover:bg-dark hover:text-accent transition font-bold uppercase tracking-wider">
-                Export Ledger
+            <div className="px-5 py-4 border-t border-white/8 shrink-0 flex gap-3">
+              <button onClick={() => setRfDisbModal(false)} className="flex-1 bg-white/5 text-white/60 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
+              <button onClick={submitRfDisb} disabled={rfDisbSubmitting}
+                className="flex-1 bg-danger text-white rounded-xl py-3 font-bold text-sm hover:bg-danger/90 transition disabled:opacity-50">
+                {rfDisbSubmitting ? 'Recording…' : 'Record Disbursement'}
               </button>
             </div>
-            <div className="space-y-4">
-              {currentEntries.map(entry => (
-                <div key={entry._id} className="bg-dark border border-gray-700 rounded-lg p-4">
-                  <div className="flex justify-between items-center mb-3 border-b border-gray-800 pb-2">
-                    <span className="text-accent font-bold">{entry.reference}</span>
-                    <span className="text-black text-sm">{new Date(entry.date).toLocaleDateString()}</span>
-                  </div>
-                  <p className="text-sm text-black mb-3 font-semibold">{entry.description}</p>
-                  <table className="w-full text-sm">
-                    <thead><tr className="text-black text-left"><th className="pb-2">Account</th><th className="pb-2 text-right">Debit</th><th className="pb-2 text-right">Credit</th></tr></thead>
-                    <tbody>
-                      {entry.lines.map((line, idx) => (
-                        <tr key={idx} className="border-t border-gray-800/50">
-                          <td className={`py-1 ${line.credit > 0 ? 'pl-6 text-black' : 'text-gray-600'}`}>{line.accountCode} - {line.accountName}</td>
-                          <td className="py-1 text-right text-gray-600">{line.debit > 0 ? line.debit.toFixed(2) : ''}</td>
-                          <td className="py-1 text-right text-gray-600">{line.credit > 0 ? line.credit.toFixed(2) : ''}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ))}
-              {/* --- ACCOUNTING PAGINATION CONTROLS --- */}
-              {totalAccountingPages > 1 && (
-                <div className="flex justify-between items-center bg-dark p-3 rounded-lg border border-gray-800 mt-4">
-                  <button 
-                    onClick={() => setAccountingPage(prev => Math.max(prev - 1, 1))}
-                    disabled={accountingPage === 1}
-                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${accountingPage === 1 ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
-                  >
-                    <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
-                  </button>
-                  <span className="text-gray-400 text-xs font-bold tracking-widest">
-                    PAGE <span className="text-accent text-sm">{accountingPage}</span> OF {totalAccountingPages}
-                  </span>
-                  <button 
-                    onClick={() => setAccountingPage(prev => Math.min(prev + 1, totalAccountingPages))}
-                    disabled={accountingPage === totalAccountingPages}
-                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${accountingPage === totalAccountingPages ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
-                  >
-                    <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
-                  </button>
-                </div>
-              )}
+          </div>
+        </div>
+      )}
+
+      {/* REPLENISH MODAL */}
+      {rfReplModal && rfActiveFund && (
+        <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm" onClick={e => { if (e.target === e.currentTarget) setRfReplModal(false); }}>
+          <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 shrink-0">
+              <div>
+                <h2 className="text-white font-black text-lg">Replenish Fund</h2>
+                <p className="text-white/30 text-xs font-bold uppercase tracking-widest mt-0.5">
+                  {rfActiveFund.name} · Shortfall: <span className="text-brand">₱{(rfActiveFund.initialAmount - rfActiveFund.currentBalance).toFixed(2)}</span>
+                </p>
+              </div>
+              <button onClick={() => setRfReplModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition"><X size={16}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 custom-scrollbar">
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Amount to Add (₱)</label>
+                <input type="number" min="0" step="0.01" value={rfReplForm.amount}
+                  onChange={e => setRfReplForm({...rfReplForm, amount: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white text-xl font-black tabular-nums outline-none focus:border-brand/60"/>
+                <p className="text-white/30 text-[10px] mt-1">Leave blank to auto-fill the full shortfall (₱{(rfActiveFund.initialAmount - rfActiveFund.currentBalance).toFixed(2)}).</p>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Get funds from *</label>
+                <select value={rfReplForm.sourceAccount} onChange={e => setRfReplForm({...rfReplForm, sourceAccount: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white font-bold outline-none focus:border-brand/60">
+                  {(cashAndBankAccounts || []).map(a => (
+                    <option key={a.code} value={a.code}>{a.name} ({a.code})</option>
+                  ))}
+                </select>
+                <p className="text-white/30 text-[10px] mt-1">This account is credited (reduced) when the petty cash float is funded.</p>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Note</label>
+                <input type="text" placeholder="e.g. Weekly replenishment from daily sales" value={rfReplForm.note}
+                  onChange={e => setRfReplForm({...rfReplForm, note: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white outline-none focus:border-brand/60 placeholder-white/20"/>
+              </div>
+              <div className="bg-brand/10 border border-brand/20 rounded-xl p-3 text-xs text-brand/80">
+                Journal entry that will be posted:<br/>
+                <span className="font-bold">DR Petty Cash / Revolving Fund &nbsp;|&nbsp; CR {(cashAndBankAccounts || []).find(a => a.code === rfReplForm.sourceAccount)?.name || 'Cash on Hand'}</span>
+              </div>
+            </div>
+            <div className="px-5 py-4 border-t border-white/8 shrink-0 flex gap-3">
+              <button onClick={() => setRfReplModal(false)} className="flex-1 bg-white/5 text-white/60 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
+              <button onClick={submitRfRepl} disabled={rfReplSubmitting}
+                className="flex-1 bg-brand text-white rounded-xl py-3 font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">
+                {rfReplSubmitting ? 'Replenishing…' : 'Replenish Fund'}
+              </button>
             </div>
           </div>
+        </div>
+      )}
 
+      {/* ===== EXPENSE ENTRY MODAL ===== */}
+      {expenseModal && (
+        <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in" onClick={e => { if (e.target === e.currentTarget) setExpenseModal(false); }} role="dialog" aria-modal="true" aria-label="Add expense">
+          <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden animate-scale-in">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 shrink-0">
+              <div>
+                <h2 className="text-white font-black text-lg">Add Expense</h2>
+                <p className="text-white/30 text-xs font-bold uppercase tracking-widest mt-0.5">Operating cost entry</p>
+              </div>
+              <button onClick={() => setExpenseModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 custom-scrollbar">
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Amount (₱) *</label>
+                <input type="number" min="0" step="0.01" value={expenseForm.amount} onChange={e => setExpenseForm({...expenseForm, amount: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white text-xl font-black tabular-nums outline-none focus:border-brand/60" />
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Category *</label>
+                <select value={expenseForm.categoryCode} onChange={e => setExpenseForm({...expenseForm, categoryCode: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white font-bold outline-none focus:border-brand/60">
+                  <option value="">Select category…</option>
+                  {expenseCategories.map(c => (
+                    <option key={c.code} value={c.code}>{c.code} — {c.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Paid From *</label>
+                <select value={expenseForm.paymentMethod} onChange={e => setExpenseForm({...expenseForm, paymentMethod: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white font-bold outline-none focus:border-brand/60">
+                  <option>Cash on Hand</option>
+                  <option>Bank Transfer</option>
+                  <option>GCash</option>
+                  <option>Maya</option>
+                  <option>Maribank</option>
+                  <option>On Account</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Description *</label>
+                <input type="text" placeholder="e.g. June electricity bill" value={expenseForm.description} onChange={e => setExpenseForm({...expenseForm, description: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Vendor (optional)</label>
+                  <input type="text" placeholder="Meralco" value={expenseForm.vendor} onChange={e => setExpenseForm({...expenseForm, vendor: e.target.value})}
+                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Date</label>
+                  <input type="date" value={expenseForm.date} onChange={e => setExpenseForm({...expenseForm, date: e.target.value})}
+                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold outline-none focus:border-brand/60" />
+                </div>
+              </div>
+              <p className="text-[10px] text-white/30 italic">A balanced journal entry will be created automatically: <span className="text-white/50">DR Expense / CR {expenseForm.paymentMethod}</span></p>
+            </div>
+            <div className="px-5 pb-5 pt-3 border-t border-white/8 shrink-0">
+              <button onClick={submitExpense} disabled={expenseSubmitting}
+                className="w-full py-4 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active-press transition shadow-elev-2 disabled:opacity-50 min-h-[56px] flex items-center justify-center gap-2">
+                <Check size={18}/> {expenseSubmitting ? 'Saving…' : 'Record Expense'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== A/R SETTLEMENT MODAL ===== */}
+      {settleModal && (
+        <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in" onClick={e => { if (e.target === e.currentTarget) setSettleModal(null); }} role="dialog" aria-modal="true" aria-label="Settle A/R">
+          <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col animate-scale-in">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
+              <div>
+                <h2 className="text-white font-black text-lg">Settle A/R</h2>
+                <p className="text-white/40 text-xs mt-0.5">{settleModal.order.orderNumber} · {settleModal.order.paymentMethod}</p>
+              </div>
+              <button onClick={() => setSettleModal(null)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <div className="bg-white/5 rounded-xl p-3 border border-white/8">
+                <p className="text-white/40 text-[10px] font-bold uppercase">Outstanding</p>
+                <p className="text-3xl text-brand font-black tabular-nums">₱{settleModal.order.total.toFixed(2)}</p>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Amount Received *</label>
+                <input type="number" min="0" step="0.01" value={settleForm.amount} onChange={e => setSettleForm({...settleForm, amount: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white text-xl font-black tabular-nums outline-none focus:border-brand/60" />
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Deposited To *</label>
+                <select value={settleForm.paymentMethod} onChange={e => setSettleForm({...settleForm, paymentMethod: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white font-bold outline-none focus:border-brand/60">
+                  <option>Cash on Hand</option>
+                  <option>Bank Transfer</option>
+                  <option>GCash</option>
+                  <option>Maya</option>
+                  <option>Maribank</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Note (optional)</label>
+                <input type="text" placeholder="Grab payout batch #..." value={settleForm.note} onChange={e => setSettleForm({...settleForm, note: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+              </div>
+            </div>
+            <div className="px-5 pb-5 pt-3 border-t border-white/8">
+              <button onClick={submitArSettlement} disabled={settleSubmitting}
+                className="w-full py-4 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active-press transition shadow-elev-2 disabled:opacity-50 min-h-[56px] flex items-center justify-center gap-2">
+                <Check size={18}/> {settleSubmitting ? 'Settling…' : 'Confirm Settlement'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
       {/* --- PRICING & DISCOUNTS TAB --- */}
-      {activeTab === 'pricing' && (
-        <div className="flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-180px)]">
-          
-          {/* LEFT COLUMN: Read-Only Pricing Table */}
-          <div className="flex-1 bg-surface border border-gray-800 rounded-xl p-6 overflow-y-auto custom-scrollbar min-h-[400px] lg:min-h-0 lg:h-full">
-            <h3 className="text-xl font-bold mb-4 text-accent border-b border-gray-800 pb-2">Product Pricing Masterlist</h3>
-            
-            {/* Added overflow-x wrapper so it scrolls sideways on small screens instead of breaking the layout */}
-            <div className="overflow-x-auto pr-2">
-              <table className="w-full text-left text-sm min-w-[500px]">
-                <thead>
-                  <tr className="text-gray-400 border-b border-gray-800">
-                    <th className="pb-3 uppercase tracking-wider text-xs">Product Name</th>
-                    <th className="pb-3 uppercase tracking-wider text-xs">Category</th>
-                    <th className="pb-3 text-right uppercase tracking-wider text-xs">Size / Option</th>
-                    <th className="pb-3 text-right uppercase tracking-wider text-xs">Selling Price</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {products.length === 0 ? (
-                    <tr><td colSpan="4" className="py-4 text-center text-gray-500">No products found.</td></tr>
-                  ) : currentPricingProducts.flatMap(p => {
-                    // We now track the exact productId and sizeIndex so the backend knows what to update
-                    const rows = [{ id: `${p._id}-base`, productId: p._id, sizeIndex: null, name: p.name, cat: p.category, size: p.baseSize || 'Regular', price: p.basePrice || p.price || 0 }];
-                    if (p.sizes) {
-                      p.sizes.forEach((s, idx) => {
-                        rows.push({ id: `${p._id}-size-${idx}`, productId: p._id, sizeIndex: idx, name: '', cat: '', size: s.name, price: s.price });
-                      });
-                    }
-                    return rows;
-                  }).map((row) => (
-                    <tr key={row.id} className={`border-gray-800/50 hover:bg-dark/30 transition ${row.name !== '' ? 'border-t' : ''}`}>
-                      <td className={`py-2 font-bold ${row.name !== '' ? 'text-gray-200 pt-4' : ''}`}>{row.name}</td>
-                      <td className={`py-2 text-xs text-gray-500 ${row.name !== '' ? 'pt-4' : ''}`}>{row.cat}</td>
-                      <td className={`py-2 text-right text-gray-400 ${row.name !== '' ? 'pt-4' : ''}`}>{row.size}</td>
-                      
-                      {/* --- INLINE EDITING UI --- */}
-                      <td className={`py-2 text-right font-mono font-bold text-accent ${row.name !== '' ? 'pt-4' : ''}`}>
-                        {editPriceId === row.id ? (
-                          <div className="flex justify-end items-center gap-2">
-                            <input 
-                              type="number" 
-                              step="0.01" 
-                              className="w-20 bg-dark border border-accent rounded px-2 py-1 text-black outline-none text-right"
-                              value={editPriceVal}
-                              onChange={(e) => setEditPriceVal(e.target.value)}
-                              autoFocus
-                              onKeyDown={(e) => { if (e.key === 'Enter') handleInlinePriceUpdate(row.productId, row.sizeIndex); }}
-                            />
-                            <button onClick={() => handleInlinePriceUpdate(row.productId, row.sizeIndex)} className="text-green-400 hover:text-green-300 flex items-center"><Check size={14} /></button>
-                            <button onClick={() => setEditPriceId(null)} className="text-red-400 hover:text-red-300">✕</button>
-                          </div>
-                        ) : (
-                          <div 
-                            className="cursor-pointer hover:bg-white/10 px-2 py-1 rounded inline-flex items-center gap-2 transition group"
-                            onClick={() => { setEditPriceId(row.id); setEditPriceVal(row.price); }}
-                          >
-                            P{Number(row.price).toFixed(2)}
-                            <span className="text-[10px] text-gray-500 group-hover:text-accent">✎</span>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {/* --- PRICING PAGINATION CONTROLS --- */}
-            {totalPricingPages > 1 && (
-              <div className="flex justify-between items-center bg-dark p-3 rounded-lg border border-gray-800 mt-4 shrink-0">
-                <button 
-                  onClick={() => setPricingPage(prev => Math.max(prev - 1, 1))}
-                  disabled={pricingPage === 1}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${pricingPage === 1 ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
-                >
-                  <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
-                </button>
-                <span className="text-gray-400 text-xs font-bold tracking-widest">
-                  PAGE <span className="text-accent text-sm">{pricingPage}</span> OF {totalPricingPages}
-                </span>
-                <button 
-                  onClick={() => setPricingPage(prev => Math.min(prev + 1, totalPricingPages))}
-                  disabled={pricingPage === totalPricingPages}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${pricingPage === totalPricingPages ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
-                >
-                  <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* RIGHT COLUMN: Discount CRUD */}
-          {/* Changed width breaks to lg:w-80 so it perfectly fits beside the table on tablets */}
-          <div className="w-full lg:w-80 xl:w-96 bg-surface border border-gray-800 rounded-xl p-6 min-h-[400px] lg:min-h-0 lg:h-full overflow-y-auto custom-scrollbar flex flex-col">
-            <h3 className="text-xl font-bold mb-4 text-accent border-b border-gray-800 pb-2">Discount Rules</h3>
-            
-            <div className="flex-1 overflow-y-auto mb-6 pr-2 scrollbar-thin scrollbar-thumb-gray-700">
-              <div className="space-y-3">
-                {discounts.length === 0 ? (
-                  <p className="text-sm text-gray-500 italic text-center py-4">No custom discounts set.</p>
-                ) : discounts.map(d => (
-                  <div key={d._id} className="bg-dark p-3 rounded-lg border border-gray-700 flex justify-between items-center">
-                    <div>
-                      {/* Fixed black text bug here! */}
-                      <p className="font-bold text-accent text-sm">{d.name}</p>
-                      <p className="text-xs text-gray-400 font-mono">{d.percentage}% OFF</p>
-                    </div>
-                    <button 
-                      onClick={async () => {
-                        if (window.confirm(`Delete ${d.name} discount?`)) {
-                          await apiFetch(`/api/discounts/${d._id}`, { method: 'DELETE' });
-                          fetchData(); // Refresh the list
-                        }
-                      }} 
-                      className="text-red-500 hover:text-red-400 font-bold px-2 py-1 bg-red-900/20 rounded transition"
-                    >
-                      Del
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="border-t border-gray-800 pt-4 mt-auto shrink-0">
-              <h4 className="text-sm font-bold text-white uppercase tracking-wider mb-3">Add New Discount</h4>
-              <form 
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  if (!discountForm.name || !discountForm.percentage) return;
-                  await apiFetch(`/api/discounts`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: discountForm.name, percentage: Number(discountForm.percentage) })
-                  });
-                  setDiscountForm({ name: '', percentage: '' });
-                  fetchData(); // Refresh the list
-                }} 
-                className="space-y-3"
-              >
-                <div>
-                  <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1 block">Discount Name</label>
-                  <input type="text" placeholder="e.g., PWD, Senior Citizen" value={discountForm.name} onChange={(e) => setDiscountForm({...discountForm, name: e.target.value})} className="w-full bg-dark border border-gray-700 rounded p-2 text-sm text-black outline-none focus:border-accent" required />
-                </div>
-                <div>
-                  <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1 block">Percentage (%)</label>
-                  <input type="number" placeholder="e.g., 20" max="100" min="1" value={discountForm.percentage} onChange={(e) => setDiscountForm({...discountForm, percentage: e.target.value})} className="w-full bg-dark border border-gray-700 rounded p-2 text-sm text-black outline-none focus:border-accent" required />
-                </div>
-                <button type="submit" className="w-full bg-accent text-dark font-black py-3 rounded hover:bg-white transition shadow-lg shadow-accent/20 uppercase tracking-wider text-xs">
-                  Save Rule
-                </button>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
+      {activeTab === 'pricing' && <Suspense fallback={<TabFallback />}><PricingTab ctx={ctx} /></Suspense>}
 
 {/* --- AUDIT REPORT --- */}
-      {activeTab === 'audit' && (() => {
-        const now = new Date();
-        const cutoff = auditFilter === 'today'
-          ? new Date(now.getFullYear(), now.getMonth(), now.getDate())
-          : auditFilter === '7d'
-          ? new Date(now - 7 * 86400000)
-          : auditFilter === '30d'
-          ? new Date(now - 30 * 86400000)
-          : new Date(0);
-
-        const allOrdersPool = [...orders, ...archivedOrders];
-        const inRange = allOrdersPool.filter(o => new Date(o.createdAt) >= cutoff);
-
-        const cancelled = inRange.filter(o => o.status === 'Cancelled' || o.status === 'Voided');
-        const comps = inRange.filter(o => o.isComplimentary && o.status === 'Completed');
-        const discounted = inRange.filter(o => !o.isComplimentary && o.status === 'Completed' && (o.discount || 0) > 0);
-        const staffList = [...new Set(inRange.filter(o => o.cashier && o.cashier !== 'System').map(o => o.cashier))].sort();
-
-        const totalCancelledValue = cancelled.reduce((s, o) => s + (o.subtotal || 0), 0);
-        const totalCompValue = comps.reduce((s, o) => s + (o.subtotal || 0), 0);
-        const totalDiscountValue = discounted.reduce((s, o) => s + (o.discount || 0), 0);
-
-        const fmtDate = (d) => {
-          const dt = new Date(d);
-          return dt.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }) + ' ' +
-            dt.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' });
-        };
-
-        const cancelTotalPages = Math.ceil(cancelled.length / AUDIT_PAGE_SIZE);
-        const compTotalPages   = Math.ceil(comps.length / AUDIT_PAGE_SIZE);
-        const discTotalPages   = Math.ceil(discounted.length / AUDIT_PAGE_SIZE);
-        const staffTotalPages  = Math.ceil(staffList.length / AUDIT_PAGE_SIZE);
-
-        const pagedCancelled  = cancelled.slice((auditCancelPage - 1) * AUDIT_PAGE_SIZE, auditCancelPage * AUDIT_PAGE_SIZE);
-        const pagedComps      = comps.slice((auditCompPage - 1) * AUDIT_PAGE_SIZE, auditCompPage * AUDIT_PAGE_SIZE);
-        const pagedDiscounted = discounted.slice((auditDiscPage - 1) * AUDIT_PAGE_SIZE, auditDiscPage * AUDIT_PAGE_SIZE);
-        const pagedStaff      = staffList.slice((auditStaffPage - 1) * AUDIT_PAGE_SIZE, auditStaffPage * AUDIT_PAGE_SIZE);
-
-        const PagBar = ({ page, total, prev, next }) => total <= 1 ? null : (
-          <div className="flex justify-between items-center border-t border-white/5 px-5 py-3 flex-shrink-0">
-            <button onClick={prev} disabled={page === 1}
-              className={`px-3 py-1 rounded text-[10px] font-black uppercase tracking-wider transition ${page === 1 ? 'text-white/15 cursor-not-allowed' : 'text-white/50 hover:text-white hover:bg-white/5'}`}>
-              ← Prev
-            </button>
-            <span className="text-[10px] text-white/30 font-bold tracking-widest">PAGE {page} OF {total}</span>
-            <button onClick={next} disabled={page === total}
-              className={`px-3 py-1 rounded text-[10px] font-black uppercase tracking-wider transition ${page === total ? 'text-white/15 cursor-not-allowed' : 'text-white/50 hover:text-white hover:bg-white/5'}`}>
-              Next →
-            </button>
-          </div>
-        );
-
-        return (
-          <div className="w-full max-w-5xl mx-auto flex flex-col gap-6">
-
-            {/* Header + Filter */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h2 className="text-xl font-black text-white tracking-tight flex items-center gap-2">
-                  <ShieldCheck size={20} className="text-brand" /> Audit Report
-                </h2>
-                <p className="text-white/30 text-xs font-medium mt-0.5">Exception log — cancelled orders, complimentaries, and discounts</p>
-              </div>
-              <div className="flex gap-1.5 flex-wrap">
-                {[['today','Today'],['7d','7 Days'],['30d','30 Days'],['all','All Time']].map(([val, lbl]) => (
-                  <button key={val}
-                    onClick={() => { setAuditFilter(val); setAuditCancelPage(1); setAuditCompPage(1); setAuditDiscPage(1); setAuditStaffPage(1); }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition ${auditFilter === val ? 'bg-brand text-white' : 'bg-white/5 text-white/40 hover:bg-white/10 hover:text-white'}`}>
-                    {lbl}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Summary Cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <div className="bg-surface border border-white/8 rounded-xl p-4">
-                <p className="text-[10px] text-white/30 font-bold uppercase tracking-wider mb-1">Cancelled / Voided</p>
-                <p className="text-2xl font-black text-red-400">{cancelled.length}</p>
-                <p className="text-[10px] text-red-400/60 font-bold mt-0.5">₱{totalCancelledValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} lost</p>
-              </div>
-              <div className="bg-surface border border-white/8 rounded-xl p-4">
-                <p className="text-[10px] text-white/30 font-bold uppercase tracking-wider mb-1">Complimentary</p>
-                <p className="text-2xl font-black text-yellow-400">{comps.length}</p>
-                <p className="text-[10px] text-yellow-400/60 font-bold mt-0.5">₱{totalCompValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} waived</p>
-              </div>
-              <div className="bg-surface border border-white/8 rounded-xl p-4">
-                <p className="text-[10px] text-white/30 font-bold uppercase tracking-wider mb-1">Discounts Given</p>
-                <p className="text-2xl font-black text-brand">{discounted.length}</p>
-                <p className="text-[10px] text-brand/60 font-bold mt-0.5">₱{totalDiscountValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} off</p>
-              </div>
-              <div className="bg-surface border border-white/8 rounded-xl p-4">
-                <p className="text-[10px] text-white/30 font-bold uppercase tracking-wider mb-1">Active Staff</p>
-                <p className="text-2xl font-black text-white">{staffList.length}</p>
-                <p className="text-[10px] text-white/30 font-bold mt-0.5">in period</p>
-              </div>
-            </div>
-
-            {/* Cancelled / Voided Table */}
-            <div className="bg-surface border border-white/8 rounded-xl overflow-hidden">
-              <div className="px-5 py-3 border-b border-white/8 flex items-center gap-2">
-                <XCircle size={14} className="text-red-400" />
-                <h3 className="text-sm font-black text-white uppercase tracking-wider">Cancelled &amp; Voided Orders</h3>
-                <span className="ml-auto text-[10px] bg-red-500/15 text-red-400 px-2 py-0.5 rounded-full font-bold">{cancelled.length}</span>
-              </div>
-              {cancelled.length === 0 ? (
-                <p className="text-white/20 text-sm p-6 text-center font-bold">No cancelled or voided orders in this period.</p>
-              ) : (
-                <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left min-w-[540px]">
-                      <thead>
-                        <tr className="text-white/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
-                          <th className="px-5 py-2.5">Date / Time</th>
-                          <th className="px-5 py-2.5">Customer</th>
-                          <th className="px-5 py-2.5">Cashier</th>
-                          <th className="px-5 py-2.5 text-right">Amount</th>
-                          <th className="px-5 py-2.5">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pagedCancelled.map(o => (
-                          <tr key={o._id} className="border-b border-white/5 last:border-0 hover:bg-white/3 transition">
-                            <td className="px-5 py-2.5 text-xs text-white/40 font-mono">{fmtDate(o.createdAt)}</td>
-                            <td className="px-5 py-2.5 text-xs text-white/70 font-bold">{o.customerName || '—'}</td>
-                            <td className="px-5 py-2.5 text-xs text-white/40">{o.cashier || '—'}</td>
-                            <td className="px-5 py-2.5 text-xs text-right font-mono text-red-400">₱{(o.subtotal || 0).toFixed(2)}</td>
-                            <td className="px-5 py-2.5">
-                              <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${o.status === 'Voided' ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20 text-gray-400'}`}>{o.status}</span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <PagBar page={auditCancelPage} total={cancelTotalPages}
-                    prev={() => setAuditCancelPage(p => Math.max(p - 1, 1))}
-                    next={() => setAuditCancelPage(p => Math.min(p + 1, cancelTotalPages))} />
-                </>
-              )}
-            </div>
-
-            {/* Complimentary Orders Table */}
-            <div className="bg-surface border border-white/8 rounded-xl overflow-hidden">
-              <div className="px-5 py-3 border-b border-white/8 flex items-center gap-2">
-                <Gift size={14} className="text-yellow-400" />
-                <h3 className="text-sm font-black text-white uppercase tracking-wider">Complimentary Orders</h3>
-                <span className="ml-auto text-[10px] bg-yellow-500/15 text-yellow-400 px-2 py-0.5 rounded-full font-bold">{comps.length}</span>
-              </div>
-              {comps.length === 0 ? (
-                <p className="text-white/20 text-sm p-6 text-center font-bold">No complimentary orders in this period.</p>
-              ) : (
-                <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left min-w-[560px]">
-                      <thead>
-                        <tr className="text-white/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
-                          <th className="px-5 py-2.5">Date / Time</th>
-                          <th className="px-5 py-2.5">Customer</th>
-                          <th className="px-5 py-2.5">Reason</th>
-                          <th className="px-5 py-2.5">Cashier</th>
-                          <th className="px-5 py-2.5 text-right">Value Waived</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pagedComps.map(o => (
-                          <tr key={o._id} className="border-b border-white/5 last:border-0 hover:bg-white/3 transition">
-                            <td className="px-5 py-2.5 text-xs text-white/40 font-mono">{fmtDate(o.createdAt)}</td>
-                            <td className="px-5 py-2.5 text-xs text-white/70 font-bold">{o.customerName || '—'}</td>
-                            <td className="px-5 py-2.5 text-xs text-yellow-400/80">{COMP_REASON_LABELS[o.reasonType] || o.reasonType || o.reasonNote || '—'}</td>
-                            <td className="px-5 py-2.5 text-xs text-white/40">{o.cashier || '—'}</td>
-                            <td className="px-5 py-2.5 text-xs text-right font-mono text-yellow-400">₱{(o.subtotal || 0).toFixed(2)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <PagBar page={auditCompPage} total={compTotalPages}
-                    prev={() => setAuditCompPage(p => Math.max(p - 1, 1))}
-                    next={() => setAuditCompPage(p => Math.min(p + 1, compTotalPages))} />
-                </>
-              )}
-            </div>
-
-            {/* Discount Activity Table */}
-            <div className="bg-surface border border-white/8 rounded-xl overflow-hidden">
-              <div className="px-5 py-3 border-b border-white/8 flex items-center gap-2">
-                <DollarSign size={14} className="text-brand" />
-                <h3 className="text-sm font-black text-white uppercase tracking-wider">Discount Activity</h3>
-                <span className="ml-auto text-[10px] bg-brand/15 text-brand px-2 py-0.5 rounded-full font-bold">{discounted.length}</span>
-              </div>
-              {discounted.length === 0 ? (
-                <p className="text-white/20 text-sm p-6 text-center font-bold">No discounted orders in this period.</p>
-              ) : (
-                <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left min-w-[560px]">
-                      <thead>
-                        <tr className="text-white/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
-                          <th className="px-5 py-2.5">Date / Time</th>
-                          <th className="px-5 py-2.5">Customer</th>
-                          <th className="px-5 py-2.5">Type</th>
-                          <th className="px-5 py-2.5">Cashier</th>
-                          <th className="px-5 py-2.5 text-right">Discount Amt</th>
-                          <th className="px-5 py-2.5 text-right">Net Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pagedDiscounted.map(o => (
-                          <tr key={o._id} className="border-b border-white/5 last:border-0 hover:bg-white/3 transition">
-                            <td className="px-5 py-2.5 text-xs text-white/40 font-mono">{fmtDate(o.createdAt)}</td>
-                            <td className="px-5 py-2.5 text-xs text-white/70 font-bold">{o.customerName || '—'}</td>
-                            <td className="px-5 py-2.5 text-xs text-brand/80 font-bold">{o.discountType || 'Promo'}</td>
-                            <td className="px-5 py-2.5 text-xs text-white/40">{o.cashier || '—'}</td>
-                            <td className="px-5 py-2.5 text-xs text-right font-mono text-brand">-₱{(o.discount || 0).toFixed(2)}</td>
-                            <td className="px-5 py-2.5 text-xs text-right font-mono text-white/70">₱{(o.total || 0).toFixed(2)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <PagBar page={auditDiscPage} total={discTotalPages}
-                    prev={() => setAuditDiscPage(p => Math.max(p - 1, 1))}
-                    next={() => setAuditDiscPage(p => Math.min(p + 1, discTotalPages))} />
-                </>
-              )}
-            </div>
-
-            {/* Staff Activity Summary */}
-            <div className="bg-surface border border-white/8 rounded-xl overflow-hidden mb-6">
-              <div className="px-5 py-3 border-b border-white/8 flex items-center gap-2">
-                <Users size={14} className="text-white/50" />
-                <h3 className="text-sm font-black text-white uppercase tracking-wider">Staff Activity</h3>
-                <span className="ml-auto text-[10px] bg-white/8 text-white/40 px-2 py-0.5 rounded-full font-bold">{staffList.length}</span>
-              </div>
-              {staffList.length === 0 ? (
-                <p className="text-white/20 text-sm p-6 text-center font-bold">No staff activity in this period.</p>
-              ) : (
-                <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left min-w-[440px]">
-                      <thead>
-                        <tr className="text-white/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
-                          <th className="px-5 py-2.5">Staff Name</th>
-                          <th className="px-5 py-2.5 text-right">Orders</th>
-                          <th className="px-5 py-2.5 text-right">Cancelled</th>
-                          <th className="px-5 py-2.5 text-right">Comps</th>
-                          <th className="px-5 py-2.5 text-right">Net Sales</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pagedStaff.map(name => {
-                          const myOrders = inRange.filter(o => o.cashier === name);
-                          const myCompleted = myOrders.filter(o => o.status === 'Completed' && !o.isComplimentary);
-                          const myCancelled = myOrders.filter(o => o.status === 'Cancelled' || o.status === 'Voided');
-                          const myComps = myOrders.filter(o => o.isComplimentary);
-                          const myNet = myCompleted.reduce((s, o) => s + (o.total || 0), 0);
-                          return (
-                            <tr key={name} className="border-b border-white/5 last:border-0 hover:bg-white/3 transition">
-                              <td className="px-5 py-2.5 text-xs text-white/80 font-black">{name}</td>
-                              <td className="px-5 py-2.5 text-xs text-right text-white/50 font-mono">{myOrders.length}</td>
-                              <td className="px-5 py-2.5 text-xs text-right font-mono">
-                                <span className={myCancelled.length > 0 ? 'text-red-400' : 'text-white/20'}>{myCancelled.length}</span>
-                              </td>
-                              <td className="px-5 py-2.5 text-xs text-right font-mono">
-                                <span className={myComps.length > 0 ? 'text-yellow-400' : 'text-white/20'}>{myComps.length}</span>
-                              </td>
-                              <td className="px-5 py-2.5 text-xs text-right font-mono text-brand font-bold">₱{myNet.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                  <PagBar page={auditStaffPage} total={staffTotalPages}
-                    prev={() => setAuditStaffPage(p => Math.max(p - 1, 1))}
-                    next={() => setAuditStaffPage(p => Math.min(p + 1, staffTotalPages))} />
-                </>
-              )}
-            </div>
-
-          </div>
-        );
-      })()}
+      {activeTab === 'audit' && <Suspense fallback={<TabFallback />}><AuditTab ctx={ctx} /></Suspense>}
 
 {/* --- MENU SETUP (PRODUCTS/CATEGORIES) --- */}
-      {activeTab === 'products' && (
-        // FIX 1: Changed h-fixed to h-auto on mobile, and added gap-6
-        <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 h-auto lg:h-[calc(100vh-180px)]">
-          
-          {/* LEFT COLUMN: Menu Items, Categories, and Add-Ons */}
-          {/* FIX 2: Added min-h-[500px] so it doesn't get crushed on mobile */}
-          <div className="flex-1 bg-surface border border-white/8 shadow-md rounded-xl p-4 sm:p-6 overflow-y-auto custom-scrollbar min-h-[500px] lg:min-h-0">
-
-            {/* 1. Menu Items List */}
-            <h3 className="text-xl font-bold mb-4 text-white border-b border-white/8 pb-2">Menu Items</h3>
-            <div className="space-y-3">
-              {currentProducts.map(p => (
-                <div key={p._id} className="flex flex-col sm:flex-row gap-4 p-4 border border-white/8 rounded-xl bg-surface-2 items-start sm:items-center">
-                  
-                  {/* Top section on mobile: Image + Text */}
-                  <div className="flex gap-4 flex-1 w-full">
-                    {p.image ? (
-                      <img src={p.image} alt={p.name} className="w-16 h-16 object-cover rounded-lg shadow-sm border border-white/10 shrink-0" />
-                    ) : (
-                      <div className="w-16 h-16 bg-white/5 rounded-lg border border-white/10 flex items-center justify-center text-xs text-white/30 font-bold shrink-0">No Img</div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h4 className="font-bold text-white truncate w-full sm:w-auto">{p.name} <span className="text-xs text-brand/70 ml-1">({p.category})</span></h4>
-                        {(() => {
-                          const est = getEstimatedStock(p.baseRecipe);
-                          if (est === null) return null;
-                          return (
-                            <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${est <= 0 ? 'bg-red-500/15 text-red-400' : est <= 5 ? 'bg-yellow-500/15 text-yellow-400' : 'bg-green-500/15 text-green-400'}`}>
-                              {est <= 0 ? 'Out of Stock' : `Est: ${est} left`}
-                            </span>
-                          );
-                        })()}
-                      </div>
-                      {p.description && <p className="text-xs text-white/40 mt-1 line-clamp-2">{p.description}</p>}
-                      <p className="text-sm text-white/70 font-bold mt-1">P{Number(p.basePrice || p.price || 0).toFixed(2)} {p.baseSize && <span className="text-xs text-white/30 font-normal">({p.baseSize})</span>} {p.sizes?.length > 0 && <span className="text-brand/70 text-xs ml-1">(+ {p.sizes.length} sizes)</span>}</p>
-                    </div>
-                  </div>
-
-                  {/* Edit button: Full width on mobile, auto width on desktop */}
-                  <div className="w-full sm:w-auto mt-2 sm:mt-0 shrink-0">
-                    <button 
-                      onClick={() => { 
-                        setEditingProduct(p); 
-                        setFormData({ 
-                          name: p.name || '', category: p.category || '', description: p.description || '', 
-                          basePrice: Number(p.basePrice || p.price || 0), baseSize: p.baseSize || '', 
-                          sizes: p.sizes || [], image: p.image || '', baseRecipe: p.baseRecipe || [], addOns: p.addOns || []
-                        }); 
-                      }} 
-                      className="w-full sm:w-auto px-4 py-3 sm:py-2 bg-white/10 text-white rounded-lg text-sm font-bold hover:bg-brand hover:text-white transition flex items-center justify-center gap-2"
-                    >
-                      <Edit size={14} /> Edit
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {/* --- PAGINATION CONTROLS --- */}
-            {totalPages > 1 && (
-              <div className="flex justify-between items-center bg-dark p-4 rounded-xl border border-gray-800 mt-6 shrink-0">
-                <button 
-                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                  disabled={currentPage === 1}
-                  className={`px-6 py-2 rounded-lg font-bold uppercase tracking-wider text-xs transition ${currentPage === 1 ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
-                >
-                  <span className="flex items-center gap-1"><ChevronLeft size={12} /> Previous</span>
-                </button>
-                
-                <span className="text-gray-400 text-sm font-bold tracking-widest">
-                  PAGE <span className="text-accent text-lg">{currentPage}</span> OF {totalPages}
-                </span>
-                
-                <button 
-                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                  disabled={currentPage === totalPages}
-                  className={`px-6 py-2 rounded-lg font-bold uppercase tracking-wider text-xs transition ${currentPage === totalPages ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
-                >
-                  <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
-                </button>
-              </div>
-            )}
-            </div>
-            
-            {/* 2. Manage Categories */}
-            <div className="mt-8 border-t border-white/8 pt-6">
-              <h3 className="text-xl font-bold mb-4 text-white border-b border-white/8 pb-2">Manage Categories & Routing</h3>
-              <form onSubmit={handleSaveCategory} className="flex gap-3 mb-6">
-                <input
-                  type="text"
-                  value={catForm.name}
-                  onChange={e => setCatForm({...catForm, name: e.target.value})}
-                  placeholder="Category Name"
-                  className="flex-1 bg-white/5 border border-white/10 rounded-lg p-3 text-white outline-none focus:border-brand font-semibold placeholder-white/20"
-                  required
-                />
-                <select
-                  value={catForm.department}
-                  onChange={e => setCatForm({...catForm, department: e.target.value})}
-                  className="w-32 bg-white/5 border border-white/10 rounded-lg p-3 text-white outline-none focus:border-brand font-bold"
-                >
-                  <option value="Kitchen">Kitchen</option>
-                  <option value="Bar">Bar</option>
-                </select>
-                <button type="submit" className="bg-accent text-white font-bold px-6 py-2 rounded-lg hover:bg-opacity-90 transition shadow-md">
-                  {editingCategory ? 'Update' : 'Add'}
-                </button>
-                {editingCategory && (
-                  <button type="button" onClick={() => { setEditingCategory(null); setCatForm({ name: '', department: 'Kitchen' }); }} className="bg-white/10 text-white/70 font-bold px-4 py-2 rounded-lg hover:bg-white/20 transition">
-                    Cancel
-                  </button>
-                )}
-              </form>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {categories.map(c => (
-                  <div key={c._id} className="flex justify-between items-center p-3 border border-white/8 rounded-xl bg-surface-2">
-                    <div>
-                      <span className="font-bold text-sm text-white block">{c.name}</span>
-                      <span className="text-[10px] uppercase font-bold text-white/40 tracking-wider">Routes to: {c.department || 'Kitchen'}</span>
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => { setEditingCategory(c); setCatForm({ name: c.name, department: c.department || 'Kitchen' }); }} className="text-white/40 hover:text-brand p-1.5 rounded"><Edit size={16} /></button>
-                      <button onClick={() => deleteCategory(c._id)} className="text-red-400 hover:text-red-300 p-1.5 rounded"><Trash2 size={16} /></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 3. MANAGE GLOBAL ADD-ONS */}
-            <div className="mt-8 border-t border-white/8 pt-6">
-              <h3 className="text-xl font-bold mb-4 text-white border-b border-white/8 pb-2">Manage Global Add-Ons (Sinkers, Shots)</h3>
-              <form onSubmit={handleSaveAddOn} className="flex gap-3 mb-6">
-                <input
-                  type="text"
-                  placeholder="Name (e.g. Popping Boba)"
-                  value={addOnForm.name}
-                  onChange={e => setAddOnForm({...addOnForm, name: e.target.value})}
-                  className="flex-1 bg-white/5 border border-white/10 rounded-lg p-3 text-white outline-none focus:border-brand font-semibold placeholder-white/20"
-                  required
-                />
-                <input
-                  type="number"
-                  placeholder="Price"
-                  value={addOnForm.price}
-                  onChange={e => setAddOnForm({...addOnForm, price: e.target.value})}
-                  className="w-24 bg-white/5 border border-white/10 rounded-lg p-3 text-white outline-none focus:border-brand font-bold placeholder-white/20"
-                  required
-                />
-                <select
-                  value={addOnForm.category}
-                  onChange={e => setAddOnForm({...addOnForm, category: e.target.value})}
-                  className="w-32 bg-white/5 border border-white/10 rounded-lg p-3 text-white outline-none focus:border-brand font-bold"
-                >
-                  <option value="Extras">Extras</option>
-                  <option value="Sinkers">Sinkers</option>
-                  <option value="Milks">Milks</option>
-                </select>
-                <button type="submit" className="bg-brand text-white font-bold px-6 py-2 rounded-lg hover:bg-brand-dark transition shadow-md">Add</button>
-              </form>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {globalAddOns.map(a => (
-                  <div key={a._id} className="flex justify-between items-center p-3 border border-white/8 rounded-xl bg-surface-2">
-                    <div>
-                      <span className="font-bold text-sm text-white block">{a.name}</span>
-                      <span className="text-[10px] uppercase font-bold text-brand/70 tracking-wider">{a.category} • +P{a.price}</span>
-                    </div>
-                    <button onClick={() => deleteAddOn(a._id)} className="text-red-400 hover:text-red-300 bg-red-500/10 p-1.5 rounded"><Trash2 size={16} /></button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* RIGHT COLUMN: Add Product Form */}
-          {/* FIX 3: Added min-h-[600px] on mobile so the form has room to breathe */}
-          <div className="w-full lg:w-96 bg-surface border border-white/8 rounded-xl p-4 sm:p-6 flex flex-col min-h-[600px] lg:min-h-0 lg:h-full overflow-hidden shadow-md">
-            <h3 className="text-xl font-bold text-white mb-4 border-b border-white/8 pb-2 shrink-0">
-              {editingProduct ? 'Edit Product' : 'Add Product'}
-            </h3>
-            
-            <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 pb-4">
-              <form onSubmit={handleSaveProduct} className="space-y-4">
-                {/* Basic Info */}
-                <div>
-                  <label className="block text-sm font-bold text-white/60 mb-2">Product Image</label>
-                  <div className="flex items-center gap-4">
-                    {formData.image ? (
-                      <img src={formData.image} alt="Preview" className="w-16 h-16 object-cover rounded-lg border border-white/10 shadow-sm" />
-                    ) : (
-                      <div className="w-16 h-16 bg-white/5 border border-white/10 rounded-lg flex items-center justify-center text-xs text-white/25 font-bold">None</div>
-                    )}
-                    <input type="file" accept="image/*" onChange={handleImageUpload} className="text-sm text-white/40 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-white/10 file:text-white hover:file:bg-white/20 cursor-pointer transition" />
-                  </div>
-                </div>
-                <div><label className="block text-sm font-bold text-white/60 mb-1">Name</label><input required type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-brand font-semibold placeholder-white/20" /></div>
-                <div>
-                  <label className="block text-sm font-bold text-white/60 mb-1">Category</label>
-                  <select required value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-brand font-semibold">
-                    <option value="" disabled>Select Category...</option>
-                    {categories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
-                  </select>
-                </div>
-                <div><label className="block text-sm font-bold text-white/60 mb-1">Description</label><textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-brand h-20 placeholder-white/20 font-medium" /></div>
-                
-                {/* Base Size & Materials */}
-                <div className="bg-surface-2 p-4 rounded-xl border border-white/8 mt-6">
-                  <label className="block text-sm font-black text-white/80 mb-3 uppercase tracking-wider">Base Size / Standard Recipe</label>
-                  <div className="flex gap-2 mb-2">
-                    <input type="text" placeholder="Size Name (e.g. Regular)" value={formData.baseSize || ''} onChange={e => setFormData({...formData, baseSize: e.target.value})} className="w-1/2 bg-white/5 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-brand font-bold placeholder-white/20" />
-                    <div className="w-1/2 relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 font-bold">₱</span>
-                      <input type="number" step="0.01" placeholder="Selling Price" value={formData.basePrice} onChange={e => setFormData({...formData, basePrice: parseFloat(e.target.value) || 0})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pl-8 text-white outline-none focus:border-brand font-bold" />
-                    </div>
-                  </div>
-                  
-                  {(() => {
-                    const baseCost = calcRecipeCost(formData.baseRecipe);
-                    const basePriceVal = parseFloat(formData.basePrice) || 0;
-                    const suggestedBasePrice = baseCost > 0 ? (baseCost / 0.7).toFixed(2) : '0.00';
-                    const baseMargin = basePriceVal > 0 ? (((basePriceVal - baseCost) / basePriceVal) * 100).toFixed(1) : '0.0';
-                    return baseCost > 0 ? (
-                      <div className="flex justify-between text-[10px] px-1 mb-3">
-                        <span className={parseFloat(baseMargin) >= 30 ? "text-green-400 font-black" : "text-yellow-400 font-black"}>Margin: {baseMargin}%</span>
-                        <button type="button" onClick={() => setFormData({...formData, basePrice: parseFloat(suggestedBasePrice)})} className="text-white/30 hover:text-brand font-bold transition">Set 30% Margin (₱{suggestedBasePrice})</button>
-                      </div>
-                    ) : <div className="mb-3"></div>;
-                  })()}
-                  
-                  <div className="bg-black/20 p-3 rounded-lg border border-white/8">
-                    <div className="flex justify-between items-center mb-3">
-                      <span className="text-xs text-white/40 font-black uppercase tracking-wider">Base Materials</span>
-                      <span className="text-xs text-white font-black">Cost: ₱{calcRecipeCost(formData.baseRecipe).toFixed(2)}</span>
-                    </div>
-                    {(formData.baseRecipe || []).map((mat, i) => (
-                      <div key={i} className="flex items-center gap-2 mb-2 text-sm">
-                        <span className="flex-1 text-white/70 font-semibold truncate">{mat.name}</span>
-                        <input type="number" value={mat.qty} onChange={e => updateMaterialQty(e.target.value, i, null)} className="w-16 bg-white/5 border border-white/10 rounded p-1.5 text-center text-white font-bold" />
-                        <span className="text-white/40 w-8 text-xs font-bold">{mat.unit}</span>
-                        <button type="button" onClick={() => removeMaterial(i, null)} className="text-red-400 hover:text-red-300 ml-2"><X size={16} /></button>
-                      </div>
-                    ))}
-                    <div className="mt-4 pt-3 border-t border-white/5">
-                      <div className="text-[10px] text-brand uppercase font-black mb-2 tracking-widest flex items-center gap-1"><Plus size={12}/> Tap to Add Material</div>
-                      <div className="max-h-32 overflow-y-auto bg-black/20 border border-white/8 rounded-lg custom-scrollbar p-1">
-                        {inventory.length === 0 ? (
-                          <p className="p-2 text-xs text-white/30 italic font-medium">No inventory available.</p>
-                        ) : (
-                          inventory.map(inv => (
-                            <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, null)} className="w-full text-left px-3 py-2 text-xs text-white/60 font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
-                              <span className="truncate pr-2">{inv.itemName}</span>
-                              <span className="text-white/30 shrink-0 font-mono">₱{inv.unitCost.toFixed(2)}/{inv.unit}</span>
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Extra Sizes */}
-                <div className="border-t border-white/8 pt-5 mt-4">
-                  <div className="flex justify-between items-center mb-4">
-                    <label className="text-sm font-black text-white/80 uppercase tracking-wider">Extra Sizes (Small, Large)</label>
-                    <button type="button" onClick={addSize} className="text-xs bg-white/10 px-3 py-1.5 rounded-full font-bold text-white/70 border border-white/10 hover:bg-brand/20 hover:text-brand hover:border-brand/30 transition flex items-center gap-1"><Plus size={14}/> Add Size</button>
-                  </div>
-
-                  {(formData.sizes || []).map((size, idx) => (
-                    <div key={idx} className="bg-surface-2 p-4 rounded-xl border border-white/8 mb-4">
-                      <div className="flex gap-2 mb-2">
-                        <input type="text" placeholder="Size Name" value={size.name} onChange={e => updateSize(idx, 'name', e.target.value)} className="w-1/2 bg-white/5 border border-white/10 rounded-lg p-2 text-sm text-white font-bold placeholder-white/20" required />
-                        <input type="number" step="0.01" placeholder="Price" value={size.price} onChange={e => updateSize(idx, 'price', e.target.value)} className="w-1/3 bg-white/5 border border-white/10 rounded-lg p-2 text-sm text-white font-bold placeholder-white/20" required />
-                        <button type="button" onClick={() => removeSize(idx)} className="text-white/30 hover:text-red-400 font-bold ml-auto px-2"><X size={20} /></button>
-                      </div>
-
-                      <div className="bg-black/20 p-3 rounded-lg border border-white/8 mt-3">
-                        <div className="flex justify-between items-center mb-3">
-                          <span className="text-xs text-white/40 font-black uppercase tracking-wider">{size.name || 'New Size'} Materials</span>
-                          <span className="text-xs text-white font-black">Cost: ₱{calcRecipeCost(size.recipe).toFixed(2)}</span>
-                        </div>
-                        {(size.recipe || []).map((mat, i) => (
-                          <div key={i} className="flex items-center gap-2 mb-2 text-sm">
-                            <span className="flex-1 text-white/70 font-semibold truncate">{mat.name}</span>
-                            <input type="number" value={mat.qty} onChange={e => updateMaterialQty(e.target.value, i, idx)} className="w-16 bg-white/5 border border-white/10 rounded p-1.5 text-center text-white font-bold" />
-                            <span className="text-white/40 w-8 text-xs font-bold">{mat.unit}</span>
-                            <button type="button" onClick={() => removeMaterial(i, idx)} className="text-red-400 hover:text-red-300 ml-2"><X size={16} /></button>
-                          </div>
-                        ))}
-                        <div className="mt-4 pt-3 border-t border-white/5">
-                          <div className="text-[10px] text-brand uppercase font-black mb-2 tracking-widest flex items-center gap-1"><Plus size={12}/> Tap to Add Material</div>
-                          <div className="max-h-28 overflow-y-auto bg-black/20 border border-white/8 rounded-lg custom-scrollbar p-1">
-                            {inventory.map(inv => (
-                              <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, idx)} className="w-full text-left px-3 py-2 text-xs text-white/60 font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
-                                <span className="truncate pr-2">{inv.itemName}</span>
-                                <span className="text-white/30 shrink-0 font-mono">₱{inv.unitCost.toFixed(2)}/{inv.unit}</span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* --- OPTIONAL ADD-ONS CHECKBOXES --- */}
-                <div className="border-t border-white/8 pt-5 mt-4 mb-4">
-                  <label className="text-sm font-black text-white/80 uppercase tracking-wider mb-3 block">Attach Add-Ons</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {globalAddOns.map(addon => {
-                      const isAttached = (formData.addOns || []).some(a => a.name === addon.name);
-                      return (
-                        <label key={addon._id} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer border-2 transition ${isAttached ? 'border-brand bg-brand/10 shadow-sm shadow-brand/10' : 'border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20'}`}>
-                          <input
-                            type="checkbox"
-                            className="w-4 h-4 accent-accent cursor-pointer"
-                            checked={isAttached}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setFormData({ ...formData, addOns: [...(formData.addOns || []), { name: addon.name, price: addon.price, recipe: [] }] });
-                              } else {
-                                setFormData({ ...formData, addOns: (formData.addOns || []).filter(a => a.name !== addon.name) });
-                              }
-                            }}
-                          />
-                          <div className="flex flex-col">
-                             <span className="text-sm font-bold text-white leading-tight">{addon.name}</span>
-                             <span className="text-[10px] text-accent font-black uppercase tracking-widest">+₱{addon.price}</span>
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Save Buttons */}
-                <div className="flex gap-3 mt-6 pt-4 border-t border-white/8">
-                  {editingProduct && (
-                    <button type="button" onClick={() => deleteProduct(editingProduct._id)} className="bg-red-500/10 text-red-400 font-bold py-3 px-4 rounded-xl hover:bg-red-500/20 transition flex items-center justify-center border border-red-500/20">
-                      <Trash2 size={20} />
-                    </button>
-                  )}
-                  <button type="submit" className="flex-1 bg-accent text-white font-black py-4 rounded-xl hover:bg-opacity-90 shadow-lg shadow-accent/20 transition uppercase tracking-wider text-sm">
-                    {editingProduct ? 'Update Product' : 'Save Product'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
+      {activeTab === 'products' && <Suspense fallback={<TabFallback />}><ProductsTab ctx={ctx} /></Suspense>}
       
       {/* --- STOCK MOVEMENT HISTORY MODAL --- */}
       {historyModalOpen && (() => {
         const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
         const pagedHistory = stockHistory.slice((historyPage - 1) * HIST_PAGE_SIZE, historyPage * HIST_PAGE_SIZE);
+        // For log mode: convert base-unit quantities to pcs using packBase from item name
+        const hPack = BUSINESS_TYPE === 'log' && historyItem ? packInfo(historyItem) : null;
+        const hBase = hPack?.packBase || 1;
+        const fmtQty = (n) => BUSINESS_TYPE === 'log' ? +(n / hBase).toFixed(4) : n;
+        const fmtCost = (c) => BUSINESS_TYPE === 'log' ? (c || 0) * hBase : (c || 0);
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
             <div className="bg-surface p-6 rounded-xl border border-gray-700 shadow-2xl flex flex-col max-w-2xl w-full max-h-[85vh]">
               <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-3 flex-shrink-0">
                 <div>
                   <h2 className="text-xl font-bold text-white">Stock Card: <span className="text-accent">{historyItemName}</span></h2>
-                  {stockHistory.length > 0 && <p className="text-[10px] text-gray-500 mt-0.5">{stockHistory.length} entries total</p>}
+                  {stockHistory.length > 0 && <p className="text-[10px] text-gray-500 mt-0.5">{stockHistory.length} entries total{BUSINESS_TYPE === 'log' ? ' · qty in pcs' : ''}</p>}
                 </div>
                 <button onClick={() => setHistoryModalOpen(false)} className="text-gray-400 hover:text-white font-bold text-xl">✕</button>
               </div>
@@ -4740,27 +5423,32 @@ const submitPhysicalCounts = async () => {
                     <tr className="text-gray-500 border-b border-gray-800 text-xs uppercase tracking-wider">
                       <th className="pb-2">Date</th>
                       <th className="pb-2">Type</th>
-                      <th className="pb-2 text-right">In/Out</th>
-                      <th className="pb-2 text-right">Unit Cost</th>
-                      <th className="pb-2 text-right">Balance</th>
+                      <th className="pb-2 text-right">In/Out ({BUSINESS_TYPE === 'log' ? 'pcs' : 'units'})</th>
+                      <th className="pb-2 text-right">Cost/Pack</th>
+                      <th className="pb-2 text-right">Balance ({BUSINESS_TYPE === 'log' ? 'pcs' : 'units'})</th>
                       <th className="pb-2 pl-4">Remarks / Ref</th>
                     </tr>
                   </thead>
                   <tbody>
                     {stockHistory.length === 0 ? (
                       <tr><td colSpan="6" className="py-4 text-center text-gray-500">No movement history recorded yet.</td></tr>
-                    ) : pagedHistory.map((log, idx) => (
-                      <tr key={idx} className="border-b border-gray-800/50 hover:bg-dark/30">
+                    ) : pagedHistory.map((log, idx) => {
+                      const dispChange = fmtQty(log.qtyChange);
+                      const dispBalance = fmtQty(log.balanceAfter);
+                      const dispCost = fmtCost(log.unitCost);
+                      return (
+                      <tr key={idx} className="border-b border-gray-800/50 hover:bg-page-bg/30">
                         <td className="py-2 text-gray-400 text-xs">{new Date(log.date).toLocaleString()}</td>
                         <td className="py-2 font-bold text-gray-300">{log.type}</td>
-                        <td className={`py-2 text-right font-mono font-bold ${log.qtyChange < 0 ? 'text-red-400' : 'text-green-400'}`}>
-                          {log.qtyChange > 0 ? `+${log.qtyChange}` : log.qtyChange}
+                        <td className={`py-2 text-right font-mono font-bold ${dispChange < 0 ? 'text-red-400' : 'text-green-400'}`}>
+                          {dispChange > 0 ? `+${dispChange}` : dispChange}
                         </td>
-                        <td className="py-2 text-right text-gray-400 font-mono text-xs">P{(log.unitCost || 0).toFixed(4)}</td>
-                        <td className="py-2 text-right text-accent font-bold font-mono">{log.balanceAfter}</td>
+                        <td className="py-2 text-right text-gray-400 font-mono text-xs">₱{dispCost.toFixed(2)}</td>
+                        <td className="py-2 text-right text-accent font-bold font-mono">{dispBalance}</td>
                         <td className="py-2 pl-4 text-gray-500 text-xs">{log.remarks || log.reference}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -4790,6 +5478,533 @@ const submitPhysicalCounts = async () => {
           </div>
         );
       })()}
+
+      {/* ============================================================
+          WASTE / SPOILAGE LOGGING MODAL
+          ============================================================ */}
+      {/* ===== BULK INVENTORY IMPORT MODAL ===== */}
+      {importModal && (
+        <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in" onClick={e => { if (e.target === e.currentTarget) setImportModal(false); }} role="dialog" aria-modal="true" aria-label="Inventory import preview">
+          <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-4xl shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden animate-scale-in">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 shrink-0">
+              <div>
+                <h2 className="text-white font-black text-lg">Bulk Import — Stock Take</h2>
+                <p className="text-white/40 text-xs font-bold uppercase tracking-widest mt-0.5">Replaces current quantities · audited via journal entries</p>
+              </div>
+              <button onClick={() => setImportModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
+            </div>
+
+            {/* Summary chips */}
+            {(() => {
+              const valid = importRows.filter(r => !r._error && !r._isCategory);
+              const newCount = valid.filter(r => r._newItem).length;
+              const batchCount = valid.filter(r => !r._newItem && r._newBatch).length;
+              const upCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff > 0).length;
+              const downCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff < 0).length;
+              const sameCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff === 0).length;
+              const errCount = importRows.filter(r => r._error).length;
+              return (
+                <div className="px-5 py-3 flex flex-wrap gap-2 border-b border-white/8 shrink-0">
+                  <span className="text-[10px] font-black uppercase tracking-widest bg-blue-500/20 text-blue-300 px-2.5 py-1.5 rounded">NEW · {newCount}</span>
+                  {batchCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-purple-500/20 text-purple-300 px-2.5 py-1.5 rounded">NEW BATCH · {batchCount}</span>}
+                  <span className="text-[10px] font-black uppercase tracking-widest bg-green-500/20 text-green-300 px-2.5 py-1.5 rounded">↑ INCREASE · {upCount}</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest bg-red-500/20 text-red-300 px-2.5 py-1.5 rounded">↓ DECREASE · {downCount}</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest bg-white/5 text-white/40 px-2.5 py-1.5 rounded">UNCHANGED · {sameCount}</span>
+                  {errCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-red-500/40 text-red-200 px-2.5 py-1.5 rounded">ERRORS · {errCount}</span>}
+                </div>
+              );
+            })()}
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+              <table className="w-full text-xs">
+                <thead className="bg-white/5 sticky top-0">
+                  <tr className="text-white/40 text-[10px] uppercase tracking-widest">
+                    <th className="text-left px-4 py-3">Item</th>
+                    <th className="text-left px-2 py-3">Status</th>
+                    <th className="text-right px-2 py-3">Current</th>
+                    <th className="text-right px-2 py-3">New</th>
+                    <th className="text-right px-2 py-3">Δ Diff</th>
+                    <th className="text-right px-2 py-3">Unit Cost</th>
+                    <th className="text-right px-4 py-3">Value Δ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {importRows.map((r, i) => {
+                    if (r._isCategory) return (
+                      <tr key={i} className="bg-white/5">
+                        <td colSpan={7} className="px-4 py-2 text-white/50 font-black text-[10px] uppercase tracking-[0.2em]">{r.category}</td>
+                      </tr>
+                    );
+                    const isErr = !!r._error;
+                    const isNew = r._newItem;
+                    const isBatch = !isNew && !!r._newBatch;
+                    const diff = Number(r._diff || 0);
+                    const valueDiff = (isNew || isBatch ? r.qty : diff) * (r.unitCost === '' ? (r._existing?.unitCost ? r._existing.unitCost * (r._existing.unitMultiplier || 1) : 0) : Number(r.unitCost || 0));
+                    return (
+                      <tr key={i} className={`border-b border-white/5 ${isErr ? 'bg-red-500/10' : isBatch ? 'bg-purple-500/5' : ''}`}>
+                        <td className="px-4 py-2.5 text-white font-bold">
+                          {r.itemCode && <span className="text-white/30 font-mono text-[10px] mr-1.5">{r.itemCode}</span>}
+                          {r.itemName || <span className="text-red-300">(missing)</span>}
+                          {isBatch && r.expiryDate && <span className="ml-1.5 text-purple-300/60 text-[10px]">exp {r.expiryDate}</span>}
+                        </td>
+                        <td className="px-2 py-2.5">
+                          {isErr && <span className="text-[10px] font-black bg-red-500/30 text-red-200 px-1.5 py-0.5 rounded uppercase">{r._error}</span>}
+                          {!isErr && isNew && <span className="text-[10px] font-black bg-blue-500/30 text-blue-200 px-1.5 py-0.5 rounded uppercase">NEW</span>}
+                          {!isErr && isBatch && <span className="text-[10px] font-black bg-purple-500/30 text-purple-200 px-1.5 py-0.5 rounded uppercase">NEW BATCH</span>}
+                          {!isErr && !isNew && !isBatch && diff > 0 && <span className="text-[10px] font-black bg-green-500/30 text-green-200 px-1.5 py-0.5 rounded uppercase">↑ INC</span>}
+                          {!isErr && !isNew && !isBatch && diff < 0 && <span className="text-[10px] font-black bg-red-500/30 text-red-200 px-1.5 py-0.5 rounded uppercase">↓ DEC</span>}
+                          {!isErr && !isNew && !isBatch && diff === 0 && <span className="text-[10px] font-black bg-white/10 text-white/40 px-1.5 py-0.5 rounded uppercase">SAME</span>}
+                        </td>
+                        <td className="px-2 py-2.5 text-right text-white/60 tabular-nums">{isNew || isErr ? '—' : `${r._oldDisplay.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r._oldDisplay.unit}`}</td>
+                        <td className="px-2 py-2.5 text-right text-white font-bold tabular-nums">{isErr ? '—' : `${Number(r.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`}</td>
+                        <td className={`px-2 py-2.5 text-right tabular-nums font-bold ${diff > 0 ? 'text-green-400' : diff < 0 ? 'text-red-400' : 'text-white/40'}`}>
+                          {isErr || isNew ? '—' : (diff > 0 ? '+' : '') + diff.toLocaleString(undefined, { maximumFractionDigits: 3 })}
+                        </td>
+                        <td className="px-2 py-2.5 text-right text-white/70 tabular-nums">{isErr || r.unitCost === '' ? '—' : peso(r.unitCost)}</td>
+                        <td className={`px-4 py-2.5 text-right tabular-nums font-bold ${valueDiff > 0 ? 'text-green-400' : valueDiff < 0 ? 'text-red-400' : 'text-white/40'}`}>{isErr ? '—' : peso(Math.abs(valueDiff)) + (valueDiff < 0 ? ' loss' : valueDiff > 0 ? ' gain' : '')}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Progress bar */}
+            {importProgress >= 0 && (
+              <div className="px-5 pt-3 shrink-0">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-white/50">
+                    {importProgress < 100 ? 'Processing…' : 'Done!'}
+                  </span>
+                  <span className="text-[10px] font-mono text-white/50">{importProgress}%</span>
+                </div>
+                <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-150 ${importProgress === 100 ? 'bg-green-400' : 'bg-brand'}`}
+                    style={{ width: `${importProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="px-5 py-4 border-t border-white/8 flex items-center gap-3 shrink-0">
+              <button onClick={() => setImportModal(false)} disabled={importSubmitting} className="flex-1 sm:flex-initial px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white font-bold text-xs uppercase tracking-wider transition min-h-[44px] disabled:opacity-40 disabled:pointer-events-none">
+                Cancel
+              </button>
+              <button onClick={async () => {
+                const { jsPDF, autoTable } = await loadPdfLibs();
+                const doc = new jsPDF('landscape');
+                doc.setFontSize(16); doc.text(`${BIZ_NAME} — Bulk Import Preview`, 14, 14);
+                doc.setFontSize(9); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 21);
+                const body = importRows.map(r => {
+                  const isErr = !!r._error;
+                  const isNew = r._newItem;
+                  const isBatch = !isNew && !!r._newBatch;
+                  const diff = Number(r._diff || 0);
+                  const status = isErr ? r._error : isNew ? 'NEW' : isBatch ? 'NEW BATCH' : diff > 0 ? '↑ INC' : diff < 0 ? '↓ DEC' : 'SAME';
+                  const current = isNew || isErr ? '—' : `${r._oldDisplay.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r._oldDisplay.unit}`;
+                  const next = isErr ? '—' : `${Number(r.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`;
+                  const delta = isErr || isNew ? '—' : (diff > 0 ? '+' : '') + diff.toLocaleString(undefined, { maximumFractionDigits: 3 });
+                  const cost = isErr || r.unitCost === '' ? '—' : `P${Number(r.unitCost).toFixed(2)}`;
+                  return [r.itemCode || '—', r.itemName || '(missing)', status, current, next, delta, cost];
+                });
+                autoTable(doc, {
+                  startY: 26,
+                  head: [['Code', 'Item Name', 'Status', 'Current', 'New Qty', 'Δ Diff', 'Unit Cost']],
+                  body,
+                  theme: 'grid',
+                  headStyles: { fillColor: [40, 40, 40] },
+                  styles: { fontSize: 8 },
+                  columnStyles: { 0: { cellWidth: 22 }, 2: { halign: 'center' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
+                });
+                doc.save(`import-preview-${new Date().toISOString().slice(0,10)}.pdf`);
+              }} className="px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white font-bold text-xs uppercase tracking-wider transition min-h-[44px]">
+                Export PDF
+              </button>
+              <button onClick={submitImport} disabled={importSubmitting || importRows.every(r => r._error)}
+                className="flex-1 px-5 py-3 rounded-xl bg-brand hover:bg-brand-dark text-white font-black text-sm uppercase tracking-widest transition shadow-elev-2 disabled:opacity-50 min-h-[44px] flex items-center justify-center gap-2">
+                <Check size={16}/> {importSubmitting ? 'Importing…' : 'Confirm Import'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== EDIT INVENTORY ITEM MODAL ===== */}
+      {editInvModal && (
+        <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in" onClick={e => { if (e.target === e.currentTarget) setEditInvModal(null); }} role="dialog" aria-modal="true" aria-label="Edit inventory item">
+          <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden animate-scale-in">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 shrink-0">
+              <div>
+                <h2 className="text-white font-black text-lg">Edit Inventory Item</h2>
+                <p className="text-white/30 text-xs font-bold uppercase tracking-widest mt-0.5">{editInvModal.item.itemCode}</p>
+              </div>
+              <button onClick={() => setEditInvModal(null)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 custom-scrollbar">
+              <div className="bg-white/5 rounded-xl p-3 border border-white/8">
+                <p className="text-white/40 text-[10px] font-bold uppercase">Current Stock</p>
+                <p className="text-2xl text-brand font-black tabular-nums">{BUSINESS_TYPE === 'log' ? itemDisplay(editInvModal.item).packQty.toLocaleString(undefined, { maximumFractionDigits: 3 }) : itemDisplay(editInvModal.item).qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} <span className="text-sm text-white/40 font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : itemDisplay(editInvModal.item).unit}</span></p>
+                <p className="text-[10px] text-white/30 mt-1 italic">To change quantity, use Restock or Waste — not this form.</p>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Item Name *</label>
+                <input type="text" value={editInvForm.itemName} onChange={e => setEditInvForm({...editInvForm, itemName: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold outline-none focus:border-brand/60 transition" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Display Unit *</label>
+                  <select value={editInvForm.displayUnit} onChange={e => setEditInvForm({...editInvForm, displayUnit: e.target.value, unit: resolveUnitFE(e.target.value).base })}
+                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold outline-none focus:border-brand/60">
+                    <option value="">— Pick —</option>
+                    <option value="L">L (Liters)</option>
+                    <option value="kg">kg (Kilograms)</option>
+                    <option value="pcs">pcs (Pieces)</option>
+                  </select>
+                  <p className="text-[9px] text-white/30 mt-1">Recipes still use precise base units internally.</p>
+                </div>
+                <div>
+                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Unit Cost (₱/{BUSINESS_TYPE === 'log' ? (packInfo({ itemName: editInvForm.itemName, unit: editInvForm.unit }).label || 'pack') : (editInvForm.displayUnit || 'unit')})</label>
+                  <input type="number" min="0" step="0.01" value={editInvForm.unitCost} onChange={e => setEditInvForm({...editInvForm, unitCost: e.target.value})}
+                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold tabular-nums outline-none focus:border-brand/60" />
+                  <p className="text-[9px] text-yellow-400/70 mt-1">⚠ Will not retro-update existing COGS.</p>
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Low Stock Threshold ({BUSINESS_TYPE === 'log' ? 'pcs' : (editInvForm.displayUnit || editInvForm.unit || 'unit')})</label>
+                <input type="number" min="0" value={editInvForm.lowStockThreshold} onChange={e => setEditInvForm({...editInvForm, lowStockThreshold: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold tabular-nums outline-none focus:border-brand/60" />
+                <p className="text-[10px] text-white/30 mt-1">Alert when stock drops to or below. 0 = disable.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Expiry Date</label>
+                  <input type="date" value={editInvForm.expiryDate} onChange={e => setEditInvForm({...editInvForm, expiryDate: e.target.value})}
+                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold outline-none focus:border-brand/60" />
+                  {editInvForm.expiryDate && (
+                    <button type="button" onClick={() => setEditInvForm({...editInvForm, expiryDate: ''})} className="text-[10px] text-red-400 hover:text-red-300 mt-1 font-bold uppercase">Clear expiry</button>
+                  )}
+                </div>
+                <div>
+                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Warn (days before)</label>
+                  <input type="number" min="1" max="365" value={editInvForm.expiryWarnDays} onChange={e => setEditInvForm({...editInvForm, expiryWarnDays: e.target.value})}
+                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold tabular-nums outline-none focus:border-brand/60" />
+                </div>
+              </div>
+            </div>
+            <div className="px-5 pb-5 pt-3 border-t border-white/8 shrink-0">
+              <button onClick={submitEditInventory} disabled={editInvSubmitting}
+                className="w-full py-4 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active-press transition shadow-elev-2 disabled:opacity-50 min-h-[56px] flex items-center justify-center gap-2">
+                <Check size={18}/> {editInvSubmitting ? 'Saving…' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── PARTIAL FULFILLMENT MODAL ─────────────────────────────────────── */}
+      {partialModal && (() => {
+        const items = partialModal.items || [];
+        const rem = (it) => (it.quantity || 0) - (it.fulfilledQty || 0);
+        const fNow = (it, i) => Math.max(0, Math.min(rem(it), Number(partialQtys[i] ?? rem(it))));
+        const fTotal = items.reduce((s, it, i) => s + (it.price || 0) * fNow(it, i), 0);
+        const rTotal = items.reduce((s, it, i) => s + (it.price || 0) * (rem(it) - fNow(it, i)), 0);
+        return (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-md w-full p-6 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-black text-white">Partial Fulfillment</h2>
+                <p className="text-xs text-gray-400 mt-0.5">{partialModal.orderNumber} · set fulfilled quantities</p>
+              </div>
+              <button onClick={() => setPartialModal(null)} className="text-gray-500 hover:text-white text-xl font-bold">✕</button>
+            </div>
+
+            <div className="space-y-2">
+              {items.map((it, i) => {
+                const remaining = rem(it);
+                const fq = fNow(it, i);
+                const short = remaining - fq;
+                if (remaining <= 0) return (
+                  <div key={i} className="bg-page-bg border border-white/8 rounded-xl px-3 py-2 opacity-50">
+                    <p className="text-sm font-bold text-white truncate">{it.name} <span className="text-emerald-400 text-[10px]">· fully fulfilled</span></p>
+                  </div>
+                );
+                return (
+                  <div key={i} className="bg-page-bg border border-white/8 rounded-xl px-3 py-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-white truncate">{it.name}</p>
+                        <p className="text-[10px] text-white/40">Remaining: {remaining} of {it.quantity} · ₱{(it.price||0).toFixed(2)} ea</p>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button onClick={() => setPartialQtys(p => ({ ...p, [i]: Math.max(0, fq - 1) }))} className="w-7 h-7 rounded-lg bg-white/5 text-white hover:bg-white/10 font-black">−</button>
+                        <input type="number" min="0" max={remaining} value={fq}
+                          onChange={e => setPartialQtys(p => ({ ...p, [i]: e.target.value }))}
+                          className="w-12 text-center bg-surface border border-white/10 rounded-lg py-1 text-white text-sm font-bold outline-none" />
+                        <button onClick={() => setPartialQtys(p => ({ ...p, [i]: Math.min(remaining, fq + 1) }))} className="w-7 h-7 rounded-lg bg-white/5 text-white hover:bg-white/10 font-black">+</button>
+                      </div>
+                    </div>
+                    {short > 0 && <p className="text-[10px] text-amber-400 mt-1 font-bold">{short} stays on this order (fulfill later)</p>}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="bg-page-bg border border-white/8 rounded-xl px-3 py-2 text-xs space-y-1">
+              <div className="flex justify-between text-white/70"><span>Fulfilled now</span><span className="font-mono font-bold text-white">₱{fTotal.toFixed(2)}</span></div>
+              <div className="flex justify-between text-white/70"><span>Remaining on order</span><span className="font-mono font-bold text-amber-400">₱{rTotal.toFixed(2)}</span></div>
+            </div>
+
+            <div>
+              <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1.5">Payment Method</label>
+              <select value={partialPayment} onChange={e => setPartialPayment(e.target.value)}
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm font-bold outline-none focus:border-brand/60">
+                <optgroup label="In-Store Payments">
+                  <option value="Cash">Cash</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                </optgroup>
+                <optgroup label="E-Wallets">
+                  <option value="GCash">GCash</option>
+                  <option value="Maya">Maya</option>
+                  <option value="Maribank">Maribank / Seabank</option>
+                  <option value="Other E-Wallet">Other E-Wallet</option>
+                </optgroup>
+                <optgroup label="Delivery Partners">
+                  <option value="Grab Delivery">Grab Delivery</option>
+                  <option value="Lalamove">Lalamove</option>
+                  <option value="Manual Delivery">Manual / Direct</option>
+                </optgroup>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1.5">Payment</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setPartialMode('partial')}
+                  className={`py-2.5 rounded-xl border text-xs font-bold transition ${partialMode === 'partial' ? 'bg-brand/20 border-brand/60 text-white' : 'bg-page-bg border-white/10 text-white/50'}`}>
+                  Pay partial only<br/><span className="text-[9px] font-normal opacity-70">₱{fTotal.toFixed(2)} now · rest billed later</span>
+                </button>
+                <button type="button" onClick={() => setPartialMode('full')}
+                  className={`py-2.5 rounded-xl border text-xs font-bold transition ${partialMode === 'full' ? 'bg-brand/20 border-brand/60 text-white' : 'bg-page-bg border-white/10 text-white/50'}`}>
+                  Pay full now<br/><span className="text-[9px] font-normal opacity-70">remaining prepaid (deposit)</span>
+                </button>
+              </div>
+            </div>
+
+            <button onClick={submitPartialFulfill} disabled={partialBusy}
+              className="w-full py-3 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand-dark transition disabled:opacity-50">
+              {partialBusy ? 'Processing…' : 'Fulfill & Set Aside Remaining'}
+            </button>
+          </div>
+        </div>
+        );
+      })()}
+
+      {/* ── REFUND MODAL ──────────────────────────────────────────────────── */}
+      {refundModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-4">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-black text-white">Issue Refund</h2>
+                <p className="text-xs text-gray-400 mt-0.5">{refundModal.orderNumber} · ₱{(refundModal.total||0).toFixed(2)}</p>
+              </div>
+              <button onClick={() => setRefundModal(null)} className="text-gray-500 hover:text-white text-xl font-bold">✕</button>
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1">Refund Amount (₱)</label>
+              <input type="number" min="0.01" max={refundModal.total} step="0.01"
+                value={refundForm.refundAmount || refundModal.total}
+                onChange={e => setRefundForm(p=>({...p,refundAmount:e.target.value}))}
+                className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-white font-black tabular-nums outline-none focus:border-brand/60" />
+              <p className="text-[10px] text-white/30 mt-1">Max: ₱{(refundModal.total||0).toFixed(2)}</p>
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1">Reason *</label>
+              <textarea rows={2} value={refundForm.reason} onChange={e => setRefundForm(p=>({...p,reason:e.target.value}))}
+                placeholder="e.g. Wrong order, product defect, customer complaint"
+                className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-brand/60 resize-none placeholder-white/20" />
+            </div>
+            {(() => {
+              const amt = parseFloat(refundForm.refundAmount) || refundModal.total;
+              const isFull = Math.abs(amt - (refundModal.total || 0)) <= 0.01;
+              return (
+                <div>
+                  <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1">Inventory & COGS</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { v: 'Restock', label: 'Restock', hint: 'Goods returned' },
+                      { v: 'Spoilage', label: 'Spoilage', hint: 'Goods wasted' },
+                      { v: 'None', label: 'No change', hint: 'Cash only' },
+                    ].map(opt => (
+                      <button key={opt.v} type="button" disabled={!isFull}
+                        onClick={() => setRefundForm(p => ({ ...p, inventoryAction: opt.v }))}
+                        className={`flex flex-col items-center py-2 rounded-xl border text-[11px] font-bold transition disabled:opacity-40
+                          ${refundForm.inventoryAction === opt.v ? 'bg-brand/20 border-brand/60 text-white' : 'bg-page-bg border-gray-700 text-gray-400 hover:border-brand/40'}`}>
+                        {opt.label}
+                        <span className="text-[9px] font-normal text-white/30">{opt.hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {!isFull && <p className="text-[10px] text-amber-400/70 mt-1">Partial refunds adjust cash & revenue only — inventory/COGS unchanged.</p>}
+                </div>
+              );
+            })()}
+            <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-2 text-xs text-red-300">
+              ⚠ Returns ₱{(parseFloat(refundForm.refundAmount)||refundModal.total).toFixed(2)} to customer. Creates reversal journal entry. Cannot be undone.
+            </div>
+            <button onClick={handleRefund} disabled={refundSubmitting}
+              className="w-full py-3 bg-red-600 text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-red-500 transition disabled:opacity-50">
+              {refundSubmitting ? 'Processing…' : 'Confirm Refund'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── CLOCK OUT / BREAK CHOICE MODAL ───────────────────────────────── */}
+      {clockModalOpen && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-4">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-black text-white uppercase tracking-wider">End Shift or Break?</h2>
+                <p className="text-xs text-gray-400 mt-0.5">Break used: {clockStatus.breakUsedMinutes || 0}m of 60m</p>
+              </div>
+              <button onClick={() => setClockModalOpen(false)} className="text-gray-500 hover:text-white text-xl font-bold">✕</button>
+            </div>
+
+            {/* Take a break — disabled once the 1-hour break is used up */}
+            {(clockStatus.breakRemainingMinutes ?? 60) > 0 ? (
+              <button onClick={startBreak}
+                className="w-full py-3 bg-amber-500/15 border border-amber-500/40 text-amber-300 font-black rounded-xl uppercase tracking-wider text-sm hover:bg-amber-500/25 transition flex items-center justify-center gap-2">
+                <Coffee size={16} /> Take a Break ({clockStatus.breakRemainingMinutes ?? 60}m left)
+              </button>
+            ) : (
+              <div className="w-full py-3 bg-white/5 border border-white/10 text-white/30 font-bold rounded-xl text-xs text-center">
+                Break used up — 1-hour break already taken
+              </div>
+            )}
+
+            <button onClick={handleClockOut}
+              className="w-full py-3 bg-red-600 text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-red-500 transition flex items-center justify-center gap-2">
+              <LogOut size={16} /> End Shift (Clock Out)
+            </button>
+            <button onClick={() => setClockModalOpen(false)}
+              className="w-full py-2 bg-surface-2 border border-white/10 text-white/50 font-bold rounded-xl text-xs uppercase hover:text-white transition">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── CHANGE PASSWORD MODAL ─────────────────────────────────────────── */}
+      {changePwModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-lg font-black text-white uppercase tracking-wider">Change Password</h2>
+              <button onClick={() => { setChangePwModal(false); setChangePwError(''); setChangePwForm({ currentPassword: '', newPassword: '', confirmPassword: '' }); }}
+                className="text-gray-500 hover:text-white text-xl font-bold">✕</button>
+            </div>
+            {changePwError && (
+              <div className="bg-red-900/30 border border-red-500/40 rounded-xl px-4 py-3 text-xs text-red-300 font-bold">{changePwError}</div>
+            )}
+            {[
+              ['Current Password', 'currentPassword', 'Your existing password'],
+              ['New Password', 'newPassword', 'Minimum 6 characters'],
+              ['Confirm New Password', 'confirmPassword', 'Repeat the new password'],
+            ].map(([label, field, hint]) => (
+              <div key={field}>
+                <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1">{label}</label>
+                <input type="password" value={changePwForm[field]}
+                  onChange={e => setChangePwForm(p => ({ ...p, [field]: e.target.value }))}
+                  placeholder={hint}
+                  className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-white outline-none focus:border-brand/60 placeholder-white/20 text-sm"
+                />
+              </div>
+            ))}
+            <button onClick={handleChangePassword} disabled={changePwLoading}
+              className="w-full py-3 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 transition disabled:opacity-50">
+              {changePwLoading ? 'Saving…' : 'Update Password'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {spoilageModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-4">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-black text-white uppercase tracking-wider">Log Waste / Spoilage</h2>
+                <p className="text-orange-400 text-xs font-bold mt-0.5">{spoilageModal.item.itemName}</p>
+              </div>
+              <button onClick={() => setSpoilageModal(null)} className="text-gray-500 hover:text-white text-xl font-bold">✕</button>
+            </div>
+            <div className="bg-surface-2 rounded-xl p-3 text-sm flex justify-between">
+              <span className="text-gray-400">Current Stock</span>
+              <span className="font-black text-white">{BUSINESS_TYPE === 'log' ? itemDisplay(spoilageModal.item).packQty.toLocaleString(undefined, { maximumFractionDigits: 3 }) : spoilageModal.item.stockQty} {BUSINESS_TYPE === 'log' ? 'pcs' : spoilageModal.item.unit}</span>
+            </div>
+            <div>
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Quantity to Discard ({BUSINESS_TYPE === 'log' ? 'pcs' : spoilageModal.item.unit})</label>
+              <input type="number" min="0.001" step="any" placeholder="0.00" value={spoilageForm.qty}
+                onChange={e => setSpoilageForm(f => ({ ...f, qty: e.target.value }))}
+                className="w-full bg-surface-2 border border-orange-500/40 focus:border-orange-400 text-white py-2.5 px-3 rounded-xl outline-none font-black text-lg text-center"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Reason *</label>
+              <select value={spoilageForm.reason} onChange={e => setSpoilageForm(f => ({ ...f, reason: e.target.value }))}
+                className="w-full bg-surface-2 border border-gray-600 focus:border-orange-400 text-white py-2.5 px-3 rounded-xl outline-none text-sm font-bold"
+              >
+                <option value="">— Select Reason —</option>
+                <option value="Spoilage">Spoilage / Expired</option>
+                <option value="Damage">Damage / Breakage</option>
+                <option value="Theft">Theft / Pilferage</option>
+                <option value="Encoding Error">Encoding Error</option>
+                <option value="Supplier Discrepancy">Supplier Discrepancy</option>
+                <option value="Quality Rejection">Quality Rejection</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Notes (optional)</label>
+              <input type="text" placeholder="Additional details..." value={spoilageForm.note}
+                onChange={e => setSpoilageForm(f => ({ ...f, note: e.target.value }))}
+                className="w-full bg-surface-2 border border-gray-700 focus:border-orange-400 text-white py-2.5 px-3 rounded-xl outline-none text-sm"
+              />
+            </div>
+            <div className="flex gap-3 mt-2">
+              <button onClick={() => setSpoilageModal(null)} className="flex-1 py-3 bg-surface-2 border border-white/10 text-white/50 font-bold rounded-xl hover:text-white transition text-sm uppercase">Cancel</button>
+              <button
+                disabled={spoilageLoading || !spoilageForm.qty || !spoilageForm.reason}
+                onClick={async () => {
+                  setSpoilageLoading(true);
+                  try {
+                    const spoilPack = BUSINESS_TYPE === 'log' ? packInfo(spoilageModal.item) : null;
+                    const spoilQtyBase = spoilPack
+                      ? parseFloat(spoilageForm.qty) * (spoilPack.packBase || 1)
+                      : parseFloat(spoilageForm.qty);
+                    const res = await apiFetch(`/api/inventory/spoilage/${spoilageModal.item._id}`, {
+                      method: 'POST',
+                      body: JSON.stringify({ qty: spoilQtyBase, reason: spoilageForm.reason, note: spoilageForm.note })
+                    });
+                    const data = await res.json();
+                    if (data.success) { setSpoilageModal(null); fetchERPData(); }
+                    else alert(data.error || 'Failed to log spoilage.');
+                  } finally { setSpoilageLoading(false); }
+                }}
+                className="flex-1 py-3 bg-orange-600 text-white font-black rounded-xl hover:bg-orange-500 transition text-sm uppercase tracking-wider disabled:opacity-50"
+              >
+                {spoilageLoading ? 'Logging…' : 'Log Waste'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
         </div>
       </div>
     </div>

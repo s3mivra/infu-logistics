@@ -54,6 +54,11 @@ const MenuItemCard = memo(({ product, onAdd }) => (
 ));
 MenuItemCard.displayName = 'MenuItemCard';
 
+// A product is shown to customers only when both flags are satisfied:
+//  • isAvailable !== false  — staff haven't manually 86'd it
+//  • stockAvailable !== false — all recipe ingredients are in stock
+const isProductVisible = (p) => p.isAvailable !== false && p.stockAvailable !== false;
+
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Kasa Lokal').toUpperCase();
 
 export default function CustomerMenu() {
@@ -63,10 +68,12 @@ export default function CustomerMenu() {
 
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]); // <-- THE FIX: Add this state
+  const [combos, setCombos] = useState([]); // active combos / promos
   const [cart, setCart] = useState([]);
   const [customerName, setCustomerName] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [orderNotes, setOrderNotes] = useState('');
 
   const [activeCategory, setActiveCategory] = useState('All');
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -325,9 +332,28 @@ export default function CustomerMenu() {
       const catData = await catRes.json();
       if (catData.success) setCategories(catData.categories);
 
+      // Combos / promos (active only)
+      const cbRes = await fetch(`${API_URL}/api/combos?t=${new Date().getTime()}`, { cache: 'no-store' });
+      const cbData = await cbRes.json();
+      if (cbData.success) setCombos(cbData.combos || []);
+
     } catch (err) {
       console.error("Failed to fetch menu data");
     }
+  };
+
+  // Add a combo to the cart as one line carrying its component products.
+  const addComboToCart = (combo) => {
+    setCart(prev => {
+      const id = `combo-${combo._id}`;
+      const existing = prev.find(i => i.cartItemId === id);
+      if (existing) return prev.map(i => i.cartItemId === id ? { ...i, quantity: i.quantity + 1 } : i);
+      return [...prev, {
+        cartItemId: id, productId: combo._id, name: combo.name, price: combo.price, quantity: 1,
+        department: 'Kitchen', selectedAddOns: [], isCombo: true,
+        comboItems: (combo.items || []).map(it => ({ productId: it.productId, name: it.name, sizeName: it.sizeName || '', quantity: it.quantity || 1 })),
+      }];
+    });
   };
 
   const handleProductClick = (product) => {
@@ -421,7 +447,8 @@ export default function CustomerMenu() {
           isVatExempt: false,
           table: tableNum,
           customerName: customerName.trim(),
-          sessionId: sessionToken
+          sessionId: sessionToken,
+          orderNotes: orderNotes.trim(),
         })
       });
 
@@ -438,14 +465,22 @@ export default function CustomerMenu() {
         setFlowState('status');
 
         requestNotificationPermission();
+      } else {
+        // Kitchen closed (403) or validation error — tell the customer and let them retry.
+        alert(data.error || 'Sorry, we could not place your order right now. Please ask our staff at the counter.');
+        setIsSubmitting(false);
       }
     } catch (error) {
       console.error("Order failed", error);
+      alert('Network problem — your order was not sent. Please try again or ask our staff.');
       setIsSubmitting(false);
     }
   };
 
-  const allCategories = useMemo(() => ['All', ...new Set(products.map(p => p.category))], [products]);
+  // Only show products that are manually enabled AND have all recipe ingredients in stock
+  const visibleProducts = useMemo(() => products.filter(isProductVisible), [products]);
+
+  const allCategories = useMemo(() => ['All', ...new Set(visibleProducts.map(p => p.category))], [visibleProducts]);
   const displayedCategories = useMemo(() => activeCategory === 'All' ? allCategories.filter(c => c !== 'All') : [activeCategory], [activeCategory, allCategories]);
 
   const modalSizes = selectedProduct ? [{ name: selectedProduct.baseSize || 'Regular', price: Number(selectedProduct.basePrice || 0) }, ...(selectedProduct.sizes || [])] : [];
@@ -709,10 +744,27 @@ export default function CustomerMenu() {
 
       {/* PRODUCT GRID */}
       <main className="px-4 py-6 max-w-5xl mx-auto pb-32">
+        {/* Combos / Promos */}
+        {combos.filter(c => c.isActive !== false).length > 0 && (activeCategory === 'All') && (
+          <div className="mb-10">
+            <h2 className="text-base font-black text-brand mb-4 uppercase tracking-widest px-0.5">Combos &amp; Promos</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              {combos.filter(c => c.isActive !== false).map(c => (
+                <div key={c._id} onClick={() => addComboToCart(c)}
+                  className="bg-brand/10 rounded-2xl overflow-hidden border border-brand/30 hover:border-brand/60 cursor-pointer active:scale-[0.97] transition-all p-4 flex flex-col">
+                  <h3 className="font-black text-white text-sm leading-tight">{c.name}</h3>
+                  {c.description && <p className="text-white/40 text-xs mt-0.5 line-clamp-1">{c.description}</p>}
+                  <p className="text-white/30 text-[10px] mt-1 line-clamp-2">{(c.items||[]).map(i => `${i.quantity>1?i.quantity+'× ':''}${i.name}`).join(' + ')}</p>
+                  <p className="text-brand font-black text-base mt-auto pt-2">₱{Number(c.price).toFixed(2)}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {displayedCategories.length === 0
           ? <p className="text-center text-white/30 mt-20 font-bold">No items available.</p>
           : displayedCategories.map(category => {
-              const catProducts = products.filter(p => p.category === category);
+              const catProducts = visibleProducts.filter(p => p.category === category);
               if (catProducts.length === 0) return null;
               return (
                 <div key={category} className="mb-10">
@@ -802,10 +854,26 @@ export default function CustomerMenu() {
               })}
             </div>
             {/* Footer */}
-            <div className="px-5 py-4 border-t border-white/5">
-              <div className="flex justify-between items-center mb-4">
+            <div className="px-5 py-4 border-t border-white/5 space-y-3">
+              <div className="flex justify-between items-center">
                 <span className="text-white/60 font-bold text-sm">Total</span>
                 <span className="text-white font-black text-2xl">₱{total.toFixed(2)}</span>
+              </div>
+              {/* Special instructions */}
+              <div>
+                <label className="text-[11px] text-white/40 font-bold uppercase tracking-wider block mb-1.5">Special Instructions (optional)</label>
+                <textarea
+                  rows={2}
+                  maxLength={300}
+                  value={orderNotes}
+                  onChange={e => setOrderNotes(e.target.value)}
+                  placeholder="e.g. No sugar, extra ice, allergy note…"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-brand/50 resize-none placeholder-white/20 transition"
+                  aria-label="Special instructions for your order"
+                />
+                {orderNotes.length > 0 && (
+                  <p className="text-[10px] text-white/20 text-right mt-0.5">{orderNotes.length}/300</p>
+                )}
               </div>
               <button
                 onClick={async () => { await confirmOrder(); setCartOpen(false); }}
@@ -888,6 +956,47 @@ export default function CustomerMenu() {
                   </div>
                 </div>
               )}
+              {/* Required Modifier Groups */}
+              {(selectedProduct.modifierGroups || []).length > 0 && (
+                <div className="border-t border-white/5 pt-4 space-y-4">
+                  {(selectedProduct.modifierGroups || []).map((mg, mgIdx) => (
+                    <div key={mgIdx}>
+                      <p className="text-white/80 text-xs font-black uppercase tracking-widest mb-2 flex items-center gap-2">
+                        {mg.name}
+                        {mg.isRequired && <span className="text-red-400 text-[9px] font-black bg-red-900/30 px-1.5 py-0.5 rounded uppercase">Required</span>}
+                      </p>
+                      <div className="space-y-2">
+                        {(mg.options || []).map((opt, optIdx) => {
+                          const selKey = `${mg.name}: ${opt.name}`;
+                          const isSelected = selectedAddOns.some(a => a.name === selKey);
+                          return (
+                            <label key={optIdx} className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition ${isSelected ? 'border-brand bg-brand/10' : 'border-white/10 hover:border-white/20 bg-white/5'}`}
+                              onClick={() => {
+                                if (mg.maxSelect === 1) {
+                                  // Radio behavior: clear other options in this group first
+                                  setSelectedAddOns(prev => [...prev.filter(a => !a.name.startsWith(mg.name + ': ')), { name: selKey, price: opt.price || 0 }]);
+                                } else {
+                                  // Checkbox behavior
+                                  if (isSelected) setSelectedAddOns(prev => prev.filter(a => a.name !== selKey));
+                                  else setSelectedAddOns(prev => [...prev, { name: selKey, price: opt.price || 0 }]);
+                                }
+                              }}>
+                              <div className="flex items-center gap-3">
+                                <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isSelected ? 'border-brand bg-brand' : 'border-white/30'}`}>
+                                  {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
+                                </div>
+                                <span className="font-bold text-white text-sm">{opt.name}</span>
+                              </div>
+                              {opt.price > 0 && <span className="text-brand font-bold text-sm">+₱{opt.price.toFixed(2)}</span>}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {selectedProduct.addOns && selectedProduct.addOns.length > 0 && (
                 <div className="border-t border-white/5 pt-4">
                   <p className="text-white/60 text-xs font-black uppercase tracking-widest mb-3">Optional Add-Ons</p>
@@ -910,7 +1019,18 @@ export default function CustomerMenu() {
               <button onClick={() => setSelectedProduct(null)} className="flex-1 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white font-bold py-3.5 rounded-2xl transition text-sm">
                 Cancel
               </button>
-              <button onClick={() => addToCart(selectedProduct, selectedSize, selectedAddOns)} className="flex-2 flex-1 bg-brand hover:bg-brand-dark text-white font-black py-3.5 rounded-2xl transition shadow-lg shadow-brand/20 text-sm">
+              <button
+                onClick={() => {
+                  // Validate required modifier groups before adding to cart
+                  const unmet = (selectedProduct.modifierGroups||[]).filter(mg => {
+                    if (!mg.isRequired) return false;
+                    const selected = selectedAddOns.filter(a => a.name.startsWith(mg.name+': ')).length;
+                    return selected < (mg.minSelect||1);
+                  });
+                  if (unmet.length > 0) { alert(`Please choose: ${unmet.map(mg=>mg.name).join(', ')}`); return; }
+                  addToCart(selectedProduct, selectedSize, selectedAddOns);
+                }}
+                className="flex-2 flex-1 bg-brand hover:bg-brand-dark text-white font-black py-3.5 rounded-2xl transition shadow-lg shadow-brand/20 text-sm">
                 Add to Cart
               </button>
             </div>

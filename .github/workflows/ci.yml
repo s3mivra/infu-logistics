@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  server:
+    name: Server — lint, test, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: node --check server.js
+      - run: npm test
+      - name: Security audit (high+critical only, non-blocking on advisories)
+        run: npm audit --audit-level=high --omit=dev || echo "Audit found high/critical findings — review."
+
+  client:
+    name: Client — build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Security audit (high+critical only, non-blocking on advisories)
+        run: npm audit --audit-level=high --omit=dev || echo "Audit found high/critical findings — review."

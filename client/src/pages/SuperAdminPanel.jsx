@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import * as auth from '../lib/auth';
 import {
   Users, Shield, Menu, X, LogOut, Plus, Edit2, Trash2,
   Search, Eye, EyeOff, AlertCircle, Tag, Loader2, Lock,
-  ChevronRight, UserCheck, Monitor, Check
+  ChevronRight, UserCheck, Monitor, Check, Package, ToggleLeft, ToggleRight
 } from 'lucide-react';
+
+const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://192.168.100.2:5002';
 
@@ -96,6 +99,7 @@ UserCard.displayName = 'UserCard';
 const NAV_ITEMS = [
   { id: 'users', label: 'User Control',  icon: Users },
   { id: 'roles', label: 'Access Roles',  icon: Tag },
+  ...(BUSINESS_TYPE === 'log' ? [{ id: 'clients', label: 'Client Accounts', icon: Package }] : []),
 ];
 
 function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }) {
@@ -163,19 +167,20 @@ const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false 
 export default function SuperAdminPanel() {
   const navigate = useNavigate();
 
-  // Auth
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    const token = localStorage.getItem('semivra_token');
-    if (!token) return false;
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      if (payload.exp && payload.exp * 1000 < Date.now()) {
-        localStorage.removeItem('semivra_token');
-        return false;
-      }
-      return payload.role === 'superadmin';
-    } catch { return false; }
-  });
+  // Auth — access token lives in memory; restored via silent refresh on mount.
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authBootstrapping, setAuthBootstrapping] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    auth.refreshSession(API_URL).then((data) => {
+      if (cancelled) return;
+      // This panel is superadmin-only — only authenticate if the role matches.
+      if (data?.user?.role === 'superadmin') setIsAuthenticated(true);
+      setAuthBootstrapping(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
   const [loginForm, setLoginForm]   = useState({ name: '', password: '', showPassword: false });
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
@@ -215,6 +220,14 @@ export default function SuperAdminPanel() {
   const [newRole, setNewRole]       = useState('');
   const [roleLoading, setRoleLoading] = useState(false);
 
+  // Client accounts (logistics mode)
+  const [clients, setClients]           = useState([]);
+  const [clientsLoading, setClientsLoading] = useState(false);
+  const [clientModal, setClientModal]   = useState({ open: false, mode: 'create', client: null });
+  const [clientForm, setClientForm]     = useState({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false });
+  const [clientFormLoading, setClientFormLoading] = useState(false);
+  const [clientFormError, setClientFormError] = useState('');
+
   // -------------------------------------------------------------------------
   const showToast = useCallback((message, type = 'success') => {
     setToast({ show: true, message, type });
@@ -222,11 +235,7 @@ export default function SuperAdminPanel() {
   }, []);
 
   const apiFetch = useCallback(async (endpoint, options = {}) => {
-    const headers = { ...options.headers };
-    const token = localStorage.getItem('semivra_token');
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
-    const res = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
+    const res = await auth.apiFetch(API_URL, endpoint, options);
     if ((res.status === 401 || res.status === 403) && endpoint !== '/api/users/login') handleLogout();
     return res;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -284,7 +293,7 @@ export default function SuperAdminPanel() {
           setLoginError('Access Denied: Superadmin credentials required.');
           return;
         }
-        localStorage.setItem('semivra_token', data.token);
+        auth.setToken(data.token);
         setIsAuthenticated(true);
       } else {
         setLoginError('Invalid name or password.');
@@ -294,7 +303,8 @@ export default function SuperAdminPanel() {
   };
 
   const handleLogout = useCallback(() => {
-    localStorage.removeItem('semivra_token');
+    auth.logout(API_URL); // revoke refresh session + clear cookie
+    auth.clearToken();
     setIsAuthenticated(false);
     setLoginForm({ name: '', password: '', showPassword: false });
     setUsers([]);
@@ -452,6 +462,82 @@ export default function SuperAdminPanel() {
   };
 
   // -------------------------------------------------------------------------
+  // Client accounts (logistics mode)
+  const fetchClients = useCallback(async () => {
+    if (BUSINESS_TYPE !== 'log') return;
+    setClientsLoading(true);
+    try {
+      const res = await apiFetch('/api/client-accounts');
+      if (res.ok) setClients((await res.json()).clients || []);
+    } catch {} finally { setClientsLoading(false); }
+  }, [apiFetch]);
+
+  useEffect(() => {
+    if (isAuthenticated && BUSINESS_TYPE === 'log') fetchClients();
+  }, [isAuthenticated, fetchClients]);
+
+  const openClientCreate = () => {
+    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false });
+    setClientFormError('');
+    setClientModal({ open: true, mode: 'create', client: null });
+  };
+
+  const openClientEdit = (client) => {
+    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false });
+    setClientFormError('');
+    setClientModal({ open: true, mode: 'edit', client });
+  };
+
+  const closeClientModal = () => setClientModal({ open: false, mode: 'create', client: null });
+
+  const handleClientSubmit = async (e) => {
+    e.preventDefault();
+    setClientFormError('');
+    if (!clientForm.username.trim() || !clientForm.name.trim()) {
+      setClientFormError('Username and name are required.'); return;
+    }
+    if (clientModal.mode === 'create' && !clientForm.password) {
+      setClientFormError('Password is required.'); return;
+    }
+    setClientFormLoading(true);
+    try {
+      if (clientModal.mode === 'create') {
+        const res = await apiFetch('/api/client-accounts', {
+          method: 'POST',
+          body: JSON.stringify({ username: clientForm.username.trim(), password: clientForm.password, name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod }),
+        });
+        const data = await res.json();
+        if (data.success) { showToast('Client account created.'); closeClientModal(); fetchClients(); }
+        else setClientFormError(data.error || 'Failed to create client.');
+      } else {
+        const body = { name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive };
+        if (clientForm.username.trim()) body.username = clientForm.username.trim();
+        if (clientForm.password) body.password = clientForm.password;
+        const res = await apiFetch(`/api/client-accounts/${clientModal.client._id}`, { method: 'PATCH', body: JSON.stringify(body) });
+        const data = await res.json();
+        if (data.success) { showToast('Client updated.'); closeClientModal(); fetchClients(); }
+        else setClientFormError(data.error || 'Failed to update client.');
+      }
+    } catch { setClientFormError('Network error.'); }
+    finally { setClientFormLoading(false); }
+  };
+
+  const handleClientDelete = async (client) => {
+    if (!confirm(`Remove client account "${client.name}"?`)) return;
+    try {
+      await apiFetch(`/api/client-accounts/${client._id}`, { method: 'DELETE' });
+      showToast(`${client.name} removed.`); fetchClients();
+    } catch { showToast('Failed to remove client.', 'error'); }
+  };
+
+  const toggleClientActive = async (client) => {
+    try {
+      await apiFetch(`/api/client-accounts/${client._id}`, { method: 'PATCH', body: JSON.stringify({ isActive: !client.isActive }) });
+      fetchClients();
+    } catch { showToast('Failed to update status.', 'error'); }
+  };
+
+  // -------------------------------------------------------------------------
   // Derived
   const sectionLabel = NAV_ITEMS.find(n => n.id === activeSection)?.label ?? '';
   const allSelected = selectableUsers.length > 0 && selected.size === selectableUsers.length;
@@ -460,6 +546,14 @@ export default function SuperAdminPanel() {
   // =========================================================================
   // LOGIN SCREEN
   // =========================================================================
+  if (authBootstrapping) {
+    return (
+      <div className="min-h-screen bg-page-bg flex items-center justify-center text-white/60 text-sm">
+        Restoring session…
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-page-bg flex flex-col items-center justify-center p-4">
@@ -618,6 +712,15 @@ export default function SuperAdminPanel() {
               New User
             </button>
           )}
+          {activeSection === 'clients' && (
+            <button
+              onClick={openClientCreate}
+              className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-white font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex-shrink-0"
+            >
+              <Plus size={15} />
+              New Client
+            </button>
+          )}
         </div>
 
         {/* ----------------------------------------------------------------- */}
@@ -704,6 +807,59 @@ export default function SuperAdminPanel() {
                   ))
               }
             </div>
+          </div>
+        )}
+
+        {/* ----------------------------------------------------------------- */}
+        {/* CLIENT ACCOUNTS SECTION (logistics mode only)                     */}
+        {/* ----------------------------------------------------------------- */}
+        {activeSection === 'clients' && BUSINESS_TYPE === 'log' && (
+          <div className="flex-1 p-6 space-y-3">
+            {clientsLoading
+              ? Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)
+              : clients.length === 0
+                ? (
+                  <div className="flex flex-col items-center py-20 text-center">
+                    <Package size={40} className="text-white/10 mb-4" />
+                    <p className="text-white/40 font-bold text-sm">No client accounts yet.</p>
+                    <button
+                      onClick={openClientCreate}
+                      className="mt-4 flex items-center gap-2 bg-brand/20 hover:bg-brand/30 text-brand font-bold px-4 py-2 rounded-xl transition text-sm"
+                    >
+                      <Plus size={14} /> Add First Client
+                    </button>
+                  </div>
+                )
+                : clients.map(client => (
+                  <div key={client._id} className="flex items-center gap-4 p-4 rounded-xl border bg-white/5 border-white/5 hover:border-white/15 transition-all">
+                    <div className="w-10 h-10 rounded-xl bg-brand/20 flex items-center justify-center font-black text-sm text-brand flex-shrink-0">
+                      {client.name.slice(0, 2).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-white truncate">{client.name}</p>
+                      <p className="text-xs text-white/40 font-mono">{client.clientCode} · @{client.username}</p>
+                    </div>
+                    <span className="text-[10px] font-bold text-white/50 bg-white/10 px-2 py-1 rounded-full flex-shrink-0">
+                      {client.paymentMethod}
+                    </span>
+                    <button
+                      onClick={() => toggleClientActive(client)}
+                      className={`flex-shrink-0 transition ${client.isActive ? 'text-emerald-400' : 'text-white/20'}`}
+                      title={client.isActive ? 'Active — click to deactivate' : 'Inactive — click to activate'}
+                    >
+                      {client.isActive ? <ToggleRight size={22} /> : <ToggleLeft size={22} />}
+                    </button>
+                    <div className="flex gap-1 flex-shrink-0">
+                      <button onClick={() => openClientEdit(client)} className="p-2 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition" aria-label="Edit">
+                        <Edit2 size={14} />
+                      </button>
+                      <button onClick={() => handleClientDelete(client)} className="p-2 rounded-lg text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition" aria-label="Delete">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+            }
           </div>
         )}
 
@@ -959,6 +1115,126 @@ export default function SuperAdminPanel() {
                 {deleteLoading ? 'Removing…' : 'Confirm Remove'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* CLIENT ACCOUNT CREATE / EDIT MODAL                                   */}
+      {/* =================================================================== */}
+      {clientModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md animate-fade-in">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
+              <div>
+                <h2 className="font-black text-white text-lg">
+                  {clientModal.mode === 'create' ? 'New Client Account' : 'Edit Client'}
+                </h2>
+                <p className="text-white/40 text-xs mt-0.5">
+                  {clientModal.mode === 'create' ? 'Pre-register a client for logistics ordering.' : `Editing ${clientModal.client?.name}`}
+                </p>
+              </div>
+              <button onClick={closeClientModal} className="p-2 rounded-xl text-white/30 hover:text-white hover:bg-white/10 transition" aria-label="Close">
+                <X size={17} />
+              </button>
+            </div>
+
+            <form onSubmit={handleClientSubmit} className="p-6 space-y-4">
+              {clientFormError && (
+                <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl px-4 py-3">
+                  <AlertCircle size={13} className="flex-shrink-0 mt-0.5" />
+                  <span>{clientFormError}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest block mb-1.5">Client / Company Name</label>
+                <input
+                  type="text"
+                  value={clientForm.name}
+                  onChange={e => setClientForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder="e.g. Acme Corp"
+                  autoFocus
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-white placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest block mb-1.5">Username</label>
+                <input
+                  type="text"
+                  value={clientForm.username}
+                  onChange={e => setClientForm(f => ({ ...f, username: e.target.value }))}
+                  placeholder="e.g. acme_corp"
+                  autoComplete="off"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-white placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest block mb-1.5">
+                  {clientModal.mode === 'edit' ? 'New Password (leave blank to keep)' : 'Password'}
+                </label>
+                <div className="relative">
+                  <input
+                    type={clientForm.showPassword ? 'text' : 'password'}
+                    value={clientForm.password}
+                    onChange={e => setClientForm(f => ({ ...f, password: e.target.value }))}
+                    placeholder={clientModal.mode === 'edit' ? '(unchanged)' : 'Set a password'}
+                    autoComplete="new-password"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-white placeholder-white/20 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setClientForm(f => ({ ...f, showPassword: !f.showPassword }))}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/70 transition"
+                  >
+                    {clientForm.showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest block mb-1.5">Default Payment Method</label>
+                <select
+                  value={clientForm.paymentMethod}
+                  onChange={e => setClientForm(f => ({ ...f, paymentMethod: e.target.value }))}
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-white px-4 py-3 rounded-xl outline-none text-sm"
+                >
+                  <option className="bg-[#1a1a1a]" value="Cash">Cash on Delivery</option>
+                  <option className="bg-[#1a1a1a]" value="E-Wallet">E-Wallet</option>
+                  <option className="bg-[#1a1a1a]" value="Bank Transfer">Bank Transfer</option>
+                  <option className="bg-[#1a1a1a]" value="Credit Card">Credit Card</option>
+                </select>
+              </div>
+
+              {clientModal.mode === 'edit' && (
+                <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                  <span className="text-sm font-bold text-white">Account Active</span>
+                  <button
+                    type="button"
+                    onClick={() => setClientForm(f => ({ ...f, isActive: !f.isActive }))}
+                    className={`transition ${clientForm.isActive ? 'text-emerald-400' : 'text-white/20'}`}
+                  >
+                    {clientForm.isActive ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}
+                  </button>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={closeClientModal} className="flex-1 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white font-bold py-3 rounded-xl transition text-sm">
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={clientFormLoading}
+                  className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {clientFormLoading && <Loader2 size={14} className="animate-spin" />}
+                  {clientFormLoading ? 'Saving…' : clientModal.mode === 'create' ? 'Create Client' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
