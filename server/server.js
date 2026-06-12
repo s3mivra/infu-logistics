@@ -3377,17 +3377,22 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           const cat = await Category.findOneAndUpdate(
             { name: { $regex: new RegExp(`^${categoryName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
             { $setOnInsert: { name: categoryName, department: 'Bar' } },
-            { upsert: true, new: true, session }
+            { upsert: true, returnDocument: 'after', session }
           );
+          const productSet = {
+            name: existing.itemName,
+            category: cat.name,
+            isAvailable: existing.stockQty > 0,
+            ...(srp != null && !isNaN(srp) ? { basePrice: srp } : {}),
+          };
+          const productSetOnInsert = (srp == null || isNaN(srp)) ? { basePrice: 0 } : {};
           await Product.findOneAndUpdate(
             { productCode: existing.itemCode },
-            { $set: {
-                name: existing.itemName,
-                category: cat.name,
-                ...(srp != null && !isNaN(srp) ? { basePrice: srp } : {}),
-                isAvailable: existing.stockQty > 0,
-            }, $setOnInsert: { basePrice: srp != null && !isNaN(srp) ? srp : 0 } },
-            { upsert: true, new: true, session }
+            {
+              $set: productSet,
+              ...(Object.keys(productSetOnInsert).length ? { $setOnInsert: productSetOnInsert } : {}),
+            },
+            { upsert: true, returnDocument: 'after', session }
           );
         }
       } else {
