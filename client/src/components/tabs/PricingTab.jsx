@@ -71,7 +71,7 @@ export default function PricingTab({ ctx }) {
     settleForm, settleModal, settleSubmitting, shiftFilter, shiftHistory,
     shiftHistoryPage, shiftHistoryTotal, spoilageForm, spoilageLoading, spoilageModal,
     standardAccounts, stockHistory, submitManualOrder, submitPhysicalCounts, submitRfDisb,
-    toggleProductAvailability,
+    toggleProductAvailability, toggleProductOOS,
     submitRfNew, submitRfRepl, toggleDay, toggleOrderList, toggleVat,
     totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
@@ -96,12 +96,13 @@ export default function PricingTab({ ctx }) {
                     <th className="pb-3 text-right uppercase tracking-wider text-xs">Selling Price</th>
                     <th className="pb-3 text-right uppercase tracking-wider text-xs">Recipe Cost</th>
                     <th className="pb-3 text-right uppercase tracking-wider text-xs">Margin</th>
-                    {isSuperAdmin && <th className="pb-3 text-center uppercase tracking-wider text-xs">86'd</th>}
+                    {isSuperAdmin && <th className="pb-3 text-center uppercase tracking-wider text-xs">Removed</th>}
+                    {isSuperAdmin && <th className="pb-3 text-center uppercase tracking-wider text-xs">OOS</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {products.length === 0 ? (
-                    <tr><td colSpan={isSuperAdmin ? 7 : 6} className="py-4 text-center text-gray-500">No products found.</td></tr>
+                    <tr><td colSpan={isSuperAdmin ? 8 : 6} className="py-4 text-center text-gray-500">No products found.</td></tr>
                   ) : currentPricingProducts.flatMap(p => {
                     // Recipe cost first; if absent, fall back to the 1:1 logistics cost
                     // (linked inventory unitCost × pack base units from the name).
@@ -137,7 +138,8 @@ export default function PricingTab({ ctx }) {
                     <tr key={row.id} className={`border-gray-800/50 hover:bg-page-bg/30 transition ${row.name !== '' ? 'border-t' : ''} ${isUnavailable ? 'opacity-50' : ''}`}>
                       <td className={`py-2 font-bold ${row.name !== '' ? 'text-gray-200 pt-4' : ''}`}>
                         {row.name}
-                        {isUnavailable && <span className="ml-2 text-[9px] bg-red-900/60 text-red-400 border border-red-700/40 rounded px-1 py-0.5 font-black uppercase tracking-wider">86'd</span>}
+                        {isUnavailable && <span className="ml-2 text-[9px] bg-red-900/60 text-red-400 border border-red-700/40 rounded px-1 py-0.5 font-black uppercase tracking-wider">Removed</span>}
+                        {row.isBase && row.product.isOutOfStock && <span className="ml-2 text-[9px] bg-amber-900/60 text-amber-400 border border-amber-700/40 rounded px-1 py-0.5 font-black uppercase tracking-wider">OOS</span>}
                       </td>
                       <td className={`py-2 text-xs text-gray-500 ${row.name !== '' ? 'pt-4' : ''}`}>{row.cat}</td>
                       <td className={`py-2 text-right text-gray-400 ${row.name !== '' ? 'pt-4' : ''}`}>{row.size}</td>
@@ -216,20 +218,38 @@ export default function PricingTab({ ctx }) {
                         )}
                       </td>
 
-                      {/* 86 Toggle (superadmin only, base-product rows only) */}
+                      {/* Removed toggle (superadmin only, base-product rows only). Permanently hides from menu — reports keep showing it while stock remains. */}
                       {isSuperAdmin && (
                         <td className={`py-2 text-center ${row.name !== '' ? 'pt-4' : ''}`}>
                           {row.isBase ? (
                             <button
                               onClick={() => toggleProductAvailability(row.product)}
-                              title={isUnavailable ? 'Click to restore (make available)' : 'Click to 86 (hide from menu & POS)'}
+                              title={isUnavailable ? 'Click to restore (un-remove)' : 'Click to REMOVE from menu (kept in reporting until stock is zero)'}
                               className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition border ${
                                 isUnavailable
                                   ? 'bg-red-900/50 text-red-400 border-red-700/40 hover:bg-green-900/50 hover:text-green-400 hover:border-green-700/40'
                                   : 'bg-transparent text-gray-600 border-gray-700 hover:bg-red-900/40 hover:text-red-400 hover:border-red-700/40'
                               }`}
                             >
-                              {isUnavailable ? 'OFF' : 'ON'}
+                              {isUnavailable ? 'REMOVED' : 'LIVE'}
+                            </button>
+                          ) : <span />}
+                        </td>
+                      )}
+                      {/* OOS toggle. Stays on menu (with a badge) and in all reports — for temporary stockouts. */}
+                      {isSuperAdmin && (
+                        <td className={`py-2 text-center ${row.name !== '' ? 'pt-4' : ''}`}>
+                          {row.isBase ? (
+                            <button
+                              onClick={() => toggleProductOOS && toggleProductOOS(row.product)}
+                              title={row.product.isOutOfStock ? 'Click to mark back in stock' : 'Click to mark OUT OF STOCK (still on menu, badged)'}
+                              className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition border ${
+                                row.product.isOutOfStock
+                                  ? 'bg-amber-900/50 text-amber-400 border-amber-700/40 hover:bg-emerald-900/50 hover:text-emerald-400 hover:border-emerald-700/40'
+                                  : 'bg-transparent text-gray-600 border-gray-700 hover:bg-amber-900/40 hover:text-amber-400 hover:border-amber-700/40'
+                              }`}
+                            >
+                              {row.product.isOutOfStock ? 'OOS' : 'OK'}
                             </button>
                           ) : <span />}
                         </td>

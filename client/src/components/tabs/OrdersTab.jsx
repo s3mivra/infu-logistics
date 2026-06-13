@@ -44,7 +44,8 @@ export default function OrdersTab({ ctx }) {
     ordersItemsPerPage, ordersPage, parseImportFile, paymentSelections, peso,
     physicalCounts, pnlData, pnlRange, posActiveAddOns, posActiveSize, posItemQty, setPosItemQty,
     posCart, posCashTendered, posCategory, posCheckoutModal, posCustomerName,
-    posClientId, setPosClientId, clientAccounts,
+    posClientId, setPosClientId, clientAccounts, coaAccounts,
+    posReserveOnly, setPosReserveOnly,
     posCustomerPhone, posDeliveryAddress, posDeliveryFee, posDeliveryFeeNum, posDiscountAmt,
     posDiscountType, posDiscountValue, posItemDiscountAmt, posGrandTotal, posSubmitting, posPage, posPayment,
     posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable,
@@ -359,6 +360,14 @@ export default function OrdersTab({ ctx }) {
                       </div>
                     </div>
                     <p className="text-center text-[9px] text-white/15 font-black uppercase tracking-[0.2em] mb-2">NON-VAT TRANSACTION</p>
+                    {/* Reserve-only: skip payment now. Order is held with status Reserved
+                        and the cashier promotes it later (Pending → Preparing). */}
+                    <label className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg bg-white/5 border border-white/10 cursor-pointer hover:bg-white/10 transition">
+                      <input type="checkbox" checked={!!posReserveOnly} onChange={e => setPosReserveOnly(e.target.checked)}
+                        className="w-4 h-4 accent-brand" />
+                      <span className="text-[11px] font-bold text-white/70">Reserve only (pay later)</span>
+                      <span className="ml-auto text-[9px] uppercase tracking-widest font-black text-white/30">Status: {posReserveOnly ? 'Reserved' : 'Pending'}</span>
+                    </label>
                     <div className="flex gap-2">
                       <button
                         onClick={parkCurrentOrder}
@@ -501,16 +510,25 @@ export default function OrdersTab({ ctx }) {
                       
                       {isStatusMenuOpen && (
                         <div className="absolute right-0 top-full mt-2 w-48 bg-surface-2 border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col">
-                          {['All', 'Pending', 'Preparing', 'Completed', 'Cancelled', 'Parked'].map(filter => (
-                            <button
-                              key={filter}
-                              onClick={() => { setOrderFilter(filter); setIsStatusMenuOpen(false); if (filter === 'Parked') fetchParked(); }}
-                              className={`px-4 py-3 text-left text-sm font-bold transition hover:bg-white/5 ${orderFilter === filter ? 'bg-brand/10 text-brand border-l-4 border-brand' : 'text-white/70 border-l-4 border-transparent'} ${filter === 'Parked' ? 'flex items-center justify-between' : ''}`}
-                            >
-                              {filter}
-                              {filter === 'Parked' && parkedOrders.length > 0 && <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full">{parkedOrders.length}</span>}
-                            </button>
-                          ))}
+                          {['All', 'Reserved', 'Pending', 'Preparing', 'Completed', 'Cancelled', 'Parked'].map(filter => {
+                            // Live counts for the two states with an actionable workflow (Reserved/Parked).
+                            const reservedCount = orders.filter(o => o.status === 'Reserved').length;
+                            const showBadge = (filter === 'Parked' && parkedOrders.length > 0) || (filter === 'Reserved' && reservedCount > 0);
+                            const badge = filter === 'Parked' ? parkedOrders.length : reservedCount;
+                            const badgeCls = filter === 'Parked'
+                              ? 'bg-amber-500/20 text-amber-400'
+                              : 'bg-purple-500/20 text-purple-300';
+                            return (
+                              <button
+                                key={filter}
+                                onClick={() => { setOrderFilter(filter); setIsStatusMenuOpen(false); if (filter === 'Parked') fetchParked(); }}
+                                className={`px-4 py-3 text-left text-sm font-bold transition hover:bg-white/5 ${orderFilter === filter ? 'bg-brand/10 text-brand border-l-4 border-brand' : 'text-white/70 border-l-4 border-transparent'} ${showBadge ? 'flex items-center justify-between' : ''}`}
+                              >
+                                {filter}
+                                {showBadge && <span className={`text-[10px] ${badgeCls} px-1.5 py-0.5 rounded-full`}>{badge}</span>}
+                              </button>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -526,7 +544,9 @@ export default function OrdersTab({ ctx }) {
 
                 {/* ── Active Table Occupancy Strip ── */}
                 {(() => {
-                  const activeOrders = orders.filter(o => ['Pending','Preparing','Ready','Partially Delivered'].includes(o.status));
+                  // Reserved orders live alongside Pending in the active list — they're held
+                  // commitments waiting on payment / promotion to Preparing.
+                  const activeOrders = orders.filter(o => ['Reserved','Pending','Preparing','Ready','Partially Delivered'].includes(o.status));
                   if (activeOrders.length === 0) return null;
                   const tableMap = {};
                   activeOrders.forEach(o => {
@@ -549,6 +569,7 @@ export default function OrdersTab({ ctx }) {
                             ${status === 'Ready'     ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' :
                               status === 'Preparing'  ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' :
                               status === 'Pending'    ? 'bg-red-500/20 text-red-300 border-red-500/30' :
+                              status === 'Reserved'   ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' :
                                                         'bg-orange-500/20 text-orange-300 border-orange-500/30'}`}>
                           {table}
                           {count > 1 && <span className="bg-white/20 rounded px-1">{count}</span>}
@@ -614,6 +635,7 @@ export default function OrdersTab({ ctx }) {
                             )}
                             <div className="flex items-center gap-2 mt-0.5">
                               <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                                order.status === 'Reserved'            ? 'bg-purple-500/15 text-purple-400' :
                                 order.status === 'Pending'             ? 'bg-red-500/15 text-red-400' :
                                 order.status === 'Preparing'           ? 'bg-yellow-500/15 text-yellow-400' :
                                 order.status === 'Ready'               ? 'bg-blue-500/15 text-blue-400' :
@@ -981,6 +1003,26 @@ export default function OrdersTab({ ctx }) {
                             </div>)}
 
                             <div className={`flex flex-col gap-2 ${isUpdating ? 'opacity-50 pointer-events-none' : ''}`}>
+                              {/* Reserved orders are held with no payment. Unlock promotes them to Pending,
+                                  which surfaces the normal Pay & Send / Drop controls below. */}
+                              {order.status === 'Reserved' && departmentFilter === 'All' && (
+                                <div className="flex flex-col w-full gap-2">
+                                  <div className="flex items-center justify-center gap-2 bg-purple-500/10 border border-purple-500/30 rounded-lg py-2.5 px-3">
+                                    <Lock size={12} className="text-purple-300" />
+                                    <span className="text-purple-300 text-[10px] font-black uppercase tracking-widest">Reserved — Payment Locked</span>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => updateStatus(order._id, 'Pending')}
+                                      className="flex-1 bg-purple-500 text-white py-2.5 rounded-lg hover:bg-purple-400 font-black text-xs uppercase tracking-widest transition flex items-center justify-center gap-1.5"
+                                      title="Unlock — promote to Pending so payment can be collected"
+                                    >
+                                      <Unlock size={12} /> Unlock & Take Payment
+                                    </button>
+                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-white font-black text-xs transition uppercase border border-red-500/20">Drop</button>
+                                  </div>
+                                </div>
+                              )}
                               {order.status === 'Pending' && departmentFilter === 'All' && (() => {
                                 const isDelivery = ['Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Lalamove'].includes(order.table);
                                 // Payment is always changeable. Default to the order's natural
@@ -1017,6 +1059,9 @@ export default function OrdersTab({ ctx }) {
                                         onChange={(e) => setPaymentSelections(prev => ({ ...prev, [order._id]: e.target.value }))}
                                         className="w-full border rounded-lg p-2 text-sm font-bold outline-none transition bg-page-bg text-white border-white/10 focus:border-accent/50"
                                       >
+                                        {/* Canonical payment methods — these stay even when no
+                                            sub-accounts have been added so the cashier always has
+                                            the standard options. */}
                                         <optgroup label="In-Store Payments">
                                           <option value="Cash">Cash</option>
                                           <option value="Bank Transfer">Bank Transfer</option>
@@ -1035,6 +1080,33 @@ export default function OrdersTab({ ctx }) {
                                           }
                                           <option value="Manual Delivery">Manual/Direct</option>
                                         </optgroup>
+                                        {/* Custom sub-accounts the admin added in COA (Metrobank,
+                                            Gotyme, etc.). Grouped by their parent account so the
+                                            cashier sees which bucket each one belongs to. */}
+                                        {(() => {
+                                          const PARENT_LABEL = {
+                                            '111000': 'Custom Cash Accounts',
+                                            '112000': 'Custom Bank Accounts',
+                                            '113000': 'Custom E-Wallets',
+                                            '120000': 'Custom Delivery Partners',
+                                            '220000': 'Custom On-Account Vendors',
+                                          };
+                                          const STANDARD_NAMES = new Set(['Cash','Bank Transfer','GCash','Maya','Maribank','Other E-Wallet','Grab Delivery','Lalamove','Foodpanda','Manual Delivery','Pickup','On Account','Cash in Bank','E-Wallet']);
+                                          const groups = {};
+                                          for (const a of (coaAccounts || [])) {
+                                            if (!a.custom || !a.parent) continue;
+                                            if (!PARENT_LABEL[a.parent]) continue;
+                                            if (STANDARD_NAMES.has(a.name)) continue; // already in the canonical optgroups
+                                            (groups[a.parent] ||= []).push(a);
+                                          }
+                                          return Object.keys(PARENT_LABEL).filter(p => groups[p]).map(p => (
+                                            <optgroup key={p} label={PARENT_LABEL[p]}>
+                                              {groups[p].sort((a,b)=>a.code.localeCompare(b.code)).map(a => (
+                                                <option key={a.code} value={a.name}>{a.name}</option>
+                                              ))}
+                                            </optgroup>
+                                          ));
+                                        })()}
                                       </select>
                                       {isCash && (
                                         <div className="flex flex-col gap-1">

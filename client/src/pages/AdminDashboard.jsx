@@ -368,6 +368,9 @@ export default function AdminDashboard() {
   // Optional client account link — when set, the order qualifies for that
   // client's per-product discount overrides on the server side.
   const [posClientId, setPosClientId] = useState('');
+  // Reserve-only mode: place order with status 'Reserved' (no payment yet).
+  // Cashier later promotes Reserved → Pending (pay later) or Preparing (pay now).
+  const [posReserveOnly, setPosReserveOnly] = useState(false);
   const [posTable, setPosTable] = useState(BUSINESS_TYPE === 'log' ? 'Pickup' : 'Dine-In');
   const [posPayment, setPosPayment] = useState('Cash');
   const [posSelectedProduct, setPosSelectedProduct] = useState(null);
@@ -702,26 +705,30 @@ export default function AdminDashboard() {
   };
 
   const handleInlinePriceUpdate = async (productId, sizeIndex) => {
-    // FIX: Look up the product in your local React state instead of querying the backend database!
     const product = products.find(p => p._id === productId);
     if (!product) return;
 
-    // Create a copy of the product and update the specific price
+    // Every price change must carry a reason. Audit log records it; server
+    // also writes a memo journal entry so finance can trace it later.
+    const newPrice = parseFloat(editPriceVal) || 0;
+    const oldPrice = sizeIndex === null ? (product.basePrice || 0) : (product.sizes?.[sizeIndex]?.price || 0);
+    if (Math.abs(newPrice - oldPrice) < 0.005) { setEditPriceId(null); return; }
+    const reason = window.prompt(`Reason for changing price of "${product.name}" from ₱${oldPrice.toFixed(2)} → ₱${newPrice.toFixed(2)}?`, '');
+    if (reason === null) return; // cancelled
+    if (!reason.trim()) return alert('A reason is required for every price change.');
+
     const updatedProduct = { ...product };
-    if (sizeIndex === null) {
-      updatedProduct.basePrice = parseFloat(editPriceVal) || 0;
-    } else {
-      updatedProduct.sizes[sizeIndex].price = parseFloat(editPriceVal) || 0;
-    }
+    if (sizeIndex === null) updatedProduct.basePrice = newPrice;
+    else updatedProduct.sizes[sizeIndex].price = newPrice;
 
     try {
       await apiFetch(`/api/products/${productId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Change-Reason': encodeURIComponent(reason.trim()) },
         body: JSON.stringify(updatedProduct)
       });
-      setEditPriceId(null); // Close the input field
-      fetchData(); // Refresh the table instantly
+      setEditPriceId(null);
+      fetchData();
     } catch (err) {
       console.error("Failed to update price", err);
     }
@@ -730,8 +737,15 @@ export default function AdminDashboard() {
   const handleInlineCostUpdate = async (productId, sizeIndex) => {
     const product = products.find(p => p._id === productId);
     if (!product) return;
-    const updatedProduct = { ...product };
     const val = parseFloat(editCostVal);
+    const newCost = isNaN(val) ? 0 : val;
+    const oldCost = sizeIndex === null ? (product.costOverride || 0) : (product.sizes?.[sizeIndex]?.costOverride || 0);
+    if (Math.abs(newCost - oldCost) < 0.005) { setEditCostId(null); return; }
+    const reason = window.prompt(`Reason for changing recipe cost of "${product.name}" from ₱${oldCost.toFixed(2)} → ₱${newCost.toFixed(2)}?`, '');
+    if (reason === null) return;
+    if (!reason.trim()) return alert('A reason is required for every recipe cost change.');
+
+    const updatedProduct = { ...product };
     if (sizeIndex === null) {
       updatedProduct.costOverride = isNaN(val) ? undefined : val;
     } else {
@@ -742,7 +756,7 @@ export default function AdminDashboard() {
     try {
       await apiFetch(`/api/products/${productId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Change-Reason': encodeURIComponent(reason.trim()) },
         body: JSON.stringify(updatedProduct)
       });
       setEditCostId(null);
@@ -1013,6 +1027,26 @@ export default function AdminDashboard() {
     } catch { alert('Delete failed.'); }
   };
 
+  // Re-run the boot-time seed for payment-method sub-accounts. Safe to invoke
+  // repeatedly — idempotent server-side. Surfaces what got created vs skipped.
+  const seedPaymentSubaccounts = async () => {
+    if (!window.confirm('Create the standard payment-method sub-accounts (GCash, Maya, Foodpanda, etc.)? Existing accounts are skipped.')) return;
+    try {
+      const r = await apiFetch('/api/admin/seed-payment-subaccounts', { method: 'POST' });
+      const d = await r.json();
+      if (d.success) {
+        const lines = [
+          `✅ Created: ${d.created.length}`,
+          ...d.created.map(c => `  • ${c.code} ${c.name} (under ${c.parent})`),
+          d.skipped.length ? `\n⚠️ Skipped: ${d.skipped.length}` : '',
+          ...d.skipped.map(s => `  • ${s.code} ${s.name} — ${s.reason}`),
+        ].filter(Boolean);
+        alert(lines.join('\n'));
+        fetchCoa(); fetchPaymentMap?.();
+      } else alert(d.error || 'Seed failed.');
+    } catch (e) { alert('Network error: ' + (e?.message || e)); }
+  };
+
   // ── Closed accounting periods ───────────────────────────────────────────────
   const [closedPeriods, setClosedPeriods] = useState([]);
   const [periodCloseForm, setPeriodCloseForm] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() || 12, notes: '' });
@@ -1063,6 +1097,26 @@ export default function AdminDashboard() {
     try { const r = await apiFetch('/api/me/permissions'); const d = await r.json(); if (d.success) setMyPermissions({ role: d.role, permissions: d.permissions || [], isWildcard: !!d.isWildcard }); } catch { /* ignore */ }
   }, []);
   const can = useCallback((perm) => myPermissions.isWildcard || myPermissions.permissions.includes(perm), [myPermissions]);
+
+  // ── Backdated Sales (superadmin only) ──────────────────────────────────────
+  const [backdateForm, setBackdateForm] = useState({ date: '', customerName: '', amount: '', paymentMethod: 'Cash', notes: '' });
+  const [backdateBusy, setBackdateBusy] = useState(false);
+  const submitBackdateSale = async () => {
+    if (!backdateForm.date) return alert('Date is required.');
+    const amt = parseFloat(backdateForm.amount);
+    if (!amt || amt <= 0) return alert('Enter a positive amount.');
+    if (!window.confirm(`Record a backdated sale of ₱${amt.toFixed(2)} on ${backdateForm.date}? A balanced journal entry will be posted to the chosen payment account.`)) return;
+    setBackdateBusy(true);
+    try {
+      const r = await apiFetch('/api/admin/backdate-sale', { method: 'POST', body: JSON.stringify(backdateForm) });
+      const d = await r.json();
+      if (d.success) {
+        alert(`Backdated sale recorded: ${d.order.orderNumber}\nJournal ref: ${d.journalReference}`);
+        setBackdateForm({ date: '', customerName: '', amount: '', paymentMethod: 'Cash', notes: '' });
+      } else alert(d.error || 'Failed to record backdated sale.');
+    } catch { alert('Network error.'); }
+    finally { setBackdateBusy(false); }
+  };
 
   // ── Payment Method → Account Map ───────────────────────────────────────────
   const [paymentMap, setPaymentMap] = useState({ defaults: {}, overrides: {}, effective: {} });
@@ -1318,6 +1372,7 @@ export default function AdminDashboard() {
       // discount overrides for this order. Optional — falls back to the
       // product's default discountPercent when blank.
       clientAccountId: posClientId || undefined,
+      reserveOnly: posReserveOnly || undefined,
       paymentMethod: ['Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Lalamove'].includes(posTable) ? posTable : 'Cash',
       isComplimentary: false,
       sessionId: null,
@@ -1336,6 +1391,7 @@ export default function AdminDashboard() {
       setPosCart([]);
       setPosCustomerName('');
       setPosClientId('');
+      setPosReserveOnly(false);
       setPosDeliveryAddress('');
       setPosCustomerPhone('');
       setPosDeliveryFee('');
@@ -4007,7 +4063,7 @@ const updateStatus = async (orderId, newStatus) => {
     doc.save(`Z-Reading-${today.replace(/\//g,'-')}.pdf`);
   };
 
-  // Toggle a product's manual availability flag (86 on/off). Superadmin only.
+  // Toggle a product's manual availability flag (Removed on/off). Superadmin only.
   const toggleProductAvailability = async (product) => {
     try {
       const next = !(product.isAvailable !== false); // default true → toggle to false
@@ -4018,6 +4074,19 @@ const updateStatus = async (orderId, newStatus) => {
       if (res.ok) fetchData(); // refresh products
       else alert('Failed to update availability.');
     } catch (err) { console.error('toggleProductAvailability', err); }
+  };
+
+  // Toggle Out-Of-Stock flag. Stays on the menu (with a badge), still in reports.
+  const toggleProductOOS = async (product) => {
+    try {
+      const next = !product.isOutOfStock;
+      const res = await apiFetch(`/api/products/${product._id}/oos`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isOutOfStock: next }),
+      });
+      if (res.ok) fetchData();
+      else alert('Failed to update OOS status.');
+    } catch (err) { console.error('toggleProductOOS', err); }
   };
 
   // ── Change Password ────────────────────────────────────────────────────────
@@ -4643,7 +4712,7 @@ const updateStatus = async (orderId, newStatus) => {
     // ── Chart of Accounts CRUD ──
     coaAccounts, fetchCoa, coaParent, setCoaParent, coaNewName, setCoaNewName,
     coaEditId, setCoaEditId, coaEditName, setCoaEditName, coaBusy,
-    addCoaChild, renameCoaChild, deleteCoaChild,
+    addCoaChild, renameCoaChild, deleteCoaChild, seedPaymentSubaccounts,
     // ── Derived account lists for "Paid From / Charge To" dropdowns ──
     cashAndBankAccounts, apAccounts, arAccounts, procurementCreditAccounts,
     // ── Closed periods ──
@@ -4653,6 +4722,8 @@ const updateStatus = async (orderId, newStatus) => {
     auditLogEntries, auditLogPage, auditLogPages, auditLogFilter, setAuditLogFilter, fetchAuditLog,
     // ── Payment method → account map ──
     paymentMap, fetchPaymentMap, savePaymentMapping, resetPaymentMapping,
+    // ── Backdated Sales (superadmin) ──
+    backdateForm, setBackdateForm, backdateBusy, submitBackdateSale,
     // ── Tenancy & permissions ──
     tenancyReport, tenancyBusy, fetchTenancyReport, runTenancyRebackfill,
     myPermissions, can,
@@ -4679,7 +4750,7 @@ const updateStatus = async (orderId, newStatus) => {
     orderSearch, setOrderSearch,
     collapsedOrders, setCollapsedOrders, updatingOrders, cashTendered, setCashTendered,
     isPosOpen, setIsPosOpen, posCart, setPosCart, posCategory, setPosCategory, posPage, setPosPage,
-    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posTable, setPosTable,
+    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posReserveOnly, setPosReserveOnly, posTable, setPosTable,
     posPayment, setPosPayment, posSelectedProduct, setPosSelectedProduct,
     posActiveSize, setPosActiveSize, posActiveAddOns, setPosActiveAddOns, posItemQty, setPosItemQty,
     posDiscountType, setPosDiscountType, posDiscountValue, setPosDiscountValue,
@@ -4743,7 +4814,7 @@ const updateStatus = async (orderId, newStatus) => {
     archiveDay, addInventory,
     downloadImportTemplate, downloadJournalCsv,
     exportInventoryToPDF, exportLedgerToPDF, exportAllToPDF,
-    handleSaveProduct, handleSaveCategory, toggleProductAvailability,
+    handleSaveProduct, handleSaveCategory, toggleProductAvailability, toggleProductOOS,
     // ── Change Password ──────────────────────────────────────────────────────
     changePwModal, setChangePwModal, changePwForm, setChangePwForm, changePwLoading, changePwError, handleChangePassword,
     // ── Modifier Groups ──────────────────────────────────────────────────────

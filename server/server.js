@@ -429,6 +429,72 @@ mongoose.connect(process.env.MONGO_URI, {
       log.error({ err }, 'Seeding error');
     }
 
+    // ── PAYMENT-METHOD SUB-ACCOUNT SEEDING ────────────────────────────────
+    // Own try block so an earlier failure can't silently skip this step.
+    // For each method, take the preferred code; if it's taken (e.g. user
+    // already added a custom account there), pick the next free child code
+    // under the same parent so the method still gets its own GL bucket.
+    try {
+      const SEED_SUB_ACCOUNTS = [
+        { name: 'GCash',           parent: '113000', preferred: '113001' },
+        { name: 'Maya',            parent: '113000', preferred: '113002' },
+        { name: 'Maribank',        parent: '113000', preferred: '113003' },
+        { name: 'Other E-Wallet',  parent: '113000', preferred: '113004' },
+        { name: 'Bank Transfer',   parent: '112000', preferred: '112001' },
+        { name: 'Foodpanda',       parent: '120000', preferred: '120001' },
+        { name: 'Grab Delivery',   parent: '120000', preferred: '120002' },
+        { name: 'Lalamove',        parent: '111000', preferred: '111001' },
+        { name: 'Manual Delivery', parent: '111000', preferred: '111002' },
+        { name: 'Pickup',          parent: '111000', preferred: '111003' },
+      ];
+      const nextFreeCodeUnder = async (parent) => {
+        // parent is a 6-digit canonical code like '113000'. Children share the
+        // first 3 digits + a 3-digit sequence. Scan 001..999 for an unused one.
+        const base = String(parent).slice(0, 3);
+        const taken = new Set([
+          ...Object.keys(ACCOUNTS),
+          ...(await Account.find({ code: { $regex: `^${base}` } }, { code: 1 }).lean()).map(a => a.code),
+        ]);
+        for (let i = 1; i <= 999; i++) {
+          const cand = base + String(i).padStart(3, '0');
+          if (!taken.has(cand)) return cand;
+        }
+        return null;
+      };
+
+      const PM_DEFAULTS = {};
+      let seededAccts = 0;
+      for (const s of SEED_SUB_ACCOUNTS) {
+        const parentMeta = ACCOUNTS[s.parent];
+        if (!parentMeta) continue;
+        // If a sub-account with this NAME already exists under this parent
+        // (regardless of code), reuse it for the routing default.
+        const existsByName = await Account.findOne({ parent: s.parent, name: s.name }).lean();
+        if (existsByName) { PM_DEFAULTS[s.name] = existsByName.code; continue; }
+        // Otherwise take the preferred code if free, else next available.
+        const existsByCode = await Account.findOne({ code: s.preferred }).lean();
+        const codeToUse = existsByCode ? await nextFreeCodeUnder(s.parent) : s.preferred;
+        if (!codeToUse) continue;
+        await Account.create({
+          code: codeToUse, name: s.name, type: parentMeta.type, parent: s.parent,
+          custom: true, normalBalance: /^[15679]/.test(codeToUse) ? 'Debit' : 'Credit',
+        });
+        PM_DEFAULTS[s.name] = codeToUse;
+        seededAccts++;
+      }
+      log.info(`✅ Payment-method sub-account seed complete — created ${seededAccts}, reused ${SEED_SUB_ACCOUNTS.length - seededAccts}.`);
+      // Refresh COA cache so the new codes are immediately resolvable.
+      await refreshCustomMeta();
+      // Update the in-memory defaults so routing falls back to the granular
+      // codes when no explicit override exists in the PaymentMethodMap.
+      for (const [m, c] of Object.entries(PM_DEFAULTS)) {
+        if (acctMeta(c)) DEFAULT_PAYMENT_ACCOUNT_MAP[m] = c;
+      }
+      await refreshPaymentMap();
+    } catch (err) {
+      log.error({ err }, 'Payment-method seed error');
+    }
+
     // ── ONE-TIME COA MIGRATION (4-digit → 6-digit SAP codes) ──────────────────
     // Rewrites historical journal-entry line codes via CODE_MAP. Guarded by a
     // Settings flag so it runs exactly once.
@@ -713,7 +779,14 @@ const ProductSchema = new mongoose.Schema({
   }],
   addOns: [{ name: String, price: Number, recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }] }],
   image: String,
-  isAvailable:    { type: Boolean, default: true },   // manual 86 toggle (superadmin)
+  // Renamed from "86'd". `isAvailable === false` means REMOVED from the menu
+  // (and from reporting too — unless the product still has stock, in which
+  // case it shows in reporting so historical inventory is visible).
+  isAvailable:    { type: Boolean, default: true },
+  // Manual out-of-stock toggle. OOS products STILL show in menu (with an OOS
+  // badge) and STILL appear in every report. Separate from isAvailable so a
+  // temporary stockout doesn't get conflated with a permanent removal.
+  isOutOfStock:   { type: Boolean, default: false },
   isArchived:     { type: Boolean, default: false },   // soft-delete; hidden from menu + POS
   modifierGroups: [{ type: mongoose.Schema.Types.ObjectId, ref: 'ModifierGroup' }]  // required/optional selection prompts
 }, { timestamps: true });
@@ -808,6 +881,21 @@ items: [{
   complimentaryCost:   { type: Number, default: 0 },
   complimentaryReferenceNumber: { type: String, default: '' },
   voidReason: { type: String, default: '' },
+  // Attribution — who actually voided / cancelled the order. Captured from the
+  // verified JWT, never the request body. Distinct from `cashier` (which is the
+  // original placer — could be the client themselves on a client-portal order).
+  voidedBy: { type: String, default: '' },
+  voidedAt: { type: Date },
+  cancelledBy: { type: String, default: '' },
+  cancelledAt: { type: Date },
+  // True when a logged-in client placed the order directly from the client portal.
+  // Used to exclude these orders from "staff activity" panels — their `cashier`
+  // is the client's own username, not real staff.
+  placedByClient: { type: Boolean, default: false, index: true },
+  clientAccountId: { type: String, index: true },
+  // Marks orders added via the superadmin Backdate Sales tool. Skips inventory
+  // deduction and recipe COGS — purely a revenue/finance tally.
+  isBackdated:    { type: Boolean, default: false, index: true },
   amountTendered: { type: Number, default: 0 },
   changeDue: { type: Number, default: 0 },
   // --- DELIVERY / PICKUP FIELDS ---
@@ -1045,11 +1133,55 @@ async function refreshPaymentMap() {
 }
 refreshPaymentMap();
 
-// Resolve a payment method to { code, name }. Falls back to Cash on Hand.
+// Resolve a payment method to { code, name }.
+//   1) Explicit override in PaymentMethodMap (user picked a specific account in
+//      the Routing UI) — wins unconditionally.
+//   2) Otherwise: look under the canonical parent (e.g. GCash → 113xxx parent)
+//      for a CUSTOM CHILD whose name matches the payment method (case-insensitive).
+//      So if the user adds "GCash" as 113001 under E-Wallet, the GCash payment
+//      method routes to it automatically — no manual mapping needed.
+//   3) Otherwise: the canonical parent code.
+//   4) Otherwise: Cash on Hand.
 function accountForPaymentMethod(method) {
-  const code = PAYMENT_MAP_CACHE[method] || '111000';
-  const meta = acctMeta(code);
-  return { code, name: meta?.name || 'Cash on Hand' };
+  // (1) Explicit override
+  const overrideCode = PAYMENT_MAP_CACHE[method];
+  // We can't tell from PAYMENT_MAP_CACHE whether this is a default or an override;
+  // the user-facing override always points at a specific code (canonical or custom).
+  // If a custom override exists in the Account collection, prefer it.
+  if (overrideCode) {
+    const overrideMeta = acctMeta(overrideCode);
+    if (overrideMeta?.parent) {
+      return { code: overrideCode, name: overrideMeta.name || method };
+    }
+  }
+  // (2a) Custom sub-account whose NAME equals the payment method, regardless
+  //      of which parent — lets the cashier pick "Metrobank" or "Gotyme" at
+  //      checkout even though those names aren't in the canonical default map.
+  //      Only matches under payment-relevant parents (cash/bank/ewallet/AR/AP)
+  //      so a random expense sub-account can't be accidentally targeted.
+  const PAYMENT_PARENTS = new Set(['111000','112000','113000','120000','220000']);
+  const wanted = String(method || '').trim().toLowerCase();
+  for (const [code, meta] of CUSTOM_META.entries()) {
+    if (!PAYMENT_PARENTS.has(meta.parent)) continue;
+    if (String(meta.name || '').trim().toLowerCase() === wanted) {
+      return { code, name: meta.name };
+    }
+  }
+  // (2b) Auto-bind: legacy path. Method has a canonical default parent and a
+  //      custom child of that parent happens to share its name.
+  const defaultParent = DEFAULT_PAYMENT_ACCOUNT_MAP[method] || '111000';
+  for (const [code, meta] of CUSTOM_META.entries()) {
+    if (meta.parent === defaultParent && String(meta.name || '').trim().toLowerCase() === wanted) {
+      return { code, name: meta.name };
+    }
+  }
+  // (3) Canonical parent
+  if (overrideCode) {
+    return { code: overrideCode, name: acctMeta(overrideCode)?.name || method };
+  }
+  // (4) Final fallback
+  const meta = acctMeta(defaultParent);
+  return { code: defaultParent, name: meta?.name || 'Cash on Hand' };
 }
 
 // --- CLOSED ACCOUNTING PERIODS ──────────────────────────────────────────────
@@ -1627,7 +1759,12 @@ app.get('/api/products', async (req, res) => {
     } catch { /* anonymous / invalid token — fall back to the default discount */ }
 
     // Exclude soft-deleted products; tenancy-scoped to this server's businessType.
-    const products = await Product.find({ isArchived: { $ne: true }, businessType: BUSINESS_TYPE }).populate('modifierGroups').lean();
+    // Removed products (isAvailable=false): visible to admin/staff for management,
+    // hidden from customer-facing menu. OOS products: visible to everyone (UI
+    // surfaces the OOS badge).
+    const productQuery = { isArchived: { $ne: true }, businessType: BUSINESS_TYPE };
+    if (!isAdminCaller) productQuery.isAvailable = { $ne: false };
+    const products = await Product.find(productQuery).populate('modifierGroups').lean();
     // Resolve the effective per-line discount for this caller.
     products.forEach(p => {
       let pct = Number(p.discountPercent || 0);
@@ -1701,13 +1838,58 @@ app.put('/api/products/:id', verifyToken, async (req, res) => {
   try {
     const existing = await Product.findById(req.params.id).lean();
     const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    // Reason from the X-Change-Reason header (URL-encoded). Required for every
+    // price / recipe-cost change; the client refuses to submit without one.
+    const changeReason = (() => {
+      try { return decodeURIComponent(String(req.headers['x-change-reason'] || '')).slice(0, 300); }
+      catch { return String(req.headers['x-change-reason'] || '').slice(0, 300); }
+    })();
+
     if (existing && req.body.basePrice !== undefined && Number(req.body.basePrice) !== Number(existing.basePrice)) {
       await AuditLog.create({
         userId: req.user ? req.user.name : 'System',
         action: 'PRODUCT_PRICE_CHANGED',
         targetReference: updatedProduct.productCode || req.params.id,
-        details: { name: updatedProduct.name, oldPrice: existing.basePrice, newPrice: updatedProduct.basePrice }
+        details: { name: updatedProduct.name, oldPrice: existing.basePrice, newPrice: updatedProduct.basePrice, reason: changeReason },
       });
+      // Memo journal entry — zero-money, balanced row pair on Inventory Asset
+      // so it threads onto the ledger filter without affecting balances.
+      // Lets finance trace every catalogue price change in the same place as
+      // real movements. Uses a unique reference per change.
+      try {
+        const memoRef = await mkSeqRef('PRICE');
+        await JournalEntry.create({
+          reference: memoRef,
+          description: `Price change · ${updatedProduct.name} · ₱${Number(existing.basePrice).toFixed(2)} → ₱${Number(updatedProduct.basePrice).toFixed(2)} · ${changeReason || 'no reason given'}`,
+          lines: [
+            { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: 0, memo: 'price change (memo)' },
+            { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: 0, memo: 'price change (memo)' },
+          ],
+          totalDebit: 0,
+          totalCredit: 0,
+        });
+      } catch (e) { log?.error?.({ err: e }, 'price-change memo JE failed'); }
+    }
+    if (existing && req.body.costOverride !== undefined && Number(req.body.costOverride || 0) !== Number(existing.costOverride || 0)) {
+      await AuditLog.create({
+        userId: req.user ? req.user.name : 'System',
+        action: 'PRODUCT_RECIPE_COST_CHANGED',
+        targetReference: updatedProduct.productCode || req.params.id,
+        details: { name: updatedProduct.name, oldCost: existing.costOverride || 0, newCost: updatedProduct.costOverride || 0, reason: changeReason },
+      });
+      try {
+        const memoRef = await mkSeqRef('RCOST');
+        await JournalEntry.create({
+          reference: memoRef,
+          description: `Recipe cost change · ${updatedProduct.name} · ₱${Number(existing.costOverride || 0).toFixed(2)} → ₱${Number(updatedProduct.costOverride || 0).toFixed(2)} · ${changeReason || 'no reason given'}`,
+          lines: [
+            { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: 0, memo: 'recipe cost change (memo)' },
+            { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: 0, memo: 'recipe cost change (memo)' },
+          ],
+          totalDebit: 0,
+          totalCredit: 0,
+        });
+      } catch (e) { log?.error?.({ err: e }, 'recipe-cost memo JE failed'); }
     }
     // General edit audit — records every PUT for forensic trail.
     await logAudit(req, {
@@ -1722,7 +1904,8 @@ app.put('/api/products/:id', verifyToken, async (req, res) => {
   }
 });
 
-// PATCH /api/products/:id/availability — superadmin toggle (86 a product on/off)
+// PATCH /api/products/:id/availability — superadmin toggle. Permanently REMOVES
+// the product from menu + POS. Reporting still surfaces it while stock remains.
 app.patch('/api/products/:id/availability', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const { isAvailable } = req.body;
@@ -1732,14 +1915,38 @@ app.patch('/api/products/:id/availability', verifyToken, requireSuperAdmin, asyn
     if (!product) return res.status(404).json({ success: false, error: 'Product not found.' });
     await AuditLog.create({
       userId: req.user?.name || 'System',
-      action: isAvailable ? 'PRODUCT_RESTORED' : 'PRODUCT_86D',
+      action: isAvailable ? 'PRODUCT_RESTORED' : 'PRODUCT_REMOVED',
       targetReference: product.productCode || req.params.id,
       details: { name: product.name, isAvailable, changedBy: req.user?.name }
     });
-    emitToAll('menuUpdated'); // customer menu + POS re-fetch immediately
+    emitToAll('menuUpdated');
     res.json({ success: true, product });
   } catch (err) {
     log.error({ err }, 'PATCH /api/products/:id/availability failed');
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// PATCH /api/products/:id/oos — toggle "Out of Stock". Distinct from Removed —
+// OOS products still appear in menu (with a badge) and in all reports. Use this
+// for a temporary stockout; use /availability for permanent removal.
+app.patch('/api/products/:id/oos', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { isOutOfStock } = req.body;
+    if (typeof isOutOfStock !== 'boolean')
+      return res.status(400).json({ success: false, error: 'isOutOfStock must be true or false.' });
+    const product = await Product.findByIdAndUpdate(req.params.id, { isOutOfStock }, { new: true });
+    if (!product) return res.status(404).json({ success: false, error: 'Product not found.' });
+    await AuditLog.create({
+      userId: req.user?.name || 'System',
+      action: isOutOfStock ? 'PRODUCT_MARKED_OOS' : 'PRODUCT_BACK_IN_STOCK',
+      targetReference: product.productCode || req.params.id,
+      details: { name: product.name, isOutOfStock, changedBy: req.user?.name }
+    });
+    emitToAll('menuUpdated');
+    res.json({ success: true, product });
+  } catch (err) {
+    log.error({ err }, 'PATCH /api/products/:id/oos failed');
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
 });
@@ -1875,7 +2082,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       if (existingOrder) return res.status(200).json({ success: true, order: existingOrder, message: "Duplicate prevented." });
     }
 
-    let { items, discountPercent = 0, discountFlat = 0, table, customerName, sessionId, isComplimentary = false, employeeName = '', orderNotes = '', guestCount = 1, payments: paymentsInput, paymentMethod: bodyPaymentMethod, termsOfPayment } = req.body;
+    let { items, discountPercent = 0, discountFlat = 0, table, customerName, sessionId, isComplimentary = false, employeeName = '', orderNotes = '', guestCount = 1, payments: paymentsInput, paymentMethod: bodyPaymentMethod, termsOfPayment, reserveOnly = false } = req.body;
 
     // Block QR-originated orders when kitchen has toggled off (staff POS unaffected)
     if (req.qrSession) {
@@ -2057,6 +2264,12 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       total: finalTotal,
       isVatExempt, discountType, customerName,
       isComplimentary, employeeName, cashier,
+      placedByClient: isClientOrder,
+      ...(onBehalfClientId ? { clientAccountId: onBehalfClientId } : {}),
+      // Reserve mode: items committed, no payment yet, status = Reserved.
+      // Cashier later promotes Reserved → Pending (pay later) or Preparing (pay now)
+      // via the existing PUT /api/orders/:id status transition.
+      ...(reserveOnly && !isComplimentary ? { status: 'Reserved' } : {}),
       transactionType: isComplimentary ? 'COMPLIMENTARY' : 'NORMAL',
       orderNotes: (orderNotes || '').trim().slice(0, 300),
       guestCount: Math.max(1, parseInt(guestCount) || 1),
@@ -2169,7 +2382,17 @@ app.put('/api/orders/:id', verifyToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Completed orders are immutable. Use the void workflow for cancellations.' });
     }
 
-    if (status) order.status = status;
+    if (status) {
+      order.status = status;
+      // Attribution: when an order moves to Cancelled, stamp who did it from
+      // the verified JWT so reports don't blame the original cashier (which
+      // for a client-portal order is the client's username).
+      if (status === 'Cancelled' && previousStatus !== 'Cancelled') {
+        order.cancelledBy = req.user?.name || 'system';
+        order.cancelledAt = new Date();
+        await logAudit(req, { action: 'cancel', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, cancelledBy: order.cancelledBy } });
+      }
+    }
     if (paymentMethod && !order.isComplimentary) order.paymentMethod = paymentMethod;
 
     // Allow the Kitchen/Bar to update specific item statuses safely
@@ -2763,7 +2986,13 @@ app.post('/api/orders/:id/void', verifyToken, requireSuperOrAdmin, async (req, r
 
     order.status = 'Voided';
     order.voidReason = reason;
+    // Attribution: stamp who actually voided the order — NOT the original cashier
+    // (which for a client-portal order is the client's username, misleading on
+    // audit reports). Captured from the verified JWT, not request body.
+    order.voidedBy = adminName;
+    order.voidedAt = new Date();
     await order.save({ session });
+    await logAudit(req, { action: 'void', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, reason, voidedBy: adminName } });
     
     await session.commitTransaction();
     session.endSession();
@@ -2786,7 +3015,7 @@ app.post('/api/orders/archive', verifyToken, async (req, res) => {
     //    isParked flag so they don't linger in the parked list.
     await Order.updateMany(
       { status: { $in: ['Pending', 'Preparing', 'Ready', 'Parked'] }, isArchived: false },
-      { $set: { status: 'Cancelled', isParked: false } }
+      { $set: { status: 'Cancelled', isParked: false, cancelledBy: req.user?.name || 'EOD Sweep', cancelledAt: new Date() } }
     );
 
     // 2. Sweep EVERYTHING that is currently active into the archive
@@ -4636,6 +4865,130 @@ app.post('/api/admin/tenancy-rebackfill', verifyToken, requireSuperAdmin, async 
     await logAudit(req, { action: 'rebackfill', entity: 'Tenancy', entityId: BUSINESS_TYPE, after: stamped });
     res.json({ success: true, stamped });
   } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// ── PAYMENT-METHOD SUB-ACCOUNT RE-SEED (superadmin) ──────────────────────────
+// Idempotent. Use when the boot-time seed didn't fire (legacy install) or
+// after wiping the Account collection. Returns what got created and what
+// already existed, so the UI can show a quick diagnostic.
+app.post('/api/admin/seed-payment-subaccounts', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const SEED = [
+      { code: '113001', name: 'GCash',           parent: '113000' },
+      { code: '113002', name: 'Maya',            parent: '113000' },
+      { code: '113003', name: 'Maribank',        parent: '113000' },
+      { code: '113004', name: 'Other E-Wallet',  parent: '113000' },
+      { code: '112001', name: 'Bank Transfer',   parent: '112000' },
+      { code: '120001', name: 'Foodpanda',       parent: '120000' },
+      { code: '120002', name: 'Grab Delivery',   parent: '120000' },
+      { code: '111001', name: 'Lalamove',        parent: '111000' },
+      { code: '111002', name: 'Manual Delivery', parent: '111000' },
+      { code: '111003', name: 'Pickup',          parent: '111000' },
+    ];
+    const created = [], skipped = [];
+    for (const s of SEED) {
+      // Skip if the CODE is already taken (e.g. user already added a sub-account
+      // there, like Metrobank at 112001). Also skip if the NAME already exists
+      // under the same parent (any code) to avoid duplicate-name children.
+      const existsByCode = await Account.findOne({ code: s.code }).lean();
+      if (existsByCode) { skipped.push({ code: s.code, name: s.name, reason: `code taken by "${existsByCode.name}"` }); continue; }
+      const existsByName = await Account.findOne({ parent: s.parent, name: s.name }).lean();
+      if (existsByName) { skipped.push({ code: s.code, name: s.name, reason: `same name exists at ${existsByName.code}` }); continue; }
+      const parentMeta = ACCOUNTS[s.parent];
+      if (!parentMeta) { skipped.push({ code: s.code, name: s.name, reason: 'parent missing' }); continue; }
+      const acct = await Account.create({
+        code: s.code, name: s.name, type: parentMeta.type, parent: s.parent,
+        custom: true, normalBalance: /^[15679]/.test(s.code) ? 'Debit' : 'Credit',
+      });
+      created.push({ code: acct.code, name: acct.name, parent: acct.parent });
+    }
+    await refreshCustomMeta();
+    // Update routing defaults too so the seed has an immediate effect.
+    const PM_DEFAULTS = {
+      'GCash': '113001', 'Maya': '113002', 'Maribank': '113003', 'Other E-Wallet': '113004',
+      'Bank Transfer': '112001',
+      'Foodpanda': '120001', 'Grab Delivery': '120002',
+      'Lalamove': '111001', 'Manual Delivery': '111002', 'Pickup': '111003',
+    };
+    for (const [m, c] of Object.entries(PM_DEFAULTS)) {
+      // Only update the default if the target code now exists in COA — keeps the
+      // routing table honest when a code was skipped (e.g. Metrobank holding 112001).
+      if (acctMeta(c)) DEFAULT_PAYMENT_ACCOUNT_MAP[m] = c;
+    }
+    await refreshPaymentMap();
+    await logAudit(req, { action: 'seed', entity: 'PaymentSubAccounts', entityId: 'bulk', after: { created: created.length, skipped: skipped.length } });
+    res.json({ success: true, created, skipped, effectiveMap: { ...PAYMENT_MAP_CACHE } });
+  } catch (err) {
+    log?.error?.({ err }, 'POST /api/admin/seed-payment-subaccounts failed');
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// ── BACKDATED SALES TALLY (superadmin only) ──────────────────────────────────
+// Adds a Completed order with a chosen historical date so analytics / P&L
+// include sales done before the POS was in place (or paper receipts that need
+// to be tallied). Skips inventory deduction and recipe COGS — this is a tally,
+// not a real transaction. Respects period locks. Always audited.
+app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { date, customerName, amount, paymentMethod, notes } = req.body;
+    const amt = Number(amount);
+    if (!date || isNaN(amt) || amt <= 0) {
+      return res.status(400).json({ success: false, error: 'date and a positive amount are required.' });
+    }
+    const dt = new Date(date);
+    if (isNaN(dt.getTime())) return res.status(400).json({ success: false, error: 'Invalid date.' });
+
+    // Period-lock guard.
+    const lock = await periodLockFor(dt);
+    if (lock) return res.status(423).json({ success: false, error: `Period ${lock.year}-${String(lock.month).padStart(2,'0')} is closed.` });
+
+    const method = paymentMethod || 'Cash';
+    const acct = accountForPaymentMethod(method);
+
+    const year = dt.getFullYear();
+    const orderNumber = await generateNextSequence(Order, `ORD-${year}`, 'orderNumber');
+    const order = await Order.create({
+      orderNumber,
+      table: 'Backdated',
+      status: 'Completed',
+      createdAt: dt,
+      cashier: req.user?.name || 'Backdated Entry',
+      customerName: customerName || 'Walk-in (backdated)',
+      paymentMethod: method,
+      items: [{ name: 'Historical Sale', price: amt, quantity: 1, productDiscountPercent: 0 }],
+      subtotal: amt,
+      discount: 0,
+      vatAmount: 0,
+      vatRate: 0,
+      total: amt,
+      isVatExempt: true,
+      transactionType: 'NORMAL',
+      orderNotes: (notes || '').trim().slice(0, 300),
+      isBackdated: true,
+    });
+
+    // Journal entry: DR <payment account>, CR Sales Revenue (410000)
+    const reference = await mkSeqRef('BACKDATE');
+    await JournalEntry.create({
+      date: dt,
+      reference,
+      description: `Backdated sale — ${order.orderNumber}${notes ? ` (${notes})` : ''}`,
+      lines: [
+        { accountCode: acct.code, accountName: acct.name, debit: amt, credit: 0 },
+        { accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: amt },
+      ],
+      totalDebit: amt,
+      totalCredit: amt,
+    });
+
+    await logAudit(req, { action: 'backdate-sale', entity: 'Order', entityId: order._id, after: { orderNumber, date: dt, amount: amt, paymentMethod: method } });
+    emitToMgr('erpUpdated');
+    res.json({ success: true, order, journalReference: reference });
+  } catch (err) {
+    log.error?.({ err }, 'POST /api/admin/backdate-sale failed');
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
 });
