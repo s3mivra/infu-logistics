@@ -86,10 +86,14 @@ export default function AuditTab({ ctx }) {
 
   const allOrdersPool    = [...orders, ...archivedOrders];
   const inRange          = allOrdersPool.filter(o => new Date(o.createdAt) >= cutoff);
+  // Client-portal orders: keep them in counts/totals but exclude their cashier
+  // from staff lists and from comp/discount activity (the cashier there is the
+  // client themselves, not real staff). Reports keep the customer column intact.
+  const isStaffOrder     = (o) => !o.placedByClient;
   const cancelled        = inRange.filter(o => o.status === 'Cancelled' || o.status === 'Voided');
-  const comps            = inRange.filter(o => o.isComplimentary && o.status === 'Completed');
-  const discounted       = inRange.filter(o => !o.isComplimentary && o.status === 'Completed' && (o.discount || 0) > 0);
-  const staffList        = [...new Set(inRange.filter(o => o.cashier && o.cashier !== 'System').map(o => o.cashier))].sort();
+  const comps            = inRange.filter(o => o.isComplimentary && o.status === 'Completed' && isStaffOrder(o));
+  const discounted       = inRange.filter(o => !o.isComplimentary && o.status === 'Completed' && (o.discount || 0) > 0 && isStaffOrder(o));
+  const staffList        = [...new Set(inRange.filter(o => isStaffOrder(o) && o.cashier && o.cashier !== 'System').map(o => o.cashier))].sort();
   const totalCancelledValue  = cancelled.reduce((s, o) => s + (o.subtotal || 0), 0);
   const totalCompValue       = comps.reduce((s, o) => s + (o.subtotal || 0), 0);
   const totalDiscountValue   = discounted.reduce((s, o) => s + (o.discount || 0), 0);
@@ -174,23 +178,31 @@ export default function AuditTab({ ctx }) {
                         <tr className="text-white/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                           <th className="px-5 py-2.5">Date / Time</th>
                           <th className="px-5 py-2.5">Customer</th>
-                          <th className="px-5 py-2.5">Cashier</th>
+                          <th className="px-5 py-2.5">Voided / Cancelled By</th>
                           <th className="px-5 py-2.5 text-right">Amount</th>
                           <th className="px-5 py-2.5">Status</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {pagedCancelled.map(o => (
+                        {pagedCancelled.map(o => {
+                          // Attribution: who actually voided / cancelled — not the
+                          // original cashier (which on a client-portal order is the
+                          // client themselves).
+                          const actor = o.status === 'Voided'
+                            ? (o.voidedBy || o.cashier || '—')
+                            : (o.cancelledBy || o.cashier || '—');
+                          return (
                           <tr key={o._id} className="border-b border-white/5 last:border-0 hover:bg-white/3 transition">
                             <td className="px-5 py-2.5 text-xs text-white/40 font-mono">{fmtDate(o.createdAt)}</td>
                             <td className="px-5 py-2.5 text-xs text-white/70 font-bold">{o.customerName || '—'}</td>
-                            <td className="px-5 py-2.5 text-xs text-white/40">{o.cashier || '—'}</td>
+                            <td className="px-5 py-2.5 text-xs text-white/70 font-bold">{actor}</td>
                             <td className="px-5 py-2.5 text-xs text-right font-mono text-red-400">₱{(o.subtotal || 0).toFixed(2)}</td>
                             <td className="px-5 py-2.5">
                               <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${o.status === 'Voided' ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20 text-gray-400'}`}>{o.status}</span>
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
