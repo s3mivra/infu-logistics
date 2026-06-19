@@ -5779,8 +5779,9 @@ const updateStatus = async (orderId, newStatus) => {
         const items = partialModal.items || [];
         const rem = (it) => (it.quantity || 0) - (it.fulfilledQty || 0);
         const fNow = (it, i) => Math.max(0, Math.min(rem(it), Number(partialQtys[i] ?? rem(it))));
-        const fTotal = items.reduce((s, it, i) => s + (it.price || 0) * fNow(it, i), 0);
-        const rTotal = items.reduce((s, it, i) => s + (it.price || 0) * (rem(it) - fNow(it, i)), 0);
+        const netUnit = (it) => (it.price || 0) * (1 - (it.productDiscountPercent || 0) / 100);
+        const fTotal = items.reduce((s, it, i) => s + netUnit(it) * fNow(it, i), 0);
+        const rTotal = items.reduce((s, it, i) => s + netUnit(it) * (rem(it) - fNow(it, i)), 0);
         return (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-md w-full p-6 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
@@ -5807,7 +5808,7 @@ const updateStatus = async (orderId, newStatus) => {
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-sm font-bold text-white truncate">{it.name}</p>
-                        <p className="text-[10px] text-white/40">Remaining: {remaining} of {it.quantity} · ₱{(it.price||0).toFixed(2)} ea</p>
+                        <p className="text-[10px] text-white/40">Remaining: {remaining} of {it.quantity} · ₱{netUnit(it).toFixed(2)} ea{(it.productDiscountPercent||0) > 0 ? ` (${it.productDiscountPercent}% off)` : ''}</p>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <button onClick={() => setPartialQtys(p => ({ ...p, [i]: Math.max(0, fq - 1) }))} className="w-7 h-7 rounded-lg bg-white/5 text-white hover:bg-white/10 font-black">−</button>

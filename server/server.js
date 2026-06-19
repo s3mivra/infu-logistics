@@ -3018,10 +3018,10 @@ app.post('/api/orders/archive', verifyToken, async (req, res) => {
       { $set: { status: 'Cancelled', isParked: false, cancelledBy: req.user?.name || 'EOD Sweep', cancelledAt: new Date() } }
     );
 
-    // 2. Sweep EVERYTHING that is currently active into the archive
-    //    (Completed, Voided, Cancelled, and the just-cancelled Parked tabs).
+    // 2. Sweep completed/cancelled/voided orders into the archive.
+    //    Reserved and Partially Fulfilled stay open — they carry over to the next day.
     await Order.updateMany(
-      { isArchived: false },
+      { isArchived: false, status: { $nin: ['Reserved', 'Partially Fulfilled'] } },
       { $set: { isArchived: true, isParked: false } }
     );
 
@@ -4394,9 +4394,12 @@ function scheduleMidnightArchive() {
         { $set: { status: 'Cancelled', isParked: false } }
       );
 
-      // Step B: Sweep everything active into the archive (incl. the just-cancelled
-      //         Parked tabs and any existing Cancelled/Voided orders).
-      await Order.updateMany({ isArchived: false }, { $set: { isArchived: true, isParked: false } });
+      // Step B: Sweep completed/cancelled/voided orders into the archive.
+      //         Reserved and Partially Fulfilled carry over to the next day.
+      await Order.updateMany(
+        { isArchived: false, status: { $nin: ['Reserved', 'Partially Fulfilled'] } },
+        { $set: { isArchived: true, isParked: false } }
+      );
       emitToAll('ordersArchived'); // Tell all iPads/phones to clear their screens
 
       // Step C: Take the Midnight Inventory Snapshot
@@ -4451,7 +4454,7 @@ function scheduleMidnightArchive() {
       }
 
     } catch (error) {
-      console.error("Auto-Archive Error:", error);
+      log.error({ err: error }, 'Auto-Archive Error');
     }
 
     // 3. Schedule it again for tomorrow!
