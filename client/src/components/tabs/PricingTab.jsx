@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 
 // ── PricingTab — extracted from AdminDashboard.jsx ──
@@ -78,12 +78,53 @@ export default function PricingTab({ ctx }) {
     users, varianceNoteMode, varianceReasons,
   } = ctx;
 
+  const [pricingSort, setPricingSort] = useState('az');
+  const [pricingCatFilter, setPricingCatFilter] = useState('');
+  const [localPage, setLocalPage] = useState(1);
+
+  const categoryOptions = useMemo(() => {
+    const seen = new Set();
+    (products || []).forEach(p => { if (p.category) seen.add(p.category); });
+    return [...seen].sort();
+  }, [products]);
+
+  const filteredSortedProducts = useMemo(() => {
+    let list = [...(products || [])];
+    if (pricingCatFilter) list = list.filter(p => p.category === pricingCatFilter);
+    if (pricingSort === 'az') list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    else if (pricingSort === 'za') list.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
+    return list;
+  }, [products, pricingSort, pricingCatFilter]);
+
+  const localItemsPerPage = pricingItemsPerPage;
+  const localTotalPages = Math.ceil(filteredSortedProducts.length / localItemsPerPage);
+  const localProducts = filteredSortedProducts.slice((localPage - 1) * localItemsPerPage, localPage * localItemsPerPage);
+
+  const handleSortChange = (val) => { setPricingSort(val); setLocalPage(1); };
+  const handleCatChange = (val) => { setPricingCatFilter(val); setLocalPage(1); };
+
   return (
         <div className="flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-180px)]">
 
           {/* LEFT COLUMN: Read-Only Pricing Table */}
           <div className="flex-1 bg-surface border border-gray-800 rounded-xl p-6 overflow-y-auto custom-scrollbar min-h-[400px] lg:min-h-0 lg:h-full">
             <h3 className="text-xl font-bold mb-4 text-accent border-b border-gray-800 pb-2">Product Pricing Masterlist</h3>
+
+            {/* Filter bar */}
+            <div className="flex flex-wrap gap-2 mb-4">
+              <div className="flex rounded-lg overflow-hidden border border-gray-700 shrink-0">
+                <button onClick={() => handleSortChange('az')} className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition ${pricingSort === 'az' ? 'bg-accent text-white' : 'bg-page-bg text-gray-400 hover:text-white'}`}>A→Z</button>
+                <button onClick={() => handleSortChange('za')} className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition border-l border-gray-700 ${pricingSort === 'za' ? 'bg-accent text-white' : 'bg-page-bg text-gray-400 hover:text-white'}`}>Z→A</button>
+              </div>
+              <select value={pricingCatFilter} onChange={e => handleCatChange(e.target.value)}
+                className="bg-page-bg border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none focus:border-accent min-w-[140px]">
+                <option value="">All Categories</option>
+                {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              {pricingCatFilter && (
+                <button onClick={() => handleCatChange('')} className="text-xs text-gray-400 hover:text-white px-2">✕ Clear</button>
+              )}
+            </div>
 
             {/* Added overflow-x wrapper so it scrolls sideways on small screens instead of breaking the layout */}
             <div className="overflow-x-auto pr-2">
@@ -101,9 +142,9 @@ export default function PricingTab({ ctx }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {products.length === 0 ? (
+                  {filteredSortedProducts.length === 0 ? (
                     <tr><td colSpan={isSuperAdmin ? 8 : 6} className="py-4 text-center text-gray-500">No products found.</td></tr>
-                  ) : currentPricingProducts.flatMap(p => {
+                  ) : localProducts.flatMap(p => {
                     // Recipe cost first; if absent, fall back to the 1:1 logistics cost
                     // (linked inventory unitCost × pack base units from the name).
                     const PACK_RE = /(\d+(?:\.\d+)?)\s*(mg|kg|g|ml|cl|l|pcs|pc|pack|unit)\b/i;
@@ -261,22 +302,22 @@ export default function PricingTab({ ctx }) {
               </table>
             </div>
             {/* --- PRICING PAGINATION CONTROLS --- */}
-            {totalPricingPages > 1 && (
+            {localTotalPages > 1 && (
               <div className="flex justify-between items-center bg-page-bg p-3 rounded-lg border border-gray-800 mt-4 shrink-0">
-                <button 
-                  onClick={() => setPricingPage(prev => Math.max(prev - 1, 1))}
-                  disabled={pricingPage === 1}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${pricingPage === 1 ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
+                <button
+                  onClick={() => setLocalPage(prev => Math.max(prev - 1, 1))}
+                  disabled={localPage === 1}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${localPage === 1 ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
                 >
                   <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                 </button>
                 <span className="text-gray-400 text-xs font-bold tracking-widest">
-                  PAGE <span className="text-accent text-sm">{pricingPage}</span> OF {totalPricingPages}
+                  PAGE <span className="text-accent text-sm">{localPage}</span> OF {localTotalPages}
                 </span>
-                <button 
-                  onClick={() => setPricingPage(prev => Math.min(prev + 1, totalPricingPages))}
-                  disabled={pricingPage === totalPricingPages}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${pricingPage === totalPricingPages ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
+                <button
+                  onClick={() => setLocalPage(prev => Math.min(prev + 1, localTotalPages))}
+                  disabled={localPage === localTotalPages}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${localPage === localTotalPages ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
                 >
                   <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                 </button>
