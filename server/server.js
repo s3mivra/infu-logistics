@@ -451,6 +451,32 @@ const runStartupTasks = async () => {
       log.error({ err }, 'Seeding error');
     }
 
+    // ── DEFAULT TENANT SEED + tenantId BACKFILL (multi-tenancy Phase 1) ────
+    // Idempotent: ensure a "default" tenant exists, then stamp every tenant-scoped
+    // doc that lacks a tenantId with it. Additive only — no query behavior changes.
+    try {
+      let defaultTenant = await Tenant.findOne({ slug: 'default' });
+      if (!defaultTenant) {
+        defaultTenant = await Tenant.create({
+          name: process.env.BUSINESS_NAME || 'Default Tenant',
+          slug: 'default',
+          businessType: BUSINESS_TYPE,
+        });
+        log.info(`✅ Default tenant seeded: ${defaultTenant._id}`);
+      }
+      const tFilter = { $or: [{ tenantId: { $exists: false } }, { tenantId: null }] };
+      const [tO, tP, tI, tC] = await Promise.all([
+        Order.updateMany(tFilter, { $set: { tenantId: defaultTenant._id } }),
+        Product.updateMany(tFilter, { $set: { tenantId: defaultTenant._id } }),
+        Inventory.updateMany(tFilter, { $set: { tenantId: defaultTenant._id } }),
+        Category.updateMany(tFilter, { $set: { tenantId: defaultTenant._id } }),
+      ]);
+      const tStamped = (tO.modifiedCount || 0) + (tP.modifiedCount || 0) + (tI.modifiedCount || 0) + (tC.modifiedCount || 0);
+      if (tStamped > 0) log.info(`✅ Backfilled tenantId on ${tStamped} doc(s) — Orders:${tO.modifiedCount} Products:${tP.modifiedCount} Inventory:${tI.modifiedCount} Categories:${tC.modifiedCount}`);
+    } catch (err) {
+      log.error({ err }, 'Tenant seed/backfill error');
+    }
+
     // ── PAYMENT-METHOD SUB-ACCOUNT SEEDING ────────────────────────────────
     // Own try block so an earlier failure can't silently skip this step.
     // For each method, take the preferred code; if it's taken (e.g. user
@@ -693,6 +719,9 @@ const CategorySchema = new mongoose.Schema({
   // Tenancy seed: which business type owns this category. Defaults to the env
   // BUSINESS_TYPE on create. Old docs without this field still read fine.
   businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  // Multi-tenancy (Phase 1): every tenant-scoped doc carries a tenantId. Backfilled
+  // to the default tenant on boot. Query-scoping/auth wiring lands in Phase 2.
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
 }, { timestamps: true });
 const Category = mongoose.model('Category', CategorySchema);
 // ── MODIFIER GROUPS ─────────────────────────────────────────────────────────
@@ -711,6 +740,61 @@ const ModifierGroup = mongoose.model('ModifierGroup', ModifierGroupSchema);
 // Key/value store for system-wide toggles (isAcceptingQROrders, etc.)
 const SettingsSchema = new mongoose.Schema({ key: { type: String, unique: true, required: true }, value: { type: mongoose.Schema.Types.Mixed } });
 const Settings = mongoose.model('Settings', SettingsSchema);
+
+// ── TENANT (multi-tenancy, Phase 1) ──────────────────────────────────────────
+// A Tenant is an isolated business in a shared deployment. Phase 1 introduces the
+// model + a default tenant + tenantId backfill (additive, non-breaking — existing
+// queries are unchanged). Phase 2 wires tenantId into the access token, per-tenant
+// query scoping, and Socket.io room partitioning.
+const TenantSchema = new mongoose.Schema({
+  name:         { type: String, required: true, trim: true },
+  slug:         { type: String, required: true, unique: true, lowercase: true, trim: true },
+  businessType: { type: String, default: () => BUSINESS_TYPE },
+  isActive:     { type: Boolean, default: true },
+}, { timestamps: true });
+const Tenant = mongoose.model('Tenant', TenantSchema);
+
+// Tenant management — superadmin only (Phase 1 CRUD over the tenant registry).
+const tenantSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  slug: z.string().trim().min(1).max(60).regex(/^[a-z0-9-]+$/i, 'slug must be alphanumeric/hyphen'),
+  businessType: z.enum(['fb', 'log']).optional(),
+  isActive: z.boolean().optional(),
+});
+app.get('/api/tenants', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const tenants = await Tenant.find().sort({ createdAt: 1 }).lean();
+    res.json({ success: true, tenants });
+  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+});
+app.post('/api/tenants', verifyToken, requireSuperAdmin, validate(tenantSchema), async (req, res) => {
+  try {
+    const slug = String(req.body.slug).toLowerCase();
+    if (await Tenant.findOne({ slug }).lean()) return res.status(409).json({ success: false, error: 'A tenant with that slug already exists.' });
+    const tenant = await Tenant.create({ ...req.body, slug });
+    res.json({ success: true, tenant });
+  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+});
+app.patch('/api/tenants/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Tenant not found.' });
+    const allowed = {};
+    for (const k of ['name', 'isActive', 'businessType']) if (req.body[k] !== undefined) allowed[k] = req.body[k];
+    const tenant = await Tenant.findByIdAndUpdate(req.params.id, { $set: allowed }, { returnDocument: 'after' });
+    if (!tenant) return res.status(404).json({ success: false, error: 'Tenant not found.' });
+    res.json({ success: true, tenant });
+  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+});
+app.delete('/api/tenants/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Tenant not found.' });
+    const tenant = await Tenant.findById(req.params.id);
+    if (!tenant) return res.status(404).json({ success: false, error: 'Tenant not found.' });
+    if (tenant.slug === 'default') return res.status(400).json({ success: false, error: 'The default tenant cannot be deleted.' });
+    await Tenant.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+});
 
 // --- ADD-ONS SCHEMA & ROUTES ---
 const AddOnSchema = new mongoose.Schema({
@@ -753,6 +837,9 @@ app.delete('/api/addons/:id', verifyToken, requireSuperAdmin, async (req, res) =
 // 1. UPDATE THE PRODUCT SCHEMA (Add Recipes)
 const ProductSchema = new mongoose.Schema({
   businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  // Multi-tenancy (Phase 1): every tenant-scoped doc carries a tenantId. Backfilled
+  // to the default tenant on boot. Query-scoping/auth wiring lands in Phase 2.
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   productCode: String,
   name: { type: String, required: true, index: true },
   description: String,
@@ -813,6 +900,9 @@ const Combo = mongoose.model('Combo', ComboSchema);
 
 const OrderSchema = new mongoose.Schema({
   businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  // Multi-tenancy (Phase 1): every tenant-scoped doc carries a tenantId. Backfilled
+  // to the default tenant on boot. Query-scoping/auth wiring lands in Phase 2.
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   orderNumber: String,
   table: String,
   isArchived: { type: Boolean, default: false, index: true },
@@ -939,6 +1029,9 @@ const QRSession = mongoose.model('QRSession', QRSessionSchema);
 // --- NEW ERP SCHEMAS ---
 const InventorySchema = new mongoose.Schema({
   businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  // Multi-tenancy (Phase 1): every tenant-scoped doc carries a tenantId. Backfilled
+  // to the default tenant on boot. Query-scoping/auth wiring lands in Phase 2.
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   itemCode: String,
   itemName: String,
   stockQty: { type: Number, default: 0 },           // ALWAYS stored in base unit (g/ml/pcs) for recipe precision
