@@ -200,7 +200,7 @@ export default function AnalyticsTab({ ctx }) {
                 </h3>
                 <div className="space-y-4">
                   {mus.length === 0 ? (
-                    <p className="text-gray-600 text-xs">No sales data yet — complete orders to populate.</p>
+                    <p className="text-gray-600 text-xs">No sales data yet - complete orders to populate.</p>
                   ) : mus.map((item, idx) => { const d = effectiveDisplay(item); return (
                     <div key={idx} className="flex flex-col border-b border-accent/10 pb-3 last:border-0 last:pb-0">
                       <div className="flex justify-between items-center mb-2">

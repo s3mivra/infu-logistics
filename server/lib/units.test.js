@@ -114,3 +114,17 @@ describe('round-trip integrity (no data loss)', () => {
     expect(baseToDisplayCost(storedCostPerBase, 'L')).toBeCloseTo(displayCost, 4);
   });
 });
+
+describe('units — resolve/effectiveDisplay edge branches (coverage)', () => {
+  it('resolveUnit handles word forms case-insensitively', () => {
+    expect(resolveUnit('GRAM')).toMatchObject({ base: 'g', mult: 1 });
+    expect(resolveUnit('Milliliter')).toMatchObject({ base: 'ml', mult: 1 });
+    expect(resolveUnit('piece')).toMatchObject({ base: 'pcs', mult: 1 });
+  });
+  it('effectiveDisplay honors explicit unit and auto-promotes g/ml', () => {
+    expect(effectiveDisplay({ displayUnit: 'kg' })).toMatchObject({ displayUnit: 'kg', mult: 1000 });
+    expect(effectiveDisplay({ unit: 'g' })).toMatchObject({ displayUnit: 'kg', mult: 1000 });
+    expect(effectiveDisplay({ unit: 'ml' })).toMatchObject({ displayUnit: 'L', mult: 1000 });
+    expect(effectiveDisplay({})).toMatchObject({ displayUnit: 'pcs', mult: 1 });
+  });
+});

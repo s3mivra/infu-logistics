@@ -99,7 +99,7 @@ UserCard.displayName = 'UserCard';
 const NAV_ITEMS = [
   { id: 'users', label: 'User Control',  icon: Users },
   { id: 'roles', label: 'Access Roles',  icon: Tag },
-  ...(BUSINESS_TYPE === 'log' ? [{ id: 'clients', label: 'Client Accounts', icon: Package }] : []),
+  { id: 'clients', label: 'Client Accounts', icon: Package },
 ];
 
 function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }) {
@@ -473,7 +473,7 @@ export default function SuperAdminPanel() {
   }, [apiFetch]);
 
   useEffect(() => {
-    if (isAuthenticated && BUSINESS_TYPE === 'log') fetchClients();
+    if (isAuthenticated) fetchClients();
   }, [isAuthenticated, fetchClients]);
 
   const openClientCreate = () => {
@@ -813,7 +813,7 @@ export default function SuperAdminPanel() {
         {/* ----------------------------------------------------------------- */}
         {/* CLIENT ACCOUNTS SECTION (logistics mode only)                     */}
         {/* ----------------------------------------------------------------- */}
-        {activeSection === 'clients' && BUSINESS_TYPE === 'log' && (
+        {activeSection === 'clients' && (
           <div className="flex-1 p-6 space-y-3">
             {clientsLoading
               ? Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)
@@ -845,7 +845,7 @@ export default function SuperAdminPanel() {
                     <button
                       onClick={() => toggleClientActive(client)}
                       className={`flex-shrink-0 transition ${client.isActive ? 'text-emerald-400' : 'text-white/20'}`}
-                      title={client.isActive ? 'Active — click to deactivate' : 'Inactive — click to activate'}
+                      title={client.isActive ? 'Active - click to deactivate' : 'Inactive - click to activate'}
                     >
                       {client.isActive ? <ToggleRight size={22} /> : <ToggleLeft size={22} />}
                     </button>

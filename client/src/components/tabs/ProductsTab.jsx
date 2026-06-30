@@ -99,7 +99,7 @@ export default function ProductsTab({ ctx }) {
                   
                   {/* Top section on mobile: Image + Text */}
                   <div className="flex gap-4 flex-1 w-full">
-                    {p.image ? (
+                    {p.image && ctx.systemSettings?.imagesEnabled !== false ? (
                       <img src={p.image} alt={p.name} className="w-16 h-16 object-cover rounded-lg shadow-sm border border-white/10 shrink-0" />
                     ) : (
                       <div className="w-16 h-16 bg-white/5 rounded-lg border border-white/10 flex items-center justify-center text-xs text-white/30 font-bold shrink-0">No Img</div>
@@ -216,7 +216,7 @@ export default function ProductsTab({ ctx }) {
               </div>
             </div>
 
-            {/* 3. MANAGE GLOBAL ADD-ONS — fb only */}
+            {/* 3. MANAGE GLOBAL ADD-ONS - fb only */}
             {BUSINESS_TYPE !== 'log' && <div className="mt-8 border-t border-white/8 pt-6">
               <h3 className="text-xl font-bold mb-4 text-white border-b border-white/8 pb-2">Manage Global Add-Ons (Sinkers, Shots)</h3>
               <form onSubmit={handleSaveAddOn} className="flex gap-3 mb-6">
@@ -303,7 +303,7 @@ export default function ProductsTab({ ctx }) {
                       <input type="number" step="0.01" placeholder="Selling Price" value={formData.basePrice} onChange={e => setFormData({...formData, basePrice: parseFloat(e.target.value) || 0})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pl-8 text-white outline-none focus:border-brand font-bold" />
                     </div>
                   </div>
-                  {/* Per-product discount — applies only to this product's line, not the whole order. */}
+                  {/* Per-product discount - applies only to this product's line, not the whole order. */}
                   <div className="flex items-center gap-2 mb-1">
                     <div className="relative w-1/2">
                       <input type="number" min="0" max="100" step="0.01" placeholder="Product Discount" value={formData.discountPercent || ''} onChange={e => setFormData({...formData, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pr-7 text-white outline-none focus:border-brand font-bold placeholder-white/20" />
@@ -315,9 +315,9 @@ export default function ProductsTab({ ctx }) {
                       </span>
                     )}
                   </div>
-                  <p className="text-[10px] text-white/30 mb-3">Discount applies to this product only, on every order line — not the whole order. Overrides below apply when a specific client buys this product.</p>
+                  <p className="text-[10px] text-white/30 mb-3">Discount applies to this product only, on every order line - not the whole order. Overrides below apply when a specific client buys this product.</p>
 
-                  {/* Per-client overrides — a specific client's special rate on THIS product */}
+                  {/* Per-client overrides - a specific client's special rate on THIS product */}
                   <div className="bg-page-bg/40 border border-white/8 rounded-xl p-3">
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-xs font-black text-white/70 uppercase tracking-wider">Per-Client Overrides</label>
@@ -327,7 +327,7 @@ export default function ProductsTab({ ctx }) {
                         className="text-[11px] font-black text-brand hover:text-white transition disabled:opacity-40">+ Add client</button>
                     </div>
                     {(!clientAccounts || clientAccounts.length === 0) && (
-                      <p className="text-[10px] text-white/30 italic">No client accounts yet — create one in the Client Accounts panel to assign a special discount.</p>
+                      <p className="text-[10px] text-white/30 italic">No client accounts yet - create one in the Client Accounts panel to assign a special discount.</p>
                     )}
                     {(formData.clientDiscounts || []).map((cd, idx) => (
                       <div key={idx} className="flex items-center gap-2 mb-1.5">
@@ -478,7 +478,7 @@ export default function ProductsTab({ ctx }) {
                   </div>
                 </div>
 
-                {/* --- REQUIRED MODIFIER GROUPS — fb only --- */}
+                {/* --- REQUIRED MODIFIER GROUPS - fb only --- */}
                 {BUSINESS_TYPE !== 'log' && modifierGroups.length > 0 && (
                   <div className="border-t border-white/8 pt-5 mt-4 mb-4">
                     <label className="text-sm font-black text-white/80 uppercase tracking-wider mb-1 block">Required Modifier Groups</label>
@@ -497,7 +497,7 @@ export default function ProductsTab({ ctx }) {
                             />
                             <div>
                               <p className="text-sm font-bold text-white">{mg.name}</p>
-                              <p className="text-[10px] text-white/40">{mg.isRequired ? `Required — pick ${mg.minSelect}${mg.maxSelect>mg.minSelect?`-${mg.maxSelect}`:``}` : 'Optional'} · {mg.options?.length||0} options</p>
+                              <p className="text-[10px] text-white/40">{mg.isRequired ? `Required - pick ${mg.minSelect}${mg.maxSelect>mg.minSelect?`-${mg.maxSelect}`:``}` : 'Optional'} · {mg.options?.length||0} options</p>
                             </div>
                           </label>
                         );
@@ -533,7 +533,7 @@ export default function ProductsTab({ ctx }) {
           </div>
           </div>
 
-          {/* ════════════ MODIFIER GROUPS MANAGEMENT — fb only ════════════ */}
+          {/* ════════════ MODIFIER GROUPS MANAGEMENT - fb only ════════════ */}
           {BUSINESS_TYPE !== 'log' && <div className="bg-surface border border-white/8 shadow-md rounded-xl p-4 sm:p-6">
             <h3 className="text-xl font-bold mb-1 text-white">Modifier Groups</h3>
             <p className="text-xs text-white/40 mb-4">Required choices on a product (e.g. "Choose your milk"). Attach them to products in the form above.</p>

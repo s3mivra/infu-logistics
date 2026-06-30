@@ -33,7 +33,7 @@ const STATUS_VIEW = (status) => {
       return { label: 'Sent to logistics', tone: 'amber',
         msg: 'Please send your payment proof on our Facebook page so we can process your order.', needsProof: true };
     case 'Preparing':
-      return { label: 'Preparing order', tone: 'blue', msg: 'Payment received — your order is being prepared.' };
+      return { label: 'Preparing order', tone: 'blue', msg: 'Payment received - your order is being prepared.' };
     case 'Partially Fulfilled':
       return { label: 'Partially fulfilled', tone: 'blue', msg: 'Some items are ready; the rest will follow.' };
     case 'Out for Delivery':
@@ -80,7 +80,7 @@ const ProductCard = memo(({ product, onAdd }) => {
     </div>
     {product.description && <p className="text-white/40 text-xs mt-1 line-clamp-2">{product.description}</p>}
     <div className="flex items-center justify-between mt-3">
-      {/* Logistics: price is hidden — staff confirms the customer's rate via Messenger. */}
+      {/* Logistics: price is hidden - staff confirms the customer's rate via Messenger. */}
       <p className="text-white/40 font-black text-[11px] uppercase tracking-wider">Inquire price</p>
       {!unavailable && (
         <button
@@ -143,7 +143,7 @@ export default function ClientOrderPage() {
         navigate('/client/portal', { replace: true });
         return;
       }
-    } catch { /* malformed token — redirect */ navigate('/client/portal', { replace: true }); return; }
+    } catch { /* malformed token - redirect */ navigate('/client/portal', { replace: true }); return; }
 
     const info = JSON.parse(storedInfo);
     setToken(storedToken);
@@ -307,7 +307,7 @@ export default function ClientOrderPage() {
         </div>
         <h2 className="text-2xl font-black text-white mb-1">Sent to Logistics!</h2>
         <p className="text-white/50 text-sm mb-3">Your order has been received.</p>
-        {/* POS reference — show this to staff so they can pull up the same order. */}
+        {/* POS reference - show this to staff so they can pull up the same order. */}
         <div className="bg-page-bg border border-brand/30 rounded-2xl px-4 py-3 mb-3 w-full max-w-sm">
           <p className="text-[10px] uppercase tracking-widest text-white/40 font-black mb-1">Order Reference (show to staff)</p>
           <p className="text-brand font-mono font-black text-lg tracking-wider">{successOrder.orderNumber}</p>
@@ -318,7 +318,7 @@ export default function ClientOrderPage() {
 
         {/* First queue state: ask for payment proof */}
         <div className="bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-2xl px-4 py-3 w-full max-w-sm mb-5 text-left">
-          <p className="text-xs font-black uppercase tracking-wider mb-1">Next step — Payment proof</p>
+          <p className="text-xs font-black uppercase tracking-wider mb-1">Next step - Payment proof</p>
           <p className="text-[12px] leading-snug opacity-90">Please send your payment proof on our Facebook page so we can start preparing your order.</p>
           {FB_LINK && (
             <a href={FB_LINK} target="_blank" rel="noopener noreferrer"
@@ -432,7 +432,7 @@ export default function ClientOrderPage() {
                       )}
                       {v.canConfirm && (
                         o.clientReceived ? (
-                          <p className="mt-2 text-[11px] font-black inline-flex items-center gap-1.5"><CheckCircle size={13} /> Received — thank you!</p>
+                          <p className="mt-2 text-[11px] font-black inline-flex items-center gap-1.5"><CheckCircle size={13} /> Received - thank you!</p>
                         ) : (
                           <button onClick={() => confirmReceived(o._id)}
                             className="mt-2 w-full bg-emerald-500 hover:bg-emerald-400 transition rounded-lg px-3 py-2 text-[11px] font-black text-white uppercase tracking-wider">

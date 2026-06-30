@@ -176,7 +176,7 @@ export default function OrdersTab({ ctx }) {
                             <button
                               key={p._id}
                               onClick={() => { if (!unavailable) openProductModal(p); }}
-                              aria-label={`${p.name} — ₱${Number(p.basePrice || p.price || 0).toFixed(2)}${unavailable ? ' (unavailable)' : ''}`}
+                              aria-label={`${p.name} - ₱${Number(p.basePrice || p.price || 0).toFixed(2)}${unavailable ? ' (unavailable)' : ''}`}
                               className={`relative bg-page-bg/60 border rounded-2xl p-3 flex flex-col items-center text-center shadow-elev-1 group min-h-[120px] transition-colors duration-180
                                 ${unavailable
                                   ? 'border-white/5 opacity-50 cursor-not-allowed'
@@ -225,7 +225,7 @@ export default function OrdersTab({ ctx }) {
 
                   {/* Customer info */}
                   <div className="px-4 pt-4 pb-3 border-b border-white/8 bg-page-bg/60 shrink-0 space-y-2">
-                    {/* Client account picker — when set, server applies that client's per-product discount overrides. */}
+                    {/* Client account picker - when set, server applies that client's per-product discount overrides. */}
                     {(clientAccounts || []).length > 0 && (
                       <select value={posClientId || ''}
                         onChange={e => {
@@ -238,7 +238,7 @@ export default function OrdersTab({ ctx }) {
                           }
                         }}
                         className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white/80 font-bold text-sm outline-none focus:border-brand/60 transition">
-                        <option value="">— Walk-in / no client account —</option>
+                        <option value="">- Walk-in / no client account -</option>
                         {clientAccounts.map(c => (
                           <option key={c._id} value={c._id}>{c.name || c.username} ({c.clientCode})</option>
                         ))}
@@ -564,7 +564,7 @@ export default function OrdersTab({ ctx }) {
                       {tables.map(({ table, count, status }) => (
                         <button key={table}
                           onClick={() => { setOrderFilter('All'); setOrderSearch(table); }}
-                          title={`${count} order${count !== 1 ? 's' : ''} — click to filter`}
+                          title={`${count} order${count !== 1 ? 's' : ''} - click to filter`}
                           className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider border transition hover:opacity-90
                             ${status === 'Ready'     ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' :
                               status === 'Preparing'  ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' :
@@ -612,7 +612,7 @@ export default function OrdersTab({ ctx }) {
                         ${allDeptDone && order.status !== 'Completed' ? 'border-green-500/40 border-l-green-500' : `border-white/5 ${statusBorderColor}`}
                         ${(order.status === 'Cancelled' || order.status === 'Voided' || order.status === 'Refunded') ? 'opacity-60' : ''}`}>
 
-                        {/* HEADER — only chevron collapses */}
+                        {/* HEADER - only chevron collapses */}
                         <div className="flex justify-between items-center px-4 pt-4 pb-3 gap-2">
                           <div className="flex flex-col min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
@@ -837,13 +837,13 @@ export default function OrdersTab({ ctx }) {
                                         )}
                                       </div>
                                       <div className="text-gray-500 text-[9px]">
-                                        <span className="text-gray-600">Reason:</span> {COMP_REASON_LABELS[order.complimentaryReasonType] || '—'}
+                                        <span className="text-gray-600">Reason:</span> {COMP_REASON_LABELS[order.complimentaryReasonType] || '-'}
                                       </div>
                                       {order.complimentaryReasonNote && (
                                         <div className="text-gray-600 text-[9px] italic truncate">&ldquo;{order.complimentaryReasonNote}&rdquo;</div>
                                       )}
                                       <div className="text-gray-600 text-[9px]">
-                                        <span className="text-gray-700">For:</span> {compEmpName} &nbsp;·&nbsp; <span className="text-gray-700">By:</span> {order.complimentaryApprovedBy || activeAdmin?.name || '—'}
+                                        <span className="text-gray-700">For:</span> {compEmpName} &nbsp;·&nbsp; <span className="text-gray-700">By:</span> {order.complimentaryApprovedBy || activeAdmin?.name || '-'}
                                       </div>
                                       {order.complimentaryApprovedAt && (
                                         <div className="text-gray-700 text-[9px]">{new Date(order.complimentaryApprovedAt).toLocaleString()}</div>
@@ -860,13 +860,13 @@ export default function OrdersTab({ ctx }) {
                                       <Gift size={10} className="text-gray-500 flex-shrink-0" />
                                       <span className="text-gray-500 text-[9px] font-bold uppercase tracking-wider">Mark Complimentary</span>
                                     </div>
-                                    {/* Reason type — REQUIRED */}
+                                    {/* Reason type - REQUIRED */}
                                     <select
                                       className="w-full bg-surface-2 border border-white/10 text-gray-200 text-[10px] rounded p-1.5 outline-none font-semibold"
                                       value={compReasonTypes[order._id] || ''}
                                       onChange={(e) => setCompReasonTypes(prev => ({ ...prev, [order._id]: e.target.value }))}
                                     >
-                                      <option value="">— Select Reason Type (required) —</option>
+                                      <option value="">- Select Reason Type (required) -</option>
                                       {Object.entries(COMP_REASON_LABELS).map(([key, label]) => (
                                         <option key={key} value={key}>{label}</option>
                                       ))}
@@ -958,7 +958,7 @@ export default function OrdersTab({ ctx }) {
                                     {scpwdDiscounts.length > 0 && order.status === 'Pending' && (
                                       <div className="border-b border-white/5 pb-1.5 space-y-1">
                                         {hasPromo ? (
-                                          <span className="text-[9px] uppercase tracking-wider text-white/20 italic">SC/PWD — Promo active</span>
+                                          <span className="text-[9px] uppercase tracking-wider text-white/20 italic">SC/PWD - Promo active</span>
                                         ) : (
                                           <>
                                             <button
@@ -1009,13 +1009,13 @@ export default function OrdersTab({ ctx }) {
                                 <div className="flex flex-col w-full gap-2">
                                   <div className="flex items-center justify-center gap-2 bg-purple-500/10 border border-purple-500/30 rounded-lg py-2.5 px-3">
                                     <Lock size={12} className="text-purple-300" />
-                                    <span className="text-purple-300 text-[10px] font-black uppercase tracking-widest">Reserved — Payment Locked</span>
+                                    <span className="text-purple-300 text-[10px] font-black uppercase tracking-widest">Reserved - Payment Locked</span>
                                   </div>
                                   <div className="flex gap-2">
                                     <button
                                       onClick={() => updateStatus(order._id, 'Pending')}
                                       className="flex-1 bg-purple-500 text-white py-2.5 rounded-lg hover:bg-purple-400 font-black text-xs uppercase tracking-widest transition flex items-center justify-center gap-1.5"
-                                      title="Unlock — promote to Pending so payment can be collected"
+                                      title="Unlock - promote to Pending so payment can be collected"
                                     >
                                       <Unlock size={12} /> Unlock & Take Payment
                                     </button>
@@ -1033,7 +1033,7 @@ export default function OrdersTab({ ctx }) {
                                     <div className="flex flex-col w-full gap-2">
                                       <div className="flex items-center justify-center gap-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg py-2.5 px-3">
                                         <Gift size={12} className="text-yellow-400" />
-                                        <span className="text-yellow-400 text-[10px] font-black uppercase tracking-widest">No Payment — Complimentary</span>
+                                        <span className="text-yellow-400 text-[10px] font-black uppercase tracking-widest">No Payment - Complimentary</span>
                                       </div>
                                       <div className="flex gap-2">
                                         <button
@@ -1236,7 +1236,7 @@ export default function OrdersTab({ ctx }) {
                                     }}
                                     className="w-full bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 py-2 rounded-lg hover:bg-yellow-500/20 font-bold text-xs uppercase tracking-widest transition"
                                   >
-                                    Give Partial — More Items Coming
+                                    Give Partial - More Items Coming
                                   </button>
                                 </div>
                               )}

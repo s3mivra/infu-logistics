@@ -10,6 +10,7 @@ import {
   isRevenueCode,
   isExpenseCode,
   isOtherIncomeCode,
+  isCogsCode,
 } from './chartOfAccounts.js';
 
 describe('chartOfAccounts.ACCOUNTS coverage (6-digit SAP)', () => {
@@ -85,5 +86,16 @@ describe('CODE_MAP migration table', () => {
 describe('Non-VAT compliance', () => {
   it('has no VAT Payable account', () => {
     for (const meta of Object.values(ACCOUNTS)) expect(meta.name.toLowerCase()).not.toMatch(/vat payable/);
+  });
+});
+
+describe('chartOfAccounts.isCogsCode + getAccount fallback (coverage)', () => {
+  it('isCogsCode is true only for 5xxxxx codes', () => {
+    expect(isCogsCode('500000')).toBe(true);
+    expect(isCogsCode('110000')).toBe(false);
+    expect(isCogsCode()).toBe(false);
+  });
+  it('getAccount returns an unknown stub for an unmapped code', () => {
+    expect(getAccount('999999')).toMatchObject({ type: 'unknown' });
   });
 });

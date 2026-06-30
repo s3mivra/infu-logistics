@@ -169,7 +169,7 @@ export default function HistoryTab({ ctx }) {
                             <td className="px-3 py-2.5 text-white/70">{new Date(r.date).toLocaleDateString()}</td>
                             <td className="px-3 py-2.5 font-bold text-white">{sssGroup === 'day' ? r.count : r.orderNumber}</td>
                             {SSS_COLS.map(([label, methods]) => { const v = sssColVal(r, methods); return (
-                              <td key={label} className="px-3 py-2.5 text-right tabular-nums text-white/80">{v ? `₱${v.toFixed(2)}` : '—'}</td>
+                              <td key={label} className="px-3 py-2.5 text-right tabular-nums text-white/80">{v ? `₱${v.toFixed(2)}` : '-'}</td>
                             ); })}
                             <td className="px-3 py-2.5 text-right tabular-nums font-black text-brand">₱{r.total.toFixed(2)}</td>
                           </tr>
@@ -221,12 +221,12 @@ export default function HistoryTab({ ctx }) {
                         <tr key={e._id||i} className={`border-b border-white/5 hover:bg-white/3 ${i%2===0?'':'bg-white/[0.015]'}`}>
                           <td className="px-5 py-2.5 text-white/50">{e.date}</td>
                           <td className="px-5 py-2.5 text-white font-bold">{e.staffName}</td>
-                          <td className="px-5 py-2.5 text-white/70">{e.clockIn ? new Date(e.clockIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}) : '—'}</td>
+                          <td className="px-5 py-2.5 text-white/70">{e.clockIn ? new Date(e.clockIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}) : '-'}</td>
                           <td className={`px-5 py-2.5 ${e.clockOut ? 'text-white/70' : 'text-yellow-400/70 italic'}`}>
                             {e.clockOut ? new Date(e.clockOut).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}) : 'Still in'}
                           </td>
                           <td className="px-5 py-2.5 text-right font-bold text-brand/80 tabular-nums">
-                            {e.durationMinutes != null ? `${Math.floor(e.durationMinutes/60)}h ${e.durationMinutes%60}m` : '—'}
+                            {e.durationMinutes != null ? `${Math.floor(e.durationMinutes/60)}h ${e.durationMinutes%60}m` : '-'}
                           </td>
                         </tr>
                       ))}
@@ -265,7 +265,7 @@ export default function HistoryTab({ ctx }) {
                       <tr key={sh._id} className={`border-b border-gray-800/50 hover:bg-white/2 transition ${sh.isLive || sh.status === 'Open' ? 'bg-yellow-500/5 border-l-2 border-l-yellow-500' : ''}`}>
                         <td className="p-3 font-bold text-white">{sh.cashierName}</td>
                         <td className="p-3 text-gray-400 text-xs">{new Date(sh.shiftStart).toLocaleString()}</td>
-                        <td className="p-3 text-gray-400 text-xs">{sh.shiftEnd ? new Date(sh.shiftEnd).toLocaleString() : '— (ongoing)'}</td>
+                        <td className="p-3 text-gray-400 text-xs">{sh.shiftEnd ? new Date(sh.shiftEnd).toLocaleString() : '- (ongoing)'}</td>
                         <td className="p-3 text-right font-mono text-sm text-white">₱{(sh.startingCash||0).toFixed(2)}</td>
                         <td className="p-3 text-right font-mono text-sm text-brand">₱{(sh.salesTotal||0).toFixed(2)}{(sh.isLive || sh.status === 'Open') && <span className="text-[8px] text-yellow-400 font-black ml-1 align-top">LIVE</span>}</td>
                         <td className="p-3 text-right font-mono text-sm text-white">₱{(sh.expectedCash||0).toFixed(2)}</td>

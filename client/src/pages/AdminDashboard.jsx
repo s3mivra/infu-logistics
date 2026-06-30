@@ -206,7 +206,7 @@ export default function AdminDashboard() {
   // --- PROFIT BY CATEGORY ---
   const [profitByCategory, setProfitByCategory] = useState(null);
   // --- SYSTEM SETTINGS (QR toggle, etc.) ---
-  const [systemSettings, setSystemSettings] = useState({ isAcceptingQROrders: true, autoCloseEnabled: true });
+  const [systemSettings, setSystemSettings] = useState({ isAcceptingQROrders: true, autoCloseEnabled: true, imagesEnabled: true });
   // --- SALES BY PAYMENT ---
   const [salesByPayment, setSalesByPayment] = useState(null);
   const [sbpRange, setSbpRange] = useState({
@@ -594,9 +594,9 @@ export default function AdminDashboard() {
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${data.token}` },
           body: JSON.stringify({ startingCash: finalCash })
         });
-        if (!shiftRes.ok) console.warn('Shift record failed to save — check server logs.');
+        if (!shiftRes.ok) console.warn('Shift record failed to save - check server logs.');
       } catch {
-        console.warn('Shift start request failed — shift may not be recorded.');
+        console.warn('Shift start request failed - shift may not be recorded.');
       }
       setStartingCash('');
       localStorage.removeItem('semivra_last_actual_cash');
@@ -804,7 +804,7 @@ export default function AdminDashboard() {
           discounts: discounts ?? prev.discounts, addons: addons ?? prev.addons,
           modifierGroups: modifierGroups ?? prev.modifierGroups, combos: combos ?? prev.combos,
         }));
-      } catch { /* quota / private mode — ignore */ }
+      } catch { /* quota / private mode - ignore */ }
     } catch (err) { console.error('Failed to fetch menu data', err); }
   };
 
@@ -1039,7 +1039,7 @@ export default function AdminDashboard() {
           `✅ Created: ${d.created.length}`,
           ...d.created.map(c => `  • ${c.code} ${c.name} (under ${c.parent})`),
           d.skipped.length ? `\n⚠️ Skipped: ${d.skipped.length}` : '',
-          ...d.skipped.map(s => `  • ${s.code} ${s.name} — ${s.reason}`),
+          ...d.skipped.map(s => `  • ${s.code} ${s.name} - ${s.reason}`),
         ].filter(Boolean);
         alert(lines.join('\n'));
         fetchCoa(); fetchPaymentMap?.();
@@ -1090,13 +1090,6 @@ export default function AdminDashboard() {
       else alert(d.error || 'Re-backfill failed.');
     } finally { setTenancyBusy(false); }
   };
-
-  // ── My permissions (from server) ────────────────────────────────────────────
-  const [myPermissions, setMyPermissions] = useState({ role: '', permissions: [], isWildcard: false });
-  const fetchMyPermissions = useCallback(async () => {
-    try { const r = await apiFetch('/api/me/permissions'); const d = await r.json(); if (d.success) setMyPermissions({ role: d.role, permissions: d.permissions || [], isWildcard: !!d.isWildcard }); } catch { /* ignore */ }
-  }, []);
-  const can = useCallback((perm) => myPermissions.isWildcard || myPermissions.permissions.includes(perm), [myPermissions]);
 
   // ── Backdated Sales (superadmin only) ──────────────────────────────────────
   const [backdateForm, setBackdateForm] = useState({ date: '', customerName: '', amount: '', paymentMethod: 'Cash', notes: '' });
@@ -1186,13 +1179,13 @@ export default function AdminDashboard() {
   const fetchClientAccounts = useCallback(async () => {
     try {
       const r = await apiFetch('/api/client-accounts');
-      if (!r.ok) return; // non-superadmin gets 403 — silently skip
+      if (!r.ok) return; // non-superadmin gets 403 - silently skip
       const d = await r.json();
       if (d.success) setClientAccounts(d.clients || []);
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { if (isAuthenticated) { fetchDiscounts(); fetchCoa(); fetchClientAccounts(); fetchClosedPeriods(); fetchPaymentMap(); fetchMyPermissions(); } }, [isAuthenticated]);
+  useEffect(() => { if (isAuthenticated) { fetchDiscounts(); fetchCoa(); fetchClientAccounts(); fetchClosedPeriods(); fetchPaymentMap(); } }, [isAuthenticated]);
 
   // ── Partial fulfillment (logistics) ────────────────────────────────────────
   const [partialModal, setPartialModal] = useState(null);  // the order being split
@@ -1569,7 +1562,7 @@ const updateStatus = async (orderId, newStatus) => {
     } catch (err) {
       setCompOverride(prev => { const n = { ...prev }; delete n[orderId]; return n; });
       console.error('Failed to apply complimentary:', err);
-      alert('Network error — complimentary not applied.');
+      alert('Network error - complimentary not applied.');
     }
   };
 
@@ -1666,7 +1659,7 @@ const updateStatus = async (orderId, newStatus) => {
     const { jsPDF, autoTable } = await loadPdfLibs();
     const m = pnlMonthly;
     const doc = new jsPDF(pnlmView === 'matrix' ? 'landscape' : 'portrait');
-    doc.setFontSize(16); doc.text(`${BIZ_NAME} — Profit & Loss`, 14, 14);
+    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Profit & Loss`, 14, 14);
     doc.setFontSize(9); doc.text(`${pnlmRange.start} to ${pnlmRange.end}  ·  ${pnlmView === 'matrix' ? 'Monthly' : 'Period'}`, 14, 20);
     const SECTIONS = [['revenue','REVENUE'],['contra','LESS: DISCOUNTS/RETURNS'],['cogs','COST OF SALES'],['opex','OPERATING EXPENSES'],['otherincome','OTHER INCOME'],['otherexpense','OTHER EXPENSES']];
     const nr = m.grandTotals.netRevenue || 0;
@@ -1688,9 +1681,9 @@ const updateStatus = async (orderId, newStatus) => {
         const rows = m.accounts.filter(a => a.section === sec);
         if (!rows.length) continue;
         body.push([{ content: label, colSpan: 4, styles: { fontStyle: 'bold', fillColor: [236,241,227] } }]);
-        rows.forEach(a => body.push([`  ${a.code} ${a.name}`, pdfMoney(a.total), nr ? `${(a.total/nr*100).toFixed(1)}%` : '—', parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '—']));
+        rows.forEach(a => body.push([`  ${a.code} ${a.name}`, pdfMoney(a.total), nr ? `${(a.total/nr*100).toFixed(1)}%` : '-', parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '-']));
       }
-      body.push(['NET INCOME', pdfMoney(m.grandTotals.netIncome), nr ? `${(m.grandTotals.netIncome/nr*100).toFixed(1)}%` : '—', '']);
+      body.push(['NET INCOME', pdfMoney(m.grandTotals.netIncome), nr ? `${(m.grandTotals.netIncome/nr*100).toFixed(1)}%` : '-', '']);
       autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 8 }, headStyles: { fillColor: [111,135,77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } } });
     }
     doc.save(`PnL-${pnlmRange.start}_to_${pnlmRange.end}.pdf`);
@@ -1708,7 +1701,7 @@ const updateStatus = async (orderId, newStatus) => {
     const { jsPDF, autoTable } = await loadPdfLibs();
     const b = bsMonthly;
     const doc = new jsPDF(bsmView === 'matrix' ? 'landscape' : 'portrait');
-    doc.setFontSize(16); doc.text(`${BIZ_NAME} — Balance Sheet`, 14, 14);
+    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Balance Sheet`, 14, 14);
     doc.setFontSize(9); doc.text(`${bsmRange.start} to ${bsmRange.end}  ·  ${bsmView === 'matrix' ? 'Monthly' : 'As of ' + b.asOf}`, 14, 20);
     const SECTIONS = [['assets','ASSETS'],['liabilities','LIABILITIES'],['equity','EQUITY']];
     const totalAssets = b.monthTotals.assets[b.asOf] || 0;
@@ -1728,7 +1721,7 @@ const updateStatus = async (orderId, newStatus) => {
       const body = [];
       for (const [sec, label] of SECTIONS) {
         body.push([{ content: label, colSpan: 4, styles: { fontStyle: 'bold', fillColor: [236,241,227] } }]);
-        b[sec].forEach(a => body.push([`  ${a.code} ${a.name}`, pdfMoney(a.total), totalAssets ? `${(a.total/totalAssets*100).toFixed(1)}%` : '—', parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '—']));
+        b[sec].forEach(a => body.push([`  ${a.code} ${a.name}`, pdfMoney(a.total), totalAssets ? `${(a.total/totalAssets*100).toFixed(1)}%` : '-', parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '-']));
         body.push([`  Total ${label}`, pdfMoney(b.monthTotals[sec][b.asOf] || 0), '', '']);
       }
       autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 8 }, headStyles: { fillColor: [111,135,77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } } });
@@ -1745,12 +1738,12 @@ const updateStatus = async (orderId, newStatus) => {
   };
   // Resolve negative/incorrect book inventory by reconciling 130000 to actual on-hand value.
   const reconcileInventory = async () => {
-    if (!window.confirm('Reconcile book Inventory (130000) to the ACTUAL on-hand value (Σ stock × unit cost)?\n\nThis posts a balancing journal entry offset to Owner\'s Capital — use it to set opening inventory / fix a negative inventory balance.')) return;
+    if (!window.confirm('Reconcile book Inventory (130000) to the ACTUAL on-hand value (Σ stock × unit cost)?\n\nThis posts a balancing journal entry offset to Owner\'s Capital - use it to set opening inventory / fix a negative inventory balance.')) return;
     try {
       const res = await apiFetch('/api/inventory/revalue', { method: 'POST', body: JSON.stringify({ offsetAccount: '310000' }) });
       const d = await res.json();
       if (!d.success) return alert(d.error || 'Reconcile failed.');
-      if (d.diff === 0) alert('Inventory already matches on-hand value — nothing to adjust.');
+      if (d.diff === 0) alert('Inventory already matches on-hand value - nothing to adjust.');
       else alert(`Inventory reconciled.\n\nActual on-hand:  ₱${d.onHand.toFixed(2)}\nWas (book):      ₱${d.book.toFixed(2)}\nAdjustment:      ${d.diff >= 0 ? '+' : ''}₱${d.diff.toFixed(2)}`);
       fetchBalanceSheet(); if (pnlMonthly) fetchPnlMonthly(); if (bsMonthly) fetchBsMonthly(); fetchERPData();
     } catch { alert('Network error.'); }
@@ -1888,7 +1881,6 @@ const updateStatus = async (orderId, newStatus) => {
       if (data.success) {
         setExpenseModal(false);
         setExpenseForm({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', date: new Date().toISOString().slice(0,10) });
-        if (typeof fetchAccountingData === 'function') fetchAccountingData();
         if (ledgerSubTab === 'pnl') fetchPnl();
         if (ledgerSubTab === 'balance') fetchBalanceSheet();
         alert('Expense recorded.');
@@ -1946,9 +1938,9 @@ const updateStatus = async (orderId, newStatus) => {
     const now = new Date().toLocaleTimeString();
     doc.setFontSize(16); doc.text(`${BIZ_NAME}`, 105, 18, { align: 'center' });
     doc.setFontSize(10); doc.text('NON-VAT REGISTERED', 105, 24, { align: 'center' });
-    doc.text(`X-READING — ${today} ${now}`, 105, 30, { align: 'center' });
+    doc.text(`X-READING - ${today} ${now}`, 105, 30, { align: 'center' });
     doc.setFontSize(9);
-    doc.text('(Mid-Shift Summary — Register NOT Closed)', 105, 36, { align: 'center' });
+    doc.text('(Mid-Shift Summary - Register NOT Closed)', 105, 36, { align: 'center' });
     const todayOrds = orders.filter(o => o.status === 'Completed');
     const gross = todayOrds.reduce((s, o) => s + o.subtotal, 0);
     const disc = todayOrds.reduce((s, o) => s + (o.discount || 0), 0);
@@ -2030,7 +2022,7 @@ const updateStatus = async (orderId, newStatus) => {
 
       const compSection = order.isComplimentary ? `
         <div class="comp-banner">&#9733; COMPLIMENTARY ORDER &#9733;</div>
-        ${order.complimentaryReasonType ? `<div class="comp-sub">${COMP_REASON_LABELS[order.complimentaryReasonType] || ''}${order.complimentaryReasonNote ? ` — ${order.complimentaryReasonNote}` : ''}</div>` : ''}
+        ${order.complimentaryReasonType ? `<div class="comp-sub">${COMP_REASON_LABELS[order.complimentaryReasonType] || ''}${order.complimentaryReasonNote ? ` - ${order.complimentaryReasonNote}` : ''}</div>` : ''}
         ${order.complimentaryApprovedBy ? `<div class="comp-sub">Approved by: ${order.complimentaryApprovedBy}</div>` : ''}
         <div class="dash"></div>` : '';
 
@@ -2076,8 +2068,8 @@ const updateStatus = async (orderId, newStatus) => {
   <div class="dash"></div>
   ${compSection}
   <table class="meta">
-    <tr><td>Order #</td><td><strong>${order.orderNumber || '—'}</strong></td></tr>
-    <tr><td>Type</td><td>${order.table || '—'}</td></tr>
+    <tr><td>Order #</td><td><strong>${order.orderNumber || '-'}</strong></td></tr>
+    <tr><td>Type</td><td>${order.table || '-'}</td></tr>
     <tr><td>Date</td><td>${dateStr}</td></tr>
     ${order.cashier && order.cashier !== 'System' ? `<tr><td>Cashier</td><td>${order.cashier}</td></tr>` : ''}
     ${order.customerName && order.customerName !== 'Guest' ? `<tr><td>Name</td><td>${order.customerName}</td></tr>` : ''}
@@ -2150,8 +2142,8 @@ const updateStatus = async (orderId, newStatus) => {
         }
 
         b(LEFT);
-        tx(`Order: ${order.orderNumber || '—'}\n`);
-        tx(`Table: ${order.table || '—'}\n`);
+        tx(`Order: ${order.orderNumber || '-'}\n`);
+        tx(`Table: ${order.table || '-'}\n`);
         tx(`Date:  ${new Date(order.createdAt || Date.now()).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}\n`);
         if (order.cashier && order.cashier !== 'System') tx(`By:    ${order.cashier}\n`);
         if (!order.isComplimentary) tx(`Pay:   ${order.paymentMethod || 'Cash'}\n`);
@@ -2205,7 +2197,7 @@ const updateStatus = async (orderId, newStatus) => {
           await sleep(100);
         }
         server.disconnect();
-        return; // Success — skip HTML fallback
+        return; // Success - skip HTML fallback
       } catch (err) {
         console.error('Bluetooth print error:', err);
         // Fall through to HTML popup
@@ -2246,8 +2238,8 @@ const updateStatus = async (orderId, newStatus) => {
         }
 
         b(LEFT);
-        tx(`Order: ${order.orderNumber || '—'}\n`);
-        tx(`Table: ${order.table || '—'}\n`);
+        tx(`Order: ${order.orderNumber || '-'}\n`);
+        tx(`Table: ${order.table || '-'}\n`);
         tx(`Date:  ${new Date(order.createdAt || Date.now()).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}\n`);
         if (order.cashier && order.cashier !== 'System') tx(`By:    ${order.cashier}\n`);
         if (!order.isComplimentary) tx(`Pay:   ${order.paymentMethod || 'Cash'}\n`);
@@ -2284,7 +2276,7 @@ const updateStatus = async (orderId, newStatus) => {
         const sleep  = (ms) => new Promise(r => setTimeout(r, ms));
         for (let i = 0; i < data.length; i += 256) { await writer.write(data.slice(i, i + 256)); await sleep(60); }
         writer.releaseLock();
-        return; // Success — skip HTML fallback
+        return; // Success - skip HTML fallback
       } catch (err) {
         window._thermalPort = null; // Reset cached port on error
         if (err.name !== 'NotFoundError') console.warn('WebSerial print failed, falling back:', err.message);
@@ -2914,7 +2906,7 @@ const updateStatus = async (orderId, newStatus) => {
       const data = await res.json();
       const allHistory = data.success ? data.history : [];
       const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-      doc.setFontSize(18); doc.text(`${BIZ_NAME} — Daily Inventory & Movement Report`, 14, 15);
+      doc.setFontSize(18); doc.text(`${BIZ_NAME} - Daily Inventory & Movement Report`, 14, 15);
       const todayStr = new Date().toLocaleDateString();
       doc.setFontSize(10); doc.text(`Date: ${todayStr} | Generated: ${new Date().toLocaleString()}`, 14, 22);
       
@@ -2932,9 +2924,15 @@ const updateStatus = async (orderId, newStatus) => {
         });
         const ending = item.stockQty;
         const beginning = ending - purchases + sales - adjustments;
+        // Show quantities in the item's DISPLAY unit (e.g. 1 L, not 1000 ml). LOG counts
+        // in packages (pcs); FB in kg/L/pcs — same conversion the inventory table uses.
+        const eff = BUSINESS_TYPE === 'log'
+          ? { mult: itemDisplay(item).packBase || 1, unit: 'pcs' }
+          : effectiveDisplay(item);
+        const conv = (n) => (n / eff.mult).toLocaleString(undefined, { maximumFractionDigits: 3 });
         return [
-          item.itemName, item.unit, beginning.toString(), purchases.toString(), 
-          sales.toString(), adjustments > 0 ? `+${adjustments}` : adjustments.toString(), ending.toString()
+          item.itemName, eff.unit, conv(beginning), conv(purchases),
+          conv(sales), (adjustments > 0 ? '+' : '') + conv(adjustments), conv(ending)
         ];
       });
       autoTable(doc, {
@@ -2949,7 +2947,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportLedgerToPDF = async () => {
     if (journalEntries.length === 0) return alert("No entries to export.");
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    doc.setFontSize(18); doc.text(`${BIZ_NAME} — General Ledger Report`, 14, 15);
+    doc.setFontSize(18); doc.text(`${BIZ_NAME} - General Ledger Report`, 14, 15);
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 22);
     let currentY = 30;
     journalEntries.forEach(entry => {
@@ -2975,7 +2973,7 @@ const updateStatus = async (orderId, newStatus) => {
     if (allOrders.length === 0) return alert("No orders to export.");
     
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    doc.setFontSize(18); doc.text(`${BIZ_NAME} — Complete Sales History`, 14, 15);
+    doc.setFontSize(18); doc.text(`${BIZ_NAME} - Complete Sales History`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
     
@@ -3082,7 +3080,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportDayToPDF = async (dateString, dayOrders) => {
     if (dayOrders.length === 0) return alert("No orders to export.");
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    doc.setFontSize(18); doc.text(`${BIZ_NAME} — Sales Report: ${dateString}`, 14, 15);
+    doc.setFontSize(18); doc.text(`${BIZ_NAME} - Sales Report: ${dateString}`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
     
@@ -3152,7 +3150,7 @@ const updateStatus = async (orderId, newStatus) => {
     if (allCompletedOrders.length === 0) return alert("No analytics data to export.");
     
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    doc.setFontSize(18); doc.text(`${BIZ_NAME} — Analytics Report`, 14, 15);
+    doc.setFontSize(18); doc.text(`${BIZ_NAME} - Analytics Report`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
     
@@ -3221,7 +3219,7 @@ const updateStatus = async (orderId, newStatus) => {
     if (allCompletedOrders.length === 0) return alert("No orders to export.");
     
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    doc.setFontSize(18); doc.text(`${BIZ_NAME} — Monthly Sales Summary`, 14, 15);
+    doc.setFontSize(18); doc.text(`${BIZ_NAME} - Monthly Sales Summary`, 14, 15);
     const groupedByMonth = {};
     allCompletedOrders.forEach(o => {
       const month = new Date(o.createdAt).toLocaleString('default', { month: 'long', year: 'numeric' });
@@ -3432,7 +3430,7 @@ const updateStatus = async (orderId, newStatus) => {
     catch (err) { console.error('fetchParked', err); }
   };
   const parkCurrentOrder = async () => {
-    if (posCart.length === 0) return alert('Cart is empty — nothing to park.');
+    if (posCart.length === 0) return alert('Cart is empty - nothing to park.');
     const res = await apiFetch('/api/orders/park', { method: 'POST', body: JSON.stringify({
       items: posCart, customerName: posCustomerName || 'Guest', table: posTable, orderNotes: posNotes, guestCount: posGuestCount,
     }) });
@@ -3442,7 +3440,7 @@ const updateStatus = async (orderId, newStatus) => {
     setIsPosOpen(false);
     await fetchParked();        // refresh the parked list + dropdown count
     setOrderFilter('Parked');   // jump straight to the Parked view so it's visible
-    alert('Order parked. It is now under the "Parked" filter — tap Resume to ring it up.');
+    alert('Order parked. It is now under the "Parked" filter - tap Resume to ring it up.');
   };
   const resumeParked = async (id) => {
     const res = await apiFetch(`/api/orders/parked/${id}`, { method: 'DELETE' });
@@ -3514,7 +3512,7 @@ const updateStatus = async (orderId, newStatus) => {
       autoTable(doc, {
         startY,
         head: [[title, 'Amount (PHP)']],
-        body: rows.length ? rows.map(r => [r.accountName || r.name || r.label || '', pdfMoney(r.amount ?? r.total)]) : [['—', pdfMoney(0)]],
+        body: rows.length ? rows.map(r => [r.accountName || r.name || r.label || '', pdfMoney(r.amount ?? r.total)]) : [['-', pdfMoney(0)]],
         styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] },
         columnStyles: { 1: { halign: 'right' } },
       });
@@ -3554,7 +3552,7 @@ const updateStatus = async (orderId, newStatus) => {
         startY,
         head: [[title, 'Amount (PHP)']],
         body: [
-          ...(rows && rows.length ? rows.map(r => [rowName(r), rowAmt(r)]) : [['—', pdfMoney(0)]]),
+          ...(rows && rows.length ? rows.map(r => [rowName(r), rowAmt(r)]) : [['-', pdfMoney(0)]]),
           [`Total ${title}`, pdfMoney(total ?? 0)],
         ],
         styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] },
@@ -3604,6 +3602,15 @@ const updateStatus = async (orderId, newStatus) => {
     } catch (err) { console.error('toggleAutoClose', err); }
   };
 
+  // Toggle whether product images are shown across the app (menu, portal, product list).
+  const toggleImages = async () => {
+    const next = systemSettings.imagesEnabled === false; // currently off -> turning on
+    try {
+      const res = await apiFetch('/api/settings/imagesEnabled', { method: 'PATCH', body: JSON.stringify({ value: next }) });
+      const d = await res.json(); if (d.success) fetchSettings();
+    } catch (err) { console.error('toggleImages', err); }
+  };
+
   // ── Profit by category ──────────────────────────────────────────────────────
   const fetchProfitByCategory = async () => {
     try { const res = await apiFetch('/api/reports/profit-by-category'); const d = await res.json(); if (d.success) setProfitByCategory(d); }
@@ -3639,7 +3646,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportSalesSummaryPDF = async () => {
     if (!salesSummary) return alert('Load the Summary Sales report first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    doc.setFontSize(16); doc.text(`${BIZ_NAME} — Sales Summary`, 14, 14);
+    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Sales Summary`, 14, 14);
     doc.setFontSize(9); doc.text(`${sssRange.start} to ${sssRange.end}  ·  ${sssGroup === 'day' ? 'Per Day' : 'Per Order'}`, 14, 20);
     // Fixed columns (match the on-screen Summary Sales table).
     const tm = salesSummary.totals?.methods || {};
@@ -3724,7 +3731,7 @@ const updateStatus = async (orderId, newStatus) => {
     if (!navigator.onLine) {
       queueClock('in');
       setClockStatus((s) => ({ ...s, isClockedIn: true, onBreak: false }));
-      alert('Clocked in (offline — will sync when back online).');
+      alert('Clocked in (offline - will sync when back online).');
       return;
     }
     try { const res = await apiFetch('/api/clock/in', { method: 'POST', body: '{}' }); const d = await res.json(); if (d.success) { fetchClockStatus(); alert('Clocked in.'); } else alert(d.error||'Clock-in failed.'); }
@@ -3756,7 +3763,7 @@ const updateStatus = async (orderId, newStatus) => {
       queueClock('out');
       setClockStatus((s) => ({ ...s, isClockedIn: false, onBreak: false }));
       setClockModalOpen(false);
-      alert('Clocked out (offline — will sync when back online).');
+      alert('Clocked out (offline - will sync when back online).');
       return;
     }
     try {
@@ -3785,7 +3792,7 @@ const updateStatus = async (orderId, newStatus) => {
     const dateStr = new Date(order.createdAt || Date.now()).toLocaleDateString('en-PH', {
       year: 'numeric', month: 'long', day: 'numeric'
     });
-    const transactionNo = order.billingNumber || order.orderNumber || '—';
+    const transactionNo = order.billingNumber || order.orderNumber || '-';
 
     const itemRowsHTML = (order.items || []).map(item => {
       const addOnTotal = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
@@ -3812,7 +3819,7 @@ const updateStatus = async (orderId, newStatus) => {
     const html = `<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
-<title>Billing Statement — ${transactionNo}</title>
+<title>Billing Statement - ${transactionNo}</title>
 <style>
   /* ── Page setup ── */
   @page {
@@ -3875,7 +3882,7 @@ const updateStatus = async (orderId, newStatus) => {
   .totals-row.grand .tl,
   .totals-row.grand .tr { font-size: 11pt; font-weight: bold; border-top: 2px solid #000; padding-top: 4px; margin-top: 2px; }
 
-  /* ── Footer block — keep together, push to new page if needed ── */
+  /* ── Footer block - keep together, push to new page if needed ── */
   .footer-block { break-inside: avoid; page-break-inside: avoid; margin-top: 12px; }
   .tcs { font-size: 8pt; border-top: 1px solid #ccc; padding-top: 7px; }
   .tcs h4 { font-size: 8.5pt; font-weight: bold; margin-bottom: 4px; }
@@ -3984,7 +3991,7 @@ const updateStatus = async (orderId, newStatus) => {
   // ── Kitchen ticket print ─────────────────────────────────────────────────────
   const printKitchenTicket = (order) => {
     const win = window.open('', '_blank', 'width=320,height=600');
-    if (!win) return alert('Pop-up blocked — allow pop-ups for this site.');
+    if (!win) return alert('Pop-up blocked - allow pop-ups for this site.');
     // Escape all dynamic values — customerName / orderNotes / item names can be
     // customer-supplied (QR menu) and are written into raw HTML below.
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -4027,7 +4034,7 @@ const updateStatus = async (orderId, newStatus) => {
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('NON-VAT REGISTERED', 105, 21, { align: 'center' });
     doc.setFontSize(12); doc.text('Z-READING', 105, 28, { align: 'center' });
-    doc.setFontSize(9);  doc.text(`${today}  ${now}  —  OFFICIAL END-OF-DAY REPORT`, 105, 34, { align: 'center' });
+    doc.setFontSize(9);  doc.text(`${today}  ${now}  -  OFFICIAL END-OF-DAY REPORT`, 105, 34, { align: 'center' });
     const completed  = archivedOrders.filter(o => o.status === 'Completed');
     const voided     = archivedOrders.filter(o => o.status === 'Voided');
     const cancelled  = archivedOrders.filter(o => o.status === 'Cancelled');
@@ -4506,7 +4513,7 @@ const updateStatus = async (orderId, newStatus) => {
           <Clock size={40} className="text-brand" />
         </div>
         <h1 className="text-white text-2xl font-black mb-1">Clock in to start</h1>
-        <p className="text-white/50 text-sm mb-8 max-w-xs">Hi {activeAdmin?.name} — you must clock in before taking orders or using the system.</p>
+        <p className="text-white/50 text-sm mb-8 max-w-xs">Hi {activeAdmin?.name} - you must clock in before taking orders or using the system.</p>
         <button onClick={handleClockIn}
           className="bg-brand text-white px-10 py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-brand/90 active:scale-98 transition shadow-lg shadow-brand/20 min-h-[56px] flex items-center gap-2">
           <Clock size={18} /> Clock In
@@ -4611,18 +4618,18 @@ const updateStatus = async (orderId, newStatus) => {
           <span className="text-[10px] text-white/25 font-bold uppercase tracking-wider">Auto-Close</span>
           <MidnightCountdown />
         </div>
-        {/* Clock In/Out/Break — always visible (frequent, critical action) */}
+        {/* Clock In/Out/Break - always visible (frequent, critical action) */}
         <button onClick={handleClockButton}
           className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20' : clockStatus.isClockedIn ? 'text-green-400 bg-green-500/10 hover:bg-green-500/20' : 'text-white/40 hover:text-white hover:bg-white/5'}`}>
           <Clock size={15} />
           {clockStatus.onBreak
-            ? `On Break — tap to resume`
+            ? `On Break - tap to resume`
             : clockStatus.isClockedIn
               ? `Clocked In · ${clockStatus.entry ? Math.round((Date.now()-new Date(clockStatus.entry.clockIn))/60000) : 0}m`
               : 'Clock In'}
         </button>
 
-        {/* Collapsible utility tools — Fullscreen / QR / Password / toggles / Install */}
+        {/* Collapsible utility tools - Fullscreen / QR / Password / toggles / Install */}
         <button onClick={toggleOpsTools}
           className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition font-bold text-[11px] uppercase tracking-wider">
           {opsToolsOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
@@ -4656,6 +4663,14 @@ const updateStatus = async (orderId, newStatus) => {
                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${systemSettings.autoCloseEnabled !== false ? 'text-green-400/70 hover:text-green-400 hover:bg-green-500/10' : 'text-yellow-400 bg-yellow-500/10 hover:bg-yellow-500/20'}`}>
                 <Clock size={15} />
                 {systemSettings.autoCloseEnabled !== false ? 'Auto Close: ON' : 'Auto Close: OFF (manual)'}
+              </button>
+            )}
+            {/* Product images toggle (superadmin only) */}
+            {isSuperAdmin && (
+              <button onClick={toggleImages}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${systemSettings.imagesEnabled !== false ? 'text-green-400/70 hover:text-green-400 hover:bg-green-500/10' : 'text-gray-400 bg-white/5 hover:bg-white/10'}`}>
+                <Eye size={15} />
+                {systemSettings.imagesEnabled !== false ? 'Product Images: ON' : 'Product Images: OFF'}
               </button>
             )}
             {/* Install as app (only when the browser offers it) */}
@@ -4724,9 +4739,8 @@ const updateStatus = async (orderId, newStatus) => {
     paymentMap, fetchPaymentMap, savePaymentMapping, resetPaymentMapping,
     // ── Backdated Sales (superadmin) ──
     backdateForm, setBackdateForm, backdateBusy, submitBackdateSale,
-    // ── Tenancy & permissions ──
+    // ── Tenancy ──
     tenancyReport, tenancyBusy, fetchTenancyReport, runTenancyRebackfill,
-    myPermissions, can,
     // ── Client accounts (for per-product per-client discount picker) ──
     clientAccounts,
     // ── Partial fulfillment ──
@@ -4896,7 +4910,7 @@ const updateStatus = async (orderId, newStatus) => {
         <div className="lg:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" onClick={() => setDashDrawerOpen(false)} />
       )}
 
-      {/* Mobile drawer — capped width on small phones, scrollable on short screens */}
+      {/* Mobile drawer - capped width on small phones, scrollable on short screens */}
       <aside className={`lg:hidden fixed top-0 left-0 h-full w-72 max-w-[85vw] bg-sidebar-bg z-50 flex flex-col border-r border-white/5 overflow-y-auto overscroll-contain transition-transform duration-300 ${dashDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {renderSidebarNav(() => setDashDrawerOpen(false))}
       </aside>
@@ -4909,7 +4923,7 @@ const updateStatus = async (orderId, newStatus) => {
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
 
-        {/* Mobile top bar — sticky so the menu button is always reachable */}
+        {/* Mobile top bar - sticky so the menu button is always reachable */}
         <header className="lg:hidden sticky top-0 z-30 flex items-center gap-3 px-4 h-16 bg-sidebar-bg border-b border-white/5 flex-shrink-0">
           <button
             onClick={() => setDashDrawerOpen(true)}
@@ -4956,7 +4970,7 @@ const updateStatus = async (orderId, newStatus) => {
             <p className="font-black text-sm leading-tight">
               {isOnline
                 ? `Syncing ${queuedCount} offline order${queuedCount === 1 ? '' : 's'}…`
-                : 'You are offline — orders are saved locally'}
+                : 'You are offline - orders are saved locally'}
             </p>
             <p className="text-xs opacity-70 leading-tight mt-0.5">
               {isOnline
@@ -5041,14 +5055,14 @@ const updateStatus = async (orderId, newStatus) => {
 
                 {shiftReconcile.result.variance < 0 && (
                   <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-3 text-xs text-red-300 font-medium">
-                    Short by ₱{Math.abs(shiftReconcile.result.variance).toFixed(2)} — report to manager before leaving.
+                    Short by ₱{Math.abs(shiftReconcile.result.variance).toFixed(2)} - report to manager before leaving.
                   </div>
                 )}
 
                 {/* ── BANK DEPOSIT ── */}
                 {shiftReconcile.result.isReconciled ? (
                   <div className="bg-green-900/20 border border-green-500/30 rounded-xl px-4 py-3 text-xs text-green-300 font-bold text-center flex items-center justify-center gap-2">
-                    <CheckCircle size={14} /> Drawer Reconciled — cash matches starting fund.
+                    <CheckCircle size={14} /> Drawer Reconciled - cash matches starting fund.
                   </div>
                 ) : (
                   <div className="bg-surface-2 rounded-xl p-4 space-y-3 text-sm border border-blue-500/20">
@@ -5214,7 +5228,7 @@ const updateStatus = async (orderId, newStatus) => {
                     <option key={a.code} value={a.code}>{a.name} ({a.code})</option>
                   ))}
                 </select>
-                <p className="text-white/30 text-[10px] mt-1">Where the float comes from — this account is credited (reduced) in the opening journal entry.</p>
+                <p className="text-white/30 text-[10px] mt-1">Where the float comes from - this account is credited (reduced) in the opening journal entry.</p>
               </div>
               <div>
                 <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Purpose / Notes</label>
@@ -5366,7 +5380,7 @@ const updateStatus = async (orderId, newStatus) => {
                   className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white font-bold outline-none focus:border-brand/60">
                   <option value="">Select category…</option>
                   {expenseCategories.map(c => (
-                    <option key={c.code} value={c.code}>{c.code} — {c.label}</option>
+                    <option key={c.code} value={c.code}>{c.code} - {c.label}</option>
                   ))}
                 </select>
               </div>
@@ -5559,7 +5573,7 @@ const updateStatus = async (orderId, newStatus) => {
           <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-4xl shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden animate-scale-in">
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 shrink-0">
               <div>
-                <h2 className="text-white font-black text-lg">Bulk Import — Stock Take</h2>
+                <h2 className="text-white font-black text-lg">Bulk Import - Stock Take</h2>
                 <p className="text-white/40 text-xs font-bold uppercase tracking-widest mt-0.5">Replaces current quantities · audited via journal entries</p>
               </div>
               <button onClick={() => setImportModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
@@ -5626,13 +5640,13 @@ const updateStatus = async (orderId, newStatus) => {
                           {!isErr && !isNew && !isBatch && diff < 0 && <span className="text-[10px] font-black bg-red-500/30 text-red-200 px-1.5 py-0.5 rounded uppercase">↓ DEC</span>}
                           {!isErr && !isNew && !isBatch && diff === 0 && <span className="text-[10px] font-black bg-white/10 text-white/40 px-1.5 py-0.5 rounded uppercase">SAME</span>}
                         </td>
-                        <td className="px-2 py-2.5 text-right text-white/60 tabular-nums">{isNew || isErr ? '—' : `${r._oldDisplay.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r._oldDisplay.unit}`}</td>
-                        <td className="px-2 py-2.5 text-right text-white font-bold tabular-nums">{isErr ? '—' : `${Number(r.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`}</td>
+                        <td className="px-2 py-2.5 text-right text-white/60 tabular-nums">{isNew || isErr ? '-' : `${r._oldDisplay.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r._oldDisplay.unit}`}</td>
+                        <td className="px-2 py-2.5 text-right text-white font-bold tabular-nums">{isErr ? '-' : `${Number(r.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`}</td>
                         <td className={`px-2 py-2.5 text-right tabular-nums font-bold ${diff > 0 ? 'text-green-400' : diff < 0 ? 'text-red-400' : 'text-white/40'}`}>
-                          {isErr || isNew ? '—' : (diff > 0 ? '+' : '') + diff.toLocaleString(undefined, { maximumFractionDigits: 3 })}
+                          {isErr || isNew ? '-' : (diff > 0 ? '+' : '') + diff.toLocaleString(undefined, { maximumFractionDigits: 3 })}
                         </td>
-                        <td className="px-2 py-2.5 text-right text-white/70 tabular-nums">{isErr || r.unitCost === '' ? '—' : peso(r.unitCost)}</td>
-                        <td className={`px-4 py-2.5 text-right tabular-nums font-bold ${valueDiff > 0 ? 'text-green-400' : valueDiff < 0 ? 'text-red-400' : 'text-white/40'}`}>{isErr ? '—' : peso(Math.abs(valueDiff)) + (valueDiff < 0 ? ' loss' : valueDiff > 0 ? ' gain' : '')}</td>
+                        <td className="px-2 py-2.5 text-right text-white/70 tabular-nums">{isErr || r.unitCost === '' ? '-' : peso(r.unitCost)}</td>
+                        <td className={`px-4 py-2.5 text-right tabular-nums font-bold ${valueDiff > 0 ? 'text-green-400' : valueDiff < 0 ? 'text-red-400' : 'text-white/40'}`}>{isErr ? '-' : peso(Math.abs(valueDiff)) + (valueDiff < 0 ? ' loss' : valueDiff > 0 ? ' gain' : '')}</td>
                       </tr>
                     );
                   })}
@@ -5665,7 +5679,7 @@ const updateStatus = async (orderId, newStatus) => {
               <button onClick={async () => {
                 const { jsPDF, autoTable } = await loadPdfLibs();
                 const doc = new jsPDF('landscape');
-                doc.setFontSize(16); doc.text(`${BIZ_NAME} — Bulk Import Preview`, 14, 14);
+                doc.setFontSize(16); doc.text(`${BIZ_NAME} - Bulk Import Preview`, 14, 14);
                 doc.setFontSize(9); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 21);
                 const body = importRows.map(r => {
                   const isErr = !!r._error;
@@ -5673,11 +5687,11 @@ const updateStatus = async (orderId, newStatus) => {
                   const isBatch = !isNew && !!r._newBatch;
                   const diff = Number(r._diff || 0);
                   const status = isErr ? r._error : isNew ? 'NEW' : isBatch ? 'NEW BATCH' : diff > 0 ? '↑ INC' : diff < 0 ? '↓ DEC' : 'SAME';
-                  const current = isNew || isErr ? '—' : `${r._oldDisplay.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r._oldDisplay.unit}`;
-                  const next = isErr ? '—' : `${Number(r.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`;
-                  const delta = isErr || isNew ? '—' : (diff > 0 ? '+' : '') + diff.toLocaleString(undefined, { maximumFractionDigits: 3 });
-                  const cost = isErr || r.unitCost === '' ? '—' : `P${Number(r.unitCost).toFixed(2)}`;
-                  return [r.itemCode || '—', r.itemName || '(missing)', status, current, next, delta, cost];
+                  const current = isNew || isErr ? '-' : `${r._oldDisplay.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r._oldDisplay.unit}`;
+                  const next = isErr ? '-' : `${Number(r.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`;
+                  const delta = isErr || isNew ? '-' : (diff > 0 ? '+' : '') + diff.toLocaleString(undefined, { maximumFractionDigits: 3 });
+                  const cost = isErr || r.unitCost === '' ? '-' : `P${Number(r.unitCost).toFixed(2)}`;
+                  return [r.itemCode || '-', r.itemName || '(missing)', status, current, next, delta, cost];
                 });
                 autoTable(doc, {
                   startY: 26,
@@ -5716,7 +5730,7 @@ const updateStatus = async (orderId, newStatus) => {
               <div className="bg-white/5 rounded-xl p-3 border border-white/8">
                 <p className="text-white/40 text-[10px] font-bold uppercase">Current Stock</p>
                 <p className="text-2xl text-brand font-black tabular-nums">{BUSINESS_TYPE === 'log' ? itemDisplay(editInvModal.item).packQty.toLocaleString(undefined, { maximumFractionDigits: 3 }) : itemDisplay(editInvModal.item).qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} <span className="text-sm text-white/40 font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : itemDisplay(editInvModal.item).unit}</span></p>
-                <p className="text-[10px] text-white/30 mt-1 italic">To change quantity, use Restock or Waste — not this form.</p>
+                <p className="text-[10px] text-white/30 mt-1 italic">To change quantity, use Restock or Waste - not this form.</p>
               </div>
               <div>
                 <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Item Name *</label>
@@ -5728,7 +5742,7 @@ const updateStatus = async (orderId, newStatus) => {
                   <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Display Unit *</label>
                   <select value={editInvForm.displayUnit} onChange={e => setEditInvForm({...editInvForm, displayUnit: e.target.value, unit: resolveUnitFE(e.target.value).base })}
                     className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold outline-none focus:border-brand/60">
-                    <option value="">— Pick —</option>
+                    <option value="">- Pick -</option>
                     <option value="L">L (Liters)</option>
                     <option value="kg">kg (Kilograms)</option>
                     <option value="pcs">pcs (Pieces)</option>
@@ -5920,7 +5934,7 @@ const updateStatus = async (orderId, newStatus) => {
                       </button>
                     ))}
                   </div>
-                  {!isFull && <p className="text-[10px] text-amber-400/70 mt-1">Partial refunds adjust cash & revenue only — inventory/COGS unchanged.</p>}
+                  {!isFull && <p className="text-[10px] text-amber-400/70 mt-1">Partial refunds adjust cash & revenue only - inventory/COGS unchanged.</p>}
                 </div>
               );
             })()}
@@ -5947,7 +5961,7 @@ const updateStatus = async (orderId, newStatus) => {
               <button onClick={() => setClockModalOpen(false)} className="text-gray-500 hover:text-white text-xl font-bold">✕</button>
             </div>
 
-            {/* Take a break — disabled once the 1-hour break is used up */}
+            {/* Take a break - disabled once the 1-hour break is used up */}
             {(clockStatus.breakRemainingMinutes ?? 60) > 0 ? (
               <button onClick={startBreak}
                 className="w-full py-3 bg-amber-500/15 border border-amber-500/40 text-amber-300 font-black rounded-xl uppercase tracking-wider text-sm hover:bg-amber-500/25 transition flex items-center justify-center gap-2">
@@ -5955,7 +5969,7 @@ const updateStatus = async (orderId, newStatus) => {
               </button>
             ) : (
               <div className="w-full py-3 bg-white/5 border border-white/10 text-white/30 font-bold rounded-xl text-xs text-center">
-                Break used up — 1-hour break already taken
+                Break used up - 1-hour break already taken
               </div>
             )}
 
@@ -6031,7 +6045,7 @@ const updateStatus = async (orderId, newStatus) => {
               <select value={spoilageForm.reason} onChange={e => setSpoilageForm(f => ({ ...f, reason: e.target.value }))}
                 className="w-full bg-surface-2 border border-gray-600 focus:border-orange-400 text-white py-2.5 px-3 rounded-xl outline-none text-sm font-bold"
               >
-                <option value="">— Select Reason —</option>
+                <option value="">- Select Reason -</option>
                 <option value="Spoilage">Spoilage / Expired</option>
                 <option value="Damage">Damage / Breakage</option>
                 <option value="Theft">Theft / Pilferage</option>

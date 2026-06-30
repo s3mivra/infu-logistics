@@ -472,7 +472,7 @@ export default function CustomerMenu() {
       }
     } catch (error) {
       console.error("Order failed", error);
-      alert('Network problem — your order was not sent. Please try again or ask our staff.');
+      alert('Network problem - your order was not sent. Please try again or ask our staff.');
       setIsSubmitting(false);
     }
   };
@@ -782,7 +782,7 @@ export default function CustomerMenu() {
         }
       </main>
 
-      {/* FLOATING CART BUTTON — portal to bypass animate-fade-in stacking context */}
+      {/* FLOATING CART BUTTON - portal to bypass animate-fade-in stacking context */}
       {cart.length > 0 && !cartOpen && createPortal(
         <div className="fixed bottom-6 left-4 right-4 z-[9990] max-w-lg mx-auto animate-fade-in">
           <button
@@ -799,7 +799,7 @@ export default function CustomerMenu() {
         document.body
       )}
 
-      {/* CART DRAWER — portal to bypass animate-fade-in stacking context */}
+      {/* CART DRAWER - portal to bypass animate-fade-in stacking context */}
       {cartOpen && createPortal(
         <>
           <div className="fixed inset-0 z-[9990] bg-black/60 backdrop-blur-sm" onClick={() => setCartOpen(false)} />
@@ -888,7 +888,7 @@ export default function CustomerMenu() {
         document.body
       )}
 
-      {/* SIZE / ADDON MODAL — portal to body to bypass any parent stacking context */}
+      {/* SIZE / ADDON MODAL - portal to body to bypass any parent stacking context */}
       {selectedProduct && createPortal(
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-end justify-center z-[9999]">
           <div className="bg-sidebar-bg rounded-t-2xl w-full max-w-md border-t border-x border-white/10 flex flex-col max-h-[85dvh]">
@@ -902,7 +902,7 @@ export default function CustomerMenu() {
                 <X size={18} />
               </button>
             </div>
-            {/* Sizes — scrollable middle */}
+            {/* Sizes - scrollable middle */}
             <div className="flex-1 px-5 py-4 space-y-4 overflow-y-auto custom-scrollbar">
               {groupedSizes.Hot && (
                 <div>
@@ -1014,7 +1014,7 @@ export default function CustomerMenu() {
                 </div>
               )}
             </div>
-            {/* Modal footer — always visible, never scrolled away */}
+            {/* Modal footer - always visible, never scrolled away */}
             <div className="flex gap-3 p-5 border-t border-white/5 flex-shrink-0">
               <button onClick={() => setSelectedProduct(null)} className="flex-1 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white font-bold py-3.5 rounded-2xl transition text-sm">
                 Cancel

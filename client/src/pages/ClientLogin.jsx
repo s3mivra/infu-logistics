@@ -48,7 +48,7 @@ export default function ClientLogin() {
             <Package size={26} className="text-brand" />
           </div>
           <h2 className="text-xl font-black text-white uppercase tracking-widest">{BIZ_NAME}</h2>
-          <p className="text-white/40 text-xs mt-1">Client Portal — Sign in to order</p>
+          <p className="text-white/40 text-xs mt-1">Client Portal - Sign in to order</p>
         </div>
 
         {error && (

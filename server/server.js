@@ -15,10 +15,13 @@ import rateLimit from 'express-rate-limit';
 import crypto from 'crypto';
 import pino from 'pino';
 import pinoHttp from 'pino-http';
-import { assertBalanced, debitAccountFor, grossSalesAmount, suggestedSettleAccount } from './lib/ledger.js';
+import { assertBalanced, debitAccountFor, suggestedSettleAccount } from './lib/ledger.js';
 import { ACCOUNTS, EXPENSE_CATEGORIES, CODE_MAP } from './lib/chartOfAccounts.js';
 import { resolveUnit, displayToBase, effectiveDisplay } from './lib/units.js';
 import { addBatch, consumeBatches, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
+import { requireStaff, evaluateClientAccess } from './lib/authz.js';
+import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
+import { validateDateRange } from './lib/reportRange.js';
 
 const log = pino({
   level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
@@ -41,6 +44,25 @@ if (SENTRY_ON) {
 if (!process.env.MONGO_URI || !process.env.JWT_SECRET) {
   console.error('❌ MONGO_URI and JWT_SECRET must be set in .env — server will not start.');
   process.exit(1);
+}
+
+// Production config hardening — refuse to boot with weak/default secrets so a
+// deployment can never silently ship a guessable signing key or admin password.
+if (process.env.NODE_ENV === 'production') {
+  const weakReasons = [];
+  if ((process.env.JWT_SECRET || '').length < 32) {
+    weakReasons.push('JWT_SECRET must be at least 32 chars (use `openssl rand -hex 32`)');
+  }
+  if (!process.env.ADMIN_PASS || process.env.ADMIN_PASS === 'ChangeMe@2026!') {
+    weakReasons.push('ADMIN_PASS must be set to a strong, non-default value');
+  }
+  if (!(process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL)) {
+    weakReasons.push('ALLOWED_ORIGINS (or FRONTEND_URL) must list your frontend origin(s)');
+  }
+  if (weakReasons.length) {
+    console.error('❌ Insecure production config — server will not start:\n  - ' + weakReasons.join('\n  - '));
+    process.exit(1);
+  }
 }
 
 const app = express();
@@ -216,7 +238,9 @@ const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const REFRESH_COOKIE = 'semivra_rt';
 
 const signAccessToken = (user) => jwt.sign(
-  { _id: user._id, name: user.name, userCode: user.userCode, role: user.role },
+  // aud:'staff' lets staff routes reject client-audience tokens structurally
+  // (see verifyToken / lib/authz.js), independent of the role string.
+  { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, aud: 'staff' },
   process.env.JWT_SECRET,
   { expiresIn: ACCESS_TTL }
 );
@@ -339,7 +363,7 @@ const mkSeqRef = async (prefix) => {
   const counter = await Counter.findOneAndUpdate(
     { _id: key },
     { $inc: { seq: 1 } },
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   );
   return `${key}-${counter.seq.toString().padStart(6, '0')}`;
 };
@@ -388,13 +412,11 @@ const generalApiLimiter = rateLimit({
 app.use('/api', generalApiLimiter);
 
 
-// --- MONGODB CONNECTION (single connect) ---
-mongoose.connect(process.env.MONGO_URI, {
-  serverSelectionTimeoutMS: 10000, // fail fast on an unreachable cluster instead of hanging
-  socketTimeoutMS: 45000,
-  maxPoolSize: 20,
-})
-  .then(async () => {
+// --- STARTUP TASKS (run once after DB connect) ---
+// Idempotent: seed superadmin, backfill businessType, seed payment-method sub-accounts,
+// run the one-time COA 4→6-digit code migration, and sync atomic counters. Extracted into
+// a named, exported function so integration tests can seed legacy data and invoke it.
+const runStartupTasks = async () => {
     log.info('Connected to MongoDB Atlas');
     try {
       const adminCount = await User.countDocuments();
@@ -563,7 +585,15 @@ mongoose.connect(process.env.MONGO_URI, {
     } catch (err) {
       log.error({ err }, 'Counter sync error');
     }
-  })
+};
+
+// --- MONGODB CONNECTION (single connect) ---
+mongoose.connect(process.env.MONGO_URI, {
+  serverSelectionTimeoutMS: 10000, // fail fast on an unreachable cluster instead of hanging
+  socketTimeoutMS: 45000,
+  maxPoolSize: 20,
+})
+  .then(runStartupTasks)
   .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
   // --- 🔒 NEW: JWT MIDDLEWARE 🔒 ---
@@ -575,8 +605,16 @@ mongoose.connect(process.env.MONGO_URI, {
 
     const token = authHeader.split(' ')[1];
     try {
+      // Stage 1 — signature/expiry. A malformed/expired token throws here and never
+      // reaches the audience/role logic below.
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = decoded; // Attach user info to the request
+      // Stage 2 — audience. A client-audience token must never satisfy the staff gate,
+      // even before role checks. This makes every verifyToken route client-hostile by
+      // default (defense-in-depth alongside requireStaff). aud beats role.
+      if (decoded.aud === 'client') {
+        return res.status(403).json({ success: false, message: 'Forbidden: client token not permitted here.' });
+      }
+      req.user = decoded; // Stage 3 (role allowlist) is enforced by requireStaff on staff routes.
       next();
     } catch (error) {
       // 401 (not 403) for an expired/invalid token so the client silently refreshes
@@ -585,15 +623,25 @@ mongoose.connect(process.env.MONGO_URI, {
     }
   };
 
-  // JWT-only auth (used by some routes that don't need RBAC).
-  const requireAuth = (req, res, next) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ success: false, error: 'Unauthorized: No token provided' });
+  // --- 🔒 CLIENT-PORTAL TOKEN GUARD 🔒 ---
+  // Strict gate for the two client-scoped routes (/api/client/orders[...]). Requires a
+  // valid signature AND aud:'client' AND role:'client' (see evaluateClientAccess). A
+  // staff token, or a client token missing the aud claim, is rejected — clients
+  // re-authenticate after deploy. Staff routes use verifyToken + requireStaff instead.
+  const verifyClientToken = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'Unauthorized: No token provided' });
+    }
     try {
-      req.user = jwt.verify(token, process.env.JWT_SECRET);
-      next();
-    } catch (err) {
-      res.status(401).json({ success: false, error: 'Unauthorized: Invalid token' });
+      const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+      if (!evaluateClientAccess(decoded).ok) {
+        return res.status(403).json({ success: false, error: 'Client session required.' });
+      }
+      req.user = decoded;
+      return next();
+    } catch (error) {
+      return res.status(401).json({ success: false, error: 'Unauthorized: Invalid or expired token' });
     }
   };
 
@@ -605,61 +653,12 @@ mongoose.connect(process.env.MONGO_URI, {
     next();
   };
 
-  // Allows superadmin OR admin (e.g. for void / refund). Role match is case-insensitive.
+  // Allows superadmin OR admin (e.g. for refund). Role match is case-insensitive.
+  // NOTE: voids are superadmin-only (requireSuperAdmin) — do not add void here.
   const requireSuperOrAdmin = (req, res, next) => {
     const role = String(req.user?.role || '').toLowerCase();
     if (role === 'superadmin' || role === 'admin') return next();
     return res.status(403).json({ success: false, error: 'Forbidden: Admin or Superadmin role required.' });
-  };
-
-  // ── GRANULAR PERMISSIONS ───────────────────────────────────────────────────
-  // Per-role permission map. superadmin gets the wildcard (everything). Other
-  // roles enumerate exactly what they may do. Add a new permission key here
-  // and gate the endpoint with requirePermission('that:key').
-  const ROLE_PERMISSIONS = {
-    superadmin: ['*'],
-    admin: [
-      'orders:create', 'orders:read', 'orders:update', 'orders:void', 'orders:refund', 'orders:settle',
-      'inventory:read', 'inventory:restock', 'inventory:spoilage', 'inventory:edit',
-      'products:read', 'products:update', 'products:availability',
-      'reports:read', 'pos:operate',
-    ],
-    manager: [
-      'orders:create', 'orders:read', 'orders:update', 'orders:settle',
-      'inventory:read', 'inventory:restock', 'inventory:spoilage',
-      'products:read', 'products:availability',
-      'reports:read', 'pos:operate',
-    ],
-    finance: [
-      'orders:read', 'orders:settle',
-      'inventory:read',
-      'products:read',
-      'reports:read', 'ledger:read', 'ledger:journal',
-    ],
-    cashier: [
-      'orders:create', 'orders:read',
-      'inventory:read', 'products:read',
-      'pos:operate',
-    ],
-    staff: [
-      'orders:create', 'orders:read',
-      'inventory:read', 'products:read',
-      'pos:operate',
-    ],
-  };
-
-  // Caller has permission `key` (or the wildcard `*`).
-  const hasPermission = (user, key) => {
-    const role = String(user?.role || '').toLowerCase();
-    const perms = ROLE_PERMISSIONS[role] || [];
-    return perms.includes('*') || perms.includes(key);
-  };
-
-  // Express middleware factory. Use as: app.post('/api/...', verifyToken, requirePermission('orders:void'), handler).
-  // Falls back deny-by-default if role isn't in the map.
-  const requirePermission = (key) => (req, res, next) => {
-    if (hasPermission(req.user, key)) return next();
-    return res.status(403).json({ success: false, error: `Forbidden: missing permission "${key}".` });
   };
 
   // Accepts valid JWT (staff/admin) OR active QR session (customer dine-in).
@@ -1308,17 +1307,29 @@ const RefreshSession = mongoose.model('RefreshSession', RefreshSessionSchema);
 const RoleSchema = new mongoose.Schema({ name: String });
 const Role = mongoose.model('Role', RoleSchema);
 
-app.get('/api/roles', verifyToken, async (req, res) => {
-  const roles = await Role.find();
-  res.json({ success: true, roles });
+app.get('/api/roles', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const roles = await Role.find();
+    res.json({ success: true, roles });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
 });
 app.post('/api/roles', verifyToken, requireSuperAdmin, validate(roleSchema), async (req, res) => {
-  const newRole = await Role.create(req.body);
-  res.json({ success: true, role: newRole });
+  try {
+    const newRole = await Role.create(req.body);
+    res.json({ success: true, role: newRole });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
 });
-app.delete('/api/roles/:id', verifyToken, async (req, res) => {
-  await Role.findByIdAndDelete(req.params.id);
-  res.json({ success: true });
+app.delete('/api/roles/:id', verifyToken, requireStaff, async (req, res) => {
+  try {
+    await Role.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
 });
 
 // ── CLIENT ACCOUNTS (logistics mode only) ────────────────────────────────────
@@ -1333,7 +1344,9 @@ app.post('/api/client-auth/login', loginLimiter, async (req, res) => {
     const match = await bcrypt.compare(password, client.password);
     if (!match) return res.status(401).json({ success: false, error: 'Invalid credentials.' });
     const token = jwt.sign(
-      { _id: client._id, clientId: String(client._id), username: client.username, name: client.name, role: 'client', paymentMethod: client.paymentMethod },
+      // aud:'client' — verified strictly by verifyClientToken on the two client-portal
+      // routes, and rejected by verifyToken/requireStaff on every staff route.
+      { _id: client._id, clientId: String(client._id), username: client.username, name: client.name, role: 'client', paymentMethod: client.paymentMethod, aud: 'client' },
       process.env.JWT_SECRET,
       { expiresIn: '8h' }
     );
@@ -1344,7 +1357,7 @@ app.post('/api/client-auth/login', loginLimiter, async (req, res) => {
 });
 
 // Logged-in client's own orders — drives the portal status sidebar.
-app.get('/api/client/orders', verifyToken, async (req, res) => {
+app.get('/api/client/orders', verifyClientToken, async (req, res) => {
   try {
     const clientId = req.user?.clientId || req.user?._id;
     if (!clientId || req.user?.role !== 'client') {
@@ -1361,7 +1374,7 @@ app.get('/api/client/orders', verifyToken, async (req, res) => {
 });
 
 // Client confirms they received a completed order (portal "I received my order").
-app.post('/api/client/orders/:id/received', verifyToken, async (req, res) => {
+app.post('/api/client/orders/:id/received', verifyClientToken, async (req, res) => {
   try {
     const clientId = req.user?.clientId || req.user?._id;
     if (!clientId || req.user?.role !== 'client') return res.status(403).json({ success: false, error: 'Client session required.' });
@@ -1415,7 +1428,7 @@ app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req
     if (paymentMethod) update.paymentMethod = paymentMethod;
     if (typeof isActive === 'boolean') update.isActive = isActive;
     if (password) update.password = await bcrypt.hash(password, BCRYPT_ROUNDS);
-    const client = await ClientAccount.findByIdAndUpdate(req.params.id, { $set: update }, { new: true, select: '-password' });
+    const client = await ClientAccount.findByIdAndUpdate(req.params.id, { $set: update }, { returnDocument: 'after', select: '-password' });
     if (!client) return res.status(404).json({ success: false, error: 'Client account not found.' });
     res.json({ success: true, client });
   } catch (err) {
@@ -1443,8 +1456,9 @@ const AuditLogSchema = new mongoose.Schema({
 });
 const AuditLog = mongoose.model('AuditLog', AuditLogSchema);
 
-// (Auth middleware — verifyToken, requireAuth, requireSuperAdmin, verifyOrderAuth —
-//  are defined earlier, before the first route that uses them, to avoid TDZ errors.)
+// (Auth middleware — verifyToken, requireStaff, verifyClientToken, requireSuperAdmin,
+//  requireSuperOrAdmin, verifyOrderAuth — are defined earlier, before the first route
+//  that uses them, to avoid TDZ errors.)
 
 const DiscountSchema = new mongoose.Schema({
   name: String,        // e.g., "Senior Citizen 20%", "Employee 10%"
@@ -1468,7 +1482,7 @@ const Counter = mongoose.model('Counter', CounterSchema);
 // --- API ROUTES ---
 
 // --- DISCOUNT ROUTES ---
-app.get('/api/discounts', verifyToken, async (req, res) => {
+app.get('/api/discounts', verifyToken, requireStaff, async (req, res) => {
   try {
     const discounts = await Discount.find();
     res.json({ success: true, discounts });
@@ -1477,7 +1491,7 @@ app.get('/api/discounts', verifyToken, async (req, res) => {
   }
 });
 
-app.post('/api/discounts', verifyToken, validate(discountSchema), async (req, res) => {
+app.post('/api/discounts', verifyToken, requireStaff, validate(discountSchema), async (req, res) => {
   try {
     const newDiscount = await Discount.create(req.body);
     res.json({ success: true, discount: newDiscount });
@@ -1486,7 +1500,7 @@ app.post('/api/discounts', verifyToken, validate(discountSchema), async (req, re
   }
 });
 
-app.delete('/api/discounts/:id', verifyToken, async (req, res) => {
+app.delete('/api/discounts/:id', verifyToken, requireStaff, async (req, res) => {
   try {
     await Discount.findByIdAndDelete(req.params.id);
     res.json({ success: true });
@@ -1498,7 +1512,7 @@ app.delete('/api/discounts/:id', verifyToken, async (req, res) => {
 // --- INVENTORY PHYSICAL COUNT & DAILY CLOSE ---
 
 // --- 1. FETCH EOD STATUS & REAL MOVEMENTS ---
-app.get('/api/inventory/eod-data', verifyToken, async (req, res) => {
+app.get('/api/inventory/eod-data', verifyToken, requireStaff, async (req, res) => {
   try {
     // Get local date string (e.g., "2026-04-29")
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
@@ -1531,7 +1545,7 @@ app.get('/api/inventory/eod-data', verifyToken, async (req, res) => {
 });
 
 // --- 2. SUBMIT & LOCK EOD ---
-app.post('/api/inventory/count', verifyToken, async (req, res) => {
+app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -1598,7 +1612,7 @@ app.post('/api/inventory/count', verifyToken, async (req, res) => {
     await EODRecord.findOneAndUpdate(
       { dateString: todayStr },
       { status: 'LOCKED', lockedAt: new Date(), lockedBy: adminName || 'Admin' },
-      { upsert: true, new: true, session }
+      { upsert: true, returnDocument: 'after', session }
     );
 
     await session.commitTransaction();
@@ -1615,7 +1629,7 @@ app.post('/api/inventory/count', verifyToken, async (req, res) => {
 });
 
 // --- UNLOCK / REOPEN EOD (ADMIN ONLY) ---
-app.post('/api/inventory/eod/reopen', verifyToken, async (req, res) => {
+app.post('/api/inventory/eod/reopen', verifyToken, requireStaff, async (req, res) => {
   try {
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
     
@@ -1634,7 +1648,7 @@ app.post('/api/inventory/eod/reopen', verifyToken, async (req, res) => {
   }
 });
 
-app.get('/api/inventory/history/:id', verifyToken, async (req, res) => {
+app.get('/api/inventory/history/:id', verifyToken, requireStaff, async (req, res) => {
   try {
     const history = await StockCard.find({ inventoryId: req.params.id }).sort({ date: -1 });
     res.json({ success: true, history });
@@ -1644,7 +1658,7 @@ app.get('/api/inventory/history/:id', verifyToken, async (req, res) => {
 });
 
 // Fetch ALL stock card history for the master PDF report
-app.get('/api/inventory/history', verifyToken, async (req, res) => {
+app.get('/api/inventory/history', verifyToken, requireStaff, async (req, res) => {
   try {
     const history = await StockCard.find().sort({ date: -1 });
     res.json({ success: true, history });
@@ -1654,28 +1668,36 @@ app.get('/api/inventory/history', verifyToken, async (req, res) => {
 });
 // Categories
 app.get('/api/categories', async (req, res) => {
-  // Tenancy: only return rows belonging to this server's business type.
-  const categories = await Category.find({ businessType: BUSINESS_TYPE }).lean();
-  res.json({ success: true, categories });
+  try {
+    // Tenancy: only return rows belonging to this server's business type.
+    const categories = await Category.find({ businessType: BUSINESS_TYPE }).lean();
+    res.json({ success: true, categories });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
 });
 
-app.post('/api/categories', verifyToken, async (req, res) => {
-  // Save the department along with the name
-  const newCat = await Category.create({ 
-    name: req.body.name, 
-    department: req.body.department || 'Kitchen' 
-  });
-  emitToAll('menuUpdated');
-  res.json({ success: true, category: newCat });
+app.post('/api/categories', verifyToken, requireStaff, async (req, res) => {
+  try {
+    // Save the department along with the name
+    const newCat = await Category.create({
+      name: req.body.name,
+      department: req.body.department || 'Kitchen'
+    });
+    emitToAll('menuUpdated');
+    res.json({ success: true, category: newCat });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
 });
 
 // --- NEW: UPDATE CATEGORY ROUTE ---
-app.put('/api/categories/:id', verifyToken, async (req, res) => {
+app.put('/api/categories/:id', verifyToken, requireStaff, async (req, res) => {
   try {
     const updated = await Category.findByIdAndUpdate(
       req.params.id, 
       { name: req.body.name, department: req.body.department }, 
-      { new: true }
+      { returnDocument: 'after' }
     );
     emitToAll('menuUpdated');
     res.json({ success: true, category: updated });
@@ -1683,14 +1705,18 @@ app.put('/api/categories/:id', verifyToken, async (req, res) => {
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
 });
-app.delete('/api/categories/:id', verifyToken, async (req, res) => {
-  await Category.findByIdAndDelete(req.params.id);
-  emitToAll('menuUpdated');
-  res.json({ success: true });
+app.delete('/api/categories/:id', verifyToken, requireStaff, async (req, res) => {
+  try {
+    await Category.findByIdAndDelete(req.params.id);
+    emitToAll('menuUpdated');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
 });
 
 // --- 📱 STRICT QR SESSION CONTROL ---
-app.post('/api/sessions/generate', verifyToken, async (req, res) => {
+app.post('/api/sessions/generate', verifyToken, requireStaff, async (req, res) => {
   try {
     const { table } = req.body;
     // KILL any previously active links for this table so there's never a duplicate online
@@ -1765,8 +1791,17 @@ app.get('/api/products', async (req, res) => {
     const productQuery = { isArchived: { $ne: true }, businessType: BUSINESS_TYPE };
     if (!isAdminCaller) productQuery.isAvailable = { $ne: false };
     const products = await Product.find(productQuery).populate('modifierGroups').lean();
+    // Product images can be globally disabled via the superadmin "Product Images" setting.
+    // Customers then receive no image (the menu shows a placeholder); staff/admin keep the
+    // image so they can still see and manage it.
+    let imagesEnabled = true;
+    if (!isAdminCaller) {
+      const imgSetting = await Settings.findOne({ key: 'imagesEnabled' }).lean();
+      imagesEnabled = !imgSetting || imgSetting.value !== false;
+    }
     // Resolve the effective per-line discount for this caller.
     products.forEach(p => {
+      if (!isAdminCaller && !imagesEnabled) p.image = '';
       let pct = Number(p.discountPercent || 0);
       if (buyerClientId) {
         const ov = (p.clientDiscounts || []).find(d => String(d.clientId) === buyerClientId);
@@ -1777,7 +1812,15 @@ app.get('/api/products', async (req, res) => {
       // them to power the edit form and the on-behalf client picker in POS;
       // stripping made the form silently lose overrides on save (the form
       // rendered as empty, then "Save" overwrote real data with [] ).
-      if (!isAdminCaller) delete p.clientDiscounts;
+      if (!isAdminCaller) {
+        delete p.clientDiscounts;
+        // Strip internal cost / recipe (BOM) data from customer-facing responses so
+        // ingredient lists, per-item costs, and margins are not exposed publicly.
+        // Keep customer-relevant fields (size name/price, add-on name/price).
+        delete p.baseRecipe; delete p.costOverride;
+        (p.sizes  || []).forEach(s => { delete s.recipe; delete s.costOverride; });
+        (p.addOns || []).forEach(a => { delete a.recipe; });
+      }
     });
 
     // Compute stockAvailable from live inventory.
@@ -1815,7 +1858,8 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-app.post('/api/products', verifyToken, validate(productSchema), async (req, res) => {
+app.post('/api/products', verifyToken, requireStaff, validate(productSchema), async (req, res) => {
+  try {
   // Generate base product code (e.g., DRS-A0001)
   const catPrefix = getCategoryPrefix(req.body.category);
   req.body.productCode = await generateNextSequence(Product, catPrefix, 'productCode');
@@ -1832,12 +1876,15 @@ app.post('/api/products', verifyToken, validate(productSchema), async (req, res)
   const newProduct = await Product.create(req.body);
   emitToAll('menuUpdated');
   res.json({ success: true, product: newProduct });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
 });
 
-app.put('/api/products/:id', verifyToken, async (req, res) => {
+app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
   try {
     const existing = await Product.findById(req.params.id).lean();
-    const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' });
     // Reason from the X-Change-Reason header (URL-encoded). Required for every
     // price / recipe-cost change; the client refuses to submit without one.
     const changeReason = (() => {
@@ -1911,7 +1958,7 @@ app.patch('/api/products/:id/availability', verifyToken, requireSuperAdmin, asyn
     const { isAvailable } = req.body;
     if (typeof isAvailable !== 'boolean')
       return res.status(400).json({ success: false, error: 'isAvailable must be true or false.' });
-    const product = await Product.findByIdAndUpdate(req.params.id, { isAvailable }, { new: true });
+    const product = await Product.findByIdAndUpdate(req.params.id, { isAvailable }, { returnDocument: 'after' });
     if (!product) return res.status(404).json({ success: false, error: 'Product not found.' });
     await AuditLog.create({
       userId: req.user?.name || 'System',
@@ -1935,7 +1982,7 @@ app.patch('/api/products/:id/oos', verifyToken, requireSuperAdmin, async (req, r
     const { isOutOfStock } = req.body;
     if (typeof isOutOfStock !== 'boolean')
       return res.status(400).json({ success: false, error: 'isOutOfStock must be true or false.' });
-    const product = await Product.findByIdAndUpdate(req.params.id, { isOutOfStock }, { new: true });
+    const product = await Product.findByIdAndUpdate(req.params.id, { isOutOfStock }, { returnDocument: 'after' });
     if (!product) return res.status(404).json({ success: false, error: 'Product not found.' });
     await AuditLog.create({
       userId: req.user?.name || 'System',
@@ -1952,12 +1999,12 @@ app.patch('/api/products/:id/oos', verifyToken, requireSuperAdmin, async (req, r
 });
 
 // Change to PUT or handle inside DELETE for archiving
-app.delete('/api/products/:id', verifyToken, async (req, res) => {
+app.delete('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
   try {
     const product = await Product.findByIdAndUpdate(
       req.params.id, 
       { isArchived: true }, 
-      { new: true }
+      { returnDocument: 'after' }
     );
     
     if (!product) return res.status(404).json({ success: false, error: 'Product not found' });
@@ -1978,7 +2025,7 @@ app.delete('/api/products/:id', verifyToken, async (req, res) => {
 });
 
 // Orders
-app.get('/api/orders', verifyToken, async (req, res) => {
+app.get('/api/orders', verifyToken, requireStaff, async (req, res) => {
   try {
     const { page, limit, search } = req.query;
     // Tenancy filter — businessType: undefined still matches via $in so that any
@@ -2031,7 +2078,7 @@ app.get('/api/orders/archives', verifyToken, requireSuperAdmin, async (req, res)
 // ── PARKED ORDERS / OPEN TABS ────────────────────────────────────────────────
 // IMPORTANT: these literal paths MUST be registered before '/api/orders/:id',
 // otherwise Express matches ':id' first and treats "parked"/"park" as an order id.
-app.post('/api/orders/park', verifyToken, async (req, res) => {
+app.post('/api/orders/park', verifyToken, requireStaff, async (req, res) => {
   try {
     const { items, customerName, table, orderNotes, guestCount } = req.body;
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ success: false, error: 'Cannot park an empty cart.' });
@@ -2046,13 +2093,13 @@ app.post('/api/orders/park', verifyToken, async (req, res) => {
     res.json({ success: true, order: parked });
   } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
-app.get('/api/orders/parked', verifyToken, async (req, res) => {
+app.get('/api/orders/parked', verifyToken, requireStaff, async (req, res) => {
   try {
     const parked = await Order.find({ isParked: true, isArchived: false }).sort({ createdAt: -1 }).lean();
     res.json({ success: true, parked });
   } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
-app.delete('/api/orders/parked/:id', verifyToken, async (req, res) => {
+app.delete('/api/orders/parked/:id', verifyToken, requireStaff, async (req, res) => {
   try {
     const order = await Order.findOne({ _id: req.params.id, isParked: true });
     if (!order) return res.status(404).json({ success: false, error: 'Parked order not found.' });
@@ -2065,9 +2112,22 @@ app.delete('/api/orders/parked/:id', verifyToken, async (req, res) => {
 app.get('/api/orders/:id', async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, message: "Order not found" });
-    const order = await Order.findById(req.params.id);
+    // Access control: staff/admin and authenticated clients get the full document.
+    // Anonymous callers (QR status polling) get a PII-SAFE projection so order ids
+    // can't be enumerated to harvest customer phone / delivery address.
+    let isPrivileged = false;
+    try {
+      const raw = req.headers.authorization?.replace(/^Bearer /, '') || '';
+      if (raw) { const d = jwt.verify(raw, process.env.JWT_SECRET); if (d?.role) isPrivileged = true; }
+    } catch { /* invalid/expired token → treat as anonymous */ }
+    const safeProjection = {
+      orderNumber: 1, status: 1, dispatchStatus: 1, isParked: 1, table: 1,
+      total: 1, customerName: 1, createdAt: 1, scheduledTime: 1,
+      'items.name': 1, 'items.quantity': 1, 'items.itemStatus': 1, 'items.department': 1,
+    };
+    const order = await Order.findById(req.params.id, isPrivileged ? undefined : safeProjection);
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
-    res.json(order); // Note: We send back just the order object so the frontend can read it directly
+    res.json(order); // sent as the raw order object so the frontend can read it directly
   } catch (error) {
     res.status(500).json({ success: false, message: "Server error" });
   }
@@ -2236,15 +2296,16 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     const currentYear = new Date().getFullYear();
     const orderNumber = await generateNextSequence(Order, `ORD-${currentYear}`, 'orderNumber');
 
-    // Generate billing number for logistics mode (monthly-reset: YYYY-MM-XXXX)
+    // Generate a billing number (monthly-reset: YYYY-MM-XXXX) for every order, both
+    // business types.
     let billingNumber = '';
-    if (BUSINESS_TYPE === 'log') {
+    {
       const now = new Date();
       const billingPrefix = `BIL-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const billingCounter = await Counter.findOneAndUpdate(
         { _id: billingPrefix },
         { $inc: { seq: 1 } },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
       billingNumber = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${billingCounter.seq.toString().padStart(4, '0')}`;
     }
@@ -2290,7 +2351,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
 });
 
 // --- COMPLIMENTARY: APPLY ---
-app.put('/api/orders/:id/complimentary', verifyToken, async (req, res) => {
+app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, res) => {
   try {
     const { reasonType, reasonNote, approvedBy, forEmployee } = req.body;
     if (!reasonType) return res.status(400).json({ success: false, error: 'reasonType is required' });
@@ -2328,7 +2389,7 @@ app.put('/api/orders/:id/complimentary', verifyToken, async (req, res) => {
 });
 
 // --- COMPLIMENTARY: REMOVE ---
-app.delete('/api/orders/:id/complimentary', verifyToken, async (req, res) => {
+app.delete('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found' });
@@ -2357,7 +2418,7 @@ app.delete('/api/orders/:id/complimentary', verifyToken, async (req, res) => {
   }
 });
 
-app.put('/api/orders/:id', verifyToken, async (req, res) => {
+app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -2557,7 +2618,7 @@ app.put('/api/orders/:id', verifyToken, async (req, res) => {
               const invItem = await Inventory.findOneAndUpdate(
                 { _id: ing.invId, stockQty: { $gte: deductQty } },
                 { $inc: { stockQty: -deductQty } },
-                { session, new: true }
+                { session, returnDocument: 'after' }
               );
               if (!invItem) {
                 await session.abortTransaction(); session.endSession();
@@ -2607,7 +2668,7 @@ app.put('/api/orders/:id', verifyToken, async (req, res) => {
             const updated = await Inventory.findOneAndUpdate(
               { _id: linkInv._id, stockQty: { $gte: deductQty } },
               { $inc: { stockQty: -deductQty } },
-              { session, new: true }
+              { session, returnDocument: 'after' }
             );
             if (!updated) {
               await session.abortTransaction();
@@ -2630,7 +2691,7 @@ app.put('/api/orders/:id', verifyToken, async (req, res) => {
           const invItem = await Inventory.findOneAndUpdate(
             { _id: ing.invId, stockQty: { $gte: deductQty } },
             { $inc: { stockQty: -deductQty } },
-            { session, new: true }
+            { session, returnDocument: 'after' }
           );
           if (invItem && invItem.expiryBatches && invItem.expiryBatches.length > 0) {
             // FEFO-consume from batches (audit info; stockQty is source of truth)
@@ -2674,7 +2735,7 @@ app.put('/api/orders/:id', verifyToken, async (req, res) => {
               const invItem = await Inventory.findOneAndUpdate(
                 { _id: ing.invId, stockQty: { $gte: deductQty } },
                 { $inc: { stockQty: -deductQty } },
-                { session, new: true }
+                { session, returnDocument: 'after' }
               );
               if (invItem && invItem.expiryBatches && invItem.expiryBatches.length > 0) {
                 const r = consumeBatches(invItem.expiryBatches, deductQty);
@@ -2808,7 +2869,7 @@ app.put('/api/orders/:id', verifyToken, async (req, res) => {
 });
 
 // --- 🚨 SAFE VOID & REFUND ENGINE 🚨 ---
-app.post('/api/orders/:id/void', verifyToken, requireSuperOrAdmin, async (req, res) => {
+app.post('/api/orders/:id/void', verifyToken, requireSuperAdmin, async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -2884,7 +2945,7 @@ app.post('/api/orders/:id/void', verifyToken, requireSuperOrAdmin, async (req, r
           const qtyUsed = item.quantity * baseUnitsPerSale(product, linkInv);
           if (reason === 'Restock') {
             const restored = await Inventory.findOneAndUpdate(
-              { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, new: true }
+              { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, returnDocument: 'after' }
             );
             if (restored) {
               totalCogs += (restored.unitCost * qtyUsed);
@@ -2907,7 +2968,7 @@ app.post('/api/orders/:id/void', verifyToken, requireSuperOrAdmin, async (req, r
           const restored = await Inventory.findOneAndUpdate(
             { _id: ing.invId },
             { $inc: { stockQty: qtyUsed } },
-            { session, new: true }
+            { session, returnDocument: 'after' }
           );
           if (!restored) continue;
           totalCogs += (restored.unitCost * qtyUsed);
@@ -2937,7 +2998,7 @@ app.post('/api/orders/:id/void', verifyToken, requireSuperOrAdmin, async (req, r
             const restored = await Inventory.findOneAndUpdate(
               { _id: ing.invId },
               { $inc: { stockQty: qtyUsed } },
-              { session, new: true }
+              { session, returnDocument: 'after' }
             );
             if (!restored) continue;
             totalCogs += (restored.unitCost * qtyUsed);
@@ -3008,7 +3069,7 @@ app.post('/api/orders/:id/void', verifyToken, requireSuperOrAdmin, async (req, r
     res.status(500).json({ success: false, error: error.message });
   }
 });
-app.post('/api/orders/archive', verifyToken, async (req, res) => {
+app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
   try {
     // 1. Force any hanging order to Cancelled — includes Ready (made but never
     //    handed over) and Parked (held unpaid tabs). Parked orders also lose the
@@ -3036,7 +3097,8 @@ app.post('/api/orders/archive', verifyToken, async (req, res) => {
 // --- ERP ROUTES ---
 
 // Inventory CRUD
-app.get('/api/inventory', verifyToken, async (req, res) => {
+app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
+  try {
   const { page, limit: lim, search } = req.query;
   // Tenancy: stamp businessType on the filter so each instance only sees its own.
   // Escape the user-supplied search string to neutralise ReDoS / regex injection.
@@ -3052,9 +3114,12 @@ app.get('/api/inventory', verifyToken, async (req, res) => {
   }
   const items = await Inventory.find(filter).sort({ itemName: 1 }).lean();
   res.json({ success: true, items });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
 });
 
-app.post('/api/inventory', verifyToken, async (req, res) => {
+app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   try {
     const existing = await Inventory.findOne({ itemName: { $regex: new RegExp(`^${escapeRegex(req.body.itemName.trim())}$`, 'i') } });
     if (existing) return res.status(400).json({ success: false, error: 'Item already exists.' });
@@ -3141,7 +3206,7 @@ app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, r
 // transaction. Two simultaneous restocks of the same SKU now serialise on the
 // inventory document instead of racing the WAC math. Retries on transient
 // transient errors (WriteConflict / TransientTransactionError).
-app.post('/api/inventory/restock/:id', verifyToken, async (req, res) => {
+app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, res) => {
   const { addedStock, totalCost, expiryDate, creditAccount: rawCreditCode } = req.body;
   const isAllowedParent = (c) => /^(111|112|113|220)/.test(String(c || ''));
   const resolved = acctMeta(rawCreditCode);
@@ -3296,7 +3361,7 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
       else update.expiryDate = new Date(update.expiryDate);
     }
 
-    const updatedItem = await Inventory.findByIdAndUpdate(req.params.id, update, { new: true });
+    const updatedItem = await Inventory.findByIdAndUpdate(req.params.id, update, { returnDocument: 'after' });
     if (!updatedItem) return res.status(404).json({ success: false, error: 'Item not found.' });
     emitToMgr('erpUpdated');
     res.json({ success: true, item: updatedItem });
@@ -3307,7 +3372,7 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
 });
 
 // --- EXPIRY WATCH: items expiring within N days (default 30), plus already-expired ---
-app.get('/api/inventory/expiring', verifyToken, async (req, res) => {
+app.get('/api/inventory/expiring', verifyToken, requireStaff, async (req, res) => {
   try {
     const days = Math.max(1, parseInt(req.query.days) || 30);
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() + days);
@@ -3440,7 +3505,7 @@ app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmi
 });
 
 // --- PATCH expiry only (after a partial spoilage clears the expired batch) ---
-app.patch('/api/inventory/:id/expiry', verifyToken, async (req, res) => {
+app.patch('/api/inventory/:id/expiry', verifyToken, requireStaff, async (req, res) => {
   try {
     const { expiryDate, expiryWarnDays } = req.body;
     const update = {};
@@ -3448,7 +3513,7 @@ app.patch('/api/inventory/:id/expiry', verifyToken, async (req, res) => {
     else if (expiryDate) update.expiryDate = new Date(expiryDate);
     if (expiryWarnDays !== undefined) update.expiryWarnDays = Math.max(1, parseInt(expiryWarnDays) || 7);
 
-    const item = await Inventory.findByIdAndUpdate(req.params.id, update, { new: true });
+    const item = await Inventory.findByIdAndUpdate(req.params.id, update, { returnDocument: 'after' });
     if (!item) return res.status(404).json({ success: false, error: 'Item not found' });
     emitToMgr('erpUpdated');
     res.json({ success: true, item });
@@ -3606,7 +3671,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           const cat = await Category.findOneAndUpdate(
             { name: { $regex: new RegExp(`^${categoryName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
             { $setOnInsert: { name: categoryName, department: 'Bar' } },
-            { upsert: true, new: true, session }
+            { upsert: true, returnDocument: 'after', session }
           );
           await Product.findOneAndUpdate(
             { productCode: existing.itemCode },
@@ -3616,7 +3681,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
                 ...(srp != null && !isNaN(srp) ? { basePrice: srp } : {}),
                 isAvailable: existing.stockQty > 0,
             }, $setOnInsert: { basePrice: srp != null && !isNaN(srp) ? srp : 0 } },
-            { upsert: true, new: true, session }
+            { upsert: true, returnDocument: 'after', session }
           );
         }
       } else {
@@ -3674,7 +3739,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           const cat = await Category.findOneAndUpdate(
             { name: { $regex: new RegExp(`^${categoryName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
             { $setOnInsert: { name: categoryName, department: 'Bar' } },
-            { upsert: true, new: true, session }
+            { upsert: true, returnDocument: 'after', session }
           );
           const productExists = await Product.findOne({ productCode: item.itemCode }).session(session);
           if (!productExists) {
@@ -3705,13 +3770,17 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
 
 // Accounting Ledger / Journal Entries — Superadmin only
 app.get('/api/journal', verifyToken, requireSuperAdmin, async (req, res) => {
-  const pageNum = Math.max(1, parseInt(req.query.page) || 1);
-  const pageSize = Math.min(100, parseInt(req.query.limit) || 50);
-  const [entries, total] = await Promise.all([
-    JournalEntry.find().sort({ date: -1 }).skip((pageNum - 1) * pageSize).limit(pageSize).lean(),
-    JournalEntry.countDocuments()
-  ]);
-  res.json({ success: true, entries, total, page: pageNum, pages: Math.ceil(total / pageSize) });
+  try {
+    const pageNum = Math.max(1, parseInt(req.query.page) || 1);
+    const pageSize = Math.min(100, parseInt(req.query.limit) || 50);
+    const [entries, total] = await Promise.all([
+      JournalEntry.find().sort({ date: -1 }).skip((pageNum - 1) * pageSize).limit(pageSize).lean(),
+      JournalEntry.countDocuments()
+    ]);
+    res.json({ success: true, entries, total, page: pageNum, pages: Math.ceil(total / pageSize) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
 });
 
 app.post('/api/journal', verifyToken, requireSuperAdmin, async (req, res) => {
@@ -4251,41 +4320,48 @@ app.get('/api/reports/balance-sheet-monthly', verifyToken, requireSuperAdmin, as
 // JOURNAL CSV EXPORT
 // ============================================================
 app.get('/api/journal/export', verifyToken, requireSuperAdmin, async (req, res) => {
+  // Bounded + streamed: a date range is required and capped at one quarter, and rows
+  // are streamed straight from a DB cursor so we never build the whole ledger as one
+  // in-memory string. Validation runs before any header/byte is written.
+  const { start, end } = req.query;
+  const range = validateDateRange(start, end); // default cap: 92 days (one quarter)
+  if (!range.ok) {
+    return res.status(400).json({ success: false, error: range.error });
+  }
+
+  const esc = (v) => {
+    if (v === null || v === undefined) return '';
+    const s = String(v).replace(/"/g, '""');
+    return /[",\n]/.test(s) ? `"${s}"` : s;
+  };
+
+  const fileName = `journal_${start}_to_${end}.csv`.replace(/[^a-zA-Z0-9._-]/g, '_');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+  res.write('Date,Reference,Description,AccountCode,AccountName,Debit,Credit\n');
+
   try {
-    const { start, end } = req.query;
-    const filter = {};
-    if (start || end) {
-      filter.date = {};
-      if (start) filter.date.$gte = new Date(start);
-      if (end)   { const e = new Date(end); e.setHours(23,59,59,999); filter.date.$lte = e; }
-    }
-    const entries = await JournalEntry.find(filter).sort({ date: 1, reference: 1 }).lean();
-
-    const esc = (v) => {
-      if (v === null || v === undefined) return '';
-      const s = String(v).replace(/"/g, '""');
-      return /[",\n]/.test(s) ? `"${s}"` : s;
-    };
-
-    let csv = 'Date,Reference,Description,AccountCode,AccountName,Debit,Credit\n';
-    for (const e of entries) {
+    const cursor = JournalEntry
+      .find({ date: { $gte: range.startDate, $lte: range.endDate } })
+      .sort({ date: 1, reference: 1 })
+      .lean()
+      .cursor();
+    for await (const e of cursor) {
       const dateStr = new Date(e.date).toISOString().slice(0, 10);
       for (const line of e.lines) {
-        csv += [
+        res.write([
           esc(dateStr), esc(e.reference), esc(e.description),
           esc(line.accountCode), esc(line.accountName),
           (line.debit || 0).toFixed(2), (line.credit || 0).toFixed(2)
-        ].join(',') + '\n';
+        ].join(',') + '\n');
       }
     }
-
-    const fileName = `journal_${start || 'all'}_to_${end || 'now'}.csv`.replace(/[^a-zA-Z0-9._-]/g, '_');
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-    res.send(csv);
+    res.end();
   } catch (err) {
     log.error({ err }, 'Journal export failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    // Headers/body already streaming — can't switch to a JSON error; just end the stream.
+    if (!res.headersSent) res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    else res.end();
   }
 });
 
@@ -4358,7 +4434,7 @@ const generateNextSequence = async (_Model, prefix, _fieldName) => {
   const counter = await Counter.findOneAndUpdate(
     { _id: prefix },
     { $inc: { seq: 1 } },
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   );
   return `${prefix}-A${counter.seq.toString().padStart(4, '0')}`;
 };
@@ -4420,7 +4496,7 @@ function scheduleMidnightArchive() {
       await EODRecord.findOneAndUpdate(
         { dateString: closedDateStr },
         { status: 'LOCKED', lockedAt: new Date(), lockedBy: 'SYSTEM AUTO-CLOSE' },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
 
       log.info(`  Register locked automatically for ${closedDateStr}`);
@@ -4521,9 +4597,16 @@ scheduleMidnightArchive();
 // --- SHIFT MANAGEMENT ROUTES ---
 
 // Open a new shift (called on login, records starting cash)
-app.post('/api/shifts/start', verifyToken, async (req, res) => {
+app.post('/api/shifts/start', verifyToken, requireStaff, async (req, res) => {
   try {
     const { startingCash } = req.body;
+    // Mandatory starting cash — reject missing/invalid/negative. No silent default-to-0:
+    // a zero opening float must be entered explicitly so EOS variance is meaningful.
+    const opening = Number(startingCash);
+    if (startingCash === undefined || startingCash === null || startingCash === '' ||
+        !Number.isFinite(opening) || opening < 0) {
+      return res.status(400).json({ success: false, error: 'A valid starting cash amount is required.' });
+    }
     // Close any dangling open shifts for this cashier
     await Shift.updateMany(
       { cashierId: String(req.user._id), status: 'Open' },
@@ -4532,7 +4615,7 @@ app.post('/api/shifts/start', verifyToken, async (req, res) => {
     const shift = await Shift.create({
       cashierId:    String(req.user._id),
       cashierName:  req.user.name,
-      startingCash: parseFloat(startingCash) || 0,
+      startingCash: opening,
     });
     res.json({ success: true, shift });
   } catch (err) {
@@ -4541,7 +4624,7 @@ app.post('/api/shifts/start', verifyToken, async (req, res) => {
 });
 
 // Close shift — records actual cash count and calculates variance
-app.post('/api/shifts/end', verifyToken, async (req, res) => {
+app.post('/api/shifts/end', verifyToken, requireStaff, async (req, res) => {
   try {
     const { actualCash } = req.body;
     const shift = await Shift.findOne({ cashierId: String(req.user._id), status: 'Open' });
@@ -4590,7 +4673,7 @@ app.post('/api/shifts/end', verifyToken, async (req, res) => {
 });
 
 // --- BANK DEPOSIT ROUTES ---
-app.post('/api/bank-deposits', verifyToken, async (req, res) => {
+app.post('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
   try {
     const { shiftId, amount, reference, sourceAccount: rawSrc, destAccount: rawDest } = req.body;
     const depositAmount = parseFloat(amount);
@@ -4656,7 +4739,7 @@ app.post('/api/bank-deposits', verifyToken, async (req, res) => {
   }
 });
 
-app.get('/api/bank-deposits', verifyToken, async (req, res) => {
+app.get('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
   try {
     const filter = req.query.shiftId ? { shiftId: req.query.shiftId } : {};
     const deposits = await BankDeposit.find(filter).sort({ createdAt: -1 });
@@ -4666,7 +4749,7 @@ app.get('/api/bank-deposits', verifyToken, async (req, res) => {
   }
 });
 
-app.get('/api/accounts', verifyToken, async (req, res) => {
+app.get('/api/accounts', verifyToken, requireStaff, async (req, res) => {
   try {
     const accounts = await Account.find().sort({ code: 1 });
     res.json({ success: true, accounts });
@@ -4681,7 +4764,7 @@ app.get('/api/accounts', verifyToken, async (req, res) => {
 const normalBalanceForCode = (code) => (/^[15679]/.test(String(code)) ? 'Debit' : 'Credit');
 
 // Full chart: canonical headers/leaves merged with user-created custom children.
-app.get('/api/coa', verifyToken, async (req, res) => {
+app.get('/api/coa', verifyToken, requireStaff, async (req, res) => {
   try {
     const custom = await Account.find({ custom: true }).sort({ code: 1 }).lean();
     const canonical = Object.entries(ACCOUNTS).map(([code, a]) => ({
@@ -4765,7 +4848,7 @@ app.delete('/api/accounts/:id', verifyToken, requireSuperAdmin, async (req, res)
 });
 
 // ── CLOSED PERIODS — list, close, reopen ──────────────────────────────────────
-app.get('/api/periods', verifyToken, async (req, res) => {
+app.get('/api/periods', verifyToken, requireStaff, async (req, res) => {
   try {
     const periods = await ClosedPeriod.find().sort({ year: -1, month: -1 }).lean();
     res.json({ success: true, periods });
@@ -4790,7 +4873,7 @@ app.post('/api/periods/close', verifyToken, requireSuperAdmin, async (req, res) 
     const upsert = await ClosedPeriod.findOneAndUpdate(
       { year, month },
       { year, month, isOpen: false, closedBy: req.user?.name || 'system', closedAt: new Date(), notes },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
     );
     await logAudit(req, { action: 'close', entity: 'Period', entityId: `${year}-${String(month).padStart(2,'0')}`, after: { year, month }, notes });
     res.json({ success: true, period: upsert });
@@ -4810,19 +4893,6 @@ app.post('/api/periods/:id/reopen', verifyToken, requireSuperAdmin, async (req, 
     await p.save();
     await logAudit(req, { action: 'reopen', entity: 'Period', entityId: p._id, after: { year: p.year, month: p.month } });
     res.json({ success: true, period: p });
-  } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
-  }
-});
-
-// ── ROLES + PERMISSIONS read ──────────────────────────────────────────────────
-// Client uses this to hide buttons/tabs the current role can't act on, while
-// the server still enforces with requirePermission on every gated endpoint.
-app.get('/api/me/permissions', verifyToken, async (req, res) => {
-  try {
-    const role = String(req.user?.role || '').toLowerCase();
-    const perms = ROLE_PERMISSIONS[role] || [];
-    res.json({ success: true, role, permissions: perms, isWildcard: perms.includes('*') });
   } catch (err) {
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
@@ -4998,7 +5068,7 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
 
 // ── PAYMENT METHOD → ACCOUNT MAP CRUD ────────────────────────────────────────
 // GET returns the live effective map (defaults + overrides).
-app.get('/api/payment-method-map', verifyToken, async (req, res) => {
+app.get('/api/payment-method-map', verifyToken, requireStaff, async (req, res) => {
   try {
     const overrides = await PaymentMethodMap.find().lean();
     res.json({
@@ -5022,7 +5092,7 @@ app.put('/api/payment-method-map', verifyToken, requireSuperAdmin, async (req, r
     const doc = await PaymentMethodMap.findOneAndUpdate(
       { method },
       { method, accountCode, updatedBy: req.user?.name || 'system' },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
     );
     await refreshPaymentMap();
     await logAudit(req, { action: 'update', entity: 'PaymentMethodMap', entityId: method, before, after: doc });
@@ -5071,7 +5141,7 @@ app.get('/api/audit-log', verifyToken, requireSuperAdmin, async (req, res) => {
 });
 
 // Get active shift for the logged-in cashier
-app.get('/api/shifts/current', verifyToken, async (req, res) => {
+app.get('/api/shifts/current', verifyToken, requireStaff, async (req, res) => {
   try {
     const shift = await Shift.findOne({ cashierId: String(req.user._id), status: 'Open' });
     res.json({ success: true, shift });
@@ -5082,7 +5152,7 @@ app.get('/api/shifts/current', verifyToken, async (req, res) => {
 
 // --- PARTIAL DELIVERY ROUTE ---
 // Sets status to 'Partially Delivered' without triggering ERP (inventory deduction deferred to Completed)
-app.post('/api/orders/:id/partial-delivery', verifyToken, async (req, res) => {
+app.post('/api/orders/:id/partial-delivery', verifyToken, requireStaff, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
@@ -5107,7 +5177,7 @@ app.post('/api/orders/:id/partial-delivery', verifyToken, async (req, res) => {
 //   • 'full'    — collect the whole remaining goods value now; the not-yet-fulfilled
 //                 portion is held as Customer Deposits and recognized as revenue on
 //                 later rounds (no new charge then).
-app.post('/api/orders/:id/partial-fulfill', verifyToken, async (req, res) => {
+app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
@@ -5146,7 +5216,7 @@ app.post('/api/orders/:id/partial-fulfill', verifyToken, async (req, res) => {
       const upd = await Inventory.findOneAndUpdate(
         { _id: linkInv._id, stockQty: { $gte: deduct } },
         { $inc: { stockQty: -deduct } },
-        { session, new: true }
+        { session, returnDocument: 'after' }
       );
       if (!upd) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for ${linkInv.itemName}.` }); }
       totalCogs += linkInv.unitCost * deduct;
@@ -5284,9 +5354,13 @@ app.post('/api/auth/logout', requireTrustedOrigin, async (req, res) => {
   }
 });
 
-app.get('/api/users', verifyToken, async (req, res) => {
-  const users = await User.find().select('-password').sort({ userCode: 1 });
-  res.json({ success: true, users });
+app.get('/api/users', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const users = await User.find().select('-password').sort({ userCode: 1 });
+    res.json({ success: true, users });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
 });
 app.post('/api/users', verifyToken, requireSuperAdmin, validate(userCreateSchema), async (req, res) => {
   try {
@@ -5316,7 +5390,7 @@ app.put('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
       updateData.password = await bcrypt.hash(req.body.password, BCRYPT_ROUNDS);
     }
 
-    const updated = await User.findByIdAndUpdate(req.params.id, updateData, { new: true }).select('-password');
+    const updated = await User.findByIdAndUpdate(req.params.id, updateData, { returnDocument: 'after' }).select('-password');
     if (updateData.password) await revokeUserSessions(req.params.id); // force re-login after password change
     res.json({ success: true, user: updated });
   } catch (err) {
@@ -5331,7 +5405,7 @@ app.patch('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => 
     if (name) updates.name = name.trim();
     if (role) updates.role = role;
     if (password && password.trim()) updates.password = await bcrypt.hash(password, BCRYPT_ROUNDS);
-    const user = await User.findByIdAndUpdate(req.params.id, updates, { new: true }).select('-password');
+    const user = await User.findByIdAndUpdate(req.params.id, updates, { returnDocument: 'after' }).select('-password');
     if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
     if (updates.password || updates.role) await revokeUserSessions(req.params.id); // privilege change → re-login
     res.json({ success: true, user });
@@ -5341,14 +5415,18 @@ app.patch('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => 
 });
 
 app.delete('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
-  await User.findByIdAndDelete(req.params.id);
-  await revokeUserSessions(req.params.id); // kill any active sessions for the deleted account
-  res.json({ success: true });
+  try {
+    await User.findByIdAndDelete(req.params.id);
+    await revokeUserSessions(req.params.id); // kill any active sessions for the deleted account
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
 });
 
 // Staff self-service password change (any authenticated user, no superadmin required)
 // Requires current password for verification — prevents session hijacking.
-app.patch('/api/users/me/password', verifyToken, async (req, res) => {
+app.patch('/api/users/me/password', verifyToken, requireStaff, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     if (!currentPassword || !newPassword)
@@ -5417,16 +5495,20 @@ app.get('/api/shifts', verifyToken, requireSuperAdmin, async (req, res) => {
 });
 
 // --- SPOILAGE / WASTE LOGGING ---
-app.post('/api/inventory/spoilage/:id', verifyToken, async (req, res) => {
+app.post('/api/inventory/spoilage/:id', verifyToken, requireStaff, async (req, res) => {
+  // Money/stock event — the stock write, the stock-card row, and the balanced
+  // journal entry all commit together (or not at all), like the void/refund engines.
+  const session = await mongoose.startSession();
+  session.startTransaction();
   try {
     const { qty, reason, note } = req.body;
     const spoilQty = parseFloat(qty);
-    if (!spoilQty || spoilQty <= 0) return res.status(400).json({ success: false, error: 'Invalid quantity.' });
-    if (!reason) return res.status(400).json({ success: false, error: 'Reason is required.' });
+    if (!spoilQty || spoilQty <= 0) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Invalid quantity.' }); }
+    if (!reason) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Reason is required.' }); }
 
-    const item = await Inventory.findById(req.params.id);
-    if (!item) return res.status(404).json({ success: false, error: 'Item not found.' });
-    if (item.stockQty < spoilQty) return res.status(400).json({ success: false, error: 'Cannot spoil more than available stock.' });
+    const item = await Inventory.findById(req.params.id).session(session);
+    if (!item) { await session.abortTransaction(); session.endSession(); return res.status(404).json({ success: false, error: 'Item not found.' }); }
+    if (item.stockQty < spoilQty) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Cannot spoil more than available stock.' }); }
 
     const spoilageCost = spoilQty * (item.unitCost || 0);
     item.stockQty = +(item.stockQty - spoilQty).toFixed(6);
@@ -5441,11 +5523,11 @@ app.post('/api/inventory/spoilage/:id', verifyToken, async (req, res) => {
       item.expiryBatches = [];
       item.expiryDate = null;
     }
-    await item.save();
+    await item.save({ session });
 
     const spoilRef = await mkSeqRef('INV-SPOIL');
 
-    await StockCard.create({
+    await StockCard.create([{
       inventoryId: item._id,
       itemName: item.itemName,
       type: 'Spoilage',
@@ -5454,24 +5536,30 @@ app.post('/api/inventory/spoilage/:id', verifyToken, async (req, res) => {
       balanceAfter: item.stockQty,
       unitCost: item.unitCost,
       remarks: `${reason}${note ? ': ' + note : ''}`
-    });
+    }], { session });
 
     if (spoilageCost > 0.001) {
-      await JournalEntry.create({
+      const lines = [
+        { accountCode: '535000', accountName: 'Spoilage, Variance & Waste Expense', debit: spoilageCost, credit: 0 },
+        { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: spoilageCost }
+      ];
+      assertBalanced(lines, spoilRef);
+      await JournalEntry.create([{
         reference: spoilRef,
         description: `Spoilage/Waste — ${spoilQty}${item.unit} of ${item.itemName} (${reason})`,
-        lines: [
-          { accountCode: '535000', accountName: 'Spoilage, Variance & Waste Expense', debit: spoilageCost, credit: 0 },
-          { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: spoilageCost }
-        ],
+        lines,
         totalDebit: spoilageCost,
         totalCredit: spoilageCost
-      });
+      }], { session });
     }
 
+    await session.commitTransaction();
+    session.endSession();
     emitToMgr('erpUpdated');
     res.json({ success: true, item });
   } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
 });
@@ -5504,7 +5592,7 @@ app.get('/api/audit-logs', verifyToken, requireSuperAdmin, async (req, res) => {
   }
 });
 
-app.get('/api/analytics/dashboard', verifyToken, async (req, res) => {
+app.get('/api/analytics/dashboard', verifyToken, requireStaff, async (req, res) => {
   try {
     const now        = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -5615,8 +5703,34 @@ app.get('/api/analytics/dashboard', verifyToken, async (req, res) => {
     // ── Raw-material velocity (weighted ADU: 70% last-7d, 30% last-30d) ────────
     // These use small time-scoped order sets — not the full history
     const [products] = await Promise.all([
-      Product.find({}, { name: 1, productCode: 1, baseRecipe: 1, sizes: 1 }).lean(),
+      Product.find({}, { name: 1, productCode: 1, baseRecipe: 1, sizes: 1, addOns: 1, isAvailable: 1 }).lean(),
     ]);
+
+    // Low-stock filter: an inventory item is hidden from the low-stock list when it is
+    // linked ONLY to removed (isAvailable=false) products — i.e. it backs a product that
+    // was pulled from the pricing masterlist and nothing active still uses it. Items not
+    // tied to any product (standalone raw materials) are unaffected.
+    const recipeInvIds = (p) => [
+      ...(p.baseRecipe || []),
+      ...((p.sizes || []).flatMap(s => s.recipe || [])),
+      ...((p.addOns || []).flatMap(a => a.recipe || [])),
+    ].map(r => r && r.invId).filter(Boolean).map(String);
+    const collectLinks = (prods) => {
+      const names = new Set(), codes = new Set(), invIds = new Set();
+      for (const p of prods) {
+        if (p.name) names.add(p.name.toLowerCase());
+        if (p.productCode) codes.add(p.productCode);
+        for (const id of recipeInvIds(p)) invIds.add(id);
+      }
+      return { names, codes, invIds };
+    };
+    const activeLinks  = collectLinks(products.filter(p => p.isAvailable !== false));
+    const removedLinks = collectLinks(products.filter(p => p.isAvailable === false));
+    const linkedToSet = (set, item) =>
+      set.invIds.has(String(item._id)) ||
+      (item.itemCode && set.codes.has(item.itemCode)) ||
+      (item.itemName && set.names.has(item.itemName.toLowerCase()));
+    const isRemovedProductStock = (item) => linkedToSet(removedLinks, item) && !linkedToSet(activeLinks, item);
     // LOG 1:1: inventory keyed by code/name to back recipe-less products.
     const invByCodeVel = {}, invByNameVel = {};
     inventoryItems.forEach(i => { if (i.itemCode) invByCodeVel[i.itemCode] = i; if (i.itemName) invByNameVel[i.itemName] = i; });
@@ -5679,6 +5793,7 @@ app.get('/api/analytics/dashboard', verifyToken, async (req, res) => {
       .map(i => ({ ...i, dailyAvg: i.weightedAdu, daysLeft: i.weightedAdu > 0 ? Math.floor(i.currentStock / i.weightedAdu) : Infinity, weeklyNeed: Math.ceil(i.weightedAdu * 7), monthlyNeed: Math.ceil(i.weightedAdu * 30), reorderPoint: Math.ceil(i.weightedAdu * 3) }));
 
     const lowestStock = inventoryItems
+      .filter(item => !isRemovedProductStock(item)) // hide stock tied only to removed products
       .map(item => { const u = rmEntries.find(e => e.name.toLowerCase() === item.itemName.toLowerCase()); const adu = u ? u.weightedAdu : 0; return { ...item, adu, daysOfSupply: adu > 0 ? item.stockQty / adu : (item.stockQty <= 0 ? 0 : Infinity) }; })
       .filter(i => i.daysOfSupply < Infinity).sort((a, b) => a.daysOfSupply - b.daysOfSupply).slice(0, 5);
 
@@ -5704,7 +5819,7 @@ app.get('/api/analytics/dashboard', verifyToken, async (req, res) => {
 });
 
 // ── MODIFIER GROUP CRUD ──────────────────────────────────────────────────────
-app.get('/api/modifier-groups', verifyToken, async (req, res) => {
+app.get('/api/modifier-groups', verifyToken, requireStaff, async (req, res) => {
   try { res.json({ success: true, groups: await ModifierGroup.find().lean() }); }
   catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
@@ -5713,7 +5828,7 @@ app.post('/api/modifier-groups', verifyToken, requireSuperAdmin, validate(modifi
   catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
 app.put('/api/modifier-groups/:id', verifyToken, requireSuperAdmin, async (req, res) => {
-  try { const group = await ModifierGroup.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true }); emitToAll('menuUpdated'); res.json({ success: true, group }); }
+  try { const group = await ModifierGroup.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after', runValidators: true }); emitToAll('menuUpdated'); res.json({ success: true, group }); }
   catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
 app.delete('/api/modifier-groups/:id', verifyToken, requireSuperAdmin, async (req, res) => {
@@ -5739,7 +5854,7 @@ app.post('/api/combos', verifyToken, requireSuperAdmin, validate(comboSchema), a
   } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
 app.put('/api/combos/:id', verifyToken, requireSuperAdmin, async (req, res) => {
-  try { const combo = await Combo.findByIdAndUpdate(req.params.id, req.body, { new: true }); emitToAll('menuUpdated'); res.json({ success: true, combo }); }
+  try { const combo = await Combo.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' }); emitToAll('menuUpdated'); res.json({ success: true, combo }); }
   catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
 app.delete('/api/combos/:id', verifyToken, requireSuperAdmin, async (req, res) => {
@@ -5915,7 +6030,7 @@ app.get('/api/reports/purchase-order', verifyToken, requireSuperAdmin, async (re
 });
 
 // ── SETTINGS ROUTES ──────────────────────────────────────────────────────────
-app.get('/api/settings', verifyToken, async (req, res) => {
+app.get('/api/settings', verifyToken, requireStaff, async (req, res) => {
   try {
     const rows = await Settings.find().lean();
     res.json({ success: true, settings: Object.fromEntries(rows.map(s => [s.key, s.value])) });
@@ -5924,7 +6039,7 @@ app.get('/api/settings', verifyToken, async (req, res) => {
 app.patch('/api/settings/:key', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const { value } = req.body;
-    const setting = await Settings.findOneAndUpdate({ key: req.params.key }, { value }, { upsert: true, new: true });
+    const setting = await Settings.findOneAndUpdate({ key: req.params.key }, { value }, { upsert: true, returnDocument: 'after' });
     emitToAll('settingsUpdated', { key: req.params.key, value });
     res.json({ success: true, setting });
   } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
@@ -6035,6 +6150,57 @@ app.get('/api/reports/sales-summary', verifyToken, requireSuperAdmin, async (req
   } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
 
+// ── REPORT: NON-VAT PERCENTAGE TAX (3%) ──────────────────────────────────────
+// Read-only. Computes the 3% non-VAT percentage tax over a REQUIRED date range.
+// Base = net collected (gross receipts actually received) = Σ order.total, mirroring
+// the sales reports' "Completed, non-complimentary" filter (so voids & comps are
+// excluded). 410000 is booked gross-of-discount, so an explicit "less: sales
+// discounts" line is returned and the figure reconciles to cash received.
+// Aggregate-based — no in-memory full scan. No schema/journal changes (report only).
+app.get('/api/reports/percentage-tax', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) {
+      return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
+    }
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      return res.status(400).json({ success: false, error: 'Invalid date range.' });
+    }
+    endDate.setHours(23, 59, 59, 999);
+
+    const agg = await Order.aggregate([
+      { $match: { status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: startDate, $lte: endDate } } },
+      { $group: {
+          _id: null,
+          netCollected: { $sum: { $ifNull: ['$total', 0] } },
+          discounts:    { $sum: { $ifNull: ['$discount', 0] } },
+          orders:       { $sum: 1 },
+      } },
+    ]);
+    const a = agg[0] || { netCollected: 0, discounts: 0, orders: 0 };
+    const tax = computePercentageTax({ netCollected: a.netCollected, discounts: a.discounts });
+
+    res.json({
+      success: true,
+      period: { start: startDate, end: endDate },
+      orders: a.orders,
+      ...tax,
+      // Explicit, auditable breakdown — the discount subtraction is a visible line.
+      lines: [
+        { label: 'Gross sales (before discounts)', amount: tax.grossSales },
+        { label: 'Less: sales discounts',          amount: -tax.discounts },
+        { label: 'Net collected (gross receipts)',  amount: tax.netCollected },
+        { label: `Percentage tax due (${(PERCENTAGE_TAX_RATE * 100).toFixed(0)}%)`, amount: tax.taxDue },
+      ],
+    });
+  } catch (err) {
+    log.error({ err }, 'Percentage-tax report failed');
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
 // ── REFUND FLOW ───────────────────────────────────────────────────────────────
 app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req, res) => {
   const session = await mongoose.startSession();
@@ -6082,7 +6248,7 @@ app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req,
             const qtyUsed = item.quantity * baseUnitsPerSale(product, linkInv);
             if (invAction === 'Restock') {
               const restored = await Inventory.findOneAndUpdate(
-                { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, new: true }
+                { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, returnDocument: 'after' }
               );
               if (restored) {
                 totalCogs += (restored.unitCost * qtyUsed);
@@ -6118,7 +6284,7 @@ app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req,
               const restored = await Inventory.findOneAndUpdate(
                 { _id: ing.invId },
                 { $inc: { stockQty: qtyUsed } },
-                { session, new: true }
+                { session, returnDocument: 'after' }
               );
               if (!restored) continue;
               totalCogs += (restored.unitCost * qtyUsed);
@@ -6181,7 +6347,7 @@ const parseClockAt = (raw) => {
   return t;
 };
 
-app.post('/api/clock/in', verifyToken, async (req, res) => {
+app.post('/api/clock/in', verifyToken, requireStaff, async (req, res) => {
   try {
     const existing = await ClockEntry.findOne({ staffId: req.user._id.toString(), clockOut: { $exists: false } });
     if (existing) return res.status(400).json({ success: false, error: 'Already clocked in.' });
@@ -6199,7 +6365,7 @@ const completedBreakMinutes = (entry) =>
 const openBreak = (entry) => (entry.breaks || []).find(b => b.start && !b.end);
 const BREAK_CAP_MIN = 60; // staff get up to 1 hour of break per shift
 
-app.post('/api/clock/out', verifyToken, async (req, res) => {
+app.post('/api/clock/out', verifyToken, requireStaff, async (req, res) => {
   try {
     const { notes } = req.body;
     const entry = await ClockEntry.findOne({ staffId: req.user._id.toString(), clockOut: { $exists: false } });
@@ -6221,7 +6387,7 @@ app.post('/api/clock/out', verifyToken, async (req, res) => {
 });
 
 // Start a break. Blocked if not clocked in, already on break, or the 1-hour cap is used up.
-app.post('/api/clock/break/start', verifyToken, async (req, res) => {
+app.post('/api/clock/break/start', verifyToken, requireStaff, async (req, res) => {
   try {
     const entry = await ClockEntry.findOne({ staffId: req.user._id.toString(), clockOut: { $exists: false } });
     if (!entry) return res.status(400).json({ success: false, error: 'Not clocked in.' });
@@ -6236,7 +6402,7 @@ app.post('/api/clock/break/start', verifyToken, async (req, res) => {
 });
 
 // End the current break (resume work).
-app.post('/api/clock/break/end', verifyToken, async (req, res) => {
+app.post('/api/clock/break/end', verifyToken, requireStaff, async (req, res) => {
   try {
     const entry = await ClockEntry.findOne({ staffId: req.user._id.toString(), clockOut: { $exists: false } });
     if (!entry) return res.status(400).json({ success: false, error: 'Not clocked in.' });
@@ -6251,7 +6417,7 @@ app.post('/api/clock/break/end', verifyToken, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
 
-app.get('/api/clock/status', verifyToken, async (req, res) => {
+app.get('/api/clock/status', verifyToken, requireStaff, async (req, res) => {
   try {
     const entry = await ClockEntry.findOne({ staffId: req.user._id.toString(), clockOut: { $exists: false } });
     if (!entry) return res.json({ success: true, isClockedIn: false, entry: null });
@@ -6372,7 +6538,7 @@ app.post('/api/revolving-funds', verifyToken, requireSuperAdmin, async (req, res
 });
 
 // POST disburse from a fund (any staff — they need to log what they spend)
-app.post('/api/revolving-funds/:id/disburse', verifyToken, async (req, res) => {
+app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, async (req, res) => {
   try {
     const fund = await RevolvingFund.findById(req.params.id);
     if (!fund || !fund.isActive) return res.status(404).json({ success: false, error: 'Fund not found.' });
@@ -6483,7 +6649,7 @@ app.get('/api/revolving-funds/:id/transactions', verifyToken, requireSuperAdmin,
 // PATCH deactivate a fund (superadmin only)
 app.patch('/api/revolving-funds/:id/close', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const fund = await RevolvingFund.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
+    const fund = await RevolvingFund.findByIdAndUpdate(req.params.id, { isActive: false }, { returnDocument: 'after' });
     if (!fund) return res.status(404).json({ success: false, error: 'Fund not found.' });
     res.json({ success: true, fund });
   } catch (err) {
@@ -6492,10 +6658,10 @@ app.patch('/api/revolving-funds/:id/close', verifyToken, requireSuperAdmin, asyn
 });
 
 // --- DISPATCH STATUS UPDATE ---
-app.patch('/api/orders/:id/dispatch', verifyToken, async (req, res) => {
+app.patch('/api/orders/:id/dispatch', verifyToken, requireStaff, async (req, res) => {
   try {
     const { dispatchStatus } = req.body;
-    const order = await Order.findByIdAndUpdate(req.params.id, { dispatchStatus }, { new: true });
+    const order = await Order.findByIdAndUpdate(req.params.id, { dispatchStatus }, { returnDocument: 'after' });
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
     emitToOps('orderUpdated', order);
     res.json({ success: true, order });
@@ -6524,10 +6690,19 @@ app.use((err, req, res, next) => {
 });
 
 // --- SERVER START ---
+// Under test (supertest) the app is imported and driven in-process — we must NOT bind
+// a port or register process-killing signal handlers that would interfere with vitest.
+const IS_TEST = process.env.NODE_ENV === 'test';
 const PORT = process.env.PORT || 5002;
-server.listen(PORT, () => {
-  log.info({ port: PORT }, 'API server running');
-});
+if (!IS_TEST) {
+  server.listen(PORT, () => {
+    log.info({ port: PORT }, 'API server running');
+  });
+}
+// Exported for in-process integration tests (supertest + socket.io-client). Importing
+// the module still connects to MONGO_URI; tests point that at an in-memory MongoDB.
+// `server` (the http.Server) is exported so socket tests can listen on an ephemeral port.
+export { app, server, runStartupTasks };
 
 const shutdown = async (signal, exitCode = 0) => {
   log.info({ signal }, 'Shutting down gracefully');
@@ -6538,8 +6713,10 @@ const shutdown = async (signal, exitCode = 0) => {
   });
   setTimeout(() => { log.error('Forced shutdown after timeout'); process.exit(1); }, 10000);
 };
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+if (!IS_TEST) {
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}
 // A process that has hit an uncaught exception is in an undefined state — log,
 // drain in-flight traffic via the normal shutdown path, then let the supervisor
 // (Railway / pm2 / Docker restart policy) start a fresh, clean process.
@@ -6549,5 +6726,7 @@ const fatalExit = (kind) => (err) => {
   // Best-effort graceful drain; force-exit guard inside shutdown() caps the wait.
   try { shutdown(kind, 1); } catch { process.exit(1); }
 };
-process.on('uncaughtException', fatalExit('uncaughtException'));
-process.on('unhandledRejection', fatalExit('unhandledRejection'));
+if (!IS_TEST) {
+  process.on('uncaughtException', fatalExit('uncaughtException'));
+  process.on('unhandledRejection', fatalExit('unhandledRejection'));
+}

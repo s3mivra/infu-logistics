@@ -22,9 +22,10 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       - run: node --check server.js
+      - run: npm run lint
       - run: npm test
-      - name: Security audit (high+critical only, non-blocking on advisories)
-        run: npm audit --audit-level=high --omit=dev || echo "Audit found high/critical findings — review."
+      - name: Security audit (fails the build on high/critical)
+        run: npm audit --audit-level=high --omit=dev
 
   client:
     name: Client — build
@@ -40,6 +41,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
       - run: npm ci
+      - run: npm run lint
       - run: npm run build
-      - name: Security audit (high+critical only, non-blocking on advisories)
-        run: npm audit --audit-level=high --omit=dev || echo "Audit found high/critical findings — review."
+      - name: Security audit (fails the build on high/critical)
+        run: npm audit --audit-level=high --omit=dev

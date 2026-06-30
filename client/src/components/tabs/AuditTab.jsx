@@ -124,7 +124,7 @@ export default function AuditTab({ ctx }) {
                 <h2 className="text-xl font-black text-white tracking-tight flex items-center gap-2">
                   <ShieldCheck size={20} className="text-brand" /> Audit Report
                 </h2>
-                <p className="text-white/30 text-xs font-medium mt-0.5">Exception log — cancelled orders, complimentaries, and discounts</p>
+                <p className="text-white/30 text-xs font-medium mt-0.5">Exception log - cancelled orders, complimentaries, and discounts</p>
               </div>
               <div className="flex gap-1.5 flex-wrap">
                 {[['today','Today'],['7d','7 Days'],['30d','30 Days'],['all','All Time']].map(([val, lbl]) => (
@@ -189,12 +189,12 @@ export default function AuditTab({ ctx }) {
                           // original cashier (which on a client-portal order is the
                           // client themselves).
                           const actor = o.status === 'Voided'
-                            ? (o.voidedBy || o.cashier || '—')
-                            : (o.cancelledBy || o.cashier || '—');
+                            ? (o.voidedBy || o.cashier || '-')
+                            : (o.cancelledBy || o.cashier || '-');
                           return (
                           <tr key={o._id} className="border-b border-white/5 last:border-0 hover:bg-white/3 transition">
                             <td className="px-5 py-2.5 text-xs text-white/40 font-mono">{fmtDate(o.createdAt)}</td>
-                            <td className="px-5 py-2.5 text-xs text-white/70 font-bold">{o.customerName || '—'}</td>
+                            <td className="px-5 py-2.5 text-xs text-white/70 font-bold">{o.customerName || '-'}</td>
                             <td className="px-5 py-2.5 text-xs text-white/70 font-bold">{actor}</td>
                             <td className="px-5 py-2.5 text-xs text-right font-mono text-red-400">₱{(o.subtotal || 0).toFixed(2)}</td>
                             <td className="px-5 py-2.5">
@@ -239,9 +239,9 @@ export default function AuditTab({ ctx }) {
                         {pagedComps.map(o => (
                           <tr key={o._id} className="border-b border-white/5 last:border-0 hover:bg-white/3 transition">
                             <td className="px-5 py-2.5 text-xs text-white/40 font-mono">{fmtDate(o.createdAt)}</td>
-                            <td className="px-5 py-2.5 text-xs text-white/70 font-bold">{o.customerName || '—'}</td>
-                            <td className="px-5 py-2.5 text-xs text-yellow-400/80">{COMP_REASON_LABELS[o.reasonType] || o.reasonType || o.reasonNote || '—'}</td>
-                            <td className="px-5 py-2.5 text-xs text-white/40">{o.cashier || '—'}</td>
+                            <td className="px-5 py-2.5 text-xs text-white/70 font-bold">{o.customerName || '-'}</td>
+                            <td className="px-5 py-2.5 text-xs text-yellow-400/80">{COMP_REASON_LABELS[o.reasonType] || o.reasonType || o.reasonNote || '-'}</td>
+                            <td className="px-5 py-2.5 text-xs text-white/40">{o.cashier || '-'}</td>
                             <td className="px-5 py-2.5 text-xs text-right font-mono text-yellow-400">₱{(o.subtotal || 0).toFixed(2)}</td>
                           </tr>
                         ))}
@@ -282,9 +282,9 @@ export default function AuditTab({ ctx }) {
                         {pagedDiscounted.map(o => (
                           <tr key={o._id} className="border-b border-white/5 last:border-0 hover:bg-white/3 transition">
                             <td className="px-5 py-2.5 text-xs text-white/40 font-mono">{fmtDate(o.createdAt)}</td>
-                            <td className="px-5 py-2.5 text-xs text-white/70 font-bold">{o.customerName || '—'}</td>
+                            <td className="px-5 py-2.5 text-xs text-white/70 font-bold">{o.customerName || '-'}</td>
                             <td className="px-5 py-2.5 text-xs text-brand/80 font-bold">{o.discountType || 'Promo'}</td>
-                            <td className="px-5 py-2.5 text-xs text-white/40">{o.discountBy || o.cashier || '—'}</td>
+                            <td className="px-5 py-2.5 text-xs text-white/40">{o.discountBy || o.cashier || '-'}</td>
                             <td className="px-5 py-2.5 text-xs text-right font-mono text-brand">-₱{(o.discount || 0).toFixed(2)}</td>
                             <td className="px-5 py-2.5 text-xs text-right font-mono text-white/70">₱{(o.total || 0).toFixed(2)}</td>
                           </tr>
@@ -366,7 +366,7 @@ export default function AuditTab({ ctx }) {
                 </button>
               </div>
               {auditLogs.length === 0 ? (
-                <p className="text-white/20 text-sm p-6 text-center font-bold">Click Load to fetch system activity — price changes, 86 toggles, password changes, AP payments.</p>
+                <p className="text-white/20 text-sm p-6 text-center font-bold">Click Load to fetch system activity - price changes, 86 toggles, password changes, AP payments.</p>
               ) : (
                 <>
                   <div className="overflow-x-auto">
@@ -408,7 +408,7 @@ export default function AuditTab({ ctx }) {
                               </td>
                               <td className={`px-5 py-2.5 font-black uppercase tracking-wider text-[10px] ${actionColor}`}>{log.action.replace(/_/g,' ')}</td>
                               <td className="px-5 py-2.5 font-mono text-white/60">{log.targetReference}</td>
-                              <td className="px-5 py-2.5 text-white/70 font-bold">{log.userId || '—'}</td>
+                              <td className="px-5 py-2.5 text-white/70 font-bold">{log.userId || '-'}</td>
                               <td className="px-5 py-2.5 text-white/40 truncate max-w-[180px]">{detail}</td>
                             </tr>
                           );

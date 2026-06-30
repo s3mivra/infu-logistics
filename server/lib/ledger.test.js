@@ -129,3 +129,12 @@ describe('integration: a typical Non-VAT cash sale journal entry', () => {
     expect(() => assertBalanced(lines, 'cash-sale-test')).not.toThrow();
   });
 });
+
+describe('ledger.assertBalanced — throw path (coverage)', () => {
+  it('throws a descriptive error when debits != credits', () => {
+    expect(() => assertBalanced([{ debit: 10 }, { credit: 5 }], 'sale')).toThrow(/UNBALANCED/);
+  });
+  it('does not throw within tolerance', () => {
+    expect(() => assertBalanced([{ debit: 10 }, { credit: 10.005 }])).not.toThrow();
+  });
+});

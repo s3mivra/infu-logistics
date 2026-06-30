@@ -212,7 +212,7 @@ export default function PricingTab({ ctx }) {
                         )}
                       </td>
 
-                      {/* Recipe Cost — inline editable */}
+                      {/* Recipe Cost - inline editable */}
                       <td className={`py-2 text-right font-mono text-xs ${row.name !== '' ? 'pt-4' : ''}`}>
                         {editCostId === row.id ? (
                           <div className="flex justify-end items-center gap-1">
@@ -255,11 +255,11 @@ export default function PricingTab({ ctx }) {
                             {margin.toFixed(1)}%
                           </span>
                         ) : (
-                          <span className="text-gray-700 text-[10px]">—</span>
+                          <span className="text-gray-700 text-[10px]">-</span>
                         )}
                       </td>
 
-                      {/* Removed toggle (superadmin only, base-product rows only). Permanently hides from menu — reports keep showing it while stock remains. */}
+                      {/* Removed toggle (superadmin only, base-product rows only). Permanently hides from menu - reports keep showing it while stock remains. */}
                       {isSuperAdmin && (
                         <td className={`py-2 text-center ${row.name !== '' ? 'pt-4' : ''}`}>
                           {row.isBase ? (
@@ -277,7 +277,7 @@ export default function PricingTab({ ctx }) {
                           ) : <span />}
                         </td>
                       )}
-                      {/* OOS toggle. Stays on menu (with a badge) and in all reports — for temporary stockouts. */}
+                      {/* OOS toggle. Stays on menu (with a badge) and in all reports - for temporary stockouts. */}
                       {isSuperAdmin && (
                         <td className={`py-2 text-center ${row.name !== '' ? 'pt-4' : ''}`}>
                           {row.isBase ? (

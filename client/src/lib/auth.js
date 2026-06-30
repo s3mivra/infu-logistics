@@ -16,7 +16,7 @@ let accessToken = null;
 try {
   localStorage.removeItem('semivra_token');
   localStorage.removeItem('kasa_token');
-} catch { /* SSR / private mode — ignore */ }
+} catch { /* SSR / private mode - ignore */ }
 
 export const getToken = () => accessToken;
 export const setToken = (t) => { accessToken = t || null; };

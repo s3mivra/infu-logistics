@@ -108,7 +108,7 @@ export function getQueuedOrders() {
 export function queueOrder(payload, id) {
   const queue = getQueuedOrders();
   const entryId = id || `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  if (queue.some(e => e.id === entryId)) return queue.length; // already queued — don't double
+  if (queue.some(e => e.id === entryId)) return queue.length; // already queued - don't double
   queue.push({ id: entryId, payload, queuedAt: Date.now() });
   localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
   return queue.length;

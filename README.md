@@ -53,7 +53,7 @@ Transformed the basic POS into a fully automated business management suite.
 
 - **Mobile UX Enhancements**
   - Screen Wake Lock API (keeps screen active)
-  - Web Push Notifications (background alerts)
+  - In-page "order ready" notification (fires while the customer tab is open; not server push)
 
 ---
 
