@@ -240,7 +240,7 @@ const REFRESH_COOKIE = 'semivra_rt';
 const signAccessToken = (user) => jwt.sign(
   // aud:'staff' lets staff routes reject client-audience tokens structurally
   // (see verifyToken / lib/authz.js), independent of the role string.
-  { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, aud: 'staff' },
+  { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, tenantId: user.tenantId || null, aud: 'staff' },
   process.env.JWT_SECRET,
   { expiresIn: ACCESS_TTL }
 );
@@ -465,14 +465,15 @@ const runStartupTasks = async () => {
         log.info(`✅ Default tenant seeded: ${defaultTenant._id}`);
       }
       const tFilter = { $or: [{ tenantId: { $exists: false } }, { tenantId: null }] };
-      const [tO, tP, tI, tC] = await Promise.all([
+      const [tO, tP, tI, tC, tU] = await Promise.all([
         Order.updateMany(tFilter, { $set: { tenantId: defaultTenant._id } }),
         Product.updateMany(tFilter, { $set: { tenantId: defaultTenant._id } }),
         Inventory.updateMany(tFilter, { $set: { tenantId: defaultTenant._id } }),
         Category.updateMany(tFilter, { $set: { tenantId: defaultTenant._id } }),
+        User.updateMany(tFilter, { $set: { tenantId: defaultTenant._id } }),
       ]);
-      const tStamped = (tO.modifiedCount || 0) + (tP.modifiedCount || 0) + (tI.modifiedCount || 0) + (tC.modifiedCount || 0);
-      if (tStamped > 0) log.info(`✅ Backfilled tenantId on ${tStamped} doc(s) — Orders:${tO.modifiedCount} Products:${tP.modifiedCount} Inventory:${tI.modifiedCount} Categories:${tC.modifiedCount}`);
+      const tStamped = (tO.modifiedCount || 0) + (tP.modifiedCount || 0) + (tI.modifiedCount || 0) + (tC.modifiedCount || 0) + (tU.modifiedCount || 0);
+      if (tStamped > 0) log.info(`✅ Backfilled tenantId on ${tStamped} doc(s) — Orders:${tO.modifiedCount} Products:${tP.modifiedCount} Inventory:${tI.modifiedCount} Categories:${tC.modifiedCount} Users:${tU.modifiedCount}`);
     } catch (err) {
       log.error({ err }, 'Tenant seed/backfill error');
     }
@@ -1364,7 +1365,10 @@ const UserSchema = new mongoose.Schema({
   userCode: { type: String, index: true },
   name: { type: String, required: true, index: true },
   password: { type: String, required: true },
-  role: { type: String, default: 'Staff' }
+  role: { type: String, default: 'Staff' },
+  // Multi-tenancy (Phase 2a): which tenant this staff user belongs to. Carried into
+  // the access token so Phase 2b can scope every query by the caller's tenant.
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null }
 }, { timestamps: true });
 const User = mongoose.model('User', UserSchema);
 
@@ -5467,7 +5471,7 @@ app.post('/api/users', verifyToken, requireSuperAdmin, validate(userCreateSchema
     // THE FIX: Add the role from the request body!
     const role = req.body.role || 'Staff'; // Default to cashier if none provided
     
-    const newUser = await User.create({ name: req.body.name, password: hashedPassword, userCode, role });
+    const newUser = await User.create({ name: req.body.name, password: hashedPassword, userCode, role, tenantId: req.user?.tenantId || null });
     res.json({ success: true, user: { _id: newUser._id, name: newUser.name, userCode: newUser.userCode, role: newUser.role } });
   } catch (err) {
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });

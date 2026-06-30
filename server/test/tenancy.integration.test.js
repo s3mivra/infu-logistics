@@ -77,3 +77,32 @@ describe('/api/tenants CRUD (superadmin only)', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('Phase 2a — tenant identity in the access token', () => {
+  it('staff access token carries the user tenantId after backfill', async () => {
+    const Tenant = mongoose.model('Tenant');
+    const def = await Tenant.findOne({ slug: 'default' });
+    // Backfill stamps existing users (incl. TenantBoss) with the default tenant.
+    const { runStartupTasks } = await import('../server.js');
+    await runStartupTasks();
+    const res = await request(app).post('/api/users/login').send({ name: 'TenantBoss', password: 'pw' });
+    expect(res.status).toBe(200);
+    const payload = JSON.parse(Buffer.from(res.body.token.split('.')[1], 'base64').toString());
+    expect(String(payload.tenantId)).toBe(String(def._id));
+  });
+
+  it('a newly created user inherits the creator tenant', async () => {
+    const Tenant = mongoose.model('Tenant');
+    const User = mongoose.model('User');
+    const def = await Tenant.findOne({ slug: 'default' });
+    const { runStartupTasks } = await import('../server.js');
+    await runStartupTasks(); // ensure the creator (TenantBoss) is stamped
+    // Re-login to get a token that carries the now-backfilled tenantId.
+    const fresh = (await request(app).post('/api/users/login').send({ name: 'TenantBoss', password: 'pw' })).body.token;
+    const res = await request(app).post('/api/users').set(auth(fresh))
+      .send({ name: 'InheritUser', password: 'secret1', role: 'cashier' });
+    expect(res.status).toBe(200);
+    const created = await User.findOne({ name: 'InheritUser' });
+    expect(String(created.tenantId)).toBe(String(def._id));
+  });
+});
