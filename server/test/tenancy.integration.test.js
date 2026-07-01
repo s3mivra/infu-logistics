@@ -106,3 +106,35 @@ describe('Phase 2a — tenant identity in the access token', () => {
     expect(String(created.tenantId)).toBe(String(def._id));
   });
 });
+
+describe('Phase 2b — per-tenant read scoping (orders), fallback-safe', () => {
+  it('each tenant sees only its own orders; a no-tenant token sees all', async () => {
+    const Tenant = mongoose.model('Tenant');
+    const Order = mongoose.model('Order');
+    const User = mongoose.model('User');
+    const def = await Tenant.findOne({ slug: 'default' });
+    const tB = await Tenant.create({ name: 'Scope Tenant B', slug: 'scope-b', businessType: 'fb' });
+
+    await Order.create({ orderNumber: 'ORD-SA-1', businessType: 'fb', tenantId: def._id, status: 'Preparing' });
+    await Order.create({ orderNumber: 'ORD-SB-1', businessType: 'fb', tenantId: tB._id, status: 'Preparing' });
+
+    await makeUser({ name: 'ScopeA', role: 'cashier', password: 'pw' });
+    await User.updateOne({ name: 'ScopeA' }, { $set: { tenantId: def._id } });
+    const tokA = (await request(app).post('/api/users/login').send({ name: 'ScopeA', password: 'pw' })).body.token;
+
+    await makeUser({ name: 'ScopeB', role: 'cashier', password: 'pw' });
+    await User.updateOne({ name: 'ScopeB' }, { $set: { tenantId: tB._id } });
+    const tokB = (await request(app).post('/api/users/login').send({ name: 'ScopeB', password: 'pw' })).body.token;
+
+    const aNums = (await request(app).get('/api/orders').set(auth(tokA))).body.orders.map(o => o.orderNumber);
+    const bNums = (await request(app).get('/api/orders').set(auth(tokB))).body.orders.map(o => o.orderNumber);
+    expect(aNums).toContain('ORD-SA-1');  expect(aNums).not.toContain('ORD-SB-1');
+    expect(bNums).toContain('ORD-SB-1');  expect(bNums).not.toContain('ORD-SA-1');
+
+    // Fallback: a freshly-made user with NO tenantId (legacy token) is unscoped -> sees all.
+    await makeUser({ name: 'LegacyNoTenant', role: 'cashier', password: 'pw' });
+    const tokL = (await request(app).post('/api/users/login').send({ name: 'LegacyNoTenant', password: 'pw' })).body.token;
+    const lNums = (await request(app).get('/api/orders').set(auth(tokL))).body.orders.map(o => o.orderNumber);
+    expect(lNums).toContain('ORD-SA-1');  expect(lNums).toContain('ORD-SB-1');
+  });
+});

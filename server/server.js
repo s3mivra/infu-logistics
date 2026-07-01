@@ -210,6 +210,13 @@ function baseUnitsPerSale(product, invItem) {
 // and ReDoS (catastrophic backtracking) when matching names case-insensitively.
 const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// Multi-tenancy (Phase 2b) — per-tenant read scoping with a SAFE FALLBACK.
+// Returns { tenantId } only when the caller's token actually carries one; otherwise
+// returns {} so unauthenticated / QR / legacy (pre-tenant) tokens are unaffected and
+// nothing breaks. Because all current data + staff live on the default tenant, this
+// is a no-op for single-tenant deployments and only isolates once >1 tenant exists.
+const tenantScope = (req) => (req.user && req.user.tenantId ? { tenantId: req.user.tenantId } : {});
+
 // bcrypt work factor — 12 rounds (OWASP-recommended minimum for 2025+).
 const BCRYPT_ROUNDS = 12;
 
@@ -2127,7 +2134,7 @@ app.get('/api/orders', verifyToken, requireStaff, async (req, res) => {
     const { page, limit, search } = req.query;
     // Tenancy filter — businessType: undefined still matches via $in so that any
     // unbackfilled docs (shouldn't exist after startup migration) still show up.
-    const baseFilter = { isArchived: false, isParked: { $ne: true }, businessType: BUSINESS_TYPE };
+    const baseFilter = { isArchived: false, isParked: { $ne: true }, businessType: BUSINESS_TYPE, ...tenantScope(req) };
     if (search && search.trim()) {
       const rx = { $regex: escapeRegex(search.trim()), $options: 'i' };
       baseFilter.$or = [{ customerName: rx }, { orderNumber: rx }, { table: rx }];
@@ -3200,6 +3207,7 @@ app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   // Tenancy: stamp businessType on the filter so each instance only sees its own.
   // Escape the user-supplied search string to neutralise ReDoS / regex injection.
   const filter = search ? { itemName: { $regex: escapeRegex(search), $options: 'i' }, businessType: BUSINESS_TYPE } : { businessType: BUSINESS_TYPE };
+  Object.assign(filter, tenantScope(req)); // per-tenant scoping (no-op when token has no tenantId)
   if (page) {
     const pageNum = Math.max(1, parseInt(page) || 1);
     const pageSize = Math.min(100, parseInt(lim) || 50);
