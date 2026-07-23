@@ -124,3 +124,49 @@ describe('inventory import — update existing item path', () => {
     expect(gainRes.body.summary.increased).toBe(1);
   });
 });
+
+// Regression: a log/1:1 product (no recipe — the product IS the stocked good)
+// must be UNAVAILABLE when its linked inventory is missing entirely or has
+// zero/insufficient stock, never default to "available" for a missing link.
+describe('stockAvailable — log 1:1 product with no linked inventory', () => {
+  it('a product whose linked inventory item does not exist is unavailable, not available', async () => {
+    const Category = mongoose.model('Category');
+    const Product = mongoose.model('Product');
+    await Category.create({ name: 'NoLinkCat', department: 'Kitchen' });
+    // No matching Inventory doc exists for this productCode/name at all.
+    await Product.create({ name: 'Orphan 1:1 Good', productCode: 'ORPHAN-1', category: 'NoLinkCat', basePrice: 50 });
+
+    const res = await request(app).get('/api/products');
+    const p = res.body.products.find(x => x.productCode === 'ORPHAN-1');
+    expect(p).toBeTruthy();
+    expect(p.stockAvailable).toBe(false);
+  });
+
+  it('a product whose linked inventory has zero stock is unavailable', async () => {
+    const Category = mongoose.model('Category');
+    const Product = mongoose.model('Product');
+    const Inventory = mongoose.model('Inventory');
+    await Category.create({ name: 'ZeroStockCat', department: 'Kitchen' });
+    await Inventory.create({ itemCode: 'ZS-1', itemName: 'Zero Stock Good', stockQty: 0, unit: 'pcs', unitCost: 5, displayUnit: 'pcs', unitMultiplier: 1 });
+    await Product.create({ name: 'Zero Stock Good', productCode: 'ZS-1', category: 'ZeroStockCat', basePrice: 50 });
+
+    const res = await request(app).get('/api/products');
+    const p = res.body.products.find(x => x.productCode === 'ZS-1');
+    expect(p).toBeTruthy();
+    expect(p.stockAvailable).toBe(false);
+  });
+
+  it('a product with sufficient linked stock is available', async () => {
+    const Category = mongoose.model('Category');
+    const Product = mongoose.model('Product');
+    const Inventory = mongoose.model('Inventory');
+    await Category.create({ name: 'StockedCat', department: 'Kitchen' });
+    await Inventory.create({ itemCode: 'OK-1', itemName: 'In Stock Good', stockQty: 50, unit: 'pcs', unitCost: 5, displayUnit: 'pcs', unitMultiplier: 1 });
+    await Product.create({ name: 'In Stock Good', productCode: 'OK-1', category: 'StockedCat', basePrice: 50 });
+
+    const res = await request(app).get('/api/products');
+    const p = res.body.products.find(x => x.productCode === 'OK-1');
+    expect(p).toBeTruthy();
+    expect(p.stockAvailable).toBe(true);
+  });
+});

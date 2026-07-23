@@ -303,9 +303,11 @@ app.get('/api/products', async (req, res) => {
           return inv && inv.stockQty > 0 && inv.stockQty >= need;
         });
       } else {
-        // 1:1 logistics good: available when the linked stock covers one pack.
+        // 1:1 logistics good: the product IS the stocked good, so with no recipe
+        // to fall back on, a missing OR zero/insufficient linked item must block
+        // the product — never default to "available" just because nothing matched.
         const inv = invByCode[p.productCode] || invByName[p.name];
-        p.stockAvailable = inv ? inv.stockQty >= baseUnitsPerSale(p, inv) : true;
+        p.stockAvailable = !!inv && inv.stockQty >= baseUnitsPerSale(p, inv);
       }
     });
 

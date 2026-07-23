@@ -24,23 +24,36 @@ const playCustomerDing = () => {
   }
 };
 
-const MenuItemCard = memo(({ product, onAdd }) => (
+const MenuItemCard = memo(({ product, onAdd }) => {
+  // Out of stock (missing/zero recipe ingredient) — shown, not hidden, but
+  // disabled with a "Not available" badge instead of being clickable.
+  const outOfStock = product.stockAvailable === false;
+  return (
   <div
-    onClick={() => onAdd(product)}
-    className="bg-sidebar-bg rounded-2xl overflow-hidden border border-white/5 hover:border-brand/30 cursor-pointer active:scale-[0.97] transition-all duration-150 group"
+    onClick={() => { if (!outOfStock) onAdd(product); }}
+    aria-disabled={outOfStock}
+    className={`bg-sidebar-bg rounded-2xl overflow-hidden border transition-all duration-150 group ${
+      outOfStock ? 'border-white/5 opacity-50 cursor-not-allowed' : 'border-white/5 hover:border-brand/30 cursor-pointer active:scale-[0.97]'
+    }`}
   >
     <div className="aspect-[4/3] relative overflow-hidden bg-black/30 flex items-center justify-center p-2">
       {product.image
         ? <img src={product.image} alt={product.name} loading="lazy" className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500 drop-shadow-md" />
         : <div className="w-full h-full flex items-center justify-center"><Coffee size={32} className="text-white/10" /></div>
       }
-      <button
-        onClick={e => { e.stopPropagation(); onAdd(product); }}
-        className="absolute bottom-2 right-2 w-9 h-9 bg-brand rounded-xl flex items-center justify-center shadow-lg shadow-brand/40 hover:bg-brand-dark transition active:scale-90"
-        aria-label={`Add ${product.name}`}
-      >
-        <Plus size={18} className="text-white" strokeWidth={2.5} />
-      </button>
+      {outOfStock ? (
+        <span className="absolute top-2 left-2 text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg bg-red-900/80 text-red-300 border border-red-700/40">
+          Not available
+        </span>
+      ) : (
+        <button
+          onClick={e => { e.stopPropagation(); onAdd(product); }}
+          className="absolute bottom-2 right-2 w-9 h-9 bg-brand rounded-xl flex items-center justify-center shadow-lg shadow-brand/40 hover:bg-brand-dark transition active:scale-90"
+          aria-label={`Add ${product.name}`}
+        >
+          <Plus size={18} className="text-white" strokeWidth={2.5} />
+        </button>
+      )}
     </div>
     <div className="p-3">
       <h3 className="font-bold text-white text-sm leading-tight truncate">{product.name}</h3>
@@ -51,13 +64,16 @@ const MenuItemCard = memo(({ product, onAdd }) => (
       </p>
     </div>
   </div>
-));
+  );
+});
 MenuItemCard.displayName = 'MenuItemCard';
 
-// A product is shown to customers only when both flags are satisfied:
-//  • isAvailable !== false  — staff haven't manually 86'd it
-//  • stockAvailable !== false — all recipe ingredients are in stock
-const isProductVisible = (p) => p.isAvailable !== false && p.stockAvailable !== false;
+// A product is only HIDDEN when staff manually removed it from the menu
+// (isAvailable === false). A stock-driven unavailability (stockAvailable ===
+// false — missing/zero recipe ingredient) still shows the card, just disabled
+// with a "Not available" badge (see MenuItemCard), so customers see it exists
+// but can't order it right now.
+const isProductVisible = (p) => p.isAvailable !== false;
 
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Kasa Lokal').toUpperCase();
 
@@ -357,6 +373,7 @@ export default function CustomerMenu() {
   };
 
   const handleProductClick = (product) => {
+    if (product.stockAvailable === false) return; // out of stock — defense in depth alongside the card's own guard
     setSelectedAddOns([]); // Reset add-ons on new product click
     if ((product.sizes && product.sizes.length > 0) || (product.addOns && product.addOns.length > 0)) {
       setSelectedProduct(product);
