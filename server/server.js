@@ -401,6 +401,9 @@ app.get('/health', (req, res) => {
   res.status(healthy ? 200 : 503).json({
     status: healthy ? 'ok' : 'degraded',
     db: states[dbState] || 'unknown',
+    // Exposed so the client can detect a build/server BUSINESS_TYPE mismatch
+    // (the #1 mis-deployment: fb client pointed at a log server or vice-versa).
+    businessType: BUSINESS_TYPE,
     uptime: Math.round(process.uptime()),
     timestamp: new Date().toISOString()
   });

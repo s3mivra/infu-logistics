@@ -46,7 +46,7 @@ afterAll(async () => { await ctx.stop(); });
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('public + health', () => {
-  it('GET /health', async () => { const r = await req('get', '/health'); expect([200, 503]).toContain(r.status); });
+  it('GET /health', async () => { const r = await req('get', '/health'); expect([200, 503]).toContain(r.status); expect(r.body.businessType).toBe('log'); });
   it('GET /api/products (public)', async () => ran(await req('get', '/api/products')));
   it('GET /api/categories (public)', async () => ran(await req('get', '/api/categories')));
   it('GET /api/combos (public)', async () => ran(await req('get', '/api/combos')));
