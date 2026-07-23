@@ -2,16 +2,23 @@
 // The PO feature is a pure tracking record (no inventory/ledger posting), so these
 // assert the lifecycle, status transitions, reconciliation math, and guards.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 
-let app, stop, superToken, cashierToken;
+let app, stop, superToken, managerToken, cashierToken;
 
 beforeAll(async () => {
   ({ app, stop } = await bootApp({ businessType: 'log', jwtSecret: 'po-test-secret-0123456789' }));
   await makeUser({ name: 'PoBoss', role: 'superadmin', password: 'pw' });
-  await makeUser({ name: 'PoCashier', role: 'cashier', password: 'pw' });
+  await makeUser({ name: 'PoManager', role: 'manager', password: 'pw' });   // procurement.view + manage (not delete)
+  await makeUser({ name: 'PoCashier', role: 'cashier', password: 'pw' });   // procurement.view only
+  // The multi-tenancy Phase-1 boot backfill races with makeUser in the harness,
+  // leaving test users with inconsistent tenantIds. Normalize to a single shared
+  // tenant BEFORE login so tokens carry a uniform scope (mirrors single-tenant prod).
+  await mongoose.model('User').updateMany({}, { $set: { tenantId: null } });
   superToken = await loginStaff(app, 'PoBoss', 'pw');
+  managerToken = await loginStaff(app, 'PoManager', 'pw');
   cashierToken = await loginStaff(app, 'PoCashier', 'pw');
 }, 120000);
 
@@ -38,7 +45,7 @@ describe('purchase order creation', () => {
   });
 
   it('creates a draft PO with an auto PO number, Ordered status, and est total', async () => {
-    const res = await request(app).post('/api/purchase-orders').set(auth(cashierToken)).send(draftBody);
+    const res = await request(app).post('/api/purchase-orders').set(auth(managerToken)).send(draftBody);
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
     const po = res.body.purchaseOrder;
@@ -48,12 +55,22 @@ describe('purchase order creation', () => {
     expect(po.estTotal).toBe(4100);
     expect(po.lines).toHaveLength(2);
     expect(po.lines[0].receivedQty).toBeNull();
-    expect(po.createdBy).toBe('PoCashier');
+    expect(po.createdBy).toBe('PoManager');
   });
 
   it('requires auth', async () => {
     const res = await request(app).post('/api/purchase-orders').send(draftBody);
     expect(res.status).toBe(401);
+  });
+
+  it('a view-only role (cashier) cannot create a PO (needs procurement.manage)', async () => {
+    const res = await request(app).post('/api/purchase-orders').set(auth(cashierToken)).send(draftBody);
+    expect(res.status).toBe(403);
+  });
+
+  it('a view-only role can still list POs (procurement.view)', async () => {
+    const res = await request(app).get('/api/purchase-orders').set(auth(cashierToken));
+    expect(res.status).toBe(200);
   });
 });
 
@@ -146,9 +163,46 @@ describe('listing & deletion guards', () => {
     expect(del2.status).toBe(409);
   });
 
-  it('non-superadmin cannot delete', async () => {
-    const draft = await request(app).post('/api/purchase-orders').set(auth(cashierToken)).send(draftBody);
-    const del = await request(app).delete(`/api/purchase-orders/${draft.body.purchaseOrder._id}`).set(auth(cashierToken));
+  it('a manager (manage but not delete) cannot delete a PO', async () => {
+    const draft = await request(app).post('/api/purchase-orders').set(auth(managerToken)).send(draftBody);
+    expect(draft.status).toBe(201); // manager CAN create
+    const del = await request(app).delete(`/api/purchase-orders/${draft.body.purchaseOrder._id}`).set(auth(managerToken));
+    expect(del.status).toBe(403);   // ...but NOT delete (needs procurement.delete)
+  });
+});
+
+describe('supplier CRUD + permission gating', () => {
+  let supplierId;
+  it('manager can create a supplier', async () => {
+    const res = await request(app).post('/api/suppliers').set(auth(managerToken))
+      .send({ name: 'Best Beans Co', contactPerson: 'Jo', phone: '0917', email: 'jo@beans.test', address: 'Cebu' });
+    expect(res.status).toBe(201);
+    expect(res.body.supplier.supplierCode).toMatch(/^SUP-\d{4}-\d{6}$/);
+    supplierId = res.body.supplier._id;
+  });
+
+  it('requires a name', async () => {
+    const res = await request(app).post('/api/suppliers').set(auth(managerToken)).send({ name: '  ' });
+    expect(res.status).toBe(400);
+  });
+
+  it('view-only cashier cannot create a supplier but can list', async () => {
+    const create = await request(app).post('/api/suppliers').set(auth(cashierToken)).send({ name: 'Nope' });
+    expect(create.status).toBe(403);
+    const list = await request(app).get('/api/suppliers').set(auth(cashierToken));
+    expect(list.status).toBe(200);
+  });
+
+  it('manager can edit; only delete-capable roles can delete', async () => {
+    // Self-contained: create its own supplier so it never races other tests.
+    const created = await request(app).post('/api/suppliers').set(auth(managerToken)).send({ name: 'Editable Supplier' });
+    const id = created.body.supplier._id;
+    const edit = await request(app).patch(`/api/suppliers/${id}`).set(auth(managerToken)).send({ phone: '0999' });
+    expect(edit.status).toBe(200);
+    expect(edit.body.supplier.phone).toBe('0999');
+    const del = await request(app).delete(`/api/suppliers/${id}`).set(auth(managerToken));
     expect(del.status).toBe(403);
+    const delOk = await request(app).delete(`/api/suppliers/${id}`).set(auth(superToken));
+    expect(delOk.status).toBe(200);
   });
 });

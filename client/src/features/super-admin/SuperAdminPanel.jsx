@@ -164,7 +164,7 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
 // Main component
 // ---------------------------------------------------------------------------
 
-const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false };
+const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false, permissions: [], customPerms: false };
 
 export default function SuperAdminPanel() {
   const navigate = useNavigate();
@@ -190,6 +190,7 @@ export default function SuperAdminPanel() {
   // Data
   const [users, setUsers]     = useState([]);
   const [roles, setRoles]     = useState([]);
+  const [permCatalog, setPermCatalog] = useState([]); // [{ key, group, label }]
   const [loading, setLoading] = useState(false);
 
   // Search / filter
@@ -257,8 +258,15 @@ export default function SuperAdminPanel() {
     } catch {}
   }, [apiFetch]);
 
+  const fetchPermCatalog = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/permissions');
+      if (res.ok) setPermCatalog((await res.json()).permissions || []);
+    } catch {}
+  }, [apiFetch]);
+
   useEffect(() => {
-    if (isAuthenticated) { fetchUsers(); fetchRoles(); }
+    if (isAuthenticated) { fetchUsers(); fetchRoles(); fetchPermCatalog(); }
   }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // -------------------------------------------------------------------------
@@ -341,7 +349,8 @@ export default function SuperAdminPanel() {
   }, []);
 
   const openEditModal = useCallback((user) => {
-    setForm({ name: user.name, password: '', role: user.role, showPassword: false });
+    const perms = Array.isArray(user.permissions) ? user.permissions : [];
+    setForm({ name: user.name, password: '', role: user.role, showPassword: false, permissions: perms, customPerms: perms.length > 0 });
     setFormErrors({});
     setModal({ open: true, mode: 'edit', user });
   }, []);
@@ -360,6 +369,21 @@ export default function SuperAdminPanel() {
     });
   }, [validateForm, modal.mode, modal.user]);
 
+  // Toggle a single permission in the custom override set.
+  const togglePerm = useCallback((key) => {
+    setForm(prev => {
+      const has = prev.permissions.includes(key);
+      return { ...prev, permissions: has ? prev.permissions.filter(k => k !== key) : [...prev.permissions, key] };
+    });
+  }, []);
+
+  // Permission catalogue grouped by domain, for the editor. [ [group, [perm,...]], ... ]
+  const groupedPerms = useMemo(() => {
+    const by = {};
+    for (const p of permCatalog) { (by[p.group] = by[p.group] || []).push(p); }
+    return Object.entries(by);
+  }, [permCatalog]);
+
   const handleSubmitModal = async (e) => {
     e.preventDefault();
     const errors = validateForm(form, modal.mode, modal.user);
@@ -368,16 +392,19 @@ export default function SuperAdminPanel() {
 
     setFormLoading(true);
     try {
+      // Explicit permission override only when "custom permissions" is on;
+      // otherwise send [] so the server falls back to the role's defaults.
+      const permsPayload = form.customPerms ? (form.permissions || []) : [];
       if (modal.mode === 'create') {
         const res = await apiFetch('/api/users', {
           method: 'POST',
-          body: JSON.stringify({ name: form.name.trim(), password: form.password, role: form.role }),
+          body: JSON.stringify({ name: form.name.trim(), password: form.password, role: form.role, permissions: permsPayload }),
         });
         const data = await res.json();
         if (data.success) { showToast('User created.'); closeModal(); fetchUsers(); }
         else setFormErrors({ general: data.error || 'Failed to create user.' });
       } else {
-        const body = { name: form.name.trim(), role: form.role };
+        const body = { name: form.name.trim(), role: form.role, permissions: permsPayload };
         if (form.password) body.password = form.password;
         const res = await apiFetch(`/api/users/${modal.user._id}`, {
           method: 'PATCH',
@@ -1059,6 +1086,39 @@ export default function SuperAdminPanel() {
                   <option className="bg-[#1a1a1a] text-white" value="Admin">Admin (Manager)</option>
                   {roles.map(r => <option className="bg-[#1a1a1a] text-white" key={r._id} value={r.name}>{r.name}</option>)}
                 </select>
+              </div>
+
+              {/* Granular permissions — override the role defaults per user */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Permissions</label>
+                  <label className="flex items-center gap-1.5 cursor-pointer text-white/50 hover:text-white/80 text-xs font-bold transition">
+                    <input type="checkbox" checked={form.customPerms} onChange={e => handleFormChange('customPerms', e.target.checked)} className="accent-brand" />
+                    Customize
+                  </label>
+                </div>
+                {!form.customPerms ? (
+                  <p className="text-white/40 text-xs bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                    Using the default permissions for the <span className="text-brand font-bold">{form.role}</span> access level. Tick “Customize” to set exactly what this person can do.
+                  </p>
+                ) : (
+                  <div className="space-y-3 bg-white/5 border border-white/10 rounded-xl p-3 max-h-60 overflow-y-auto">
+                    {groupedPerms.length === 0 && <p className="text-white/30 text-xs">Loading permissions…</p>}
+                    {groupedPerms.map(([group, perms]) => (
+                      <div key={group}>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-white/30 mb-1">{group}</p>
+                        <div className="grid sm:grid-cols-2 gap-x-3 gap-y-1">
+                          {perms.map(p => (
+                            <label key={p.key} className="flex items-center gap-2 text-[13px] text-white/70 cursor-pointer hover:text-white transition">
+                              <input type="checkbox" checked={form.permissions.includes(p.key)} onChange={() => togglePerm(p.key)} className="accent-brand shrink-0" />
+                              <span className="leading-tight">{p.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-3 pt-2">

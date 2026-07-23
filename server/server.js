@@ -19,7 +19,7 @@ import { assertBalanced, debitAccountFor, suggestedSettleAccount } from './lib/l
 import { ACCOUNTS, EXPENSE_CATEGORIES, CODE_MAP } from './lib/chartOfAccounts.js';
 import { resolveUnit, displayToBase, effectiveDisplay } from './lib/units.js';
 import { addBatch, consumeBatches, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
-import { requireStaff, evaluateClientAccess } from './lib/authz.js';
+import { requireStaff, evaluateClientAccess, requirePermission, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { validateDateRange } from './lib/reportRange.js';
 import registerTenants from './features/tenants.js';
@@ -263,7 +263,9 @@ const REFRESH_COOKIE = 'semivra_rt';
 const signAccessToken = (user) => jwt.sign(
   // aud:'staff' lets staff routes reject client-audience tokens structurally
   // (see verifyToken / lib/authz.js), independent of the role string.
-  { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, tenantId: user.tenantId || null, aud: 'staff' },
+  // `perms` carries the resolved permission set so requirePermission needn't hit
+  // the DB; legacy tokens without it fall back to role defaults in hasPermission.
+  { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, tenantId: user.tenantId || null, perms: resolvePermissions(user), aud: 'staff' },
   process.env.JWT_SECRET,
   { expiresIn: ACCESS_TTL }
 );
@@ -1328,6 +1330,9 @@ const UserSchema = new mongoose.Schema({
   name: { type: String, required: true, index: true },
   password: { type: String, required: true },
   role: { type: String, default: 'Staff' },
+  // Granular RBAC: explicit permission override. Empty ⇒ fall back to the role's
+  // defaults (see lib/authz.js resolvePermissions). Ignored for superadmin (full).
+  permissions: { type: [String], default: [] },
   // Multi-tenancy (Phase 2a): which tenant this staff user belongs to. Carried into
   // the access token so Phase 2b can scope every query by the caller's tenant.
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null }
@@ -1416,10 +1421,27 @@ const Counter = mongoose.model('Counter', CounterSchema);
 // (everything arrived) or Incomplete (short/over). Purely a tracking record — it
 // does NOT post to inventory or the ledger; restock + journal entries stay on the
 // existing /api/inventory/restock flow so there's no double counting.
+// Suppliers — a managed directory (CRUD) that POs can be drawn from. A PO stores
+// both a supplierId link AND a supplier name snapshot, so renaming/deleting a
+// supplier never rewrites the history of past POs.
+const SupplierSchema = new mongoose.Schema({
+  supplierCode:  { type: String, index: true },             // SUP-2026-000001
+  name:          { type: String, required: true, index: true },
+  contactPerson: { type: String, default: '' },
+  phone:         { type: String, default: '' },
+  email:         { type: String, default: '' },
+  address:       { type: String, default: '' },
+  notes:         { type: String, default: '' },
+  isActive:      { type: Boolean, default: true },
+  tenantId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+}, { timestamps: true });
+const Supplier = mongoose.model('Supplier', SupplierSchema);
+
 const PO_STATUSES = ['Ordered', 'Processing', 'Complete', 'Incomplete', 'Cancelled'];
 const PurchaseOrderSchema = new mongoose.Schema({
   poNumber:     { type: String, index: true },              // PO-2026-000001
-  supplier:     { type: String, default: '' },
+  supplier:     { type: String, default: '' },              // name snapshot at draft time
+  supplierId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Supplier', default: null },
   status:       { type: String, default: 'Ordered', enum: PO_STATUSES, index: true },
   expectedDate: { type: Date },
   notes:        { type: String, default: '' },
@@ -2056,6 +2078,8 @@ const ctx = {
   EODRecord,
   CounterSchema,
   Counter,
+  SupplierSchema,
+  Supplier,
   PurchaseOrderSchema,
   PurchaseOrder,
   PO_STATUSES,
@@ -2082,6 +2106,12 @@ const ctx = {
   requireSuperAdmin,
   requireSuperOrAdmin,
   verifyOrderAuth,
+  requirePermission,
+  resolvePermissions,
+  hasPermission,
+  PERMISSIONS,
+  PERMISSION_KEYS,
+  ROLE_DEFAULT_PERMISSIONS,
   // live getter: refreshPaymentMap() reassigns this module-level variable
   get PAYMENT_MAP_CACHE() { return PAYMENT_MAP_CACHE; },
 };

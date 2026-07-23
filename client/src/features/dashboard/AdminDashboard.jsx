@@ -147,8 +147,16 @@ export default function AdminDashboard() {
 
   const [paymentSelections, setPaymentSelections] = useState({});
 
-  const [activeTab, setActiveTab] = useState('orders');
-  const [navMode, setNavMode] = useState('libellus'); // 'libellus' (Operations) or 'negotium' (Management)
+  // Restore the last-viewed tab across page refreshes (was resetting to Orders&POS).
+  // Falls back to 'orders' for a fresh session or bad/stale storage.
+  const [activeTab, setActiveTab] = useState(() => {
+    try { return localStorage.getItem('dash.activeTab') || 'orders'; } catch { return 'orders'; }
+  });
+  const [navMode, setNavMode] = useState(() => {
+    try { return localStorage.getItem('dash.navMode') || 'libellus'; } catch { return 'libellus'; }
+  }); // 'libellus' (Operations) or 'negotium' (Management)
+  useEffect(() => { try { localStorage.setItem('dash.activeTab', activeTab); } catch { /* ignore */ } }, [activeTab]);
+  useEffect(() => { try { localStorage.setItem('dash.navMode', navMode); } catch { /* ignore */ } }, [navMode]);
   const [orderFilter, setOrderFilter] = useState('All'); 
   const [departmentFilter, setDepartmentFilter] = useState('All'); // 'All', 'Kitchen', 'Bar'
   const [expandedDays, setExpandedDays] = useState({}); 
@@ -4502,6 +4510,8 @@ const updateStatus = async (orderId, newStatus) => {
   const totalPricingPages = Math.ceil(products.length / pricingItemsPerPage);
 
   const isSuperAdmin = activeAdmin?.role === 'superadmin';
+  // Granular permission check for UI gating (server still enforces). Superadmin ⇒ all.
+  const can = (perm) => isSuperAdmin || auth.can(perm);
   // Void / refund are allowed for superadmin OR admin (case-insensitive).
   const canVoidRefund = ['superadmin', 'admin'].includes(String(activeAdmin?.role || '').toLowerCase());
 
@@ -4546,11 +4556,11 @@ const updateStatus = async (orderId, newStatus) => {
       <nav className="p-3 space-y-0.5 lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
         <p className="text-[9px] text-white/20 font-bold uppercase tracking-[0.2em] px-4 pt-2 pb-1">Operations</p>
         {[
-          { id: 'orders', label: 'Orders & POS', icon: ShoppingCart },
-          { id: 'inventory', label: 'Inventory & Stock', icon: Package },
-          { id: 'procurement', label: 'Procurement', icon: Truck },
-          { id: 'products', label: 'Menu Setup', icon: ChefHat },
-        ].map(({ id, label, icon: Icon }) => {
+          { id: 'orders', label: 'Orders & POS', icon: ShoppingCart, perm: 'orders.view' },
+          { id: 'inventory', label: 'Inventory & Stock', icon: Package, perm: 'inventory.view' },
+          { id: 'procurement', label: 'Procurement', icon: Truck, perm: 'procurement.view' },
+          { id: 'products', label: 'Menu Setup', icon: ChefHat, perm: 'products.view' },
+        ].filter(({ perm }) => can(perm)).map(({ id, label, icon: Icon }) => {
           // invBadgeCount and invBadgeColor are hoisted to component scope above
           const badgeCount = id === 'inventory' ? invBadgeCount : 0;
           const badgeColor = id === 'inventory' ? invBadgeColor : 'bg-red-500';
@@ -4690,7 +4700,7 @@ const updateStatus = async (orderId, newStatus) => {
   const ctx = {
     // ── Shared data ─────────────────────────────────────────────────────────
     orders, archivedOrders, products, categories, inventory, discounts, globalAddOns,
-    users, activeAdmin, isSuperAdmin, canVoidRefund,
+    users, activeAdmin, isSuperAdmin, canVoidRefund, can,
     // ── Core helpers ────────────────────────────────────────────────────────
     fetchOrders, fetchData, fetchERPData, fetchEODData,
     apiFetch, updateStatus, printOrderSlip, printBillingStatement, handleVoidOrder,

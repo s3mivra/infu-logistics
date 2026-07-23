@@ -172,7 +172,24 @@ export default function registerUsers(ctx) {
     requireSuperAdmin,
     requireSuperOrAdmin,
     verifyOrderAuth,
+    resolvePermissions,
+    PERMISSIONS,
+    PERMISSION_KEYS,
   } = ctx;
+
+// Catalogue of assignable permissions + role defaults — drives the UI editor.
+app.get('/api/permissions', verifyToken, requireStaff, async (req, res) => {
+  res.json({ success: true, permissions: PERMISSIONS });
+});
+
+// Effective permissions for the caller — the client gates its UI on this.
+app.get('/api/users/me', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('-password').lean();
+    if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+    res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
+  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+});
 
 app.get('/api/roles', verifyToken, requireStaff, async (req, res) => {
   try {
@@ -210,7 +227,7 @@ app.post('/api/users/login', loginLimiter, validate(loginSchema), async (req, re
     const isMatch = await bcrypt.compare(password, user.password);
     if (isMatch) {
       const token = await issueSession(res, user, { userAgent: req.headers['user-agent'] });
-      res.json({ success: true, token, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role } });
+      res.json({ success: true, token, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
     } else {
       res.status(401).json({ success: false, message: 'Invalid name or password' });
     }
@@ -249,7 +266,7 @@ app.post('/api/auth/refresh', requireTrustedOrigin, async (req, res) => {
     res.cookie(REFRESH_COOKIE, raw, refreshCookieOptions());
 
     const newToken = signAccessToken(user);
-    res.json({ success: true, token: newToken, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role } });
+    res.json({ success: true, token: newToken, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
   } catch (err) {
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
@@ -288,9 +305,12 @@ app.post('/api/users', verifyToken, requireSuperAdmin, validate(userCreateSchema
     
     // THE FIX: Add the role from the request body!
     const role = req.body.role || 'Staff'; // Default to cashier if none provided
-    
-    const newUser = await User.create({ name: req.body.name, password: hashedPassword, userCode, role, tenantId: req.user?.tenantId || null });
-    res.json({ success: true, user: { _id: newUser._id, name: newUser.name, userCode: newUser.userCode, role: newUser.role } });
+    // Optional explicit permission override (empty ⇒ role defaults). Sanitized.
+    const permissions = Array.isArray(req.body.permissions)
+      ? req.body.permissions.filter((k) => PERMISSION_KEYS.has(k)) : [];
+
+    const newUser = await User.create({ name: req.body.name, password: hashedPassword, userCode, role, permissions, tenantId: req.user?.tenantId || null });
+    res.json({ success: true, user: { _id: newUser._id, name: newUser.name, userCode: newUser.userCode, role: newUser.role, permissions: resolvePermissions(newUser) } });
   } catch (err) {
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
@@ -315,15 +335,18 @@ app.put('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
 
 app.patch('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { name, password, role } = req.body;
+    const { name, password, role, permissions } = req.body;
     const updates = {};
     if (name) updates.name = name.trim();
     if (role) updates.role = role;
+    if (Array.isArray(permissions)) updates.permissions = permissions.filter((k) => PERMISSION_KEYS.has(k));
     if (password && password.trim()) updates.password = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const user = await User.findByIdAndUpdate(req.params.id, updates, { returnDocument: 'after' }).select('-password');
     if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
-    if (updates.password || updates.role) await revokeUserSessions(req.params.id); // privilege change → re-login
-    res.json({ success: true, user });
+    // Any privilege change (password/role/permissions) revokes sessions → re-login
+    // so the new permission set is minted into a fresh token.
+    if (updates.password || updates.role || updates.permissions) await revokeUserSessions(req.params.id);
+    res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
   } catch (err) {
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }

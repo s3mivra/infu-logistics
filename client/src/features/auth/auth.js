@@ -34,6 +34,21 @@ export const decodeToken = (t = accessToken) => {
   try { return JSON.parse(atob(t.split('.')[1])); } catch { return null; }
 };
 
+// ── Granular RBAC (client-side UI gating) ────────────────────────────────────
+// Server enforcement is the real gate; this just hides UI a user can't use.
+// Reads the token's `perms` claim; superadmin is treated as all-permissions.
+export const getPermissions = (t = accessToken) => {
+  const d = decodeToken(t);
+  if (!d) return [];
+  if (String(d.role || '').toLowerCase() === 'superadmin') return ['*'];
+  return Array.isArray(d.perms) ? d.perms : [];
+};
+// can('accounting.view') → boolean. '*' (superadmin) satisfies everything.
+export const can = (perm, t = accessToken) => {
+  const perms = getPermissions(t);
+  return perms.includes('*') || perms.includes(perm);
+};
+
 // De-duplicate concurrent refreshes: many in-flight requests share one refresh call.
 let refreshing = null;
 

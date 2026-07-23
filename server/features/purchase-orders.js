@@ -11,10 +11,17 @@ export default function registerPurchaseOrders(ctx) {
     logAudit,
     PurchaseOrder,
     PO_STATUSES,
+    Supplier,
     verifyToken,
     requireStaff,
     requireSuperAdmin,
+    requirePermission,
   } = ctx;
+
+  // Permission gates for this domain (superadmin bypasses inside requirePermission).
+  const canView   = requirePermission('procurement.view');
+  const canManage = requirePermission('procurement.manage');
+  const canDelete = requirePermission('procurement.delete');
 
   // Round money to 2dp; guard against NaN from bad client input.
   const money = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -34,9 +41,72 @@ export default function registerPurchaseOrders(ctx) {
     receivedQty: null,
   });
 
+  // ══ SUPPLIERS (managed directory) ═════════════════════════════════════════════
+  app.get('/api/suppliers', verifyToken, requireStaff, canView, async (req, res) => {
+    try {
+      const q = { ...tenantScope(req) };
+      if (req.query.active === 'true') q.isActive = true;
+      const suppliers = await Supplier.find(q).sort({ name: 1 }).lean();
+      res.json({ success: true, suppliers });
+    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  });
+
+  app.post('/api/suppliers', verifyToken, requireStaff, canManage, async (req, res) => {
+    try {
+      const { name, contactPerson = '', phone = '', email = '', address = '', notes = '' } = req.body || {};
+      if (!name || !String(name).trim()) return res.status(400).json({ success: false, error: 'Supplier name is required.' });
+      const supplierCode = await mkSeqRef('SUP');
+      const supplier = await Supplier.create({
+        supplierCode,
+        name: String(name).trim().slice(0, 200),
+        contactPerson: String(contactPerson).slice(0, 200),
+        phone: String(phone).slice(0, 60),
+        email: String(email).slice(0, 200),
+        address: String(address).slice(0, 500),
+        notes: String(notes).slice(0, 1000),
+        ...tenantScope(req),
+      });
+      logAudit?.(req, { action: 'create', entity: 'supplier', entityId: supplierCode, after: { name: supplier.name } });
+      res.status(201).json({ success: true, supplier: supplier.toObject() });
+    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  });
+
+  app.patch('/api/suppliers/:id', verifyToken, requireStaff, canManage, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const supplier = await Supplier.findOne({ _id: req.params.id, ...tenantScope(req) });
+      if (!supplier) return res.status(404).json({ success: false, error: 'Not found' });
+      const { name, contactPerson, phone, email, address, notes, isActive } = req.body || {};
+      if (name !== undefined) {
+        if (!String(name).trim()) return res.status(400).json({ success: false, error: 'Supplier name is required.' });
+        supplier.name = String(name).trim().slice(0, 200);
+      }
+      if (contactPerson !== undefined) supplier.contactPerson = String(contactPerson).slice(0, 200);
+      if (phone !== undefined) supplier.phone = String(phone).slice(0, 60);
+      if (email !== undefined) supplier.email = String(email).slice(0, 200);
+      if (address !== undefined) supplier.address = String(address).slice(0, 500);
+      if (notes !== undefined) supplier.notes = String(notes).slice(0, 1000);
+      if (isActive !== undefined) supplier.isActive = !!isActive;
+      await supplier.save();
+      logAudit?.(req, { action: 'update', entity: 'supplier', entityId: supplier.supplierCode, after: { name: supplier.name, isActive: supplier.isActive } });
+      res.json({ success: true, supplier: supplier.toObject() });
+    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  });
+
+  app.delete('/api/suppliers/:id', verifyToken, requireStaff, canDelete, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const supplier = await Supplier.findOne({ _id: req.params.id, ...tenantScope(req) });
+      if (!supplier) return res.status(404).json({ success: false, error: 'Not found' });
+      await supplier.deleteOne();
+      logAudit?.(req, { action: 'delete', entity: 'supplier', entityId: supplier.supplierCode });
+      res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  });
+
   // ── LIST ────────────────────────────────────────────────────────────────────
   // GET /api/purchase-orders?status=Ordered&limit=100
-  app.get('/api/purchase-orders', verifyToken, requireStaff, async (req, res) => {
+  app.get('/api/purchase-orders', verifyToken, requireStaff, canView, async (req, res) => {
     try {
       const q = { ...tenantScope(req) };
       if (req.query.status && PO_STATUSES.includes(req.query.status)) q.status = req.query.status;
@@ -47,7 +117,7 @@ export default function registerPurchaseOrders(ctx) {
   });
 
   // ── SINGLE ──────────────────────────────────────────────────────────────────
-  app.get('/api/purchase-orders/:id', verifyToken, requireStaff, async (req, res) => {
+  app.get('/api/purchase-orders/:id', verifyToken, requireStaff, canView, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const po = await PurchaseOrder.findOne({ _id: req.params.id, ...tenantScope(req) }).lean();
@@ -58,9 +128,9 @@ export default function registerPurchaseOrders(ctx) {
 
   // ── CREATE (draft a planned PO) ───────────────────────────────────────────────
   // POST /api/purchase-orders  { supplier, expectedDate, notes, lines:[{invId,itemName,itemCode,unit,orderedQty,unitCost}] }
-  app.post('/api/purchase-orders', verifyToken, requireStaff, async (req, res) => {
+  app.post('/api/purchase-orders', verifyToken, requireStaff, canManage, async (req, res) => {
     try {
-      const { supplier = '', expectedDate = null, notes = '', lines = [] } = req.body || {};
+      const { supplier = '', supplierId = null, expectedDate = null, notes = '', lines = [] } = req.body || {};
       const clean = (Array.isArray(lines) ? lines : [])
         .map(cleanLine)
         .filter(l => l.itemName && l.orderedQty > 0);
@@ -70,6 +140,7 @@ export default function registerPurchaseOrders(ctx) {
       const po = await PurchaseOrder.create({
         poNumber,
         supplier: String(supplier).slice(0, 200),
+        supplierId: supplierId && mongoose.Types.ObjectId.isValid(supplierId) ? supplierId : null,
         expectedDate: expectedDate ? new Date(expectedDate) : null,
         notes: String(notes).slice(0, 1000),
         status: 'Ordered',
@@ -86,7 +157,7 @@ export default function registerPurchaseOrders(ctx) {
   // ── UPDATE (edit draft header/lines, or move status Ordered↔Processing) ────────
   // PATCH /api/purchase-orders/:id  { supplier?, expectedDate?, notes?, status?, lines? }
   // Editing lines is only allowed before the PO is reconciled (Complete/Incomplete).
-  app.patch('/api/purchase-orders/:id', verifyToken, requireStaff, async (req, res) => {
+  app.patch('/api/purchase-orders/:id', verifyToken, requireStaff, canManage, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const po = await PurchaseOrder.findOne({ _id: req.params.id, ...tenantScope(req) });
@@ -95,8 +166,9 @@ export default function registerPurchaseOrders(ctx) {
         return res.status(409).json({ success: false, error: 'This PO has already been received. Reconciled POs cannot be edited.' });
       }
 
-      const { supplier, expectedDate, notes, status, lines } = req.body || {};
+      const { supplier, supplierId, expectedDate, notes, status, lines } = req.body || {};
       if (supplier !== undefined) po.supplier = String(supplier).slice(0, 200);
+      if (supplierId !== undefined) po.supplierId = supplierId && mongoose.Types.ObjectId.isValid(supplierId) ? supplierId : null;
       if (notes !== undefined) po.notes = String(notes).slice(0, 1000);
       if (expectedDate !== undefined) po.expectedDate = expectedDate ? new Date(expectedDate) : null;
       if (status !== undefined) {
@@ -123,7 +195,7 @@ export default function registerPurchaseOrders(ctx) {
   // Sets receivedQty per line, computes actualTotal, and flips status to Complete
   // (every line received ≥ ordered) or Incomplete (any short). Terminal — the PO
   // becomes read-only afterward.
-  app.post('/api/purchase-orders/:id/receive', verifyToken, requireStaff, async (req, res) => {
+  app.post('/api/purchase-orders/:id/receive', verifyToken, requireStaff, canManage, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const po = await PurchaseOrder.findOne({ _id: req.params.id, ...tenantScope(req) });
@@ -162,7 +234,7 @@ export default function registerPurchaseOrders(ctx) {
   });
 
   // ── DELETE (only drafts / cancelled — never a reconciled record) ───────────────
-  app.delete('/api/purchase-orders/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  app.delete('/api/purchase-orders/:id', verifyToken, requireStaff, canDelete, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const po = await PurchaseOrder.findOne({ _id: req.params.id, ...tenantScope(req) });

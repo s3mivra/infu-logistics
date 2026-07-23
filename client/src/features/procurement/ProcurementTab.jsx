@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, Search, AlertTriangle, FileText, Loader2 } from 'lucide-react';
+import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, Search, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin } from 'lucide-react';
 
 // ── ProcurementTab — Purchase Order workflow ──────────────────────────────────
 // Two-stage tracking. LEFT tab ("Purchase Orders") drafts & tracks planned POs
@@ -28,8 +28,12 @@ const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { month: 's
 export default function ProcurementTab({ ctx }) {
   const { apiFetch, peso, inventory = [], isSuperAdmin } = ctx;
   const money = peso || ((n) => `₱${(Number(n) || 0).toFixed(2)}`);
+  // Permission gating (server also enforces). Fall back to role-ish defaults if ctx.can missing.
+  const can = ctx.can || (() => true);
+  const canManage = can('procurement.manage');
+  const canDelete = can('procurement.delete');
 
-  const [subTab, setSubTab] = useState('orders');   // 'orders' | 'receiving'
+  const [subTab, setSubTab] = useState('orders');   // 'orders' | 'receiving' | 'suppliers'
   const [pos, setPos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -47,22 +51,34 @@ export default function ProcurementTab({ ctx }) {
 
   useEffect(() => { fetchPOs(); }, [fetchPOs]);
 
+  // ── Suppliers ─────────────────────────────────────────────────────────────────
+  const [suppliers, setSuppliers] = useState([]);
+  const fetchSuppliers = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/suppliers');
+      const d = await res.json();
+      if (d.success) setSuppliers(d.suppliers || []);
+    } catch { /* non-fatal */ }
+  }, [apiFetch]);
+  useEffect(() => { fetchSuppliers(); }, [fetchSuppliers]);
+
   // ── Draft form state ────────────────────────────────────────────────────────
   const blankLine = () => ({ invId: null, itemName: '', itemCode: '', unit: '', orderedQty: '', unitCost: '' });
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({ supplier: '', expectedDate: '', notes: '', lines: [blankLine()] });
+  const [form, setForm] = useState({ supplier: '', supplierId: '', expectedDate: '', notes: '', lines: [blankLine()] });
   const [saving, setSaving] = useState(false);
 
   const openNewForm = () => {
     setEditId(null);
-    setForm({ supplier: '', expectedDate: '', notes: '', lines: [blankLine()] });
+    setForm({ supplier: '', supplierId: '', expectedDate: '', notes: '', lines: [blankLine()] });
     setShowForm(true);
   };
   const openEditForm = (po) => {
     setEditId(po._id);
     setForm({
       supplier: po.supplier || '',
+      supplierId: po.supplierId || '',
       expectedDate: po.expectedDate ? new Date(po.expectedDate).toISOString().slice(0, 10) : '',
       notes: po.notes || '',
       lines: (po.lines || []).map(l => ({
@@ -71,6 +87,50 @@ export default function ProcurementTab({ ctx }) {
       })),
     });
     setShowForm(true);
+  };
+
+  // Picking a saved supplier fills the name snapshot; clearing reverts to free-text.
+  const pickSupplier = (supplierId) => {
+    const s = suppliers.find(x => String(x._id) === String(supplierId));
+    setForm(f => ({ ...f, supplierId: supplierId || '', supplier: s ? s.name : f.supplier }));
+  };
+
+  // ── Supplier CRUD form ──────────────────────────────────────────────────────
+  const blankSupplier = { name: '', contactPerson: '', phone: '', email: '', address: '', notes: '' };
+  const [showSupplierForm, setShowSupplierForm] = useState(false);
+  const [supplierEditId, setSupplierEditId] = useState(null);
+  const [supplierForm, setSupplierForm] = useState(blankSupplier);
+  const [savingSupplier, setSavingSupplier] = useState(false);
+
+  const openSupplierForm = (s = null) => {
+    setSupplierEditId(s?._id || null);
+    setSupplierForm(s ? {
+      name: s.name || '', contactPerson: s.contactPerson || '', phone: s.phone || '',
+      email: s.email || '', address: s.address || '', notes: s.notes || '',
+    } : blankSupplier);
+    setShowSupplierForm(true);
+  };
+
+  const saveSupplier = async () => {
+    if (!supplierForm.name.trim()) { setError('Supplier name is required.'); return; }
+    setSavingSupplier(true); setError('');
+    try {
+      const url = supplierEditId ? `/api/suppliers/${supplierEditId}` : '/api/suppliers';
+      const res = await apiFetch(url, { method: supplierEditId ? 'PATCH' : 'POST', body: JSON.stringify(supplierForm) });
+      const d = await res.json();
+      if (d.success) { setShowSupplierForm(false); await fetchSuppliers(); }
+      else setError(d.error || 'Failed to save supplier.');
+    } catch { setError('Network error saving supplier.'); }
+    finally { setSavingSupplier(false); }
+  };
+
+  const deleteSupplier = async (s) => {
+    if (!window.confirm(`Delete supplier "${s.name}"? Past POs keep their supplier name.`)) return;
+    try {
+      const res = await apiFetch(`/api/suppliers/${s._id}`, { method: 'DELETE' });
+      const d = await res.json();
+      if (d.success) fetchSuppliers(); else setError(d.error || 'Failed to delete supplier.');
+    } catch { setError('Network error deleting supplier.'); }
   };
 
   const updateLine = (idx, patch) => setForm(f => ({ ...f, lines: f.lines.map((l, i) => i === idx ? { ...l, ...patch } : l) }));
@@ -105,7 +165,7 @@ export default function ProcurementTab({ ctx }) {
       const url = editId ? `/api/purchase-orders/${editId}` : '/api/purchase-orders';
       const res = await apiFetch(url, {
         method: editId ? 'PATCH' : 'POST',
-        body: JSON.stringify({ supplier: form.supplier, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines }),
+        body: JSON.stringify({ supplier: form.supplier, supplierId: form.supplierId || null, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines }),
       });
       const d = await res.json();
       if (d.success) { setShowForm(false); await fetchPOs(); }
@@ -178,9 +238,14 @@ export default function ProcurementTab({ ctx }) {
             <p className="text-white/40 text-xs font-bold mt-1">Purchase orders &amp; delivery reconciliation</p>
           </div>
         </div>
-        {subTab === 'orders' && (
+        {subTab === 'orders' && canManage && (
           <button onClick={openNewForm} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
             <Plus size={16} /> New PO
+          </button>
+        )}
+        {subTab === 'suppliers' && canManage && (
+          <button onClick={() => openSupplierForm()} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
+            <Plus size={16} /> New Supplier
           </button>
         )}
       </div>
@@ -190,6 +255,7 @@ export default function ProcurementTab({ ctx }) {
         {[
           { id: 'orders', label: 'Purchase Orders', icon: ClipboardList },
           { id: 'receiving', label: 'Receiving', icon: PackageCheck, badge: activePOs.length },
+          { id: 'suppliers', label: 'Suppliers', icon: Building2 },
         ].map(({ id, label, icon: Icon, badge }) => (
           <button key={id} onClick={() => setSubTab(id)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition ${subTab === id ? 'bg-brand text-white shadow-sm' : 'text-white/50 hover:text-white'}`}>
@@ -214,20 +280,55 @@ export default function ProcurementTab({ ctx }) {
           <PoSection title="Active" empty="No active purchase orders. Create one with “New PO”." pos={activePOs} money={money}
             renderActions={(po) => (
               <div className="flex items-center gap-1.5 flex-wrap">
-                {po.status === 'Ordered' && (
+                {canManage && po.status === 'Ordered' && (
                   <button onClick={() => setStatus(po, 'Processing')} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 transition">Mark Processing</button>
                 )}
-                <button onClick={() => openEditForm(po)} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-white/60 hover:bg-white/10 hover:text-white transition">Edit</button>
-                <button onClick={() => setStatus(po, 'Cancelled')} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-white/40 hover:bg-red-500/15 hover:text-red-300 transition">Cancel</button>
-                {isSuperAdmin && (
+                {canManage && <button onClick={() => openEditForm(po)} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-white/60 hover:bg-white/10 hover:text-white transition">Edit</button>}
+                {canManage && <button onClick={() => setStatus(po, 'Cancelled')} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-white/40 hover:bg-red-500/15 hover:text-red-300 transition">Cancel</button>}
+                {canDelete && (
                   <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-white/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
                 )}
               </div>
             )} />
           <PoSection title="History" empty="No completed or cancelled POs yet." pos={historyPOs} money={money} showReceived
-            renderActions={(po) => isSuperAdmin && ['Cancelled'].includes(po.status) ? (
+            renderActions={(po) => canDelete && ['Cancelled'].includes(po.status) ? (
               <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-white/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
             ) : null} />
+        </div>
+      ) : subTab === 'suppliers' ? (
+        /* ── SUPPLIERS DIRECTORY ── */
+        <div className="space-y-2">
+          {suppliers.length === 0 ? (
+            <div className="text-center py-16 text-white/40 font-bold">
+              <Building2 size={32} className="mx-auto mb-3 opacity-40" />
+              No suppliers yet.{canManage ? ' Add one with “New Supplier”.' : ''}
+            </div>
+          ) : suppliers.map(s => (
+            <div key={s._id} className={`bg-white/5 border border-white/10 rounded-2xl px-4 py-3.5 flex items-start gap-3 ${s.isActive === false ? 'opacity-50' : ''}`}>
+              <div className="w-9 h-9 rounded-lg bg-brand/15 border border-brand/30 flex items-center justify-center shrink-0">
+                <Building2 size={16} className="text-brand" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-black text-white text-sm">{s.name}</span>
+                  {s.isActive === false && <span className="text-[10px] font-black uppercase tracking-wider text-white/40 bg-white/5 px-1.5 py-0.5 rounded-full">Inactive</span>}
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1 text-white/40 text-xs">
+                  {s.contactPerson && <span>{s.contactPerson}</span>}
+                  {s.phone && <span className="inline-flex items-center gap-1"><Phone size={11} />{s.phone}</span>}
+                  {s.email && <span className="inline-flex items-center gap-1"><Mail size={11} />{s.email}</span>}
+                  {s.address && <span className="inline-flex items-center gap-1"><MapPin size={11} />{s.address}</span>}
+                </div>
+                {s.notes && <p className="text-white/30 text-xs mt-1">{s.notes}</p>}
+              </div>
+              {canManage && (
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => openSupplierForm(s)} className="p-1.5 rounded-lg text-white/40 hover:bg-white/10 hover:text-white transition"><Pencil size={14} /></button>
+                  {canDelete && <button onClick={() => deleteSupplier(s)} className="p-1.5 rounded-lg text-white/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       ) : (
         /* ── RECEIVING / RECONCILIATION ── */
@@ -306,7 +407,13 @@ export default function ProcurementTab({ ctx }) {
               <div className="grid sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Supplier</label>
-                  <input value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value }))} placeholder="Supplier name" className={inputCls} />
+                  {suppliers.length > 0 && (
+                    <select value={form.supplierId} onChange={e => pickSupplier(e.target.value)} className={`${inputCls} mb-1.5`}>
+                      <option value="">— Pick a saved supplier (or type below) —</option>
+                      {suppliers.filter(s => s.isActive !== false).map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
+                    </select>
+                  )}
+                  <input value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value, supplierId: '' }))} placeholder="Supplier name" className={inputCls} />
                 </div>
                 <div>
                   <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Expected Delivery</label>
@@ -358,6 +465,52 @@ export default function ProcurementTab({ ctx }) {
                   {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {editId ? 'Save Changes' : 'Create PO'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── SUPPLIER FORM MODAL ── */}
+      {showSupplierForm && (
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !savingSupplier && setShowSupplierForm(false)}>
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-lg my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+              <h2 className="font-black text-white text-lg">{supplierEditId ? 'Edit Supplier' : 'New Supplier'}</h2>
+              <button onClick={() => !savingSupplier && setShowSupplierForm(false)} className="text-white/40 hover:text-white transition"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Name *</label>
+                <input value={supplierForm.name} onChange={e => setSupplierForm(f => ({ ...f, name: e.target.value }))} placeholder="Supplier name" className={inputCls} />
+              </div>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Contact Person</label>
+                  <input value={supplierForm.contactPerson} onChange={e => setSupplierForm(f => ({ ...f, contactPerson: e.target.value }))} placeholder="Contact name" className={inputCls} />
+                </div>
+                <div>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Phone</label>
+                  <input value={supplierForm.phone} onChange={e => setSupplierForm(f => ({ ...f, phone: e.target.value }))} placeholder="Phone" className={inputCls} />
+                </div>
+              </div>
+              <div>
+                <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Email</label>
+                <input value={supplierForm.email} onChange={e => setSupplierForm(f => ({ ...f, email: e.target.value }))} placeholder="Email" className={inputCls} />
+              </div>
+              <div>
+                <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Address</label>
+                <input value={supplierForm.address} onChange={e => setSupplierForm(f => ({ ...f, address: e.target.value }))} placeholder="Address" className={inputCls} />
+              </div>
+              <div>
+                <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Notes</label>
+                <textarea value={supplierForm.notes} onChange={e => setSupplierForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder="Optional notes" className={inputCls} />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
+              <button onClick={() => !savingSupplier && setShowSupplierForm(false)} className="text-sm font-bold px-4 py-2 rounded-xl text-white/50 hover:text-white transition">Cancel</button>
+              <button onClick={saveSupplier} disabled={savingSupplier} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+                {savingSupplier ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {supplierEditId ? 'Save Changes' : 'Create Supplier'}
+              </button>
             </div>
           </div>
         </div>
