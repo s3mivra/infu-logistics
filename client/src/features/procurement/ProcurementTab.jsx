@@ -227,8 +227,13 @@ export default function ProcurementTab({ ctx }) {
   const [supplierForm, setSupplierForm] = useState(blankSupplier);
   const [savingSupplier, setSavingSupplier] = useState(false);
 
-  const openSupplierForm = (s = null) => {
+  // fromPoForm: true when "+ Add new supplier…" was picked inside the New PO
+  // modal, so the freshly-created supplier gets auto-selected back into the PO
+  // instead of leaving that field blank after the user just filled it in.
+  const [supplierFormOrigin, setSupplierFormOrigin] = useState(null); // 'po' | null
+  const openSupplierForm = (s = null, fromPoForm = false) => {
     setSupplierEditId(s?._id || null);
+    setSupplierFormOrigin(fromPoForm ? 'po' : null);
     setSupplierForm(s ? {
       name: s.name || '', contactPerson: s.contactPerson || '', phone: s.phone || '',
       email: s.email || '', address: s.address || '', notes: s.notes || '',
@@ -243,8 +248,14 @@ export default function ProcurementTab({ ctx }) {
       const url = supplierEditId ? `/api/suppliers/${supplierEditId}` : '/api/suppliers';
       const res = await apiFetch(url, { method: supplierEditId ? 'PATCH' : 'POST', body: JSON.stringify(supplierForm) });
       const d = await res.json();
-      if (d.success) { setShowSupplierForm(false); await fetchSuppliers(); }
-      else setError(d.error || 'Failed to save supplier.');
+      if (d.success) {
+        setShowSupplierForm(false);
+        await fetchSuppliers();
+        if (supplierFormOrigin === 'po' && !supplierEditId && d.supplier) {
+          setForm(f => ({ ...f, supplierId: d.supplier._id, supplier: d.supplier.name }));
+        }
+        setSupplierFormOrigin(null);
+      } else setError(d.error || 'Failed to save supplier.');
     } catch { setError('Network error saving supplier.'); }
     finally { setSavingSupplier(false); }
   };
@@ -541,13 +552,17 @@ export default function ProcurementTab({ ctx }) {
               <div className="grid sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Supplier</label>
-                  {suppliers.length > 0 && (
-                    <select value={form.supplierId} onChange={e => pickSupplier(e.target.value)} className={`${inputCls} mb-1.5`}>
-                      <option value="">— Pick a saved supplier (or type below) —</option>
-                      {suppliers.filter(s => s.isActive !== false).map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
-                    </select>
-                  )}
-                  <input value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value, supplierId: '' }))} placeholder="Supplier name" className={inputCls} />
+                  {/* Always visible: pick a saved supplier, add a new one on the fly, or
+                      just type the name manually below. Not gated on suppliers existing
+                      yet, so the picker is discoverable even before any supplier is saved. */}
+                  <select value={form.supplierId} onChange={e => { if (e.target.value === '__new__') openSupplierForm(null, true); else pickSupplier(e.target.value); }} className={`${inputCls} mb-1.5`}>
+                    <option value="">
+                      {suppliers.length > 0 ? '— Pick a saved supplier (or type below) —' : '— No saved suppliers yet (type below, or add one) —'}
+                    </option>
+                    {suppliers.filter(s => s.isActive !== false).map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
+                    <option value="__new__">+ Add new supplier…</option>
+                  </select>
+                  <input value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value, supplierId: '' }))} placeholder="Or type supplier name manually" className={inputCls} />
                 </div>
                 <div>
                   <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Expected Delivery</label>
