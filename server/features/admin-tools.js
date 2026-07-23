@@ -324,7 +324,7 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
     await JournalEntry.create({
       date: dt,
       reference,
-      description: `Backdated sale — ${order.orderNumber}${notes ? ` (${notes})` : ''}`,
+      description: `Backdated sale: ${order.orderNumber}${notes ? ` (${notes})` : ''}`,
       lines: [
         { accountCode: acct.code, accountName: acct.name, debit: amt, credit: 0 },
         { accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: amt },

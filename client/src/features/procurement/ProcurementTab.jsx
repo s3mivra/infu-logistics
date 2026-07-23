@@ -525,7 +525,7 @@ export default function ProcurementTab({ ctx }) {
                     })}
                   </div>
                   <textarea value={receiveNotes} onChange={e => setReceiveNotes(e.target.value)} rows={2}
-                    placeholder="Delivery notes (optional) — damages, substitutions, backorders…" className={inputCls} />
+                    placeholder="Delivery notes (optional): damages, substitutions, backorders…" className={inputCls} />
                   <div className="flex items-center justify-end gap-2">
                     <button onClick={() => setReceiveId(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-white/50 hover:text-white transition">Cancel</button>
                     <button onClick={() => submitReceive(po)} disabled={receiving}
@@ -582,7 +582,7 @@ export default function ProcurementTab({ ctx }) {
                       <div className="flex items-center gap-2">
                         <select value={l.invId || ''} onChange={e => pickInventory(idx, e.target.value)}
                           className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-brand/60">
-                          <option value="">— Pick from inventory (or type below) —</option>
+                          <option value="">Pick from inventory (or type below)</option>
                           {inventory.map(i => <option key={i._id} value={i._id}>{i.itemName}{i.itemCode ? ` (${i.itemCode})` : ''}</option>)}
                         </select>
                         {form.lines.length > 1 && (

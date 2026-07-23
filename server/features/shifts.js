@@ -236,7 +236,7 @@ app.post('/api/shifts/end', verifyToken, requireStaff, async (req, res) => {
           ];
       await JournalEntry.create({
         reference: await mkSeqRef('SHIFT-VAR'),
-        description: `Variance adjustment — ${shift.cashierName} (${variance >= 0 ? 'Over' : 'Short'} ₱${Math.abs(variance).toFixed(2)})`,
+        description: `Variance adjustment: ${shift.cashierName} (${variance >= 0 ? 'Over' : 'Short'} ₱${Math.abs(variance).toFixed(2)})`,
         lines: varLines,
         totalDebit: Math.abs(variance),
         totalCredit: Math.abs(variance),

@@ -19,7 +19,7 @@ function ModeMismatchBanner() {
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 99999, background: '#b91c1c', color: '#fff',
       padding: '10px 16px', font: '700 13px system-ui, sans-serif', textAlign: 'center', letterSpacing: '0.02em' }}>
-      ⚠️ Configuration mismatch — this app was built for <b>{clientType.toUpperCase()}</b> but the server is running <b>{serverType.toUpperCase()}</b>.
+      ⚠️ Configuration mismatch: this app was built for <b>{clientType.toUpperCase()}</b> but the server is running <b>{serverType.toUpperCase()}</b>.
       Set VITE_BUSINESS_TYPE and the server’s BUSINESS_TYPE to the same value and rebuild the client.
     </div>
   );

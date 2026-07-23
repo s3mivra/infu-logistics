@@ -321,7 +321,7 @@ app.post('/api/expenses', verifyToken, ...canPostAcct, async (req, res) => {
 
     const je = await JournalEntry.create({
       reference,
-      description: `${cat.label} — ${description.trim()}${vendor ? ` (${vendor.trim()})` : ''}`,
+      description: `${cat.label}: ${description.trim()}${vendor ? ` (${vendor.trim()})` : ''}`,
       lines,
       totalDebit: amt,
       totalCredit: amt,
@@ -518,7 +518,7 @@ app.post('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
     const depRef = reference ? reference : await mkSeqRef('DEP');
     const je = await JournalEntry.create({
       reference: depRef,
-      description: `Bank deposit — ${shift.cashierName}${reference ? ` (${reference})` : ''}`,
+      description: `Bank deposit: ${shift.cashierName}${reference ? ` (${reference})` : ''}`,
       lines: [
         { accountCode: destCode, accountName: destName, debit: depositAmount, credit: 0 },
         { accountCode: srcCode,  accountName: srcName,  debit: 0, credit: depositAmount },
@@ -642,7 +642,7 @@ app.delete('/api/accounts/:id', verifyToken, ...canPostAcct, async (req, res) =>
     const acct = await Account.findById(req.params.id);
     if (!acct || !acct.custom) return res.status(404).json({ success: false, error: 'Custom account not found.' });
     const used = await JournalEntry.exists({ 'lines.accountCode': acct.code });
-    if (used) return res.status(409).json({ success: false, error: 'Account has posted journal entries — cannot delete. It can be left unused.' });
+    if (used) return res.status(409).json({ success: false, error: 'Account has posted journal entries; cannot delete. It can be left unused.' });
     const before = acct.toObject();
     await Account.deleteOne({ _id: acct._id });
     await refreshCustomMeta();
@@ -798,7 +798,7 @@ app.post('/api/revolving-funds', verifyToken, ...canPostAcct, async (req, res) =
     await RevolvingFundTx.create({
       fundId: fund._id, type: 'replenishment',
       amount: Number(initialAmount),
-      description: 'Fund opened — initial amount',
+      description: 'Fund opened: initial amount',
       performedBy: req.user?.name, balanceAfter: Number(initialAmount),
       journalRef: je._id,
     });
@@ -832,7 +832,7 @@ app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, async (
 
     // DR expense / CR 1050 Petty Cash
     const je = await JournalEntry.create({
-      date: new Date(), description: `Revolving Fund disbursement — ${fund.name}: ${description}`,
+      date: new Date(), description: `Revolving Fund disbursement (${fund.name}): ${description}`,
       lines: [
         { accountCode: expCode, accountName: expName,                    debit: amt, credit: 0 },
         { accountCode: '114000',  accountName: 'Petty Cash / Revolving Fund', debit: 0, credit: amt },
@@ -873,7 +873,7 @@ app.post('/api/revolving-funds/:id/replenish', verifyToken, ...canPostAcct, asyn
     const shortfall = +(fund.initialAmount - fund.currentBalance).toFixed(2);
     const amt = amount ? Number(amount) : shortfall;
 
-    if (amt <= 0) return res.status(400).json({ success: false, error: 'Fund is already full — nothing to replenish.' });
+    if (amt <= 0) return res.status(400).json({ success: false, error: 'Fund is already full; nothing to replenish.' });
 
     fund.currentBalance = +(fund.currentBalance + amt).toFixed(2);
     await fund.save();
@@ -881,7 +881,7 @@ app.post('/api/revolving-funds/:id/replenish', verifyToken, ...canPostAcct, asyn
     // DR 1050 Petty Cash / CR sourceAccount
     const je = await JournalEntry.create({
       date: new Date(),
-      description: `Revolving Fund replenishment — ${fund.name} (from ${srcName})${note ? ': ' + note : ''}`,
+      description: `Revolving Fund replenishment: ${fund.name} (from ${srcName})${note ? ': ' + note : ''}`,
       lines: [
         { accountCode: '114000', accountName: 'Petty Cash / Revolving Fund', debit: amt, credit: 0 },
         { accountCode: srcCode,  accountName: srcName,                      debit: 0, credit: amt },
@@ -892,7 +892,7 @@ app.post('/api/revolving-funds/:id/replenish', verifyToken, ...canPostAcct, asyn
 
     const tx = await RevolvingFundTx.create({
       fundId: fund._id, type: 'replenishment', amount: amt,
-      description: note || `Replenished ₱${amt.toFixed(2)} — balance restored`,
+      description: note || `Replenished ₱${amt.toFixed(2)}; balance restored`,
       performedBy: req.user?.name,
       balanceAfter: fund.currentBalance,
       journalRef: je._id,

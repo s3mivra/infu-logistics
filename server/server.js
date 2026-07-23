@@ -1696,7 +1696,7 @@ function scheduleMidnightArchive() {
           completed.forEach(o => (o.items || []).forEach(i => { const n = (i.name || '').replace(/\s*\(.*?\)\s*/g, '').trim(); prodCount[n] = (prodCount[n] || 0) + i.quantity; }));
           const topProd    = Object.entries(prodCount).sort(([, a], [, b]) => b - a)[0];
           const msg = [
-            `📊 *${closedDateStr} — Daily Summary*`,
+            `📊 *${closedDateStr} Daily Summary*`,
             `💰 Revenue: ₱${revenue.toFixed(2)}`,
             `📦 Orders: ${completed.length} completed${voids > 0 ? `, ${voids} voided` : ''}`,
             `💵 Cash: ₱${cashSales.toFixed(2)} | Non-Cash: ₱${(revenue - cashSales).toFixed(2)}`,

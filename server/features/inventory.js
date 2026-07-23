@@ -890,7 +890,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           qtyChange: diff,
           balanceAfter: existing.stockQty,
           unitCost: existing.unitCost,
-          remarks: `Bulk import — ${diff >= 0 ? '+' : ''}${diff} ${baseUnit}`
+          remarks: `Bulk import: ${diff >= 0 ? '+' : ''}${diff} ${baseUnit}`
         }], { session });
 
         if (Math.abs(valueImpact) > 0.001) {
@@ -908,7 +908,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           assertBalanced(lines, `IMPORT-${existing.itemName}`);
           await JournalEntry.create([{
             reference: impRef,
-            description: `Stock take import — ${existing.itemName} (${diff >= 0 ? '+' : ''}${diff.toFixed(2)} ${baseUnit} @ P${unitCostForValuation.toFixed(4)})`,
+            description: `Stock take import: ${existing.itemName} (${diff >= 0 ? '+' : ''}${diff.toFixed(2)} ${baseUnit} @ P${unitCostForValuation.toFixed(4)})`,
             lines, totalDebit: valueImpact, totalCredit: valueImpact
           }], { session });
         }
@@ -985,7 +985,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           assertBalanced(lines, `IMPORT-NEW-${item.itemName}`);
           await JournalEntry.create([{
             reference: impRef,
-            description: `Stock take import (new item) — ${item.itemName} (${newBaseQty.toFixed(2)} ${baseUnit} @ P${item.unitCost.toFixed(4)})`,
+            description: `Stock take import (new item): ${item.itemName} (${newBaseQty.toFixed(2)} ${baseUnit} @ P${item.unitCost.toFixed(4)})`,
             lines, totalDebit: valueImpact, totalCredit: valueImpact
           }], { session });
         }
@@ -1079,7 +1079,7 @@ app.post('/api/inventory/spoilage/:id', verifyToken, requireStaff, async (req, r
       assertBalanced(lines, spoilRef);
       await JournalEntry.create([{
         reference: spoilRef,
-        description: `Spoilage/Waste — ${spoilQty}${item.unit} of ${item.itemName} (${reason})`,
+        description: `Spoilage/Waste: ${spoilQty}${item.unit} of ${item.itemName} (${reason})`,
         lines,
         totalDebit: spoilageCost,
         totalCredit: spoilageCost

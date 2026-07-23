@@ -545,7 +545,7 @@ app.delete('/api/orders/:id/complimentary', verifyToken, requireStaff, async (re
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found' });
-    if (order.status === 'Completed') return res.status(400).json({ success: false, error: 'Cannot reverse a completed complimentary order — void it instead' });
+    if (order.status === 'Completed') return res.status(400).json({ success: false, error: 'Cannot reverse a completed complimentary order; void it instead' });
 
     order.isComplimentary = false;
     order.transactionType = 'NORMAL';
@@ -774,7 +774,7 @@ app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
               );
               if (!invItem) {
                 await session.abortTransaction(); session.endSession();
-                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for combo "${item.name}" — [${ing.name || ing.invId}] would drop below zero.` });
+                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for combo "${item.name}": [${ing.name || ing.invId}] would drop below zero.` });
               }
               if (invItem.expiryBatches?.length > 0) {
                 const r = consumeBatches(invItem.expiryBatches, deductQty);
@@ -1279,7 +1279,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
 
     await JournalEntry.create({
       reference,
-      description: `A/R settlement — ${order.orderNumber} via ${order.paymentMethod}${note ? ` (${note})` : ''}`,
+      description: `A/R settlement: ${order.orderNumber} via ${order.paymentMethod}${note ? ` (${note})` : ''}`,
       lines, totalDebit: amt, totalCredit: amt,
     });
 
@@ -1411,7 +1411,7 @@ app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (re
     const totalDebit = +lines.reduce((s, l) => s + l.debit, 0).toFixed(2);
     const totalCredit = +lines.reduce((s, l) => s + l.credit, 0).toFixed(2);
     assertBalanced(lines, reference);
-    await JournalEntry.create([{ reference, description: `Partial fulfillment (${mode === 'full' ? 'pay full' : 'pay partial'}) — ${order.orderNumber}`, lines, totalDebit, totalCredit }], { session });
+    await JournalEntry.create([{ reference, description: `Partial fulfillment (${mode === 'full' ? 'pay full' : 'pay partial'}): ${order.orderNumber}`, lines, totalDebit, totalCredit }], { session });
 
     // Apply fulfilled units and advance status on the SAME order.
     for (const { i, want } of deltas) order.items[i].fulfilledQty = (order.items[i].fulfilledQty || 0) + want;
@@ -1488,7 +1488,7 @@ app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req,
                 await StockCard.create([{
                   inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
                   reference, qtyChange: qtyUsed, balanceAfter: restored.stockQty,
-                  remarks: `Refunded (Restock) — ${item.name}`
+                  remarks: `Refunded (Restock): ${item.name}`
                 }], { session });
               }
             } else {
@@ -1524,7 +1524,7 @@ app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req,
               await StockCard.create([{
                 inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
                 reference, qtyChange: qtyUsed, balanceAfter: restored.stockQty,
-                remarks: `Refunded (Restock) — ${label}`
+                remarks: `Refunded (Restock): ${label}`
               }], { session });
             } else {
               const invItem = await Inventory.findById(ing.invId).session(session);
@@ -1550,7 +1550,7 @@ app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req,
     const totalDebit = lines.reduce((s, l) => s + l.debit, 0);
     const totalCredit = lines.reduce((s, l) => s + l.credit, 0);
     assertBalanced(lines, reference);
-    await JournalEntry.create([{ date: new Date(), reference, description: `Refund — ${order.orderNumber}: ${reason}`, lines, totalDebit, totalCredit }], { session });
+    await JournalEntry.create([{ date: new Date(), reference, description: `Refund for order ${order.orderNumber}: ${reason}`, lines, totalDebit, totalCredit }], { session });
     order.transactionType = 'REFUND';
     order.status = 'Refunded';
     order.voidReason = `REFUND: ${reason}`;

@@ -74,12 +74,12 @@ export default function SettingsTab({ ctx }) {
           <Card title="System">
             {BUSINESS_TYPE !== 'log' && (
               <SettingRow icon={QrCode} title="QR Orders"
-                desc={qrOn ? 'Customers can place orders by scanning the table QR.' : 'QR ordering is closed — scans are rejected.'}>
+                desc={qrOn ? 'Customers can place orders by scanning the table QR.' : 'QR ordering is closed; scans are rejected.'}>
                 <Toggle on={qrOn} onChange={toggleQROrders} />
               </SettingRow>
             )}
             <SettingRow icon={Clock} title="Automatic Midnight Close"
-              desc={autoOn ? 'The day auto-closes & archives at midnight.' : 'Manual close required — the day stays open past midnight.'}>
+              desc={autoOn ? 'The day auto-closes & archives at midnight.' : 'Manual close required; the day stays open past midnight.'}>
               <Toggle on={autoOn} onChange={toggleAutoClose} />
             </SettingRow>
             <SettingRow icon={ImageIcon} title="Product Images"
