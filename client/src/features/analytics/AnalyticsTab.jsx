@@ -122,10 +122,41 @@ export default function AnalyticsTab({ ctx }) {
           </div>
 
           {analyticsLayout === 'b' ? (
-            <div className="bg-brand-dark/40 border border-dashed border-white/15 rounded-2xl p-10 text-center">
-              <BarChart2 size={30} className="mx-auto mb-3 text-white/20" />
-              <h3 className="text-white font-black text-lg">Layout B (Ledger-style)</h3>
-              <p className="text-white/40 text-sm mt-1.5">A denser, ledger-style analytics view is being built. Use Layout A for now.</p>
+            <div className="bg-surface border border-white/8 rounded-2xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-white/30 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
+                    <th className="px-5 py-3">Metric</th>
+                    <th className="px-5 py-3 text-right">Value</th>
+                  </tr>
+                </thead>
+                <tbody className="text-white/85">
+                  {[
+                    { section: 'Today' },
+                    { label: 'Gross Sales Today',      value: today.gross },
+                    { label: 'Net Revenue Today',      value: today.revenue },
+                    { label: 'Discounts Today',        value: -Math.abs(today.discounts || 0), neg: true },
+                    { label: 'Complimentary Today',    value: today.comp },
+                    { label: 'Orders Today',            value: today.count, notMoney: true },
+                    { label: 'Avg Order Value Today',  value: today.avg },
+                    { section: 'All-Time' },
+                    { label: 'All-Time Revenue',        value: allTime.revenue, bold: true },
+                    { label: 'All-Time Complimentary',  value: allTime.comp },
+                    { label: 'All-Time Orders',         value: allTime.orders, notMoney: true, bold: true },
+                  ].map((row, i) => row.section ? (
+                    <tr key={i} className="bg-white/[0.03]">
+                      <td colSpan={2} className="px-5 py-2 text-[10px] font-black uppercase tracking-wider text-brand/80">{row.section}</td>
+                    </tr>
+                  ) : (
+                    <tr key={i} className="border-b border-white/5 last:border-0">
+                      <td className={`px-5 py-2.5 ${row.bold ? 'font-black text-white' : 'text-white/60'}`}>{row.label}</td>
+                      <td className={`px-5 py-2.5 text-right font-mono tabular-nums ${row.bold ? 'font-black text-white' : row.neg ? 'text-red-400' : 'text-white/90'}`}>
+                        {row.notMoney ? (row.value ?? 0).toLocaleString() : `${row.neg ? '-' : ''}₱${Math.abs(row.value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : (<>
 

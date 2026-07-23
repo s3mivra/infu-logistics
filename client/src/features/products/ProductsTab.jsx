@@ -324,7 +324,10 @@ export default function ProductsTab({ ctx }) {
                   </div>
                   <p className="text-[10px] text-white/30 mb-3">Discount applies to this product only, on every order line - not the whole order. Overrides below apply when a specific client buys this product.</p>
 
-                  {/* Per-client overrides - a specific client's special rate on THIS product */}
+                  {/* Per-client overrides - a specific client's special rate on THIS product.
+                      Client Accounts are a logistics-only concept, so this section only
+                      applies (and only renders) in log mode. */}
+                  {BUSINESS_TYPE === 'log' && (
                   <div className="bg-page-bg/40 border border-white/8 rounded-xl p-3">
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-xs font-black text-white/70 uppercase tracking-wider">Per-Client Overrides</label>
@@ -366,7 +369,8 @@ export default function ProductsTab({ ctx }) {
                       </div>
                     ))}
                   </div>
-                  
+                  )}
+
                   {(() => {
                     const baseCost = calcRecipeCost(formData.baseRecipe);
                     const basePriceVal = parseFloat(formData.basePrice) || 0;
