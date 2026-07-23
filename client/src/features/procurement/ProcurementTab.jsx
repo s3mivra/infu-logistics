@@ -69,6 +69,23 @@ export default function ProcurementTab({ ctx }) {
   const [importPreview, setImportPreview] = useState(null); // { pos: [...], skipped }
   const [importing, setImporting] = useState(false);
 
+  // Downloads a blank template with the exact header row the importer expects,
+  // plus one filled-in sample row so the user can see the format at a glance.
+  const downloadPoTemplate = async () => {
+    const XLSX = await import('xlsx');
+    const headers = [
+      "SUPPLIER'S CODE", 'SUPPLIER NAME', 'ITEM CODE', 'PRODUCT DESCRIPTION', 'PO NO', 'LEAD TIME',
+      'DATE (MMDDYYYY)', 'DR / SI', 'DATE (MMDDYYYY)', 'QTY', 'UNIT PRICE (COST PRICE)',
+      'GROSS AMOUNT DUE', 'VAT/ DEL FEE', 'DISCOUNT', 'NET PAYABLE', 'BRIEF DESCRIPTION OF TRANS.',
+    ];
+    const sample = ['', 'ALLEGRO BEVERAGE CORP.', 'P50001', 'OATSIDE BARISTA EDITION 1L', '2026-06-0132', 20, '06/13/26', 'SI-PAM-0000002319', '07/3/26', 180, 115.00, 20700.00, '', '', 20700.00, ''];
+    const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
+    ws['!cols'] = headers.map((h) => ({ wch: Math.max(12, Math.min(28, h.length + 2)) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'PO Import');
+    XLSX.writeFile(wb, 'purchase_order_import_template.xlsx');
+  };
+
   // Pack size in a description: "…1L", "…250G", "…2.5KG", "…750ML". orderedQty is
   // the PACKAGE count and unitCost is per-package (QTY × UNIT PRICE = GROSS in the
   // source), so the pack size becomes the unit LABEL ("1L", "2L", "250G") — we do
@@ -348,6 +365,9 @@ export default function ProcurementTab({ ctx }) {
         </div>
         {subTab === 'orders' && canManage && (
           <div className="flex items-center gap-2">
+            <button onClick={downloadPoTemplate} title="Download a blank template with the expected headers" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white font-bold text-sm px-4 py-2.5 rounded-xl transition">
+              <FileText size={15} /> Template
+            </button>
             <label className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white font-bold text-sm px-4 py-2.5 rounded-xl transition cursor-pointer">
               <Download size={15} className="rotate-180" /> Import Excel
               <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => { parsePoExcel(e.target.files?.[0]); e.target.value = ''; }} />
