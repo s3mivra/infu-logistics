@@ -75,3 +75,23 @@ describe('fb mode: product images toggle', () => {
     expect(reEnabled.body.products.find(p => p.name === 'FB Latte').image).toBe('http://example.com/latte.png');
   });
 });
+
+describe('fb mode: inventory import ignores the category column (menu setup is log-only)', () => {
+  it('imports the raw stock but does NOT create a Category or Product from the sheet', async () => {
+    const res = await request(app).post('/api/inventory/import').set('Authorization', `Bearer ${superTok}`).send({
+      items: [{ itemCode: 'FB-CAT-1', itemName: 'FB Category Test Item', qty: 5, unit: 'kg', unitCost: 10, category: 'Should Not Sync', srp: 99 }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.summary.created).toBeGreaterThanOrEqual(1);
+
+    const invItem = await mongoose.model('Inventory').findOne({ itemCode: 'FB-CAT-1' });
+    expect(invItem).toBeTruthy(); // the raw inventory data still lands
+    expect(invItem.stockQty).toBeGreaterThan(0);
+
+    const category = await mongoose.model('Category').findOne({ name: 'Should Not Sync' });
+    expect(category).toBeNull(); // but no menu-setup Category
+
+    const product = await mongoose.model('Product').findOne({ productCode: 'FB-CAT-1' });
+    expect(product).toBeNull(); // and no linked Product
+  });
+});

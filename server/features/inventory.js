@@ -799,7 +799,10 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       const row = items[i] || {};
       const itemCode = String(row.itemCode || row.code || '').trim();
       const itemName = String(row.itemName || row.product || row.name || '').trim();
-      const categoryName = String(row.category || '').trim();
+      // Category (and the linked Product/menu-setup sync it triggers below) is a
+      // logistics-only concept — an fb import brings in raw inventory data (stock,
+      // cost, expiry) only, and never touches menu setup even if the sheet has one.
+      const categoryName = BUSINESS_TYPE === 'log' ? String(row.category || '').trim() : '';
       const srp = row.srp !== undefined && row.srp !== '' ? parseFloat(row.srp) : null;
       // FORCED RULE: only kg / L / pcs displayed. Auto-promote g→kg, ml→L.
       let displayUnit = String(row.displayUnit || row.unit || '').trim();
