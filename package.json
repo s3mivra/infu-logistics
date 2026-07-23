@@ -7,6 +7,8 @@
     "client": "cd client && npm run dev -- --host",
     "start": "concurrently \"npm run server\" \"npm run client\"",
     "test": "cd server && npm test",
-    "coverage": "cd server && npm run coverage"
+    "coverage": "cd server && npm run coverage",
+    "e2e:server": "cd server && node e2e-server.mjs",
+    "e2e": "cd client && npx playwright test"
   }
 }

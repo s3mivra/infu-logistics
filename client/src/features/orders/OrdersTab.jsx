@@ -472,7 +472,7 @@ export default function OrdersTab({ ctx }) {
               <>
                 <div className="flex justify-between items-center mb-6 bg-surface-2 p-3 rounded-xl border border-white/10 shadow-sm relative flex-wrap gap-3">
                   {/* Search bar */}
-                  <div className="relative w-full sm:w-56 order-last sm:order-none">
+                  <div className="relative w-full sm:flex-1 sm:max-w-md order-last sm:order-none">
                     <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30 pointer-events-none" />
                     <input
                       type="text"
@@ -487,12 +487,12 @@ export default function OrdersTab({ ctx }) {
                       </button>
                     )}
                   </div>
-                  <div className="flex gap-2 overflow-x-auto">
+                  <div className="flex gap-1 overflow-x-auto bg-page-bg border border-white/10 rounded-xl p-1">
                     {(BUSINESS_TYPE === 'log' ? ['All', 'Storage Room'] : ['All', 'Kitchen', 'Bar']).map(dept => (
                       <button
                         key={dept}
                         onClick={() => setDepartmentFilter(dept)}
-                        className={`px-6 py-2 rounded-lg text-sm font-black uppercase tracking-widest transition whitespace-nowrap ${departmentFilter === dept ? 'bg-brand text-white shadow-md shadow-brand/20' : 'bg-transparent text-white/50 hover:text-brand'}`}
+                        className={`px-5 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition whitespace-nowrap ${departmentFilter === dept ? 'bg-brand text-white shadow-md shadow-brand/20' : 'bg-transparent text-white/50 hover:text-white/80 hover:bg-white/5'}`}
                       >
                         {dept} View
                       </button>
@@ -581,7 +581,23 @@ export default function OrdersTab({ ctx }) {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                   {displayOrders.length === 0 ? (
-                    <div className="col-span-full text-center py-12 text-gray-500 font-bold uppercase tracking-widest">No orders in {departmentFilter === 'All' ? 'any' : departmentFilter} queue.</div>
+                    <div className="col-span-full flex flex-col items-center justify-center py-20 px-6 text-center">
+                      <div className="w-16 h-16 rounded-2xl bg-surface-2 border border-white/5 flex items-center justify-center mb-5">
+                        <ShoppingCart size={28} className="text-brand/60" />
+                      </div>
+                      <p className="text-white/80 font-black uppercase tracking-widest text-sm mb-1.5">
+                        No orders in {departmentFilter === 'All' ? 'any' : departmentFilter} queue
+                      </p>
+                      <p className="text-white/35 text-xs mb-6 max-w-xs">
+                        New orders appear here instantly, whether staff ring them up or customers order by QR.
+                      </p>
+                      <button
+                        onClick={() => setIsPosOpen(true)}
+                        className="px-6 py-2.5 bg-brand text-page-bg rounded-lg text-xs font-black uppercase tracking-widest hover:bg-brand-dark transition shadow-md flex items-center gap-2"
+                      >
+                        <Plus size={15} /> Start a Manual Order
+                      </button>
+                    </div>
                   ) : displayOrders.map(order => {
                     // Items scoped to current department view (or all items when in All view)
                     const viewItems      = departmentFilter !== 'All'

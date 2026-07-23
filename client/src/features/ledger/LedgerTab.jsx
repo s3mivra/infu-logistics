@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
-import { usePagination } from '../../lib/usePagination';
-import Pager from '../Pager';
+import { usePagination } from '../../shared/usePagination';
+import Pager from '../../shared/Pager';
 
 // ── LedgerTab — extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
@@ -356,6 +356,13 @@ export default function LedgerTab({ ctx }) {
               </button>
             </div>
             <div className="space-y-4">
+              {currentEntries.length === 0 && (
+                <div className="py-14 px-6 text-center border border-dashed border-white/10 rounded-xl">
+                  <FileText size={26} className="mx-auto mb-3 text-brand/50" />
+                  <p className="text-white/70 font-black uppercase tracking-widest text-xs mb-1">No journal entries yet</p>
+                  <p className="text-white/35 text-xs">Every sale, expense, and restock posts here automatically; you can also post one manually on the left.</p>
+                </div>
+              )}
               {currentEntries.map(entry => (
                 <div key={entry._id} className="bg-page-bg border border-gray-700 rounded-lg p-4">
                   <div className="flex justify-between items-center mb-3 border-b border-gray-800 pb-2">

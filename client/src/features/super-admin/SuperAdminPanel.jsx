@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import * as auth from '../lib/auth';
+import * as auth from '../auth/auth';
 import {
   Users, Shield, Menu, X, LogOut, Plus, Edit2, Trash2,
   Search, Eye, EyeOff, AlertCircle, Tag, Loader2, Lock,
@@ -96,10 +96,12 @@ const UserCard = memo(({ user, isSelected, onSelect, onEdit, onDelete }) => {
 });
 UserCard.displayName = 'UserCard';
 
+// Client Accounts belongs to the client portal, which is a logistics-only feature.
+// Hide the panel entirely for non-log business types (e.g. fb).
 const NAV_ITEMS = [
   { id: 'users', label: 'User Control',  icon: Users },
   { id: 'roles', label: 'Access Roles',  icon: Tag },
-  { id: 'clients', label: 'Client Accounts', icon: Package },
+  ...(BUSINESS_TYPE === 'log' ? [{ id: 'clients', label: 'Client Accounts', icon: Package }] : []),
 ];
 
 function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }) {

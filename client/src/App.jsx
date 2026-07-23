@@ -1,12 +1,12 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { lazy, Suspense, Component, useEffect } from 'react';
 
-const CustomerMenu = lazy(() => import('./pages/CustomerMenu'));
-const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
-const SuperAdminPanel = lazy(() => import('./pages/SuperAdminPanel'));
-const QRCodeComponent = lazy(() => import('./components/QRCode'));
-const ClientLogin = lazy(() => import('./pages/ClientLogin'));
-const ClientOrderPage = lazy(() => import('./pages/ClientOrderPage'));
+const CustomerMenu = lazy(() => import('./features/menu/CustomerMenu'));
+const AdminDashboard = lazy(() => import('./features/dashboard/AdminDashboard'));
+const SuperAdminPanel = lazy(() => import('./features/super-admin/SuperAdminPanel'));
+const QRCodeComponent = lazy(() => import('./features/qr/QRCode'));
+const ClientLogin = lazy(() => import('./features/client-portal/ClientLogin'));
+const ClientOrderPage = lazy(() => import('./features/client-portal/ClientOrderPage'));
 //fix
 class ErrorBoundary extends Component {
   state = { error: null };

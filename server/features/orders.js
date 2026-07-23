@@ -1,0 +1,1581 @@
+// orders routes — moved verbatim from server.js (feature-driven restructure).
+// All models/helpers/middleware still live in server.js and arrive via ctx.
+/* eslint-disable no-unused-vars */
+export default function registerOrders(ctx) {
+  const {
+    app,
+    io,
+    server,
+    express,
+    http,
+    Server,
+    cors,
+    helmet,
+    cookieParser,
+    Sentry,
+    z,
+    mongoose,
+    bcrypt,
+    jwt,
+    compression,
+    rateLimit,
+    crypto,
+    pino,
+    pinoHttp,
+    assertBalanced,
+    debitAccountFor,
+    suggestedSettleAccount,
+    ACCOUNTS,
+    EXPENSE_CATEGORIES,
+    CODE_MAP,
+    resolveUnit,
+    displayToBase,
+    effectiveDisplay,
+    addBatch,
+    consumeBatches,
+    soonestExpiry,
+    sortBatchesFEFO,
+    batchesTotal,
+    requireStaff,
+    evaluateClientAccess,
+    computePercentageTax,
+    PERCENTAGE_TAX_RATE,
+    validateDateRange,
+    log,
+    SENTRY_ON,
+    IS_PROD,
+    BUSINESS_TYPE,
+    ENV_ORIGINS,
+    allowedOrigins,
+    corsOriginCheck,
+    mkRef,
+    resolveLinkedInventory,
+    UNIT_TO_BASE,
+    baseUnitsPerSale,
+    escapeRegex,
+    tenantScope,
+    BCRYPT_ROUNDS,
+    shiftCashFilter,
+    ACCESS_TTL,
+    REFRESH_TTL_MS,
+    REFRESH_COOKIE,
+    signAccessToken,
+    hashToken,
+    refreshCookieOptions,
+    requireTrustedOrigin,
+    issueSession,
+    revokeUserSessions,
+    validate,
+    zName,
+    zMoney,
+    zRole,
+    loginSchema,
+    userCreateSchema,
+    addonSchema,
+    zRecipe,
+    productSchema,
+    comboSchema,
+    discountSchema,
+    roleSchema,
+    modifierGroupSchema,
+    mkSeqRef,
+    loginLimiter,
+    orderLimiter,
+    generalApiLimiter,
+    runStartupTasks,
+    CategorySchema,
+    Category,
+    ModifierGroupSchema,
+    ModifierGroup,
+    SettingsSchema,
+    Settings,
+    TenantSchema,
+    Tenant,
+    tenantSchema,
+    AddOnSchema,
+    AddOn,
+    ProductSchema,
+    Product,
+    ComboSchema,
+    Combo,
+    OrderSchema,
+    Order,
+    QRSessionSchema,
+    QRSession,
+    InventorySchema,
+    Inventory,
+    JournalEntrySchema,
+    JournalEntry,
+    InventoryMovementSchema,
+    InventoryMovement,
+    StockCardSchema,
+    StockCard,
+    ShiftSchema,
+    Shift,
+    ClockEntrySchema,
+    ClockEntry,
+    ownerUserIds,
+    ownerIdentity,
+    logAudit,
+    PaymentMethodMapSchema,
+    PaymentMethodMap,
+    DEFAULT_PAYMENT_ACCOUNT_MAP,
+    refreshPaymentMap,
+    accountForPaymentMethod,
+    ClosedPeriodSchema,
+    ClosedPeriod,
+    periodLockFor,
+    AccountSchema,
+    Account,
+    BankDepositSchema,
+    BankDeposit,
+    DEFAULT_ACCOUNTS,
+    CUSTOM_META,
+    refreshCustomMeta,
+    acctMeta,
+    UserSchema,
+    User,
+    ClientAccountSchema,
+    ClientAccount,
+    RefreshSessionSchema,
+    RefreshSession,
+    RoleSchema,
+    Role,
+    AuditLogSchema,
+    AuditLog,
+    DiscountSchema,
+    Discount,
+    EODRecordSchema,
+    EODRecord,
+    CounterSchema,
+    Counter,
+    emitToOps,
+    emitToAll,
+    emitToMgr,
+    getCategoryPrefix,
+    generateNextSequence,
+    scheduleMidnightArchive,
+    validateOrderMath,
+    normalBalanceForCode,
+    reportLinesForItem,
+    paymentChannel,
+    parseClockAt,
+    completedBreakMinutes,
+    openBreak,
+    BREAK_CAP_MIN,
+    RevolvingFundSchema,
+    RevolvingFund,
+    RevolvingFundTxSchema,
+    RevolvingFundTx,
+    verifyToken,
+    verifyClientToken,
+    requireSuperAdmin,
+    requireSuperOrAdmin,
+    verifyOrderAuth,
+  } = ctx;
+
+// Orders
+app.get('/api/orders', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const { page, limit, search } = req.query;
+    // Tenancy filter — businessType: undefined still matches via $in so that any
+    // unbackfilled docs (shouldn't exist after startup migration) still show up.
+    const baseFilter = { isArchived: false, isParked: { $ne: true }, businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    if (search && search.trim()) {
+      const rx = { $regex: escapeRegex(search.trim()), $options: 'i' };
+      baseFilter.$or = [{ customerName: rx }, { orderNumber: rx }, { table: rx }];
+    }
+    const query = Order.find(baseFilter).sort({ createdAt: -1 }).lean();
+    if (page && limit) {
+      const pageNum = Math.max(1, parseInt(page, 10));
+      const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10)));
+      query.skip((pageNum - 1) * limitNum).limit(limitNum);
+      const [orders, total] = await Promise.all([query, Order.countDocuments(baseFilter)]);
+      return res.json({ success: true, orders, total, page: pageNum, limit: limitNum });
+    }
+    const orders = await query;
+    res.json({ success: true, orders });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+app.get('/api/orders/archives', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { search, start, end, page = 1, limit: lim = 200 } = req.query;
+    const filter = { isArchived: true };
+    if (search?.trim()) {
+      const rx = { $regex: escapeRegex(search.trim()), $options: 'i' };
+      filter.$or = [{ customerName: rx }, { orderNumber: rx }, { cashier: rx }, { table: rx }];
+    }
+    if (start || end) {
+      filter.createdAt = {};
+      if (start) filter.createdAt.$gte = new Date(start);
+      if (end) { const d = new Date(end); d.setHours(23, 59, 59, 999); filter.createdAt.$lte = d; }
+    }
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const pageSize = Math.min(500, parseInt(lim) || 200);
+    const [archives, total] = await Promise.all([
+      Order.find(filter).sort({ createdAt: -1 }).skip((pageNum - 1) * pageSize).limit(pageSize).lean(),
+      Order.countDocuments(filter)
+    ]);
+    res.json({ success: true, archives, total, page: pageNum });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// ── PARKED ORDERS / OPEN TABS ────────────────────────────────────────────────
+// IMPORTANT: these literal paths MUST be registered before '/api/orders/:id',
+// otherwise Express matches ':id' first and treats "parked"/"park" as an order id.
+app.post('/api/orders/park', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const { items, customerName, table, orderNotes, guestCount } = req.body;
+    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ success: false, error: 'Cannot park an empty cart.' });
+    const subtotal = items.reduce((s, i) => s + ((i.price || 0) + (i.selectedAddOns || []).reduce((a, x) => a + Number(x.price || 0), 0)) * (i.quantity || 1), 0);
+    const year = new Date().getFullYear();
+    const orderNumber = await generateNextSequence(Order, `ORD-${year}`, 'orderNumber');
+    const parked = await Order.create({
+      orderNumber, items, customerName: customerName || 'Guest', table: table || 'Dine-In',
+      orderNotes: (orderNotes || '').trim().slice(0, 300), guestCount: Math.max(1, parseInt(guestCount) || 1),
+      subtotal, total: subtotal, status: 'Parked', isParked: true, cashier: req.user?.name || 'System',
+    });
+    res.json({ success: true, order: parked });
+  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+});
+
+app.get('/api/orders/parked', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const parked = await Order.find({ isParked: true, isArchived: false }).sort({ createdAt: -1 }).lean();
+    res.json({ success: true, parked });
+  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+});
+
+app.delete('/api/orders/parked/:id', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const order = await Order.findOne({ _id: req.params.id, isParked: true });
+    if (!order) return res.status(404).json({ success: false, error: 'Parked order not found.' });
+    await Order.findByIdAndDelete(req.params.id);
+    res.json({ success: true, order });
+  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+});
+
+// Fetch a single order by ID (Used for Customer Status Lock)
+app.get('/api/orders/:id', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, message: "Order not found" });
+    // Access control: staff/admin and authenticated clients get the full document.
+    // Anonymous callers (QR status polling) get a PII-SAFE projection so order ids
+    // can't be enumerated to harvest customer phone / delivery address.
+    let isPrivileged = false;
+    try {
+      const raw = req.headers.authorization?.replace(/^Bearer /, '') || '';
+      if (raw) { const d = jwt.verify(raw, process.env.JWT_SECRET); if (d?.role) isPrivileged = true; }
+    } catch { /* invalid/expired token → treat as anonymous */ }
+    const safeProjection = {
+      orderNumber: 1, status: 1, dispatchStatus: 1, isParked: 1, table: 1,
+      total: 1, customerName: 1, createdAt: 1, scheduledTime: 1,
+      'items.name': 1, 'items.quantity': 1, 'items.itemStatus': 1, 'items.department': 1,
+    };
+    const order = await Order.findById(req.params.id, isPrivileged ? undefined : safeProjection);
+    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
+    res.json(order); // sent as the raw order object so the frontend can read it directly
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
+  try {
+    // 1. IDEMPOTENCY CHECK
+    const idempotencyKey = req.headers['idempotency-key'];
+    if (idempotencyKey) {
+      const existingOrder = await Order.findOne({ idempotencyKey });
+      if (existingOrder) return res.status(200).json({ success: true, order: existingOrder, message: "Duplicate prevented." });
+    }
+
+    let { items, discountPercent = 0, discountFlat = 0, table, customerName, sessionId, isComplimentary = false, employeeName = '', orderNotes = '', guestCount = 1, payments: paymentsInput, paymentMethod: bodyPaymentMethod, termsOfPayment, reserveOnly = false } = req.body;
+
+    // Block QR-originated orders when kitchen has toggled off (staff POS unaffected)
+    if (req.qrSession) {
+      const qrSetting = await Settings.findOne({ key: 'isAcceptingQROrders' }).lean();
+      const isOpen = qrSetting ? qrSetting.value !== false : true;
+      if (!isOpen) return res.status(403).json({ success: false, error: 'Kitchen is currently closed. Please see staff at the counter.' });
+    }
+
+    // Client account ordering (logistics mode): extract pre-set payment method and identity
+    const isClientOrder = req.user?.role === 'client';
+    const clientPresetPayment = isClientOrder ? req.user.paymentMethod : null;
+    const cashier = isClientOrder ? (req.user.username || req.user.name || 'Client') : (req.user?.name || 'System');
+
+    // Admin POS on-behalf: an admin/staff can attach a client account to an
+    // order they're placing in person (`clientAccountId` in the body). When set,
+    // we resolve per-product per-client discount overrides as if that client
+    // bought it themselves. Ignored when the caller IS already a client (the
+    // JWT identity is canonical and can't be overridden client-side).
+    let onBehalfClientId = '';
+    if (!isClientOrder && req.body.clientAccountId) {
+      try {
+        const cli = await ClientAccount.findById(req.body.clientAccountId).lean();
+        if (cli && cli.isActive) onBehalfClientId = String(cli._id);
+      } catch { /* invalid id — ignore, fall back to default discount */ }
+    }
+
+    let isVatExempt = true;
+    // FIX 1: Safely default to Takeout if the table is null or empty
+    if (!table) table = 'Takeout';
+
+    // Kill QR session — already validated by verifyOrderAuth; burn it before processing to prevent replay
+    if (req.qrSession) {
+      req.qrSession.isActive = false;
+      await req.qrSession.save();
+    }
+
+    if (!items || items.length === 0) {
+      throw new Error("Cart is empty");
+    }
+
+    for (const item of items) {
+      if (!item.quantity || item.quantity <= 0) {
+        throw new Error(`Invalid quantity for item: ${item.name || item.productId}`);
+      }
+      if (item.price === undefined || item.price < 0) {
+        throw new Error(`Invalid price for item: ${item.name || item.productId}`);
+      }
+    }
+
+    // Authoritative department stamping — look up each product's category and resolve to Kitchen/Bar.
+    // Combos resolve from their component products: all-Bar → Bar, otherwise Kitchen.
+    {
+      const directIds = items.map(i => i.productId).filter(Boolean);
+      const comboCompIds = items.filter(i => i.isCombo).flatMap(i => (i.comboItems || []).map(c => c.productId)).filter(Boolean);
+      const allIds = [...new Set([...directIds, ...comboCompIds])];
+      const [prods, cats] = await Promise.all([
+        allIds.length ? Product.find({ _id: { $in: allIds } }, { _id: 1, category: 1, productCode: 1 }).lean() : [],
+        Category.find({}, { name: 1, department: 1 }).lean()
+      ]);
+      const catDeptMap = Object.fromEntries(cats.map(c => [c.name, c.department || 'Kitchen']));
+      const prodCatMap = Object.fromEntries(prods.map(p => [p._id.toString(), p.category]));
+      const prodCodeMap = Object.fromEntries(prods.map(p => [p._id.toString(), p.productCode]));
+      const defaultDept = BUSINESS_TYPE === 'log' ? 'Storage Room' : 'Kitchen';
+      const deptOf = (pid) => { const cat = prodCatMap[pid]; return cat ? (catDeptMap[cat] || defaultDept) : null; };
+      for (const item of items) {
+        if (item.productId && prodCodeMap[item.productId]) {
+          item.productCode = prodCodeMap[item.productId];
+        }
+        if (item.isCombo && (item.comboItems || []).length) {
+          const depts = item.comboItems.map(c => deptOf(c.productId)).filter(Boolean);
+          item.department = (depts.length > 0 && depts.every(d => d === 'Bar')) ? 'Bar' : defaultDept;
+        } else {
+          const d = deptOf(item.productId);
+          item.department = d || (item.department || defaultDept);
+        }
+      }
+    }
+
+    const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+    let totalGross = 0;
+    let totalDiscount = 0;
+    let totalVat = 0;
+    
+    const flatDiscount = Math.max(0, parseFloat(discountFlat) || 0);
+    let discountType = 'None';
+    if (isComplimentary) discountType = 'Complimentary';
+    else if (isVatExempt && discountPercent > 0) discountType = 'SC/PWD';
+    else if (discountPercent > 0) discountType = 'Promo';
+    else if (flatDiscount > 0) discountType = 'Promo';
+
+    // Per-product (and optional per-client) discount lookup. Server-authoritative —
+    // never trust a client-side discount field. If the buyer is a logged-in client
+    // and the product has a matching clientDiscounts entry, that override wins.
+    const _prodIds = items.map(i => i.productId).filter(Boolean);
+    const _prodNames = items.map(i => i.name).filter(Boolean);
+    const _discProds = await Product.find(
+      { $or: [{ _id: { $in: _prodIds } }, { name: { $in: _prodNames } }] },
+      { _id: 1, name: 1, discountPercent: 1, clientDiscounts: 1 }
+    ).lean();
+    const _discById = new Map(_discProds.map(p => [String(p._id), p]));
+    const _discByName = new Map(_discProds.map(p => [p.name, p]));
+    // Buyer identity for per-client discount resolution. Authenticated client
+    // wins; otherwise we fall back to the admin-on-behalf clientAccountId.
+    const _buyerClientId = isClientOrder
+      ? String(req.user.clientId || req.user._id || '')
+      : (onBehalfClientId || '');
+    const productDiscPct = (item) => {
+      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+      if (!p) return 0;
+      // 1) per-client override beats the default when a client is buying
+      if (_buyerClientId) {
+        const ov = (p.clientDiscounts || []).find(d => String(d.clientId) === _buyerClientId);
+        if (ov) return Math.max(0, Math.min(100, Number(ov.percent || 0)));
+      }
+      return Math.max(0, Math.min(100, Number(p.discountPercent || 0)));
+    };
+
+    const validatedItems = items.map(item => {
+      item.hasDiscount = true;
+      // Calculate Add-Ons Total
+      const addOnTotal = (item.selectedAddOns || []).reduce((sum, a) => sum + Number(a.price || 0), 0);
+      const itemBase = ((item.price || 0) + addOnTotal) * (item.quantity || 1);
+      totalGross += itemBase;
+
+      // Per-product discount applies to THIS line only.
+      const prodPct = productDiscPct(item);
+      const prodDisc = +(itemBase * prodPct / 100).toFixed(2);
+      item.productDiscountPercent = prodPct;
+      totalDiscount += prodDisc;
+      const lineBase = itemBase - prodDisc;   // base the order-level discount works on
+
+      if (isComplimentary) {
+        totalDiscount += lineBase;
+      } else if (discountPercent > 0) {
+        // Order-wide discount (SC/PWD / promo) on top of any product discount.
+        totalDiscount += lineBase * (discountPercent / 100);
+      }
+      return item;
+    });
+
+    // Flat peso discount (POS "₱ off") — applied after the per-item percent pass,
+    // capped at the gross so the total never goes negative.
+    if (!isComplimentary && discountPercent === 0 && flatDiscount > 0) {
+      totalDiscount = Math.min(flatDiscount, totalGross);
+    }
+
+    const vatRate = 0; // VAT DISABLED
+    const finalTotal = totalGross - totalDiscount + totalVat; // Add VAT on top!
+
+    const currentYear = new Date().getFullYear();
+    const orderNumber = await generateNextSequence(Order, `ORD-${currentYear}`, 'orderNumber');
+
+    // Generate a billing number (monthly-reset: YYYY-MM-XXXX) for every order, both
+    // business types.
+    let billingNumber = '';
+    {
+      const now = new Date();
+      const billingPrefix = `BIL-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const billingCounter = await Counter.findOneAndUpdate(
+        { _id: billingPrefix },
+        { $inc: { seq: 1 } },
+        { upsert: true, returnDocument: 'after' }
+      );
+      billingNumber = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${billingCounter.seq.toString().padStart(4, '0')}`;
+    }
+
+    // Resolve payment method: client pre-set → body override → default Cash
+    const resolvedPaymentMethod = paymentsInput?.length > 0
+      ? (paymentsInput.length === 1 ? paymentsInput[0].method : 'Split')
+      : (bodyPaymentMethod || clientPresetPayment || 'Cash');
+
+    const newOrder = await Order.create({
+      orderNumber, table, items: validatedItems,
+      subtotal: totalGross,
+      vatRate: vatRate,
+      vatAmount: totalVat,
+      discountPercent: isComplimentary ? 0 : discountPercent,
+      discount: totalDiscount,
+      total: finalTotal,
+      isVatExempt, discountType, customerName,
+      isComplimentary, employeeName, cashier,
+      placedByClient: isClientOrder,
+      ...(onBehalfClientId ? { clientAccountId: onBehalfClientId } : {}),
+      // Reserve mode: items committed, no payment yet, status = Reserved.
+      // Cashier later promotes Reserved → Pending (pay later) or Preparing (pay now)
+      // via the existing PUT /api/orders/:id status transition.
+      ...(reserveOnly && !isComplimentary ? { status: 'Reserved' } : {}),
+      transactionType: isComplimentary ? 'COMPLIMENTARY' : 'NORMAL',
+      orderNotes: (orderNotes || '').trim().slice(0, 300),
+      guestCount: Math.max(1, parseInt(guestCount) || 1),
+      paymentMethod: resolvedPaymentMethod,
+      ...(termsOfPayment && { termsOfPayment }),
+      ...(billingNumber && { billingNumber }),
+      ...(isClientOrder && { clientId: req.user._id || req.user.clientId || '', clientUsername: req.user.username || '' }),
+      ...(idempotencyKey && { idempotencyKey }),
+      ...(paymentsInput?.length > 0 && { payments: paymentsInput }),
+    });
+
+    emitToOps('newOrder', newOrder);
+    res.json({ success: true, order: newOrder });
+  } catch (error) {
+    console.error("Order Creation Error:", error);
+    res.status(500).json({ success: false, error: 'Order failed' });
+  }
+});
+
+// --- COMPLIMENTARY: APPLY ---
+app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const { reasonType, reasonNote, approvedBy, forEmployee } = req.body;
+    if (!reasonType) return res.status(400).json({ success: false, error: 'reasonType is required' });
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found' });
+    if (order.status === 'Completed') return res.status(400).json({ success: false, error: 'Completed orders cannot be marked complimentary' });
+
+    const year = new Date().getFullYear();
+    const compCount = await Order.countDocuments({ isComplimentary: true });
+    const refNum = `COMP-${year}-${(compCount + 1).toString().padStart(4, '0')}`;
+
+    order.isComplimentary = true;
+    order.transactionType = 'COMPLIMENTARY';
+    order.complimentaryReasonType = reasonType;
+    order.complimentaryReasonNote = reasonNote || '';
+    order.complimentaryApprovedBy = approvedBy || 'Manager';
+    order.complimentaryApprovedAt = new Date();
+    order.complimentaryAmount = order.subtotal;
+    order.complimentaryReferenceNumber = refNum;
+    order.employeeName = forEmployee || approvedBy || '';
+    order.discountPercent = 0;
+    order.discount = order.subtotal;
+    order.total = 0;
+    order.discountType = 'Complimentary';
+    order.paymentMethod = 'Complimentary';
+
+    await order.save();
+    emitToOps('orderUpdated', order.toObject());
+    res.json({ success: true, order });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// --- COMPLIMENTARY: REMOVE ---
+app.delete('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found' });
+    if (order.status === 'Completed') return res.status(400).json({ success: false, error: 'Cannot reverse a completed complimentary order — void it instead' });
+
+    order.isComplimentary = false;
+    order.transactionType = 'NORMAL';
+    order.complimentaryReasonType = null;
+    order.complimentaryReasonNote = '';
+    order.complimentaryApprovedBy = '';
+    order.complimentaryApprovedAt = null;
+    order.complimentaryAmount = 0;
+    order.complimentaryReferenceNumber = '';
+    order.employeeName = '';
+    order.discountPercent = 0;
+    order.discount = 0;
+    order.total = order.subtotal;
+    order.paymentMethod = 'Cash';
+
+    await order.save();
+    emitToOps('orderUpdated', order.toObject());
+    res.json({ success: true, order });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { status, discountPercent, isVatExempt, paymentMethod, discountType, discountedIndices, items, amountTendered } = req.body;
+    
+    const order = await Order.findById(req.params.id).session(session);
+    if (!order) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ success: false });
+    }
+
+    // Freeze previousStatus to prevent the 500 Internal Server Crash
+    const previousStatus = order.status;
+    const wasNotCompleted = previousStatus !== 'Completed';
+
+    // Immutability guard: completed orders are locked; use the void workflow
+    if (previousStatus === 'Completed') {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ success: false, error: 'Completed orders are immutable. Use the void workflow for cancellations.' });
+    }
+
+    if (status) {
+      order.status = status;
+      // Attribution: when an order moves to Cancelled, stamp who did it from
+      // the verified JWT so reports don't blame the original cashier (which
+      // for a client-portal order is the client's username).
+      if (status === 'Cancelled' && previousStatus !== 'Cancelled') {
+        order.cancelledBy = req.user?.name || 'system';
+        order.cancelledAt = new Date();
+        await logAudit(req, { action: 'cancel', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, cancelledBy: order.cancelledBy } });
+      }
+    }
+    if (paymentMethod && !order.isComplimentary) order.paymentMethod = paymentMethod;
+
+    // Allow the Kitchen/Bar to update specific item statuses safely
+    // Allow the Kitchen/Bar to update specific item statuses safely
+    if (items) {
+      items.forEach((incomingItem, index) => {
+        if (order.items[index]) {
+          if (incomingItem.itemStatus !== undefined) order.items[index].itemStatus = incomingItem.itemStatus;
+          if (incomingItem.selectedAddOns !== undefined) order.items[index].selectedAddOns = incomingItem.selectedAddOns; 
+          // NEW: Listen for the isolated discount from the frontend!
+          if (incomingItem.discountPercent !== undefined) order.items[index].discountPercent = incomingItem.discountPercent; 
+        }
+      });
+      order.markModified('items');
+    }
+
+    if (discountPercent !== undefined) order.discountPercent = discountPercent;
+    if (isVatExempt !== undefined) order.isVatExempt = isVatExempt;
+    if (discountType !== undefined) order.discountType = discountType;
+
+    // Stamp WHO applied the discount with the logged-in user (not the order's
+    // original cashier, which may be 'System' for QR/customer-created orders).
+    if ((discountPercent !== undefined && discountPercent > 0) ||
+        (Array.isArray(discountedIndices) && discountedIndices.length > 0)) {
+      if (req.user?.name) order.discountBy = req.user.name;
+    }
+
+    if (order.isComplimentary) {
+        order.discountType = 'Complimentary';
+    } else if (order.discountPercent > 0 && (!order.discountType || order.discountType === 'None')) {
+        order.discountType = order.isVatExempt ? 'SC/PWD' : 'Promo';
+    } else if (order.discountPercent === 0) {
+        order.discountType = 'None';
+    }
+
+    if (discountedIndices !== undefined) {
+      order.items.forEach((item, idx) => {
+        item.hasDiscount = discountedIndices.includes(idx);
+      });
+      order.markModified('items'); 
+    }
+
+    // --- BULLETPROOF MATH RECALCULATION ---
+    let totalGross = 0;
+    let totalDiscount = 0;
+    let totalVat = 0;
+    
+    order.items.forEach(item => {
+      const price = item.price || 0;
+      const qty = item.quantity || 1;
+      const addOnTotal = (item.selectedAddOns || []).reduce((sum, a) => sum + Number(a.price || 0), 0);
+      const itemBase = (price + addOnTotal) * qty;
+
+      totalGross += itemBase;
+      const getsDiscount = item.hasDiscount !== false;
+      // Effective per-line discount: MAX of the server-resolved per-product /
+      // per-client discount (productDiscountPercent, set at order create) and
+      // the cashier per-item override (discountPercent). The MAX guarantees a
+      // status change can never silently strip a buyer's negotiated rate.
+      const prodPct = Number(item.productDiscountPercent || 0);
+      const cashierPct = Number(item.discountPercent || 0);
+      const linePct = Math.max(prodPct, cashierPct);
+
+      if (order.isComplimentary) {
+        totalDiscount += itemBase;
+      } else if (linePct > 0) {
+        // Per-line discount (product/client or cashier override) overrides the
+        // order-level discount for this line.
+        const itemDisc = itemBase * (linePct / 100);
+        totalDiscount += itemDisc;
+        if (!order.isVatExempt) totalVat += (itemBase - itemDisc) * 0; // VAT DISABLED
+      } else if (getsDiscount && order.discountPercent > 0) {
+        if (order.isVatExempt || order.discountType === 'SC/PWD') {
+          const scDisc = itemBase * (order.discountPercent / 100);
+          totalDiscount += scDisc;
+        } else {
+          const itemDisc = itemBase * (order.discountPercent / 100);
+          totalDiscount += itemDisc;
+          if (!order.isVatExempt) totalVat += (itemBase - itemDisc) * 0; // VAT DISABLED
+        }
+      } else {
+        if (!order.isVatExempt) totalVat += (itemBase * 0); // VAT DISABLED
+      }
+    });
+
+    order.subtotal = Number(totalGross.toFixed(2));
+    order.discount = Number(totalDiscount.toFixed(2));
+    order.vatAmount = Number(totalVat.toFixed(2));
+    order.vatRate = 0;
+    order.total = Number((totalGross - totalDiscount + totalVat).toFixed(2));
+
+    // Cash tendered — only for cash orders transitioning to Preparing
+    if (status === 'Preparing' && amountTendered !== undefined && (order.paymentMethod === 'Cash' || paymentMethod === 'Cash')) {
+      const tendered = Number(amountTendered);
+      if (tendered < order.total) {
+        await session.abortTransaction(); session.endSession();
+        return res.status(400).json({ success: false, error: `Insufficient cash: tendered ₱${tendered.toFixed(2)} but total is ₱${order.total.toFixed(2)}` });
+      }
+      order.amountTendered = tendered;
+      order.changeDue = Number((tendered - order.total).toFixed(2));
+    }
+
+    const validation = validateOrderMath(order);
+    if (!validation.valid) {
+      await session.abortTransaction();
+      session.endSession();
+      console.error(`[VALIDATION FAILED] Order ${order.orderNumber}: ${validation.error}`);
+      return res.status(400).json({ success: false, error: `SYSTEM AUDIT REJECTED: ${validation.error}` });
+    }
+
+    // --- POS GUARDRAIL: CHECK IF EOD IS LOCKED ---
+    if (status === 'Completed' && wasNotCompleted) {
+      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+      const currentEOD = await EODRecord.findOne({ dateString: todayStr }).session(session);
+      
+      if (currentEOD && currentEOD.status === 'LOCKED') {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(403).json({ success: false, error: 'REGISTER CLOSED: EOD is locked.' });
+      }
+    }
+
+    // Orders fulfilled in batches are posted by the partial-fulfill endpoint
+    // (inventory, COGS and revenue per round). Skip the standard engine so the
+    // sale isn't double-counted if such an order is completed via this route.
+    const wasPartiallyFulfilled = (order.items || []).some(it => (it.fulfilledQty || 0) > 0);
+
+    // --- THE STRICT ERP ENGINE ---
+    if (status === 'Completed' && wasNotCompleted && !wasPartiallyFulfilled) {
+      log.info(`\n[ERP ENGINE] Processing Order: ${order.orderNumber}...`);
+      let totalCogs = 0;
+      const stockCardBatch = [];
+      const depletedInvIds = new Set(); // track inventory items that hit 0 for auto-unavailable
+
+      // BULK PRE-FETCH all products for this order in 2 queries (fix N+1)
+      const itemProductIds = order.items.map(i => i.productId).filter(Boolean);
+      const itemBaseNames  = order.items.filter(i => !i.productId).map(i => i.name.replace(/\s*\(.*?\)\s*/g, '').trim());
+      const [productsById, productsByName] = await Promise.all([
+        itemProductIds.length ? Product.find({ _id:  { $in: itemProductIds } }).populate('modifierGroups').session(session) : [],
+        itemBaseNames.length  ? Product.find({ name: { $in: itemBaseNames  } }).populate('modifierGroups').session(session) : []
+      ]);
+      const productMap = new Map();
+      productsById.forEach(p => productMap.set(String(p._id), p));
+      productsByName.forEach(p => productMap.set(`name:${p.name}`, p));
+
+      for (const item of order.items) {
+        if (item.price === undefined || item.quantity === undefined) return { valid: false, error: "Line item missing price or quantity." };
+
+        // COMBO / BUNDLE: deduct each component product's recipe.
+        if (item.isCombo && Array.isArray(item.comboItems) && item.comboItems.length) {
+          for (const comp of item.comboItems) {
+            const compProduct = await Product.findById(comp.productId).session(session);
+            if (!compProduct) continue;
+            let compRecipe = compProduct.baseRecipe || [];
+            if (comp.sizeName) {
+              const sz = compProduct.sizes?.find(s => s.name === comp.sizeName);
+              if (sz?.recipe?.length) compRecipe = sz.recipe;
+            }
+            for (const ing of compRecipe) {
+              if (!ing.invId) continue;
+              const deductQty = (ing.qty * (comp.quantity || 1) * item.quantity);
+              const invItem = await Inventory.findOneAndUpdate(
+                { _id: ing.invId, stockQty: { $gte: deductQty } },
+                { $inc: { stockQty: -deductQty } },
+                { session, returnDocument: 'after' }
+              );
+              if (!invItem) {
+                await session.abortTransaction(); session.endSession();
+                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for combo "${item.name}" — [${ing.name || ing.invId}] would drop below zero.` });
+              }
+              if (invItem.expiryBatches?.length > 0) {
+                const r = consumeBatches(invItem.expiryBatches, deductQty);
+                invItem.expiryBatches = r.batches; invItem.expiryDate = soonestExpiry(r.batches);
+                await invItem.save({ session });
+              }
+              stockCardBatch.push({
+                inventoryId: invItem._id, itemName: invItem.itemName, type: 'Sale',
+                reference: mkRef('', order.orderNumber), qtyChange: -deductQty, balanceAfter: invItem.stockQty,
+                remarks: `Sold via Combo (${item.name} → ${comp.name})`
+              });
+              totalCogs += (invItem.unitCost * deductQty);
+              if (invItem.stockQty <= 0) depletedInvIds.add(String(ing.invId));
+            }
+          }
+          continue; // combo fully handled
+        }
+
+        let product = null;
+        if (item.productId) {
+          product = productMap.get(String(item.productId));
+        } else {
+          const baseName = item.name.replace(/\s*\(.*?\)\s*/g, '').trim();
+          product = productMap.get(`name:${baseName}`);
+        }
+
+        if (!product) continue;
+
+        let recipeToUse = product.baseRecipe || [];
+        const sizeMatch = item.name.match(/\(([^)]+)\)$/);
+        if (sizeMatch) {
+          const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+          if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
+        }
+
+        // LOGISTICS 1:1 FALLBACK — product has no recipe: treat it as a stocked
+        // good linked by code/name. Deduct (qty × unitMultiplier) base units and
+        // book COGS at unitCost. Skips cleanly if no matching inventory exists.
+        if (!recipeToUse.some(r => r.invId)) {
+          const linkInv = await resolveLinkedInventory(product, item.productCode, session);
+          if (linkInv) {
+            const deductQty = item.quantity * baseUnitsPerSale(product, linkInv);
+            const updated = await Inventory.findOneAndUpdate(
+              { _id: linkInv._id, stockQty: { $gte: deductQty } },
+              { $inc: { stockQty: -deductQty } },
+              { session, returnDocument: 'after' }
+            );
+            if (!updated) {
+              await session.abortTransaction();
+              session.endSession();
+              return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Cannot fulfill order. [${linkInv.itemName}] would drop below zero. Please receive stock in the Procurement tab first.` });
+            }
+            stockCardBatch.push({
+              inventoryId: updated._id, itemName: updated.itemName, type: 'Sale',
+              reference: mkRef('', order.orderNumber), qtyChange: -deductQty, balanceAfter: updated.stockQty,
+              remarks: `Sold (${item.name})`
+            });
+            totalCogs += (linkInv.unitCost * deductQty);
+            if (updated.stockQty <= 0) depletedInvIds.add(String(updated._id));
+          }
+        }
+
+        for (const ing of recipeToUse) {
+          if (!ing.invId) continue;
+          const deductQty = (ing.qty * item.quantity);
+          const invItem = await Inventory.findOneAndUpdate(
+            { _id: ing.invId, stockQty: { $gte: deductQty } },
+            { $inc: { stockQty: -deductQty } },
+            { session, returnDocument: 'after' }
+          );
+          if (invItem && invItem.expiryBatches && invItem.expiryBatches.length > 0) {
+            // FEFO-consume from batches (audit info; stockQty is source of truth)
+            const r = consumeBatches(invItem.expiryBatches, deductQty);
+            invItem.expiryBatches = r.batches;
+            invItem.expiryDate = soonestExpiry(r.batches);
+            await invItem.save({ session });
+          }
+          if (!invItem) {
+            const missing = await Inventory.findById(ing.invId).lean();
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Cannot fulfill order. [${missing?.itemName || ing.name}] would drop below zero. Please receive stock in the Procurement tab first.` });
+          }
+          stockCardBatch.push({
+            inventoryId: invItem._id,
+            itemName: invItem.itemName,
+            type: 'Sale',
+            reference: mkRef('', order.orderNumber),
+            qtyChange: -deductQty,
+            balanceAfter: invItem.stockQty,
+            remarks: `Sold via ${item.name}`
+          });
+          totalCogs += (invItem.unitCost * deductQty);
+          if (invItem.stockQty <= 0) depletedInvIds.add(String(ing.invId));
+        }
+        // DEDUCT ADD-ONS + MODIFIER-OPTION INVENTORY
+        for (const selectedAddOn of (item.selectedAddOns || [])) {
+          // Resolve the recipe from either a product add-on OR a modifier-group option.
+          // Modifier selections are stored as "Group name: Option name".
+          let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
+          if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
+            const [grpName, optName] = selectedAddOn.name.split(': ');
+            const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
+            resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
+          }
+          if (resolvedRecipe && resolvedRecipe.length) {
+            for (const ing of resolvedRecipe) {
+              if (!ing.invId) continue;
+              const deductQty = (ing.qty * item.quantity);
+              const invItem = await Inventory.findOneAndUpdate(
+                { _id: ing.invId, stockQty: { $gte: deductQty } },
+                { $inc: { stockQty: -deductQty } },
+                { session, returnDocument: 'after' }
+              );
+              if (invItem && invItem.expiryBatches && invItem.expiryBatches.length > 0) {
+                const r = consumeBatches(invItem.expiryBatches, deductQty);
+                invItem.expiryBatches = r.batches;
+                invItem.expiryDate = soonestExpiry(r.batches);
+                await invItem.save({ session });
+              }
+              if (!invItem) {
+                await session.abortTransaction();
+                session.endSession();
+                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Add-on [${ing.name || ing.invId}] drops below zero.` });
+              }
+              stockCardBatch.push({
+                inventoryId: invItem._id, itemName: invItem.itemName, type: 'Sale',
+                reference: mkRef('', order.orderNumber), qtyChange: -deductQty, balanceAfter: invItem.stockQty,
+                remarks: `Sold via Add-on (${selectedAddOn.name})`
+              });
+              totalCogs += (invItem.unitCost * deductQty);
+              if (invItem.stockQty <= 0) depletedInvIds.add(String(ing.invId));
+            }
+          }
+        }
+      }
+
+      // Auto-mark products unavailable when a required ingredient hits zero stock
+      if (depletedInvIds.size > 0) {
+        const ids = [...depletedInvIds];
+        await Product.updateMany(
+          {
+            isAvailable: true,
+            $or: [
+              { 'baseRecipe.invId': { $in: ids } },
+              { 'sizes.recipe.invId': { $in: ids } },
+              { 'addOns.recipe.invId': { $in: ids } },
+            ],
+          },
+          { $set: { isAvailable: false } }
+        );
+        emitToAll('menuUpdated');
+        log.info({ depletedInvIds: ids }, 'Auto-marked products unavailable due to depleted stock');
+      }
+
+      // Batch-insert all stock card entries in one round-trip
+      if (stockCardBatch.length > 0) {
+        await StockCard.insertMany(stockCardBatch, { session });
+      }
+
+      const reference = mkRef('', order.orderNumber);
+      const lines = [];
+
+      if (order.isComplimentary) {
+        // DR 5300 Complimentary Expense / CR 4000 Sales Revenue at selling price (keeps gross visible)
+        const sellingPrice = order.subtotal || 0;
+        if (sellingPrice > 0) {
+          lines.push({ accountCode: '540000', accountName: 'Complimentary Expense', debit: sellingPrice, credit: 0 });
+          lines.push({ accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: sellingPrice });
+        }
+        // DR 5000 COGS / CR 1500 Inventory at cost
+        if (totalCogs > 0) {
+          lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: totalCogs, credit: 0 });
+          lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: totalCogs });
+        }
+        order.complimentaryCost = totalCogs;
+      } else {
+        // Split-payment: one debit line per payment; single-payment: one line as before
+        const payRows = (order.payments?.length > 0)
+          ? order.payments
+          : [{ method: order.paymentMethod || 'Cash', amount: order.total }];
+        for (const p of payRows) {
+          const acct = debitAccountFor(p.method);
+          lines.push({ accountCode: acct.code, accountName: acct.name, debit: p.amount, credit: 0 });
+        }
+        lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: order.discount || 0, credit: 0 });
+
+        // Non-VAT: gross receipts = net collected + discount (no VAT separation)
+        const grossSalesAmount = order.total + (order.discount || 0);
+        lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: grossSalesAmount });
+
+        if (totalCogs > 0) {
+          lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: totalCogs, credit: 0 });
+          lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: totalCogs });
+        }
+      }
+
+      const totalDebit = lines.reduce((sum, line) => sum + line.debit, 0);
+      const totalCredit = lines.reduce((sum, line) => sum + line.credit, 0);
+      if (Math.abs(totalDebit - totalCredit) > 0.01) {
+        throw new Error(`Journal imbalance on ${reference}: DR=${totalDebit.toFixed(2)} CR=${totalCredit.toFixed(2)}`);
+      }
+
+      await JournalEntry.create([{
+        reference,
+        description: order.isComplimentary
+          ? `COMP [${order.complimentaryReasonType || 'UNKNOWN'}] For: ${order.employeeName || '—'} | By: ${order.complimentaryApprovedBy || '—'} | Ref: ${order.complimentaryReferenceNumber || order.orderNumber}`
+          : `Sales & COGS for Order ${order.orderNumber}`,
+        lines, 
+        totalDebit, 
+        totalCredit 
+      }], { session });
+
+      log.info(`[ERP LEDGER] Single AUTO Entry ${reference} created.`);
+      emitToMgr('erpUpdated');
+    }
+
+    // FIX: Removed the array brackets and {session} to prevent Mongoose crash
+    if (status && status !== previousStatus) {
+      await AuditLog.create({
+        userId: req.user ? req.user.name : 'System',
+        action: `ORDER_${status.toUpperCase()}`,
+        targetReference: order.orderNumber,
+        details: { previousStatus, newStatus: status, total: order.total, method: paymentMethod }
+      });
+    }
+
+    await order.save({ session }); 
+    await session.commitTransaction();
+    session.endSession();
+
+    emitToOps('orderUpdated', order);
+    // Push menuUpdated so CustomerMenu instantly re-fetches products and recomputes
+    // stockAvailable — catches the moment an ingredient hits zero during service.
+    if (status === 'Completed') emitToAll('menuUpdated');
+    res.json({ success: true, order });
+
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error("[ERP CRITICAL ERROR] Failed to process order:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// --- 🚨 SAFE VOID & REFUND ENGINE 🚨 ---
+app.post('/api/orders/:id/void', verifyToken, requireSuperAdmin, async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { reason } = req.body; // 'Restock' or 'Spoilage'
+    // Extract admin name securely from the JWT token, NOT the request body
+    const adminName = req.user.name; 
+    
+    const order = await Order.findById(req.params.id).session(session);
+    
+    if (!order) {
+        await session.abortTransaction(); session.endSession();
+        return res.status(404).json({ success: false, error: 'Order not found' });
+    }
+    if (order.status !== 'Completed') {
+        await session.abortTransaction(); session.endSession();
+        return res.status(400).json({ success: false, error: 'Only completed orders can be voided.' });
+    }
+
+    const orderDateStr = new Date(order.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    const eodRecord = await EODRecord.findOne({ dateString: orderDateStr }).session(session);
+    if (eodRecord?.status === 'LOCKED') {
+      await session.abortTransaction(); session.endSession();
+      return res.status(403).json({ success: false, error: `EOD locked for ${orderDateStr}. Cannot void after day is closed.` });
+    }
+
+    // Reject voids on already-settled A/R orders — would orphan a paired entry.
+    // Operator must reverse the settlement manually first (or use full refund flow).
+    if (order.arSettled) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(403).json({ success: false, error: 'Cannot void an A/R-settled order. Reverse the settlement first or contact superadmin.' });
+    }
+
+    // Route the credit to the same cash/AR account the original entry debited.
+    const _cashAcct = debitAccountFor(order.paymentMethod);
+    const cashAccount = _cashAcct.code;
+    const cashAccountName = _cashAcct.name;
+
+    const lines = [];
+    // Non-VAT: gross receipts = net collected + discount (no VAT separation)
+    const grossSalesAmount = order.total + (order.discount || 0);
+
+    if (!order.isComplimentary) {
+      lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: grossSalesAmount, credit: 0 });
+      lines.push({ accountCode: cashAccount, accountName: cashAccountName, debit: 0, credit: order.total });
+      if (order.discount > 0) lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: 0, credit: order.discount });
+    } else {
+      // Reverse the complimentary revenue recognition: DR 4000 / CR 5300 at selling price
+      const sellingPrice = order.subtotal || 0;
+      if (sellingPrice > 0) {
+        lines.push({ accountCode: '410000', accountName: 'Sales Revenue', debit: sellingPrice, credit: 0 });
+        lines.push({ accountCode: '540000', accountName: 'Complimentary Expense', debit: 0, credit: sellingPrice });
+      }
+    }
+
+    let totalCogs = 0;
+    for (const item of order.items) {
+      let product = await Product.findById(item.productId).populate('modifierGroups').session(session);
+      if (!product) continue;
+
+      let recipeToUse = product.baseRecipe || [];
+      const sizeMatch = item.name.match(/\(([^)]+)\)$/);
+      if (sizeMatch) {
+        const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+        if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
+      }
+
+      // LOGISTICS 1:1 FALLBACK — mirror the sale: reverse the linked stocked good.
+      if (!recipeToUse.some(r => r.invId)) {
+        const linkInv = await resolveLinkedInventory(product, item.productCode, session);
+        if (linkInv) {
+          const qtyUsed = item.quantity * baseUnitsPerSale(product, linkInv);
+          if (reason === 'Restock') {
+            const restored = await Inventory.findOneAndUpdate(
+              { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, returnDocument: 'after' }
+            );
+            if (restored) {
+              totalCogs += (restored.unitCost * qtyUsed);
+              await StockCard.create([{
+                inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+                reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty, remarks: `Voided (${reason})`
+              }], { session });
+            }
+          } else {
+            totalCogs += (linkInv.unitCost * qtyUsed);
+          }
+        }
+      }
+
+      for (const ing of recipeToUse) {
+        if (!ing.invId) continue;
+        const qtyUsed = ing.qty * item.quantity;
+
+        if (reason === 'Restock') {
+          const restored = await Inventory.findOneAndUpdate(
+            { _id: ing.invId },
+            { $inc: { stockQty: qtyUsed } },
+            { session, returnDocument: 'after' }
+          );
+          if (!restored) continue;
+          totalCogs += (restored.unitCost * qtyUsed);
+          await StockCard.create([{
+            inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+            reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty, remarks: `Voided (${reason})`
+          }], { session });
+        } else {
+          const invItem = await Inventory.findById(ing.invId).session(session);
+          if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
+        }
+      }
+
+      for (const selectedAddOn of (item.selectedAddOns || [])) {
+        // Resolve recipe from product add-on OR modifier-group option (symmetric with sale deduction)
+        let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
+        if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
+          const [grpName, optName] = selectedAddOn.name.split(': ');
+          const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
+          resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
+        }
+        if (!resolvedRecipe?.length) continue;
+        for (const ing of resolvedRecipe) {
+          if (!ing.invId) continue;
+          const qtyUsed = ing.qty * item.quantity;
+          if (reason === 'Restock') {
+            const restored = await Inventory.findOneAndUpdate(
+              { _id: ing.invId },
+              { $inc: { stockQty: qtyUsed } },
+              { session, returnDocument: 'after' }
+            );
+            if (!restored) continue;
+            totalCogs += (restored.unitCost * qtyUsed);
+            await StockCard.create([{
+              inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+              reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty,
+              remarks: `Voided Add-on (${selectedAddOn.name}) (${reason})`
+            }], { session });
+          } else {
+            const invItem = await Inventory.findById(ing.invId).session(session);
+            if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
+          }
+        }
+      }
+    }
+
+    if (totalCogs > 0) {
+      if (reason === 'Restock') {
+        lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: totalCogs, credit: 0 });
+        lines.push({
+          accountCode: '510000',
+          accountName: 'Cost of Goods Sold',
+          debit: 0, credit: totalCogs
+        });
+      } else if (reason === 'Spoilage' && !order.isComplimentary) {
+        lines.push({ accountCode: '535000', accountName: 'Spoilage, Variance & Waste Expense', debit: totalCogs, credit: 0 });
+        lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: 0, credit: totalCogs });
+      }
+      // Complimentary + Spoilage: cost already expensed at completion, inventory gone, no reversal
+    }
+
+    const totalDebit = lines.reduce((sum, line) => sum + line.debit, 0);
+    const totalCredit = lines.reduce((sum, line) => sum + line.credit, 0);
+    if (totalDebit > 0 && Math.abs(totalDebit - totalCredit) > 0.01) {
+      throw new Error(`Journal imbalance on ${mkRef('VOID', order.orderNumber)}: DR=${totalDebit.toFixed(2)} CR=${totalCredit.toFixed(2)}`);
+    }
+
+    // If totalDebit/Credit is 0, it means the item had no BOM and wasn't complimentary. We still log the order status change.
+    if (totalDebit > 0) {
+        await JournalEntry.create([{ 
+        reference: mkRef('VOID', order.orderNumber), 
+        description: `VOID (${reason}) by ${adminName}`, 
+        lines, totalDebit, totalCredit 
+        }], { session });
+    }
+
+    order.status = 'Voided';
+    order.voidReason = reason;
+    // Attribution: stamp who actually voided the order — NOT the original cashier
+    // (which for a client-portal order is the client's username, misleading on
+    // audit reports). Captured from the verified JWT, not request body.
+    order.voidedBy = adminName;
+    order.voidedAt = new Date();
+    await order.save({ session });
+    await logAudit(req, { action: 'void', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, reason, voidedBy: adminName } });
+    
+    await session.commitTransaction();
+    session.endSession();
+
+    emitToMgr('erpUpdated');
+    emitToOps('orderUpdated', order);
+    res.json({ success: true, order });
+
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error("Void Error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
+  try {
+    // 1. Force any hanging order to Cancelled — includes Ready (made but never
+    //    handed over) and Parked (held unpaid tabs). Parked orders also lose the
+    //    isParked flag so they don't linger in the parked list.
+    await Order.updateMany(
+      { status: { $in: ['Pending', 'Preparing', 'Ready', 'Parked'] }, isArchived: false },
+      { $set: { status: 'Cancelled', isParked: false, cancelledBy: req.user?.name || 'EOD Sweep', cancelledAt: new Date() } }
+    );
+
+    // 2. Sweep completed/cancelled/voided orders into the archive.
+    //    Reserved and Partially Fulfilled stay open — they carry over to the next day.
+    await Order.updateMany(
+      { isArchived: false, status: { $nin: ['Reserved', 'Partially Fulfilled'] } },
+      { $set: { isArchived: true, isParked: false } }
+    );
+
+    emitToAll('ordersArchived');
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Archive Error:", error);
+    res.status(500).json({ success: false });
+  }
+});
+
+// ============================================================
+// A/R SETTLEMENT — record delivery-partner payout received
+// Used when Grab / Foodpanda / Manual Delivery payouts arrive
+// ============================================================
+app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { amount, paymentMethod, note } = req.body;
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+    if (order.paymentMethod === 'Cash')
+      return res.status(400).json({ success: false, error: 'Cash sales do not require A/R settlement (already booked to Cash on Hand).' });
+    if (order.arSettled) return res.status(400).json({ success: false, error: 'Order already settled.' });
+    if (order.status !== 'Completed') return res.status(400).json({ success: false, error: 'Order must be Completed before settlement.' });
+
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Settlement amount must be > 0.' });
+    if (amt > order.total + 0.01)
+      return res.status(400).json({ success: false, error: `Settlement amount exceeds outstanding A/R (₱${order.total.toFixed(2)}).` });
+
+    // Debit-side account from configurable payment-method map.
+    const debitAcct = accountForPaymentMethod(paymentMethod);
+
+    const reference = mkRef('ARS', order.orderNumber);
+
+    const lines = [
+      { accountCode: debitAcct.code, accountName: debitAcct.name, debit: amt, credit: 0 },
+      { accountCode: '120000', accountName: 'Accounts Receivable', debit: 0, credit: amt },
+    ];
+    assertBalanced(lines, reference);
+
+    await JournalEntry.create({
+      reference,
+      description: `A/R settlement — ${order.orderNumber} via ${order.paymentMethod}${note ? ` (${note})` : ''}`,
+      lines, totalDebit: amt, totalCredit: amt,
+    });
+
+    order.arSettled = true;
+    order.arSettledAt = new Date();
+    order.arSettledAmount = amt;
+    order.arSettledMethod = paymentMethod || 'Cash on Hand';
+    order.arSettledNote = note || '';
+    await order.save();
+
+    emitToMgr('erpUpdated');
+    emitToOps('orderUpdated', order.toObject());
+    res.json({ success: true, order });
+  } catch (err) {
+    log.error({ err }, 'A/R settlement failed');
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// --- PARTIAL DELIVERY ROUTE ---
+// Sets status to 'Partially Delivered' without triggering ERP (inventory deduction deferred to Completed)
+app.post('/api/orders/:id/partial-delivery', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+    if (!['Ready', 'Preparing'].includes(order.status)) {
+      return res.status(400).json({ success: false, error: 'Order must be Ready or Preparing to partially deliver.' });
+    }
+    order.status = 'Partially Delivered';
+    await order.save();
+    emitToOps('orderUpdated', order);
+    res.json({ success: true, order });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// --- PARTIAL FULFILLMENT (logistics) — ONE order, fulfilled in batches --------
+// Fulfill some units now; the order stays a single sale and moves to
+// 'Partially Fulfilled' until every unit is delivered, then 'Completed'.
+// `fulfill` = [{ index, qty }] where qty is the units to fulfill THIS round.
+// Payment modes (chosen per round):
+//   • 'partial' — collect only for the units fulfilled now.
+//   • 'full'    — collect the whole remaining goods value now; the not-yet-fulfilled
+//                 portion is held as Customer Deposits and recognized as revenue on
+//                 later rounds (no new charge then).
+app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const { fulfill, paymentMode, paymentMethod } = req.body;
+    const mode = paymentMode === 'full' ? 'full' : 'partial';
+    const order = await Order.findById(req.params.id).session(session);
+    if (!order) { await session.abortTransaction(); session.endSession(); return res.status(404).json({ success: false, error: 'Order not found.' }); }
+    if (order.isComplimentary) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Complimentary orders cannot be partially fulfilled.' }); }
+    if (!['Pending', 'Preparing', 'Ready', 'Partially Fulfilled'].includes(order.status)) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Only open orders can be partially fulfilled.' }); }
+
+    // Net (post-product-discount) unit price drives revenue so totals match order.total.
+    const netUnit = (it) => +((it.price || 0) * (1 - (it.productDiscountPercent || 0) / 100)).toFixed(4);
+
+    // Units to fulfill this round per line, clamped to what's still outstanding.
+    const wantMap = new Map((fulfill || []).map(f => [Number(f.index), Math.max(0, Number(f.qty) || 0)]));
+    const deltas = [];
+    let deltaValue = 0;
+    order.items.forEach((it, i) => {
+      const remaining = (it.quantity || 0) - (it.fulfilledQty || 0);
+      const want = Math.min(remaining, wantMap.has(i) ? wantMap.get(i) : remaining);
+      if (want > 0) { deltas.push({ i, want }); deltaValue += netUnit(it) * want; }
+    });
+    deltaValue = +deltaValue.toFixed(2);
+    if (deltas.length === 0 || deltaValue <= 0) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Nothing to fulfill this round.' }); }
+
+    // Deduct inventory + COGS for the units fulfilled now (logistics 1:1 model).
+    let totalCogs = 0; const stockCardBatch = [];
+    for (const { i, want } of deltas) {
+      const it = order.items[i];
+      const product = it.productId
+        ? await Product.findById(it.productId).session(session)
+        : await Product.findOne({ name: it.name }).session(session);
+      const linkInv = await resolveLinkedInventory(product, it.productCode, session);
+      if (!linkInv) continue;
+      const deduct = want * baseUnitsPerSale(product, linkInv);
+      const upd = await Inventory.findOneAndUpdate(
+        { _id: linkInv._id, stockQty: { $gte: deduct } },
+        { $inc: { stockQty: -deduct } },
+        { session, returnDocument: 'after' }
+      );
+      if (!upd) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for ${linkInv.itemName}.` }); }
+      totalCogs += linkInv.unitCost * deduct;
+      stockCardBatch.push({ inventoryId: upd._id, itemName: upd.itemName, type: 'Sale', reference: mkRef('', order.orderNumber), qtyChange: -deduct, balanceAfter: upd.stockQty, remarks: `Partial fulfillment (${it.name})` });
+    }
+    if (stockCardBatch.length) await StockCard.insertMany(stockCardBatch, { session });
+
+    const goodsTotal = +order.items.reduce((s, it) => s + netUnit(it) * (it.quantity || 0), 0).toFixed(2);
+    const cash = debitAccountFor(paymentMethod || order.paymentMethod || 'Cash');
+    const lines = [];
+
+    // 1) Recognize revenue already prepaid (from the deposit) first.
+    const fromDeposit = +Math.min(order.depositRemaining || 0, deltaValue).toFixed(2);
+    if (fromDeposit > 0) {
+      lines.push({ accountCode: '260000', accountName: 'Customer Deposits', debit: fromDeposit, credit: 0 });
+      lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: fromDeposit });
+      order.depositRemaining = +(order.depositRemaining - fromDeposit).toFixed(2);
+    }
+
+    // 2) Collect cash for the rest. In 'full' mode, take the entire remaining
+    //    unpaid goods value now and park the not-yet-earned part as a deposit.
+    const needRevenue = +(deltaValue - fromDeposit).toFixed(2);
+    if (needRevenue > 0.005) {
+      const remainingUnpaid = +(goodsTotal - (order.amountPaid || 0)).toFixed(2);
+      const collectNow = mode === 'full' ? remainingUnpaid : needRevenue;
+      lines.push({ accountCode: cash.code, accountName: cash.name, debit: collectNow, credit: 0 });
+      lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: needRevenue });
+      const toDeposit = +(collectNow - needRevenue).toFixed(2);
+      if (toDeposit > 0.005) {
+        lines.push({ accountCode: '260000', accountName: 'Customer Deposits', debit: 0, credit: toDeposit });
+        order.depositRemaining = +((order.depositRemaining || 0) + toDeposit).toFixed(2);
+      }
+      order.amountPaid = +((order.amountPaid || 0) + collectNow).toFixed(2);
+    }
+
+    // 3) COGS for the units fulfilled now.
+    if (totalCogs > 0) {
+      lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: +totalCogs.toFixed(2), credit: 0 });
+      lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: +totalCogs.toFixed(2) });
+    }
+
+    const reference = `${order.orderNumber}-PF${Date.now().toString(36).toUpperCase()}`;
+    const totalDebit = +lines.reduce((s, l) => s + l.debit, 0).toFixed(2);
+    const totalCredit = +lines.reduce((s, l) => s + l.credit, 0).toFixed(2);
+    assertBalanced(lines, reference);
+    await JournalEntry.create([{ reference, description: `Partial fulfillment (${mode === 'full' ? 'pay full' : 'pay partial'}) — ${order.orderNumber}`, lines, totalDebit, totalCredit }], { session });
+
+    // Apply fulfilled units and advance status on the SAME order.
+    for (const { i, want } of deltas) order.items[i].fulfilledQty = (order.items[i].fulfilledQty || 0) + want;
+    order.markModified('items');
+    const allFulfilled = order.items.every(it => (it.fulfilledQty || 0) >= (it.quantity || 0));
+    order.status = allFulfilled ? 'Completed' : 'Partially Fulfilled';
+    if (paymentMethod) order.paymentMethod = paymentMethod;
+    await order.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
+    emitToMgr('erpUpdated');
+    emitToOps('orderUpdated', order);
+    res.json({ success: true, order });
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    log.error({ err }, 'POST /api/orders/:id/partial-fulfill failed');
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// ── REFUND FLOW ───────────────────────────────────────────────────────────────
+app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req, res) => {
+  const session = await mongoose.startSession();
+  try {
+    session.startTransaction();
+    const { reason, refundAmount, inventoryAction } = req.body;
+    if (!reason?.trim()) return res.status(400).json({ success: false, error: 'Reason required.' });
+    const order = await Order.findById(req.params.id).session(session);
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+    if (order.status !== 'Completed') return res.status(400).json({ success: false, error: 'Can only refund Completed orders.' });
+    if (order.transactionType === 'REFUND') return res.status(400).json({ success: false, error: 'Already refunded.' });
+    const amt = parseFloat(refundAmount) || order.total;
+    if (amt <= 0 || amt > order.total + 0.01) return res.status(400).json({ success: false, error: `Refund amount must be between ₱0.01 and ₱${order.total.toFixed(2)}.` });
+    const reference = mkRef('REFUND', order.orderNumber);
+    const creditAcct = debitAccountFor(order.paymentMethod);
+    const lines = [
+      { accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: amt,  credit: 0   },
+      { accountCode: creditAcct.code, accountName: creditAcct.name,  debit: 0,    credit: amt },
+    ];
+
+    // --- INVENTORY / COGS REVERSAL ---
+    // Only a FULL refund touches inventory & COGS (partial refunds adjust cash/revenue only).
+    // Operator chooses per refund: 'Restock' (goods returned, put stock back & reverse COGS)
+    // or 'Spoilage' (goods unusable, move COGS → waste expense). Complimentary orders carry
+    // no COGS reversal here (cost was already expensed at completion).
+    const isFullRefund = Math.abs(amt - order.total) <= 0.01;
+    const invAction = inventoryAction === 'Restock' || inventoryAction === 'Spoilage' ? inventoryAction : 'None';
+    if (isFullRefund && invAction !== 'None' && !order.isComplimentary) {
+      let totalCogs = 0;
+      for (const item of order.items) {
+        const product = await Product.findById(item.productId).populate('modifierGroups').session(session);
+        if (!product) continue;
+
+        let recipeToUse = product.baseRecipe || [];
+        const sizeMatch = item.name.match(/\(([^)]+)\)$/);
+        if (sizeMatch) {
+          const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+          if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
+        }
+
+        // LOGISTICS 1:1 FALLBACK — product has no recipe: reverse the linked stocked good.
+        if (!recipeToUse.some(r => r.invId)) {
+          const linkInv = await resolveLinkedInventory(product, item.productCode, session);
+          if (linkInv) {
+            const qtyUsed = item.quantity * baseUnitsPerSale(product, linkInv);
+            if (invAction === 'Restock') {
+              const restored = await Inventory.findOneAndUpdate(
+                { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, returnDocument: 'after' }
+              );
+              if (restored) {
+                totalCogs += (restored.unitCost * qtyUsed);
+                await StockCard.create([{
+                  inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+                  reference, qtyChange: qtyUsed, balanceAfter: restored.stockQty,
+                  remarks: `Refunded (Restock) — ${item.name}`
+                }], { session });
+              }
+            } else {
+              totalCogs += (linkInv.unitCost * qtyUsed);
+            }
+          }
+        }
+
+        // Collect every ingredient line: base recipe + add-on / modifier-option recipes.
+        const recipes = [{ recipe: recipeToUse, label: item.name }];
+        for (const selectedAddOn of (item.selectedAddOns || [])) {
+          let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
+          if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
+            const [grpName, optName] = selectedAddOn.name.split(': ');
+            const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
+            resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
+          }
+          if (resolvedRecipe?.length) recipes.push({ recipe: resolvedRecipe, label: `Add-on (${selectedAddOn.name})` });
+        }
+
+        for (const { recipe, label } of recipes) {
+          for (const ing of recipe) {
+            if (!ing.invId) continue;
+            const qtyUsed = ing.qty * item.quantity;
+            if (invAction === 'Restock') {
+              const restored = await Inventory.findOneAndUpdate(
+                { _id: ing.invId },
+                { $inc: { stockQty: qtyUsed } },
+                { session, returnDocument: 'after' }
+              );
+              if (!restored) continue;
+              totalCogs += (restored.unitCost * qtyUsed);
+              await StockCard.create([{
+                inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+                reference, qtyChange: qtyUsed, balanceAfter: restored.stockQty,
+                remarks: `Refunded (Restock) — ${label}`
+              }], { session });
+            } else {
+              const invItem = await Inventory.findById(ing.invId).session(session);
+              if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
+            }
+          }
+        }
+      }
+
+      if (totalCogs > 0) {
+        if (invAction === 'Restock') {
+          // Goods back on the shelf: DR Inventory / CR COGS
+          lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: totalCogs, credit: 0 });
+          lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: 0, credit: totalCogs });
+        } else {
+          // Goods unusable: reclass COGS → Spoilage (inventory stays gone)
+          lines.push({ accountCode: '535000', accountName: 'Spoilage, Variance & Waste Expense', debit: totalCogs, credit: 0 });
+          lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: 0, credit: totalCogs });
+        }
+      }
+    }
+
+    const totalDebit = lines.reduce((s, l) => s + l.debit, 0);
+    const totalCredit = lines.reduce((s, l) => s + l.credit, 0);
+    assertBalanced(lines, reference);
+    await JournalEntry.create([{ date: new Date(), reference, description: `Refund — ${order.orderNumber}: ${reason}`, lines, totalDebit, totalCredit }], { session });
+    order.transactionType = 'REFUND';
+    order.status = 'Refunded';
+    order.voidReason = `REFUND: ${reason}`;
+    await order.save({ session });
+    await AuditLog.create({ userId: req.user?.name, action: 'ORDER_REFUNDED', targetReference: order.orderNumber, details: { reason, refundAmount: amt, inventoryAction: isFullRefund ? invAction : 'None (partial)', refundedBy: req.user?.name } });
+    await session.commitTransaction(); session.endSession();
+    emitToOps('orderUpdated', order); emitToMgr('erpUpdated');
+    res.json({ success: true, order });
+  } catch (err) {
+    await session.abortTransaction(); session.endSession();
+    log.error({ err }, 'POST /api/orders/:id/refund failed');
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// --- DISPATCH STATUS UPDATE ---
+app.patch('/api/orders/:id/dispatch', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const { dispatchStatus } = req.body;
+    const order = await Order.findByIdAndUpdate(req.params.id, { dispatchStatus }, { returnDocument: 'after' });
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+    emitToOps('orderUpdated', order);
+    res.json({ success: true, order });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+}

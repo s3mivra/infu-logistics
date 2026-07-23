@@ -2,19 +2,19 @@ import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspens
 import { io } from 'socket.io-client';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
-import { usePwa } from '../lib/usePwa';
-import { queueOrder, requestNotificationPermission, notify, queueClock, getQueuedClock, flushClockQueue } from '../lib/pwa';
-import * as auth from '../lib/auth';
+import { usePwa } from '../../shared/usePwa';
+import { queueOrder, requestNotificationPermission, notify, queueClock, getQueuedClock, flushClockQueue } from '../../shared/pwa';
+import * as auth from '../auth/auth';
 // Tabs are lazy-loaded so only the active tab's code ships on first dashboard
 // paint; the rest load on demand when the operator opens them.
-const AnalyticsTab  = lazy(() => import('../components/tabs/AnalyticsTab'));
-const OrdersTab     = lazy(() => import('../components/tabs/OrdersTab'));
-const HistoryTab    = lazy(() => import('../components/tabs/HistoryTab'));
-const InventoryTab  = lazy(() => import('../components/tabs/InventoryTab'));
-const LedgerTab     = lazy(() => import('../components/tabs/LedgerTab'));
-const PricingTab    = lazy(() => import('../components/tabs/PricingTab'));
-const AuditTab      = lazy(() => import('../components/tabs/AuditTab'));
-const ProductsTab   = lazy(() => import('../components/tabs/ProductsTab'));
+const AnalyticsTab  = lazy(() => import('../analytics/AnalyticsTab'));
+const OrdersTab     = lazy(() => import('../orders/OrdersTab'));
+const HistoryTab    = lazy(() => import('../orders/HistoryTab'));
+const InventoryTab  = lazy(() => import('../inventory/InventoryTab'));
+const LedgerTab     = lazy(() => import('../ledger/LedgerTab'));
+const PricingTab    = lazy(() => import('../pricing/PricingTab'));
+const AuditTab      = lazy(() => import('../audit/AuditTab'));
+const ProductsTab   = lazy(() => import('../products/ProductsTab'));
 
 // Small fallback shown while a tab chunk loads.
 const TabFallback = () => (
@@ -4528,22 +4528,14 @@ const updateStatus = async (orderId, newStatus) => {
   // Sidebar nav content (inlined twice: desktop + mobile)
   const renderSidebarNav = (closeFn) => (
     <>
-      {/* Brand */}
-      <div
-        className="p-5 border-b border-white/5 cursor-pointer group"
-        onClick={() => {
-          if (navMode === 'libellus') {
-            if (!isSuperAdmin) return alert('Access Denied: Management view is restricted to Superadmin.');
-            setNavMode('negotium'); setActiveTab('history');
-          } else {
-            setNavMode('libellus'); setActiveTab('orders');
-          }
-          closeFn?.();
-        }}
-      >
-        <p className="text-2xl font-black text-brand group-hover:text-brand-dark transition tracking-tight leading-none drop-shadow-sm">{BIZ_NAME}</p>
+      {/* Brand — display only. Mode switching happens via the nav items below,
+          which are always visible; the old hidden logo-click toggle was
+          undiscoverable and is intentionally gone. */}
+      <div className="p-5 border-b border-white/5">
+        <p className="text-2xl font-black text-brand tracking-tight leading-none drop-shadow-sm">{BIZ_NAME}</p>
         <p className="text-[10px] text-white/25 font-bold uppercase tracking-[0.25em] mt-0.5">
           SEMIVRA <span className="text-brand/80">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span>
+          <span className="text-white/40 normal-case tracking-normal font-bold"> · {navMode === 'libellus' ? 'Operations' : 'Management'}</span>
         </p>
         <span className="inline-block mt-1.5 text-[8px] font-black bg-brand/15 border border-brand/30 text-brand px-2 py-0.5 rounded-full uppercase tracking-widest">NON-VAT REGISTERED</span>
       </div>
@@ -4599,9 +4591,9 @@ const updateStatus = async (orderId, newStatus) => {
               onClick={() => { closeFn?.(); window.location.assign('/admin/admin-panel'); }}
               className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm text-white/50 hover:text-white hover:bg-white/5"
             >
-              <ShieldCheck size={16} className="text-brand" />
-              Command Center
-              <span className="ml-auto text-[8px] font-black uppercase tracking-widest bg-brand/15 border border-brand/30 text-brand px-1.5 py-0.5 rounded">Super</span>
+              <ShieldCheck size={16} className="text-brand shrink-0" />
+              <span className="whitespace-nowrap">Command Center</span>
+              <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand/15 border border-brand/30 text-brand px-1.5 py-0.5 rounded">Super</span>
             </button>
           ])
         ) : (

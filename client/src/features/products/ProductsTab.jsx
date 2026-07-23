@@ -94,6 +94,13 @@ export default function ProductsTab({ ctx }) {
             {/* 1. Menu Items List */}
             <h3 className="text-xl font-bold mb-4 text-white border-b border-white/8 pb-2">Menu Items</h3>
             <div className="space-y-3">
+              {currentProducts.length === 0 && (
+                <div className="py-12 px-6 text-center border border-dashed border-white/10 rounded-xl">
+                  <Coffee size={26} className="mx-auto mb-3 text-brand/50" />
+                  <p className="text-white/70 font-black uppercase tracking-widest text-xs mb-1">No menu items yet</p>
+                  <p className="text-white/35 text-xs">Add your first product with the form on the right; it goes live on the menu instantly.</p>
+                </div>
+              )}
               {currentProducts.map(p => (
                 <div key={p._id} className="flex flex-col sm:flex-row gap-4 p-4 border border-white/8 rounded-xl bg-surface-2 items-start sm:items-center">
                   

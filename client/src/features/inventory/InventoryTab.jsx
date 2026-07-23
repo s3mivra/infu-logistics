@@ -223,6 +223,15 @@ export default function InventoryTab({ ctx }) {
                     </tr>
                   </thead>
                   <tbody>
+                    {currentInventory.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="py-14 text-center">
+                          <Package size={26} className="mx-auto mb-3 text-brand/50" />
+                          <p className="text-white/70 font-black uppercase tracking-widest text-xs mb-1">No stock items yet</p>
+                          <p className="text-white/35 text-xs">Receive your first delivery with the Procurement form to start tracking inventory.</p>
+                        </td>
+                      </tr>
+                    )}
                     {currentInventory.map(item => {
                       const isLow = item.lowStockThreshold > 0 && item.stockQty <= item.lowStockThreshold;
                       // Expiry classification
