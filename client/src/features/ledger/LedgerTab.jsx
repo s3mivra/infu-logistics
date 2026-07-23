@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
@@ -94,6 +94,34 @@ export default function LedgerTab({ ctx }) {
     tenancyReport, tenancyBusy, fetchTenancyReport, runTenancyRebackfill,
     backdateForm, setBackdateForm, backdateBusy, submitBackdateSale,
   } = ctx;
+
+  // ── Stage 2 report views: self-contained fetches via ctx.apiFetch ──────────
+  const money2 = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const [tb, setTb] = useState(null);
+  const [tbLoading, setTbLoading] = useState(false);
+  const loadTrial = async () => {
+    setTbLoading(true);
+    try { const r = await apiFetch('/api/reports/trial-balance'); const d = await r.json(); setTb(d.success ? d : { error: d.error || 'Failed to load' }); }
+    catch { setTb({ error: 'Network error' }); }
+    finally { setTbLoading(false); }
+  };
+  const [ptax, setPtax] = useState(null);
+  const [ptaxRange, setPtaxRange] = useState({ start: '', end: '' });
+  const [ptaxLoading, setPtaxLoading] = useState(false);
+  const loadPtax = async () => {
+    setPtaxLoading(true);
+    try {
+      const q = ptaxRange.start && ptaxRange.end ? `?start=${ptaxRange.start}&end=${ptaxRange.end}` : '';
+      const r = await apiFetch(`/api/reports/percentage-tax${q}`); const d = await r.json();
+      setPtax(d.success ? d : { error: d.error || 'Provide a start and end date.' });
+    } catch { setPtax({ error: 'Network error' }); }
+    finally { setPtaxLoading(false); }
+  };
+  // Auto-load the active view's data on entry (nav landing or sub-tab click).
+  useEffect(() => {
+    if (ledgerSubTab === 'trial') loadTrial();
+    if (ledgerSubTab === 'salessummary' && !salesSummary) fetchSalesSummary();
+  }, [ledgerSubTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Which Payment Routing parent groups (111000 / 112000 / etc.) are expanded.
   // Default-collapsed so the operator sees only the high-level parent rows;
@@ -195,7 +223,8 @@ export default function LedgerTab({ ctx }) {
                   // Merged "AR & AP" page.
                   if (id === 'araap') { fetchArOutstanding(); fetchApData(); }
                   if (id === 'pnl' && !pnlData) fetchPnl();
-                  if (id === 'trial' && !bsData) fetchBalanceSheet(); // trial balance derives from the same aggregation
+                  if (id === 'trial') loadTrial();
+                  if (id === 'percentagetax') loadPtax();
                   if (id === 'pnlmonthly' && !pnlMonthly) fetchPnlMonthly();
                   if (id === 'balance' && !bsData) fetchBalanceSheet();
                   if (id === 'bsmonthly' && !bsMonthly) fetchBsMonthly();
@@ -213,23 +242,149 @@ export default function LedgerTab({ ctx }) {
             ))}
           </div>
 
-          {/* Section header for merged "Accounts & Periods" page */}
-          {ledgerSubTab === 'accperiods' && (
-            <p className="text-[11px] font-black uppercase tracking-wider text-white/30 -mb-1">Chart of Accounts</p>
+          {/* Section area. On the merged pages (Accounts & Periods, AR & AP) the
+              stacked sections flow into two columns so they fill the width instead
+              of leaving a big empty right side; every other page stays single-column. */}
+          <div className={(ledgerSubTab === 'accperiods' || ledgerSubTab === 'araap')
+            ? 'lg:columns-2 lg:gap-4 [&>*]:mb-4 [&>*]:break-inside-avoid [&>*]:max-w-none'
+            : 'space-y-4'}>
+
+          {/* ── TRIAL BALANCE ─────────────────────────────────────────────────── */}
+          {ledgerSubTab === 'trial' && (
+            <div className="bg-surface border border-white/8 rounded-2xl p-5">
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                <div>
+                  <h3 className="text-lg font-black text-white">Trial Balance</h3>
+                  <p className="text-white/40 text-xs">All accounts with their net debit / credit balance.</p>
+                </div>
+                <button onClick={loadTrial} disabled={tbLoading} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition">
+                  <RefreshCw size={12} className={tbLoading ? 'animate-spin' : ''} /> Refresh
+                </button>
+              </div>
+              {tb?.error ? (
+                <p className="text-red-300 text-sm font-bold">{tb.error}</p>
+              ) : !tb ? (
+                <p className="text-white/40 text-sm">Loading…</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-white/30 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
+                        <th className="py-2">Code</th><th className="py-2">Account</th>
+                        <th className="py-2 text-right">Debit</th><th className="py-2 text-right">Credit</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-white/75">
+                      {tb.rows.map((r) => (
+                        <tr key={r.code} className="border-b border-white/5">
+                          <td className="py-1.5 font-mono text-white/40 text-xs">{r.code}</td>
+                          <td className="py-1.5 font-bold text-white/85">{r.name}</td>
+                          <td className="py-1.5 text-right font-mono">{r.debit ? money2(r.debit) : ''}</td>
+                          <td className="py-1.5 text-right font-mono">{r.credit ? money2(r.credit) : ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="font-black text-white border-t-2 border-white/20">
+                        <td className="py-2" colSpan={2}>Totals {tb.balanced ? <span className="text-green-400 text-xs ml-1">Balanced</span> : <span className="text-red-400 text-xs ml-1">Out of balance</span>}</td>
+                        <td className="py-2 text-right font-mono">{money2(tb.totalDebit)}</td>
+                        <td className="py-2 text-right font-mono">{money2(tb.totalCredit)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
           )}
 
-          {/* NEW VIEWS (Stage 2 coming-soon placeholders) */}
-          {['trial', 'salessummary', 'percentagetax'].includes(ledgerSubTab) && (
-            <div className="max-w-2xl bg-surface border border-dashed border-white/15 rounded-2xl p-8 text-center">
-              <BarChart2 size={30} className="mx-auto mb-3 text-white/20" />
-              <h3 className="text-white font-black text-lg">
-                {ledgerSubTab === 'trial' ? 'Trial Balance'
-                  : ledgerSubTab === 'salessummary' ? 'Sales Summary'
-                  : 'Percentage Tax'}
-              </h3>
-              <p className="text-white/40 text-sm mt-1.5">
-                This view is being built. The backend data is ready; the report layout lands in the next update.
-              </p>
+          {/* ── SALES SUMMARY (channel breakdown) ─────────────────────────────── */}
+          {ledgerSubTab === 'salessummary' && (
+            <div className="bg-surface border border-white/8 rounded-2xl p-5">
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                <div>
+                  <h3 className="text-lg font-black text-white">Sales Summary</h3>
+                  <p className="text-white/40 text-xs">Completed sales broken down by payment channel.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={fetchSalesSummary} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
+                  {salesSummary && <button onClick={exportSalesSummaryPDF} className="flex items-center gap-1.5 bg-white/5 text-white/70 hover:text-white hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
+                </div>
+              </div>
+              {!sssRows || sssRows.length === 0 ? (
+                <p className="text-white/40 text-sm">No completed sales in range. Press Refresh.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-white/30 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
+                        <th className="py-2">Date</th><th className="py-2">Order</th>
+                        <th className="py-2 text-right">Cash</th><th className="py-2 text-right">E-Wallet</th>
+                        <th className="py-2 text-right">Bank</th><th className="py-2 text-right">Delivery</th><th className="py-2 text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-white/75">
+                      {sssRows.map((row, i) => (
+                        <tr key={i} className="border-b border-white/5">
+                          <td className="py-1.5 text-white/50 text-xs">{row.date ? new Date(row.date).toLocaleDateString() : ''}</td>
+                          <td className="py-1.5 font-mono text-xs text-white/60">{row.orderNumber}</td>
+                          <td className="py-1.5 text-right font-mono">{row.cash ? money2(row.cash) : ''}</td>
+                          <td className="py-1.5 text-right font-mono">{row.ewallet ? money2(row.ewallet) : ''}</td>
+                          <td className="py-1.5 text-right font-mono">{row.bank ? money2(row.bank) : ''}</td>
+                          <td className="py-1.5 text-right font-mono">{row.delivery ? money2(row.delivery) : ''}</td>
+                          <td className="py-1.5 text-right font-mono font-bold text-white/90">{money2(row.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    {salesSummary?.totals && (
+                      <tfoot>
+                        <tr className="font-black text-white border-t-2 border-white/20">
+                          <td className="py-2" colSpan={2}>Totals</td>
+                          <td className="py-2 text-right font-mono">{money2(salesSummary.totals.cash)}</td>
+                          <td className="py-2 text-right font-mono">{money2(salesSummary.totals.ewallet)}</td>
+                          <td className="py-2 text-right font-mono">{money2(salesSummary.totals.bank)}</td>
+                          <td className="py-2 text-right font-mono">{money2(salesSummary.totals.delivery)}</td>
+                          <td className="py-2 text-right font-mono text-brand">{money2(salesSummary.totals.total)}</td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── PERCENTAGE TAX ────────────────────────────────────────────────── */}
+          {ledgerSubTab === 'percentagetax' && (
+            <div className="bg-surface border border-white/8 rounded-2xl p-5 max-w-2xl">
+              <h3 className="text-lg font-black text-white mb-1">Percentage Tax</h3>
+              <p className="text-white/40 text-xs mb-4">Non-VAT percentage tax on net collected sales for a period.</p>
+              <div className="flex items-end gap-2 mb-4 flex-wrap">
+                <label className="text-xs font-bold text-white/40">Start
+                  <input type="date" value={ptaxRange.start} onChange={(e) => setPtaxRange((r) => ({ ...r, start: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white mt-1" />
+                </label>
+                <label className="text-xs font-bold text-white/40">End
+                  <input type="date" value={ptaxRange.end} onChange={(e) => setPtaxRange((r) => ({ ...r, end: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white mt-1" />
+                </label>
+                <button onClick={loadPtax} disabled={ptaxLoading} className="bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2 rounded-lg transition">{ptaxLoading ? 'Loading…' : 'Compute'}</button>
+              </div>
+              {ptax?.error ? (
+                <p className="text-red-300 text-sm font-bold">{ptax.error}</p>
+              ) : ptax && !ptax.error ? (
+                <div className="space-y-1">
+                  <p className="text-white/40 text-xs mb-2">{ptax.orders} completed order(s) in range.</p>
+                  {(ptax.lines || []).map((l, i) => {
+                    const isTax = i === (ptax.lines.length - 1);
+                    return (
+                      <div key={i} className={`flex justify-between text-sm py-2 ${isTax ? 'border-t-2 border-white/20 mt-1 font-black text-white' : 'border-b border-white/5'}`}>
+                        <span className={isTax ? '' : 'text-white/60'}>{l.label}</span>
+                        <span className={`font-mono font-bold ${isTax ? 'text-brand' : l.amount < 0 ? 'text-red-300' : 'text-white/85'}`}>{money2(l.amount)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-white/40 text-sm">Pick a date range and press Compute.</p>
+              )}
             </div>
           )}
 
@@ -1950,6 +2105,7 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
+          </div>
         </div>
   );
 }

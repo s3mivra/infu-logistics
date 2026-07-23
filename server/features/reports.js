@@ -673,6 +673,22 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
       .map(item => { const u = rmEntries.find(e => e.name.toLowerCase() === item.itemName.toLowerCase()); const adu = u ? u.weightedAdu : 0; const dos = adu > 0 ? item.stockQty / adu : (item.stockQty > 0 ? Infinity : 0); return { ...item, adu, daysOfSupply: dos, tiedUpCapital: item.stockQty * (item.unitCost || 0) }; })
       .filter(i => i.daysOfSupply > 30 && i.stockQty > 0).sort((a, b) => b.tiedUpCapital - a.tiedUpCapital).slice(0, 5);
 
+    // ── Slow movers: in stock and DO sell, but slowly (long days-of-supply). ────
+    const slowMovers = inventoryItems
+      .filter(item => !isRemovedProductStock(item))
+      .map(item => { const u = rmEntries.find(e => e.name.toLowerCase() === item.itemName.toLowerCase()); const adu = u ? u.weightedAdu : 0; return { ...item, adu, daysOfSupply: adu > 0 ? item.stockQty / adu : Infinity, tiedUpCapital: item.stockQty * (item.unitCost || 0) }; })
+      .filter(i => i.adu > 0 && i.stockQty > 0)
+      .sort((a, b) => a.adu - b.adu) // slowest velocity first
+      .slice(0, 8);
+
+    // ── Dead stock: in stock but ZERO movement in the last 30 days. ────────────
+    const deadStock = inventoryItems
+      .filter(item => !isRemovedProductStock(item))
+      .map(item => { const u = rmEntries.find(e => e.name.toLowerCase() === item.itemName.toLowerCase()); const adu = u ? u.weightedAdu : 0; return { ...item, adu, tiedUpCapital: item.stockQty * (item.unitCost || 0) }; })
+      .filter(i => i.adu === 0 && i.stockQty > 0)
+      .sort((a, b) => b.tiedUpCapital - a.tiedUpCapital)
+      .slice(0, 10);
+
     res.json({
       success: true,
       today: { gross: todayGross, revenue: todayRevenue, count: todayCount, avg: todayAvg, discounts: todayDiscounts, comp: todayComp },
@@ -683,6 +699,8 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
       mostUsedStock,
       lowestStock,
       highestStock,
+      slowMovers,
+      deadStock,
     });
   } catch (err) {
     log.error({ err }, 'analytics/dashboard error');

@@ -245,6 +245,47 @@ app.get('/api/finance/balances', verifyToken, ...canViewAcct, async (req, res) =
   }
 });
 
+// ── TRIAL BALANCE ─────────────────────────────────────────────────────────────
+// Every account with its net debit/credit balance; total debits must equal total
+// credits when the books are balanced. Optional ?start&end date range.
+app.get('/api/reports/trial-balance', verifyToken, ...canViewAcct, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    const match = {};
+    if (start || end) {
+      match.date = {};
+      if (start) match.date.$gte = new Date(start);
+      if (end) { const e = new Date(end); e.setHours(23, 59, 59, 999); match.date.$lte = e; }
+    }
+    const agg = await JournalEntry.aggregate([
+      ...(Object.keys(match).length ? [{ $match: match }] : []),
+      { $unwind: '$lines' },
+      { $group: {
+          _id: '$lines.accountCode',
+          name:   { $first: '$lines.accountName' },
+          debit:  { $sum: { $ifNull: ['$lines.debit', 0] } },
+          credit: { $sum: { $ifNull: ['$lines.credit', 0] } },
+      } },
+      { $sort: { _id: 1 } },
+    ]);
+    const rows = agg.map((a) => {
+      const meta = acctMeta(a._id);
+      const net = (a.debit || 0) - (a.credit || 0);
+      return {
+        code: a._id,
+        name: meta?.name || a.name || a._id,
+        debit:  net > 0 ? +net.toFixed(2) : 0,
+        credit: net < 0 ? +(-net).toFixed(2) : 0,
+      };
+    }).filter((r) => r.debit || r.credit);
+    const totalDebit  = +rows.reduce((s, r) => s + r.debit, 0).toFixed(2);
+    const totalCredit = +rows.reduce((s, r) => s + r.credit, 0).toFixed(2);
+    res.json({ success: true, rows, totalDebit, totalCredit, balanced: Math.abs(totalDebit - totalCredit) < 0.01 });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
 // ============================================================
 // EXPENSE ENTRY — operator-facing expense bookkeeping
 // Categories defined in lib/chartOfAccounts.js

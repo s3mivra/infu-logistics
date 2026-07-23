@@ -100,7 +100,7 @@ export default function AnalyticsTab({ ctx }) {
     );
   }
 
-  const { today, allTime, dailyRevenue, bestDay, topProducts: tp, mostUsedStock: mus, lowestStock: ls, highestStock: hs } = ad;
+  const { today, allTime, dailyRevenue, bestDay, topProducts: tp, mostUsedStock: mus, lowestStock: ls, highestStock: hs, slowMovers: sm = [], deadStock: dead = [] } = ad;
 
   return (
         <div className="flex flex-col gap-6 w-full max-w-7xl mx-auto animate-fade-in">
@@ -192,23 +192,35 @@ export default function AnalyticsTab({ ctx }) {
                   Export Analytics PDF
                 </button>
               </div>
-              <div className="overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-700 flex-1 space-y-2">
+              <div className="flex-1 flex flex-col min-h-0">
                 {dailyRevenue.length === 0 ? (
                   <p className="text-gray-600 text-sm text-center py-4">No daily data available.</p>
-                ) : [...dailyRevenue].reverse().map((day, i) => {
-                  const pct = bestDay.revenue > 0 ? (day.revenue / bestDay.revenue) * 100 : 0;
-                  return (
-                    <div key={i} className="flex flex-col mb-3">
-                      <div className="flex justify-between text-sm mb-1">
-                        <span className="text-gray-300 font-semibold">{day.date}</span>
-                        <span className="text-white font-bold">₱{day.revenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                      </div>
-                      <div className="w-full bg-page-bg rounded-full h-2">
-                        <div className={`h-2 rounded-full ${day.revenue === bestDay.revenue ? 'bg-accent' : 'bg-gray-600'}`} style={{ width: `${pct}%` }}/>
-                      </div>
+                ) : (
+                  <>
+                    {/* Vertical bar graph — last 30 days, tallest bar = best day */}
+                    <div className="flex items-end gap-[3px] flex-1 min-h-[180px] overflow-x-auto pb-2">
+                      {dailyRevenue.slice(-30).map((day, i) => {
+                        const pct = bestDay.revenue > 0 ? (day.revenue / bestDay.revenue) * 100 : 0;
+                        const isBest = day.revenue === bestDay.revenue && day.revenue > 0;
+                        return (
+                          <div key={i} className="group relative flex-1 min-w-[10px] h-full flex flex-col justify-end">
+                            <div className={`w-full rounded-t transition-colors ${isBest ? 'bg-accent' : 'bg-brand/60 group-hover:bg-brand'}`}
+                              style={{ height: `${Math.max(2, pct)}%` }} />
+                            {/* tooltip */}
+                            <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block whitespace-nowrap bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-[10px] z-10">
+                              <span className="text-white/60">{day.date}</span> <span className="text-white font-bold">₱{Number(day.revenue).toLocaleString()}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
+                    <div className="flex justify-between text-[10px] text-gray-500 font-bold pt-1 border-t border-gray-800">
+                      <span>{dailyRevenue.slice(-30)[0]?.date}</span>
+                      <span className="text-accent">Best: {bestDay.date} · ₱{Number(bestDay.revenue).toLocaleString()}</span>
+                      <span>{dailyRevenue.slice(-1)[0]?.date}</span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
@@ -279,6 +291,48 @@ export default function AnalyticsTab({ ctx }) {
                           <span className="text-gray-400 font-bold text-xs">{isFinite(item.daysOfSupply) ? `~${Math.floor(item.daysOfSupply)}d supply` : '∞ supply'}</span>
                           {item.tiedUpCapital > 0 && <span className="text-orange-400 text-[10px] font-mono">₱{Number(item.tiedUpCapital).toFixed(0)} tied</span>}
                         </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Slow movers + Dead stock */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="bg-surface border border-yellow-900/30 rounded-xl p-5 flex flex-col">
+                  <h3 className="text-yellow-400 text-sm font-bold uppercase tracking-wider mb-4 border-b border-yellow-900/30 pb-2 flex items-center gap-2">
+                    <TrendingDown size={13} className="text-yellow-400" /> Slow Movers
+                  </h3>
+                  <div className="space-y-3">
+                    {sm.length === 0 ? <p className="text-gray-600 text-xs">Nothing selling unusually slowly.</p>
+                    : sm.map(item => (
+                      <div key={item._id} className="flex justify-between items-center text-sm">
+                        <div className="flex flex-col min-w-0 pr-2">
+                          <span className="text-gray-300 truncate font-semibold">{item.itemName}</span>
+                          <span className="text-gray-600 text-[10px]">{(Number(item.stockQty)/effectiveDisplay(item).mult).toFixed(2)} {effectiveDisplay(item).unit} on hand</span>
+                        </div>
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="text-yellow-400/90 font-bold text-xs whitespace-nowrap">{isFinite(item.daysOfSupply) ? `~${Math.floor(item.daysOfSupply)}d supply` : '∞'}</span>
+                          {item.tiedUpCapital > 0 && <span className="text-orange-400 text-[10px] font-mono">₱{Number(item.tiedUpCapital).toFixed(0)} tied</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-surface border border-red-900/30 rounded-xl p-5 flex flex-col">
+                  <h3 className="text-red-400 text-sm font-bold uppercase tracking-wider mb-4 border-b border-red-900/30 pb-2 flex items-center gap-2">
+                    <XCircle size={13} className="text-red-400" /> Dead Stock
+                  </h3>
+                  <div className="space-y-3">
+                    {dead.length === 0 ? <p className="text-gray-600 text-xs">No idle stock. Everything moved in the last 30 days.</p>
+                    : dead.map(item => (
+                      <div key={item._id} className="flex justify-between items-center text-sm">
+                        <div className="flex flex-col min-w-0 pr-2">
+                          <span className="text-gray-300 truncate font-semibold">{item.itemName}</span>
+                          <span className="text-gray-600 text-[10px]">{(Number(item.stockQty)/effectiveDisplay(item).mult).toFixed(2)} {effectiveDisplay(item).unit} · no sales 30d</span>
+                        </div>
+                        {item.tiedUpCapital > 0 && <span className="text-red-400 text-[11px] font-mono font-bold whitespace-nowrap">₱{Number(item.tiedUpCapital).toFixed(0)} tied</span>}
                       </div>
                     ))}
                   </div>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
@@ -84,6 +84,14 @@ export default function HistoryTab({ ctx }) {
     users, varianceNoteMode, varianceReasons,
   } = ctx;
 
+  // Bank Deposits (read-only list; deposits are posted during shift close).
+  const [deposits, setDeposits] = useState(null);
+  const loadDeposits = async () => {
+    try { const r = await apiFetch('/api/bank-deposits'); const d = await r.json(); setDeposits(d.success ? (d.deposits || []) : []); }
+    catch { setDeposits([]); }
+  };
+  useEffect(() => { if (historySubTab === 'deposits' && deposits === null) loadDeposits(); }, [historySubTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const sssPage = usePagination(sssRows, 15);
   // Fixed Summary-Sales columns (always shown), each summing one or more raw methods.
   const SSS_COLS = [
@@ -126,11 +134,47 @@ export default function HistoryTab({ ctx }) {
         <div className="w-full max-w-5xl mx-auto flex flex-col gap-6">
           {histSubTabUI}
 
-          {/* ===== BANK DEPOSITS (Stage 2 coming-soon placeholder) ===== */}
+          {/* ===== BANK DEPOSITS (list; posted during shift close) ===== */}
           {historySubTab === 'deposits' && (
-            <div className="bg-surface border border-dashed border-white/15 rounded-2xl p-8 text-center animate-fade-in">
-              <h3 className="text-white font-black text-lg">Bank Deposits</h3>
-              <p className="text-white/40 text-sm mt-1.5">Record and reconcile cash-to-bank deposits here. This view is being built. The API is ready.</p>
+            <div className="bg-surface border border-white/8 rounded-2xl p-5 animate-fade-in">
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                <div>
+                  <h3 className="text-lg font-black text-white">Bank Deposits</h3>
+                  <p className="text-white/40 text-xs">Cash-to-bank deposits (posted when a shift is closed &amp; reconciled).</p>
+                </div>
+                <button onClick={loadDeposits} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
+              </div>
+              {deposits === null ? (
+                <p className="text-white/40 text-sm">Loading…</p>
+              ) : deposits.length === 0 ? (
+                <p className="text-white/40 text-sm">No bank deposits recorded yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-white/30 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
+                        <th className="py-2">Date</th><th className="py-2">Reference</th><th className="py-2">Deposited By</th><th className="py-2 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-white/75">
+                      {deposits.map((d) => (
+                        <tr key={d._id} className="border-b border-white/5">
+                          <td className="py-1.5 text-white/50 text-xs">{d.createdAt ? new Date(d.createdAt).toLocaleDateString() : ''}</td>
+                          <td className="py-1.5 font-mono text-xs">{d.reference}</td>
+                          <td className="py-1.5">{d.depositedBy}</td>
+                          <td className="py-1.5 text-right font-mono font-bold text-white/90">₱{Number(d.amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="font-black text-white border-t-2 border-white/20">
+                        <td className="py-2" colSpan={3}>Total</td>
+                        <td className="py-2 text-right font-mono text-brand">₱{deposits.reduce((s, d) => s + Number(d.amount || 0), 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 
