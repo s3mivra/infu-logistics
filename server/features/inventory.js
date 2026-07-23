@@ -841,7 +841,19 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       if (existing) {
         const oldQty = existing.stockQty || 0;
         const diff = +(newBaseQty - oldQty).toFixed(6);
-        const unitCostForValuation = newCostPerBase != null ? newCostPerBase : (existing.unitCost || 0);
+        // Gain/loss is a QUANTITY VARIANCE (physical count vs. book), so it must be
+        // valued at the cost those units are CURRENTLY carried at on the books —
+        // never at a new cost typed into the same row. Using the new cost here
+        // previously made the loss/gain figure wrong whenever a row updated price
+        // and quantity together (e.g. existing 100 @ ₱10, row says 50 @ ₱20 → the
+        // 50-unit shortfall is a ₱10-cost loss of ₱500, not a ₱20-cost loss of
+        // ₱1000). The new cost still gets applied to the item going forward
+        // (existing.unitCost below) — it just doesn't retroactively value this
+        // variance. Only fall back to the new/import cost when the item has no
+        // existing cost basis at all, so a first-time cost import isn't valued at ₱0.
+        const unitCostForValuation = (existing.unitCost || 0) > 0
+          ? existing.unitCost
+          : (newCostPerBase != null ? newCostPerBase : 0);
         const valueImpact = Math.abs(diff) * unitCostForValuation;
 
         // Update item: replace stockQty + (optionally) update unitCost + sync display unit

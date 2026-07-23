@@ -93,4 +93,34 @@ describe('inventory import — update existing item path', () => {
     expect(product).toBeTruthy();
     expect(product.basePrice).toBe(250);
   });
+
+  // Regression: gain/loss must be valued at the EXISTING book cost of the units
+  // being adjusted, not a new cost typed into the same import row. Previously a
+  // row that updated both qty and unitCost together (a common real-world case —
+  // "here's the new count AND the new price") valued the variance at the new
+  // cost, which either overstates or understates the loss/gain depending on
+  // whether the price went up or down.
+  it('gain/loss on import is valued at the OLD unit cost, not a new cost from the same row', async () => {
+    const Inventory = mongoose.model('Inventory');
+    await Inventory.create({ itemCode: 'HB-GL-1', itemName: 'GL Item', stockQty: 100, unit: 'pcs', unitCost: 10, displayUnit: 'pcs', unitMultiplier: 1 });
+
+    // Shortfall (100 → 50) with a simultaneous cost bump (10 → 20): the 50-unit
+    // loss must be valued at the OLD cost (10), i.e. 500 — not the new cost (1000).
+    const lossRes = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'HB-GL-1', itemName: 'GL Item', qty: 50, unit: 'pcs', unitCost: 20 }],
+    });
+    expect(lossRes.body.summary.lossValue).toBe(500);
+    expect(lossRes.body.summary.decreased).toBe(1);
+    const afterLoss = await Inventory.findOne({ itemCode: 'HB-GL-1' }).lean();
+    expect(afterLoss.unitCost).toBe(20); // new cost still applies going forward
+    expect(afterLoss.stockQty).toBe(50);
+
+    // Gain (50 → 70) with another cost bump (20 → 25): valued at the book cost
+    // in effect at the START of this row (20), i.e. 20 units * 20 = 400.
+    const gainRes = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'HB-GL-1', itemName: 'GL Item', qty: 70, unit: 'pcs', unitCost: 25 }],
+    });
+    expect(gainRes.body.summary.gainValue).toBe(400);
+    expect(gainRes.body.summary.increased).toBe(1);
+  });
 });
