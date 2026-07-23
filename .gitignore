@@ -32,6 +32,9 @@ pnpm-debug.log*
 .env
 .env.*
 *.env
+# ...but DO track the placeholder templates (no secrets — they document deploy).
+!.env.example
+!**/.env.example
 
 ############################
 # Dependency Directories
