@@ -17,7 +17,7 @@ import pino from 'pino';
 import pinoHttp from 'pino-http';
 import { assertBalanced, debitAccountFor, suggestedSettleAccount } from './lib/ledger.js';
 import { ACCOUNTS, EXPENSE_CATEGORIES, CODE_MAP } from './lib/chartOfAccounts.js';
-import { resolveUnit, displayToBase, effectiveDisplay } from './lib/units.js';
+import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf } from './lib/units.js';
 import { addBatch, consumeBatches, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
 import { requireStaff, evaluateClientAccess, requirePermission, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS, setCustomRolePermissions } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
@@ -203,8 +203,7 @@ async function resolveLinkedInventory(product, productCode, session) {
   return Inventory.findOne({ $or: or }).session(session);
 }
 
-// Conversion factors into a canonical base (grams / millilitres / pieces).
-const UNIT_TO_BASE = { mg: 0.001, g: 1, kg: 1000, ml: 1, cl: 10, l: 1000, pcs: 1, pc: 1, pack: 1, unit: 1 };
+// UNIT_TO_BASE now lives in lib/units.js (single source of truth) and is imported above.
 // Base units of stock consumed by ONE sold unit of a logistics 1:1 product.
 // The pack size is encoded in the product/inventory name (e.g. "…250G", "…1KG",
 // "…500ML") and converted into the inventory item's base unit (inv.unit). NOTE:
@@ -1998,6 +1997,7 @@ const ctx = {
   mkRef,
   resolveLinkedInventory,
   UNIT_TO_BASE,
+  unitTypeOf,
   baseUnitsPerSale,
   escapeRegex,
   tenantScope,
