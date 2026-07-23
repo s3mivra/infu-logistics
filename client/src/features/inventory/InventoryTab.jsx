@@ -129,13 +129,7 @@ export default function InventoryTab({ ctx }) {
               </div>
               
               <div className="flex items-center gap-1.5">
-                <label className="text-[10px] bg-blue-600/90 hover:bg-blue-500 text-white px-3 py-1.5 rounded font-bold uppercase tracking-wider transition cursor-pointer min-h-[32px] flex items-center gap-1">
-                  <Download size={11} className="rotate-180" /> Import
-                  <input type="file" accept=".xlsx,.xls,.csv" onChange={e => { parseImportFile(e.target.files?.[0]); e.target.value = ''; }} className="hidden" />
-                </label>
-                <button onClick={downloadImportTemplate} title="Download CSV template" className="text-[10px] bg-white/5 hover:bg-white/10 text-white/60 hover:text-white px-2.5 py-1.5 rounded font-bold uppercase tracking-wider transition min-h-[32px]">
-                  Template
-                </button>
+                {/* Bulk Excel import moved to Procurement as a Purchase Order import. */}
                 <button onClick={exportInventoryToPDF} className="text-[10px] bg-accent border border-white/10 text-white px-3 py-1.5 rounded hover:bg-brand-dark transition font-bold uppercase tracking-wider min-h-[32px]">
                   Export PDF
                 </button>

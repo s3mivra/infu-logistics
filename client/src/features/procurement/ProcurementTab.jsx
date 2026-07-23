@@ -62,6 +62,114 @@ export default function ProcurementTab({ ctx }) {
   }, [apiFetch]);
   useEffect(() => { fetchSuppliers(); }, [fetchSuppliers]);
 
+  // ── Excel PO import ───────────────────────────────────────────────────────────
+  // Parses a supplier's PO/delivery spreadsheet, finds the header row, groups rows
+  // by PO NO into draft POs, and pulls the pack size (e.g. "1L", "2L", "250G") out
+  // of the product description into the line's unit.
+  const [importPreview, setImportPreview] = useState(null); // { pos: [...], skipped }
+  const [importing, setImporting] = useState(false);
+
+  // Pack size in a description: "…1L", "…250G", "…2.5KG", "…750ML". orderedQty is
+  // the PACKAGE count and unitCost is per-package (QTY × UNIT PRICE = GROSS in the
+  // source), so the pack size becomes the unit LABEL ("1L", "2L", "250G") — we do
+  // NOT convert quantities, which would break the cost math.
+  const PACK_RE = /\b([0-9]+(?:\.[0-9]+)?)\s*(kg|g|l|ml|pcs|pc)\b/i;
+  const parseSize = (desc) => {
+    const name = String(desc || '').trim();
+    const m = name.match(PACK_RE);
+    return { name, unit: m ? `${m[1]}${m[2].toUpperCase()}` : 'pcs' };
+  };
+  const numify = (v) => { const n = parseFloat(String(v ?? '').replace(/[₱,\s]/g, '')); return Number.isFinite(n) ? n : 0; };
+  const norm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  const parsePoExcel = async (file) => {
+    if (!file) return;
+    setError(''); setImporting(true);
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }); // array-of-arrays
+
+      // Find the header row: it contains "supplier name" AND "product description".
+      let hIdx = -1;
+      for (let i = 0; i < Math.min(grid.length, 40); i++) {
+        const cells = (grid[i] || []).map(norm);
+        if (cells.some(c => c.includes('suppliername')) && cells.some(c => c.includes('productdescription'))) { hIdx = i; break; }
+      }
+      if (hIdx === -1) { setError('Could not find the header row (needs SUPPLIER NAME and PRODUCT DESCRIPTION).'); setImporting(false); return; }
+
+      // Map each needed field to a column index by matching the header cells.
+      const header = (grid[hIdx] || []).map(norm);
+      const col = (aliases) => header.findIndex(c => aliases.some(a => c.includes(a)));
+      const idx = {
+        supplierCode: col(['supplierscode', 'suppliercode']),
+        supplier:     col(['suppliername']),
+        itemCode:     col(['itemcode']),
+        desc:         col(['productdescription']),
+        poNo:         col(['pono']),
+        leadTime:     col(['leadtime']),
+        drsi:         col(['drsi', 'dr/si', 'drsi']),
+        qty:          header.findIndex(c => c === 'qty' || c === 'quantity'),
+        unitPrice:    col(['unitprice', 'costprice']),
+        net:          col(['netpayable']),
+        brief:        col(['briefdescription']),
+      };
+
+      // Group data rows by PO NO (fallback to supplier) into draft POs.
+      const byPo = new Map();
+      let skipped = 0;
+      for (let i = hIdx + 1; i < grid.length; i++) {
+        const row = grid[i] || [];
+        const desc = idx.desc >= 0 ? String(row[idx.desc] ?? '').trim() : '';
+        const qty  = idx.qty >= 0 ? numify(row[idx.qty]) : 0;
+        if (!desc || qty <= 0) { if (desc || qty) skipped++; continue; }
+        const supplier = idx.supplier >= 0 ? String(row[idx.supplier] ?? '').trim() : '';
+        const poNo = idx.poNo >= 0 ? String(row[idx.poNo] ?? '').trim() : '';
+        const key = poNo || supplier || `row-${i}`;
+        if (!byPo.has(key)) byPo.set(key, { poNo, supplier, supplierCode: idx.supplierCode >= 0 ? String(row[idx.supplierCode] ?? '').trim() : '', drsi: idx.drsi >= 0 ? String(row[idx.drsi] ?? '').trim() : '', leadTime: idx.leadTime >= 0 ? String(row[idx.leadTime] ?? '').trim() : '', lines: [] });
+        const parsed = parseSize(desc);
+        byPo.get(key).lines.push({
+          itemName: parsed.name,
+          itemCode: idx.itemCode >= 0 ? String(row[idx.itemCode] ?? '').trim() : '',
+          unit: parsed.unit,
+          orderedQty: qty,
+          unitCost: idx.unitPrice >= 0 ? numify(row[idx.unitPrice]) : 0,
+          invId: null,
+        });
+      }
+
+      const posOut = [...byPo.values()].filter(p => p.lines.length);
+      if (posOut.length === 0) { setError('No item rows found under the header.'); setImporting(false); return; }
+      setImportPreview({ pos: posOut, skipped });
+    } catch (e) {
+      setError('Could not read the file. Make sure it is a valid .xlsx / .csv.');
+    } finally { setImporting(false); }
+  };
+
+  const confirmImport = async () => {
+    if (!importPreview) return;
+    setImporting(true); setError('');
+    let ok = 0, fail = 0;
+    for (const p of importPreview.pos) {
+      // Link to an existing supplier by name/code if we have one.
+      const match = suppliers.find(s => (p.supplierCode && s.supplierCode === p.supplierCode) || (p.supplier && s.name.toLowerCase() === p.supplier.toLowerCase()));
+      const noteBits = [p.poNo && `Supplier PO ${p.poNo}`, p.drsi && `DR/SI ${p.drsi}`, p.leadTime && `Lead time ${p.leadTime}d`].filter(Boolean);
+      try {
+        const res = await apiFetch('/api/purchase-orders', {
+          method: 'POST',
+          body: JSON.stringify({ supplier: p.supplier, supplierId: match?._id || null, notes: noteBits.join(' · '), lines: p.lines }),
+        });
+        const d = await res.json();
+        if (d.success) ok++; else fail++;
+      } catch { fail++; }
+    }
+    setImporting(false);
+    setImportPreview(null);
+    await fetchPOs();
+    setError(fail ? `Imported ${ok} PO(s); ${fail} failed.` : '');
+  };
+
   // ── Draft form state ────────────────────────────────────────────────────────
   const blankLine = () => ({ invId: null, itemName: '', itemCode: '', unit: '', orderedQty: '', unitCost: '' });
   const [showForm, setShowForm] = useState(false);
@@ -239,9 +347,15 @@ export default function ProcurementTab({ ctx }) {
           </div>
         </div>
         {subTab === 'orders' && canManage && (
-          <button onClick={openNewForm} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
-            <Plus size={16} /> New PO
-          </button>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white font-bold text-sm px-4 py-2.5 rounded-xl transition cursor-pointer">
+              <Download size={15} className="rotate-180" /> Import Excel
+              <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => { parsePoExcel(e.target.files?.[0]); e.target.value = ''; }} />
+            </label>
+            <button onClick={openNewForm} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
+              <Plus size={16} /> New PO
+            </button>
+          </div>
         )}
         {subTab === 'suppliers' && canManage && (
           <button onClick={() => openSupplierForm()} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
@@ -510,6 +624,54 @@ export default function ProcurementTab({ ctx }) {
               <button onClick={() => !savingSupplier && setShowSupplierForm(false)} className="text-sm font-bold px-4 py-2 rounded-xl text-white/50 hover:text-white transition">Cancel</button>
               <button onClick={saveSupplier} disabled={savingSupplier} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
                 {savingSupplier ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {supplierEditId ? 'Save Changes' : 'Create Supplier'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── IMPORT PREVIEW MODAL ── */}
+      {importPreview && (
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !importing && setImportPreview(null)}>
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-3xl my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+              <div>
+                <h2 className="font-black text-white text-lg">Import Purchase Orders</h2>
+                <p className="text-white/40 text-xs mt-0.5">
+                  {importPreview.pos.length} PO(s) · {importPreview.pos.reduce((s, p) => s + p.lines.length, 0)} line item(s)
+                  {importPreview.skipped > 0 && ` · ${importPreview.skipped} row(s) skipped`}
+                </p>
+              </div>
+              <button onClick={() => !importing && setImportPreview(null)} className="text-white/40 hover:text-white transition"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3 max-h-[60vh] overflow-y-auto">
+              {importPreview.pos.map((p, pi) => {
+                const total = p.lines.reduce((s, l) => s + (Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0), 0);
+                return (
+                  <div key={pi} className="bg-white/5 border border-white/10 rounded-xl p-3">
+                    <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                      <span className="font-black text-white text-sm">{p.supplier || 'Unknown supplier'}</span>
+                      <div className="flex items-center gap-2 text-[11px] text-white/40 font-bold">
+                        {p.poNo && <span>PO {p.poNo}</span>}
+                        <span className="text-brand">{money(total)}</span>
+                      </div>
+                    </div>
+                    <div className="space-y-0.5">
+                      {p.lines.map((l, li) => (
+                        <div key={li} className="flex items-center justify-between text-xs text-white/60">
+                          <span className="truncate pr-2">{l.itemCode ? `${l.itemCode} · ` : ''}{l.itemName}</span>
+                          <span className="whitespace-nowrap font-mono">{l.orderedQty} {l.unit} × {money(l.unitCost)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
+              <button onClick={() => !importing && setImportPreview(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-white/50 hover:text-white transition">Cancel</button>
+              <button onClick={confirmImport} disabled={importing} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+                {importing ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Import {importPreview.pos.length} PO(s)
               </button>
             </div>
           </div>
