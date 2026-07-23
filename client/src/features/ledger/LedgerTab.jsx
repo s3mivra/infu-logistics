@@ -159,51 +159,51 @@ export default function LedgerTab({ ctx }) {
   return (
         <div className="space-y-4">
 
-          {/* SUB-TAB NAV */}
+          {/* SUB-TAB NAV. The group shown depends on the top-level tab: Reports vs
+              Ledger (both render from this component). Merged pages (AR & AP, and
+              Accounts & Periods) stack several sections on one page. */}
           <div className="flex gap-2 overflow-x-auto custom-scrollbar pb-1 bg-surface border border-white/8 rounded-2xl p-2">
-            {[
-              ['journal',   'Journal',          FileText],
-              ['coa',       'Chart of Accounts', Settings],
-              ['pnl',       'Profit & Loss',    TrendingUp],
-              ['pnlmonthly','Monthly P&L',      BarChart3],
-              ['balance',   'Balance Sheet',    BarChart2],
-              ['bsmonthly', 'Monthly Bal. Sheet', BarChart3],
-              ['ar',        'A/R Outstanding',  Truck],
-              ['ap',        'A/P Payables',     CreditCard],
-              ['payments',  'By Payment',       Banknote],
-              ['profitcat', 'Profit by Cat.',   BarChart2],
-              ['menueng',   'Menu Engineering', TrendingUp],
-              ['variance',  'Cashier Variance', Users],
-              ['po',        'Purchase Order',   Package],
-              ['revolving', 'Revolving Funds',  RefreshCw],
-              ['periods',   'Period Lock',      Lock],
-              ['audit',     'Audit Log',        ShieldCheck],
-              ['payroute',  'Payment Routing',  CreditCard],
-              ['backdate',  'Backdate Sales',   Clock],
-              ['tenancy',   'Tenancy Health',   ShieldCheck],
-              ['expenses',  'Add Expense',      Plus]
-            ].map(([id, label, Icon]) => (
+            {(activeTab === 'reports'
+              ? [
+                  ['salessummary',  'Sales Summary',          BarChart3],
+                  ['payments',      'By Payment',             Banknote],
+                  ['profitcat',     'By Category',            BarChart2],
+                  ['pnlmonthly',    'Monthly P&L',            BarChart3],
+                  ['bsmonthly',     'Monthly Balance Sheet',  BarChart3],
+                  ['percentagetax', 'Percentage Tax',         FileText],
+                  ['menueng',       'Menu Engineering',       TrendingUp],
+                  ['variance',      'Cashier Variance',       Users],
+                ]
+              : [
+                  ['journal',    'General Ledger',      FileText],
+                  ['trial',      'Trial Balance',       BarChart2],
+                  ['pnl',        'P&L',                 TrendingUp],
+                  ['balance',    'Balance Sheet',       BarChart2],
+                  ['araap',      'AR & AP',             Truck],
+                  ['accperiods', 'Accounts & Periods',  Settings],
+                  ['revolving',  'Revolving Funds',     RefreshCw],
+                  ['expenses',   'Add Expense',         Plus],
+                ]
+            ).map(([id, label, Icon]) => (
               <button
                 key={id}
                 onClick={() => {
                   if (id === 'expenses') { fetchExpenseCategories(); setExpenseModal(true); return; }
                   setLedgerSubTab(id);
-                  if (id === 'coa') fetchCoa();
-                  if (id === 'periods') fetchClosedPeriods();
-                  if (id === 'audit') fetchAuditLog(1);
-                  if (id === 'payroute') fetchPaymentMap();
-                  if (id === 'tenancy') fetchTenancyReport();
+                  // Merged "Accounts & Periods" page: load all its sections.
+                  if (id === 'accperiods') { fetchCoa(); fetchClosedPeriods(); fetchPaymentMap(); }
+                  // Merged "AR & AP" page.
+                  if (id === 'araap') { fetchArOutstanding(); fetchApData(); }
                   if (id === 'pnl' && !pnlData) fetchPnl();
+                  if (id === 'trial' && !bsData) fetchBalanceSheet(); // trial balance derives from the same aggregation
                   if (id === 'pnlmonthly' && !pnlMonthly) fetchPnlMonthly();
                   if (id === 'balance' && !bsData) fetchBalanceSheet();
                   if (id === 'bsmonthly' && !bsMonthly) fetchBsMonthly();
-                  if (id === 'ar') fetchArOutstanding();
-                  if (id === 'ap') fetchApData();
+                  if (id === 'salessummary') fetchSalesSummary();
                   if (id === 'payments') fetchSalesByPayment();
                   if (id === 'profitcat') fetchProfitByCategory();
                   if (id === 'menueng') fetchMenuEngineering();
                   if (id === 'variance') fetchCashierVariance();
-                  if (id === 'po') fetchPurchaseOrder();
                   if (id === 'revolving') { fetchRfFunds(); setRfActiveFund(null); setRfTxs([]); }
                 }}
                 className={`shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[44px] ${ledgerSubTab === id && id !== 'expenses' ? 'bg-brand text-white shadow-elev-1' : 'bg-transparent text-white/50 hover:text-white hover:bg-white/5'}`}
@@ -213,7 +213,27 @@ export default function LedgerTab({ ctx }) {
             ))}
           </div>
 
-          {ledgerSubTab === 'coa' && (
+          {/* Section header for merged "Accounts & Periods" page */}
+          {ledgerSubTab === 'accperiods' && (
+            <p className="text-[11px] font-black uppercase tracking-wider text-white/30 -mb-1">Chart of Accounts</p>
+          )}
+
+          {/* NEW VIEWS (Stage 2 coming-soon placeholders) */}
+          {['trial', 'salessummary', 'percentagetax'].includes(ledgerSubTab) && (
+            <div className="max-w-2xl bg-surface border border-dashed border-white/15 rounded-2xl p-8 text-center">
+              <BarChart2 size={30} className="mx-auto mb-3 text-white/20" />
+              <h3 className="text-white font-black text-lg">
+                {ledgerSubTab === 'trial' ? 'Trial Balance'
+                  : ledgerSubTab === 'salessummary' ? 'Sales Summary'
+                  : 'Percentage Tax'}
+              </h3>
+              <p className="text-white/40 text-sm mt-1.5">
+                This view is being built. The backend data is ready; the report layout lands in the next update.
+              </p>
+            </div>
+          )}
+
+          {(ledgerSubTab === 'coa' || ledgerSubTab === 'accperiods') && (
             <div className="max-w-3xl space-y-5">
               {/* Add child account */}
               <div className="bg-surface border border-white/8 rounded-2xl p-5">
@@ -724,7 +744,7 @@ export default function LedgerTab({ ctx }) {
           })()}
 
           {/* ===== A/R OUTSTANDING SUB-TAB ===== */}
-          {ledgerSubTab === 'ar' && (
+          {(ledgerSubTab === 'ar' || ledgerSubTab === 'araap') && (
             <div className="bg-surface border border-white/8 rounded-2xl p-6 space-y-4 animate-fade-in">
               <div className="flex justify-between items-end border-b border-white/10 pb-4">
                 <div>
@@ -815,7 +835,7 @@ export default function LedgerTab({ ctx }) {
           )}
 
           {/* ===== ACCOUNTS PAYABLE SUB-TAB ===== */}
-          {ledgerSubTab === 'ap' && (
+          {(ledgerSubTab === 'ap' || ledgerSubTab === 'araap') && (
             <div className="space-y-6 animate-fade-in">
               {/* Summary KPI bar */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -1416,7 +1436,7 @@ export default function LedgerTab({ ctx }) {
           )}
 
           {/* ── PERIOD LOCK ─────────────────────────────────────────────── */}
-          {ledgerSubTab === 'periods' && (
+          {(ledgerSubTab === 'periods' || ledgerSubTab === 'accperiods') && (
             <div className="bg-surface border border-white/8 rounded-2xl p-6 space-y-6">
               <div>
                 <h3 className="text-xl font-black text-white flex items-center gap-2"><Lock size={18} className="text-brand"/> Closed Accounting Periods</h3>
@@ -1488,7 +1508,7 @@ export default function LedgerTab({ ctx }) {
           )}
 
           {/* ── PAYMENT ROUTING ───────────────────────────────────────────── */}
-          {ledgerSubTab === 'payroute' && (() => {
+          {(ledgerSubTab === 'payroute' || ledgerSubTab === 'accperiods') && (() => {
             const methods = Array.from(new Set([
               ...Object.keys(paymentMap?.defaults || {}),
               ...Object.keys(paymentMap?.effective || {}),
@@ -1815,7 +1835,7 @@ export default function LedgerTab({ ctx }) {
 
           {/* ── TENANCY HEALTH + MY PERMISSIONS ───────────────────────────── */}
           {/* ── BACKDATE SALES (superadmin only) ──────────────────────────── */}
-          {ledgerSubTab === 'backdate' && (
+          {(ledgerSubTab === 'backdate' || ledgerSubTab === 'accperiods') && (
             <div className="bg-surface border border-white/8 rounded-2xl p-6 space-y-4">
               <div>
                 <h3 className="text-xl font-black text-white flex items-center gap-2"><Clock size={18} className="text-brand"/> Backdate Sales</h3>

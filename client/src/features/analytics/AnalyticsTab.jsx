@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 
 // ── AnalyticsTab — extracted from AdminDashboard.jsx ──
@@ -77,6 +77,9 @@ export default function AnalyticsTab({ ctx }) {
     users, varianceNoteMode, varianceReasons,
   } = ctx;
 
+  // Layout switch: A = KPI Grid (current), B = Ledger-style (Stage 2).
+  const [analyticsLayout, setAnalyticsLayout] = useState('a');
+
   // Compute local values before rendering
   const ad = analyticsData;
   const totalInvValue = inventory.reduce((s, i) => s + i.stockQty * (i.unitCost || 0), 0);
@@ -102,13 +105,29 @@ export default function AnalyticsTab({ ctx }) {
   return (
         <div className="flex flex-col gap-6 w-full max-w-7xl mx-auto animate-fade-in">
 
-          {/* Refresh button */}
-          <div className="flex justify-end">
+          {/* Layout switch + Refresh */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="inline-flex bg-white/5 border border-white/10 rounded-xl p-1">
+              {[['a', 'Layout A (KPI Grid)'], ['b', 'Layout B (Ledger-style)']].map(([id, label]) => (
+                <button key={id} onClick={() => setAnalyticsLayout(id)}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition ${analyticsLayout === id ? 'bg-brand text-white shadow-sm' : 'text-white/50 hover:text-white'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
             <button onClick={fetchAnalytics} disabled={analyticsLoading}
               className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition disabled:opacity-40">
               <RefreshCw size={12} className={analyticsLoading ? 'animate-spin' : ''}/> Refresh
             </button>
           </div>
+
+          {analyticsLayout === 'b' ? (
+            <div className="bg-brand-dark/40 border border-dashed border-white/15 rounded-2xl p-10 text-center">
+              <BarChart2 size={30} className="mx-auto mb-3 text-white/20" />
+              <h3 className="text-white font-black text-lg">Layout B (Ledger-style)</h3>
+              <p className="text-white/40 text-sm mt-1.5">A denser, ledger-style analytics view is being built. Use Layout A for now.</p>
+            </div>
+          ) : (<>
 
           {/* TOP ROW: High-Level Metrics */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -267,6 +286,7 @@ export default function AnalyticsTab({ ctx }) {
               </div>
             </div>
           </div>
+          </>)}
         </div>
   );
 }

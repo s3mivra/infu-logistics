@@ -112,10 +112,10 @@ export default function HistoryTab({ ctx }) {
   const shiftVat           = shiftPaid.reduce((sum, o) => sum + o.vatAmount, 0);
 
   const histSubTabUI = (
-    <div className="flex items-center gap-2 mb-6">
-      {[['daily','Daily Register'],['shifts','Shift History'],['hours','Staff Hours'],['sales','Summary Sales']].map(([id, label]) => (
+    <div className="flex items-center gap-2 mb-6 flex-wrap">
+      {[['daily','Current Shift'],['shifts','Shift History'],['hours','Timesheets'],['deposits','Bank Deposits']].map(([id, label]) => (
         <button key={id}
-          onClick={() => { setHistorySubTab(id); if (id === 'shifts') fetchShiftHistory(1); if (id === 'hours') fetchClockEntries(1); if (id === 'sales') fetchSalesSummary(); }}
+          onClick={() => { setHistorySubTab(id); if (id === 'shifts') fetchShiftHistory(1); if (id === 'hours') fetchClockEntries(1); }}
           className={`px-5 py-2.5 rounded-xl font-black text-sm uppercase tracking-wider transition ${historySubTab === id ? 'bg-brand text-white shadow-md' : 'bg-surface-2 text-white/50 hover:text-white'}`}
         >{label}</button>
       ))}
@@ -125,6 +125,14 @@ export default function HistoryTab({ ctx }) {
   return (
         <div className="w-full max-w-5xl mx-auto flex flex-col gap-6">
           {histSubTabUI}
+
+          {/* ===== BANK DEPOSITS (Stage 2 coming-soon placeholder) ===== */}
+          {historySubTab === 'deposits' && (
+            <div className="bg-surface border border-dashed border-white/15 rounded-2xl p-8 text-center animate-fade-in">
+              <h3 className="text-white font-black text-lg">Bank Deposits</h3>
+              <p className="text-white/40 text-sm mt-1.5">Record and reconcile cash-to-bank deposits here. This view is being built. The API is ready.</p>
+            </div>
+          )}
 
           {/* ===== SUMMARY SALES (channel breakdown) ===== */}
           {historySubTab === 'sales' && (
