@@ -37,6 +37,7 @@ import registerShifts from './features/shifts.js';
 import registerAdminTools from './features/admin-tools.js';
 import registerAudit from './features/audit.js';
 import registerSettings from './features/settings.js';
+import registerPurchaseOrders from './features/purchase-orders.js';
 
 const log = pino({
   level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
@@ -1408,6 +1409,38 @@ const EODRecord = mongoose.model('EODRecord', EODRecordSchema);
 const CounterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, default: 0 } });
 const Counter = mongoose.model('Counter', CounterSchema);
 
+// ── PURCHASE ORDERS (procurement workflow) ───────────────────────────────────
+// Two-stage tracking tool. A PO is drafted with line items pulled from inventory,
+// tracked through Ordered → Processing, then reconciled against the actual
+// delivery (per-line receivedQty typed in by hand) which flips it to Complete
+// (everything arrived) or Incomplete (short/over). Purely a tracking record — it
+// does NOT post to inventory or the ledger; restock + journal entries stay on the
+// existing /api/inventory/restock flow so there's no double counting.
+const PO_STATUSES = ['Ordered', 'Processing', 'Complete', 'Incomplete', 'Cancelled'];
+const PurchaseOrderSchema = new mongoose.Schema({
+  poNumber:     { type: String, index: true },              // PO-2026-000001
+  supplier:     { type: String, default: '' },
+  status:       { type: String, default: 'Ordered', enum: PO_STATUSES, index: true },
+  expectedDate: { type: Date },
+  notes:        { type: String, default: '' },
+  lines: [{
+    invId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
+    itemName:    { type: String, default: '' },
+    itemCode:    { type: String, default: '' },
+    unit:        { type: String, default: '' },             // display unit captured at draft time
+    orderedQty:  { type: Number, default: 0 },
+    unitCost:    { type: Number, default: 0 },
+    receivedQty: { type: Number, default: null },           // null until reconciled
+  }],
+  estTotal:     { type: Number, default: 0 },
+  actualTotal:  { type: Number, default: 0 },
+  receivedAt:   { type: Date, default: null },
+  receivedBy:   { type: String, default: '' },
+  createdBy:    { type: String, default: '' },
+  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+}, { timestamps: true });
+const PurchaseOrder = mongoose.model('PurchaseOrder', PurchaseOrderSchema);
+
 // --- API ROUTES ---
 
 
@@ -2023,6 +2056,9 @@ const ctx = {
   EODRecord,
   CounterSchema,
   Counter,
+  PurchaseOrderSchema,
+  PurchaseOrder,
+  PO_STATUSES,
   emitToOps,
   emitToAll,
   emitToMgr,
@@ -2064,6 +2100,7 @@ registerShifts(ctx);
 registerAdminTools(ctx);
 registerAudit(ctx);
 registerSettings(ctx);
+registerPurchaseOrders(ctx);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Not found.' });

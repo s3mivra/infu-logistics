@@ -15,6 +15,8 @@ const LedgerTab     = lazy(() => import('../ledger/LedgerTab'));
 const PricingTab    = lazy(() => import('../pricing/PricingTab'));
 const AuditTab      = lazy(() => import('../audit/AuditTab'));
 const ProductsTab   = lazy(() => import('../products/ProductsTab'));
+const ProcurementTab = lazy(() => import('../procurement/ProcurementTab'));
+const SettingsTab   = lazy(() => import('../settings/SettingsTab'));
 
 // Small fallback shown while a tab chunk loads.
 const TabFallback = () => (
@@ -4546,7 +4548,8 @@ const updateStatus = async (orderId, newStatus) => {
         {[
           { id: 'orders', label: 'Orders & POS', icon: ShoppingCart },
           { id: 'inventory', label: 'Inventory & Stock', icon: Package },
-          { id: 'products', label: 'Menu Setup', icon: Settings },
+          { id: 'procurement', label: 'Procurement', icon: Truck },
+          { id: 'products', label: 'Menu Setup', icon: ChefHat },
         ].map(({ id, label, icon: Icon }) => {
           // invBadgeCount and invBadgeColor are hoisted to component scope above
           const badgeCount = id === 'inventory' ? invBadgeCount : 0;
@@ -4621,11 +4624,21 @@ const updateStatus = async (orderId, newStatus) => {
               : 'Clock In'}
         </button>
 
-        {/* Collapsible utility tools - Fullscreen / QR / Password / toggles / Install */}
+        {/* Settings — system preferences & account. The QR-Orders / Auto-Close /
+            Product-Images toggles and Change Password now live on this page
+            instead of being crammed into the sidebar dropdown. */}
+        <button onClick={() => { setActiveTab('settings'); setNavMode('negotium'); closeFn?.(); }}
+          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${activeTab === 'settings' ? 'bg-brand text-white shadow-sm' : 'text-white/40 hover:text-white hover:bg-white/5'}`}>
+          <Settings size={15} />
+          Settings
+          {activeTab === 'settings' && <ChevronRight size={13} className="ml-auto" />}
+        </button>
+
+        {/* Collapsible quick tools - Fullscreen / QR / Install (frequent, low-stakes) */}
         <button onClick={toggleOpsTools}
           className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition font-bold text-[11px] uppercase tracking-wider">
           {opsToolsOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-          Tools &amp; Settings
+          Quick Tools
         </button>
         {opsToolsOpen && (
           <div className="space-y-0.5">
@@ -4637,34 +4650,6 @@ const updateStatus = async (orderId, newStatus) => {
               <QrCode size={15} />
               {BUSINESS_TYPE === 'log' ? 'Portal' : 'Show QR'}
             </button>
-            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition font-bold text-sm">
-              <Settings size={15} />
-              Change Password
-            </button>
-            {/* QR Orders toggle (superadmin only) */}
-            {isSuperAdmin && (
-              <button onClick={toggleQROrders}
-                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${systemSettings.isAcceptingQROrders ? 'text-green-400/70 hover:text-green-400 hover:bg-green-500/10' : 'text-red-400 bg-red-500/10 hover:bg-red-500/20'}`}>
-                {systemSettings.isAcceptingQROrders ? <Unlock size={15} /> : <Lock size={15} />}
-                {systemSettings.isAcceptingQROrders ? 'QR Orders: OPEN' : 'QR Orders: CLOSED'}
-              </button>
-            )}
-            {/* Auto midnight close toggle (superadmin only) */}
-            {isSuperAdmin && (
-              <button onClick={toggleAutoClose}
-                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${systemSettings.autoCloseEnabled !== false ? 'text-green-400/70 hover:text-green-400 hover:bg-green-500/10' : 'text-yellow-400 bg-yellow-500/10 hover:bg-yellow-500/20'}`}>
-                <Clock size={15} />
-                {systemSettings.autoCloseEnabled !== false ? 'Auto Close: ON' : 'Auto Close: OFF (manual)'}
-              </button>
-            )}
-            {/* Product images toggle (superadmin only) */}
-            {isSuperAdmin && (
-              <button onClick={toggleImages}
-                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${systemSettings.imagesEnabled !== false ? 'text-green-400/70 hover:text-green-400 hover:bg-green-500/10' : 'text-gray-400 bg-white/5 hover:bg-white/10'}`}>
-                <Eye size={15} />
-                {systemSettings.imagesEnabled !== false ? 'Product Images: ON' : 'Product Images: OFF'}
-              </button>
-            )}
             {/* Install as app (only when the browser offers it) */}
             {installable && (
               <button onClick={() => { install(); closeFn?.(); }}
@@ -4822,7 +4807,7 @@ const updateStatus = async (orderId, newStatus) => {
     exportInventoryToPDF, exportLedgerToPDF, exportAllToPDF,
     handleSaveProduct, handleSaveCategory, toggleProductAvailability, toggleProductOOS,
     // ── Change Password ──────────────────────────────────────────────────────
-    changePwModal, setChangePwModal, changePwForm, setChangePwForm, changePwLoading, changePwError, handleChangePassword,
+    changePwModal, setChangePwModal, setChangePwError, changePwForm, setChangePwForm, changePwLoading, changePwError, handleChangePassword,
     // ── Modifier Groups ──────────────────────────────────────────────────────
     modifierGroups, fetchModifierGroups,
     editingModifier, setEditingModifier, modForm, setModForm,
@@ -4844,7 +4829,7 @@ const updateStatus = async (orderId, newStatus) => {
     // ── Profit by Category ───────────────────────────────────────────────────
     profitByCategory, fetchProfitByCategory,
     // ── System Settings / QR Toggle ─────────────────────────────────────────
-    systemSettings, toggleQROrders,
+    systemSettings, toggleQROrders, toggleAutoClose, toggleImages,
     // ── Sales by Payment ─────────────────────────────────────────────────────
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     // ── Summary Sales (channel breakdown) ────────────────────────────────────
@@ -5473,7 +5458,13 @@ const updateStatus = async (orderId, newStatus) => {
 
 {/* --- MENU SETUP (PRODUCTS/CATEGORIES) --- */}
       {activeTab === 'products' && <Suspense fallback={<TabFallback />}><ProductsTab ctx={ctx} /></Suspense>}
-      
+
+{/* --- PROCUREMENT (PURCHASE ORDERS) --- */}
+      {activeTab === 'procurement' && <Suspense fallback={<TabFallback />}><ProcurementTab ctx={ctx} /></Suspense>}
+
+{/* --- SETTINGS --- */}
+      {activeTab === 'settings' && <Suspense fallback={<TabFallback />}><SettingsTab ctx={ctx} /></Suspense>}
+
       {/* --- STOCK MOVEMENT HISTORY MODAL --- */}
       {historyModalOpen && (() => {
         const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);

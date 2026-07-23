@@ -1,0 +1,154 @@
+// Purchase Order workflow integration tests — draft → status → receive/reconcile.
+// The PO feature is a pure tracking record (no inventory/ledger posting), so these
+// assert the lifecycle, status transitions, reconciliation math, and guards.
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import request from 'supertest';
+import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+
+let app, stop, superToken, cashierToken;
+
+beforeAll(async () => {
+  ({ app, stop } = await bootApp({ businessType: 'log', jwtSecret: 'po-test-secret-0123456789' }));
+  await makeUser({ name: 'PoBoss', role: 'superadmin', password: 'pw' });
+  await makeUser({ name: 'PoCashier', role: 'cashier', password: 'pw' });
+  superToken = await loginStaff(app, 'PoBoss', 'pw');
+  cashierToken = await loginStaff(app, 'PoCashier', 'pw');
+}, 120000);
+
+afterAll(async () => { await stop(); });
+
+const auth = (t) => ({ Authorization: `Bearer ${t}` });
+
+const draftBody = {
+  supplier: 'Acme Supplies',
+  expectedDate: '2026-08-01',
+  notes: 'Weekly restock',
+  lines: [
+    { itemName: 'Coffee Beans', unit: 'kg', orderedQty: 10, unitCost: 250 },
+    { itemName: 'Milk', unit: 'L', orderedQty: 20, unitCost: 80 },
+  ],
+};
+
+describe('purchase order creation', () => {
+  it('rejects a PO with no valid lines', async () => {
+    const res = await request(app).post('/api/purchase-orders').set(auth(superToken))
+      .send({ supplier: 'X', lines: [{ itemName: '', orderedQty: 0 }] });
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  it('creates a draft PO with an auto PO number, Ordered status, and est total', async () => {
+    const res = await request(app).post('/api/purchase-orders').set(auth(cashierToken)).send(draftBody);
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+    const po = res.body.purchaseOrder;
+    expect(po.poNumber).toMatch(/^PO-\d{4}-\d{6}$/);
+    expect(po.status).toBe('Ordered');
+    // 10*250 + 20*80 = 2500 + 1600 = 4100
+    expect(po.estTotal).toBe(4100);
+    expect(po.lines).toHaveLength(2);
+    expect(po.lines[0].receivedQty).toBeNull();
+    expect(po.createdBy).toBe('PoCashier');
+  });
+
+  it('requires auth', async () => {
+    const res = await request(app).post('/api/purchase-orders').send(draftBody);
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('status transitions', () => {
+  let poId;
+  beforeAll(async () => {
+    const res = await request(app).post('/api/purchase-orders').set(auth(superToken)).send(draftBody);
+    poId = res.body.purchaseOrder._id;
+  });
+
+  it('moves Ordered → Processing', async () => {
+    const res = await request(app).patch(`/api/purchase-orders/${poId}`).set(auth(superToken)).send({ status: 'Processing' });
+    expect(res.status).toBe(200);
+    expect(res.body.purchaseOrder.status).toBe('Processing');
+  });
+
+  it('rejects setting a terminal status via PATCH (must use /receive)', async () => {
+    const res = await request(app).patch(`/api/purchase-orders/${poId}`).set(auth(superToken)).send({ status: 'Complete' });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('receiving / reconciliation', () => {
+  it('full delivery → Complete with actualTotal = est', async () => {
+    const created = await request(app).post('/api/purchase-orders').set(auth(superToken)).send(draftBody);
+    const po = created.body.purchaseOrder;
+    const received = po.lines.map((l, i) => ({ lineId: l._id, index: i, receivedQty: l.orderedQty }));
+    const res = await request(app).post(`/api/purchase-orders/${po._id}/receive`).set(auth(superToken)).send({ received });
+    expect(res.status).toBe(200);
+    expect(res.body.purchaseOrder.status).toBe('Complete');
+    expect(res.body.purchaseOrder.actualTotal).toBe(4100);
+    expect(res.body.purchaseOrder.receivedBy).toBe('PoBoss');
+    expect(res.body.purchaseOrder.receivedAt).toBeTruthy();
+  });
+
+  it('short delivery → Incomplete with reduced actualTotal', async () => {
+    const created = await request(app).post('/api/purchase-orders').set(auth(superToken)).send(draftBody);
+    const po = created.body.purchaseOrder;
+    // Receive only 5kg of beans (of 10) and all 20 milk → short
+    const received = [
+      { lineId: po.lines[0]._id, index: 0, receivedQty: 5 },
+      { lineId: po.lines[1]._id, index: 1, receivedQty: 20 },
+    ];
+    const res = await request(app).post(`/api/purchase-orders/${po._id}/receive`).set(auth(superToken)).send({ received });
+    expect(res.status).toBe(200);
+    expect(res.body.purchaseOrder.status).toBe('Incomplete');
+    // 5*250 + 20*80 = 1250 + 1600 = 2850
+    expect(res.body.purchaseOrder.actualTotal).toBe(2850);
+  });
+
+  it('cannot receive an already-received PO', async () => {
+    const created = await request(app).post('/api/purchase-orders').set(auth(superToken)).send(draftBody);
+    const po = created.body.purchaseOrder;
+    const received = po.lines.map((l, i) => ({ lineId: l._id, index: i, receivedQty: l.orderedQty }));
+    await request(app).post(`/api/purchase-orders/${po._id}/receive`).set(auth(superToken)).send({ received });
+    const again = await request(app).post(`/api/purchase-orders/${po._id}/receive`).set(auth(superToken)).send({ received });
+    expect(again.status).toBe(409);
+  });
+
+  it('cannot edit a reconciled PO', async () => {
+    const created = await request(app).post('/api/purchase-orders').set(auth(superToken)).send(draftBody);
+    const po = created.body.purchaseOrder;
+    const received = po.lines.map((l, i) => ({ lineId: l._id, index: i, receivedQty: l.orderedQty }));
+    await request(app).post(`/api/purchase-orders/${po._id}/receive`).set(auth(superToken)).send({ received });
+    const edit = await request(app).patch(`/api/purchase-orders/${po._id}`).set(auth(superToken)).send({ supplier: 'New' });
+    expect(edit.status).toBe(409);
+  });
+});
+
+describe('listing & deletion guards', () => {
+  it('lists POs and filters by status', async () => {
+    const all = await request(app).get('/api/purchase-orders').set(auth(cashierToken));
+    expect(all.status).toBe(200);
+    expect(Array.isArray(all.body.purchaseOrders)).toBe(true);
+    const completed = await request(app).get('/api/purchase-orders?status=Complete').set(auth(cashierToken));
+    expect(completed.body.purchaseOrders.every(p => p.status === 'Complete')).toBe(true);
+  });
+
+  it('superadmin can delete a draft; a received PO cannot be deleted', async () => {
+    const draft = await request(app).post('/api/purchase-orders').set(auth(superToken)).send(draftBody);
+    const draftId = draft.body.purchaseOrder._id;
+    const del = await request(app).delete(`/api/purchase-orders/${draftId}`).set(auth(superToken));
+    expect(del.status).toBe(200);
+
+    const created = await request(app).post('/api/purchase-orders').set(auth(superToken)).send(draftBody);
+    const po = created.body.purchaseOrder;
+    const received = po.lines.map((l, i) => ({ lineId: l._id, index: i, receivedQty: l.orderedQty }));
+    await request(app).post(`/api/purchase-orders/${po._id}/receive`).set(auth(superToken)).send({ received });
+    const del2 = await request(app).delete(`/api/purchase-orders/${po._id}`).set(auth(superToken));
+    expect(del2.status).toBe(409);
+  });
+
+  it('non-superadmin cannot delete', async () => {
+    const draft = await request(app).post('/api/purchase-orders').set(auth(cashierToken)).send(draftBody);
+    const del = await request(app).delete(`/api/purchase-orders/${draft.body.purchaseOrder._id}`).set(auth(cashierToken));
+    expect(del.status).toBe(403);
+  });
+});
