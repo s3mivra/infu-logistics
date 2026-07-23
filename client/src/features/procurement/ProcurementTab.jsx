@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, Search, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin } from 'lucide-react';
+import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, Search, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download } from 'lucide-react';
 
 // ── ProcurementTab — Purchase Order workflow ──────────────────────────────────
 // Two-stage tracking. LEFT tab ("Purchase Orders") drafts & tracks planned POs
