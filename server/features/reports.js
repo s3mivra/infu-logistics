@@ -470,6 +470,10 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const day30ago   = new Date(now.getTime() - 30 * 86400000);
     const day60ago   = new Date(now.getTime() - 60 * 86400000);
+    // Every query below MUST be scoped — this dashboard previously had zero
+    // businessType/tenant scoping, so an fb deployment sharing a DB with a log
+    // deployment (or any leftover cross-type docs) leaked into every number here.
+    const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
 
     // ── Run DB aggregations in parallel (no full table scan into memory) ──────
     const [todayAgg, allTimeAgg, dailyAgg, topProductsAgg, orders30d, orders7d, inventoryItems] =
@@ -477,7 +481,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
 
       // 1. Today's KPIs
       Order.aggregate([
-        { $match: { status: 'Completed', createdAt: { $gte: todayStart } } },
+        { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: todayStart } } },
         { $group: {
           _id: null,
           gross:      { $sum: '$subtotal' },
@@ -491,7 +495,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
 
       // 2. All-time totals
       Order.aggregate([
-        { $match: { status: 'Completed' } },
+        { $match: { ...bizScope, status: 'Completed' } },
         { $group: {
           _id: null,
           revenue: { $sum: { $cond: ['$isComplimentary', 0, '$total'] } },
@@ -502,7 +506,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
 
       // 3. Daily revenue — last 60 days (grouped in Manila time)
       Order.aggregate([
-        { $match: { status: 'Completed', createdAt: { $gte: day60ago } } },
+        { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: day60ago } } },
         { $group: {
           _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Asia/Manila' } },
           net:  { $sum: { $cond: ['$isComplimentary', 0, '$total'] } },
@@ -513,7 +517,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
       // 4. Product tallies by raw name (size-variant merge happens in JS below,
       //    since $replaceAll cannot take a $regexFind object as its `find`).
       Order.aggregate([
-        { $match: { status: 'Completed', isComplimentary: { $ne: true } } },
+        { $match: { ...bizScope, status: 'Completed', isComplimentary: { $ne: true } } },
         { $unwind: '$items' },
         { $group: {
           _id:     '$items.name',
@@ -524,19 +528,19 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
 
       // 5. Last-30d orders with items (for raw-material velocity)
       Order.find(
-        { status: 'Completed', createdAt: { $gte: day30ago } },
+        { ...bizScope, status: 'Completed', createdAt: { $gte: day30ago } },
         { items: 1, createdAt: 1 }
       ).lean(),
 
       // 6. Last-7d orders with items
       Order.find(
-        { status: 'Completed', createdAt: { $gte: new Date(now.getTime() - 7 * 86400000) } },
+        { ...bizScope, status: 'Completed', createdAt: { $gte: new Date(now.getTime() - 7 * 86400000) } },
         { items: 1, createdAt: 1 }
       ).lean(),
 
       // 7. Inventory (needed for velocity + stock KPIs) — include unit fields so the
       //    UI can display kg/L/pcs correctly (effectiveDisplay needs unit/displayUnit/unitMultiplier).
-      Inventory.find({}, { itemCode: 1, itemName: 1, stockQty: 1, unitCost: 1, unit: 1, displayUnit: 1, unitMultiplier: 1 }).lean(),
+      Inventory.find(bizScope, { itemCode: 1, itemName: 1, stockQty: 1, unitCost: 1, unit: 1, displayUnit: 1, unitMultiplier: 1 }).lean(),
     ]);
 
     // ── Today KPIs ─────────────────────────────────────────────────────────────
@@ -575,7 +579,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
     // ── Raw-material velocity (weighted ADU: 70% last-7d, 30% last-30d) ────────
     // These use small time-scoped order sets — not the full history
     const [products] = await Promise.all([
-      Product.find({}, { name: 1, productCode: 1, baseRecipe: 1, sizes: 1, addOns: 1, isAvailable: 1 }).lean(),
+      Product.find(bizScope, { name: 1, productCode: 1, baseRecipe: 1, sizes: 1, addOns: 1, isAvailable: 1 }).lean(),
     ]);
 
     // Low-stock filter: an inventory item is hidden from the low-stock list when it is
@@ -712,7 +716,8 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
 app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
-    const match = { status: 'Completed', isComplimentary: { $ne: true } };
+    const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    const match = { ...bizScope, status: 'Completed', isComplimentary: { $ne: true } };
     if (start || end) {
       match.createdAt = {};
       if (start) match.createdAt.$gte = new Date(start);
@@ -720,8 +725,8 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (
     }
     const [ordersData, prods, invItems] = await Promise.all([
       Order.find(match, { items: 1 }).lean(),
-      Product.find({}, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1 }).lean(),
-      Inventory.find({}, { _id: 1, itemCode: 1, itemName: 1, unitCost: 1, unitMultiplier: 1 }).lean(),
+      Product.find(bizScope, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1 }).lean(),
+      Inventory.find(bizScope, { _id: 1, itemCode: 1, itemName: 1, unitCost: 1, unitMultiplier: 1 }).lean(),
     ]);
     const prodMap = Object.fromEntries(prods.map(p => [p._id.toString(), p]));
     const invMap = {};
@@ -776,12 +781,13 @@ app.get('/api/reports/cashier-variance', verifyToken, ...canViewReports, async (
 // ── REPORT: PURCHASE ORDER SUGGESTION (from low stock + velocity) ────────────
 app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (req, res) => {
   try {
+    const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
     const days = Math.max(1, parseInt(req.query.days) || 7); // cover N days of supply
     const since = new Date(Date.now() - 30 * 86400000);
     const [inv, orders, products] = await Promise.all([
-      Inventory.find({}, { itemCode: 1, itemName: 1, stockQty: 1, unit: 1, unitCost: 1, lowStockThreshold: 1, displayUnit: 1, unitMultiplier: 1 }).lean(),
-      Order.find({ status: 'Completed', createdAt: { $gte: since } }, { items: 1 }).lean(),
-      Product.find({}, { _id: 1, name: 1, productCode: 1, baseRecipe: 1, sizes: 1 }).lean(),
+      Inventory.find(bizScope, { itemCode: 1, itemName: 1, stockQty: 1, unit: 1, unitCost: 1, lowStockThreshold: 1, displayUnit: 1, unitMultiplier: 1 }).lean(),
+      Order.find({ ...bizScope, status: 'Completed', createdAt: { $gte: since } }, { items: 1 }).lean(),
+      Product.find(bizScope, { _id: 1, name: 1, productCode: 1, baseRecipe: 1, sizes: 1 }).lean(),
     ]);
     const prodMap = Object.fromEntries(products.map(p => [p._id.toString(), p]));
     // LOG 1:1: resolve the inventory doc that backs a recipe-less product (by code/name).
@@ -828,7 +834,8 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
 app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
-    const match = { status: 'Completed', isComplimentary: { $ne: true } };
+    const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    const match = { ...bizScope, status: 'Completed', isComplimentary: { $ne: true } };
     if (start || end) {
       match.createdAt = {};
       if (start) match.createdAt.$gte = new Date(start);
@@ -836,8 +843,8 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async
     }
     const [ordersData, prods, invItems] = await Promise.all([
       Order.find(match, { items: 1 }).lean(),
-      Product.find({}, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1 }).lean(),
-      Inventory.find({}, { _id: 1, itemCode: 1, itemName: 1, unitCost: 1, unitMultiplier: 1 }).lean(),
+      Product.find(bizScope, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1 }).lean(),
+      Inventory.find(bizScope, { _id: 1, itemCode: 1, itemName: 1, unitCost: 1, unitMultiplier: 1 }).lean(),
     ]);
     const prodMap  = Object.fromEntries(prods.map(p => [p._id.toString(), p]));
     const invMap   = {};
@@ -867,7 +874,7 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async
 app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
-    const match = { status: 'Completed', isComplimentary: { $ne: true } };
+    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
     if (start || end) {
       match.createdAt = {};
       if (start) match.createdAt.$gte = new Date(start);
@@ -886,7 +893,7 @@ app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, async (
 app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
-    const match = { status: 'Completed', isComplimentary: { $ne: true } };
+    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
     if (start || end) {
       match.createdAt = {};
       if (start) match.createdAt.$gte = new Date(start);
@@ -941,7 +948,7 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (re
     endDate.setHours(23, 59, 59, 999);
 
     const agg = await Order.aggregate([
-      { $match: { status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: startDate, $lte: endDate } } },
+      { $match: { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: startDate, $lte: endDate } } },
       { $group: {
           _id: null,
           netCollected: { $sum: { $ifNull: ['$total', 0] } },

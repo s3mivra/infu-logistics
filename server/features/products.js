@@ -286,7 +286,7 @@ app.get('/api/products', async (req, res) => {
     //  • LOG / 1:1 products (no recipe): the product IS a stocked good — match the
     //    linked inventory item by itemCode (then itemName) and require at least one
     //    sellable unit (unitMultiplier base units) on hand.
-    const invItems = await Inventory.find({}, { _id: 1, itemCode: 1, itemName: 1, stockQty: 1, unitMultiplier: 1 }).lean();
+    const invItems = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }, { _id: 1, itemCode: 1, itemName: 1, stockQty: 1, unitMultiplier: 1 }).lean();
     const invById = {}, invByCode = {}, invByName = {};
     invItems.forEach(i => {
       invById[i._id.toString()] = i;

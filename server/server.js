@@ -225,12 +225,19 @@ function baseUnitsPerSale(product, invItem) {
 // and ReDoS (catastrophic backtracking) when matching names case-insensitively.
 const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// Multi-tenancy (Phase 2b) — per-tenant read scoping with a SAFE FALLBACK.
-// Returns { tenantId } only when the caller's token actually carries one; otherwise
-// returns {} so unauthenticated / QR / legacy (pre-tenant) tokens are unaffected and
-// nothing breaks. Because all current data + staff live on the default tenant, this
-// is a no-op for single-tenant deployments and only isolates once >1 tenant exists.
-const tenantScope = (req) => (req.user && req.user.tenantId ? { tenantId: req.user.tenantId } : {});
+// Multi-tenancy (Phase 2b) — DISABLED. This was meant to be a no-op for
+// single-tenant deployments ("all current data + staff live on the default
+// tenant"), but that assumption was false in practice: the boot migration
+// backfills tenantId onto EXISTING Users, but nothing stamps tenantId onto
+// NEWLY CREATED docs (Orders, Inventory, etc.) going forward — those default
+// to null. Once a deployment has been running long enough for the backfill to
+// have run, every staff token carries a tenantId while every fresh order/item
+// does not, so filtering reads by tenantId silently hid all new data (this was
+// the root cause of "orders/inventory not showing up"). Per this project's
+// direction (one deployment per business, not shared multi-tenant), tenant
+// scoping is paused rather than finished — always return {} so it's a true
+// no-op everywhere it's used, until/unless multi-tenancy is revisited.
+const tenantScope = (req) => ({});
 
 // bcrypt work factor — 12 rounds (OWASP-recommended minimum for 2025+).
 const BCRYPT_ROUNDS = 12;

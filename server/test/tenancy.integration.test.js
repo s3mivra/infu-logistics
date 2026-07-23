@@ -107,8 +107,18 @@ describe('Phase 2a — tenant identity in the access token', () => {
   });
 });
 
-describe('Phase 2b — per-tenant read scoping (orders), fallback-safe', () => {
-  it('each tenant sees only its own orders; a no-tenant token sees all', async () => {
+describe('Phase 2b — per-tenant read scoping: DISABLED (tenantScope is now a no-op)', () => {
+  // Phase 2b's premise ("all current data lives on the default tenant, so this
+  // is a no-op until >1 tenant exists") didn't hold in practice: the boot
+  // migration backfills tenantId onto EXISTING users, but nothing stamps
+  // tenantId onto newly-created Orders/Inventory/etc. going forward — those
+  // default to null. Once the backfill has run, every staff token carries a
+  // tenantId while every fresh order does not, so filtering reads by tenantId
+  // silently hid all new data (this was the real-world root cause of "orders
+  // not showing up"). Per this project's single-tenant-per-deployment
+  // direction, tenantScope now always returns {} — this test asserts that,
+  // instead of asserting isolation that no longer applies.
+  it('tenant-scoped orders are visible to every staff token regardless of tenantId', async () => {
     const Tenant = mongoose.model('Tenant');
     const Order = mongoose.model('Order');
     const User = mongoose.model('User');
@@ -126,15 +136,35 @@ describe('Phase 2b — per-tenant read scoping (orders), fallback-safe', () => {
     await User.updateOne({ name: 'ScopeB' }, { $set: { tenantId: tB._id } });
     const tokB = (await request(app).post('/api/users/login').send({ name: 'ScopeB', password: 'pw' })).body.token;
 
+    // Both tokens see BOTH orders now — no tenant filtering.
     const aNums = (await request(app).get('/api/orders').set(auth(tokA))).body.orders.map(o => o.orderNumber);
     const bNums = (await request(app).get('/api/orders').set(auth(tokB))).body.orders.map(o => o.orderNumber);
-    expect(aNums).toContain('ORD-SA-1');  expect(aNums).not.toContain('ORD-SB-1');
-    expect(bNums).toContain('ORD-SB-1');  expect(bNums).not.toContain('ORD-SA-1');
+    expect(aNums).toContain('ORD-SA-1');  expect(aNums).toContain('ORD-SB-1');
+    expect(bNums).toContain('ORD-SA-1');  expect(bNums).toContain('ORD-SB-1');
 
-    // Fallback: a freshly-made user with NO tenantId (legacy token) is unscoped -> sees all.
     await makeUser({ name: 'LegacyNoTenant', role: 'cashier', password: 'pw' });
     const tokL = (await request(app).post('/api/users/login').send({ name: 'LegacyNoTenant', password: 'pw' })).body.token;
     const lNums = (await request(app).get('/api/orders').set(auth(tokL))).body.orders.map(o => o.orderNumber);
     expect(lNums).toContain('ORD-SA-1');  expect(lNums).toContain('ORD-SB-1');
+  });
+
+  // Regression for the actual production bug: a real order created through the
+  // API (tenantId defaults to null, same as every live order) must be visible
+  // to a staff member whose token carries a backfilled tenantId.
+  it('regression: a freshly-created order (tenantId null) is visible to a staff token with a backfilled tenantId', async () => {
+    const Tenant = mongoose.model('Tenant');
+    const User = mongoose.model('User');
+    const def = await Tenant.findOne({ slug: 'default' });
+
+    await makeUser({ name: 'BackfilledCashier', role: 'cashier', password: 'pw' });
+    await User.updateOne({ name: 'BackfilledCashier' }, { $set: { tenantId: def._id } });
+    const tok = (await request(app).post('/api/users/login').send({ name: 'BackfilledCashier', password: 'pw' })).body.token;
+
+    const create = await request(app).post('/api/orders').set(auth(tok))
+      .send({ items: [{ name: 'Regression Item', price: 10, quantity: 1 }], table: 'Takeout', paymentMethod: 'Cash' });
+    expect(create.status).toBe(200);
+
+    const list = await request(app).get('/api/orders').set(auth(tok));
+    expect(list.body.orders.map(o => o.orderNumber)).toContain(create.body.order.orderNumber);
   });
 });

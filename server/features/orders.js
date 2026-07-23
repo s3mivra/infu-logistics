@@ -203,7 +203,7 @@ app.get('/api/orders', verifyToken, requireStaff, async (req, res) => {
 app.get('/api/orders/archives', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const { search, start, end, page = 1, limit: lim = 200 } = req.query;
-    const filter = { isArchived: true };
+    const filter = { isArchived: true, businessType: BUSINESS_TYPE, ...tenantScope(req) };
     if (search?.trim()) {
       const rx = { $regex: escapeRegex(search.trim()), $options: 'i' };
       filter.$or = [{ customerName: rx }, { orderNumber: rx }, { cashier: rx }, { table: rx }];
@@ -246,7 +246,7 @@ app.post('/api/orders/park', verifyToken, requireStaff, async (req, res) => {
 
 app.get('/api/orders/parked', verifyToken, requireStaff, async (req, res) => {
   try {
-    const parked = await Order.find({ isParked: true, isArchived: false }).sort({ createdAt: -1 }).lean();
+    const parked = await Order.find({ isParked: true, isArchived: false, businessType: BUSINESS_TYPE, ...tenantScope(req) }).sort({ createdAt: -1 }).lean();
     res.json({ success: true, parked });
   } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
@@ -352,7 +352,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       const allIds = [...new Set([...directIds, ...comboCompIds])];
       const [prods, cats] = await Promise.all([
         allIds.length ? Product.find({ _id: { $in: allIds } }, { _id: 1, category: 1, productCode: 1 }).lean() : [],
-        Category.find({}, { name: 1, department: 1 }).lean()
+        Category.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }, { name: 1, department: 1 }).lean()
       ]);
       const catDeptMap = Object.fromEntries(cats.map(c => [c.name, c.department || 'Kitchen']));
       const prodCatMap = Object.fromEntries(prods.map(p => [p._id.toString(), p.category]));
@@ -513,7 +513,7 @@ app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, 
     if (order.status === 'Completed') return res.status(400).json({ success: false, error: 'Completed orders cannot be marked complimentary' });
 
     const year = new Date().getFullYear();
-    const compCount = await Order.countDocuments({ isComplimentary: true });
+    const compCount = await Order.countDocuments({ isComplimentary: true, businessType: BUSINESS_TYPE, ...tenantScope(req) });
     const refNum = `COMP-${year}-${(compCount + 1).toString().padStart(4, '0')}`;
 
     order.isComplimentary = true;

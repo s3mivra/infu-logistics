@@ -340,6 +340,7 @@ app.post('/api/expenses', verifyToken, ...canPostAcct, async (req, res) => {
 app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, res) => {
   try {
     const rows = await Order.find({
+      businessType: BUSINESS_TYPE,
       status: 'Completed',
       paymentMethod: { $ne: 'Cash' },
       isComplimentary: { $ne: true }, // comps collect no money — never an A/R

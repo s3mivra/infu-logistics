@@ -222,8 +222,8 @@ app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => 
       return res.status(403).json({ success: false, error: 'ALREADY_CLOSED: You cannot submit another EOD for today.' });
     }
 
-    const { counts, reasons, adminName } = req.body; 
-    const items = await Inventory.find().session(session);
+    const { counts, reasons, adminName } = req.body;
+    const items = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).session(session);
 
     for (const item of items) {
       if (counts[item._id] === undefined || counts[item._id] === '') continue; 
@@ -412,7 +412,7 @@ app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, r
     const offCode = VALID[req.body.offsetAccount] ? req.body.offsetAccount : '310000';
     const offName = VALID[offCode];
 
-    const items = await Inventory.find({}, { stockQty: 1, unitCost: 1 }).lean();
+    const items = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }, { stockQty: 1, unitCost: 1 }).lean();
     const onHand = +items.reduce((s, i) => s + (i.stockQty || 0) * (i.unitCost || 0), 0).toFixed(2);
 
     const agg = await JournalEntry.aggregate([
@@ -614,6 +614,7 @@ app.get('/api/inventory/expiring', verifyToken, requireStaff, async (req, res) =
     cutoff.setHours(23, 59, 59, 999);
 
     const items = await Inventory.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
       expiryDate: { $ne: null, $lte: cutoff },
       stockQty: { $gt: 0 } // ignore depleted items even if expiry date lingers
     }).sort({ expiryDate: 1 }).lean();
