@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import {
   Package, ShoppingCart, Plus, Minus, X, LogOut, CheckCircle,
-  AlertCircle, CreditCard, Loader2, ChevronLeft, RefreshCw, Barcode
+  AlertCircle, CreditCard, Loader2, ChevronLeft, RefreshCw, Barcode, Search
 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://192.168.100.2:5002';
@@ -110,6 +110,7 @@ export default function ClientOrderPage() {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [activeCategory, setActiveCategory] = useState('All');
+  const [productSearch, setProductSearch] = useState('');
   const [loadingProducts, setLoadingProducts] = useState(true);
 
   // Cart
@@ -252,10 +253,16 @@ export default function ClientOrderPage() {
   const cartCount = useMemo(() => cart.reduce((s, i) => s + i.quantity, 0), [cart]);
 
   const visibleProducts = useMemo(() => {
-    const active = products.filter(p => !p.isArchived);
-    if (activeCategory === 'All') return active;
-    return active.filter(p => p.category === activeCategory);
-  }, [products, activeCategory]);
+    let active = products.filter(p => !p.isArchived);
+    if (activeCategory !== 'All') active = active.filter(p => p.category === activeCategory);
+    const q = productSearch.trim().toLowerCase();
+    if (q) active = active.filter(p =>
+      p.name?.toLowerCase().includes(q) ||
+      p.productCode?.toLowerCase().includes(q) ||
+      p.description?.toLowerCase().includes(q)
+    );
+    return active;
+  }, [products, activeCategory, productSearch]);
 
   const handleLogout = () => {
     sessionStorage.removeItem('client_token');
@@ -452,6 +459,26 @@ export default function ClientOrderPage() {
         </div>
       )}
 
+      {/* Product search */}
+      <div className="px-4 pt-3 pb-1 flex-shrink-0">
+        <div className="relative">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+          <input
+            type="text"
+            value={productSearch}
+            onChange={e => setProductSearch(e.target.value)}
+            placeholder="Search products by name or code…"
+            className="w-full bg-white/5 border border-white/10 focus:border-brand rounded-xl pl-9 pr-9 py-2.5 text-sm text-white placeholder-white/30 outline-none transition"
+          />
+          {productSearch && (
+            <button onClick={() => setProductSearch('')} aria-label="Clear search"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/40 hover:text-white transition">
+              <X size={15} />
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Category filter */}
       <div className="flex gap-2 px-4 py-3 overflow-x-auto scrollbar-hide border-b border-white/5 flex-shrink-0">
         {['All', ...categories.map(c => c.name)].map(cat => (
@@ -475,7 +502,9 @@ export default function ClientOrderPage() {
         ) : visibleProducts.length === 0 ? (
           <div className="flex flex-col items-center py-20 text-center">
             <Package size={40} className="text-white/10 mb-4" />
-            <p className="text-white/40 font-bold text-sm">No products available.</p>
+            <p className="text-white/40 font-bold text-sm">
+              {productSearch.trim() ? `No products match "${productSearch.trim()}".` : 'No products available.'}
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
