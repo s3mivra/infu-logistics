@@ -172,12 +172,15 @@ export default function registerAudit(ctx) {
     requireSuperAdmin,
     requireSuperOrAdmin,
     verifyOrderAuth,
+    requirePermission,
   } = ctx;
+
+  const canViewAudit = [requireStaff, requirePermission('audit.view')];
 
 // ── AUDIT LOG read ────────────────────────────────────────────────────────────
 // Filterable by action prefix (e.g. 'ORDER', 'INVENTORY', 'PRODUCT'), exact
 // action, actor name, and date range. Sorted newest-first, paginated.
-app.get('/api/audit-log', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/audit-log', verifyToken, ...canViewAudit, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = Math.min(100, parseInt(req.query.pageSize, 10) || 25);
@@ -204,7 +207,7 @@ app.get('/api/audit-log', verifyToken, requireSuperAdmin, async (req, res) => {
 // Moves heavy computations off the browser so the dashboard stays fast
 // even with 12+ months of order history.
 // GET /api/audit-logs — superadmin only, paginated, filterable by action + date range
-app.get('/api/audit-logs', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/audit-logs', verifyToken, ...canViewAudit, async (req, res) => {
   try {
     const { page = 1, limit: lim = 30, action, start, end } = req.query;
     const pageNum  = Math.max(1, parseInt(page) || 1);

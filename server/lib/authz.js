@@ -41,14 +41,27 @@ export const PERMISSIONS = [
 ];
 export const PERMISSION_KEYS = new Set(PERMISSIONS.map((p) => p.key));
 
-// Sensible defaults per role, applied when a user has NO explicit permission
-// override. Superadmin bypasses this entirely (full access). These are chosen to
-// preserve today's behaviour so nothing breaks when the layer ships.
+// Default permissions per role, applied when a user has NO explicit override.
+// Superadmin bypasses this (full access). Posture is DEFAULT-DENY for the most
+// sensitive capabilities: only `finance` (and superadmin) may POST to the books
+// (accounting.manage), and only superadmin may manage staff/permissions
+// (users.manage). Everyone else is granted the narrowest useful set; widen a
+// specific person via an explicit per-user override in the UI.
 export const ROLE_DEFAULT_PERMISSIONS = {
-  admin:   PERMISSIONS.map((p) => p.key).filter((k) => k !== 'users.manage'),
-  manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'inventory.view', 'inventory.manage',
-            'products.view', 'products.manage', 'procurement.view', 'procurement.manage',
-            'accounting.view', 'reports.view', 'analytics.view', 'audit.view'],
+  // Shop administrator: runs operations & config and can VIEW the books, but
+  // cannot post journal entries (that's finance/superadmin) or manage staff.
+  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete',
+            'inventory.view', 'inventory.manage', 'inventory.delete',
+            'products.view', 'products.manage',
+            'procurement.view', 'procurement.manage', 'procurement.delete',
+            'accounting.view', 'reports.view', 'analytics.view', 'audit.view', 'settings.manage'],
+  // Operations lead: full ops, no books/settings/staff.
+  manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete',
+            'inventory.view', 'inventory.manage',
+            'products.view', 'products.manage',
+            'procurement.view', 'procurement.manage',
+            'reports.view', 'analytics.view', 'audit.view'],
+  // The books role: view + post accounting, plus read-only ops context.
   finance: ['orders.view', 'inventory.view', 'procurement.view',
             'accounting.view', 'accounting.manage', 'reports.view', 'analytics.view', 'audit.view'],
   cashier: ['pos.use', 'orders.view', 'orders.manage', 'inventory.view', 'products.view', 'procurement.view'],

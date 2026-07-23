@@ -222,18 +222,31 @@ describe('reports: aggregates are correct and the books stay balanced', () => {
   });
 });
 
-describe('RBAC: superadmin-only routes reject manager/admin/staff', () => {
-  const ROUTES = [
+describe('RBAC: accounting/reports/audit permission gating', () => {
+  // VIEWING the books / reports / audit needs accounting.view|reports.view|audit.view.
+  // admin & superadmin hold these by default; plain staff does not.
+  const VIEW_ROUTES = [
     ['get', '/api/journal'],
     ['get', '/api/reports/pnl'],
     ['get', '/api/reports/balance-sheet'],
     ['get', '/api/finance/ar-outstanding'],
     ['get', '/api/finance/ap-outstanding'],
-    ['post', '/api/expenses'],
     ['get', '/api/audit-logs'],
   ];
-  for (const [m, p] of ROUTES) {
-    it(`${m.toUpperCase()} ${p} → 403 for staff & admin, not-403 for superadmin`, async () => {
+  for (const [m, p] of VIEW_ROUTES) {
+    it(`${m.toUpperCase()} ${p} → staff 403; admin & superadmin allowed`, async () => {
+      expect((await auth(m, p, tok.staff).send({})).status).toBe(403);
+      expect((await auth(m, p, tok.admin).send({})).status).not.toBe(403);
+      expect((await auth(m, p, tok.super).send({})).status).not.toBe(403);
+    });
+  }
+  // POSTING to the books needs accounting.manage — only finance/superadmin by
+  // default. Even a shop admin is denied unless explicitly granted.
+  const MANAGE_ROUTES = [
+    ['post', '/api/expenses'],
+  ];
+  for (const [m, p] of MANAGE_ROUTES) {
+    it(`${m.toUpperCase()} ${p} → staff & admin 403 (needs accounting.manage); superadmin allowed`, async () => {
       expect((await auth(m, p, tok.staff).send({})).status).toBe(403);
       expect((await auth(m, p, tok.admin).send({})).status).toBe(403);
       expect((await auth(m, p, tok.super).send({})).status).not.toBe(403);

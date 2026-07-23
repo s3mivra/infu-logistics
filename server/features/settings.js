@@ -172,6 +172,7 @@ export default function registerSettings(ctx) {
     requireSuperAdmin,
     requireSuperOrAdmin,
     verifyOrderAuth,
+    requirePermission,
   } = ctx;
 
 // ── SETTINGS ROUTES ──────────────────────────────────────────────────────────
@@ -182,7 +183,7 @@ app.get('/api/settings', verifyToken, requireStaff, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
 
-app.patch('/api/settings/:key', verifyToken, requireSuperAdmin, async (req, res) => {
+app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('settings.manage'), async (req, res) => {
   try {
     const { value } = req.body;
     const setting = await Settings.findOneAndUpdate({ key: req.params.key }, { value }, { upsert: true, returnDocument: 'after' });

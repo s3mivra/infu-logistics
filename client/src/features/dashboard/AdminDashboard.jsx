@@ -4578,43 +4578,48 @@ const updateStatus = async (orderId, newStatus) => {
           );
         })}
 
-        <p className="text-[9px] text-white/20 font-bold uppercase tracking-[0.2em] px-4 pt-4 pb-1">Management</p>
-        {isSuperAdmin ? (
-          [
-            { id: 'history', label: 'Daily History & Shifts', icon: Clock },
-            { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-            { id: 'ledger', label: 'Accounting & Ledger', icon: FileText },
-            { id: 'pricing', label: 'Pricing Control', icon: DollarSign },
-            { id: 'audit', label: 'Audit Report', icon: ShieldCheck },
-          ].map(({ id, label, icon: Icon }) => (
-            <button key={id}
-              onClick={() => { setActiveTab(id); setNavMode('negotium'); closeFn?.(); if (id === 'analytics') fetchAnalytics(); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
-                ${activeTab === id && navMode === 'negotium' ? 'bg-brand text-white shadow-sm' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
-            >
-              <Icon size={16} />
-              {label}
-              {activeTab === id && navMode === 'negotium' && <ChevronRight size={13} className="ml-auto" />}
-            </button>
-          )).concat([
-            // Superadmin-only deep link — opens the dedicated Command Center page
-            // (user, client-account, and tenant management). Lives outside the
-            // tabbed dashboard, so we navigate via window.location instead of setActiveTab.
-            <button key="command-center"
-              onClick={() => { closeFn?.(); window.location.assign('/admin/admin-panel'); }}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm text-white/50 hover:text-white hover:bg-white/5"
-            >
-              <ShieldCheck size={16} className="text-brand shrink-0" />
-              <span className="whitespace-nowrap">Command Center</span>
-              <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand/15 border border-brand/30 text-brand px-1.5 py-0.5 rounded">Super</span>
-            </button>
-          ])
-        ) : (
-          <div className="flex items-center gap-2 px-4 py-2.5 text-red-400/50">
-            <Lock size={13} />
-            <span className="text-xs font-bold uppercase tracking-wider">Superadmin Only</span>
-          </div>
-        )}
+        {(() => {
+          // Management tabs gated by granular permission. History & Pricing still
+          // depend on superadmin-only server routes, so they stay superadmin-only;
+          // Analytics / Accounting / Audit open up to anyone holding the matching
+          // permission (their data routes are now permission-gated server-side).
+          const mgmtItems = [
+            { id: 'history',   label: 'Daily History & Shifts', icon: Clock,      show: isSuperAdmin },
+            { id: 'analytics', label: 'Analytics',              icon: BarChart3,  show: can('analytics.view') },
+            { id: 'ledger',    label: 'Accounting & Ledger',    icon: FileText,   show: can('accounting.view') },
+            { id: 'pricing',   label: 'Pricing Control',        icon: DollarSign, show: isSuperAdmin },
+            { id: 'audit',     label: 'Audit Report',           icon: ShieldCheck, show: can('audit.view') },
+          ].filter(it => it.show);
+          if (mgmtItems.length === 0 && !isSuperAdmin) return null;
+          return (
+            <>
+              <p className="text-[9px] text-white/20 font-bold uppercase tracking-[0.2em] px-4 pt-4 pb-1">Management</p>
+              {mgmtItems.map(({ id, label, icon: Icon }) => (
+                <button key={id}
+                  onClick={() => { setActiveTab(id); setNavMode('negotium'); closeFn?.(); if (id === 'analytics') fetchAnalytics(); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
+                    ${activeTab === id && navMode === 'negotium' ? 'bg-brand text-white shadow-sm' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+                >
+                  <Icon size={16} />
+                  {label}
+                  {activeTab === id && navMode === 'negotium' && <ChevronRight size={13} className="ml-auto" />}
+                </button>
+              ))}
+              {isSuperAdmin && (
+                // Superadmin-only deep link — the dedicated Command Center page
+                // (user, client-account, and tenant management), outside the tabs.
+                <button key="command-center"
+                  onClick={() => { closeFn?.(); window.location.assign('/admin/admin-panel'); }}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm text-white/50 hover:text-white hover:bg-white/5"
+                >
+                  <ShieldCheck size={16} className="text-brand shrink-0" />
+                  <span className="whitespace-nowrap">Command Center</span>
+                  <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand/15 border border-brand/30 text-brand px-1.5 py-0.5 rounded">Super</span>
+                </button>
+              )}
+            </>
+          );
+        })()}
       </nav>
 
       {/* Bottom */}

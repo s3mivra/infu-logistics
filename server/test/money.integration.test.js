@@ -151,10 +151,12 @@ describe('Batch 2 — percentage-tax report', () => {
     expect(discLine.amount).toBe(-100);
   });
 
-  it('blocks a non-superadmin (admin) from the report', async () => {
+  it('blocks a user without reports.view (staff) from the report', async () => {
+    // Under granular RBAC a plain staff role lacks reports.view → 403.
+    // (Admin/finance/superadmin, which hold reports.view, are allowed.)
     const res = await request(app)
       .get('/api/reports/percentage-tax?start=2026-02-01&end=2026-02-28')
-      .set('Authorization', `Bearer ${adminToken}`);
+      .set('Authorization', `Bearer ${staffToken}`);
     expect(res.status).toBe(403);
   });
 });

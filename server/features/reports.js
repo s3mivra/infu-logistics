@@ -172,12 +172,17 @@ export default function registerReports(ctx) {
     requireSuperAdmin,
     requireSuperOrAdmin,
     verifyOrderAuth,
+    requirePermission,
   } = ctx;
+
+  // Reporting gates (superadmin bypasses inside requirePermission); requireStaff is the floor.
+  const canViewReports   = [requireStaff, requirePermission('reports.view')];
+  const canViewAnalytics = [requireStaff, requirePermission('analytics.view')];
 
 // ============================================================
 // PROFIT & LOSS REPORT  (date range, revenue vs expense)
 // ============================================================
-app.get('/api/reports/pnl', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/reports/pnl', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
     const startDate = start ? new Date(start) : new Date(new Date().setHours(0,0,0,0));
@@ -250,7 +255,7 @@ app.get('/api/reports/pnl', verifyToken, requireSuperAdmin, async (req, res) => 
 // ============================================================
 // MONTHLY P&L — per-account amounts bucketed by month (parent/child + ratios computed client-side)
 // ============================================================
-app.get('/api/reports/pnl-monthly', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/reports/pnl-monthly', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
     const startDate = start ? new Date(start) : new Date(new Date().getFullYear(), 0, 1);
@@ -329,7 +334,7 @@ app.get('/api/reports/pnl-monthly', verifyToken, requireSuperAdmin, async (req, 
 // ============================================================
 // BALANCE SHEET (point-in-time: as-of date)
 // ============================================================
-app.get('/api/reports/balance-sheet', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/reports/balance-sheet', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const asOf = req.query.asOf ? new Date(req.query.asOf) : new Date();
     asOf.setHours(23, 59, 59, 999);
@@ -404,7 +409,7 @@ app.get('/api/reports/balance-sheet', verifyToken, requireSuperAdmin, async (req
 // ============================================================
 // MONTHLY BALANCE SHEET — cumulative balance as-of each month-end across a range
 // ============================================================
-app.get('/api/reports/balance-sheet-monthly', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/reports/balance-sheet-monthly', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
     const startDate = start ? new Date(start) : new Date(new Date().getFullYear(), 0, 1);
@@ -459,7 +464,7 @@ app.get('/api/reports/balance-sheet-monthly', verifyToken, requireSuperAdmin, as
   } catch (err) { log.error({ err }, 'bs-monthly failed'); res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
 
-app.get('/api/analytics/dashboard', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req, res) => {
   try {
     const now        = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -686,7 +691,7 @@ app.get('/api/analytics/dashboard', verifyToken, requireStaff, async (req, res) 
 });
 
 // ── REPORT: MENU ENGINEERING (Stars / Plowhorses / Puzzles / Dogs) ───────────
-app.get('/api/reports/menu-engineering', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
     const match = { status: 'Completed', isComplimentary: { $ne: true } };
@@ -731,7 +736,7 @@ app.get('/api/reports/menu-engineering', verifyToken, requireSuperAdmin, async (
 });
 
 // ── REPORT: CASHIER VARIANCE TREND ───────────────────────────────────────────
-app.get('/api/reports/cashier-variance', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/reports/cashier-variance', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const owner = await ownerIdentity();
     const agg = await Shift.aggregate([
@@ -751,7 +756,7 @@ app.get('/api/reports/cashier-variance', verifyToken, requireSuperAdmin, async (
 });
 
 // ── REPORT: PURCHASE ORDER SUGGESTION (from low stock + velocity) ────────────
-app.get('/api/reports/purchase-order', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const days = Math.max(1, parseInt(req.query.days) || 7); // cover N days of supply
     const since = new Date(Date.now() - 30 * 86400000);
@@ -802,7 +807,7 @@ app.get('/api/reports/purchase-order', verifyToken, requireSuperAdmin, async (re
 });
 
 // ── GROSS PROFIT BY CATEGORY ─────────────────────────────────────────────────
-app.get('/api/reports/profit-by-category', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
     const match = { status: 'Completed', isComplimentary: { $ne: true } };
@@ -841,7 +846,7 @@ app.get('/api/reports/profit-by-category', verifyToken, requireSuperAdmin, async
 });
 
 // ── SALES BY PAYMENT METHOD ───────────────────────────────────────────────────
-app.get('/api/reports/sales-by-payment', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
     const match = { status: 'Completed', isComplimentary: { $ne: true } };
@@ -860,7 +865,7 @@ app.get('/api/reports/sales-by-payment', verifyToken, requireSuperAdmin, async (
   } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
 
-app.get('/api/reports/sales-summary', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
     const match = { status: 'Completed', isComplimentary: { $ne: true } };
@@ -904,7 +909,7 @@ app.get('/api/reports/sales-summary', verifyToken, requireSuperAdmin, async (req
 // excluded). 410000 is booked gross-of-discount, so an explicit "less: sales
 // discounts" line is returned and the figure reconciles to cash received.
 // Aggregate-based — no in-memory full scan. No schema/journal changes (report only).
-app.get('/api/reports/percentage-tax', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
     if (!start || !end) {

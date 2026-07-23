@@ -38,7 +38,8 @@ afterAll(async () => { await ctx.stop(); });
 
 describe('low-stock analytics excludes stock tied only to removed products', () => {
   it('lists the active-product item but not the removed-product item', async () => {
-    const res = await request(app).get('/api/analytics/dashboard').set('Authorization', `Bearer ${staffTok}`);
+    // analytics.view is required now; use the superadmin token for this data-logic check.
+    const res = await request(app).get('/api/analytics/dashboard').set('Authorization', `Bearer ${superTok}`);
     expect(res.status).toBe(200);
     const names = res.body.lowestStock.map(i => i.itemName);
     expect(names).toContain('Active Stock');

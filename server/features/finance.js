@@ -172,10 +172,17 @@ export default function registerFinance(ctx) {
     requireSuperAdmin,
     requireSuperOrAdmin,
     verifyOrderAuth,
+    requirePermission,
   } = ctx;
 
-// Accounting Ledger / Journal Entries — Superadmin only
-app.get('/api/journal', verifyToken, requireSuperAdmin, async (req, res) => {
+  // Accounting domain gates (superadmin bypasses inside requirePermission).
+  // requireStaff is the floor (client-hostile + role allowlist), then the
+  // granular permission. Viewing the books ≠ posting to them.
+  const canViewAcct = [requireStaff, requirePermission('accounting.view')];
+  const canPostAcct = [requireStaff, requirePermission('accounting.manage')];
+
+// Accounting Ledger / Journal Entries — requires accounting.view (superadmin/finance/admin)
+app.get('/api/journal', verifyToken, ...canViewAcct, async (req, res) => {
   try {
     const pageNum = Math.max(1, parseInt(req.query.page) || 1);
     const pageSize = Math.min(100, parseInt(req.query.limit) || 50);
@@ -189,7 +196,7 @@ app.get('/api/journal', verifyToken, requireSuperAdmin, async (req, res) => {
   }
 });
 
-app.post('/api/journal', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/journal', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const { description, lines, date: requestedDate } = req.body;
 
@@ -218,7 +225,7 @@ app.post('/api/journal', verifyToken, requireSuperAdmin, async (req, res) => {
   }
 });
 
-app.get('/api/finance/balances', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/finance/balances', verifyToken, ...canViewAcct, async (req, res) => {
   try {
     // Aggregate at MongoDB level — no full collection load, OOM-safe at scale
     const agg = await JournalEntry.aggregate([
@@ -242,11 +249,11 @@ app.get('/api/finance/balances', verifyToken, requireSuperAdmin, async (req, res
 // EXPENSE ENTRY — operator-facing expense bookkeeping
 // Categories defined in lib/chartOfAccounts.js
 // ============================================================
-app.get('/api/expenses/categories', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/expenses/categories', verifyToken, ...canViewAcct, async (req, res) => {
   res.json({ success: true, categories: EXPENSE_CATEGORIES });
 });
 
-app.post('/api/expenses', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/expenses', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const { amount, categoryCode, paymentMethod, description, vendor, date } = req.body;
     const amt = parseFloat(amount);
@@ -289,7 +296,7 @@ app.post('/api/expenses', verifyToken, requireSuperAdmin, async (req, res) => {
 });
 
 // Outstanding A/R list (delivery orders, Completed, not yet settled)
-app.get('/api/finance/ar-outstanding', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, res) => {
   try {
     const rows = await Order.find({
       status: 'Completed',
@@ -311,7 +318,7 @@ app.get('/api/finance/ar-outstanding', verifyToken, requireSuperAdmin, async (re
 //   DR 1500 Inventory / CR 2000 AP  → when goods received on credit
 //   DR 2000 AP / CR 1000 Cash       → when supplier is paid
 // ──────────────────────────────────────────────────────────────────────────────
-app.get('/api/finance/ap-outstanding', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/finance/ap-outstanding', verifyToken, ...canViewAcct, async (req, res) => {
   try {
     const agg = await JournalEntry.aggregate([
       { $unwind: '$lines' },
@@ -348,7 +355,7 @@ app.get('/api/finance/ap-outstanding', verifyToken, requireSuperAdmin, async (re
 });
 
 // POST /api/finance/ap-payment — record a supplier payment (DR 2000 AP / CR cash account)
-app.post('/api/finance/ap-payment', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/finance/ap-payment', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const { amount, payFromAccount, description, vendorName } = req.body;
     const amt = parseFloat(amount);
@@ -388,7 +395,7 @@ app.post('/api/finance/ap-payment', verifyToken, requireSuperAdmin, async (req, 
 // ============================================================
 // JOURNAL CSV EXPORT
 // ============================================================
-app.get('/api/journal/export', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/journal/export', verifyToken, ...canViewAcct, async (req, res) => {
   // Bounded + streamed: a date range is required and capped at one quarter, and rows
   // are streamed straight from a DB cursor so we never build the whole ledger as one
   // in-memory string. Validation runs before any header/byte is written.
@@ -539,7 +546,7 @@ app.get('/api/coa', verifyToken, requireStaff, async (req, res) => {
 });
 
 // Create a custom child account under a chosen parent (superadmin only).
-app.post('/api/accounts', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/accounts', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const { parentCode, name } = req.body;
     const parent = ACCOUNTS[parentCode];
@@ -572,7 +579,7 @@ app.post('/api/accounts', verifyToken, requireSuperAdmin, async (req, res) => {
 });
 
 // Rename a custom child account (canonical accounts are immutable).
-app.put('/api/accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/accounts/:id', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const { name } = req.body;
     if (!name?.trim()) return res.status(400).json({ success: false, error: 'Account name is required.' });
@@ -588,7 +595,7 @@ app.put('/api/accounts/:id', verifyToken, requireSuperAdmin, async (req, res) =>
 });
 
 // Delete a custom child account — blocked if any journal entry already posted to it.
-app.delete('/api/accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/accounts/:id', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const acct = await Account.findById(req.params.id);
     if (!acct || !acct.custom) return res.status(404).json({ success: false, error: 'Custom account not found.' });
@@ -614,7 +621,7 @@ app.get('/api/periods', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
-app.post('/api/periods/close', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/periods/close', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const year = parseInt(req.body.year, 10);
     const month = parseInt(req.body.month, 10);
@@ -639,7 +646,7 @@ app.post('/api/periods/close', verifyToken, requireSuperAdmin, async (req, res) 
   }
 });
 
-app.post('/api/periods/:id/reopen', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/periods/:id/reopen', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const p = await ClosedPeriod.findById(req.params.id);
     if (!p) return res.status(404).json({ success: false, error: 'Period not found.' });
@@ -672,7 +679,7 @@ app.get('/api/payment-method-map', verifyToken, requireStaff, async (req, res) =
 });
 
 // Upsert a single mapping. Validates the code resolves against the COA.
-app.put('/api/payment-method-map', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/payment-method-map', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const { method, accountCode } = req.body;
     if (!method || !accountCode) return res.status(400).json({ success: false, error: 'method and accountCode are required.' });
@@ -692,7 +699,7 @@ app.put('/api/payment-method-map', verifyToken, requireSuperAdmin, async (req, r
 });
 
 // Reset a single mapping back to its default.
-app.delete('/api/payment-method-map/:method', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/payment-method-map/:method', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const before = await PaymentMethodMap.findOneAndDelete({ method: req.params.method }).lean();
     await refreshPaymentMap();
@@ -704,7 +711,7 @@ app.delete('/api/payment-method-map/:method', verifyToken, requireSuperAdmin, as
 });
 
 // GET all funds (superadmin only)
-app.get('/api/revolving-funds', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/revolving-funds', verifyToken, ...canViewAcct, async (req, res) => {
   try {
     const funds = await RevolvingFund.find({ isActive: true }).sort({ createdAt: -1 });
     res.json({ success: true, funds });
@@ -714,7 +721,7 @@ app.get('/api/revolving-funds', verifyToken, requireSuperAdmin, async (req, res)
 });
 
 // POST create a new fund (superadmin only)
-app.post('/api/revolving-funds', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/revolving-funds', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const { name, initialAmount, description, sourceAccount } = req.body;
     if (!name || !initialAmount || Number(initialAmount) <= 0)
@@ -808,7 +815,7 @@ app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, async (
 });
 
 // POST replenish a fund back to its initial amount (superadmin only)
-app.post('/api/revolving-funds/:id/replenish', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/revolving-funds/:id/replenish', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const fund = await RevolvingFund.findById(req.params.id);
     if (!fund || !fund.isActive) return res.status(404).json({ success: false, error: 'Fund not found.' });
@@ -857,7 +864,7 @@ app.post('/api/revolving-funds/:id/replenish', verifyToken, requireSuperAdmin, a
 });
 
 // GET transaction history for a fund
-app.get('/api/revolving-funds/:id/transactions', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/revolving-funds/:id/transactions', verifyToken, ...canViewAcct, async (req, res) => {
   try {
     const page  = Math.max(1, parseInt(req.query.page)  || 1);
     const limit = Math.min(50, parseInt(req.query.limit) || 20);
@@ -871,7 +878,7 @@ app.get('/api/revolving-funds/:id/transactions', verifyToken, requireSuperAdmin,
 });
 
 // PATCH deactivate a fund (superadmin only)
-app.patch('/api/revolving-funds/:id/close', verifyToken, requireSuperAdmin, async (req, res) => {
+app.patch('/api/revolving-funds/:id/close', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const fund = await RevolvingFund.findByIdAndUpdate(req.params.id, { isActive: false }, { returnDocument: 'after' });
     if (!fund) return res.status(404).json({ success: false, error: 'Fund not found.' });
