@@ -235,7 +235,8 @@ export default function InventoryTab({ ctx }) {
                       </tr>
                     )}
                     {currentInventory.map(item => {
-                      const isLow = item.lowStockThreshold > 0 && item.stockQty <= item.lowStockThreshold;
+                      const effThreshold = item.effectiveThreshold != null ? item.effectiveThreshold : (item.lowStockThreshold || 0);
+                      const isLow = effThreshold > 0 && item.stockQty <= effThreshold;
                       // Expiry classification
                       let expBadge = null;
                       let rowExpiredTint = '';
@@ -270,7 +271,7 @@ export default function InventoryTab({ ctx }) {
                         </td>
                         {(() => { const d = itemDisplay(item); return (<>
                         <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-white'}`}>{(BUSINESS_TYPE === 'log' ? d.packQty : d.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
-                        <td className="py-3 text-right text-white text-xs font-mono tabular-nums">{item.lowStockThreshold > 0 ? (item.lowStockThreshold / (BUSINESS_TYPE === 'log' ? (itemDisplay(item).packBase || 1) : effectiveDisplay(item).mult)).toLocaleString(undefined, { maximumFractionDigits: 3 }) : '-'}</td>
+                        <td className="py-3 text-right text-white text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(effThreshold / (BUSINESS_TYPE === 'log' ? (itemDisplay(item).packBase || 1) : effectiveDisplay(item).mult)).toLocaleString(undefined, { maximumFractionDigits: 3 })}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
                         <td className="py-3 text-white pl-2 font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : d.unit}</td>
                         <td className="py-3 text-right text-white font-mono text-xs tabular-nums">{BUSINESS_TYPE === 'log' ? (<>{peso(d.packCost)}<span className="text-white/40">/{d.packLabel}</span></>) : (<>{peso(d.cost)}<span className="text-white/40">/{d.unit}</span></>)}</td>
                         <td className="py-3 text-right text-white font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
@@ -669,14 +670,15 @@ export default function InventoryTab({ ctx }) {
           {/* RIGHT COLUMN: Procurement Panel */}
           <div className="w-full xl:w-96 space-y-4">
           {/* LOW STOCK ALERTS SUMMARY */}
-          {inventory.filter(i => i.lowStockThreshold > 0 && i.stockQty <= i.lowStockThreshold).length > 0 && (
+          {inventory.filter(i => { const t = i.effectiveThreshold != null ? i.effectiveThreshold : (i.lowStockThreshold || 0); return t > 0 && i.stockQty <= t; }).length > 0 && (
             <div className="bg-red-900/20 border border-red-500/30 rounded-xl p-4">
               <h4 className="text-red-400 font-black uppercase tracking-wider text-xs mb-2 flex items-center gap-1.5"><AlertTriangle size={13} /> Low Stock Alerts</h4>
               <div className="space-y-1">
-                {inventory.filter(i => i.lowStockThreshold > 0 && i.stockQty <= i.lowStockThreshold).map(i => {
+                {inventory.filter(i => { const t = i.effectiveThreshold != null ? i.effectiveThreshold : (i.lowStockThreshold || 0); return t > 0 && i.stockQty <= t; }).map(i => {
                   const d = itemDisplay(i);
                   const mult = effectiveDisplay(i).mult;
-                  const minDisp = (i.lowStockThreshold / mult).toLocaleString(undefined, { maximumFractionDigits: 3 });
+                  const eff = i.effectiveThreshold != null ? i.effectiveThreshold : (i.lowStockThreshold || 0);
+                  const minDisp = (eff / mult).toLocaleString(undefined, { maximumFractionDigits: 3 });
                   return (
                   <div key={i._id} className="flex justify-between text-xs">
                     <span className="text-red-300 font-bold">{i.itemName}</span>

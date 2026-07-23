@@ -331,6 +331,53 @@ app.get('/api/inventory/history', verifyToken, requireStaff, async (req, res) =>
 });
 
 // Inventory CRUD
+// 30-day usage (base units) per inventory id, resolved through recipes (fb) or the
+// 1:1 product↔stock link (log). Same resolution as the PO-suggestion report so the
+// auto-threshold and the suggested PO agree on how fast each item moves.
+async function computeUsage30d(bizScope) {
+  const since = new Date(Date.now() - 30 * 86400000);
+  const [inv, orders, products] = await Promise.all([
+    Inventory.find(bizScope, { itemCode: 1, itemName: 1, unitMultiplier: 1, unit: 1, displayUnit: 1 }).lean(),
+    Order.find({ ...bizScope, status: 'Completed', createdAt: { $gte: since } }, { items: 1 }).lean(),
+    Product.find(bizScope, { _id: 1, name: 1, productCode: 1, baseRecipe: 1, sizes: 1 }).lean(),
+  ]);
+  const prodMap = Object.fromEntries(products.map(p => [p._id.toString(), p]));
+  const invByCode = {}, invByName = {};
+  inv.forEach(i => { if (i.itemCode) invByCode[i.itemCode] = i; if (i.itemName) invByName[i.itemName] = i; });
+  const usage = {};
+  for (const o of orders) {
+    for (const it of (o.items || [])) {
+      const base = (it.name || '').replace(/\s*\(.*?\)\s*/g, '').trim();
+      const prod = prodMap[it.productId] || products.find(p => p.name === base);
+      if (!prod) continue;
+      let recipe = prod.baseRecipe || [];
+      const sm = (it.name || '').match(/\(([^)]+)\)$/);
+      if (sm) { const sz = prod.sizes?.find(s => s.name === sm[1]); if (sz?.recipe?.length) recipe = sz.recipe; }
+      if (recipe.some(r => r.invId)) {
+        for (const ing of recipe) { if (ing.invId) usage[ing.invId] = (usage[ing.invId] || 0) + (ing.qty || 0) * (it.quantity || 0); }
+      } else {
+        const linked = invByCode[prod.productCode] || invByName[prod.name];
+        if (linked) usage[linked._id.toString()] = (usage[linked._id.toString()] || 0) + (it.quantity || 0) * baseUnitsPerSale(prod, linked);
+      }
+    }
+  }
+  return usage;
+}
+
+// Auto low-stock threshold: when an item has no explicit threshold, derive one from
+// velocity so fast-moving stock gets flagged before it runs out. threshold ≈ ADU ×
+// cover-days buffer (base units), rounded up. Never overwrites a manual threshold.
+const AUTO_THRESHOLD_COVER_DAYS = 4;
+function enrichThresholds(items, usage) {
+  return items.map(i => {
+    const adu = (usage[i._id.toString()] || 0) / 30;
+    const manual = Number(i.lowStockThreshold) || 0;
+    const autoThreshold = adu > 0 ? Math.ceil(adu * AUTO_THRESHOLD_COVER_DAYS) : 0;
+    const thresholdIsAuto = manual <= 0 && autoThreshold > 0;
+    return { ...i, avgDailyUse: +adu.toFixed(3), autoThreshold, thresholdIsAuto, effectiveThreshold: manual > 0 ? manual : autoThreshold };
+  });
+}
+
 app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   try {
   const { page, limit: lim, search } = req.query;
@@ -338,6 +385,7 @@ app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   // Escape the user-supplied search string to neutralise ReDoS / regex injection.
   const filter = search ? { itemName: { $regex: escapeRegex(search), $options: 'i' }, businessType: BUSINESS_TYPE } : { businessType: BUSINESS_TYPE };
   Object.assign(filter, tenantScope(req)); // per-tenant scoping (no-op when token has no tenantId)
+  const usage = await computeUsage30d({ businessType: BUSINESS_TYPE, ...tenantScope(req) });
   if (page) {
     const pageNum = Math.max(1, parseInt(page) || 1);
     const pageSize = Math.min(100, parseInt(lim) || 50);
@@ -345,10 +393,10 @@ app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
       Inventory.find(filter).sort({ itemName: 1 }).skip((pageNum - 1) * pageSize).limit(pageSize).lean(),
       Inventory.countDocuments(filter)
     ]);
-    return res.json({ success: true, items, total, page: pageNum, pages: Math.ceil(total / pageSize) });
+    return res.json({ success: true, items: enrichThresholds(items, usage), total, page: pageNum, pages: Math.ceil(total / pageSize) });
   }
   const items = await Inventory.find(filter).sort({ itemName: 1 }).lean();
-  res.json({ success: true, items });
+  res.json({ success: true, items: enrichThresholds(items, usage) });
   } catch (err) {
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }

@@ -202,3 +202,48 @@ describe('log inventory import creates the linked product', () => {
     expect(product.isAvailable).toBe(false);
   });
 });
+
+describe('auto low-stock threshold from velocity', () => {
+  const get = (p, tok) => request(app).get(p).set('Authorization', `Bearer ${tok}`);
+
+  it('derives an autoThreshold for a fast-moving item with no manual threshold', async () => {
+    const Inventory = mongoose.model('Inventory');
+    const Product = mongoose.model('Product');
+    const Order = mongoose.model('Order');
+    // 1:1 log good, no lowStockThreshold set.
+    await Inventory.create({ itemCode: 'VEL-1', itemName: 'Velocity Good', stockQty: 200, unit: 'pcs', unitCost: 5, displayUnit: 'pcs', unitMultiplier: 1 });
+    const prod = await Product.create({ name: 'Velocity Good', productCode: 'VEL-1', category: 'VelCat', basePrice: 40 });
+    // 60 sold over the last 30 days → ADU 2/day → autoThreshold = ceil(2*4) = 8.
+    await Order.create({
+      status: 'Completed', createdAt: new Date(Date.now() - 3 * 86400000), businessType: 'log',
+      items: [{ productId: String(prod._id), name: 'Velocity Good', quantity: 60, price: 40 }],
+      total: 2400, subtotal: 2400,
+    });
+
+    const res = await get('/api/inventory', superTok);
+    expect(res.status).toBe(200);
+    const item = res.body.items.find(i => i.itemCode === 'VEL-1');
+    expect(item.thresholdIsAuto).toBe(true);
+    expect(item.autoThreshold).toBe(8);
+    expect(item.effectiveThreshold).toBe(8);
+  });
+
+  it('never overrides an explicit manual threshold', async () => {
+    const Inventory = mongoose.model('Inventory');
+    await Inventory.create({ itemCode: 'VEL-2', itemName: 'Manual Threshold Good', stockQty: 200, unit: 'pcs', unitCost: 5, lowStockThreshold: 25, displayUnit: 'pcs', unitMultiplier: 1 });
+    const res = await get('/api/inventory', superTok);
+    const item = res.body.items.find(i => i.itemCode === 'VEL-2');
+    expect(item.thresholdIsAuto).toBe(false);
+    expect(item.effectiveThreshold).toBe(25);
+  });
+
+  it('leaves autoThreshold at 0 for an item with no sales', async () => {
+    const Inventory = mongoose.model('Inventory');
+    await Inventory.create({ itemCode: 'VEL-3', itemName: 'Dead Stock Good', stockQty: 200, unit: 'pcs', unitCost: 5, displayUnit: 'pcs', unitMultiplier: 1 });
+    const res = await get('/api/inventory', superTok);
+    const item = res.body.items.find(i => i.itemCode === 'VEL-3');
+    expect(item.autoThreshold).toBe(0);
+    expect(item.thresholdIsAuto).toBe(false);
+    expect(item.effectiveThreshold).toBe(0);
+  });
+});
