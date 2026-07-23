@@ -268,7 +268,7 @@ export default function InventoryTab({ ctx }) {
                         </td>
                         {(() => { const d = itemDisplay(item); return (<>
                         <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-white'}`}>{(BUSINESS_TYPE === 'log' ? d.packQty : d.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
-                        <td className="py-3 text-right text-gray-500 text-xs font-mono tabular-nums">{item.lowStockThreshold > 0 ? (item.lowStockThreshold / (BUSINESS_TYPE === 'log' ? (itemDisplay(item).packBase || 1) : effectiveDisplay(item).mult)).toLocaleString(undefined, { maximumFractionDigits: 3 }) : '-'}</td>
+                        <td className="py-3 text-right text-white text-xs font-mono tabular-nums">{item.lowStockThreshold > 0 ? (item.lowStockThreshold / (BUSINESS_TYPE === 'log' ? (itemDisplay(item).packBase || 1) : effectiveDisplay(item).mult)).toLocaleString(undefined, { maximumFractionDigits: 3 }) : '-'}</td>
                         <td className="py-3 text-white pl-2 font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : d.unit}</td>
                         <td className="py-3 text-right text-white font-mono text-xs tabular-nums">{BUSINESS_TYPE === 'log' ? (<>{peso(d.packCost)}<span className="text-white/40">/{d.packLabel}</span></>) : (<>{peso(d.cost)}<span className="text-white/40">/{d.unit}</span></>)}</td>
                         <td className="py-3 text-right text-white font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
