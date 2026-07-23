@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, Search, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download } from 'lucide-react';
+import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, Search, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download, Sparkles } from 'lucide-react';
 
 // ── ProcurementTab — Purchase Order workflow ──────────────────────────────────
 // Two-stage tracking. LEFT tab ("Purchase Orders") drafts & tracks planned POs
@@ -217,6 +217,43 @@ export default function ProcurementTab({ ctx }) {
     setShowForm(true);
   };
 
+  // ── Suggested PO ────────────────────────────────────────────────────────────
+  // Pulls the velocity-based reorder report (ADU × cover-days − on-hand) and pre-fills
+  // a fresh draft with the items that need restocking. The user reviews/edits before
+  // saving, so nothing is ordered automatically. Per-display-unit cost is recovered
+  // from the report's estCost so the PO line math (qty × unitCost) matches.
+  const [suggesting, setSuggesting] = useState(false);
+  const buildSuggestedPo = async () => {
+    setSuggesting(true); setError('');
+    try {
+      const res = await apiFetch('/api/reports/purchase-order?days=7');
+      const d = await res.json();
+      if (!d.success) { setError(d.error || 'Failed to build a suggested PO.'); return; }
+      const lines = (d.lines || [])
+        .filter(l => (Number(l.suggestedOrder) || 0) > 0)
+        .map(l => {
+          const inv = inventory.find(i => i.itemName === l.itemName);
+          const qty = Number(l.suggestedOrder) || 0;
+          const unitCost = qty > 0 ? +((Number(l.estCost) || 0) / qty).toFixed(4) : (inv?.unitCost ?? '');
+          return {
+            invId: inv?._id || null,
+            itemName: l.itemName || '',
+            itemCode: inv?.itemCode || '',
+            unit: l.displayUnit || inv?.displayUnit || inv?.unit || '',
+            packSize: inv?.unitMultiplier && inv.unitMultiplier !== 1 ? inv.unitMultiplier : '',
+            orderedQty: qty,
+            unitCost,
+            expiryDate: '',
+          };
+        });
+      if (lines.length === 0) { setError('Nothing to reorder — all stock is above its reorder point.'); return; }
+      setEditId(null);
+      setForm({ supplier: '', supplierId: '', expectedDate: '', notes: `Suggested restock (${d.coverDays || 7}-day cover) generated ${new Date().toLocaleDateString()}`, lines });
+      setShowForm(true);
+    } catch { setError('Network error building suggested PO.'); }
+    finally { setSuggesting(false); }
+  };
+
   // Picking a saved supplier fills the name snapshot; clearing reverts to free-text.
   const pickSupplier = (supplierId) => {
     const s = suppliers.find(x => String(x._id) === String(supplierId));
@@ -394,6 +431,9 @@ export default function ProcurementTab({ ctx }) {
               <Download size={15} className="rotate-180" /> Import Excel
               <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => { parsePoExcel(e.target.files?.[0]); e.target.value = ''; }} />
             </label>
+            <button onClick={buildSuggestedPo} disabled={suggesting} title="Auto-draft a PO from sales velocity — items below their reorder point" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 text-brand font-bold text-sm px-4 py-2.5 rounded-xl transition">
+              {suggesting ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} Suggested PO
+            </button>
             <button onClick={openNewForm} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
               <Plus size={16} /> New PO
             </button>
