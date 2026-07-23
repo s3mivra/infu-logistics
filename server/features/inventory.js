@@ -908,14 +908,22 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
             { $setOnInsert: { name: categoryName, department: 'Bar' } },
             { upsert: true, returnDocument: 'after', session }
           );
+          // basePrice must never appear in both $set and $setOnInsert — Mongo
+          // rejects an update that targets the same path from two operators.
+          // A valid SRP always wins (goes in $set); only fall back to
+          // $setOnInsert (default 0 on first creation) when there's no SRP.
+          const hasSrp = srp != null && !isNaN(srp);
           await Product.findOneAndUpdate(
             { productCode: existing.itemCode },
-            { $set: {
+            {
+              $set: {
                 name: existing.itemName,
                 category: cat.name,
-                ...(srp != null && !isNaN(srp) ? { basePrice: srp } : {}),
                 isAvailable: existing.stockQty > 0,
-            }, $setOnInsert: { basePrice: srp != null && !isNaN(srp) ? srp : 0 } },
+                ...(hasSrp ? { basePrice: srp } : {}),
+              },
+              ...(hasSrp ? {} : { $setOnInsert: { basePrice: 0 } }),
+            },
             { upsert: true, returnDocument: 'after', session }
           );
         }

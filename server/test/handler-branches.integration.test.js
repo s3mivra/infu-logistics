@@ -67,4 +67,30 @@ describe('inventory import — update existing item path', () => {
     const count = await mongoose.model('Inventory').countDocuments({ itemName: 'HB Imported' });
     expect(count).toBe(1); // updated, not duplicated
   });
+
+  // Regression: basePrice was set via BOTH $set and $setOnInsert in the same
+  // Product upsert whenever the row carried a category + srp, which Mongo
+  // rejects outright ("Updating the path 'basePrice' would create a conflict").
+  it('re-importing an item with a category + srp does not 500 (basePrice $set/$setOnInsert conflict)', async () => {
+    await mongoose.model('Inventory').create({ itemName: 'HB SRP Item', itemCode: 'HB-SRP-1', stockQty: 1000, unit: 'g', unitCost: 0.2, displayUnit: 'kg', unitMultiplier: 1000 });
+    const r = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'HB-SRP-1', itemName: 'HB SRP Item', qty: 5, unit: 'kg', unitCost: 0.25, category: 'HB Category', srp: 199.99 }],
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.summary.updated).toBeGreaterThanOrEqual(1);
+    const product = await mongoose.model('Product').findOne({ productCode: 'HB-SRP-1' });
+    expect(product).toBeTruthy();
+    expect(product.basePrice).toBe(199.99);
+  });
+
+  it('creating a brand-new item with a category + srp sets basePrice on the new Product', async () => {
+    const r = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'HB-SRP-2', itemName: 'HB New SRP Item', qty: 3, unit: 'kg', unitCost: 0.3, category: 'HB Category', srp: 250 }],
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.summary.created).toBeGreaterThanOrEqual(1);
+    const product = await mongoose.model('Product').findOne({ productCode: 'HB-SRP-2' });
+    expect(product).toBeTruthy();
+    expect(product.basePrice).toBe(250);
+  });
 });
