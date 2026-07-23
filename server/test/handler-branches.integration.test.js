@@ -170,3 +170,35 @@ describe('stockAvailable — log 1:1 product with no linked inventory', () => {
     expect(p.stockAvailable).toBe(true);
   });
 });
+
+// In log mode, products ARE the stocked goods, so importing inventory must also
+// create/update the linked Product — even when the sheet carries no category.
+describe('log inventory import creates the linked product', () => {
+  it('a new item with NO category still creates both the inventory item and a Product', async () => {
+    const res = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'LOGSYNC-1', itemName: 'Log Sync Good', qty: 10, unit: 'pcs', unitCost: 5, srp: 40 }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.summary.created).toBeGreaterThanOrEqual(1);
+
+    const invItem = await mongoose.model('Inventory').findOne({ itemCode: 'LOGSYNC-1' });
+    expect(invItem).toBeTruthy();
+
+    const product = await mongoose.model('Product').findOne({ productCode: 'LOGSYNC-1' });
+    expect(product).toBeTruthy();           // product created despite no category on the row
+    expect(product.name).toBe('Log Sync Good');
+    expect(product.basePrice).toBe(40);     // srp carried through
+    expect(product.category).toBe('General'); // fallback bucket
+    expect(product.isAvailable).toBe(true); // stock > 0
+  });
+
+  it('re-importing the same item with a new qty updates its Product availability', async () => {
+    // Deplete it to zero → the linked product must become unavailable.
+    const res = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'LOGSYNC-1', itemName: 'Log Sync Good', qty: 0, unit: 'pcs' }],
+    });
+    expect(res.status).toBe(200);
+    const product = await mongoose.model('Product').findOne({ productCode: 'LOGSYNC-1' });
+    expect(product.isAvailable).toBe(false);
+  });
+});

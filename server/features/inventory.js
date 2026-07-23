@@ -805,6 +805,12 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       // cost, expiry) only, and never touches menu setup even if the sheet has one.
       const categoryName = BUSINESS_TYPE === 'log' ? String(row.category || '').trim() : '';
       const srp = row.srp !== undefined && row.srp !== '' ? parseFloat(row.srp) : null;
+      // In log mode the product IS the stocked good, so EVERY imported item gets a
+      // linked Product (menu entry), with or without a category on the sheet — a
+      // missing category falls back to a general bucket. fb never syncs products
+      // from an import (categoryName is forced empty above), so this stays log-only.
+      const syncProduct = BUSINESS_TYPE === 'log';
+      const productCategory = categoryName || 'General';
       // FORCED RULE: only kg / L / pcs displayed. Auto-promote g→kg, ml→L.
       let displayUnit = String(row.displayUnit || row.unit || '').trim();
       if (displayUnit.toLowerCase() === 'g')  displayUnit = 'kg';
@@ -917,11 +923,11 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         if (diff > 0) { summary.increased++; summary.gainValue += valueImpact; }
         if (diff < 0) { summary.decreased++; summary.lossValue += valueImpact; }
 
-        // Sync product menu entry if category provided
-        if (categoryName) {
+        // Sync the linked Product (log only — the product IS the stocked good).
+        if (syncProduct) {
           const cat = await Category.findOneAndUpdate(
-            { name: { $regex: new RegExp(`^${categoryName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
-            { $setOnInsert: { name: categoryName, department: 'Bar' } },
+            { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
+            { $setOnInsert: { name: productCategory, department: 'Bar' } },
             { upsert: true, returnDocument: 'after', session }
           );
           // basePrice must never appear in both $set and $setOnInsert — Mongo
@@ -993,11 +999,11 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         summary.increased++;
         summary.gainValue += valueImpact;
 
-        // Create product menu entry if category provided
-        if (categoryName) {
+        // Create the linked Product (log only — the product IS the stocked good).
+        if (syncProduct) {
           const cat = await Category.findOneAndUpdate(
-            { name: { $regex: new RegExp(`^${categoryName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
-            { $setOnInsert: { name: categoryName, department: 'Bar' } },
+            { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
+            { $setOnInsert: { name: productCategory, department: 'Bar' } },
             { upsert: true, returnDocument: 'after', session }
           );
           const productExists = await Product.findOne({ productCode: item.itemCode }).session(session);
