@@ -19,7 +19,7 @@ import { assertBalanced, debitAccountFor, suggestedSettleAccount } from './lib/l
 import { ACCOUNTS, EXPENSE_CATEGORIES, CODE_MAP } from './lib/chartOfAccounts.js';
 import { resolveUnit, displayToBase, effectiveDisplay } from './lib/units.js';
 import { addBatch, consumeBatches, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
-import { requireStaff, evaluateClientAccess, requirePermission, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS } from './lib/authz.js';
+import { requireStaff, evaluateClientAccess, requirePermission, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS, setCustomRolePermissions } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { validateDateRange } from './lib/reportRange.js';
 import registerTenants from './features/tenants.js';
@@ -371,7 +371,7 @@ const comboSchema = z.object({
 const discountSchema = z.object({
   name: zName, percentage: z.number().min(0).max(100).optional(), isSCPWD: z.boolean().optional(),
 });
-const roleSchema = z.object({ name: zName });
+const roleSchema = z.object({ name: zName, permissions: z.array(z.string()).optional() });
 const modifierGroupSchema = z.object({
   name: zName, isRequired: z.boolean().optional(),
   minSelect: z.number().int().min(0).optional(), maxSelect: z.number().int().min(0).optional(),
@@ -640,6 +640,9 @@ const runStartupTasks = async () => {
     } catch (err) {
       log.error({ err }, 'Counter sync error');
     }
+
+    // Load custom-role → permissions into the authz resolver (function is hoisted).
+    await refreshCustomRolePerms();
 };
 
 // --- MONGODB CONNECTION (single connect) ---
@@ -1371,8 +1374,20 @@ RefreshSessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // TTL 
 const RefreshSession = mongoose.model('RefreshSession', RefreshSessionSchema);
 
 // --- NEW: CUSTOM ROLES SCHEMA & ROUTES ---
-const RoleSchema = new mongoose.Schema({ name: String });
+// Custom roles created in the UI role-maker. `permissions` is the granular set a
+// user with this role gets by default (unless the user has an explicit override).
+const RoleSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  permissions: { type: [String], default: [] },
+});
 const Role = mongoose.model('Role', RoleSchema);
+
+// Load custom-role permissions into the authz resolver. Called at boot and after
+// every role mutation so newly-granted permissions take effect on next login/refresh.
+async function refreshCustomRolePerms() {
+  try { setCustomRolePermissions(await Role.find().lean()); }
+  catch (e) { (typeof log !== 'undefined' ? log.error : console.error)({ err: e }, 'refreshCustomRolePerms failed'); }
+}
 
 
 // ── CLIENT ACCOUNTS (logistics mode only) ────────────────────────────────────
@@ -2115,6 +2130,7 @@ const ctx = {
   PERMISSIONS,
   PERMISSION_KEYS,
   ROLE_DEFAULT_PERMISSIONS,
+  refreshCustomRolePerms,
   // live getter: refreshPaymentMap() reassigns this module-level variable
   get PAYMENT_MAP_CACHE() { return PAYMENT_MAP_CACHE; },
 };

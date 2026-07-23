@@ -68,16 +68,33 @@ export const ROLE_DEFAULT_PERMISSIONS = {
   staff:   ['pos.use', 'orders.view', 'inventory.view', 'products.view'],
 };
 
+// Permissions for CUSTOM roles (created in the UI role-maker), keyed by the
+// normalized role name. Populated from the DB at boot and refreshed on every
+// role mutation via setCustomRolePermissions(). Built-in roles above always win.
+const _customRolePerms = new Map();
+export function setCustomRolePermissions(roles = []) {
+  _customRolePerms.clear();
+  for (const r of roles) {
+    if (!r || !r.name) continue;
+    _customRolePerms.set(norm(r.name), (Array.isArray(r.permissions) ? r.permissions : []).filter((k) => PERMISSION_KEYS.has(k)));
+  }
+}
+export function customRolePermissions(roleName) {
+  return _customRolePerms.get(norm(roleName)) || [];
+}
+
 // Resolve a user's EFFECTIVE permission set.
 //   - superadmin → every permission (bypass)
 //   - explicit user.permissions (non-empty) → exactly those (intersected with the catalogue)
-//   - otherwise → the role's defaults (empty for unknown roles)
+//   - a built-in role → its hard-coded defaults
+//   - a custom role → whatever the role-maker granted it
+//   - otherwise → nothing
 export function resolvePermissions(user) {
   const role = norm(user && user.role);
   if (role === 'superadmin') return PERMISSIONS.map((p) => p.key);
   const explicit = Array.isArray(user && user.permissions) ? user.permissions.filter((k) => PERMISSION_KEYS.has(k)) : [];
   if (explicit.length) return explicit;
-  return ROLE_DEFAULT_PERMISSIONS[role] || [];
+  return ROLE_DEFAULT_PERMISSIONS[role] || _customRolePerms.get(role) || [];
 }
 
 // Does this (decoded token OR user doc) hold a given permission?
@@ -109,6 +126,9 @@ export function evaluateStaffAccess(user) {
   // STRICT (post-transition): replace the next line with
   //   if (aud !== 'staff') return { ok: false, reason: 'missing-staff-audience' };
   if (STAFF_ROLES.has(role)) return { ok: true, reason: 'staff-role' };
+  // Custom roles created in the UI role-maker are staff roles too — accept any
+  // role registered in _customRolePerms (populated from the DB at boot / on change).
+  if (_customRolePerms.has(role)) return { ok: true, reason: 'custom-staff-role' };
   return { ok: false, reason: 'not-staff-role' };
 }
 

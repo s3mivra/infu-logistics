@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
@@ -144,6 +145,7 @@ const pdfMoney = (n) => {
 export default function AdminDashboard() {
   // PWA runtime: connectivity, install prompt, offline order queue
   const { isOnline, installable, install, queuedCount, refreshQueue, syncQueue } = usePwa();
+  const navigate = useNavigate(); // in-app (SPA) navigation — no full page reload
 
   const [paymentSelections, setPaymentSelections] = useState({});
 
@@ -4609,7 +4611,7 @@ const updateStatus = async (orderId, newStatus) => {
                 // Superadmin-only deep link — the dedicated Command Center page
                 // (user, client-account, and tenant management), outside the tabs.
                 <button key="command-center"
-                  onClick={() => { closeFn?.(); window.location.assign('/admin/admin-panel'); }}
+                  onClick={() => { closeFn?.(); navigate('/admin/admin-panel'); }}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm text-white/50 hover:text-white hover:bg-white/5"
                 >
                   <ShieldCheck size={16} className="text-brand shrink-0" />

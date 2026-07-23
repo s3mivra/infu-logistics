@@ -219,8 +219,8 @@ export default function SuperAdminPanel() {
   // Toast
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
-  // Roles form
-  const [newRole, setNewRole]       = useState('');
+  // Roles form — name + the granular permissions this role grants by default.
+  const [roleForm, setRoleForm]       = useState({ id: null, name: '', permissions: [] });
   const [roleLoading, setRoleLoading] = useState(false);
 
   // Client accounts (logistics mode)
@@ -473,14 +473,27 @@ export default function SuperAdminPanel() {
 
   // -------------------------------------------------------------------------
   // Role management
-  const handleAddRole = async (e) => {
+  const resetRoleForm = () => setRoleForm({ id: null, name: '', permissions: [] });
+  const editRole = (r) => setRoleForm({ id: r._id, name: r.name, permissions: Array.isArray(r.permissions) ? r.permissions : [] });
+  const toggleRolePerm = (key) => setRoleForm(prev => ({
+    ...prev,
+    permissions: prev.permissions.includes(key) ? prev.permissions.filter(k => k !== key) : [...prev.permissions, key],
+  }));
+
+  const handleSaveRole = async (e) => {
     e.preventDefault();
-    if (!newRole.trim()) return;
+    if (!roleForm.name.trim()) return;
     setRoleLoading(true);
     try {
-      await apiFetch('/api/roles', { method: 'POST', body: JSON.stringify({ name: newRole.trim() }) });
-      setNewRole(''); fetchRoles(); showToast('Role added.');
-    } finally { setRoleLoading(false); }
+      const body = JSON.stringify({ name: roleForm.name.trim(), permissions: roleForm.permissions });
+      const res = roleForm.id
+        ? await apiFetch(`/api/roles/${roleForm.id}`, { method: 'PATCH', body })
+        : await apiFetch('/api/roles', { method: 'POST', body });
+      const data = await res.json();
+      if (data.success) { resetRoleForm(); fetchRoles(); showToast(roleForm.id ? 'Role updated.' : 'Role added.'); }
+      else showToast(data.error || 'Failed to save role.', 'error');
+    } catch { showToast('Network error saving role.', 'error'); }
+    finally { setRoleLoading(false); }
   };
 
   const handleDeleteRole = async (id, name) => {
@@ -896,23 +909,51 @@ export default function SuperAdminPanel() {
         {/* ROLES SECTION                                                      */}
         {/* ----------------------------------------------------------------- */}
         {activeSection === 'roles' && (
-          <div className="flex-1 p-6 max-w-lg">
-            <form onSubmit={handleAddRole} className="flex gap-3 mb-6">
+          <div className="flex-1 p-6 max-w-2xl">
+            {/* Role maker — name + the permissions this role grants by default */}
+            <form onSubmit={handleSaveRole} className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-black text-white text-sm">{roleForm.id ? 'Edit Role' : 'New Role'}</h3>
+                {roleForm.id && (
+                  <button type="button" onClick={resetRoleForm} className="text-xs font-bold text-white/40 hover:text-white transition">Cancel edit</button>
+                )}
+              </div>
               <input
                 type="text"
-                placeholder="New role name (e.g. Barista, Kitchen)"
-                value={newRole}
-                onChange={e => setNewRole(e.target.value)}
-                className="flex-1 bg-white/5 border border-white/10 focus:border-brand text-white placeholder-white/30 px-4 py-2.5 rounded-xl outline-none transition text-sm"
+                placeholder="Role name (e.g. Barista, Bookkeeper)"
+                value={roleForm.name}
+                onChange={e => setRoleForm(f => ({ ...f, name: e.target.value }))}
+                className="w-full bg-white/5 border border-white/10 focus:border-brand text-white placeholder-white/30 px-4 py-2.5 rounded-xl outline-none transition text-sm mb-4"
               />
-              <button
-                type="submit"
-                disabled={roleLoading || !newRole.trim()}
-                className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-white font-bold px-4 py-2.5 rounded-xl transition disabled:opacity-50 text-sm"
-              >
-                {roleLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                Add
-              </button>
+
+              <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-2">What this role can do</p>
+              <div className="space-y-3 bg-black/20 border border-white/10 rounded-xl p-3 max-h-72 overflow-y-auto">
+                {groupedPerms.length === 0 && <p className="text-white/30 text-xs">Loading permissions…</p>}
+                {groupedPerms.map(([group, perms]) => (
+                  <div key={group}>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-white/30 mb-1">{group}</p>
+                    <div className="grid sm:grid-cols-2 gap-x-3 gap-y-1">
+                      {perms.map(p => (
+                        <label key={p.key} className="flex items-center gap-2 text-[13px] text-white/70 cursor-pointer hover:text-white transition">
+                          <input type="checkbox" checked={roleForm.permissions.includes(p.key)} onChange={() => toggleRolePerm(p.key)} className="accent-brand shrink-0" />
+                          <span className="leading-tight">{p.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-end mt-4">
+                <button
+                  type="submit"
+                  disabled={roleLoading || !roleForm.name.trim()}
+                  className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-white font-bold px-5 py-2.5 rounded-xl transition disabled:opacity-50 text-sm"
+                >
+                  {roleLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                  {roleForm.id ? 'Save Role' : 'Add Role'}
+                </button>
+              </div>
             </form>
 
             <div className="space-y-2">
@@ -925,19 +966,39 @@ export default function SuperAdminPanel() {
               ) : roles.map(r => (
                 <div
                   key={r._id}
-                  className="flex items-center justify-between bg-white/5 hover:bg-white/[0.07] border border-white/5 px-5 py-4 rounded-xl transition"
+                  className="bg-white/5 hover:bg-white/[0.07] border border-white/5 px-5 py-4 rounded-xl transition"
                 >
-                  <div className="flex items-center gap-3">
-                    <Tag size={13} className="text-brand" />
-                    <span className="font-bold text-white text-sm">{r.name}</span>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Tag size={13} className="text-brand" />
+                      <span className="font-bold text-white text-sm">{r.name}</span>
+                      <span className="text-white/30 text-xs">{(r.permissions?.length || 0)} permission{(r.permissions?.length === 1 ? '' : 's')}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => editRole(r)}
+                        className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition"
+                        aria-label={`Edit ${r.name} role`}
+                      >
+                        <Edit2 size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteRole(r._id, r.name)}
+                        className="p-1.5 rounded-lg text-red-400/40 hover:text-red-400 hover:bg-red-500/10 transition"
+                        aria-label={`Delete ${r.name} role`}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    onClick={() => handleDeleteRole(r._id, r.name)}
-                    className="p-1.5 rounded-lg text-red-400/40 hover:text-red-400 hover:bg-red-500/10 transition"
-                    aria-label={`Delete ${r.name} role`}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  {r.permissions?.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2.5 pl-6">
+                      {r.permissions.map(k => {
+                        const meta = permCatalog.find(p => p.key === k);
+                        return <span key={k} className="text-[10px] font-bold bg-brand/10 border border-brand/25 text-brand/90 px-2 py-0.5 rounded-full">{meta ? meta.label : k}</span>;
+                      })}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

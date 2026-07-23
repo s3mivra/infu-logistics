@@ -89,6 +89,42 @@ describe('settings.manage', () => {
   });
 });
 
+describe('custom roles carry their granted permissions', () => {
+  it('a user with a custom role created in the role-maker gets that role’s permissions', async () => {
+    // superadmin creates a "Bookkeeper" role that can view + post the books.
+    const created = await request(app).post('/api/roles').set(auth(superT))
+      .send({ name: 'Bookkeeper', permissions: ['accounting.view', 'accounting.manage', 'bogus.perm'] });
+    expect(created.status).toBe(200);
+    expect(created.body.role.permissions).toEqual(['accounting.view', 'accounting.manage']); // bogus filtered out
+
+    // A fresh user with that role, logging in AFTER the role exists, inherits it.
+    const User = mongoose.model('User');
+    await User.create({ name: 'Booky', role: 'Bookkeeper', userCode: 'ADN-B0001', password: await bcrypt.hash('pw', 12), tenantId: null });
+    const bookyT = await loginStaff(app, 'Booky', 'pw');
+
+    notForbidden((await request(app).get('/api/journal').set(auth(bookyT))).status);       // accounting.view
+    notForbidden((await request(app).post('/api/expenses').set(auth(bookyT)).send({})).status); // accounting.manage
+    // ...but nothing it wasn't granted:
+    expect((await request(app).get('/api/audit-logs').set(auth(bookyT))).status).toBe(403);
+  });
+
+  it('editing a role’s permissions changes what its users can do (after re-login)', async () => {
+    const created = await request(app).post('/api/roles').set(auth(superT)).send({ name: 'Viewer', permissions: ['reports.view'] });
+    const roleId = created.body.role._id;
+    const User = mongoose.model('User');
+    await User.create({ name: 'Vera', role: 'Viewer', userCode: 'ADN-V0001', password: await bcrypt.hash('pw', 12), tenantId: null });
+
+    let veraT = await loginStaff(app, 'Vera', 'pw');
+    notForbidden((await request(app).get('/api/reports/pnl').set(auth(veraT))).status);
+    expect((await request(app).get('/api/journal').set(auth(veraT))).status).toBe(403); // no accounting.view yet
+
+    // Grant accounting.view to the role, then re-login to mint a fresh token.
+    await request(app).patch(`/api/roles/${roleId}`).set(auth(superT)).send({ permissions: ['reports.view', 'accounting.view'] });
+    veraT = await loginStaff(app, 'Vera', 'pw');
+    notForbidden((await request(app).get('/api/journal').set(auth(veraT))).status);
+  });
+});
+
 describe('client token is rejected everywhere (staff floor holds)', () => {
   it('a client-audience token cannot reach accounting even with the route open', async () => {
     // No client token minted here; assert an unauthenticated request is 401, not 200.

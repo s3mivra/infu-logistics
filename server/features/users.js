@@ -175,6 +175,7 @@ export default function registerUsers(ctx) {
     resolvePermissions,
     PERMISSIONS,
     PERMISSION_KEYS,
+    refreshCustomRolePerms,
   } = ctx;
 
 // Catalogue of assignable permissions + role defaults — drives the UI editor.
@@ -202,16 +203,35 @@ app.get('/api/roles', verifyToken, requireStaff, async (req, res) => {
 
 app.post('/api/roles', verifyToken, requireSuperAdmin, validate(roleSchema), async (req, res) => {
   try {
-    const newRole = await Role.create(req.body);
+    const permissions = Array.isArray(req.body.permissions)
+      ? req.body.permissions.filter((k) => PERMISSION_KEYS.has(k)) : [];
+    const newRole = await Role.create({ name: req.body.name, permissions });
+    await refreshCustomRolePerms?.(); // new grants take effect on next login/refresh
     res.json({ success: true, role: newRole });
   } catch (err) {
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
 });
 
-app.delete('/api/roles/:id', verifyToken, requireStaff, async (req, res) => {
+// Edit a custom role's name and/or its permission set.
+app.patch('/api/roles/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const updates = {};
+    if (req.body.name !== undefined) updates.name = String(req.body.name).trim();
+    if (Array.isArray(req.body.permissions)) updates.permissions = req.body.permissions.filter((k) => PERMISSION_KEYS.has(k));
+    const role = await Role.findByIdAndUpdate(req.params.id, updates, { returnDocument: 'after' });
+    if (!role) return res.status(404).json({ success: false, error: 'Role not found.' });
+    await refreshCustomRolePerms?.();
+    res.json({ success: true, role });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+app.delete('/api/roles/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     await Role.findByIdAndDelete(req.params.id);
+    await refreshCustomRolePerms?.();
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
