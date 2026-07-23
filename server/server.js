@@ -1473,9 +1473,11 @@ const PurchaseOrderSchema = new mongoose.Schema({
     invId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
     itemName:    { type: String, default: '' },
     itemCode:    { type: String, default: '' },
-    unit:        { type: String, default: '' },             // display unit captured at draft time
+    unit:        { type: String, default: '' },             // display unit captured at draft time (kg/L/pcs)
+    packSize:    { type: Number, default: null },           // weight/volume per pack, in `unit` (e.g. 1 for "1L", 250 for "250g"); optional
     orderedQty:  { type: Number, default: 0 },
     unitCost:    { type: Number, default: 0 },
+    expiryDate:  { type: Date, default: null },             // optional expiry for the incoming stock
     receivedQty: { type: Number, default: null },           // null until reconciled
   }],
   estTotal:     { type: Number, default: 0 },

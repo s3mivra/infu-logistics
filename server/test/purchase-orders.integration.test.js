@@ -58,6 +58,29 @@ describe('purchase order creation', () => {
     expect(po.createdBy).toBe('PoManager');
   });
 
+  it('persists optional per-line unit, pack size, and expiry date', async () => {
+    const res = await request(app).post('/api/purchase-orders').set(auth(managerToken)).send({
+      supplier: 'PackCo',
+      lines: [{ itemName: 'Oatside 1L', unit: 'L', packSize: 1, orderedQty: 12, unitCost: 100, expiryDate: '2027-01-15' }],
+    });
+    expect(res.status).toBe(201);
+    const line = res.body.purchaseOrder.lines[0];
+    expect(line.unit).toBe('L');
+    expect(line.packSize).toBe(1);
+    expect(new Date(line.expiryDate).toISOString().slice(0, 10)).toBe('2027-01-15');
+  });
+
+  it('leaves pack size / expiry null when omitted (they are optional)', async () => {
+    const res = await request(app).post('/api/purchase-orders').set(auth(managerToken)).send({
+      supplier: 'PlainCo',
+      lines: [{ itemName: 'Sugar', unit: 'kg', orderedQty: 5, unitCost: 60 }],
+    });
+    expect(res.status).toBe(201);
+    const line = res.body.purchaseOrder.lines[0];
+    expect(line.packSize).toBeNull();
+    expect(line.expiryDate).toBeNull();
+  });
+
   it('requires auth', async () => {
     const res = await request(app).post('/api/purchase-orders').send(draftBody);
     expect(res.status).toBe(401);

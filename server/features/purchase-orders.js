@@ -31,15 +31,21 @@ export default function registerPurchaseOrders(ctx) {
     money((lines || []).reduce((s, l) => s + (Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0), 0));
 
   // Normalize an incoming line into our stored shape.
-  const cleanLine = (l) => ({
-    invId:      l.invId && mongoose.Types.ObjectId.isValid(l.invId) ? l.invId : null,
-    itemName:   String(l.itemName || '').slice(0, 200),
-    itemCode:   String(l.itemCode || '').slice(0, 60),
-    unit:       String(l.unit || '').slice(0, 20),
-    orderedQty: Math.max(0, Number(l.orderedQty) || 0),
-    unitCost:   Math.max(0, money(l.unitCost)),
-    receivedQty: null,
-  });
+  const cleanLine = (l) => {
+    const packSize = l.packSize === '' || l.packSize == null ? null : Math.max(0, Number(l.packSize) || 0);
+    const exp = l.expiryDate ? new Date(l.expiryDate) : null;
+    return {
+      invId:      l.invId && mongoose.Types.ObjectId.isValid(l.invId) ? l.invId : null,
+      itemName:   String(l.itemName || '').slice(0, 200),
+      itemCode:   String(l.itemCode || '').slice(0, 60),
+      unit:       String(l.unit || '').slice(0, 20),
+      packSize:   packSize && packSize > 0 ? packSize : null,
+      orderedQty: Math.max(0, Number(l.orderedQty) || 0),
+      unitCost:   Math.max(0, money(l.unitCost)),
+      expiryDate: exp && !Number.isNaN(exp.getTime()) ? exp : null,
+      receivedQty: null,
+    };
+  };
 
   // ══ SUPPLIERS (managed directory) ═════════════════════════════════════════════
   app.get('/api/suppliers', verifyToken, requireStaff, canView, async (req, res) => {

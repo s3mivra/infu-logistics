@@ -188,7 +188,9 @@ export default function ProcurementTab({ ctx }) {
   };
 
   // ── Draft form state ────────────────────────────────────────────────────────
-  const blankLine = () => ({ invId: null, itemName: '', itemCode: '', unit: '', orderedQty: '', unitCost: '' });
+  const blankLine = () => ({ invId: null, itemName: '', itemCode: '', unit: '', packSize: '', orderedQty: '', unitCost: '', expiryDate: '' });
+  // Same forced g/mL/pcs display units the inventory uses (see lib/units).
+  const UNIT_OPTIONS = ['', 'pcs', 'kg', 'L', 'g', 'ml'];
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({ supplier: '', supplierId: '', expectedDate: '', notes: '', lines: [blankLine()] });
@@ -208,7 +210,8 @@ export default function ProcurementTab({ ctx }) {
       notes: po.notes || '',
       lines: (po.lines || []).map(l => ({
         invId: l.invId || null, itemName: l.itemName || '', itemCode: l.itemCode || '',
-        unit: l.unit || '', orderedQty: l.orderedQty ?? '', unitCost: l.unitCost ?? '',
+        unit: l.unit || '', packSize: l.packSize ?? '', orderedQty: l.orderedQty ?? '', unitCost: l.unitCost ?? '',
+        expiryDate: l.expiryDate ? new Date(l.expiryDate).toISOString().slice(0, 10) : '',
       })),
     });
     setShowForm(true);
@@ -282,6 +285,8 @@ export default function ProcurementTab({ ctx }) {
       itemName: item.itemName || '',
       itemCode: item.itemCode || '',
       unit: item.displayUnit || item.unit || '',
+      // unitMultiplier is base units per display unit — the item's pack size.
+      packSize: item.unitMultiplier && item.unitMultiplier !== 1 ? item.unitMultiplier : '',
       unitCost: item.unitCost ?? '',
     });
   };
@@ -293,7 +298,13 @@ export default function ProcurementTab({ ctx }) {
 
   const saveDraft = async () => {
     const cleanLines = form.lines
-      .map(l => ({ ...l, orderedQty: Number(l.orderedQty) || 0, unitCost: Number(l.unitCost) || 0 }))
+      .map(l => ({
+        ...l,
+        orderedQty: Number(l.orderedQty) || 0,
+        unitCost: Number(l.unitCost) || 0,
+        packSize: l.packSize === '' || l.packSize == null ? null : Number(l.packSize) || null,
+        expiryDate: l.expiryDate || null,
+      }))
       .filter(l => l.itemName.trim() && l.orderedQty > 0);
     if (cleanLines.length === 0) { setError('Add at least one line with an item name and quantity.'); return; }
     setSaving(true); setError('');
@@ -589,11 +600,15 @@ export default function ProcurementTab({ ctx }) {
                           <button onClick={() => removeLine(idx)} className="p-1.5 rounded-lg text-white/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={15} /></button>
                         )}
                       </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        <input value={l.itemName} onChange={e => updateLine(idx, { itemName: e.target.value, invId: null })} placeholder="Item name" className="col-span-2 sm:col-span-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        <input value={l.itemName} onChange={e => updateLine(idx, { itemName: e.target.value, invId: null })} placeholder="Item name" className="col-span-2 sm:col-span-3 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white placeholder-white/25 focus:outline-none focus:border-brand/60" />
                         <input type="number" min="0" step="any" value={l.orderedQty} onChange={e => updateLine(idx, { orderedQty: e.target.value })} placeholder="Qty" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white placeholder-white/25 focus:outline-none focus:border-brand/60" />
-                        <input value={l.unit} onChange={e => updateLine(idx, { unit: e.target.value })} placeholder="Unit" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                        <select value={l.unit} onChange={e => updateLine(idx, { unit: e.target.value })} className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-brand/60">
+                          {UNIT_OPTIONS.map(u => <option key={u || 'none'} value={u}>{u || 'Unit'}</option>)}
+                        </select>
+                        <input type="number" min="0" step="any" value={l.packSize} onChange={e => updateLine(idx, { packSize: e.target.value })} title="Weight / volume per pack, in the selected unit" placeholder="Per-pack size (opt.)" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white placeholder-white/25 focus:outline-none focus:border-brand/60" />
                         <input type="number" min="0" step="any" value={l.unitCost} onChange={e => updateLine(idx, { unitCost: e.target.value })} placeholder="Unit cost" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                        <input type="date" value={l.expiryDate} onChange={e => updateLine(idx, { expiryDate: e.target.value })} title="Expiry date (optional)" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white/70 focus:outline-none focus:border-brand/60" />
                       </div>
                       <p className="text-right text-white/40 text-xs font-bold">Line: {money((Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0))}</p>
                     </div>
