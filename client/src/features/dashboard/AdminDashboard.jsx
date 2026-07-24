@@ -2666,8 +2666,13 @@ const updateStatus = async (orderId, newStatus) => {
       //   Code, Product, Qty Unit, Unit Cost, Expiry date
       // Backwards-compat also accepts: itemName, displayUnit, qty, unitCost.
       // Product may contain trailing size hint like "Milk 1kg" or "Coke 1.5L" — we parse it.
-      // Matches trailing pack size in product name: "250G", "1KG", "750ML", "1.3KG", "2.5L"
-      const PACK_SIZE_RE = /\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|L|l|ml|pcs|pc|piece)\b\s*$/i;
+      // Matches trailing pack size in product name: "250G", "1KG", "750ML", "1.3KG", "2.5L".
+      // Also tolerates a trailing parenthetical note after the size, e.g. "1KG (NW)" —
+      // that note is preserved in the cleaned name, only the size token is stripped.
+      // Anchoring strictly to end-of-string without this meant "MATCHA POWDER 1KG (NW)"
+      // never matched at all (the "(NW)" broke the `$` anchor), silently dropping the
+      // row from import (no unit could be inferred → filtered out with zero warning).
+      const PACK_SIZE_RE = /\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|L|l|ml|pcs|pc|piece)\b(\s*\([^)]*\))?\s*$/i;
       const normalise = (r) => {
         const lower = {};
         for (const [k, v] of Object.entries(r)) lower[String(k).toLowerCase().trim()] = v;
@@ -2680,7 +2685,8 @@ const updateStatus = async (orderId, newStatus) => {
         const sizeMatch = rawProduct.match(PACK_SIZE_RE);
         let cleanedName = rawProduct, hintedUnit = '', packSizeInDisplay = 1;
         if (sizeMatch) {
-          cleanedName = rawProduct.replace(PACK_SIZE_RE, '').trim();
+          const trailingNote = sizeMatch[3] ? sizeMatch[3].trim() : '';
+          cleanedName = (rawProduct.slice(0, sizeMatch.index).trim() + (trailingNote ? ' ' + trailingNote : '')).trim();
           const packQty = parseFloat(sizeMatch[1]);
           const rawU = sizeMatch[2].toLowerCase();
           if (rawU === 'g') {
@@ -2773,6 +2779,12 @@ const updateStatus = async (orderId, newStatus) => {
           return { ...r, _error: 'Missing itemName' };
         }
         r.category = currentCategory;
+        // No unit could be determined — neither a Unit column nor a parseable size
+        // suffix on the name (e.g. "1KG"). Flag it instead of silently dropping it:
+        // rows like this used to vanish from the import with zero indication.
+        if (!r.displayUnit) {
+          return { ...r, _error: 'Missing Unit — add a size to the name (e.g. "1KG") or fill the Unit column' };
+        }
         const existing = inventory.find(inv =>
           (r.itemCode && inv.itemCode && inv.itemCode === r.itemCode) ||
           inv.itemName.toLowerCase() === r.itemName.toLowerCase()
