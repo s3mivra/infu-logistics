@@ -281,25 +281,34 @@ app.post('/api/admin/seed-payment-subaccounts', verifyToken, requireSuperAdmin, 
 // to be tallied). Skips inventory deduction and recipe COGS — this is a tally,
 // not a real transaction. Respects period locks. Always audited.
 app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
   try {
     const { date, customerName, amount, paymentMethod, notes } = req.body;
     const amt = Number(amount);
     if (!date || isNaN(amt) || amt <= 0) {
+      await session.abortTransaction(); session.endSession();
       return res.status(400).json({ success: false, error: 'date and a positive amount are required.' });
     }
     const dt = new Date(date);
-    if (isNaN(dt.getTime())) return res.status(400).json({ success: false, error: 'Invalid date.' });
+    if (isNaN(dt.getTime())) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'Invalid date.' });
+    }
 
     // Period-lock guard.
     const lock = await periodLockFor(dt);
-    if (lock) return res.status(423).json({ success: false, error: `Period ${lock.year}-${String(lock.month).padStart(2,'0')} is closed.` });
+    if (lock) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(423).json({ success: false, error: `Period ${lock.year}-${String(lock.month).padStart(2,'0')} is closed.` });
+    }
 
     const method = paymentMethod || 'Cash';
     const acct = accountForPaymentMethod(method);
 
     const year = dt.getFullYear();
     const orderNumber = await generateNextSequence(Order, `ORD-${year}`, 'orderNumber');
-    const order = await Order.create({
+    const [order] = await Order.create([{
       orderNumber,
       table: 'Backdated',
       status: 'Completed',
@@ -317,11 +326,14 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
       transactionType: 'NORMAL',
       orderNotes: (notes || '').trim().slice(0, 300),
       isBackdated: true,
-    });
+    }], { session });
 
     // Journal entry: DR <payment account>, CR Sales Revenue (410000)
+    // Same transaction as the Order write above — if this fails, the order
+    // must not survive either, or the sale would show up in reports with no
+    // corresponding ledger entry.
     const reference = await mkSeqRef('BACKDATE');
-    await JournalEntry.create({
+    await JournalEntry.create([{
       date: dt,
       reference,
       description: `Backdated sale: ${order.orderNumber}${notes ? ` (${notes})` : ''}`,
@@ -331,12 +343,16 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
       ],
       totalDebit: amt,
       totalCredit: amt,
-    });
+    }], { session });
+
+    await session.commitTransaction();
+    session.endSession();
 
     await logAudit(req, { action: 'backdate-sale', entity: 'Order', entityId: order._id, after: { orderNumber, date: dt, amount: amt, paymentMethod: method } });
     emitToMgr('erpUpdated');
     res.json({ success: true, order, journalReference: reference });
   } catch (err) {
+    await session.abortTransaction(); session.endSession();
     log.error?.({ err }, 'POST /api/admin/backdate-sale failed');
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
