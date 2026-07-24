@@ -287,7 +287,7 @@ const refreshCookieOptions = () => ({
   secure: IS_PROD,                         // None requires Secure; HTTPS-only in prod
   sameSite: IS_PROD ? 'none' : 'lax',
   maxAge: REFRESH_TTL_MS,
-  path: '/api/auth',                       // cookie only ever sent to the refresh/logout endpoints
+  path: '/',                       // cookie only ever sent to the refresh/logout endpoints
 });
 
 // CSRF defense for the cookie-bearing auth endpoints: reject requests whose Origin
