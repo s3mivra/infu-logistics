@@ -32,6 +32,13 @@ beforeAll(async () => {
 
   prod = await Product.create({ name: 'FT Good', category: 'FT', basePrice: 100,
     baseRecipe: [{ invId: String(activeStock._id), name: 'Active Stock', qty: 1, unit: 'pcs' }] });
+
+  // DELETE /api/products/:id soft-archives (isArchived: true) and never touches
+  // isAvailable — a real "Delete this product" click leaves isAvailable as
+  // whatever it already was (default true), not false.
+  const deletedStock = await Inventory.create({ itemName: 'Deleted Stock', stockQty: 0, unit: 'pcs', unitCost: 1 });
+  await Product.create({ name: 'Deleted Prod', category: 'FT', basePrice: 10, isArchived: true,
+    baseRecipe: [{ invId: String(deletedStock._id), name: 'Deleted Stock', qty: 1, unit: 'pcs' }] });
 }, 120000);
 
 afterAll(async () => { await ctx.stop(); });
@@ -44,6 +51,13 @@ describe('low-stock analytics excludes stock tied only to removed products', () 
     const names = res.body.lowestStock.map(i => i.itemName);
     expect(names).toContain('Active Stock');
     expect(names).not.toContain('Removed Stock');
+  });
+
+  it('also excludes stock tied only to an ACTUALLY DELETED product (isArchived, not isAvailable)', async () => {
+    const res = await request(app).get('/api/analytics/dashboard').set('Authorization', `Bearer ${superTok}`);
+    expect(res.status).toBe(200);
+    const names = res.body.lowestStock.map(i => i.itemName);
+    expect(names).not.toContain('Deleted Stock');
   });
 });
 

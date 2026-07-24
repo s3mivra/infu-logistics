@@ -3,8 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import {
   Package, ShoppingCart, Plus, Minus, X, LogOut, CheckCircle,
-  AlertCircle, CreditCard, Loader2, ChevronLeft, RefreshCw, Barcode, Search
+  AlertCircle, CreditCard, Loader2, ChevronLeft, RefreshCw, Barcode, Search, Download, FileText
 } from 'lucide-react';
+
+let _pdfLibPromise = null;
+const loadPdfLib = () => {
+  if (!_pdfLibPromise) _pdfLibPromise = import('jspdf').then(m => m.default);
+  return _pdfLibPromise;
+};
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://192.168.100.2:5002';
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Semivra').toUpperCase();
@@ -53,6 +59,16 @@ const STATUS_VIEW = (status) => {
       return { label: status || 'Processing', tone: 'gray', msg: '' };
   }
 };
+// Filter chips group the portal's many granular statuses into the 4 buckets a
+// client actually cares about: still moving, partially done, cancelled, or done.
+const FILTER_BUCKETS = [
+  { key: 'all',       label: 'All',                statuses: null },
+  { key: 'sent',      label: 'Sent',                statuses: ['Pending', 'Preparing', 'Out for Delivery', 'Awaiting Pickup'] },
+  { key: 'partial',   label: 'Partially Fulfilled', statuses: ['Partially Fulfilled'] },
+  { key: 'complete',  label: 'Complete',            statuses: ['Completed', 'Delivered', 'Picked Up'] },
+  { key: 'cancelled', label: 'Cancelled',           statuses: ['Cancelled', 'Voided', 'Refunded'] },
+];
+
 const TONE_CLS = {
   amber: 'bg-amber-500/10 border-amber-500/30 text-amber-300',
   blue:  'bg-blue-500/10 border-blue-500/30 text-blue-300',
@@ -133,6 +149,9 @@ export default function ClientOrderPage() {
   // Order status queue (portal sidebar)
   const [myOrders, setMyOrders] = useState([]);
   const [queueOpen, setQueueOpen] = useState(false);
+  const [orderFilter, setOrderFilter] = useState('all');
+  const [slipOrder, setSlipOrder] = useState(null);        // order shown in the PO-slip popup
+  const [slipDownloading, setSlipDownloading] = useState(false);
 
   // On mount: verify session
   useEffect(() => {
@@ -235,6 +254,49 @@ export default function ClientOrderPage() {
     () => myOrders.filter(o => !['Completed', 'Delivered', 'Picked Up', 'Cancelled', 'Voided', 'Refunded'].includes(o.status)),
     [myOrders]
   );
+
+  const filteredOrders = useMemo(() => {
+    const bucket = FILTER_BUCKETS.find(b => b.key === orderFilter);
+    if (!bucket || !bucket.statuses) return myOrders;
+    return myOrders.filter(o => bucket.statuses.includes(o.status));
+  }, [myOrders, orderFilter]);
+
+  // Downloads a simple text-based order slip — no pricing (final total is
+  // confirmed by staff via Messenger for this business type), just what was
+  // ordered, when, and its current status, so the client has something to
+  // show/keep as a reference alongside the order number.
+  const downloadOrderSlip = useCallback(async (order) => {
+    setSlipDownloading(true);
+    try {
+      const jsPDF = await loadPdfLib();
+      const doc = new jsPDF();
+      let y = 18;
+      doc.setFontSize(16); doc.setFont(undefined, 'bold');
+      doc.text(`${BIZ_NAME} — Order Slip`, 14, y); y += 8;
+      doc.setFontSize(10); doc.setFont(undefined, 'normal');
+      doc.text(`Order: ${order.orderNumber}`, 14, y); y += 6;
+      if (order.billingNumber) { doc.text(`Billing: ${order.billingNumber}`, 14, y); y += 6; }
+      doc.text(`Status: ${STATUS_VIEW(order.status).label}`, 14, y); y += 6;
+      doc.text(`Placed: ${new Date(order.createdAt).toLocaleString()}`, 14, y); y += 6;
+      if (order.paymentMethod) { doc.text(`Payment method: ${order.paymentMethod}`, 14, y); y += 6; }
+      y += 4;
+      doc.setFont(undefined, 'bold'); doc.text('Items', 14, y); y += 6;
+      doc.setFont(undefined, 'normal');
+      (order.items || []).forEach(i => {
+        doc.text(`${i.quantity}x  ${i.name}`, 14, y);
+        y += 6;
+        if (y > 275) { doc.addPage(); y = 18; }
+      });
+      y += 4;
+      doc.setFontSize(9); doc.setTextColor(120);
+      doc.text('Final total is confirmed by our team via Messenger — this slip is a reference only.', 14, y);
+      doc.save(`${order.orderNumber}-slip.pdf`);
+    } catch {
+      alert('Could not generate the slip. Please try again.');
+    } finally {
+      setSlipDownloading(false);
+    }
+  }, []);
 
   // Cart helpers
   const addToCart = useCallback((product) => {
@@ -429,16 +491,33 @@ export default function ClientOrderPage() {
                 <X size={16} />
               </button>
             </div>
+            {/* Filter chips — group the many granular statuses into what a client
+                actually asks about: still moving, partial, cancelled, or done. */}
+            <div className="flex gap-1.5 px-4 py-2.5 overflow-x-auto scrollbar-hide border-b border-white/5 flex-shrink-0">
+              {FILTER_BUCKETS.map(b => (
+                <button key={b.key} onClick={() => setOrderFilter(b.key)}
+                  className={`px-3 py-1.5 rounded-full text-[11px] font-bold whitespace-nowrap transition flex-shrink-0
+                    ${orderFilter === b.key ? 'bg-brand text-white' : 'bg-white/5 text-white/50 hover:text-white'}`}>
+                  {b.label}
+                </button>
+              ))}
+            </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {myOrders.length === 0 ? (
                 <div className="flex flex-col items-center py-16 text-center">
                   <Package size={36} className="text-white/10 mb-3" />
                   <p className="text-white/40 text-sm font-bold">No orders yet.</p>
                 </div>
-              ) : myOrders.map(o => {
+              ) : filteredOrders.length === 0 ? (
+                <div className="flex flex-col items-center py-16 text-center">
+                  <Package size={36} className="text-white/10 mb-3" />
+                  <p className="text-white/40 text-sm font-bold">No orders in this filter.</p>
+                </div>
+              ) : filteredOrders.map(o => {
                 const v = STATUS_VIEW(o.status);
                 return (
-                  <div key={o._id} className="bg-page-bg border border-white/8 rounded-2xl p-4">
+                  <div key={o._id} onClick={() => setSlipOrder(o)}
+                    className="bg-page-bg border border-white/8 rounded-2xl p-4 cursor-pointer hover:border-brand/30 transition">
                     <div className="flex items-start justify-between mb-2 gap-2">
                       <div className="min-w-0 flex flex-col gap-0.5">
                         <span className="font-mono text-xs text-brand font-black tracking-wider">{o.orderNumber}</span>
@@ -446,13 +525,15 @@ export default function ClientOrderPage() {
                           <span className="font-mono text-[10px] text-white/40">Billing: {o.billingNumber}</span>
                         )}
                       </div>
-                      <span className="text-white/30 text-[10px] font-black uppercase tracking-wider shrink-0">Inquire total</span>
+                      <span className="text-white/30 text-[10px] font-black uppercase tracking-wider shrink-0 inline-flex items-center gap-1">
+                        <FileText size={11} /> View slip
+                      </span>
                     </div>
                     <div className={`rounded-xl border px-3 py-2 ${TONE_CLS[v.tone] || TONE_CLS.gray}`}>
                       <p className="text-xs font-black uppercase tracking-wider">{v.label}</p>
                       {v.msg && <p className="text-[11px] mt-1 leading-snug opacity-90">{v.msg}</p>}
                       {v.needsProof && FB_LINK && (
-                        <a href={FB_LINK} target="_blank" rel="noopener noreferrer"
+                        <a href={FB_LINK} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
                           className="inline-flex items-center gap-1.5 mt-2 bg-white/10 hover:bg-white/20 transition rounded-lg px-3 py-1.5 text-[11px] font-black text-white">
                           Send payment proof →
                         </a>
@@ -461,7 +542,7 @@ export default function ClientOrderPage() {
                         o.clientReceived ? (
                           <p className="mt-2 text-[11px] font-black inline-flex items-center gap-1.5"><CheckCircle size={13} /> Received - thank you!</p>
                         ) : (
-                          <button onClick={() => confirmReceived(o._id)}
+                          <button onClick={e => { e.stopPropagation(); confirmReceived(o._id); }}
                             className="mt-2 w-full bg-emerald-500 hover:bg-emerald-400 transition rounded-lg px-3 py-2 text-[11px] font-black text-white uppercase tracking-wider">
                             I received my order
                           </button>
@@ -469,7 +550,7 @@ export default function ClientOrderPage() {
                       )}
                     </div>
                     {o.status === 'Pending' && (
-                      <button onClick={() => cancelOrder(o._id)}
+                      <button onClick={e => { e.stopPropagation(); cancelOrder(o._id); }}
                         className="mt-2 w-full border border-red-500/30 text-red-300 hover:bg-red-500/10 transition rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-wider">
                         Cancel order
                       </button>
@@ -482,6 +563,48 @@ export default function ClientOrderPage() {
               })}
             </div>
           </aside>
+        </div>
+      )}
+
+      {/* ── PO Slip popup: full order detail, downloadable as a PDF ────────────── */}
+      {slipOrder && (
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/70 backdrop-blur-sm" onClick={() => setSlipOrder(null)}>
+          <div className="bg-sidebar-bg border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 flex-shrink-0">
+              <div>
+                <h2 className="font-black text-white text-sm uppercase tracking-widest">Order Slip</h2>
+                <p className="font-mono text-xs text-brand font-black mt-0.5">{slipOrder.orderNumber}</p>
+              </div>
+              <button onClick={() => setSlipOrder(null)} className="p-2 rounded-xl text-white/40 hover:text-white hover:bg-white/10 transition" aria-label="Close"><X size={16} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              {slipOrder.billingNumber && (
+                <div className="flex justify-between text-xs"><span className="text-white/40">Billing</span><span className="text-white font-mono">{slipOrder.billingNumber}</span></div>
+              )}
+              <div className="flex justify-between text-xs"><span className="text-white/40">Status</span><span className="text-white font-bold">{STATUS_VIEW(slipOrder.status).label}</span></div>
+              <div className="flex justify-between text-xs"><span className="text-white/40">Placed</span><span className="text-white">{new Date(slipOrder.createdAt).toLocaleString()}</span></div>
+              {slipOrder.paymentMethod && (
+                <div className="flex justify-between text-xs"><span className="text-white/40">Payment</span><span className="text-white">{slipOrder.paymentMethod}</span></div>
+              )}
+              <div className="border-t border-white/10 pt-3 space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Items</p>
+                {(slipOrder.items || []).map((item, i) => (
+                  <div key={i} className="flex justify-between text-sm">
+                    <span className="text-white font-bold">{item.name}</span>
+                    <span className="text-white/70 font-mono">×{item.quantity}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] text-white/30 italic pt-2 border-t border-white/5">Final total is confirmed by our team via Messenger.</p>
+            </div>
+            <div className="p-4 border-t border-white/10 flex-shrink-0">
+              <button onClick={() => downloadOrderSlip(slipOrder)} disabled={slipDownloading}
+                className="w-full flex items-center justify-center gap-2 bg-brand hover:bg-brand-dark disabled:opacity-60 text-white font-black py-3 rounded-xl transition uppercase tracking-widest text-xs">
+                {slipDownloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                {slipDownloading ? 'Preparing…' : 'Download Slip (PDF)'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

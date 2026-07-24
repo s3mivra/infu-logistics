@@ -579,12 +579,15 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
     // ── Raw-material velocity (weighted ADU: 70% last-7d, 30% last-30d) ────────
     // These use small time-scoped order sets — not the full history
     const [products] = await Promise.all([
-      Product.find(bizScope, { name: 1, productCode: 1, baseRecipe: 1, sizes: 1, addOns: 1, isAvailable: 1 }).lean(),
+      Product.find(bizScope, { name: 1, productCode: 1, baseRecipe: 1, sizes: 1, addOns: 1, isAvailable: 1, isArchived: 1 }).lean(),
     ]);
 
     // Low-stock filter: an inventory item is hidden from the low-stock list when it is
-    // linked ONLY to removed (isAvailable=false) products — i.e. it backs a product that
-    // was pulled from the pricing masterlist and nothing active still uses it. Items not
+    // linked ONLY to removed products — either 86'd (isAvailable=false) or actually
+    // deleted (isArchived=true, set by DELETE /api/products/:id, which soft-archives
+    // rather than hard-deleting). Both signals must be checked: a "Delete" in the
+    // Products UI only flips isArchived, leaving isAvailable untouched, so checking
+    // isAvailable alone let deleted products keep counting as active here. Items not
     // tied to any product (standalone raw materials) are unaffected.
     const recipeInvIds = (p) => [
       ...(p.baseRecipe || []),
@@ -600,8 +603,9 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
       }
       return { names, codes, invIds };
     };
-    const activeLinks  = collectLinks(products.filter(p => p.isAvailable !== false));
-    const removedLinks = collectLinks(products.filter(p => p.isAvailable === false));
+    const isRemovedProduct = (p) => p.isArchived === true || p.isAvailable === false;
+    const activeLinks  = collectLinks(products.filter(p => !isRemovedProduct(p)));
+    const removedLinks = collectLinks(products.filter(p => isRemovedProduct(p)));
     const linkedToSet = (set, item) =>
       set.invIds.has(String(item._id)) ||
       (item.itemCode && set.codes.has(item.itemCode)) ||
