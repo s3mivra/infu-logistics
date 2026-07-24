@@ -202,8 +202,9 @@ describe('sales-summary resolves the customer\'s standard CUS-A0000 code; sales-
     expect(summary.status).toBe(200);
     const sRow = summary.body.rows.find(r => r.orderNumber === o.body.order.orderNumber);
     expect(sRow).toBeTruthy();
+    // Report text is normalized to caps, regardless of stored casing.
     expect(sRow.customerId).toBe('CUS-A9001');
-    expect(sRow.customerName).toBe('Juan Dela Cruz');
+    expect(sRow.customerName).toBe('JUAN DELA CRUZ');
     expect(sRow.itemCodes).toBeUndefined();
     expect(sRow.itemNames).toBeUndefined();
 
@@ -213,9 +214,28 @@ describe('sales-summary resolves the customer\'s standard CUS-A0000 code; sales-
     expect(lRow).toBeTruthy();
     expect(lRow.customerId).toBe('CUS-A9001');
     expect(lRow.itemCode).toBe('SKU-EC-1');
-    expect(lRow.itemName).toBe('EC Coded Brew');
+    expect(lRow.itemName).toBe('EC CODED BREW');
     expect(lRow.quantity).toBe(2);
     expect(lRow.lineTotal).toBeCloseTo(200, 2);
+  });
+
+  it('a genuine walk-in (no linked ClientAccount) gets the reserved CUS-1000-A0001 code', async () => {
+    const o = await mkOrder({ ...line('productId'), paymentMethod: 'Cash' });
+    await complete(o.body.order._id);
+    const today = new Date().toISOString().slice(0, 10);
+    const summary = await req('get', `/api/reports/sales-summary?start=${today}&end=${today}`, T.super);
+    const sRow = summary.body.rows.find(r => r.orderNumber === o.body.order.orderNumber);
+    expect(sRow).toBeTruthy();
+    expect(sRow.customerId).toBe('CUS-1000-A0001');
+  });
+});
+
+describe('client account signup generates the standard customer ID format', () => {
+  it('POST /api/client-accounts assigns clientCode matching CUS-1000-A####', async () => {
+    const res = await req('post', '/api/client-accounts', T.super)
+      .send({ username: `ec_newclient_${Date.now()}`, password: 'x', name: 'New Client' });
+    expect(res.status).toBe(200);
+    expect(res.body.client.clientCode).toMatch(/^CUS-1000-A\d{4,}$/);
   });
 });
 

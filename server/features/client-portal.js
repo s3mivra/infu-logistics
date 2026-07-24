@@ -274,9 +274,11 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
     const exists = await ClientAccount.findOne({ username: username.trim() });
     if (exists) return res.status(409).json({ success: false, error: 'Username already taken.' });
     const hashed = await bcrypt.hash(password, BCRYPT_ROUNDS);
-    // Standard customer ID format: CUS-A0000 (same "prefix-A + zero-padded
-    // sequence" convention used for client codes and product codes elsewhere).
-    const clientCode = await generateNextSequence(ClientAccount, 'CUS', 'clientCode');
+    // Standard customer ID format: CUS-1000-A0000 ("1000" is a fixed segment;
+    // "A0000" is the zero-padded sequence — same "prefix-A + digits" convention
+    // used for client/product codes elsewhere, just with the fixed segment folded
+    // into the prefix so generateNextSequence's `${prefix}-A${seq}` template fits).
+    const clientCode = await generateNextSequence(ClientAccount, 'CUS-1000', 'clientCode');
     const client = await ClientAccount.create({ clientCode, username: username.trim(), password: hashed, name: name.trim(), paymentMethod: paymentMethod || 'Cash' });
     res.json({ success: true, client: { _id: client._id, clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive } });
   } catch (err) {

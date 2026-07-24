@@ -106,6 +106,10 @@ app.use(compression());
 const IS_PROD = process.env.NODE_ENV === 'production';
 // 'fb' = food & beverage (QR ordering), 'log' = logistics (client-login ordering)
 const BUSINESS_TYPE = (process.env.BUSINESS_TYPE || 'fb').toLowerCase();
+// Reserved standard customer ID for walk-in/guest sales (no linked ClientAccount).
+// Never issued by the CUS-1000 sequence — real signups start at CUS-1000-A0002
+// (the counter is pre-seeded to 1 at boot so the first real signup increments past it).
+const WALK_IN_CUSTOMER_CODE = 'CUS-1000-A0001';
 const ENV_ORIGINS = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '')
   .split(',').map(s => s.trim()).filter(Boolean);
 const allowedOrigins = [
@@ -635,18 +639,22 @@ const runStartupTasks = async () => {
         await Counter.collection.updateOne({ _id: prefix }, { $max: { seq } }, { upsert: true });
       }
 
-      // Client accounts (customer ID): legacy CLT-AXXXX, standard format is now CUS-AXXXX.
-      // Each prefix keeps its own counter — existing CLT- codes are untouched, new
-      // signups get CUS-.
+      // Client accounts (customer ID): legacy CLT-AXXXX, standard format is now
+      // CUS-1000-AXXXX. Each prefix keeps its own counter — existing CLT- codes
+      // are untouched, new signups get CUS-1000-.
       const allClients = await ClientAccount.find({}, { clientCode: 1 }).lean();
-      const maxClientSeq = { CLT: 0, CUS: 0 };
+      const maxClientSeq = { 'CLT': 0, 'CUS-1000': 0 };
       for (const c of allClients) {
-        const m = c.clientCode?.match(/^(CLT|CUS)-A(\d+)$/);
+        const m = c.clientCode?.match(/^(CLT|CUS-1000)-A(\d+)$/);
         if (m) maxClientSeq[m[1]] = Math.max(maxClientSeq[m[1]], parseInt(m[2], 10));
       }
       for (const [prefix, seq] of Object.entries(maxClientSeq)) {
         if (seq > 0) await Counter.collection.updateOne({ _id: prefix }, { $max: { seq } }, { upsert: true });
       }
+      // A0001 is reserved for walk-in/guest sales (WALK_IN_CUSTOMER_CODE) — never
+      // issued to a real signup. Floor the counter at 1 so the next real
+      // generateNextSequence() call always lands on A0002 or higher.
+      await Counter.collection.updateOne({ _id: 'CUS-1000' }, { $max: { seq: 1 } }, { upsert: true });
 
       log.info('Counters synced from existing data');
     } catch (err) {
@@ -1376,7 +1384,7 @@ const User = mongoose.model('User', UserSchema);
 // Pre-registered clients who log in to place orders directly (no QR scan).
 // Created/managed by superadmin. paymentMethod is pre-set per client.
 const ClientAccountSchema = new mongoose.Schema({
-  clientCode:    { type: String, index: true },                 // standard customer ID, e.g. CUS-A0001 (legacy accounts may still carry CLT-A0001)
+  clientCode:    { type: String, index: true },                 // standard customer ID, e.g. CUS-1000-A0001 (legacy accounts may still carry CLT-A0001)
   username:      { type: String, required: true, unique: true },
   password:      { type: String, required: true },              // bcrypt-hashed
   name:          { type: String, required: true },
@@ -2021,6 +2029,7 @@ const ctx = {
   SENTRY_ON,
   IS_PROD,
   BUSINESS_TYPE,
+  WALK_IN_CUSTOMER_CODE,
   ENV_ORIGINS,
   allowedOrigins,
   corsOriginCheck,

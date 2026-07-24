@@ -45,6 +45,7 @@ export default function registerReports(ctx) {
     SENTRY_ON,
     IS_PROD,
     BUSINESS_TYPE,
+    WALK_IN_CUSTOMER_CODE,
     ENV_ORIGINS,
     allowedOrigins,
     corsOriginCheck,
@@ -908,8 +909,10 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req
       customerName: 1, clientId: 1, clientAccountId: 1,
     }).sort({ createdAt: 1 }).lean();
 
-    // Resolve to the client's standard CUS-A0000 code, not the raw ObjectId
+    // Resolve to the client's standard CUS-1000-A0000 code, not the raw ObjectId
     // stored on the order (clientId / clientAccountId are internal references).
+    // No linked ClientAccount = a genuine walk-in — gets the reserved walk-in code,
+    // never a blank ID.
     const clientRefIds = [...new Set(orders.map(o => o.clientId || o.clientAccountId).filter(Boolean))];
     const clientCodeById = clientRefIds.length
       ? Object.fromEntries((await ClientAccount.find({ _id: { $in: clientRefIds } }, { clientCode: 1 }).lean())
@@ -931,7 +934,8 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req
       const refId = o.clientId || o.clientAccountId || '';
       return {
         date: o.createdAt, orderNumber: o.orderNumber,
-        customerId: clientCodeById[String(refId)] || '', customerName: o.customerName || 'Guest',
+        customerId: (clientCodeById[String(refId)] || WALK_IN_CUSTOMER_CODE).toUpperCase(),
+        customerName: (o.customerName || 'WALK-IN').toUpperCase(),
         ...ch, methods, total: Number(o.total) || 0,
       };
     });
@@ -972,15 +976,15 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (
     const rows = [];
     for (const o of orders) {
       const refId = o.clientId || o.clientAccountId || '';
-      const customerId = clientCodeById[String(refId)] || '';
-      const customerName = o.customerName || 'Guest';
+      const customerId = (clientCodeById[String(refId)] || WALK_IN_CUSTOMER_CODE).toUpperCase();
+      const customerName = (o.customerName || 'WALK-IN').toUpperCase();
       for (const it of (o.items || [])) {
         const qty = Number(it.quantity) || 0;
         const lineTotal = (Number(it.price) || 0) * qty + (it.selectedAddOns || []).reduce((s, a) => s + (Number(a.price) || 0), 0) * qty;
         rows.push({
           date: o.createdAt, orderNumber: o.orderNumber, paymentMethod: o.paymentMethod,
           customerId, customerName,
-          itemCode: it.productCode || '', itemName: it.name || '', quantity: qty, lineTotal,
+          itemCode: (it.productCode || '').toUpperCase(), itemName: (it.name || '').toUpperCase(), quantity: qty, lineTotal,
         });
       }
     }
