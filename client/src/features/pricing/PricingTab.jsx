@@ -162,17 +162,17 @@ export default function PricingTab({ ctx }) {
                     <tr><td colSpan={isSuperAdmin ? 8 : 6} className="py-4 text-center text-gray-500">No products found.</td></tr>
                   ) : localProducts.flatMap(p => {
                     // 1:1 logistics cost — no recipes in 'log' mode, so cost is
-                    // always the linked inventory item's unitCost × pack base
-                    // units from the name (e.g. "…500ML" against an ML-stocked item).
-                    const PACK_RE = /(\d+(?:\.\d+)?)\s*(mg|kg|g|ml|cl|l|pcs|pc|pack|unit)\b/i;
-                    const UNIT = { mg: 0.001, g: 1, kg: 1000, ml: 1, cl: 10, l: 1000, pcs: 1, pc: 1, pack: 1, unit: 1 };
+                    // always the linked inventory item's cost per named pack.
+                    // Uses the SAME itemDisplay() helper the Inventory tab uses
+                    // (parses the pack size off the INVENTORY item's own name,
+                    // e.g. "DV Roasted Almond 250G" → packCost for 250g) — matching
+                    // it against the product's own name here instead was wrong
+                    // whenever the product name lacked a size token, since it fell
+                    // back to unitMultiplier (a unit-conversion factor, not a pack cost).
                     const linkedCost = (prod) => {
                       const inv = (inventory || []).find(i => i.itemCode === prod.productCode) || (inventory || []).find(i => i.itemName === prod.name);
                       if (!inv) return 0;
-                      const m = (prod.name || '').match(PACK_RE);
-                      const bf = UNIT[(inv.unit || '').toLowerCase()] || 1;
-                      const packBase = m ? parseFloat(m[1]) * ((UNIT[m[2].toLowerCase()] || 1) / bf) : (inv.unitMultiplier || 1);
-                      return (inv.unitCost || 0) * packBase;
+                      return itemDisplay(inv).packCost;
                     };
                     // Recipe cost only applies in F&B mode (BOM-based products).
                     // Logistics products have no recipe — go straight to inventory.
