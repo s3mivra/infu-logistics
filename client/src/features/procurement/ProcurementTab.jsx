@@ -317,14 +317,21 @@ export default function ProcurementTab({ ctx }) {
   const pickInventory = (idx, invId) => {
     const item = inventory.find(i => String(i._id) === String(invId));
     if (!item) { updateLine(idx, { invId: null }); return; }
+    // item.unitCost is stored per BASE unit (e.g. ₱/gram); PO lines price per
+    // DISPLAY unit (₱/kg) — must multiply by unitMultiplier (base units per
+    // display unit) to convert, or the line silently carries the raw per-gram
+    // figure (e.g. 0.18 instead of ₱182.75/kg).
+    const mult = item.unitMultiplier && item.unitMultiplier > 0 ? item.unitMultiplier : 1;
     updateLine(idx, {
       invId: item._id,
       itemName: item.itemName || '',
       itemCode: item.itemCode || '',
       unit: item.displayUnit || item.unit || '',
-      // unitMultiplier is base units per display unit — the item's pack size.
-      packSize: item.unitMultiplier && item.unitMultiplier !== 1 ? item.unitMultiplier : '',
-      unitCost: item.unitCost ?? '',
+      // item.packSize is the SKU's real per-pack size (e.g. 0.377 for a 377g
+      // can); unitMultiplier is the fixed kg/L<->g/ml conversion factor (1000)
+      // and is NOT a pack size — using it here was the actual bug.
+      packSize: item.packSize && item.packSize > 0 ? item.packSize : '',
+      unitCost: item.unitCost != null ? +(item.unitCost * mult).toFixed(4) : '',
     });
   };
 
