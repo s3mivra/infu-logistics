@@ -350,28 +350,38 @@ export default function LedgerTab({ ctx }) {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-white/30 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
-                        <th className="py-2">Date</th><th className="py-2">Order</th>
+                        <th className="py-2">Date</th>
+                        <th className="py-2">Customer ID</th><th className="py-2">Customer Name</th>
+                        <th className="py-2">Order</th>
+                        <th className="py-2">Item Code</th><th className="py-2">Item</th>
                         <th className="py-2 text-right">Cash</th><th className="py-2 text-right">E-Wallet</th>
                         <th className="py-2 text-right">Bank</th><th className="py-2 text-right">Delivery</th><th className="py-2 text-right">Total</th>
                       </tr>
                     </thead>
                     <tbody className="text-white/75">
-                      {sssRows.map((row, i) => (
+                      {sssRows.map((row, i) => {
+                        const isDayRow = row.orderNumber == null;
+                        return (
                         <tr key={i} className="border-b border-white/5">
                           <td className="py-1.5 text-white/50 text-xs">{row.date ? new Date(row.date).toLocaleDateString() : ''}</td>
-                          <td className="py-1.5 font-mono text-xs text-white/60">{row.orderNumber}</td>
+                          <td className="py-1.5 font-mono text-xs text-white/60">{isDayRow ? '-' : (row.customerId || '-')}</td>
+                          <td className="py-1.5 text-xs text-white/60">{isDayRow ? '-' : (row.customerName || 'Guest')}</td>
+                          <td className="py-1.5 font-mono text-xs text-white/60">{isDayRow ? row.count : row.orderNumber}</td>
+                          <td className="py-1.5 font-mono text-xs text-white/60">{isDayRow ? '-' : (row.itemCodes || '-')}</td>
+                          <td className="py-1.5 text-xs text-white/60">{isDayRow ? '-' : (row.itemNames || '-')}</td>
                           <td className="py-1.5 text-right font-mono">{row.cash ? money2(row.cash) : ''}</td>
                           <td className="py-1.5 text-right font-mono">{row.ewallet ? money2(row.ewallet) : ''}</td>
                           <td className="py-1.5 text-right font-mono">{row.bank ? money2(row.bank) : ''}</td>
                           <td className="py-1.5 text-right font-mono">{row.delivery ? money2(row.delivery) : ''}</td>
                           <td className="py-1.5 text-right font-mono font-bold text-white/90">{money2(row.total)}</td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                     {salesSummary?.totals && (
                       <tfoot>
                         <tr className="font-black text-white border-t-2 border-white/20">
-                          <td className="py-2" colSpan={2}>Totals</td>
+                          <td className="py-2" colSpan={6}>Totals</td>
                           <td className="py-2 text-right font-mono">{money2(salesSummary.totals.cash)}</td>
                           <td className="py-2 text-right font-mono">{money2(salesSummary.totals.ewallet)}</td>
                           <td className="py-2 text-right font-mono">{money2(salesSummary.totals.bank)}</td>

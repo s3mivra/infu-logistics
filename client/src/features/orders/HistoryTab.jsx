@@ -208,7 +208,11 @@ export default function HistoryTab({ ctx }) {
                       <thead className="text-white/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                         <tr>
                           <th className="px-3 py-2.5">Date</th>
+                          <th className="px-3 py-2.5">Customer ID</th>
+                          <th className="px-3 py-2.5">Customer Name</th>
                           <th className="px-3 py-2.5">{sssGroup === 'day' ? 'Orders' : 'Order ID'}</th>
+                          <th className="px-3 py-2.5">Item Code</th>
+                          <th className="px-3 py-2.5">Item</th>
                           {SSS_COLS.map(([label]) => (
                             <th key={label} className="px-3 py-2.5 text-right">{label}</th>
                           ))}
@@ -219,7 +223,11 @@ export default function HistoryTab({ ctx }) {
                         {sssPage.pageItems.map((r, i) => (
                           <tr key={i} className={`border-b border-white/5 ${i % 2 ? 'bg-white/[0.015]' : ''}`}>
                             <td className="px-3 py-2.5 text-white/70">{new Date(r.date).toLocaleDateString()}</td>
+                            <td className="px-3 py-2.5 text-white/70">{sssGroup === 'day' ? '-' : (r.customerId || '-')}</td>
+                            <td className="px-3 py-2.5 text-white/70">{sssGroup === 'day' ? '-' : (r.customerName || 'Guest')}</td>
                             <td className="px-3 py-2.5 font-bold text-white">{sssGroup === 'day' ? r.count : r.orderNumber}</td>
+                            <td className="px-3 py-2.5 text-white/70">{sssGroup === 'day' ? '-' : (r.itemCodes || '-')}</td>
+                            <td className="px-3 py-2.5 text-white/70">{sssGroup === 'day' ? '-' : (r.itemNames || '-')}</td>
                             {SSS_COLS.map(([label, methods]) => { const v = sssColVal(r, methods); return (
                               <td key={label} className="px-3 py-2.5 text-right tabular-nums text-white/80">{v ? `₱${v.toFixed(2)}` : '-'}</td>
                             ); })}
@@ -230,6 +238,10 @@ export default function HistoryTab({ ctx }) {
                       <tfoot>
                         <tr className="border-t-2 border-white/10 bg-brand/5 font-black text-white">
                           <td className="px-3 py-3 uppercase text-[10px] tracking-wider">Totals</td>
+                          <td className="px-3 py-3"></td>
+                          <td className="px-3 py-3"></td>
+                          <td className="px-3 py-3"></td>
+                          <td className="px-3 py-3"></td>
                           <td className="px-3 py-3"></td>
                           {SSS_COLS.map(([label, methods]) => (
                             <td key={label} className="px-3 py-3 text-right tabular-nums">₱{sssColTotal(methods).toFixed(2)}</td>

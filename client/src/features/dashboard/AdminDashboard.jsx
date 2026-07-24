@@ -3728,17 +3728,22 @@ const updateStatus = async (orderId, newStatus) => {
       ['GrabFood', ['Grab Delivery']], ...(BUSINESS_TYPE === 'log' ? [['Lalamove', ['Lalamove']]] : [['Foodpanda', ['Foodpanda']]]), ['Manual/Direct', ['Manual Delivery']],
     ];
     const cv = (r, ms) => ms.reduce((s, m) => s + (r?.methods?.[m] || 0), 0);
-    const head = ['Date', sssGroup === 'day' ? 'Orders' : 'Order ID', ...COLS.map(c => c[0]), 'Total'];
+    // Customer/item detail is per-order only — meaningless once rolled up "Per Day".
+    const head = ['Date', 'Customer ID', 'Customer Name', sssGroup === 'day' ? 'Orders' : 'Order ID', 'Item Code', 'Item', ...COLS.map(c => c[0]), 'Total'];
     const body = sssRows.map(r => [
       new Date(r.date).toLocaleDateString(),
+      sssGroup === 'day' ? '' : (r.customerId || ''),
+      sssGroup === 'day' ? '' : (r.customerName || ''),
       sssGroup === 'day' ? String(r.count) : r.orderNumber,
+      sssGroup === 'day' ? '' : (r.itemCodes || ''),
+      sssGroup === 'day' ? '' : (r.itemNames || ''),
       ...COLS.map(([, ms]) => pdfMoney(cv(r, ms))),
       pdfMoney(r.total),
     ]);
     const t = salesSummary.totals || {};
     autoTable(doc, {
       startY: 24, head: [head], body,
-      foot: [[ 'TOTALS', '', ...COLS.map(([, ms]) => pdfMoney(ms.reduce((s, m) => s + (tm[m] || 0), 0))), pdfMoney(t.total) ]],
+      foot: [[ 'TOTALS', '', '', '', '', '', ...COLS.map(([, ms]) => pdfMoney(ms.reduce((s, m) => s + (tm[m] || 0), 0))), pdfMoney(t.total) ]],
       styles: { fontSize: 7 }, headStyles: { fillColor: [111,135,77] }, footStyles: { fillColor: [61,74,42], textColor: 255 },
     });
     doc.save(`Sales-Summary_${sssRange.start}_to_${sssRange.end}.pdf`);

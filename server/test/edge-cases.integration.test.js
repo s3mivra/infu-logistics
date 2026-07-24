@@ -182,6 +182,30 @@ describe('backdated sale posts a real, balanced, findable journal entry', () => 
   });
 });
 
+describe('sales-summary includes customer and item detail per order', () => {
+  it('returns customerId, customerName, itemCodes, and itemNames for each order row', async () => {
+    const Product = mongoose.model('Product');
+    const coded = await Product.create({ name: 'EC Coded Brew', category: 'EC', productCode: 'SKU-EC-1', basePrice: 100, baseRecipe: [{ invId: ids.invId, name: 'EC Bean', qty: 10, cost: 5, unit: 'g' }] });
+
+    const o = await mkOrder({
+      items: [{ productId: String(coded._id), name: 'EC Coded Brew', price: 100, quantity: 2 }],
+      table: 'Takeout', paymentMethod: 'Cash', customerName: 'Juan Dela Cruz',
+    });
+    expect(o.status).toBe(200);
+    const done = await complete(o.body.order._id);
+    expect(done.status).toBe(200);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await req('get', `/api/reports/sales-summary?start=${today}&end=${today}`, T.super);
+    expect(res.status).toBe(200);
+    const row = res.body.rows.find(r => r.orderNumber === o.body.order.orderNumber);
+    expect(row).toBeTruthy();
+    expect(row.customerName).toBe('Juan Dela Cruz');
+    expect(row.itemCodes).toBe('SKU-EC-1');
+    expect(row.itemNames).toBe('EC Coded Brew (x2)');
+  });
+});
+
 describe('backfill-ledger repairs backdated orders left without a journal entry', () => {
   it('posts the missing entry for an orphaned order and leaves already-linked ones alone', async () => {
     // Simulates what the pre-transaction bug could leave behind: the Order

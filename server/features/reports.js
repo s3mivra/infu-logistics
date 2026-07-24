@@ -903,8 +903,10 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req
       if (start) match.createdAt.$gte = new Date(start);
       if (end) { const d = new Date(end); d.setHours(23, 59, 59, 999); match.createdAt.$lte = d; }
     }
-    const orders = await Order.find(match, { orderNumber: 1, total: 1, paymentMethod: 1, payments: 1, createdAt: 1 })
-      .sort({ createdAt: 1 }).lean();
+    const orders = await Order.find(match, {
+      orderNumber: 1, total: 1, paymentMethod: 1, payments: 1, createdAt: 1,
+      customerName: 1, clientId: 1, clientAccountId: 1, items: 1,
+    }).sort({ createdAt: 1 }).lean();
 
     const rows = orders.map(o => {
       const ch = { cash: 0, ewallet: 0, bank: 0, delivery: 0 };
@@ -918,7 +920,14 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req
         ch[paymentChannel(m)] += amt;
         methods[m] = (methods[m] || 0) + amt;
       }
-      return { date: o.createdAt, orderNumber: o.orderNumber, ...ch, methods, total: Number(o.total) || 0 };
+      const itemCodes = (o.items || []).map(it => it.productCode || '').filter(Boolean).join(', ');
+      const itemNames = (o.items || []).map(it => (it.quantity > 1 ? `${it.name} (x${it.quantity})` : it.name)).filter(Boolean).join(', ');
+      return {
+        date: o.createdAt, orderNumber: o.orderNumber,
+        customerId: o.clientId || o.clientAccountId || '', customerName: o.customerName || 'Guest',
+        itemCodes, itemNames,
+        ...ch, methods, total: Number(o.total) || 0,
+      };
     });
 
     const totals = rows.reduce((t, r) => {
