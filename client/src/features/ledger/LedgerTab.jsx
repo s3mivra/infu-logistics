@@ -3,6 +3,8 @@ import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, Trending
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
 
+const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+
 // ── LedgerTab — extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function LedgerTab({ ctx }) {
@@ -2028,11 +2030,54 @@ export default function LedgerTab({ ctx }) {
                       <select value={backdateForm.paymentMethod}
                         onChange={e => setBackdateForm({ ...backdateForm, paymentMethod: e.target.value })}
                         className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-white font-bold outline-none focus:border-brand/60">
-                        <option value="Cash">Cash</option>
-                        <option value="Bank Transfer">Bank Transfer</option>
-                        <option value="GCash">GCash</option>
-                        <option value="Maya">Maya</option>
-                        <option value="On Account">On Account (A/R)</option>
+                        {/* Same canonical set + custom sub-accounts as the live checkout
+                            payment selector (OrdersTab) — every method the app actually
+                            supports, not a short hand-picked subset. */}
+                        <optgroup label="In-Store Payments">
+                          <option value="Cash">Cash</option>
+                          <option value="Bank Transfer">Bank Transfer</option>
+                        </optgroup>
+                        <optgroup label="E-Wallets">
+                          <option value="GCash">GCash</option>
+                          <option value="Maya">Maya</option>
+                          <option value="Maribank">Maribank / Seabank</option>
+                          <option value="Other E-Wallet">Other E-Wallet</option>
+                        </optgroup>
+                        <optgroup label="Delivery Partners">
+                          <option value="Grab Delivery">Grab Delivery</option>
+                          {BUSINESS_TYPE === 'log'
+                            ? <option value="Lalamove">Lalamove</option>
+                            : <option value="Foodpanda">Foodpanda</option>
+                          }
+                          <option value="Manual Delivery">Manual/Direct</option>
+                        </optgroup>
+                        <optgroup label="Credit">
+                          <option value="On Account">On Account (A/R)</option>
+                        </optgroup>
+                        {(() => {
+                          const PARENT_LABEL = {
+                            '111000': 'Custom Cash Accounts',
+                            '112000': 'Custom Bank Accounts',
+                            '113000': 'Custom E-Wallets',
+                            '120000': 'Custom Delivery Partners',
+                            '220000': 'Custom On-Account Vendors',
+                          };
+                          const STANDARD_NAMES = new Set(['Cash','Bank Transfer','GCash','Maya','Maribank','Other E-Wallet','Grab Delivery','Lalamove','Foodpanda','Manual Delivery','Pickup','On Account','Cash in Bank','E-Wallet']);
+                          const groups = {};
+                          for (const a of (coaAccounts || [])) {
+                            if (!a.custom || !a.parent) continue;
+                            if (!PARENT_LABEL[a.parent]) continue;
+                            if (STANDARD_NAMES.has(a.name)) continue; // already in the canonical optgroups above
+                            (groups[a.parent] ||= []).push(a);
+                          }
+                          return Object.keys(PARENT_LABEL).filter(p => groups[p]).map(p => (
+                            <optgroup key={p} label={PARENT_LABEL[p]}>
+                              {groups[p].sort((a,b)=>a.code.localeCompare(b.code)).map(a => (
+                                <option key={a.code} value={a.name}>{a.name}</option>
+                              ))}
+                            </optgroup>
+                          ));
+                        })()}
                       </select>
                     </div>
                   </div>
