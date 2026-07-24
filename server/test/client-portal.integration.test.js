@@ -120,4 +120,28 @@ describe('client portal: a client buys from the portal', () => {
     const res = await get('/api/orders', clientATok);
     expect(res.status).toBe(403);
   });
+
+  it('a client can cancel their own still-pending order', async () => {
+    const placed = await post('/api/orders', clientATok, orderBody(1));
+    const id = placed.body.order._id;
+    expect(placed.body.order.status).toBe('Pending');
+    const res = await post(`/api/client/orders/${id}/cancel`, clientATok);
+    expect(res.status).toBe(200);
+    const Order = mongoose.model('Order');
+    expect((await Order.findById(id).lean()).status).toBe('Cancelled');
+  });
+
+  it('a client cannot cancel once the order left Pending (e.g. Preparing)', async () => {
+    const placed = await post('/api/orders', clientATok, orderBody(1));
+    const id = placed.body.order._id;
+    await request(app).put(`/api/orders/${id}`).set('Authorization', `Bearer ${staffTok}`).send({ status: 'Preparing' });
+    const res = await post(`/api/client/orders/${id}/cancel`, clientATok);
+    expect(res.status).toBe(400);
+  });
+
+  it('DATA ISOLATION: client B cannot cancel client A\'s order', async () => {
+    const placed = await post('/api/orders', clientATok, orderBody(1));
+    const res = await post(`/api/client/orders/${placed.body.order._id}/cancel`, clientBTok);
+    expect(res.status).toBe(404);
+  });
 });

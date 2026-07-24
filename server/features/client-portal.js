@@ -232,6 +232,29 @@ app.post('/api/client/orders/:id/received', verifyClientToken, async (req, res) 
   }
 });
 
+// Client cancels their OWN order while it is still Pending (placed, unpaid, not
+// yet accepted into Preparing). No inventory/ledger has moved at this stage, so
+// this is a pure status flip — nothing to reverse. Once staff move it to
+// Preparing (payment confirmed) the client can no longer cancel from the portal.
+app.post('/api/client/orders/:id/cancel', verifyClientToken, async (req, res) => {
+  try {
+    const clientId = req.user?.clientId || req.user?._id;
+    if (!clientId || req.user?.role !== 'client') return res.status(403).json({ success: false, error: 'Client session required.' });
+    const order = await Order.findOne({ _id: req.params.id, clientId: String(clientId) });
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+    if (order.status !== 'Pending') {
+      return res.status(400).json({ success: false, error: 'Only a pending, unpaid order can be cancelled. Please contact us for changes.' });
+    }
+    order.status = 'Cancelled';
+    await order.save();
+    emitToOps('orderUpdated', order);
+    emitToMgr('erpUpdated');
+    res.json({ success: true, order });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
 // CRUD for client accounts — superadmin only
 app.get('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res) => {
   try {

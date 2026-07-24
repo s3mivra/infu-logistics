@@ -749,17 +749,14 @@ export default function InventoryTab({ ctx }) {
                   <p className="text-[10px] text-accent font-bold mt-1 uppercase tracking-wider">★ Existing Item: Will be Restocked</p>
                 )}
               </div>
+              {/* Field order: item name → qty → unit → unit cost → per-qty size. */}
               <div className="flex gap-2">
-                 <div className={BUSINESS_TYPE === 'log' ? 'w-full' : 'w-1/3'}>
+                 <div className={BUSINESS_TYPE === 'log' ? 'w-full' : 'w-1/2'}>
                    <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Qty Bought</label>
                    <input type="number" placeholder="Cans/Packs" value={invForm.packQty} onChange={e => setInvForm({...invForm, packQty: e.target.value})} className="w-full bg-page-bg border border-gray-700 rounded p-2 text-white outline-none focus:border-accent" />
                  </div>
-                 {BUSINESS_TYPE !== 'log' && (<>
-                 <div className="w-1/3">
-                   <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Weight/Vol</label>
-                   <input type="number" placeholder="Per Pack" value={invForm.unitPerPack} onChange={e => setInvForm({...invForm, unitPerPack: e.target.value})} className="w-full bg-page-bg border border-gray-700 rounded p-2 text-white outline-none focus:border-accent" />
-                 </div>
-                 <div className="w-1/3">
+                 {BUSINESS_TYPE !== 'log' && (
+                 <div className="w-1/2">
                    <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Unit</label>
                    <select value={invForm.unit} onChange={e => setInvForm({...invForm, unit: e.target.value})} className="w-full bg-page-bg border border-gray-700 rounded p-2 text-white outline-none focus:border-accent">
                      <option value="" disabled>Select…</option>
@@ -769,7 +766,7 @@ export default function InventoryTab({ ctx }) {
                    </select>
                    <p className="text-[9px] text-gray-500 mt-1">Unit cost reads as ₱/{invForm.unit || 'unit'}.</p>
                  </div>
-                 </>)}
+                 )}
               </div>
 
               {/* --- UPDATED PRICE SECTION WITH CASH VALIDATION --- */}
@@ -842,7 +839,14 @@ export default function InventoryTab({ ctx }) {
                   </div>
                 );
               })()}
-              
+
+              {BUSINESS_TYPE !== 'log' && (
+                <div>
+                  <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Per-Qty Size (Weight/Vol per pack)</label>
+                  <input type="number" placeholder={`Per pack, in ${invForm.unit || 'unit'}`} value={invForm.unitPerPack} onChange={e => setInvForm({...invForm, unitPerPack: e.target.value})} className="w-full bg-page-bg border border-gray-700 rounded p-2 text-white outline-none focus:border-accent" />
+                </div>
+              )}
+
               {(invForm.packQty && invForm.unitPerPack && invForm.costPerPack && invForm.unit) && (
                 <div className="bg-page-bg/50 p-3 rounded border border-gray-700 text-sm">
                   <p className="text-white font-bold mb-1">System will save to inventory:</p>

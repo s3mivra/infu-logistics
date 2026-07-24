@@ -65,6 +65,11 @@ describe('validation (Zod 422) guards', () => {
     const res = await request(app).post('/api/users').set(auth(superToken)).send({ name: 'Tiny', password: '123' });
     expect(res.status).toBe(422);
   });
+  it('create user with a 4-char staff PIN → 200 (matches client min length)', async () => {
+    const res = await request(app).post('/api/users').set(auth(superToken)).send({ name: 'PinUser', password: '1234', role: 'Staff' });
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+  });
   it('login with wrong password → 401', async () => {
     const res = await request(app).post('/api/users/login').send({ name: 'GuardBoss', password: 'wrong' });
     expect(res.status).toBe(401);

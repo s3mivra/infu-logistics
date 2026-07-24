@@ -19,6 +19,18 @@ const ROLE_META = {
 const getRoleMeta = (role) =>
   ROLE_META[role] ?? { label: role, bg: 'bg-purple-500/20', text: 'text-purple-400', border: 'border-purple-500/30' };
 
+// Built-in roles shown (read-only) in the Access Roles list. Mirrors the server's
+// ROLE_DEFAULT_PERMISSIONS (lib/authz.js) for admin & staff. Superadmin is
+// intentionally omitted — it bypasses the permission system and must not be
+// assignable or presented as an editable role.
+const BUILTIN_ROLES = [
+  { name: 'Admin', permissions: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete',
+    'inventory.view', 'inventory.manage', 'inventory.delete', 'products.view', 'products.manage',
+    'procurement.view', 'procurement.manage', 'procurement.delete',
+    'accounting.view', 'reports.view', 'analytics.view', 'audit.view', 'settings.manage'] },
+  { name: 'Staff', permissions: ['pos.use', 'orders.view', 'inventory.view', 'products.view'] },
+];
+
 // ---------------------------------------------------------------------------
 // Sub-components (defined outside main component to avoid remount on render)
 // ---------------------------------------------------------------------------
@@ -957,11 +969,30 @@ export default function SuperAdminPanel() {
             </form>
 
             <div className="space-y-2">
+              {/* Built-in roles (read-only). Superadmin is deliberately excluded. */}
+              {BUILTIN_ROLES.map(r => (
+                <div key={r.name} className="bg-white/5 border border-white/5 px-5 py-4 rounded-xl">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Lock size={13} className="text-white/40" />
+                      <span className="font-bold text-white text-sm">{r.name}</span>
+                      <span className="text-white/30 text-xs">{r.permissions.length} permissions</span>
+                    </div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider bg-white/5 text-white/40 border border-white/10 px-2 py-0.5 rounded-full">Built-in</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mt-2.5 pl-6">
+                    {r.permissions.map(k => {
+                      const meta = permCatalog.find(p => p.key === k);
+                      return <span key={k} className="text-[10px] font-bold bg-white/5 border border-white/10 text-white/50 px-2 py-0.5 rounded-full">{meta ? meta.label : k}</span>;
+                    })}
+                  </div>
+                </div>
+              ))}
               {roles.length === 0 ? (
-                <div className="flex flex-col items-center py-16 text-center">
+                <div className="flex flex-col items-center py-10 text-center">
                   <Tag size={32} className="text-white/10 mb-3" />
                   <p className="text-white/40 font-bold text-sm">No custom roles yet.</p>
-                  <p className="text-white/20 text-xs mt-1">Staff and Admin are built-in.</p>
+                  <p className="text-white/20 text-xs mt-1">Create one above to extend beyond the built-in roles.</p>
                 </div>
               ) : roles.map(r => (
                 <div

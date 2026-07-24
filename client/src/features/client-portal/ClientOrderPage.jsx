@@ -72,6 +72,13 @@ const ProductCard = memo(({ product, onAdd }) => {
         ? 'border-white/5 opacity-50 cursor-not-allowed'
         : 'border-white/5 hover:border-brand/30 cursor-pointer active:scale-[0.97]'}`}
   >
+    {/* Product image — only present when the "Product Images" setting is on
+        (the server strips product.image for customers when disabled). */}
+    {product.image && (
+      <div className="w-full h-28 mb-2.5 rounded-xl overflow-hidden bg-page-bg/40 flex items-center justify-center">
+        <img src={product.image} alt={product.name} loading="lazy" className="w-full h-full object-contain" />
+      </div>
+    )}
     <div className="flex items-start justify-between gap-2">
       <h3 className="font-bold text-white text-sm leading-snug">{product.name}</h3>
       <span className={`shrink-0 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${unavailable ? 'bg-white/5 border-white/10 text-white/40' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'}`}>
@@ -197,6 +204,19 @@ export default function ClientOrderPage() {
       const data = await res.json();
       if (data.success) fetchMyOrders();
       else alert(data.error || 'Could not confirm.');
+    } catch { alert('Network error.'); }
+  }, [token, fetchMyOrders]);
+
+  // Cancel a still-pending (unpaid) order from the portal.
+  const cancelOrder = useCallback(async (orderId) => {
+    if (!window.confirm('Cancel this order? This cannot be undone.')) return;
+    try {
+      const res = await fetch(`${API_URL}/api/client/orders/${orderId}/cancel`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.success) fetchMyOrders();
+      else alert(data.error || 'Could not cancel.');
     } catch { alert('Network error.'); }
   }, [token, fetchMyOrders]);
 
@@ -448,6 +468,12 @@ export default function ClientOrderPage() {
                         )
                       )}
                     </div>
+                    {o.status === 'Pending' && (
+                      <button onClick={() => cancelOrder(o._id)}
+                        className="mt-2 w-full border border-red-500/30 text-red-300 hover:bg-red-500/10 transition rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-wider">
+                        Cancel order
+                      </button>
+                    )}
                     <div className="mt-2 text-[10px] text-white/30">
                       {(o.items || []).reduce((s, i) => s + (i.quantity || 0), 0)} item(s) · {new Date(o.createdAt).toLocaleString()}
                     </div>

@@ -287,7 +287,15 @@ export default function ProductsTab({ ctx }) {
                     ) : (
                       <div className="w-16 h-16 bg-white/5 border border-white/10 rounded-lg flex items-center justify-center text-xs text-white/25 font-bold">None</div>
                     )}
-                    <input type="file" accept="image/*" onChange={handleImageUpload} className="text-sm text-white/40 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-white/10 file:text-white hover:file:bg-white/20 cursor-pointer transition" />
+                    <div className="flex flex-col gap-2">
+                      <input type="file" accept="image/*" onChange={handleImageUpload} className="text-sm text-white/40 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-white/10 file:text-white hover:file:bg-white/20 cursor-pointer transition" />
+                      {formData.image && (
+                        <button type="button" onClick={() => setFormData({ ...formData, image: '', imageUrl: '' })}
+                          className="self-start text-xs font-bold text-red-400 hover:text-red-300 transition">
+                          Remove image
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div><label className="block text-sm font-bold text-white/60 mb-1">Name</label><input required type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-brand font-semibold placeholder-white/20" /></div>

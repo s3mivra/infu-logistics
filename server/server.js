@@ -345,7 +345,9 @@ const zRole  = z.enum(['superadmin', 'Manager', 'Staff', 'Cashier']).or(z.string
 
 // Schemas for the previously raw `Model.create(req.body)` routes (mass-assignment fixes)
 const loginSchema    = z.object({ name: zName, password: z.string().min(1).max(200) });
-const userCreateSchema = z.object({ name: zName, password: z.string().min(6).max(200), role: zRole.optional() });
+// password min 4 to match the client's staff-PIN policy (SuperAdminPanel validateForm).
+// permissions passes through so the create route can honour an explicit override.
+const userCreateSchema = z.object({ name: zName, password: z.string().min(4).max(200), role: zRole.optional(), permissions: z.array(z.string()).optional() });
 const addonSchema    = z.object({
   name: zName, price: zMoney, category: z.string().trim().max(60).optional(),
   recipe: z.array(z.object({ invId: z.string(), name: z.string(), qty: z.number(), cost: z.number().optional(), unit: z.string().optional() })).optional(),
