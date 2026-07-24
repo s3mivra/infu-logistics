@@ -981,7 +981,7 @@ app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
       await JournalEntry.create([{
         reference,
         description: order.isComplimentary
-          ? `COMP [${order.complimentaryReasonType || 'UNKNOWN'}] For: ${order.employeeName || '—'} | By: ${order.complimentaryApprovedBy || '—'} | Ref: ${order.complimentaryReferenceNumber || order.orderNumber}`
+          ? `COMP [${order.complimentaryReasonType || 'UNKNOWN'}] For: ${order.employeeName || '-'} | By: ${order.complimentaryApprovedBy || '-'} | Ref: ${order.complimentaryReferenceNumber || order.orderNumber}`
           : `Sales & COGS for Order ${order.orderNumber}`,
         lines, 
         totalDebit, 
@@ -1271,7 +1271,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     if (debitAcct.fallback) {
       // Tender has no COA route — parked in Unassigned Receipts. Alert managers
       // to configure a route in Payment Routing so it lands in the right account.
-      emitToMgr('mgrAlert', { kind: 'unmappedTender', method: paymentMethod || '(none)', account: debitAcct.code, ref: order.orderNumber, message: `Payment method "${paymentMethod || '(none)'}" has no account route — settled into Unassigned Receipts. Configure it in Payment Routing.` });
+      emitToMgr('mgrAlert', { kind: 'unmappedTender', method: paymentMethod || '(none)', account: debitAcct.code, ref: order.orderNumber, message: `Payment method "${paymentMethod || '(none)'}" has no account route - settled into Unassigned Receipts. Configure it in Payment Routing.` });
       try { await logAudit(req, { action: 'unmappedTender', entity: 'PaymentMethodMap', entityId: paymentMethod || '(none)', after: { account: debitAcct.code, order: order.orderNumber } }); } catch { /* non-fatal */ }
     }
 

@@ -319,7 +319,7 @@ app.post('/api/expenses', verifyToken, ...canPostAcct, async (req, res) => {
     // Manager can route "GCash" to a custom sub-account (e.g. BPI E-Wallet 113001) via Ledger UI.
     const credAcct = accountForPaymentMethod(paymentMethod);
     if (credAcct.fallback) {
-      emitToMgr('mgrAlert', { kind: 'unmappedTender', method: paymentMethod || '(none)', account: credAcct.code, message: `Expense payment method "${paymentMethod || '(none)'}" has no account route — booked against Unassigned Receipts. Configure it in Payment Routing.` });
+      emitToMgr('mgrAlert', { kind: 'unmappedTender', method: paymentMethod || '(none)', account: credAcct.code, message: `Expense payment method "${paymentMethod || '(none)'}" has no account route - booked against Unassigned Receipts. Configure it in Payment Routing.` });
       try { await logAudit(req, { action: 'unmappedTender', entity: 'PaymentMethodMap', entityId: paymentMethod || '(none)', after: { account: credAcct.code, context: 'expense' } }); } catch { /* non-fatal */ }
     }
 

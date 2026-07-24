@@ -272,7 +272,7 @@ export default function registerPurchaseOrders(ctx) {
       if (po.status === 'Incomplete') {
         const touchesOtherFields = supplier !== undefined || supplierId !== undefined || expectedDate !== undefined || notes !== undefined || lines !== undefined;
         if (touchesOtherFields || status !== 'Cancelled') {
-          return res.status(409).json({ success: false, error: 'This PO is partially received — only cancelling the remaining balance is allowed (already-received stock is unaffected).' });
+          return res.status(409).json({ success: false, error: 'This PO is partially received - only cancelling the remaining balance is allowed (already-received stock is unaffected).' });
         }
         po.status = 'Cancelled';
         await po.save();
@@ -390,7 +390,7 @@ export default function registerPurchaseOrders(ctx) {
       // PO record would orphan that audit trail.
       const hasReceivedActivity = (po.lines || []).some(l => (l.receivedQty || 0) > 0);
       if (['Complete', 'Incomplete'].includes(po.status) || hasReceivedActivity) {
-        return res.status(409).json({ success: false, error: 'This PO has received activity posted to inventory and is a permanent record — it cannot be deleted.' });
+        return res.status(409).json({ success: false, error: 'This PO has received activity posted to inventory and is a permanent record - it cannot be deleted.' });
       }
       await po.deleteOne();
       logAudit?.(req, { action: 'delete', entity: 'purchase_order', entityId: po.poNumber });

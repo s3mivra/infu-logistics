@@ -272,7 +272,7 @@ export default function ClientOrderPage() {
       const doc = new jsPDF();
       let y = 18;
       doc.setFontSize(16); doc.setFont(undefined, 'bold');
-      doc.text(`${BIZ_NAME} — Order Slip`, 14, y); y += 8;
+      doc.text(`${BIZ_NAME} - Order Slip`, 14, y); y += 8;
       doc.setFontSize(10); doc.setFont(undefined, 'normal');
       doc.text(`Order: ${order.orderNumber}`, 14, y); y += 6;
       if (order.billingNumber) { doc.text(`Billing: ${order.billingNumber}`, 14, y); y += 6; }
@@ -289,7 +289,7 @@ export default function ClientOrderPage() {
       });
       y += 4;
       doc.setFontSize(9); doc.setTextColor(120);
-      doc.text('Final total is confirmed by our team via Messenger — this slip is a reference only.', 14, y);
+      doc.text('Final total is confirmed by our team via Messenger - this slip is a reference only.', 14, y);
       doc.save(`${order.orderNumber}-slip.pdf`);
     } catch {
       alert('Could not generate the slip. Please try again.');

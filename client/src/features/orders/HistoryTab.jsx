@@ -274,7 +274,7 @@ export default function HistoryTab({ ctx }) {
                         <tr key={e._id||i} className={`border-b border-white/5 hover:bg-white/3 ${i%2===0?'':'bg-white/[0.015]'}`}>
                           <td className="px-5 py-2.5 text-white/50">{e.date}</td>
                           <td className="px-5 py-2.5 text-white font-bold">{e.staffName}</td>
-                          <td className="px-5 py-2.5 text-white/50 capitalize">{e.staffRole || '—'}</td>
+                          <td className="px-5 py-2.5 text-white/50 capitalize">{e.staffRole || '-'}</td>
                           <td className="px-5 py-2.5 text-white/70">{e.clockIn ? new Date(e.clockIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}) : '-'}</td>
                           <td className={`px-5 py-2.5 ${e.clockOut ? 'text-white/70' : 'text-yellow-400/70 italic'}`}>
                             {e.clockOut ? new Date(e.clockOut).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}) : 'Still in'}

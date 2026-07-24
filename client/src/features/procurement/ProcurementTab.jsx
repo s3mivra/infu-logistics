@@ -23,7 +23,7 @@ const StatusBadge = ({ status }) => (
   </span>
 );
 
-const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 export default function ProcurementTab({ ctx }) {
@@ -258,7 +258,7 @@ export default function ProcurementTab({ ctx }) {
             expiryDate: '',
           };
         });
-      if (lines.length === 0) { setError('Nothing to reorder — all stock is above its reorder point.'); return; }
+      if (lines.length === 0) { setError('Nothing to reorder - all stock is above its reorder point.'); return; }
       setEditId(null);
       setForm({ supplier: '', supplierId: '', expectedDate: '', notes: `Suggested restock (${d.coverDays || 7}-day cover) generated ${new Date().toLocaleDateString()}`, lines });
       setShowForm(true);
@@ -471,7 +471,7 @@ export default function ProcurementTab({ ctx }) {
               <Download size={15} className="rotate-180" /> Import Excel
               <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => { parsePoExcel(e.target.files?.[0]); e.target.value = ''; }} />
             </label>
-            <button onClick={buildSuggestedPo} disabled={suggesting} title="Auto-draft a PO from sales velocity — items below their reorder point" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 text-brand font-bold text-sm px-4 py-2.5 rounded-xl transition">
+            <button onClick={buildSuggestedPo} disabled={suggesting} title="Auto-draft a PO from sales velocity - items below their reorder point" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 text-brand font-bold text-sm px-4 py-2.5 rounded-xl transition">
               {suggesting ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} Suggested PO
             </button>
             <button onClick={openNewForm} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
@@ -524,7 +524,7 @@ export default function ProcurementTab({ ctx }) {
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] font-bold text-amber-400/70 uppercase tracking-wider">Receive rest in Receiving tab</span>
                   {canManage && (
-                    <button onClick={() => setStatus(po, 'Cancelled')} title="Cancel the outstanding balance — already-received stock is unaffected" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-white/40 hover:bg-red-500/15 hover:text-red-300 transition">Cancel rest</button>
+                    <button onClick={() => setStatus(po, 'Cancelled')} title="Cancel the outstanding balance - already-received stock is unaffected" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-white/40 hover:bg-red-500/15 hover:text-red-300 transition">Cancel rest</button>
                   )}
                 </div>
               );
@@ -611,7 +611,7 @@ export default function ProcurementTab({ ctx }) {
                 return (
                 <div className="border-t border-white/10 p-4 space-y-3 bg-black/20">
                   <p className="text-[11px] font-black uppercase tracking-wider text-white/40">
-                    {po.status === 'Incomplete' ? 'Outstanding items only — enter what just arrived' : 'Enter actual quantities received'}
+                    {po.status === 'Incomplete' ? 'Outstanding items only - enter what just arrived' : 'Enter actual quantities received'}
                   </p>
                   {missingLines.length === 0 ? (
                     <p className="text-white/40 text-sm font-bold py-2">Nothing outstanding on this PO.</p>
@@ -676,7 +676,7 @@ export default function ProcurementTab({ ctx }) {
                       yet, so the picker is discoverable even before any supplier is saved. */}
                   <select value={form.supplierId} onChange={e => { if (e.target.value === '__new__') openSupplierForm(null, true); else pickSupplier(e.target.value); }} className={`${inputCls} mb-1.5`}>
                     <option value="">
-                      {suppliers.length > 0 ? '— Pick a saved supplier (or type below) —' : '— No saved suppliers yet (type below, or add one) —'}
+                      {suppliers.length > 0 ? '- Pick a saved supplier (or type below) -' : '- No saved suppliers yet (type below, or add one) -'}
                     </option>
                     {suppliers.filter(s => s.isActive !== false).map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
                     <option value="__new__">+ Add new supplier…</option>
@@ -897,7 +897,7 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
                           <tr key={l._id || i} className="border-t border-white/5">
                             <td className="py-1.5 font-bold text-white/80">{l.itemName}</td>
                             <td className="py-1.5 text-right">{l.orderedQty} {l.unit}</td>
-                            {showReceived && <td className={`py-1.5 text-right font-bold ${short ? 'text-red-300' : 'text-green-300'}`}>{l.receivedQty ?? '—'} {l.unit}</td>}
+                            {showReceived && <td className={`py-1.5 text-right font-bold ${short ? 'text-red-300' : 'text-green-300'}`}>{l.receivedQty ?? '-'} {l.unit}</td>}
                             <td className="py-1.5 text-right">{money(l.unitCost)}</td>
                             <td className="py-1.5 text-right">{money((showReceived && l.receivedQty != null ? l.receivedQty : l.orderedQty) * l.unitCost)}</td>
                           </tr>

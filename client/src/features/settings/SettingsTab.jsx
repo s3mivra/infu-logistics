@@ -113,7 +113,7 @@ export default function SettingsTab({ ctx }) {
               {BUSINESS_TYPE.toUpperCase()}
             </span>
           </SettingRow>
-          <SettingRow icon={ShieldCheck} title="Signed in as" desc={`${activeAdmin?.name || '—'} · ${activeAdmin?.role || '—'}`} tone="muted">
+          <SettingRow icon={ShieldCheck} title="Signed in as" desc={`${activeAdmin?.name || '-'} · ${activeAdmin?.role || '-'}`} tone="muted">
             <span />
           </SettingRow>
         </Card>

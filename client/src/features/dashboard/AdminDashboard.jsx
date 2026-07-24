@@ -5708,7 +5708,7 @@ const updateStatus = async (orderId, newStatus) => {
                           {r.itemCode && <span className="text-white/30 font-mono text-[10px] mr-1.5">{r.itemCode}</span>}
                           {r.itemName || <span className="text-red-300">(missing)</span>}
                           {r._needsSize && (
-                            <span title="No unit/size found in the name or a Unit column — imported as pcs. Edit the item afterward to set its real size." className="ml-1.5 text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1.5 py-0.5 rounded uppercase align-middle">SET SIZE</span>
+                            <span title="No unit/size found in the name or a Unit column - imported as pcs. Edit the item afterward to set its real size." className="ml-1.5 text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1.5 py-0.5 rounded uppercase align-middle">SET SIZE</span>
                           )}
                           {isBatch && r.expiryDate && <span className="ml-1.5 text-purple-300/60 text-[10px]">exp {r.expiryDate}</span>}
                         </td>
