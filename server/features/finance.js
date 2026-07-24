@@ -182,13 +182,25 @@ export default function registerFinance(ctx) {
   const canPostAcct = [requireStaff, requirePermission('accounting.manage')];
 
 // Accounting Ledger / Journal Entries — requires accounting.view (superadmin/finance/admin)
+// Sorted by transaction `date` (chronological ledger, not entry-order) — so a
+// BACKDATED entry sorts below every more-recent one and can fall off the
+// default page entirely once there are more entries than the page size. The
+// UI's initial load has no way to reach it without either raising the limit
+// or searching — `search` (reference/description, case-insensitive) lets any
+// entry be found regardless of how far back its date sorts it.
 app.get('/api/journal', verifyToken, ...canViewAcct, async (req, res) => {
   try {
     const pageNum = Math.max(1, parseInt(req.query.page) || 1);
-    const pageSize = Math.min(100, parseInt(req.query.limit) || 50);
+    const pageSize = Math.min(500, parseInt(req.query.limit) || 50);
+    const q = {};
+    const search = String(req.query.search || '').trim();
+    if (search) {
+      const rx = { $regex: escapeRegex(search), $options: 'i' };
+      q.$or = [{ reference: rx }, { description: rx }];
+    }
     const [entries, total] = await Promise.all([
-      JournalEntry.find().sort({ date: -1 }).skip((pageNum - 1) * pageSize).limit(pageSize).lean(),
-      JournalEntry.countDocuments()
+      JournalEntry.find(q).sort({ date: -1 }).skip((pageNum - 1) * pageSize).limit(pageSize).lean(),
+      JournalEntry.countDocuments(q)
     ]);
     res.json({ success: true, entries, total, page: pageNum, pages: Math.ceil(total / pageSize) });
   } catch (err) {

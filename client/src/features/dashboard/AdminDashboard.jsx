@@ -527,6 +527,10 @@ export default function AdminDashboard() {
   // NEW: Accounting Pagination
   const [accountingPage, setAccountingPage] = useState(1);
   const accountingItemsPerPage = 8; // Journal entries are tall, 10 is good
+  // Journal is sorted by transaction date (chronological ledger) and only the
+  // most recent ~500 are fetched — a backdated entry needs to be findable by
+  // reference/description regardless of how far back its date sorts it.
+  const [journalSearch, setJournalSearch] = useState('');
 
   // NEW: Pricing Pagination
   const [pricingPage, setPricingPage] = useState(1);
@@ -845,7 +849,10 @@ export default function AdminDashboard() {
 
       const isSuperAdmin = activeAdmin?.role === 'superadmin';
       if (isSuperAdmin) {
-        const jeRes = await apiFetch(`/api/journal`);
+        // limit=500 (server max) — the default 50 sorts by transaction date, so
+        // a BACKDATED entry (old date) can fall off the page entirely once
+        // there are 50+ more-recent entries, looking like it was never posted.
+        const jeRes = await apiFetch(`/api/journal?limit=500`);
         if (jeRes.ok) setJournalEntries((await jeRes.json()).entries || []);
 
         const balRes = await apiFetch(`/api/finance/balances`);
@@ -4546,11 +4553,15 @@ const updateStatus = async (orderId, newStatus) => {
   const totalOrdersPages = Math.ceil(displayOrders.length / ordersItemsPerPage);
 
   // --- ACCOUNTING PAGINATION MATH ---
+  const journalSearchQ = journalSearch.trim().toLowerCase();
+  const filteredJournalEntries = journalSearchQ
+    ? journalEntries.filter(e => e.reference?.toLowerCase().includes(journalSearchQ) || e.description?.toLowerCase().includes(journalSearchQ))
+    : journalEntries;
   const indexOfLastEntry = accountingPage * accountingItemsPerPage;
   const indexOfFirstEntry = indexOfLastEntry - accountingItemsPerPage;
 
-  const currentEntries = journalEntries.slice(indexOfFirstEntry, indexOfLastEntry);
-  const totalAccountingPages = Math.ceil(journalEntries.length / accountingItemsPerPage);
+  const currentEntries = filteredJournalEntries.slice(indexOfFirstEntry, indexOfLastEntry);
+  const totalAccountingPages = Math.ceil(filteredJournalEntries.length / accountingItemsPerPage);
 
   // --- PRICING PAGINATION MATH ---
   const indexOfLastPricing = pricingPage * pricingItemsPerPage;
@@ -4929,7 +4940,7 @@ const updateStatus = async (orderId, newStatus) => {
     scpwdOpen, setScpwdOpen,
     isStatusMenuOpen, setIsStatusMenuOpen,
     // ── Ledger pagination ────────────────────────────────────────────────────
-    accountingPage, setAccountingPage, accountingItemsPerPage,
+    accountingPage, setAccountingPage, accountingItemsPerPage, journalSearch, setJournalSearch,
     setRfTxs,
   };
 

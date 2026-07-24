@@ -148,6 +148,40 @@ describe('void variants', () => {
   });
 });
 
+describe('backdated sale posts a real, balanced, findable journal entry', () => {
+  it('creates a Completed order dated in the past AND a matching journal entry (DR cash / CR Sales Revenue)', async () => {
+    const res = await req('post', '/api/admin/backdate-sale', T.super)
+      .send({ date: '2020-06-01', amount: 250, paymentMethod: 'Cash', customerName: 'Walk-in', notes: 'paper receipt #1' });
+    expect(res.status).toBe(200);
+    expect(res.body.journalReference).toMatch(/^BACKDATE-/);
+
+    const order = await mongoose.model('Order').findById(res.body.order._id).lean();
+    expect(order.isBackdated).toBe(true);
+    expect(new Date(order.createdAt).toISOString().slice(0, 10)).toBe('2020-06-01');
+
+    const je = await mongoose.model('JournalEntry').findOne({ reference: res.body.journalReference }).lean();
+    expect(je).toBeTruthy();
+    expect(je.totalDebit).toBeCloseTo(250, 2);
+    expect(je.totalCredit).toBeCloseTo(250, 2);
+    const codes = je.lines.map(l => l.accountCode);
+    expect(codes).toContain('111000'); // Cash on Hand debited
+    expect(codes).toContain('410000'); // Sales Revenue credited
+  });
+
+  it('GET /api/journal?search finds a backdated entry regardless of how far back its date sorts it', async () => {
+    const posted = await req('post', '/api/admin/backdate-sale', T.super)
+      .send({ date: '2019-01-01', amount: 99, paymentMethod: 'Cash' });
+    const ref = posted.body.journalReference;
+
+    const found = await req('get', `/api/journal?search=${ref}`, T.super);
+    expect(found.status).toBe(200);
+    expect(found.body.entries.some(e => e.reference === ref)).toBe(true);
+
+    const notFound = await req('get', '/api/journal?search=NoSuchReferenceXYZ', T.super);
+    expect(notFound.body.entries.length).toBe(0);
+  });
+});
+
 describe('purchase-order report reflects usage from completed orders', () => {
   it('returns suggested-order lines after a recipe sale', async () => {
     const o = await mkOrder({ ...line('productId'), paymentMethod: 'Cash' });

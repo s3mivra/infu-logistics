@@ -18,6 +18,7 @@ export default function LedgerTab({ ctx }) {
   const {
     API_URL, AUDIT_PAGE_SIZE, BIZ_NAME, COMP_REASON_LABELS, FRONTEND_URL,
     HIST_PAGE_SIZE, POS_PER_PAGE, SHIFT_HIST_PAGE_SIZE, accountingItemsPerPage, accountingPage,
+    journalSearch, setJournalSearch,
     activeAdmin, activeInventoryItem, activeTab, addInventory, addMaterialToRecipe,
     addOnForm, addSize, analyticsData, analyticsLoading, apiFetch,
     applyComplimentary, applyDiscount, applyItemDiscount, arOutstanding, archiveDay,
@@ -532,12 +533,30 @@ export default function LedgerTab({ ctx }) {
                 Export Ledger
               </button>
             </div>
+            {/* Sorted by transaction date, not entry order — a backdated entry
+                sorts below everything more recent and can be hard to spot by
+                scrolling. Search by reference or description finds it directly. */}
+            <div className="relative mb-4">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+              <input type="text" placeholder="Search by reference or description (e.g. BACKDATE, order #)…"
+                value={journalSearch} onChange={e => { setJournalSearch(e.target.value); setAccountingPage(1); }}
+                className="w-full bg-page-bg border border-gray-700 rounded-lg pl-9 pr-9 py-2 text-sm text-white placeholder-gray-500 outline-none focus:border-accent" />
+              {journalSearch && (
+                <button onClick={() => setJournalSearch('')} aria-label="Clear search" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white transition">
+                  <X size={14} />
+                </button>
+              )}
+            </div>
             <div className="space-y-4">
               {currentEntries.length === 0 && (
                 <div className="py-14 px-6 text-center border border-dashed border-white/10 rounded-xl">
                   <FileText size={26} className="mx-auto mb-3 text-brand/50" />
-                  <p className="text-white/70 font-black uppercase tracking-widest text-xs mb-1">No journal entries yet</p>
-                  <p className="text-white/35 text-xs">Every sale, expense, and restock posts here automatically; you can also post one manually on the left.</p>
+                  <p className="text-white/70 font-black uppercase tracking-widest text-xs mb-1">
+                    {journalSearch ? 'No matching entries' : 'No journal entries yet'}
+                  </p>
+                  <p className="text-white/35 text-xs">
+                    {journalSearch ? 'Try a different reference or description.' : 'Every sale, expense, and restock posts here automatically; you can also post one manually on the left.'}
+                  </p>
                 </div>
               )}
               {currentEntries.map(entry => (
