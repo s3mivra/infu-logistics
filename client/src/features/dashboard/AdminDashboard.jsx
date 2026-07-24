@@ -2734,6 +2734,13 @@ const updateStatus = async (orderId, newStatus) => {
           unit = hintedUnit;
         }
 
+        // Nothing to go on — no Unit column, no parseable size in the name. Don't
+        // drop the row: default to pcs (no per-pack conversion needed) so the item
+        // still gets created/updated, and flag it so it's clearly marked "SET SIZE"
+        // for the user to fix later, same badge already used in the inventory list.
+        const needsSize = !unit;
+        if (needsSize) unit = 'pcs';
+
         const exp = lower['expiry date'] || lower['expiry'] || lower['expirydate'] || '';
         const expStr = exp === '' || exp == null ? '' : String(exp).trim();
 
@@ -2761,6 +2768,10 @@ const updateStatus = async (orderId, newStatus) => {
           // Per-qty (pack) size parsed from the name, e.g. "Milk 1L" → packSize 1.
           // null when the name carried no size hint (nothing to persist).
           packSize: sizeMatch ? packSizeInDisplay : null,
+          // No unit/size could be determined anywhere — imported as pcs, but flagged
+          // so the preview (and later the inventory list's SET SIZE badge) tells the
+          // user this item still needs its real size added.
+          _needsSize: needsSize,
         };
       };
 
@@ -2779,12 +2790,6 @@ const updateStatus = async (orderId, newStatus) => {
           return { ...r, _error: 'Missing itemName' };
         }
         r.category = currentCategory;
-        // No unit could be determined — neither a Unit column nor a parseable size
-        // suffix on the name (e.g. "1KG"). Flag it instead of silently dropping it:
-        // rows like this used to vanish from the import with zero indication.
-        if (!r.displayUnit) {
-          return { ...r, _error: 'Missing Unit — add a size to the name (e.g. "1KG") or fill the Unit column' };
-        }
         const existing = inventory.find(inv =>
           (r.itemCode && inv.itemCode && inv.itemCode === r.itemCode) ||
           inv.itemName.toLowerCase() === r.itemName.toLowerCase()
@@ -5688,6 +5693,9 @@ const updateStatus = async (orderId, newStatus) => {
                         <td className="px-4 py-2.5 text-white font-bold">
                           {r.itemCode && <span className="text-white/30 font-mono text-[10px] mr-1.5">{r.itemCode}</span>}
                           {r.itemName || <span className="text-red-300">(missing)</span>}
+                          {r._needsSize && (
+                            <span title="No unit/size found in the name or a Unit column — imported as pcs. Edit the item afterward to set its real size." className="ml-1.5 text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1.5 py-0.5 rounded uppercase align-middle">SET SIZE</span>
+                          )}
                           {isBatch && r.expiryDate && <span className="ml-1.5 text-purple-300/60 text-[10px]">exp {r.expiryDate}</span>}
                         </td>
                         <td className="px-2 py-2.5">
