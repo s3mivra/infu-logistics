@@ -1020,6 +1020,11 @@ const InventorySchema = new mongoose.Schema({
   // Display layer — what operators see (kg / L / pcs). storage stays in base units for recipe precision.
   displayUnit:     { type: String, default: '' },     // 'L', 'kg', 'pcs', 'g', 'ml' — falls back to `unit` when empty
   unitMultiplier:  { type: Number, default: 1 },      // base units per displayUnit (1 for g/ml/pcs; 1000 for L/kg)
+  // Per-qty (pack) size, in displayUnit — how much ONE purchased unit/pack holds,
+  // e.g. 1 for "Milk 1L", 0.25 for "Filter 250G". Distinct from unitMultiplier
+  // (the fixed kg/L↔g/ml conversion factor): this is the SKU's own package size,
+  // parsed from the item name on import or entered manually. null = not tracked.
+  packSize:        { type: Number, default: null },
   // Suggested Retail Price (per displayUnit) — optional reference for items intended for resale.
   srp:             { type: Number, default: 0 },
   // Expiry monitoring — multi-batch (FEFO)

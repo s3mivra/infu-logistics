@@ -616,7 +616,7 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
     // Whitelist editable fields — stockQty must NEVER be edited here
     // (would bypass StockCard audit trail and double-entry accounting).
     // Stock changes go through restock / spoilage / order-completion flows.
-    const allowed = ['itemName', 'unit', 'unitCost', 'lowStockThreshold', 'expiryDate', 'expiryWarnDays', 'displayUnit', 'unitMultiplier', 'srp'];
+    const allowed = ['itemName', 'unit', 'unitCost', 'lowStockThreshold', 'expiryDate', 'expiryWarnDays', 'displayUnit', 'unitMultiplier', 'srp', 'packSize'];
     const update = {};
     for (const k of allowed) if (k in req.body) update[k] = req.body[k];
 
@@ -638,6 +638,10 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
       update.unitCost = n;
     }
     if ('lowStockThreshold' in update) update.lowStockThreshold = Math.max(0, parseFloat(update.lowStockThreshold) || 0);
+    if ('packSize' in update) {
+      const n = parseFloat(update.packSize);
+      update.packSize = (update.packSize === null || update.packSize === '' || Number.isNaN(n) || n <= 0) ? null : n;
+    }
     if ('expiryWarnDays' in update)    update.expiryWarnDays    = Math.max(1, parseInt(update.expiryWarnDays) || 7);
     if ('expiryDate' in update) {
       if (update.expiryDate === null || update.expiryDate === '') update.expiryDate = null;
@@ -869,6 +873,20 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       const qty = parseFloat(row.qty);
       const unitCostFromExcel = row.unitCost !== undefined && row.unitCost !== '' ? parseFloat(row.unitCost) : null;
       const expiryFromExcel = row.expiryDate || row.expiry || null;
+      // Per-qty (pack) size in displayUnit, e.g. "Milk 1L" → itemName "Milk", unit L,
+      // packSize 1. The client pre-parses the size out of the product name and sends
+      // it here; if a caller sends the raw unparsed name instead, fall back to
+      // parsing it here so the size is never silently dropped.
+      let packSizeFromExcel = row.packSize !== undefined && row.packSize !== '' ? parseFloat(row.packSize) : null;
+      if (packSizeFromExcel == null || Number.isNaN(packSizeFromExcel)) {
+        const m = itemName.match(/\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|l|ml|pcs|pc)\s*$/i);
+        if (m) {
+          const raw = parseFloat(m[1]);
+          const u = m[2].toLowerCase();
+          packSizeFromExcel = (u === 'g' || u === 'ml') ? raw / 1000 : raw; // → kg / L
+        }
+      }
+      if (packSizeFromExcel != null && (Number.isNaN(packSizeFromExcel) || packSizeFromExcel <= 0)) packSizeFromExcel = null;
 
       if (!itemName) { summary.errors.push(`Row ${i+1}: missing Product name`); continue; }
       if (!displayUnit) { summary.errors.push(`Row ${i+1} (${itemName}): missing Unit`); continue; }
@@ -920,6 +938,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         existing.displayUnit = displayUnit;
         existing.unitMultiplier = mult;
         if (baseUnit) existing.unit = baseUnit;
+        if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
 
         // Expiry batches:
         //  - If Excel row carries an expiry: append it as a new batch with the +diff qty (only if diff > 0).
@@ -1016,6 +1035,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           lowStockThreshold: 0,
           displayUnit,
           unitMultiplier: mult,
+          packSize: packSizeFromExcel,
           expiryBatches: initialBatches,
           expiryDate: soonestExpiry(initialBatches),
           businessType: BUSINESS_TYPE,

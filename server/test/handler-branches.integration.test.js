@@ -203,6 +203,58 @@ describe('log inventory import creates the linked product', () => {
   });
 });
 
+describe('inventory import persists per-qty (pack) size', () => {
+  it('accepts an explicit packSize from the client and stores it on create', async () => {
+    const res = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'PACK-1', itemName: 'Milk', qty: 10, unit: 'L', unitCost: 200, packSize: 1 }],
+    });
+    expect(res.status).toBe(200);
+    const item = await mongoose.model('Inventory').findOne({ itemCode: 'PACK-1' }).lean();
+    expect(item.packSize).toBe(1);
+  });
+
+  it('updates packSize on a re-import of an existing item', async () => {
+    const res = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'PACK-1', itemName: 'Milk', qty: 20, unit: 'L', unitCost: 200, packSize: 2 }],
+    });
+    expect(res.status).toBe(200);
+    const item = await mongoose.model('Inventory').findOne({ itemCode: 'PACK-1' }).lean();
+    expect(item.packSize).toBe(2);
+  });
+
+  it('falls back to parsing a trailing size off the item name when packSize is omitted', async () => {
+    const res = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'PACK-2', itemName: 'Filter 250G', qty: 5, unit: 'kg', unitCost: 100 }],
+    });
+    expect(res.status).toBe(200);
+    const item = await mongoose.model('Inventory').findOne({ itemCode: 'PACK-2' }).lean();
+    expect(item.packSize).toBeCloseTo(0.25, 5); // 250g → 0.25 kg
+  });
+
+  it('leaves packSize null when there is nothing to infer', async () => {
+    const res = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'PACK-3', itemName: 'Loose Rice', qty: 5, unit: 'kg', unitCost: 60 }],
+    });
+    expect(res.status).toBe(200);
+    const item = await mongoose.model('Inventory').findOne({ itemCode: 'PACK-3' }).lean();
+    expect(item.packSize).toBeNull();
+  });
+});
+
+describe('editing an inventory item can set/clear packSize', () => {
+  it('PUT /api/inventory/:id accepts and persists packSize', async () => {
+    const Inventory = mongoose.model('Inventory');
+    const item = await Inventory.create({ itemCode: 'EDIT-PACK-1', itemName: 'Edit Pack Good', stockQty: 100, unit: 'pcs', unitCost: 5, displayUnit: 'pcs', unitMultiplier: 1 });
+    const res = await put(`/api/inventory/${item._id}`, superTok, { itemName: 'Edit Pack Good', unit: 'pcs', unitCost: 5, packSize: 1.5 });
+    expect(res.status).toBe(200);
+    expect(res.body.item.packSize).toBe(1.5);
+
+    const cleared = await put(`/api/inventory/${item._id}`, superTok, { itemName: 'Edit Pack Good', unit: 'pcs', unitCost: 5, packSize: '' });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.item.packSize).toBeNull();
+  });
+});
+
 describe('inventory import is tenant-scoped (no cross-businessType clobber)', () => {
   it('a log import never matches or overwrites an fb-owned row of the same code', async () => {
     const Inventory = mongoose.model('Inventory');

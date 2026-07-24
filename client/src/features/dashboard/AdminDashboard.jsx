@@ -186,7 +186,7 @@ export default function AdminDashboard() {
   const [invForm, setInvForm] = useState({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000' });
   // --- INVENTORY EDIT MODAL ---
   const [editInvModal, setEditInvModal] = useState(null);   // { item } | null
-  const [editInvForm, setEditInvForm] = useState({ itemName: '', unit: '', unitCost: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, displayUnit: '' });
+  const [editInvForm, setEditInvForm] = useState({ itemName: '', unit: '', unitCost: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, displayUnit: '', packSize: '' });
   const [editInvSubmitting, setEditInvSubmitting] = useState(false);
   // --- BULK EXCEL IMPORT ---
   const [importModal, setImportModal] = useState(false);
@@ -2527,7 +2527,8 @@ const updateStatus = async (orderId, newStatus) => {
         expiryDate: invForm.expiryDate || null,
         expiryWarnDays: parseInt(invForm.expiryWarnDays) || 7,
         displayUnit: invForm.unit,
-        unitMultiplier: mult
+        unitMultiplier: mult,
+        packSize: invFormEff.unitPerPack ? parseFloat(invFormEff.unitPerPack) : null,
       };
 
       payload.creditAccount = invForm.creditAccount || '111000';
@@ -2742,6 +2743,9 @@ const updateStatus = async (orderId, newStatus) => {
           unitCost,
           expiryDate: expStr,
           srp,
+          // Per-qty (pack) size parsed from the name, e.g. "Milk 1L" → packSize 1.
+          // null when the name carried no size hint (nothing to persist).
+          packSize: sizeMatch ? packSizeInDisplay : null,
         };
       };
 
@@ -2815,6 +2819,7 @@ const updateStatus = async (orderId, newStatus) => {
           expiryDate: r.expiryDate || undefined,
           category: r.category || undefined,
           srp: r.srp === '' || r.srp === undefined ? undefined : r.srp,
+          packSize: r.packSize == null ? undefined : r.packSize,
         }))
       };
       const res = await apiFetch('/api/inventory/import', {
@@ -2864,7 +2869,8 @@ const updateStatus = async (orderId, newStatus) => {
       lowStockThreshold: ((item.lowStockThreshold || 0) / costBasis).toString(),    // base → packages (log) / display (fb)
       expiryDate: item.expiryDate ? new Date(item.expiryDate).toISOString().slice(0, 10) : '',
       expiryWarnDays: item.expiryWarnDays || 7,
-      displayUnit: eff.unit
+      displayUnit: eff.unit,
+      packSize: item.packSize != null ? String(item.packSize) : ''
     });
     setEditInvModal({ item });
   };
@@ -2895,7 +2901,8 @@ const updateStatus = async (orderId, newStatus) => {
         expiryWarnDays: Math.max(1, parseInt(editInvForm.expiryWarnDays) || 7),
         expiryDate: editInvForm.expiryDate ? new Date(editInvForm.expiryDate).toISOString() : null,
         displayUnit: editInvForm.displayUnit || editInvForm.unit,
-        unitMultiplier: mult
+        unitMultiplier: mult,
+        packSize: editInvForm.packSize === '' ? null : parseFloat(editInvForm.packSize),
       };
       const res = await apiFetch(`/api/inventory/${editInvModal.item._id}`, {
         method: 'PUT',
@@ -5784,6 +5791,12 @@ const updateStatus = async (orderId, newStatus) => {
                     className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold tabular-nums outline-none focus:border-brand/60" />
                   <p className="text-[9px] text-yellow-400/70 mt-1">⚠ Will not retro-update existing COGS.</p>
                 </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Per-Qty Size ({editInvForm.displayUnit || editInvForm.unit || 'unit'} per pack, optional)</label>
+                <input type="number" min="0" step="any" placeholder="e.g. 1 for a 1L pack" value={editInvForm.packSize} onChange={e => setEditInvForm({...editInvForm, packSize: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold tabular-nums outline-none focus:border-brand/60" />
+                <p className="text-[10px] text-white/30 mt-1">How much one purchased pack/unit holds, e.g. "Milk 1L" → 1. Leave blank if not tracked.</p>
               </div>
               <div>
                 <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Low Stock Threshold ({BUSINESS_TYPE === 'log' ? 'pcs' : (editInvForm.displayUnit || editInvForm.unit || 'unit')})</label>
