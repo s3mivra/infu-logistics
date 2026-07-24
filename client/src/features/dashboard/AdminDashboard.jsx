@@ -842,7 +842,7 @@ export default function AdminDashboard() {
     fetchData();
   };
 
-  const fetchERPData = async () => {
+  const fetchERPData = async (journalSearchTerm) => {
     try {
       const invRes = await apiFetch(`/api/inventory`);
       if (invRes.ok) setInventory((await invRes.json()).items || []);
@@ -850,9 +850,15 @@ export default function AdminDashboard() {
       const isSuperAdmin = activeAdmin?.role === 'superadmin';
       if (isSuperAdmin) {
         // limit=500 (server max) — the default 50 sorts by transaction date, so
-        // a BACKDATED entry (old date) can fall off the page entirely once
-        // there are 50+ more-recent entries, looking like it was never posted.
-        const jeRes = await apiFetch(`/api/journal?limit=500`);
+        // an old-dated entry (e.g. a backdated sale) can fall off the page once
+        // there are 500+ more-recent entries. When the caller passes a search
+        // term, hit the server's own search (unbounded by date sort) instead of
+        // relying on whatever happens to be in this recent-500 window — the
+        // client-side filter over journalEntries can only ever find entries
+        // that were already fetched.
+        const q = (journalSearchTerm || '').trim();
+        const jeUrl = q ? `/api/journal?limit=500&search=${encodeURIComponent(q)}` : `/api/journal?limit=500`;
+        const jeRes = await apiFetch(jeUrl);
         if (jeRes.ok) setJournalEntries((await jeRes.json()).entries || []);
 
         const balRes = await apiFetch(`/api/finance/balances`);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
@@ -100,6 +100,21 @@ export default function LedgerTab({ ctx }) {
 
   // ── Stage 2 report views: self-contained fetches via ctx.apiFetch ──────────
   const money2 = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  // journalEntries only ever holds the 500 most recent-by-date entries, so an
+  // old-dated entry (e.g. a backdated sale) may not be in memory at all — no
+  // amount of client-side filtering can find it. Re-fetch from the server's
+  // own search whenever the ledger search box has a term, so the lookup isn't
+  // bounded by that recent-500 window. Debounced so it doesn't fire per keystroke.
+  const journalSearchMounted = useRef(false);
+  useEffect(() => {
+    if (!journalSearchMounted.current) { journalSearchMounted.current = true; return; }
+    const q = journalSearch.trim();
+    const t = setTimeout(() => { fetchERPData(q); }, q ? 350 : 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [journalSearch]);
+
   const [backfillBusy, setBackfillBusy] = useState(false);
   const runBackfillLedger = async () => {
     if (!window.confirm('Scan every backdated sale and post a journal entry for any that are missing one?')) return;

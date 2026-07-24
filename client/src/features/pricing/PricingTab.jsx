@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 
+const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+
 // ── PricingTab — extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function PricingTab({ ctx }) {
@@ -149,7 +151,7 @@ export default function PricingTab({ ctx }) {
                     <th className="pb-3 uppercase tracking-wider text-xs">Category</th>
                     <th className="pb-3 text-right uppercase tracking-wider text-xs">Size / Option</th>
                     <th className="pb-3 text-right uppercase tracking-wider text-xs">Selling Price</th>
-                    <th className="pb-3 text-right uppercase tracking-wider text-xs">Recipe Cost</th>
+                    <th className="pb-3 text-right uppercase tracking-wider text-xs">{BUSINESS_TYPE === 'log' ? 'Unit Cost' : 'Recipe Cost'}</th>
                     <th className="pb-3 text-right uppercase tracking-wider text-xs">Margin</th>
                     {isSuperAdmin && <th className="pb-3 text-center uppercase tracking-wider text-xs">Removed</th>}
                     {isSuperAdmin && <th className="pb-3 text-center uppercase tracking-wider text-xs">OOS</th>}
@@ -159,8 +161,9 @@ export default function PricingTab({ ctx }) {
                   {filteredSortedProducts.length === 0 ? (
                     <tr><td colSpan={isSuperAdmin ? 8 : 6} className="py-4 text-center text-gray-500">No products found.</td></tr>
                   ) : localProducts.flatMap(p => {
-                    // Recipe cost first; if absent, fall back to the 1:1 logistics cost
-                    // (linked inventory unitCost × pack base units from the name).
+                    // 1:1 logistics cost — no recipes in 'log' mode, so cost is
+                    // always the linked inventory item's unitCost × pack base
+                    // units from the name (e.g. "…500ML" against an ML-stocked item).
                     const PACK_RE = /(\d+(?:\.\d+)?)\s*(mg|kg|g|ml|cl|l|pcs|pc|pack|unit)\b/i;
                     const UNIT = { mg: 0.001, g: 1, kg: 1000, ml: 1, cl: 10, l: 1000, pcs: 1, pc: 1, pack: 1, unit: 1 };
                     const linkedCost = (prod) => {
@@ -171,13 +174,15 @@ export default function PricingTab({ ctx }) {
                       const packBase = m ? parseFloat(m[1]) * ((UNIT[m[2].toLowerCase()] || 1) / bf) : (inv.unitMultiplier || 1);
                       return (inv.unitCost || 0) * packBase;
                     };
-                    const baseCostCalc = calcRecipeCost(p.baseRecipe) || linkedCost(p);
+                    // Recipe cost only applies in F&B mode (BOM-based products).
+                    // Logistics products have no recipe — go straight to inventory.
+                    const baseCostCalc = BUSINESS_TYPE === 'log' ? linkedCost(p) : (calcRecipeCost(p.baseRecipe) || linkedCost(p));
                     const baseCost = p.costOverride != null ? p.costOverride : baseCostCalc;
                     // We now track the exact productId and sizeIndex so the backend knows what to update
                     const rows = [{ id: `${p._id}-base`, productId: p._id, sizeIndex: null, name: p.name, cat: p.category, size: p.baseSize || 'Regular', price: p.basePrice || p.price || 0, cost: baseCost, hasOverride: p.costOverride != null, isBase: true, product: p }];
                     if (p.sizes) {
                       p.sizes.forEach((s, idx) => {
-                        const szCostCalc = calcRecipeCost(s.recipe?.length ? s.recipe : p.baseRecipe) || baseCostCalc;
+                        const szCostCalc = BUSINESS_TYPE === 'log' ? baseCostCalc : (calcRecipeCost(s.recipe?.length ? s.recipe : p.baseRecipe) || baseCostCalc);
                         const szCost = s.costOverride != null ? s.costOverride : szCostCalc;
                         rows.push({ id: `${p._id}-size-${idx}`, productId: p._id, sizeIndex: idx, name: '', cat: '', size: s.name, price: s.price, cost: szCost, hasOverride: s.costOverride != null, isBase: false, product: p });
                       });
