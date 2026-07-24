@@ -100,6 +100,21 @@ export default function LedgerTab({ ctx }) {
 
   // ── Stage 2 report views: self-contained fetches via ctx.apiFetch ──────────
   const money2 = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const runBackfillLedger = async () => {
+    if (!window.confirm('Scan every backdated sale and post a journal entry for any that are missing one?')) return;
+    setBackfillBusy(true);
+    try {
+      const r = await apiFetch('/api/admin/backdate-sale/backfill-ledger', { method: 'POST', body: JSON.stringify({}) });
+      const d = await r.json();
+      if (d.success) {
+        alert(`Scanned ${d.scanned}. Already linked: ${d.alreadyLinked}. Posted: ${d.created.length}.${d.failed.length ? ` Failed: ${d.failed.length} (see console).` : ''}`);
+        if (d.failed.length) console.error('backfill-ledger failures', d.failed);
+        if (d.created.length) fetchERPData();
+      } else alert(d.error || 'Backfill failed.');
+    } catch { alert('Network error.'); }
+    finally { setBackfillBusy(false); }
+  };
   const [tb, setTb] = useState(null);
   const [tbLoading, setTbLoading] = useState(false);
   const loadTrial = async () => {
@@ -2111,6 +2126,14 @@ export default function LedgerTab({ ctx }) {
                     {backdateBusy ? 'Posting…' : 'Record Backdated Sale'}
                   </button>
                   <p className="text-[10px] text-white/40">Period locks are enforced - if the chosen month is closed, the post is rejected with a 423.</p>
+
+                  <div className="border-t border-white/8 pt-3 mt-1">
+                    <button onClick={runBackfillLedger} disabled={backfillBusy}
+                      className="w-full bg-page-bg border border-white/10 text-white font-black py-2.5 rounded-lg uppercase tracking-widest text-xs hover:border-brand/60 transition disabled:opacity-50">
+                      {backfillBusy ? 'Scanning…' : 'Repair Missing Ledger Entries'}
+                    </button>
+                    <p className="text-[10px] text-white/40 mt-1.5">One-time fix for backdated sales that show up in reports but have no journal entry (an old bug). Safe to run more than once - already-linked sales are skipped.</p>
+                  </div>
                 </div>
               )}
             </div>

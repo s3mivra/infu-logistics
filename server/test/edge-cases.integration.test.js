@@ -182,6 +182,42 @@ describe('backdated sale posts a real, balanced, findable journal entry', () => 
   });
 });
 
+describe('backfill-ledger repairs backdated orders left without a journal entry', () => {
+  it('posts the missing entry for an orphaned order and leaves already-linked ones alone', async () => {
+    // Simulates what the pre-transaction bug could leave behind: the Order
+    // write succeeded but no JournalEntry was ever created for it.
+    const Order = mongoose.model('Order');
+    const orphan = await Order.create({
+      orderNumber: 'ORD-BF-TEST-1', table: 'Backdated', status: 'Completed',
+      createdAt: new Date('2021-03-01'), cashier: 'Backdated Entry', customerName: 'Walk-in (backdated)',
+      paymentMethod: 'Cash', items: [{ name: 'Historical Sale', price: 500, quantity: 1, productDiscountPercent: 0 }],
+      subtotal: 500, discount: 0, vatAmount: 0, vatRate: 0, total: 500, isVatExempt: true,
+      transactionType: 'NORMAL', isBackdated: true,
+    });
+
+    const linked = await req('post', '/api/admin/backdate-sale', T.super)
+      .send({ date: '2021-04-01', amount: 300, paymentMethod: 'Cash' });
+    expect(linked.status).toBe(200);
+    const linkedOrderNumber = linked.body.order.orderNumber;
+
+    const res = await req('post', '/api/admin/backdate-sale/backfill-ledger', T.super).send({});
+    expect(res.status).toBe(200);
+    expect(res.body.created.some(c => c.orderNumber === 'ORD-BF-TEST-1')).toBe(true);
+    expect(res.body.created.find(c => c.orderNumber === 'ORD-BF-TEST-1').amount).toBe(500);
+    // The properly-linked order created just above must NOT be re-posted.
+    expect(res.body.created.some(c => c.orderNumber === linkedOrderNumber)).toBe(false);
+
+    const je = await mongoose.model('JournalEntry').findOne({ description: /^Backdated sale: ORD-BF-TEST-1/ }).lean();
+    expect(je).toBeTruthy();
+    expect(je.totalDebit).toBeCloseTo(500, 2);
+    expect(je.totalCredit).toBeCloseTo(500, 2);
+
+    // Re-running is a no-op for the order just backfilled.
+    const rerun = await req('post', '/api/admin/backdate-sale/backfill-ledger', T.super).send({});
+    expect(rerun.body.created.some(c => c.orderNumber === 'ORD-BF-TEST-1')).toBe(false);
+  });
+});
+
 describe('purchase-order report reflects usage from completed orders', () => {
   it('returns suggested-order lines after a recipe sale', async () => {
     const o = await mkOrder({ ...line('productId'), paymentMethod: 'Cash' });

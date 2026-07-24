@@ -357,4 +357,57 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
 });
+
+// One-off repair for orders created by the old (pre-transaction) backdate-sale
+// route: the Order write could succeed while the JournalEntry write failed or
+// was never reached, leaving a sale that shows in reports but has no ledger
+// entry. Finds every isBackdated order lacking its "Backdated sale: <orderNumber>"
+// journal entry and posts the missing one, using the order's own snapshot
+// (paymentMethod/total/createdAt) so the entry matches what would have been
+// posted at the time. Safe to re-run — already-linked orders are skipped.
+app.post('/api/admin/backdate-sale/backfill-ledger', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const orphans = await Order.find({ isBackdated: true }).lean();
+    const results = { scanned: orphans.length, alreadyLinked: 0, created: [], failed: [] };
+
+    for (const order of orphans) {
+      const rx = new RegExp(`^Backdated sale: ${escapeRegex(order.orderNumber)}(\\s|$|\\()`);
+      const existing = await JournalEntry.findOne({ description: rx }).lean();
+      if (existing) { results.alreadyLinked++; continue; }
+
+      const session = await mongoose.startSession();
+      session.startTransaction();
+      try {
+        const amt = order.total;
+        const method = order.paymentMethod || 'Cash';
+        const acct = accountForPaymentMethod(method);
+        const reference = await mkSeqRef('BACKDATE');
+        await JournalEntry.create([{
+          date: order.createdAt,
+          reference,
+          description: `Backdated sale: ${order.orderNumber} (ledger backfill)`,
+          lines: [
+            { accountCode: acct.code, accountName: acct.name, debit: amt, credit: 0 },
+            { accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: amt },
+          ],
+          totalDebit: amt,
+          totalCredit: amt,
+        }], { session });
+        await session.commitTransaction();
+        session.endSession();
+        results.created.push({ orderNumber: order.orderNumber, amount: amt, journalReference: reference });
+      } catch (err) {
+        await session.abortTransaction(); session.endSession();
+        results.failed.push({ orderNumber: order.orderNumber, error: err.message });
+      }
+    }
+
+    await logAudit(req, { action: 'backdate-sale-backfill-ledger', entity: 'JournalEntry', entityId: 'bulk', after: results });
+    if (results.created.length) emitToMgr('erpUpdated');
+    res.json({ success: true, ...results });
+  } catch (err) {
+    log.error?.({ err }, 'POST /api/admin/backdate-sale/backfill-ledger failed');
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
 }
