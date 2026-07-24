@@ -80,6 +80,7 @@ export default function PricingTab({ ctx }) {
 
   const [pricingSort, setPricingSort] = useState('az');
   const [pricingCatFilter, setPricingCatFilter] = useState('');
+  const [pricingSearch, setPricingSearch] = useState('');
   const [localPage, setLocalPage] = useState(1);
 
   const categoryOptions = useMemo(() => {
@@ -91,10 +92,12 @@ export default function PricingTab({ ctx }) {
   const filteredSortedProducts = useMemo(() => {
     let list = [...(products || [])];
     if (pricingCatFilter) list = list.filter(p => p.category === pricingCatFilter);
+    const q = pricingSearch.trim().toLowerCase();
+    if (q) list = list.filter(p => (p.name || '').toLowerCase().includes(q));
     if (pricingSort === 'az') list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     else if (pricingSort === 'za') list.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
     return list;
-  }, [products, pricingSort, pricingCatFilter]);
+  }, [products, pricingSort, pricingCatFilter, pricingSearch]);
 
   const localItemsPerPage = pricingItemsPerPage;
   const localTotalPages = Math.ceil(filteredSortedProducts.length / localItemsPerPage);
@@ -102,6 +105,7 @@ export default function PricingTab({ ctx }) {
 
   const handleSortChange = (val) => { setPricingSort(val); setLocalPage(1); };
   const handleCatChange = (val) => { setPricingCatFilter(val); setLocalPage(1); };
+  const handleSearchChange = (val) => { setPricingSearch(val); setLocalPage(1); };
 
   return (
         <div className="flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-180px)]">
@@ -112,6 +116,16 @@ export default function PricingTab({ ctx }) {
 
             {/* Filter bar */}
             <div className="flex flex-wrap gap-2 mb-4">
+              <div className="relative shrink-0">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Search product name…"
+                  value={pricingSearch}
+                  onChange={e => handleSearchChange(e.target.value)}
+                  className="bg-page-bg border border-gray-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white outline-none focus:border-accent w-full sm:w-56"
+                />
+              </div>
               <div className="flex rounded-lg overflow-hidden border border-gray-700 shrink-0">
                 <button onClick={() => handleSortChange('az')} className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition ${pricingSort === 'az' ? 'bg-accent text-white' : 'bg-page-bg text-gray-400 hover:text-white'}`}>A→Z</button>
                 <button onClick={() => handleSortChange('za')} className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition border-l border-gray-700 ${pricingSort === 'za' ? 'bg-accent text-white' : 'bg-page-bg text-gray-400 hover:text-white'}`}>Z→A</button>
