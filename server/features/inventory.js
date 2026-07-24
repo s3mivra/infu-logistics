@@ -898,13 +898,21 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         ? unitCostFromExcel / mult                            // convert ₱/displayUnit → ₱/baseUnit
         : null;
 
-      // Look up by itemCode first (more specific), then by case-insensitive name.
+      // Look up by itemCode when the row provides one; only fall back to a
+      // case-insensitive name match when it DOESN'T. Falling back to name-matching
+      // even after an itemCode miss is what caused two genuinely different SKUs
+      // that share a base name — e.g. "DK Blueberry 3kg" (code DKB-3) and
+      // "DK Blueberry 2.5kg" (code DKB-25) — to collide into a single item once
+      // the size suffix is stripped from both names down to "DK Blueberry". An
+      // itemCode on the row is an unambiguous identity claim: if nothing has that
+      // code yet, it's a NEW item, never a name-matched update of a different SKU.
       // MUST be scoped to this instance's businessType — otherwise a log import
       // matches (and overwrites) an fb-owned row of the same code/name, leaving the
       // stock stamped 'fb' (invisible to log, wrongly visible to fb) and vice-versa.
       let existing = null;
-      if (itemCode) existing = await Inventory.findOne({ itemCode, businessType: BUSINESS_TYPE }).session(session);
-      if (!existing) {
+      if (itemCode) {
+        existing = await Inventory.findOne({ itemCode, businessType: BUSINESS_TYPE }).session(session);
+      } else {
         existing = await Inventory.findOne({
           itemName: { $regex: new RegExp(`^${itemName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
           businessType: BUSINESS_TYPE,

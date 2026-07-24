@@ -241,6 +241,50 @@ describe('inventory import persists per-qty (pack) size', () => {
   });
 });
 
+describe('import never merges two different-itemCode SKUs by cleaned name', () => {
+  it('creates two distinct items when both provide an itemCode, even if their (post-size-strip) names match', async () => {
+    const Inventory = mongoose.model('Inventory');
+    // Simulates "DK Blueberry 3kg" (code DKB-3) and "DK Blueberry 2.5kg" (code
+    // DKB-25) — the client strips the size suffix from both, so both rows carry
+    // the same cleaned itemName "DK Blueberry". An itemCode miss must NEVER fall
+    // back to a name match, or the second row silently overwrites the first.
+    const r1 = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'DKB-3', itemName: 'DK Blueberry', qty: 25, unit: 'kg', unitCost: 100, packSize: 3 }],
+    });
+    expect(r1.status).toBe(200);
+    expect(r1.body.summary.created).toBe(1);
+
+    const r2 = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'DKB-25', itemName: 'DK Blueberry', qty: 0, unit: 'kg', unitCost: 100, packSize: 2.5 }],
+    });
+    expect(r2.status).toBe(200);
+    expect(r2.body.summary.created).toBe(1); // NOT "updated" — a genuinely new SKU
+
+    const item3kg = await Inventory.findOne({ itemCode: 'DKB-3' }).lean();
+    const item25kg = await Inventory.findOne({ itemCode: 'DKB-25' }).lean();
+    expect(item3kg).toBeTruthy();
+    expect(item25kg).toBeTruthy();
+    expect(item3kg._id.toString()).not.toBe(item25kg._id.toString());
+    expect(item3kg.stockQty).toBeGreaterThan(0); // 25kg, untouched by the second row
+    expect(item25kg.stockQty).toBe(0);
+  });
+
+  it('still name-matches when a row has NO itemCode at all', async () => {
+    const Inventory = mongoose.model('Inventory');
+    const r1 = await post('/api/inventory/import', superTok, {
+      items: [{ itemName: 'No Code Good', qty: 10, unit: 'kg', unitCost: 50 }],
+    });
+    expect(r1.body.summary.created).toBe(1);
+    const r2 = await post('/api/inventory/import', superTok, {
+      items: [{ itemName: 'No Code Good', qty: 15, unit: 'kg', unitCost: 55 }],
+    });
+    expect(r2.body.summary.updated).toBe(1); // matched by name, as before
+    const items = await Inventory.find({ itemName: 'No Code Good' }).lean();
+    expect(items.length).toBe(1);
+    expect(items[0].stockQty).toBe(15000); // 15kg in grams — the update won
+  });
+});
+
 describe('editing an inventory item can set/clear packSize', () => {
   it('PUT /api/inventory/:id accepts and persists packSize', async () => {
     const Inventory = mongoose.model('Inventory');
