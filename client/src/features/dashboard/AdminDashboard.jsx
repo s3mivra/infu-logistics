@@ -232,6 +232,12 @@ export default function AdminDashboard() {
     end: new Date().toISOString().slice(0,10)
   });
   const [sssGroup, setSssGroup] = useState('order'); // 'order' | 'day'
+  // --- SALES LINE ITEMS (one row per order item — item code + item detail) ---
+  const [salesLineItems, setSalesLineItems] = useState(null);
+  const [sliRange, setSliRange] = useState({
+    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10),
+    end: new Date().toISOString().slice(0,10)
+  });
   // --- REFUND ---
   const [refundModal, setRefundModal] = useState(null);
   const [refundForm, setRefundForm] = useState({ reason: '', refundAmount: '', inventoryAction: 'Restock' });
@@ -3728,25 +3734,46 @@ const updateStatus = async (orderId, newStatus) => {
       ['GrabFood', ['Grab Delivery']], ...(BUSINESS_TYPE === 'log' ? [['Lalamove', ['Lalamove']]] : [['Foodpanda', ['Foodpanda']]]), ['Manual/Direct', ['Manual Delivery']],
     ];
     const cv = (r, ms) => ms.reduce((s, m) => s + (r?.methods?.[m] || 0), 0);
-    // Customer/item detail is per-order only — meaningless once rolled up "Per Day".
-    const head = ['Date', 'Customer ID', 'Customer Name', sssGroup === 'day' ? 'Orders' : 'Order ID', 'Item Code', 'Item', ...COLS.map(c => c[0]), 'Total'];
+    // Item-level detail lives in the separate Sales Line Items report.
+    const head = ['Date', 'Customer ID', 'Customer Name', sssGroup === 'day' ? 'Orders' : 'Order ID', ...COLS.map(c => c[0]), 'Total'];
     const body = sssRows.map(r => [
       new Date(r.date).toLocaleDateString(),
       sssGroup === 'day' ? '' : (r.customerId || ''),
       sssGroup === 'day' ? '' : (r.customerName || ''),
       sssGroup === 'day' ? String(r.count) : r.orderNumber,
-      sssGroup === 'day' ? '' : (r.itemCodes || ''),
-      sssGroup === 'day' ? '' : (r.itemNames || ''),
       ...COLS.map(([, ms]) => pdfMoney(cv(r, ms))),
       pdfMoney(r.total),
     ]);
     const t = salesSummary.totals || {};
     autoTable(doc, {
       startY: 24, head: [head], body,
-      foot: [[ 'TOTALS', '', '', '', '', '', ...COLS.map(([, ms]) => pdfMoney(ms.reduce((s, m) => s + (tm[m] || 0), 0))), pdfMoney(t.total) ]],
+      foot: [[ 'TOTALS', '', '', '', ...COLS.map(([, ms]) => pdfMoney(ms.reduce((s, m) => s + (tm[m] || 0), 0))), pdfMoney(t.total) ]],
       styles: { fontSize: 7 }, headStyles: { fillColor: [111,135,77] }, footStyles: { fillColor: [61,74,42], textColor: 255 },
     });
     doc.save(`Sales-Summary_${sssRange.start}_to_${sssRange.end}.pdf`);
+  };
+
+  // ── Sales Line Items (item-level detail) ─────────────────────────────────────
+  const fetchSalesLineItems = async () => {
+    try { const res = await apiFetch(`/api/reports/sales-line-items?start=${sliRange.start}&end=${sliRange.end}`); const d = await res.json(); if (d.success) setSalesLineItems(d); }
+    catch (err) { console.error('fetchSalesLineItems', err); }
+  };
+  const exportSalesLineItemsPDF = async () => {
+    if (!salesLineItems) return alert('Load the Sales Line Items report first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Sales Line Items`, 14, 14);
+    doc.setFontSize(9); doc.text(`${sliRange.start} to ${sliRange.end}`, 14, 20);
+    const head = ['Date', 'Customer ID', 'Customer Name', 'Order ID', 'Item Code', 'Item', 'Qty', 'Payment', 'Line Total'];
+    const body = salesLineItems.rows.map(r => [
+      new Date(r.date).toLocaleDateString(), r.customerId || '', r.customerName || '', r.orderNumber,
+      r.itemCode || '', r.itemName || '', String(r.quantity), r.paymentMethod || '', pdfMoney(r.lineTotal),
+    ]);
+    autoTable(doc, {
+      startY: 24, head: [head], body,
+      foot: [[ 'TOTAL', '', '', '', '', '', '', '', pdfMoney(salesLineItems.grandTotal) ]],
+      styles: { fontSize: 7 }, headStyles: { fillColor: [111,135,77] }, footStyles: { fillColor: [61,74,42], textColor: 255 },
+    });
+    doc.save(`Sales-Line-Items_${sliRange.start}_to_${sliRange.end}.pdf`);
   };
 
   // ── Refund ──────────────────────────────────────────────────────────────────
@@ -4926,6 +4953,7 @@ const updateStatus = async (orderId, newStatus) => {
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     // ── Summary Sales (channel breakdown) ────────────────────────────────────
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
+    salesLineItems, sliRange, setSliRange, fetchSalesLineItems, exportSalesLineItemsPDF,
     // ── Refund ───────────────────────────────────────────────────────────────
     refundModal, setRefundModal, refundForm, setRefundForm, refundSubmitting, handleRefund,
     // ── Clock In/Out ─────────────────────────────────────────────────────────

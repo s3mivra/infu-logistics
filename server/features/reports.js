@@ -905,8 +905,16 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req
     }
     const orders = await Order.find(match, {
       orderNumber: 1, total: 1, paymentMethod: 1, payments: 1, createdAt: 1,
-      customerName: 1, clientId: 1, clientAccountId: 1, items: 1,
+      customerName: 1, clientId: 1, clientAccountId: 1,
     }).sort({ createdAt: 1 }).lean();
+
+    // Resolve to the client's standard CUS-A0000 code, not the raw ObjectId
+    // stored on the order (clientId / clientAccountId are internal references).
+    const clientRefIds = [...new Set(orders.map(o => o.clientId || o.clientAccountId).filter(Boolean))];
+    const clientCodeById = clientRefIds.length
+      ? Object.fromEntries((await ClientAccount.find({ _id: { $in: clientRefIds } }, { clientCode: 1 }).lean())
+          .map(c => [String(c._id), c.clientCode]))
+      : {};
 
     const rows = orders.map(o => {
       const ch = { cash: 0, ewallet: 0, bank: 0, delivery: 0 };
@@ -920,12 +928,10 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req
         ch[paymentChannel(m)] += amt;
         methods[m] = (methods[m] || 0) + amt;
       }
-      const itemCodes = (o.items || []).map(it => it.productCode || '').filter(Boolean).join(', ');
-      const itemNames = (o.items || []).map(it => (it.quantity > 1 ? `${it.name} (x${it.quantity})` : it.name)).filter(Boolean).join(', ');
+      const refId = o.clientId || o.clientAccountId || '';
       return {
         date: o.createdAt, orderNumber: o.orderNumber,
-        customerId: o.clientId || o.clientAccountId || '', customerName: o.customerName || 'Guest',
-        itemCodes, itemNames,
+        customerId: clientCodeById[String(refId)] || '', customerName: o.customerName || 'Guest',
         ...ch, methods, total: Number(o.total) || 0,
       };
     });
@@ -937,6 +943,49 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req
     }, { cash: 0, ewallet: 0, bank: 0, delivery: 0, total: 0, methods: {} });
 
     res.json({ success: true, rows, totals });
+  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+});
+
+// ── SALES LINE ITEMS ─────────────────────────────────────────────────────────
+// One row per order LINE (not per order) — the item-level detail Summary Sales
+// deliberately leaves out. Same Completed/non-comp filter and date range as
+// sales-summary, so the two reports reconcile against each other.
+app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
+    if (start || end) {
+      match.createdAt = {};
+      if (start) match.createdAt.$gte = new Date(start);
+      if (end) { const d = new Date(end); d.setHours(23, 59, 59, 999); match.createdAt.$lte = d; }
+    }
+    const orders = await Order.find(match, {
+      orderNumber: 1, paymentMethod: 1, createdAt: 1, customerName: 1, clientId: 1, clientAccountId: 1, items: 1,
+    }).sort({ createdAt: 1 }).lean();
+
+    const clientRefIds = [...new Set(orders.map(o => o.clientId || o.clientAccountId).filter(Boolean))];
+    const clientCodeById = clientRefIds.length
+      ? Object.fromEntries((await ClientAccount.find({ _id: { $in: clientRefIds } }, { clientCode: 1 }).lean())
+          .map(c => [String(c._id), c.clientCode]))
+      : {};
+
+    const rows = [];
+    for (const o of orders) {
+      const refId = o.clientId || o.clientAccountId || '';
+      const customerId = clientCodeById[String(refId)] || '';
+      const customerName = o.customerName || 'Guest';
+      for (const it of (o.items || [])) {
+        const qty = Number(it.quantity) || 0;
+        const lineTotal = (Number(it.price) || 0) * qty + (it.selectedAddOns || []).reduce((s, a) => s + (Number(a.price) || 0), 0) * qty;
+        rows.push({
+          date: o.createdAt, orderNumber: o.orderNumber, paymentMethod: o.paymentMethod,
+          customerId, customerName,
+          itemCode: it.productCode || '', itemName: it.name || '', quantity: qty, lineTotal,
+        });
+      }
+    }
+    const grandTotal = rows.reduce((s, r) => s + r.lineTotal, 0);
+    res.json({ success: true, rows, grandTotal });
   } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
 

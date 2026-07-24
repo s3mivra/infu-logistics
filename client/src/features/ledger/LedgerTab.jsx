@@ -84,6 +84,7 @@ export default function LedgerTab({ ctx }) {
     profitByCategory, fetchProfitByCategory,
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
+    salesLineItems, sliRange, setSliRange, fetchSalesLineItems, exportSalesLineItemsPDF,
     menuEngineering, fetchMenuEngineering, cashierVariance, fetchCashierVariance, purchaseOrder, fetchPurchaseOrder,
     exportPnlPDF, exportBalanceSheetPDF, exportPurchaseOrderPDF, reconcileInventory,
     coaAccounts, fetchCoa, coaParent, setCoaParent, coaNewName, setCoaNewName,
@@ -154,6 +155,7 @@ export default function LedgerTab({ ctx }) {
   useEffect(() => {
     if (ledgerSubTab === 'trial') loadTrial();
     if (ledgerSubTab === 'salessummary' && !salesSummary) fetchSalesSummary();
+    if (ledgerSubTab === 'salesline' && !salesLineItems) fetchSalesLineItems();
   }, [ledgerSubTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Which Payment Routing parent groups (111000 / 112000 / etc.) are expanded.
@@ -212,6 +214,7 @@ export default function LedgerTab({ ctx }) {
   const apPage   = usePagination(apData?.recent, 10);
   const sbpPage  = usePagination(salesByPayment?.breakdown, 10);
   const sssPage  = usePagination(sssRows, 15);
+  const sliPage  = usePagination(salesLineItems?.rows, 15);
   const pbcPage  = usePagination(profitByCategory?.categories, 10);
   const mePage   = usePagination(menuEngineering?.items, 10);
   const cvPage   = usePagination(cashierVariance?.cashiers, 10);
@@ -227,6 +230,7 @@ export default function LedgerTab({ ctx }) {
             {(activeTab === 'reports'
               ? [
                   ['salessummary',  'Sales Summary',          BarChart3],
+                  ['salesline',     'Sales Line Items',       FileText],
                   ['payments',      'By Payment',             Banknote],
                   ['profitcat',     'By Category',            BarChart2],
                   ['pnlmonthly',    'Monthly P&L',            BarChart3],
@@ -262,6 +266,7 @@ export default function LedgerTab({ ctx }) {
                   if (id === 'balance' && !bsData) fetchBalanceSheet();
                   if (id === 'bsmonthly' && !bsMonthly) fetchBsMonthly();
                   if (id === 'salessummary') fetchSalesSummary();
+                  if (id === 'salesline') fetchSalesLineItems();
                   if (id === 'payments') fetchSalesByPayment();
                   if (id === 'profitcat') fetchProfitByCategory();
                   if (id === 'menueng') fetchMenuEngineering();
@@ -353,7 +358,6 @@ export default function LedgerTab({ ctx }) {
                         <th className="py-2">Date</th>
                         <th className="py-2">Customer ID</th><th className="py-2">Customer Name</th>
                         <th className="py-2">Order</th>
-                        <th className="py-2">Item Code</th><th className="py-2">Item</th>
                         <th className="py-2 text-right">Cash</th><th className="py-2 text-right">E-Wallet</th>
                         <th className="py-2 text-right">Bank</th><th className="py-2 text-right">Delivery</th><th className="py-2 text-right">Total</th>
                       </tr>
@@ -367,8 +371,6 @@ export default function LedgerTab({ ctx }) {
                           <td className="py-1.5 font-mono text-xs text-white/60">{isDayRow ? '-' : (row.customerId || '-')}</td>
                           <td className="py-1.5 text-xs text-white/60">{isDayRow ? '-' : (row.customerName || 'Guest')}</td>
                           <td className="py-1.5 font-mono text-xs text-white/60">{isDayRow ? row.count : row.orderNumber}</td>
-                          <td className="py-1.5 font-mono text-xs text-white/60">{isDayRow ? '-' : (row.itemCodes || '-')}</td>
-                          <td className="py-1.5 text-xs text-white/60">{isDayRow ? '-' : (row.itemNames || '-')}</td>
                           <td className="py-1.5 text-right font-mono">{row.cash ? money2(row.cash) : ''}</td>
                           <td className="py-1.5 text-right font-mono">{row.ewallet ? money2(row.ewallet) : ''}</td>
                           <td className="py-1.5 text-right font-mono">{row.bank ? money2(row.bank) : ''}</td>
@@ -381,7 +383,7 @@ export default function LedgerTab({ ctx }) {
                     {salesSummary?.totals && (
                       <tfoot>
                         <tr className="font-black text-white border-t-2 border-white/20">
-                          <td className="py-2" colSpan={6}>Totals</td>
+                          <td className="py-2" colSpan={4}>Totals</td>
                           <td className="py-2 text-right font-mono">{money2(salesSummary.totals.cash)}</td>
                           <td className="py-2 text-right font-mono">{money2(salesSummary.totals.ewallet)}</td>
                           <td className="py-2 text-right font-mono">{money2(salesSummary.totals.bank)}</td>
@@ -391,6 +393,68 @@ export default function LedgerTab({ ctx }) {
                       </tfoot>
                     )}
                   </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── SALES LINE ITEMS (item-level detail) ────────────────────────────── */}
+          {ledgerSubTab === 'salesline' && (
+            <div className="bg-surface border border-white/8 rounded-2xl p-5">
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                <div>
+                  <h3 className="text-lg font-black text-white">Sales Line Items</h3>
+                  <p className="text-white/40 text-xs">One row per item ordered — item code, item, quantity, per line.</p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input type="date" value={sliRange.start} onChange={e => setSliRange(p => ({ ...p, start: e.target.value }))}
+                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-brand/50" />
+                  <span className="text-white/30 font-bold text-sm">→</span>
+                  <input type="date" value={sliRange.end} onChange={e => setSliRange(p => ({ ...p, end: e.target.value }))}
+                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-brand/50" />
+                  <button onClick={fetchSalesLineItems} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Load</button>
+                  {salesLineItems && <button onClick={exportSalesLineItemsPDF} className="flex items-center gap-1.5 bg-white/5 text-white/70 hover:text-white hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
+                </div>
+              </div>
+              {!salesLineItems ? (
+                <p className="text-white/40 text-sm">Pick a range and press Load.</p>
+              ) : sliPage.pageItems.length === 0 ? (
+                <p className="text-white/40 text-sm">No completed sales in range.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-white/30 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
+                        <th className="py-2">Date</th>
+                        <th className="py-2">Customer ID</th><th className="py-2">Customer Name</th>
+                        <th className="py-2">Order</th>
+                        <th className="py-2">Item Code</th><th className="py-2">Item</th>
+                        <th className="py-2 text-right">Qty</th>
+                        <th className="py-2 text-right">Line Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-white/75">
+                      {sliPage.pageItems.map((row, i) => (
+                        <tr key={i} className="border-b border-white/5">
+                          <td className="py-1.5 text-white/50 text-xs">{row.date ? new Date(row.date).toLocaleDateString() : ''}</td>
+                          <td className="py-1.5 font-mono text-xs text-white/60">{row.customerId || '-'}</td>
+                          <td className="py-1.5 text-xs text-white/60">{row.customerName || 'Guest'}</td>
+                          <td className="py-1.5 font-mono text-xs text-white/60">{row.orderNumber}</td>
+                          <td className="py-1.5 font-mono text-xs text-white/60">{row.itemCode || '-'}</td>
+                          <td className="py-1.5 text-xs text-white/60">{row.itemName}</td>
+                          <td className="py-1.5 text-right font-mono">{row.quantity}</td>
+                          <td className="py-1.5 text-right font-mono font-bold text-white/90">{money2(row.lineTotal)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="font-black text-white border-t-2 border-white/20">
+                        <td className="py-2" colSpan={7}>Total</td>
+                        <td className="py-2 text-right font-mono text-brand">{money2(salesLineItems.grandTotal)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                  <div className="px-3 pt-2"><Pager {...sliPage} label="lines" /></div>
                 </div>
               )}
             </div>

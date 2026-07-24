@@ -182,27 +182,40 @@ describe('backdated sale posts a real, balanced, findable journal entry', () => 
   });
 });
 
-describe('sales-summary includes customer and item detail per order', () => {
-  it('returns customerId, customerName, itemCodes, and itemNames for each order row', async () => {
+describe('sales-summary resolves the customer\'s standard CUS-A0000 code; sales-line-items carries item detail', () => {
+  it('sales-summary has customerId/customerName but no item fields; sales-line-items has itemCode/itemName per line', async () => {
     const Product = mongoose.model('Product');
+    const ClientAccount = mongoose.model('ClientAccount');
     const coded = await Product.create({ name: 'EC Coded Brew', category: 'EC', productCode: 'SKU-EC-1', basePrice: 100, baseRecipe: [{ invId: ids.invId, name: 'EC Bean', qty: 10, cost: 5, unit: 'g' }] });
+    const client = await ClientAccount.create({ clientCode: 'CUS-A9001', username: `ec_cus_${Date.now()}`, password: 'x', name: 'Juan Dela Cruz' });
 
     const o = await mkOrder({
       items: [{ productId: String(coded._id), name: 'EC Coded Brew', price: 100, quantity: 2 }],
-      table: 'Takeout', paymentMethod: 'Cash', customerName: 'Juan Dela Cruz',
+      table: 'Takeout', paymentMethod: 'Cash', customerName: 'Juan Dela Cruz', clientAccountId: String(client._id),
     });
     expect(o.status).toBe(200);
     const done = await complete(o.body.order._id);
     expect(done.status).toBe(200);
 
     const today = new Date().toISOString().slice(0, 10);
-    const res = await req('get', `/api/reports/sales-summary?start=${today}&end=${today}`, T.super);
-    expect(res.status).toBe(200);
-    const row = res.body.rows.find(r => r.orderNumber === o.body.order.orderNumber);
-    expect(row).toBeTruthy();
-    expect(row.customerName).toBe('Juan Dela Cruz');
-    expect(row.itemCodes).toBe('SKU-EC-1');
-    expect(row.itemNames).toBe('EC Coded Brew (x2)');
+    const summary = await req('get', `/api/reports/sales-summary?start=${today}&end=${today}`, T.super);
+    expect(summary.status).toBe(200);
+    const sRow = summary.body.rows.find(r => r.orderNumber === o.body.order.orderNumber);
+    expect(sRow).toBeTruthy();
+    expect(sRow.customerId).toBe('CUS-A9001');
+    expect(sRow.customerName).toBe('Juan Dela Cruz');
+    expect(sRow.itemCodes).toBeUndefined();
+    expect(sRow.itemNames).toBeUndefined();
+
+    const lineItems = await req('get', `/api/reports/sales-line-items?start=${today}&end=${today}`, T.super);
+    expect(lineItems.status).toBe(200);
+    const lRow = lineItems.body.rows.find(r => r.orderNumber === o.body.order.orderNumber);
+    expect(lRow).toBeTruthy();
+    expect(lRow.customerId).toBe('CUS-A9001');
+    expect(lRow.itemCode).toBe('SKU-EC-1');
+    expect(lRow.itemName).toBe('EC Coded Brew');
+    expect(lRow.quantity).toBe(2);
+    expect(lRow.lineTotal).toBeCloseTo(200, 2);
   });
 });
 
