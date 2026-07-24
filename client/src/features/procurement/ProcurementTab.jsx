@@ -24,9 +24,10 @@ const StatusBadge = ({ status }) => (
 );
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 export default function ProcurementTab({ ctx }) {
-  const { apiFetch, peso, inventory = [], isSuperAdmin } = ctx;
+  const { apiFetch, peso, inventory = [], isSuperAdmin, packInfo, effectiveDisplay } = ctx;
   const money = peso || ((n) => `₱${(Number(n) || 0).toFixed(2)}`);
   // Permission gating (server also enforces). Fall back to role-ish defaults if ctx.can missing.
   const can = ctx.can || (() => true);
@@ -233,15 +234,26 @@ export default function ProcurementTab({ ctx }) {
         .filter(l => (Number(l.suggestedOrder) || 0) > 0)
         .map(l => {
           const inv = inventory.find(i => i.itemName === l.itemName);
-          const qty = Number(l.suggestedOrder) || 0;
-          const unitCost = qty > 0 ? +((Number(l.estCost) || 0) / qty).toFixed(4) : (inv?.unitCost ?? '');
+          const displayQty = Number(l.suggestedOrder) || 0;
+          // The report's suggestedOrder/estCost are in DISPLAY units (₱/kg-style).
+          // LOG orders by the PACK, so convert to a pack count + price-per-pack
+          // whenever the item's real pack size is known — same convention as
+          // pickInventory() / the Edit Inventory modal. Falls back to the raw
+          // display-unit figures when packSize isn't tracked for this item.
+          const packSize = inv?.packSize && inv.packSize > 0 ? inv.packSize : null;
+          let orderedQty = displayQty;
+          let unitCost = displayQty > 0 ? +((Number(l.estCost) || 0) / displayQty).toFixed(4) : (inv?.unitCost ?? '');
+          if (BUSINESS_TYPE === 'log' && packSize && packInfo && inv) {
+            orderedQty = +(displayQty / packSize).toFixed(2);
+            unitCost = +(packInfo(inv).cost).toFixed(4);
+          }
           return {
             invId: inv?._id || null,
             itemName: l.itemName || '',
             itemCode: inv?.itemCode || '',
             unit: l.displayUnit || inv?.displayUnit || inv?.unit || '',
-            packSize: inv?.unitMultiplier && inv.unitMultiplier !== 1 ? inv.unitMultiplier : '',
-            orderedQty: qty,
+            packSize: packSize || '',
+            orderedQty,
             unitCost,
             expiryDate: '',
           };
@@ -313,15 +325,26 @@ export default function ProcurementTab({ ctx }) {
   const addLine = () => setForm(f => ({ ...f, lines: [...f.lines, blankLine()] }));
   const removeLine = (idx) => setForm(f => ({ ...f, lines: f.lines.length > 1 ? f.lines.filter((_, i) => i !== idx) : f.lines }));
 
-  // Autofill a line when an inventory item is picked.
+  // Autofill a line when an inventory item is picked. item.unitCost is always
+  // stored per BASE unit (₱/gram) — never copy it straight across.
+  //   LOG: ordering is by the PACK ("10 cans of condensed milk"), so unitCost
+  //   here must be the price PER PACK — exactly what the Edit Inventory modal
+  //   shows (packInfo().cost = base cost × the pack's base-unit size). Using
+  //   the per-display-unit (₱/kg) figure instead was the bug: a 250g cookie
+  //   pack costing ₱133.46 showed as ₱533.84 (its ₱/kg price × 4).
+  //   FB: ordering is by display unit (kg/L), so the per-display-unit cost is
+  //   the correct one to prefill.
   const pickInventory = (idx, invId) => {
     const item = inventory.find(i => String(i._id) === String(invId));
     if (!item) { updateLine(idx, { invId: null }); return; }
-    // item.unitCost is stored per BASE unit (e.g. ₱/gram); PO lines price per
-    // DISPLAY unit (₱/kg) — must multiply by unitMultiplier (base units per
-    // display unit) to convert, or the line silently carries the raw per-gram
-    // figure (e.g. 0.18 instead of ₱182.75/kg).
-    const mult = item.unitMultiplier && item.unitMultiplier > 0 ? item.unitMultiplier : 1;
+    let unitCost = item.unitCost ?? '';
+    if (BUSINESS_TYPE === 'log' && packInfo) {
+      const pack = packInfo(item);
+      if (pack?.packBase > 0) unitCost = +(pack.cost).toFixed(4);
+    } else if (effectiveDisplay) {
+      const { mult } = effectiveDisplay(item);
+      if (item.unitCost != null) unitCost = +(item.unitCost * (mult || 1)).toFixed(4);
+    }
     updateLine(idx, {
       invId: item._id,
       itemName: item.itemName || '',
@@ -329,9 +352,9 @@ export default function ProcurementTab({ ctx }) {
       unit: item.displayUnit || item.unit || '',
       // item.packSize is the SKU's real per-pack size (e.g. 0.377 for a 377g
       // can); unitMultiplier is the fixed kg/L<->g/ml conversion factor (1000)
-      // and is NOT a pack size — using it here was the actual bug.
+      // and is NOT a pack size.
       packSize: item.packSize && item.packSize > 0 ? item.packSize : '',
-      unitCost: item.unitCost != null ? +(item.unitCost * mult).toFixed(4) : '',
+      unitCost,
     });
   };
 
