@@ -5,6 +5,8 @@ import { defineConfig, devices } from '@playwright/test';
 // Prereqs to run:
 //   1. Backend running (server/) against a TEST MongoDB (never production), with a
 //      seeded Super Admin whose password = E2E_ADMIN_PASS.
+//      Easiest: `npm run e2e:server` at the repo root — boots the API on an
+//      in-memory MongoDB with the default seed password (ChangeMe@2026!).
 //   2. `npx playwright install chromium` once (or `npm run e2e:install`).
 //
 // The frontend dev server is started automatically below (reused if already up).

@@ -1,12 +1,36 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { lazy, Suspense, Component, useEffect } from 'react';
+import { lazy, Suspense, Component, useEffect, useState } from 'react';
 
-const CustomerMenu = lazy(() => import('./pages/CustomerMenu'));
-const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
-const SuperAdminPanel = lazy(() => import('./pages/SuperAdminPanel'));
-const QRCodeComponent = lazy(() => import('./components/QRCode'));
-const ClientLogin = lazy(() => import('./pages/ClientLogin'));
-const ClientOrderPage = lazy(() => import('./pages/ClientOrderPage'));
+// Guards against the #1 mis-deployment: a client built for one BUSINESS_TYPE
+// pointed at a server running the other (fb ↔ log). Fetches the server's mode
+// from /health once and shows a loud fixed banner on mismatch. Fails OPEN — any
+// fetch error is ignored so a flaky/unreachable health check never blocks the app.
+function ModeMismatchBanner() {
+  const [serverType, setServerType] = useState(null);
+  const clientType = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+  useEffect(() => {
+    const api = import.meta.env.VITE_API_URL || '';
+    fetch(`${api}/health`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.businessType) setServerType(String(d.businessType).toLowerCase()); })
+      .catch(() => { /* fail open */ });
+  }, []);
+  if (!serverType || serverType === clientType) return null;
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 99999, background: '#b91c1c', color: '#fff',
+      padding: '10px 16px', font: '700 13px system-ui, sans-serif', textAlign: 'center', letterSpacing: '0.02em' }}>
+      ⚠️ Configuration mismatch: this app was built for <b>{clientType.toUpperCase()}</b> but the server is running <b>{serverType.toUpperCase()}</b>.
+      Set VITE_BUSINESS_TYPE and the server’s BUSINESS_TYPE to the same value and rebuild the client.
+    </div>
+  );
+}
+
+const CustomerMenu = lazy(() => import('./features/menu/CustomerMenu'));
+const AdminDashboard = lazy(() => import('./features/dashboard/AdminDashboard'));
+const SuperAdminPanel = lazy(() => import('./features/super-admin/SuperAdminPanel'));
+const QRCodeComponent = lazy(() => import('./features/qr/QRCode'));
+const ClientLogin = lazy(() => import('./features/client-portal/ClientLogin'));
+const ClientOrderPage = lazy(() => import('./features/client-portal/ClientOrderPage'));
 //fix
 class ErrorBoundary extends Component {
   state = { error: null };
@@ -38,6 +62,7 @@ function App() {
 
   return (
     <ErrorBoundary>
+      <ModeMismatchBanner />
       <Router>
         <Suspense fallback={
           <div className="min-h-screen bg-page-bg flex flex-col items-center justify-center">

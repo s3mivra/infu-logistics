@@ -11,6 +11,25 @@ export const UNIT_TABLE = {
   'pcs': { base: 'pcs', mult: 1 },
 };
 
+// Canonical flat conversion table: any (case-insensitive) unit token → how many
+// base units it equals. THE single source of truth — server.js imports this
+// instead of keeping its own copy. Base units are g / mL / pcs. Values here must
+// stay identical to what baseUnitsPerSale historically used (COGS depends on it).
+export const UNIT_TO_BASE = {
+  mg: 0.001, g: 1, kg: 1000,       // mass → grams
+  ml: 1, cl: 10, l: 1000,          // volume → millilitres
+  pcs: 1, pc: 1, pack: 1, unit: 1, // count → pieces
+};
+
+// Classify a unit into its dimension. Enforces "mass/volume/count are separate":
+// g/mL/pcs each belong to exactly one type and never convert across types.
+export function unitTypeOf(unit) {
+  const u = String(unit || '').trim().toLowerCase();
+  if (['mg', 'g', 'kg', 'gram', 'grams', 'kilogram', 'kilograms'].includes(u)) return 'mass';
+  if (['ml', 'cl', 'l', 'milliliter', 'millilitre', 'liter', 'litre'].includes(u)) return 'volume';
+  return 'count'; // pcs / pc / pack / unit / anything else countable
+}
+
 // Resolve a display unit into { baseUnit, multiplier }.
 // Unknown strings fall back to (base = the string itself, mult = 1).
 export function resolveUnit(displayUnit) {

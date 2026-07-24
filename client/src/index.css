@@ -15,21 +15,21 @@
 :root,
 [data-theme="default"] {
   /* --- PRIMARY BRAND COLOR (RGB channels for opacity modifier support) --- */
-  --brand:        111 135 77;   /* #6f874d — olive green                   */
-  --brand-dark:   90 110 61;    /* #5a6e3d — hover/pressed state           */
+  --brand:        111 135 77;   /* #6f874d - olive green                   */
+  --brand-dark:   90 110 61;    /* #5a6e3d - hover/pressed state           */
 
   /* --- SURFACE SYSTEM --- */
-  --surface:      26 26 26;     /* #1a1a1a — card panels                   */
-  --surface-2:    36 36 36;     /* #242424 — nested / elevated panels      */
+  --surface:      26 26 26;     /* #1a1a1a - card panels                   */
+  --surface-2:    36 36 36;     /* #242424 - nested / elevated panels      */
 
   /* --- PAGE BACKGROUND --- */
   --bg:           13 13 13;     /* alias of --page-bg (kept for legacy)    */
-  --page-bg:      13 13 13;     /* #0d0d0d — main dark canvas              */
-  --sidebar-bg:   26 26 26;     /* #1a1a1a — sidebar / modal panels        */
+  --page-bg:      13 13 13;     /* #0d0d0d - main dark canvas              */
+  --sidebar-bg:   26 26 26;     /* #1a1a1a - sidebar / modal panels        */
 
   /* --- FOREGROUND (text on dark surfaces) --- */
-  --fg:           245 245 245;  /* #f5f5f5 — body text                     */
-  --fg-muted:     180 180 180;  /* #b4b4b4 — secondary text                */
+  --fg:           245 245 245;  /* #f5f5f5 - body text                     */
+  --fg-muted:     180 180 180;  /* #b4b4b4 - secondary text                */
 
   /* --- STATUS COLORS --- */
   --danger:       239 68 68;    /* red-500                                 */
@@ -41,13 +41,13 @@
  * THEME 2 — YELLOW: same black base, yellow accent
  * ===================================================================== */
 [data-theme="yellow"] {
-  --brand:        234 179 8;    /* yellow-500 — #eab308                    */
-  --brand-dark:   202 138 4;    /* yellow-600 — hover state                */
-  --surface:      26 26 26;     /* #1a1a1a — identical to default          */
-  --surface-2:    36 36 36;     /* #242424 — identical to default          */
+  --brand:        234 179 8;    /* yellow-500 - #eab308                    */
+  --brand-dark:   202 138 4;    /* yellow-600 - hover state                */
+  --surface:      26 26 26;     /* #1a1a1a - identical to default          */
+  --surface-2:    36 36 36;     /* #242424 - identical to default          */
   --bg:           13 13 13;
-  --page-bg:      13 13 13;     /* #0d0d0d — identical to default          */
-  --sidebar-bg:   26 26 26;     /* #1a1a1a — identical to default          */
+  --page-bg:      13 13 13;     /* #0d0d0d - identical to default          */
+  --sidebar-bg:   26 26 26;     /* #1a1a1a - identical to default          */
   --fg:           245 245 245;
   --fg-muted:     180 180 180;
 }
@@ -56,13 +56,13 @@
  * THEME 3 — OCEAN: same black base, blue accent
  * ===================================================================== */
 [data-theme="ocean"] {
-  --brand:        56 189 248;   /* sky-400 — electric blue                 */
-  --brand-dark:   14 165 233;   /* sky-500 — hover state                   */
-  --surface:      26 26 26;     /* #1a1a1a — identical to default          */
-  --surface-2:    36 36 36;     /* #242424 — identical to default          */
+  --brand:        56 189 248;   /* sky-400 - electric blue                 */
+  --brand-dark:   14 165 233;   /* sky-500 - hover state                   */
+  --surface:      26 26 26;     /* #1a1a1a - identical to default          */
+  --surface-2:    36 36 36;     /* #242424 - identical to default          */
   --bg:           13 13 13;
-  --page-bg:      13 13 13;     /* #0d0d0d — identical to default          */
-  --sidebar-bg:   26 26 26;     /* #1a1a1a — identical to default          */
+  --page-bg:      13 13 13;     /* #0d0d0d - identical to default          */
+  --sidebar-bg:   26 26 26;     /* #1a1a1a - identical to default          */
   --fg:           245 245 245;
   --fg-muted:     180 180 180;
 }
@@ -97,17 +97,31 @@ body {
   font-feature-settings: 'tnum';
 }
 
-/* Smooth theme transitions — layout shells only, never interactive elements */
+/* Smooth theme transitions - layout shells only, never interactive elements */
 body, aside, header, nav, main {
   transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
 /* Fat-finger safe: enforce 44×44 touch baseline */
-button, [role="button"], select, input[type="checkbox"], input[type="radio"] {
+button, [role="button"], select {
   min-height: 44px;
   touch-action: manipulation;             /* removes 300ms tap delay on iPad/Android */
 }
 button.btn-icon-sm { min-height: 28px; }  /* exception for tight icon rows */
+/* Switch toggles set their own compact height (h-6 pill); the 44px baseline
+ * stretched them into a distorted bar. Let their utility height stand. */
+button[role="switch"] { min-height: 0; }
+
+/* Checkboxes/radios must stay square — a min-height stretched them into an
+ * invisible sliver. Give them an explicit box size and keep tap delay off; the
+ * 44px touch target comes from the surrounding clickable label, not the control. */
+input[type="checkbox"], input[type="radio"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  cursor: pointer;
+}
 
 /* ============================================================
  * ACCESSIBILITY — VISIBLE FOCUS RINGS (P1 CRITICAL)
@@ -121,7 +135,7 @@ button.btn-icon-sm { min-height: 28px; }  /* exception for tight icon rows */
   border-radius: 6px;
 }
 
-/* Selection color — feels intentional, not browser-default blue */
+/* Selection color - feels intentional, not browser-default blue */
 ::selection { background: rgb(var(--brand) / 0.4); color: white; }
 
 /* Dark-theme <select> dropdowns: force readable option contrast.
@@ -189,7 +203,7 @@ input:-webkit-autofill:active {
 }
 .active-press:active { transform: scale(0.97); }
 
-/* Soft elevation scale — replaces ad-hoc shadows */
+/* Soft elevation scale - replaces ad-hoc shadows */
 .elev-1 { box-shadow: 0 1px 2px   rgb(0 0 0 / 0.20); }
 .elev-2 { box-shadow: 0 4px 12px  rgb(0 0 0 / 0.28); }
 .elev-3 { box-shadow: 0 10px 24px rgb(0 0 0 / 0.36); }

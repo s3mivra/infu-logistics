@@ -8,7 +8,9 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@sentry/node": "^10.56.0",
@@ -29,6 +31,13 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@vitest/coverage-v8": "^4.1.9",
+    "eslint": "^10.6.0",
+    "globals": "^17.7.0",
+    "mongodb-memory-server": "^11.2.0",
+    "socket.io-client": "^4.8.3",
+    "supertest": "^7.2.2",
     "vitest": "^4.1.7"
   }
 }

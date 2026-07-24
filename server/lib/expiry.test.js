@@ -162,3 +162,19 @@ describe('integration: real-world milk batch scenario', () => {
     expect(soonestExpiry(after1300.batches).toISOString()).toBe(D('2026-06-22').toISOString());
   });
 });
+
+describe('expiry — FEFO edge branches (coverage)', () => {
+  it('sorts batches with no expiryDate last', () => {
+    const r = sortBatchesFEFO([{ expiryDate: null, qty: 1 }, { expiryDate: '2026-01-01', qty: 1 }]);
+    expect(r[0].expiryDate).toBe('2026-01-01');
+    expect(r[1].expiryDate).toBeNull();
+  });
+  it('skips empty (0-qty) batches when consuming', () => {
+    const r = consumeBatches([{ qty: 0, expiryDate: '2026-01-01' }, { qty: 5, expiryDate: '2026-02-01' }], 3);
+    expect(r.consumed).toBe(3);
+    expect(r.batches[0].qty).toBe(2);
+  });
+  it('addBatch with no expiryDate stores null', () => {
+    expect(addBatch([], { qty: 4 })[0].expiryDate).toBeNull();
+  });
+});

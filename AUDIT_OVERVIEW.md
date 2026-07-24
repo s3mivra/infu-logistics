@@ -31,7 +31,7 @@ It is **not** just a cash register. It bundles POS, inventory, double-entry acco
 
 ### QR self-ordering (customer-facing)
 - `CustomerMenu.jsx` — QR-code table ordering, cryptographically-random session IDs, time-boxed sessions, single-use ("burned") on order
-- Web-push "order ready" notification path
+- "Order ready" in-page notification only (Service Worker `showNotification`, fires while the customer tab is open; not server-pushed background delivery)
 
 ### Inventory & stock
 - Recipe-based ingredient deduction (base + add-on recipes) on order completion — **atomic** (`findOneAndUpdate $inc`), race-safe
@@ -76,7 +76,7 @@ It is **not** just a cash register. It bundles POS, inventory, double-entry acco
 | Deps (server) | `npm audit fix` → **0 vulnerabilities** | ✅ |
 | Deps (client) | `xlsx` HIGH (proto-pollution + ReDoS) → swapped abandoned npm pkg for **patched SheetJS 0.20.3** CDN build; client build clean | ✅ |
 
-Already-strong from prior passes: JWT secret enforced (no fallback), env fail-fast, rate-limiting (login 10/15min, orders 60/min), atomic inventory deduction, balanced-journal assertions, superadmin RBAC, completed-order immutability, A/R void guards, crypto-random QR sessions.
+Already-strong from prior passes: JWT secret enforced (no fallback), env fail-fast, rate-limiting (login 5/15min, orders 60/min), atomic inventory deduction, balanced-journal assertions, superadmin RBAC, completed-order immutability, A/R void guards, crypto-random QR sessions.
 
 ---
 

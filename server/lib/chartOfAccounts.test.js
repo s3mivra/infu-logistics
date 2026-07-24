@@ -10,6 +10,7 @@ import {
   isRevenueCode,
   isExpenseCode,
   isOtherIncomeCode,
+  isCogsCode,
 } from './chartOfAccounts.js';
 
 describe('chartOfAccounts.ACCOUNTS coverage (6-digit SAP)', () => {
@@ -85,5 +86,28 @@ describe('CODE_MAP migration table', () => {
 describe('Non-VAT compliance', () => {
   it('has no VAT Payable account', () => {
     for (const meta of Object.values(ACCOUNTS)) expect(meta.name.toLowerCase()).not.toMatch(/vat payable/);
+  });
+});
+
+describe('chartOfAccounts.isCogsCode + getAccount fallback (coverage)', () => {
+  it('isCogsCode is true only for 5xxxxx codes', () => {
+    expect(isCogsCode('500000')).toBe(true);
+    expect(isCogsCode('110000')).toBe(false);
+    expect(isCogsCode()).toBe(false);
+  });
+  it('getAccount returns an unknown stub for an unmapped code', () => {
+    expect(getAccount('999999')).toMatchObject({ type: 'unknown' });
+  });
+});
+
+describe('chartOfAccounts class predicates — match/non-match/nullish (coverage)', () => {
+  it('classifies by leading digit', () => {
+    expect(isAssetCode('100000')).toBe(true);  expect(isAssetCode('900000')).toBe(false); expect(isAssetCode(null)).toBe(false);
+    expect(isLiabilityCode('200000')).toBe(true); expect(isLiabilityCode('100000')).toBe(false);
+    expect(isEquityCode('300000')).toBe(true);  expect(isEquityCode('100000')).toBe(false);
+    expect(isRevenueCode('400000')).toBe(true); expect(isRevenueCode('100000')).toBe(false);
+    expect(isOtherIncomeCode('800000')).toBe(true); expect(isOtherIncomeCode('100000')).toBe(false);
+    expect(isExpenseCode('600000')).toBe(true); expect(isExpenseCode('700000')).toBe(true);
+    expect(isExpenseCode('900000')).toBe(true); expect(isExpenseCode('100000')).toBe(false); expect(isExpenseCode()).toBe(false);
   });
 });

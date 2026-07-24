@@ -10,6 +10,7 @@ export const ACCOUNTS = {
   '112000': { name: 'Cash in Bank',               type: 'asset', parent: '110000' },
   '113000': { name: 'E-Wallet',                   type: 'asset', parent: '110000' },
   '114000': { name: 'Petty Cash / Revolving Fund',type: 'asset', parent: '110000' },
+  '118000': { name: 'Unassigned Receipts',        type: 'asset', parent: '110000' },
   '120000': { name: 'Accounts Receivable',        type: 'asset', parent: '100000' },
   '130000': { name: 'Inventory',                  type: 'asset', parent: '100000' },
   '140000': { name: 'Fixed Assets',               type: 'asset', isParent: true, parent: '100000' },

@@ -45,7 +45,7 @@ A single working branch (`security/hardening-p1-p3`, PR #1 against `main`) conta
 - **Injection:** `escapeRegex()` helper — fixed **ReDoS / regex-injection** on `POST /api/inventory` and `POST /api/users` (user input went straight into `new RegExp`). NoSQL-object injection on login closed by Zod string typing.
 - **Validation / mass-assignment (BOPLA):** Zod `validate()` middleware (strips unknown keys + 422 field errors) on login, user-create, addon, product, combo, discount, role, modifier-group create routes. `POST /api/roles` tightened to superadmin.
 - **Error handling:** centralized error handler + 404 fallback; **~87 route catch blocks** gated behind `IS_PROD` so internal `err.message`/stack never leak in production.
-- **Rate limiting:** baseline `/api` limiter (300/min) on top of the existing login (10/15min) and order (60/min) limiters.
+- **Rate limiting:** baseline `/api` limiter (300/min) on top of the existing login (5/15min) and order (60/min) limiters.
 - **XSS:** kitchen-ticket print window now escapes all dynamic values (customer name, order notes, item names — all customer-suppliable).
 - **Resilience:** `mongoose.connect` timeouts (fail fast); `uncaughtException`/`unhandledRejection` now drain + exit(1) for a clean supervisor restart; `console.*` → structured `pino`.
 - **Dependencies:** server `npm audit fix` → 0 vulns; client `xlsx` HIGH (prototype pollution + ReDoS) replaced with patched SheetJS.
