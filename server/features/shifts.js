@@ -388,7 +388,18 @@ app.get('/api/clock/entries', verifyToken, requireSuperAdmin, async (req, res) =
       ClockEntry.find(filter).sort({ clockIn: -1 }).skip((pageNum-1)*pageSize).limit(pageSize).lean(),
       ClockEntry.countDocuments(filter)
     ]);
-    res.json({ success: true, entries, total, page: pageNum });
+    // Join each entry to the staff member's current role (clock entries don't store
+    // it). Look up by the recorded staffId; fall back to a name match for legacy ids.
+    const ids = [...new Set(entries.map(e => e.staffId).filter(Boolean))];
+    const names = [...new Set(entries.map(e => e.staffName).filter(Boolean))];
+    const users = await User.find(
+      { $or: [{ _id: { $in: ids.filter(id => mongoose.isValidObjectId(id)) } }, { name: { $in: names } }] },
+      { name: 1, role: 1 }
+    ).lean();
+    const roleById = {}, roleByName = {};
+    for (const u of users) { roleById[String(u._id)] = u.role; roleByName[u.name] = u.role; }
+    const withRole = entries.map(e => ({ ...e, staffRole: roleById[e.staffId] || roleByName[e.staffName] || '' }));
+    res.json({ success: true, entries: withRole, total, page: pageNum });
   } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
 });
 }

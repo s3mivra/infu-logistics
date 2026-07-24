@@ -2466,9 +2466,10 @@ const updateStatus = async (orderId, newStatus) => {
   };
 
   const addInventory = async () => {
-    // log: unit is always pcs — use effective values without mutating state
+    // log: honour the chosen unit (defaulting to pcs) and per-qty size (default 1)
+    // so a "10× 1L Milk" restock keeps its L unit and 1-per-pack size.
     const eff = BUSINESS_TYPE === 'log'
-      ? { ...invForm, unitPerPack: invForm.unitPerPack || '1', unit: 'pcs' }
+      ? { ...invForm, unitPerPack: invForm.unitPerPack || '1', unit: invForm.unit || 'pcs' }
       : invForm;
     if (!eff.itemName || !eff.packQty || !eff.costPerPack) return alert("Please fill in Item Name, Qty, and Price.");
     if (BUSINESS_TYPE !== 'log' && (!eff.unitPerPack || !eff.unit)) return alert("Please fill in all inventory fields.");

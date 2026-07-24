@@ -86,15 +86,21 @@ export function customRolePermissions(roleName) {
 // Resolve a user's EFFECTIVE permission set.
 //   - superadmin → every permission (bypass)
 //   - explicit user.permissions (non-empty) → exactly those (intersected with the catalogue)
+//   - a custom role (an actual Role document) → whatever the role-maker granted it.
+//     This is checked BEFORE the built-in defaults so a custom role whose name
+//     collides with a built-in (e.g. "Admin") uses the permissions the user
+//     actually picked, instead of being silently widened to the built-in admin
+//     defaults (which include inventory/procurement). Built-in roles have no Role
+//     document, so they fall through to their hard-coded defaults below.
 //   - a built-in role → its hard-coded defaults
-//   - a custom role → whatever the role-maker granted it
 //   - otherwise → nothing
 export function resolvePermissions(user) {
   const role = norm(user && user.role);
   if (role === 'superadmin') return PERMISSIONS.map((p) => p.key);
   const explicit = Array.isArray(user && user.permissions) ? user.permissions.filter((k) => PERMISSION_KEYS.has(k)) : [];
   if (explicit.length) return explicit;
-  return ROLE_DEFAULT_PERMISSIONS[role] || _customRolePerms.get(role) || [];
+  if (_customRolePerms.has(role)) return _customRolePerms.get(role);
+  return ROLE_DEFAULT_PERMISSIONS[role] || [];
 }
 
 // Does this (decoded token OR user doc) hold a given permission?

@@ -203,6 +203,27 @@ describe('log inventory import creates the linked product', () => {
   });
 });
 
+describe('inventory import is tenant-scoped (no cross-businessType clobber)', () => {
+  it('a log import never matches or overwrites an fb-owned row of the same code', async () => {
+    const Inventory = mongoose.model('Inventory');
+    // An fb-owned row sharing the itemCode the log import will use.
+    await Inventory.create({ itemCode: 'XT-1', itemName: 'Cross Tenant Milk', stockQty: 999, unit: 'pcs', unitCost: 5, displayUnit: 'pcs', unitMultiplier: 1, businessType: 'fb' });
+
+    const res = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'XT-1', itemName: 'Cross Tenant Milk', qty: 10, unit: 'pcs', unitCost: 5 }],
+    });
+    expect(res.status).toBe(200);
+    // The fb row is untouched…
+    const fb = await Inventory.findOne({ itemCode: 'XT-1', businessType: 'fb' }).lean();
+    expect(fb.stockQty).toBe(999);
+    // …and a NEW log row was created (created, not updated) with businessType 'log'.
+    const log = await Inventory.findOne({ itemCode: 'XT-1', businessType: 'log' }).lean();
+    expect(log).toBeTruthy();
+    expect(log.stockQty).toBe(10);
+    expect(res.body.summary.created).toBeGreaterThanOrEqual(1);
+  });
+});
+
 describe('auto low-stock threshold from velocity', () => {
   const get = (p, tok) => request(app).get(p).set('Authorization', `Bearer ${tok}`);
 

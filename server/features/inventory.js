@@ -880,12 +880,16 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         ? unitCostFromExcel / mult                            // convert ₱/displayUnit → ₱/baseUnit
         : null;
 
-      // Look up by itemCode first (more specific), then by case-insensitive name
+      // Look up by itemCode first (more specific), then by case-insensitive name.
+      // MUST be scoped to this instance's businessType — otherwise a log import
+      // matches (and overwrites) an fb-owned row of the same code/name, leaving the
+      // stock stamped 'fb' (invisible to log, wrongly visible to fb) and vice-versa.
       let existing = null;
-      if (itemCode) existing = await Inventory.findOne({ itemCode }).session(session);
+      if (itemCode) existing = await Inventory.findOne({ itemCode, businessType: BUSINESS_TYPE }).session(session);
       if (!existing) {
         existing = await Inventory.findOne({
-          itemName: { $regex: new RegExp(`^${itemName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+          itemName: { $regex: new RegExp(`^${itemName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+          businessType: BUSINESS_TYPE,
         }).session(session);
       }
 
@@ -974,8 +978,8 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         // Sync the linked Product (log only — the product IS the stocked good).
         if (syncProduct) {
           const cat = await Category.findOneAndUpdate(
-            { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
-            { $setOnInsert: { name: productCategory, department: 'Bar' } },
+            { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }, businessType: BUSINESS_TYPE },
+            { $setOnInsert: { name: productCategory, department: 'Bar', businessType: BUSINESS_TYPE } },
             { upsert: true, returnDocument: 'after', session }
           );
           // basePrice must never appear in both $set and $setOnInsert — Mongo
@@ -984,7 +988,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           // $setOnInsert (default 0 on first creation) when there's no SRP.
           const hasSrp = srp != null && !isNaN(srp);
           await Product.findOneAndUpdate(
-            { productCode: existing.itemCode },
+            { productCode: existing.itemCode, businessType: BUSINESS_TYPE },
             {
               $set: {
                 name: existing.itemName,
@@ -992,7 +996,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
                 isAvailable: existing.stockQty > 0,
                 ...(hasSrp ? { basePrice: srp } : {}),
               },
-              ...(hasSrp ? {} : { $setOnInsert: { basePrice: 0 } }),
+              $setOnInsert: { businessType: BUSINESS_TYPE, ...(hasSrp ? {} : { basePrice: 0 }) },
             },
             { upsert: true, returnDocument: 'after', session }
           );
@@ -1013,7 +1017,8 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           displayUnit,
           unitMultiplier: mult,
           expiryBatches: initialBatches,
-          expiryDate: soonestExpiry(initialBatches)
+          expiryDate: soonestExpiry(initialBatches),
+          businessType: BUSINESS_TYPE,
         }], { session });
         const item = created[0];
         const valueImpact = newBaseQty * (item.unitCost || 0);
@@ -1050,11 +1055,11 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         // Create the linked Product (log only — the product IS the stocked good).
         if (syncProduct) {
           const cat = await Category.findOneAndUpdate(
-            { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
-            { $setOnInsert: { name: productCategory, department: 'Bar' } },
+            { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }, businessType: BUSINESS_TYPE },
+            { $setOnInsert: { name: productCategory, department: 'Bar', businessType: BUSINESS_TYPE } },
             { upsert: true, returnDocument: 'after', session }
           );
-          const productExists = await Product.findOne({ productCode: item.itemCode }).session(session);
+          const productExists = await Product.findOne({ productCode: item.itemCode, businessType: BUSINESS_TYPE }).session(session);
           if (!productExists) {
             await Product.create([{
               productCode: item.itemCode,
@@ -1062,6 +1067,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
               category: cat.name,
               basePrice: srp != null && !isNaN(srp) ? srp : 0,
               isAvailable: newBaseQty > 0,
+              businessType: BUSINESS_TYPE,
             }], { session });
           }
         }

@@ -1,6 +1,6 @@
 // Unit tests for the pure RBAC permission helpers in lib/authz.js.
 import { describe, it, expect } from 'vitest';
-import { resolvePermissions, hasPermission, ROLE_DEFAULT_PERMISSIONS, PERMISSIONS, PERMISSION_KEYS } from '../lib/authz.js';
+import { resolvePermissions, hasPermission, setCustomRolePermissions, ROLE_DEFAULT_PERMISSIONS, PERMISSIONS, PERMISSION_KEYS } from '../lib/authz.js';
 
 describe('resolvePermissions', () => {
   it('grants superadmin every permission', () => {
@@ -23,6 +23,24 @@ describe('resolvePermissions', () => {
 
   it('is case-insensitive on role', () => {
     expect(resolvePermissions({ role: 'SuperAdmin' })).toEqual(PERMISSIONS.map(p => p.key));
+  });
+
+  it('a custom role overrides built-in defaults of a colliding name', () => {
+    // A user-created role named "Admin" with a narrow permission set must NOT be
+    // silently widened to the built-in admin defaults (which include inventory /
+    // procurement). The explicitly-granted set wins.
+    setCustomRolePermissions([{ name: 'Admin', permissions: ['pos.use', 'orders.view'] }]);
+    try {
+      expect(resolvePermissions({ role: 'Admin' })).toEqual(['pos.use', 'orders.view']);
+      expect(resolvePermissions({ role: 'admin' })).not.toContain('inventory.view');
+    } finally {
+      setCustomRolePermissions([]); // reset shared module state for other tests
+    }
+  });
+
+  it('built-in roles still use defaults when no custom role shadows them', () => {
+    setCustomRolePermissions([]);
+    expect(resolvePermissions({ role: 'admin' })).toEqual(ROLE_DEFAULT_PERMISSIONS.admin);
   });
 });
 

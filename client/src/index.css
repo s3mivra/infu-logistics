@@ -103,11 +103,25 @@ body, aside, header, nav, main {
 }
 
 /* Fat-finger safe: enforce 44×44 touch baseline */
-button, [role="button"], select, input[type="checkbox"], input[type="radio"] {
+button, [role="button"], select {
   min-height: 44px;
   touch-action: manipulation;             /* removes 300ms tap delay on iPad/Android */
 }
 button.btn-icon-sm { min-height: 28px; }  /* exception for tight icon rows */
+/* Switch toggles set their own compact height (h-6 pill); the 44px baseline
+ * stretched them into a distorted bar. Let their utility height stand. */
+button[role="switch"] { min-height: 0; }
+
+/* Checkboxes/radios must stay square — a min-height stretched them into an
+ * invisible sliver. Give them an explicit box size and keep tap delay off; the
+ * 44px touch target comes from the surrounding clickable label, not the control. */
+input[type="checkbox"], input[type="radio"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  cursor: pointer;
+}
 
 /* ============================================================
  * ACCESSIBILITY — VISIBLE FOCUS RINGS (P1 CRITICAL)
