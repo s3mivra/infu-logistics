@@ -4628,17 +4628,20 @@ const updateStatus = async (orderId, newStatus) => {
         })}
 
         {(() => {
-          // Management tabs gated by granular permission. History & Pricing still
-          // depend on superadmin-only server routes, so they stay superadmin-only;
-          // Analytics / Accounting / Audit open up to anyone holding the matching
-          // permission (their data routes are now permission-gated server-side).
+          // Management tabs gated by granular permission. History still depends on
+          // superadmin-only server routes, so it stays superadmin-only; Pricing
+          // Control's only server calls (/api/discounts — promos, PWD/Senior
+          // discounts) are requireStaff, not superadmin-only, so it's gated on
+          // products.manage like Menu Setup — a hardcoded isSuperAdmin here made
+          // any non-superadmin staff (managers, custom roles with products.manage)
+          // unable to find or CRUD promos/discounts at all.
           // Default sub-tab for each grouped tab, set on click so switching between
           // Ledger and Reports (both rendered by LedgerTab) lands on the right page.
           const mgmtItems = [
             { id: 'analytics', label: 'Analytics',       icon: BarChart3,   show: can('analytics.view') },
             { id: 'reports',   label: 'Reports',         icon: BarChart2,   show: can('reports.view'), sub: 'salessummary' },
             { id: 'ledger',    label: 'Ledger',          icon: FileText,    show: can('accounting.view'), sub: 'journal' },
-            { id: 'pricing',   label: 'Pricing Control', icon: DollarSign,  show: isSuperAdmin },
+            { id: 'pricing',   label: 'Pricing Control', icon: DollarSign,  show: can('products.manage') },
             { id: 'history',   label: 'Shifts & Cash',   icon: Clock,       show: isSuperAdmin },
             { id: 'audit',     label: 'Audit Report',    icon: ShieldCheck, show: can('audit.view') },
           ].filter(it => it.show);
