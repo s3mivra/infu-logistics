@@ -413,9 +413,12 @@ export default function ProcurementTab({ ctx }) {
 
   const openReceive = (po) => {
     setReceiveId(po._id);
-    // Prefill received = ordered (common case: full delivery), user tweaks shortfalls.
+    // Prefill with what's still MISSING (ordered minus already received), not
+    // the full ordered qty — reopening a partially-received PO only asks about
+    // the outstanding balance, and the value entered is submitted as THIS
+    // delivery's quantity (a delta), never a replacement total.
     const q = {};
-    (po.lines || []).forEach((l, i) => { q[l._id || i] = String(l.orderedQty ?? ''); });
+    (po.lines || []).forEach((l, i) => { const rem = remainingOf(l); if (rem > 0) q[l._id || i] = String(rem); });
     setReceiveQtys(q);
     setReceiveNotes(po.notes || '');
   };
@@ -423,7 +426,9 @@ export default function ProcurementTab({ ctx }) {
   const submitReceive = async (po) => {
     setReceiving(true); setError('');
     try {
-      const received = (po.lines || []).map((l, i) => ({ lineId: l._id, index: i, receivedQty: Number(receiveQtys[l._id || i]) || 0 }));
+      const received = (po.lines || [])
+        .map((l, i) => ({ lineId: l._id, index: i, receivedQty: Number(receiveQtys[l._id || i]) || 0 }))
+        .filter(r => r.receivedQty > 0); // only send lines the user actually entered a delivered qty for
       const res = await apiFetch(`/api/purchase-orders/${po._id}/receive`, { method: 'POST', body: JSON.stringify({ received, notes: receiveNotes }) });
       const d = await res.json();
       if (d.success) { setReceiveId(null); await fetchPOs(); }
@@ -433,8 +438,13 @@ export default function ProcurementTab({ ctx }) {
   };
 
   // ── Split lists ───────────────────────────────────────────────────────────────
-  const activePOs = pos.filter(p => ['Ordered', 'Processing'].includes(p.status));
-  const historyPOs = pos.filter(p => ['Complete', 'Incomplete', 'Cancelled'].includes(p.status));
+  // Incomplete is NOT terminal — a short delivery stays actionable until every
+  // line is fully received, so it belongs with the active/receivable POs, not
+  // in History (which is only for genuinely finished records).
+  const activePOs = pos.filter(p => ['Ordered', 'Processing', 'Incomplete'].includes(p.status));
+  const historyPOs = pos.filter(p => ['Complete', 'Cancelled'].includes(p.status));
+  // Per-line remaining-to-receive, used to show "the missing ones only".
+  const remainingOf = (l) => Math.max(0, (Number(l.orderedQty) || 0) - (Number(l.receivedQty) || 0));
   const [invSearch, setInvSearch] = useState('');
 
   const inputCls = 'w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 focus:outline-none focus:border-brand/60';
@@ -503,8 +513,22 @@ export default function ProcurementTab({ ctx }) {
       ) : subTab === 'orders' ? (
         /* ── PURCHASE ORDERS LIST ── */
         <div className="space-y-6">
-          <PoSection title="Active" empty="No active purchase orders. Create one with “New PO”." pos={activePOs} money={money}
-            renderActions={(po) => (
+          <PoSection title="Active" empty="No active purchase orders. Create one with “New PO”." pos={activePOs} money={money} showReceived
+            renderActions={(po) => {
+              // Incomplete already has a partial delivery reconciled against it —
+              // editing/deleting would desync from what's already posted to
+              // inventory (the server blocks both). The only edit still allowed
+              // is cancelling the OUTSTANDING balance when the rest will never
+              // arrive; whatever was already received stays exactly as posted.
+              if (po.status === 'Incomplete') return (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold text-amber-400/70 uppercase tracking-wider">Receive rest in Receiving tab</span>
+                  {canManage && (
+                    <button onClick={() => setStatus(po, 'Cancelled')} title="Cancel the outstanding balance — already-received stock is unaffected" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-white/40 hover:bg-red-500/15 hover:text-red-300 transition">Cancel rest</button>
+                  )}
+                </div>
+              );
+              return (
               <div className="flex items-center gap-1.5 flex-wrap">
                 {canManage && po.status === 'Ordered' && (
                   <button onClick={() => setStatus(po, 'Processing')} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 transition">Mark Processing</button>
@@ -515,7 +539,8 @@ export default function ProcurementTab({ ctx }) {
                   <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-white/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
                 )}
               </div>
-            )} />
+              );
+            }} />
           <PoSection title="History" empty="No completed or cancelled POs yet." pos={historyPOs} money={money} showReceived
             renderActions={(po) => canDelete && ['Cancelled'].includes(po.status) ? (
               <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-white/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
@@ -581,19 +606,30 @@ export default function ProcurementTab({ ctx }) {
                 <ChevronRight size={16} className={`text-white/30 transition ${receiveId === po._id ? 'rotate-90' : ''}`} />
               </button>
 
-              {receiveId === po._id && (
+              {receiveId === po._id && (() => {
+                const missingLines = po.lines.map((l, i) => ({ l, i, key: l._id || i, rem: remainingOf(l) })).filter(x => x.rem > 0);
+                return (
                 <div className="border-t border-white/10 p-4 space-y-3 bg-black/20">
-                  <p className="text-[11px] font-black uppercase tracking-wider text-white/40">Enter actual quantities received</p>
+                  <p className="text-[11px] font-black uppercase tracking-wider text-white/40">
+                    {po.status === 'Incomplete' ? 'Outstanding items only — enter what just arrived' : 'Enter actual quantities received'}
+                  </p>
+                  {missingLines.length === 0 ? (
+                    <p className="text-white/40 text-sm font-bold py-2">Nothing outstanding on this PO.</p>
+                  ) : (
                   <div className="space-y-2">
-                    {po.lines.map((l, i) => {
-                      const key = l._id || i;
+                    {missingLines.map(({ l, key, rem }) => {
                       const recv = Number(receiveQtys[key]);
-                      const short = !isNaN(recv) && recv < (l.orderedQty || 0);
+                      const short = !isNaN(recv) && recv > 0 && recv < rem;
+                      const alreadyIn = Number(l.receivedQty) || 0;
                       return (
                         <div key={key} className="flex items-center gap-3 bg-white/5 rounded-lg px-3 py-2">
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-bold text-white truncate">{l.itemName}</p>
-                            <p className="text-white/40 text-xs">Ordered: {l.orderedQty} {l.unit} @ {money(l.unitCost)}</p>
+                            <p className="text-white/40 text-xs">
+                              Ordered: {l.orderedQty} {l.unit} @ {money(l.unitCost)}
+                              {alreadyIn > 0 && <span className="text-emerald-400/70"> · Received so far: {alreadyIn}</span>}
+                              <span className="text-amber-400/80"> · Missing: {rem} {l.unit}</span>
+                            </p>
                           </div>
                           <div className="flex items-center gap-1.5">
                             <input type="number" min="0" step="any" value={receiveQtys[key] ?? ''}
@@ -605,17 +641,19 @@ export default function ProcurementTab({ ctx }) {
                       );
                     })}
                   </div>
+                  )}
                   <textarea value={receiveNotes} onChange={e => setReceiveNotes(e.target.value)} rows={2}
                     placeholder="Delivery notes (optional): damages, substitutions, backorders…" className={inputCls} />
                   <div className="flex items-center justify-end gap-2">
                     <button onClick={() => setReceiveId(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-white/50 hover:text-white transition">Cancel</button>
-                    <button onClick={() => submitReceive(po)} disabled={receiving}
+                    <button onClick={() => submitReceive(po)} disabled={receiving || missingLines.length === 0}
                       className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-4 py-2 rounded-xl transition">
                       {receiving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Confirm Received
                     </button>
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </div>
           ))}
         </div>
