@@ -121,6 +121,31 @@ describe('void variants', () => {
     const s = await req('post', `/api/orders/${o.body.order._id}/settle-ar`, T.super).send({ amount: 100, paymentMethod: 'Cash' });
     expect(s.status).toBe(400);
   });
+
+  it('an unmapped settlement tender parks funds in Unassigned Receipts (118000)', async () => {
+    const o = await mkOrder({ ...line('productId'), paymentMethod: 'Bank Transfer' });
+    const id = o.body.order._id;
+    await complete(id);
+    // "CryptoWallet" is not a seeded default, has no override, and no matching
+    // custom sub-account → the settlement must debit the Unassigned clearing account.
+    const s = await req('post', `/api/orders/${id}/settle-ar`, T.super).send({ amount: 100, paymentMethod: 'CryptoWallet' });
+    expect(s.status).toBe(200);
+    const je = await mongoose.model('JournalEntry').findOne({ reference: new RegExp(`ARS.*${o.body.order.orderNumber}`) }).lean();
+    const debit = je.lines.find(l => l.debit > 0);
+    expect(debit.accountCode).toBe('118000');
+  });
+
+  it('a known settlement tender routes to its mapped account, not Unassigned', async () => {
+    const o = await mkOrder({ ...line('productId'), paymentMethod: 'GCash' });
+    const id = o.body.order._id;
+    await complete(id);
+    const s = await req('post', `/api/orders/${id}/settle-ar`, T.super).send({ amount: 100, paymentMethod: 'GCash' });
+    expect(s.status).toBe(200);
+    const je = await mongoose.model('JournalEntry').findOne({ reference: new RegExp(`ARS.*${o.body.order.orderNumber}`) }).lean();
+    const debit = je.lines.find(l => l.debit > 0);
+    expect(debit.accountCode).not.toBe('118000');   // routed to a real E-Wallet account
+    expect(debit.accountCode.startsWith('113')).toBe(true);
+  });
 });
 
 describe('purchase-order report reflects usage from completed orders', () => {

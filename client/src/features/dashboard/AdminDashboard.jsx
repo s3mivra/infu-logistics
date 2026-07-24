@@ -480,6 +480,11 @@ export default function AdminDashboard() {
     setTimeout(() => setOrderToasts(prev => prev.filter(t => t.id !== id)), 5000);
   };
 
+  // Manager alerts (e.g. an unmapped payment tender parked in Unassigned Receipts).
+  // Persist until dismissed — these are accounting exceptions the manager must act on.
+  const [mgrAlerts, setMgrAlerts] = useState([]); // [{ id, message }]
+  const dismissMgrAlert = (id) => setMgrAlerts(prev => prev.filter(a => a.id !== id));
+
   // --- FULLSCREEN LOGIC ---
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -1275,12 +1280,18 @@ export default function AdminDashboard() {
     const handleMenuUpdate  = () => fetchData();
     const handleArchived    = () => fetchOrders();
     const handleERPUpdate   = () => fetchERPData();
+    const handleMgrAlert    = (a) => {
+      const id = Date.now() + Math.random();
+      setMgrAlerts(prev => [...prev.slice(-4), { id, message: a?.message || 'Accounting alert' }]);
+      if (typeof document !== 'undefined' && document.hidden) notify('Accounting alert', a?.message || '');
+    };
 
     socket.on('newOrder',       handleNewOrder);
     socket.on('orderUpdated',   handleOrderUpdate);
     socket.on('menuUpdated',    handleMenuUpdate);
     socket.on('ordersArchived', handleArchived);
     socket.on('erpUpdated',     handleERPUpdate);
+    socket.on('mgrAlert',       handleMgrAlert);
 
     return () => {
       socket.off('newOrder',       handleNewOrder);
@@ -1288,6 +1299,7 @@ export default function AdminDashboard() {
       socket.off('menuUpdated',    handleMenuUpdate);
       socket.off('ordersArchived', handleArchived);
       socket.off('erpUpdated',     handleERPUpdate);
+      socket.off('mgrAlert',       handleMgrAlert);
     };
   }, [isAuthenticated]);
 
@@ -4897,6 +4909,19 @@ const updateStatus = async (orderId, newStatus) => {
                 <p className="font-black text-sm leading-none">New Order! #{t.orderNumber}</p>
                 <p className="text-white/70 text-xs mt-0.5">{t.table} · {t.ts}</p>
               </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── MANAGER ACCOUNTING ALERTS (persist until dismissed) ── */}
+      {mgrAlerts.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-[99999] flex flex-col gap-2 max-w-sm">
+          {mgrAlerts.map(a => (
+            <div key={a.id} className="flex items-start gap-2 bg-amber-500/15 border border-amber-500/40 text-amber-200 px-4 py-3 rounded-2xl shadow-lg animate-fade-in">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <p className="text-xs font-bold leading-snug flex-1">{a.message}</p>
+              <button onClick={() => dismissMgrAlert(a.id)} className="text-amber-200/60 hover:text-amber-100 shrink-0"><X size={15} /></button>
             </div>
           ))}
         </div>

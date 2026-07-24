@@ -1268,6 +1268,12 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
 
     // Debit-side account from configurable payment-method map.
     const debitAcct = accountForPaymentMethod(paymentMethod);
+    if (debitAcct.fallback) {
+      // Tender has no COA route — parked in Unassigned Receipts. Alert managers
+      // to configure a route in Payment Routing so it lands in the right account.
+      emitToMgr('mgrAlert', { kind: 'unmappedTender', method: paymentMethod || '(none)', account: debitAcct.code, ref: order.orderNumber, message: `Payment method "${paymentMethod || '(none)'}" has no account route — settled into Unassigned Receipts. Configure it in Payment Routing.` });
+      try { await logAudit(req, { action: 'unmappedTender', entity: 'PaymentMethodMap', entityId: paymentMethod || '(none)', after: { account: debitAcct.code, order: order.orderNumber } }); } catch { /* non-fatal */ }
+    }
 
     const reference = mkRef('ARS', order.orderNumber);
 

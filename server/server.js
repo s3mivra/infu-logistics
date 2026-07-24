@@ -1238,7 +1238,8 @@ function accountForPaymentMethod(method) {
   }
   // (2b) Auto-bind: legacy path. Method has a canonical default parent and a
   //      custom child of that parent happens to share its name.
-  const defaultParent = DEFAULT_PAYMENT_ACCOUNT_MAP[method] || '111000';
+  const knownDefault = DEFAULT_PAYMENT_ACCOUNT_MAP[method];
+  const defaultParent = knownDefault || '111000';
   for (const [code, meta] of CUSTOM_META.entries()) {
     if (meta.parent === defaultParent && String(meta.name || '').trim().toLowerCase() === wanted) {
       return { code, name: meta.name };
@@ -1248,7 +1249,15 @@ function accountForPaymentMethod(method) {
   if (overrideCode) {
     return { code: overrideCode, name: acctMeta(overrideCode)?.name || method };
   }
-  // (4) Final fallback
+  // (4) Unassigned fallback. The tender has no explicit mapping, no matching
+  //     custom sub-account, and isn't a seeded default — so we can't safely
+  //     guess its account. Park it in a dedicated clearing account (118000)
+  //     and flag `fallback` so callers can alert a manager to route it. Never
+  //     silently absorb an unmapped tender into Cash on Hand.
+  if (!knownDefault) {
+    const meta = acctMeta('118000');
+    return { code: '118000', name: meta?.name || 'Unassigned Receipts', fallback: true };
+  }
   const meta = acctMeta(defaultParent);
   return { code: defaultParent, name: meta?.name || 'Cash on Hand' };
 }
@@ -1309,6 +1318,7 @@ const BankDeposit = mongoose.model('BankDeposit', BankDepositSchema);
 const DEFAULT_ACCOUNTS = [
   { code: '111000', name: 'Cash on Hand',             type: 'Asset',   normalBalance: 'Debit'  },
   { code: '112000', name: 'Cash in Bank',              type: 'Asset',   normalBalance: 'Debit'  },
+  { code: '118000', name: 'Unassigned Receipts',       type: 'Asset',   normalBalance: 'Debit'  },
   { code: '410000', name: 'Sales Revenue',             type: 'Income',  normalBalance: 'Credit' },
   { code: '930000', name: 'Cash Short & Over Expense', type: 'Expense', normalBalance: 'Debit'  },
   { code: '830000', name: 'Cash Short & Over Income',  type: 'Income',  normalBalance: 'Credit' },
