@@ -2579,12 +2579,21 @@ const updateStatus = async (orderId, newStatus) => {
     }
     return { unit: displayUnit, mult: mult || 1 };
   };
-  // LOG 1:1 — derive the pack size from the item name (e.g. "…250G", "…1L",
-  // "…500ML") so cost can be shown per pack ("₱200/250g") rather than per kg/L.
+  // LOG 1:1 — the pack size (how much ONE purchased unit holds) drives cost-per-pack
+  // and the "count of packages" stock display. Prefer the persisted item.packSize
+  // field (set on import/edit — see server InventorySchema.packSize) since imports
+  // now STRIP the size hint out of the item name (e.g. "Milk 1L" → name "Milk",
+  // packSize 1). Only fall back to parsing the name for legacy items that still
+  // carry their size embedded in it (pre-packSize-field imports).
   // unitCost is stored per base unit, so packCost = unitCost × packBaseUnits.
   const PACK_RE = /(\d+(?:\.\d+)?)\s*(mg|kg|g|ml|cl|l|pcs|pc|pack|unit)\b/i;
   const PACK_TO_BASE = { mg: 0.001, g: 1, kg: 1000, ml: 1, cl: 10, l: 1000, pcs: 1, pc: 1, pack: 1, unit: 1 };
   const packInfo = (item) => {
+    if (item.packSize && item.packSize > 0) {
+      const { unit, mult } = effectiveDisplay(item);
+      const packBase = item.packSize * mult;
+      return { packBase, label: `${item.packSize}${unit}`, cost: (item.unitCost || 0) * packBase };
+    }
     const mt = (item.itemName || '').match(PACK_RE);
     const baseFactor = PACK_TO_BASE[(item.unit || '').toLowerCase()] || 1;
     if (mt) {
@@ -2888,10 +2897,11 @@ const updateStatus = async (orderId, newStatus) => {
       // Convert display-unit values (₱/L, threshold in L) → base storage (₱/ml, threshold in ml)
       const resolved = resolveUnitFE(editInvForm.displayUnit || editInvForm.unit);
       const mult = resolved.mult;
-      // LOG: the entered cost is per package — divide by the pack size parsed from the
-      // (possibly edited) name. FB: per display unit — divide by display multiplier.
+      // LOG: the entered cost is per package — divide by the pack size (the
+      // explicit field the user just edited, falling back to a name-parse for
+      // legacy items). FB: per display unit — divide by display multiplier.
       const costBasis = BUSINESS_TYPE === 'log'
-        ? packInfo({ itemName: editInvForm.itemName.trim(), unit: resolved.base }).packBase
+        ? packInfo({ itemName: editInvForm.itemName.trim(), unit: resolved.base, displayUnit: editInvForm.displayUnit, unitMultiplier: mult, packSize: editInvForm.packSize === '' ? null : parseFloat(editInvForm.packSize) }).packBase
         : mult;
       const payload = {
         itemName: editInvForm.itemName.trim(),
@@ -5786,7 +5796,7 @@ const updateStatus = async (orderId, newStatus) => {
                   <p className="text-[9px] text-white/30 mt-1">Recipes still use precise base units internally.</p>
                 </div>
                 <div>
-                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Unit Cost (₱/{BUSINESS_TYPE === 'log' ? (packInfo({ itemName: editInvForm.itemName, unit: editInvForm.unit }).label || 'pack') : (editInvForm.displayUnit || 'unit')})</label>
+                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Unit Cost (₱/{BUSINESS_TYPE === 'log' ? (packInfo({ itemName: editInvForm.itemName, unit: editInvForm.unit, displayUnit: editInvForm.displayUnit, packSize: editInvForm.packSize === '' ? null : parseFloat(editInvForm.packSize) }).label || 'pack') : (editInvForm.displayUnit || 'unit')})</label>
                   <input type="number" min="0" step="0.01" value={editInvForm.unitCost} onChange={e => setEditInvForm({...editInvForm, unitCost: e.target.value})}
                     className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold tabular-nums outline-none focus:border-brand/60" />
                   <p className="text-[9px] text-yellow-400/70 mt-1">⚠ Will not retro-update existing COGS.</p>
