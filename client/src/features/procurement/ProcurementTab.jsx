@@ -1,20 +1,21 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, Search, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download, Sparkles } from 'lucide-react';
+import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, ChevronDown, Search, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download, Sparkles, Box } from 'lucide-react';
+import * as ui from '../../shared/ui';
 
-// ── ProcurementTab — Purchase Order workflow ──────────────────────────────────
+// ── ProcurementTab - Purchase Order workflow ──────────────────────────────────
 // Two-stage tracking. LEFT tab ("Purchase Orders") drafts & tracks planned POs
 // through Ordered → Processing. RIGHT tab ("Receiving") reconciles a delivery by
 // typing the actual received quantities, which flips the PO to Complete or
-// Incomplete. Purely a tracking record — it does not post to inventory/ledger.
+// Incomplete. Purely a tracking record - it does not post to inventory/ledger.
 //
 // Self-contained: only pulls apiFetch / peso / inventory / isSuperAdmin from ctx.
 
 const STATUS_STYLES = {
-  Ordered:    'bg-blue-500/15 text-blue-300 border-blue-500/30',
-  Processing: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-  Complete:   'bg-green-500/15 text-green-300 border-green-500/30',
-  Incomplete: 'bg-red-500/15 text-red-300 border-red-500/30',
-  Cancelled:  'bg-white/5 text-white/40 border-white/10',
+  Ordered:    'bg-blue-500 text-white border-blue-500',
+  Processing: 'bg-amber-500 text-white border-amber-500',
+  Complete:   'bg-green-500 text-white border-green-500',
+  Incomplete: 'bg-red-500 text-white border-red-500',
+  Cancelled:  'bg-white text-fg border-white',
 };
 
 const StatusBadge = ({ status }) => (
@@ -89,7 +90,7 @@ export default function ProcurementTab({ ctx }) {
 
   // Pack size in a description: "…1L", "…250G", "…2.5KG", "…750ML". orderedQty is
   // the PACKAGE count and unitCost is per-package (QTY × UNIT PRICE = GROSS in the
-  // source), so the pack size becomes the unit LABEL ("1L", "2L", "250G") — we do
+  // source), so the pack size becomes the unit LABEL ("1L", "2L", "250G") - we do
   // NOT convert quantities, which would break the cost math.
   const PACK_RE = /\b([0-9]+(?:\.[0-9]+)?)\s*(kg|g|l|ml|pcs|pc)\b/i;
   const parseSize = (desc) => {
@@ -237,7 +238,7 @@ export default function ProcurementTab({ ctx }) {
           const displayQty = Number(l.suggestedOrder) || 0;
           // The report's suggestedOrder/estCost are in DISPLAY units (₱/kg-style).
           // LOG orders by the PACK, so convert to a pack count + price-per-pack
-          // whenever the item's real pack size is known — same convention as
+          // whenever the item's real pack size is known - same convention as
           // pickInventory() / the Edit Inventory modal. Falls back to the raw
           // display-unit figures when packSize isn't tracked for this item.
           const packSize = inv?.packSize && inv.packSize > 0 ? inv.packSize : null;
@@ -278,6 +279,8 @@ export default function ProcurementTab({ ctx }) {
   const [supplierEditId, setSupplierEditId] = useState(null);
   const [supplierForm, setSupplierForm] = useState(blankSupplier);
   const [savingSupplier, setSavingSupplier] = useState(false);
+  // Which supplier's "what they supply / how much we buy" rollup is expanded.
+  const [expandedSupplierId, setExpandedSupplierId] = useState(null);
 
   // fromPoForm: true when "+ Add new supplier…" was picked inside the New PO
   // modal, so the freshly-created supplier gets auto-selected back into the PO
@@ -313,7 +316,7 @@ export default function ProcurementTab({ ctx }) {
   };
 
   const deleteSupplier = async (s) => {
-    if (!window.confirm(`Delete supplier "${s.name}"? Past POs keep their supplier name.`)) return;
+    if (!(await ui.confirm(`Delete supplier "${s.name}"? Past POs keep their supplier name.`))) return;
     try {
       const res = await apiFetch(`/api/suppliers/${s._id}`, { method: 'DELETE' });
       const d = await res.json();
@@ -321,14 +324,96 @@ export default function ProcurementTab({ ctx }) {
     } catch { setError('Network error deleting supplier.'); }
   };
 
+  // ── Supplier catalog (what they supply + their quoted price) ───────────────────
+  // Independent of purchase history - lets "who's cheaper for X" be answered
+  // before ever placing a PO with them.
+  const blankCatalogEntry = { itemName: '', itemCode: '', unit: '', packSize: '', unitCost: '', notes: '', invId: null };
+  const [catalogFormFor, setCatalogFormFor] = useState(null); // supplierId currently adding/editing a catalog entry
+  const [catalogEditId, setCatalogEditId] = useState(null);   // catalog entry _id being edited (null = adding new)
+  const [catalogForm, setCatalogForm] = useState(blankCatalogEntry);
+  const [savingCatalog, setSavingCatalog] = useState(false);
+  const [showPriceCompare, setShowPriceCompare] = useState(false);
+
+  const openCatalogForm = (supplierId, entry = null) => {
+    setCatalogFormFor(supplierId);
+    setCatalogEditId(entry?._id || null);
+    setCatalogForm(entry ? {
+      itemName: entry.itemName || '', itemCode: entry.itemCode || '', unit: entry.unit || '',
+      packSize: entry.packSize ?? '', unitCost: entry.unitCost ?? '', notes: entry.notes || '',
+      invId: entry.invId || null,
+    } : blankCatalogEntry);
+  };
+  const closeCatalogForm = () => { setCatalogFormFor(null); setCatalogEditId(null); setCatalogForm(blankCatalogEntry); };
+
+  // Typing the item name: if it matches an existing inventory item (case-insensitive,
+  // exact), link to it (invId) and pull its unit/code across - this is a real stocked
+  // product. Otherwise it's a free-text quote for something they sell that we don't
+  // stock yet; invId stays null.
+  const onCatalogItemNameChange = (typed) => {
+    const match = inventory.find(i => i.itemName.toLowerCase() === typed.toLowerCase().trim());
+    setCatalogForm(f => ({
+      ...f, itemName: typed,
+      invId: match ? match._id : null,
+      itemCode: match ? (match.itemCode || '') : f.itemCode,
+      unit: match ? (match.displayUnit || match.unit || f.unit) : f.unit,
+      packSize: match ? (match.packSize && match.packSize > 0 ? match.packSize : f.packSize) : f.packSize,
+    }));
+  };
+
+  const saveCatalogEntry = async (supplierId) => {
+    if (!catalogForm.itemName.trim()) { setError('Item name is required.'); return; }
+    if (!(Number(catalogForm.unitCost) > 0)) { setError('A positive price is required.'); return; }
+    setSavingCatalog(true); setError('');
+    try {
+      const url = catalogEditId
+        ? `/api/suppliers/${supplierId}/products/${catalogEditId}`
+        : `/api/suppliers/${supplierId}/products`;
+      const res = await apiFetch(url, { method: catalogEditId ? 'PATCH' : 'POST', body: JSON.stringify(catalogForm) });
+      const d = await res.json();
+      if (d.success) { closeCatalogForm(); await fetchSuppliers(); }
+      else setError(d.error || 'Failed to save catalog item.');
+    } catch { setError('Network error saving catalog item.'); }
+    finally { setSavingCatalog(false); }
+  };
+
+  const deleteCatalogEntry = async (supplierId, entry) => {
+    if (!(await ui.confirm(`Remove "${entry.itemName}" from this supplier's catalog?`))) return;
+    try {
+      const res = await apiFetch(`/api/suppliers/${supplierId}/products/${entry._id}`, { method: 'DELETE' });
+      const d = await res.json();
+      if (d.success) fetchSuppliers(); else setError(d.error || 'Failed to remove catalog item.');
+    } catch { setError('Network error removing catalog item.'); }
+  };
+
+  // Flatten every supplier's catalog, grouped by item name (case-insensitive),
+  // each group sorted cheapest-first - the actual "who's cheaper" answer.
+  const priceComparison = useMemo(() => {
+    const groups = new Map();
+    for (const s of suppliers) {
+      for (const entry of (s.catalog || [])) {
+        const key = entry.itemName.trim().toLowerCase();
+        if (!groups.has(key)) groups.set(key, { itemName: entry.itemName, offers: [] });
+        groups.get(key).offers.push({
+          supplierId: s._id, supplierName: s.name, unitCost: entry.unitCost,
+          unit: entry.unit, packSize: entry.packSize, notes: entry.notes,
+        });
+      }
+    }
+    const rows = Array.from(groups.values()).map(g => ({
+      ...g, offers: g.offers.sort((a, b) => a.unitCost - b.unitCost),
+    }));
+    rows.sort((a, b) => a.itemName.localeCompare(b.itemName));
+    return rows;
+  }, [suppliers]);
+
   const updateLine = (idx, patch) => setForm(f => ({ ...f, lines: f.lines.map((l, i) => i === idx ? { ...l, ...patch } : l) }));
   const addLine = () => setForm(f => ({ ...f, lines: [...f.lines, blankLine()] }));
   const removeLine = (idx) => setForm(f => ({ ...f, lines: f.lines.length > 1 ? f.lines.filter((_, i) => i !== idx) : f.lines }));
 
   // Autofill a line when an inventory item is picked. item.unitCost is always
-  // stored per BASE unit (₱/gram) — never copy it straight across.
+  // stored per BASE unit (₱/gram) - never copy it straight across.
   //   LOG: ordering is by the PACK ("10 cans of condensed milk"), so unitCost
-  //   here must be the price PER PACK — exactly what the Edit Inventory modal
+  //   here must be the price PER PACK - exactly what the Edit Inventory modal
   //   shows (packInfo().cost = base cost × the pack's base-unit size). Using
   //   the per-display-unit (₱/kg) figure instead was the bug: a 250g cookie
   //   pack costing ₱133.46 showed as ₱533.84 (its ₱/kg price × 4).
@@ -397,7 +482,7 @@ export default function ProcurementTab({ ctx }) {
   };
 
   const deletePO = async (po) => {
-    if (!window.confirm(`Delete ${po.poNumber}? This cannot be undone.`)) return;
+    if (!(await ui.confirm(`Delete ${po.poNumber}? This cannot be undone.`))) return;
     try {
       const res = await apiFetch(`/api/purchase-orders/${po._id}`, { method: 'DELETE' });
       const d = await res.json();
@@ -414,7 +499,7 @@ export default function ProcurementTab({ ctx }) {
   const openReceive = (po) => {
     setReceiveId(po._id);
     // Prefill with what's still MISSING (ordered minus already received), not
-    // the full ordered qty — reopening a partially-received PO only asks about
+    // the full ordered qty - reopening a partially-received PO only asks about
     // the outstanding balance, and the value entered is submitted as THIS
     // delivery's quantity (a delta), never a replacement total.
     const q = {};
@@ -438,7 +523,7 @@ export default function ProcurementTab({ ctx }) {
   };
 
   // ── Split lists ───────────────────────────────────────────────────────────────
-  // Incomplete is NOT terminal — a short delivery stays actionable until every
+  // Incomplete is NOT terminal - a short delivery stays actionable until every
   // line is fully received, so it belongs with the active/receivable POs, not
   // in History (which is only for genuinely finished records).
   const activePOs = pos.filter(p => ['Ordered', 'Processing', 'Incomplete'].includes(p.status));
@@ -447,7 +532,7 @@ export default function ProcurementTab({ ctx }) {
   const remainingOf = (l) => Math.max(0, (Number(l.orderedQty) || 0) - (Number(l.receivedQty) || 0));
   const [invSearch, setInvSearch] = useState('');
 
-  const inputCls = 'w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 focus:outline-none focus:border-brand/60';
+  const inputCls = 'w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg placeholder-fg/25 focus:outline-none focus:border-brand/60';
 
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
@@ -458,16 +543,16 @@ export default function ProcurementTab({ ctx }) {
             <Truck size={19} className="text-brand" />
           </div>
           <div>
-            <h1 className="text-xl font-black text-white leading-none">Procurement</h1>
-            <p className="text-white/40 text-xs font-bold mt-1">Purchase orders &amp; delivery reconciliation</p>
+            <h1 className="text-xl font-black text-fg leading-none">Procurement</h1>
+            <p className="text-fg/40 text-xs font-bold mt-1">Purchase orders &amp; delivery reconciliation</p>
           </div>
         </div>
         {subTab === 'orders' && canManage && (
           <div className="flex items-center gap-2">
-            <button onClick={downloadPoTemplate} title="Download a blank template with the expected headers" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white font-bold text-sm px-4 py-2.5 rounded-xl transition">
+            <button onClick={downloadPoTemplate} title="Download a blank template with the expected headers" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition">
               <FileText size={15} /> Template
             </button>
-            <label className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white font-bold text-sm px-4 py-2.5 rounded-xl transition cursor-pointer">
+            <label className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition cursor-pointer">
               <Download size={15} className="rotate-180" /> Import Excel
               <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => { parsePoExcel(e.target.files?.[0]); e.target.value = ''; }} />
             </label>
@@ -494,7 +579,7 @@ export default function ProcurementTab({ ctx }) {
           { id: 'suppliers', label: 'Suppliers', icon: Building2 },
         ].map(({ id, label, icon: Icon, badge }) => (
           <button key={id} onClick={() => setSubTab(id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition ${subTab === id ? 'bg-brand text-white shadow-sm' : 'text-white/50 hover:text-white'}`}>
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition ${subTab === id ? 'bg-brand text-white shadow-sm' : 'text-fg/50 hover:text-fg'}`}>
             <Icon size={15} /> {label}
             {badge > 0 && <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${subTab === id ? 'bg-white/20' : 'bg-brand/20 text-brand'}`}>{badge}</span>}
           </button>
@@ -509,13 +594,13 @@ export default function ProcurementTab({ ctx }) {
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center gap-2 text-white/40 py-16 font-bold"><Loader2 size={18} className="animate-spin" /> Loading…</div>
+        <div className="flex items-center justify-center gap-2 text-fg/40 py-16 font-bold"><Loader2 size={18} className="animate-spin" /> Loading…</div>
       ) : subTab === 'orders' ? (
         /* ── PURCHASE ORDERS LIST ── */
         <div className="space-y-6">
           <PoSection title="Active" empty="No active purchase orders. Create one with “New PO”." pos={activePOs} money={money} showReceived
             renderActions={(po) => {
-              // Incomplete already has a partial delivery reconciled against it —
+              // Incomplete already has a partial delivery reconciled against it -
               // editing/deleting would desync from what's already posted to
               // inventory (the server blocks both). The only edit still allowed
               // is cancelling the OUTSTANDING balance when the rest will never
@@ -524,7 +609,7 @@ export default function ProcurementTab({ ctx }) {
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] font-bold text-amber-400/70 uppercase tracking-wider">Receive rest in Receiving tab</span>
                   {canManage && (
-                    <button onClick={() => setStatus(po, 'Cancelled')} title="Cancel the outstanding balance - already-received stock is unaffected" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-white/40 hover:bg-red-500/15 hover:text-red-300 transition">Cancel rest</button>
+                    <button onClick={() => setStatus(po, 'Cancelled')} title="Cancel the outstanding balance - already-received stock is unaffected" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/40 hover:bg-red-500/15 hover:text-red-300 transition">Cancel rest</button>
                   )}
                 </div>
               );
@@ -533,59 +618,187 @@ export default function ProcurementTab({ ctx }) {
                 {canManage && po.status === 'Ordered' && (
                   <button onClick={() => setStatus(po, 'Processing')} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 transition">Mark Processing</button>
                 )}
-                {canManage && <button onClick={() => openEditForm(po)} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-white/60 hover:bg-white/10 hover:text-white transition">Edit</button>}
-                {canManage && <button onClick={() => setStatus(po, 'Cancelled')} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-white/40 hover:bg-red-500/15 hover:text-red-300 transition">Cancel</button>}
+                {canManage && <button onClick={() => openEditForm(po)} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 hover:text-fg transition">Edit</button>}
+                {canManage && <button onClick={() => setStatus(po, 'Cancelled')} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/40 hover:bg-red-500/15 hover:text-red-300 transition">Cancel</button>}
                 {canDelete && (
-                  <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-white/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
+                  <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-fg/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
                 )}
               </div>
               );
             }} />
           <PoSection title="History" empty="No completed or cancelled POs yet." pos={historyPOs} money={money} showReceived
             renderActions={(po) => canDelete && ['Cancelled'].includes(po.status) ? (
-              <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-white/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
+              <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-fg/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
             ) : null} />
         </div>
       ) : subTab === 'suppliers' ? (
         /* ── SUPPLIERS DIRECTORY ── */
-        <div className="space-y-2">
+        <div className="space-y-3">
+          {priceComparison.length > 0 && (
+            <button onClick={() => setShowPriceCompare(v => !v)}
+              className="w-full flex items-center justify-between gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 hover:bg-white/10 transition">
+              <span className="flex items-center gap-2 text-sm font-black text-fg">
+                <Sparkles size={14} className="text-brand" /> Compare Prices - {priceComparison.length} item{priceComparison.length === 1 ? '' : 's'} catalogued
+              </span>
+              {showPriceCompare ? <ChevronDown size={16} className="text-fg/40" /> : <ChevronRight size={16} className="text-fg/40" />}
+            </button>
+          )}
+          {showPriceCompare && (
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-4 space-y-3">
+              {priceComparison.map(g => (
+                <div key={g.itemName} className="border-b border-white/5 last:border-0 pb-3 last:pb-0">
+                  <p className="text-sm font-black text-fg mb-1.5">{g.itemName}</p>
+                  <div className="space-y-1">
+                    {g.offers.map((o, i) => (
+                      <div key={o.supplierId} className={`flex items-center justify-between gap-3 text-xs px-2.5 py-1.5 rounded-lg ${i === 0 ? 'bg-green-500 border border-green-500' : 'bg-white/5'}`}>
+                        <span className={`font-bold truncate ${i === 0 ? 'text-white' : 'text-fg/60'}`}>
+                          {i === 0 && '✓ '}{o.supplierName}
+                        </span>
+                        <span className={`whitespace-nowrap font-black ${i === 0 ? 'text-white' : 'text-fg/50'}`}>
+                          {money(o.unitCost)}{o.unit ? ` / ${o.unit}` : ''}{o.packSize ? ` (${o.packSize}${o.unit || ''}/pack)` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {suppliers.length === 0 ? (
-            <div className="text-center py-16 text-white/40 font-bold">
+            <div className="text-center py-16 text-fg/40 font-bold">
               <Building2 size={32} className="mx-auto mb-3 opacity-40" />
               No suppliers yet.{canManage ? ' Add one with “New Supplier”.' : ''}
             </div>
-          ) : suppliers.map(s => (
-            <div key={s._id} className={`bg-white/5 border border-white/10 rounded-2xl px-4 py-3.5 flex items-start gap-3 ${s.isActive === false ? 'opacity-50' : ''}`}>
-              <div className="w-9 h-9 rounded-lg bg-brand/15 border border-brand/30 flex items-center justify-center shrink-0">
-                <Building2 size={16} className="text-brand" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-black text-white text-sm">{s.name}</span>
-                  {s.isActive === false && <span className="text-[10px] font-black uppercase tracking-wider text-white/40 bg-white/5 px-1.5 py-0.5 rounded-full">Inactive</span>}
+          ) : suppliers.map(s => {
+            const catalog = s.catalog || [];
+            const purchaseHistory = s.purchaseHistory || [];
+            const isOpen = expandedSupplierId === s._id;
+            const isAddingCatalog = catalogFormFor === s._id;
+            return (
+            <div key={s._id} className={`bg-white/5 border border-white/10 rounded-2xl overflow-hidden ${s.isActive === false ? 'opacity-50' : ''}`}>
+              <div className="px-4 py-3.5 flex items-start gap-3">
+                <div className="w-9 h-9 rounded-lg bg-brand/15 border border-brand/30 flex items-center justify-center shrink-0">
+                  <Building2 size={16} className="text-brand" />
                 </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1 text-white/40 text-xs">
-                  {s.contactPerson && <span>{s.contactPerson}</span>}
-                  {s.phone && <span className="inline-flex items-center gap-1"><Phone size={11} />{s.phone}</span>}
-                  {s.email && <span className="inline-flex items-center gap-1"><Mail size={11} />{s.email}</span>}
-                  {s.address && <span className="inline-flex items-center gap-1"><MapPin size={11} />{s.address}</span>}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-black text-fg text-sm">{s.name}</span>
+                    {s.isActive === false && <span className="text-[10px] font-black uppercase tracking-wider text-fg/40 bg-white/5 px-1.5 py-0.5 rounded-full">Inactive</span>}
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1 text-fg/50 text-xs">
+                    {s.contactPerson && <span>{s.contactPerson}</span>}
+                    {s.phone && <span className="inline-flex items-center gap-1"><Phone size={11} />{s.phone}</span>}
+                    {s.email && <span className="inline-flex items-center gap-1"><Mail size={11} />{s.email}</span>}
+                    {s.address && <span className="inline-flex items-center gap-1"><MapPin size={11} />{s.address}</span>}
+                  </div>
+                  {s.notes && <p className="text-fg/50 text-xs mt-1">{s.notes}</p>}
+                  <button onClick={() => setExpandedSupplierId(isOpen ? null : s._id)}
+                    className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-brand/80 hover:text-brand transition">
+                    <Box size={12} />
+                    {catalog.length === 0 ? 'No products linked yet' : `Supplies ${catalog.length} item${catalog.length === 1 ? '' : 's'}`}
+                    {purchaseHistory.length > 0 && ` · ${money(s.totalSpend)} bought`}
+                    {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                  </button>
                 </div>
-                {s.notes && <p className="text-white/30 text-xs mt-1">{s.notes}</p>}
+                {canManage && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => openSupplierForm(s)} className="p-1.5 rounded-lg text-fg/40 hover:bg-white/10 hover:text-fg transition"><Pencil size={14} /></button>
+                    {canDelete && <button onClick={() => deleteSupplier(s)} className="p-1.5 rounded-lg text-fg/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>}
+                  </div>
+                )}
               </div>
-              {canManage && (
-                <div className="flex items-center gap-1 shrink-0">
-                  <button onClick={() => openSupplierForm(s)} className="p-1.5 rounded-lg text-white/40 hover:bg-white/10 hover:text-white transition"><Pencil size={14} /></button>
-                  {canDelete && <button onClick={() => deleteSupplier(s)} className="p-1.5 rounded-lg text-white/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>}
+              {isOpen && (
+                <div className="border-t border-white/10 bg-white/5 px-4 py-3 space-y-3">
+                  {/* Catalog - what they supply, at what price (manually maintained) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg">Products Supplied</p>
+                      {canManage && !isAddingCatalog && (
+                        <button onClick={() => openCatalogForm(s._id)} className="text-[11px] font-bold text-fg hover:text-white/100 flex items-center gap-1"><Plus size={12} /> Link Product</button>
+                      )}
+                    </div>
+                    {catalog.length === 0 && !isAddingCatalog && <p className="text-white text-xs py-1">Nothing linked yet.</p>}
+                    <div className="space-y-1">
+                      {catalog.map(p => (
+                        <div key={p._id} className="flex items-center justify-between gap-3 bg-white rounded-lg px-2.5 py-1.5 text-xs">
+                          <div className="min-w-0">
+                            <span className="text-accent font-bold truncate block">{p.itemName}</span>
+                            {p.notes && <span className="text-black text-[10px] block truncate">{p.notes}</span>}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-black/80 font-black whitespace-nowrap">
+                              {money(p.unitCost)}{p.unit ? ` / ${p.unit}` : ''}{p.packSize ? ` (${p.packSize}${p.unit || ''}/pack)` : ''}
+                            </span>
+                            {canManage && (
+                              <div className="flex items-center gap-0.5">
+                                <button onClick={() => openCatalogForm(s._id, p)} className="p-1 rounded text-black/60 hover:text-black/40 hover:bg-white/10"><Pencil size={12} /></button>
+                                <button onClick={() => deleteCatalogEntry(s._id, p)} className="p-1 rounded text-black/60 hover:text-red-300 hover:bg-red-500/15"><Trash2 size={12} /></button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {isAddingCatalog && (
+                      <div className="mt-2 bg-white/5 border border-white/10 rounded-xl p-3 space-y-2">
+                        <input value={catalogForm.itemName} onChange={e => onCatalogItemNameChange(e.target.value)}
+                          list="supplier-catalog-inventory" placeholder="Type or pick an item…" className={inputCls} />
+                        <datalist id="supplier-catalog-inventory">
+                          {inventory.map(inv => <option key={inv._id} value={inv.itemName} />)}
+                        </datalist>
+                        <p className="text-[10px] font-bold uppercase tracking-wider">
+                          {catalogForm.invId
+                            ? <span className="text-brand">★ Linked to inventory item</span>
+                            : <span className="text-brand">New / unstocked item - quote only</span>}
+                        </p>
+                        <div className="grid grid-cols-3 gap-2">
+                          <input value={catalogForm.unit} onChange={e => setCatalogForm(f => ({ ...f, unit: e.target.value }))}
+                            placeholder="Unit (kg/L/pcs)" className={inputCls} />
+                          <input type="number" min="0" step="any" value={catalogForm.packSize} onChange={e => setCatalogForm(f => ({ ...f, packSize: e.target.value }))}
+                            placeholder="Pack size" className={inputCls} />
+                          <input type="number" min="0" step="0.01" value={catalogForm.unitCost} onChange={e => setCatalogForm(f => ({ ...f, unitCost: e.target.value }))}
+                            placeholder="Price ₱" className={inputCls} />
+                        </div>
+                        <input value={catalogForm.notes} onChange={e => setCatalogForm(f => ({ ...f, notes: e.target.value }))}
+                          placeholder="Notes (optional)" className={inputCls} />
+                        <div className="flex gap-2">
+                          <button onClick={() => saveCatalogEntry(s._id)} disabled={savingCatalog}
+                            className="flex-1 flex items-center justify-center gap-1.5 bg-brand text-white font-bold text-xs py-2 rounded-lg hover:bg-brand-dark transition disabled:opacity-50">
+                            {savingCatalog ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {catalogEditId ? 'Save' : 'Add'}
+                          </button>
+                          <button onClick={closeCatalogForm} className="px-4 bg-white/5 text-black/80 font-bold text-xs py-2 rounded-lg hover:bg-white/10 transition">Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Purchase history - derived from actual POs, read-only */}
+                  {purchaseHistory.length > 0 && (
+                    <div className="pt-2 border-t border-white/5">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-1.5">Purchase History</p>
+                      <div className="space-y-1">
+                        {purchaseHistory.map(p => (
+                          <div key={`${p.itemCode || p.itemName}`} className="flex items-center justify-between gap-3 text-xs">
+                            <span className="text-fg/60 font-bold truncate">{p.itemName}</span>
+                            <span className="text-fg/40 whitespace-nowrap">
+                              {p.receivedQty}/{p.orderedQty} {p.unit} received · <span className="text-fg/50 font-bold">{money(p.actualSpend)}</span> bought
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-          ))}
+          );})}
         </div>
       ) : (
         /* ── RECEIVING / RECONCILIATION ── */
         <div className="space-y-3">
           {activePOs.length === 0 ? (
-            <div className="text-center py-16 text-white/40 font-bold">
+            <div className="text-center py-16 text-fg/40 font-bold">
               <PackageCheck size={32} className="mx-auto mb-3 opacity-40" />
               Nothing awaiting delivery. Create a PO in the Purchase Orders tab first.
             </div>
@@ -595,26 +808,26 @@ export default function ProcurementTab({ ctx }) {
                 className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition text-left">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-black text-white text-sm">{po.poNumber}</span>
+                    <span className="font-black text-fg text-sm">{po.poNumber}</span>
                     <StatusBadge status={po.status} />
                   </div>
-                  <p className="text-white/40 text-xs font-bold mt-0.5 truncate">
+                  <p className="text-fg/40 text-xs font-bold mt-0.5 truncate">
                     {po.supplier || 'No supplier'} · {po.lines?.length || 0} item(s) · Expected {fmtDate(po.expectedDate)}
                   </p>
                 </div>
-                <span className="text-white/50 font-black text-sm whitespace-nowrap">{money(po.estTotal)}</span>
-                <ChevronRight size={16} className={`text-white/30 transition ${receiveId === po._id ? 'rotate-90' : ''}`} />
+                <span className="text-fg/50 font-black text-sm whitespace-nowrap">{money(po.estTotal)}</span>
+                <ChevronRight size={16} className={`text-fg/30 transition ${receiveId === po._id ? 'rotate-90' : ''}`} />
               </button>
 
               {receiveId === po._id && (() => {
                 const missingLines = po.lines.map((l, i) => ({ l, i, key: l._id || i, rem: remainingOf(l) })).filter(x => x.rem > 0);
                 return (
                 <div className="border-t border-white/10 p-4 space-y-3 bg-black/20">
-                  <p className="text-[11px] font-black uppercase tracking-wider text-white/40">
+                  <p className="text-[11px] font-black uppercase tracking-wider text-fg/40">
                     {po.status === 'Incomplete' ? 'Outstanding items only - enter what just arrived' : 'Enter actual quantities received'}
                   </p>
                   {missingLines.length === 0 ? (
-                    <p className="text-white/40 text-sm font-bold py-2">Nothing outstanding on this PO.</p>
+                    <p className="text-fg/40 text-sm font-bold py-2">Nothing outstanding on this PO.</p>
                   ) : (
                   <div className="space-y-2">
                     {missingLines.map(({ l, key, rem }) => {
@@ -624,8 +837,8 @@ export default function ProcurementTab({ ctx }) {
                       return (
                         <div key={key} className="flex items-center gap-3 bg-white/5 rounded-lg px-3 py-2">
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold text-white truncate">{l.itemName}</p>
-                            <p className="text-white/40 text-xs">
+                            <p className="text-sm font-bold text-fg truncate">{l.itemName}</p>
+                            <p className="text-fg/40 text-xs">
                               Ordered: {l.orderedQty} {l.unit} @ {money(l.unitCost)}
                               {alreadyIn > 0 && <span className="text-emerald-400/70"> · Received so far: {alreadyIn}</span>}
                               <span className="text-amber-400/80"> · Missing: {rem} {l.unit}</span>
@@ -634,8 +847,8 @@ export default function ProcurementTab({ ctx }) {
                           <div className="flex items-center gap-1.5">
                             <input type="number" min="0" step="any" value={receiveQtys[key] ?? ''}
                               onChange={e => setReceiveQtys(q => ({ ...q, [key]: e.target.value }))}
-                              className={`w-24 bg-white/5 border rounded-lg px-2 py-1.5 text-sm text-right text-white focus:outline-none ${short ? 'border-red-500/50' : 'border-white/10 focus:border-brand/60'}`} />
-                            <span className="text-white/40 text-xs font-bold w-8">{l.unit}</span>
+                              className={`w-24 bg-white/5 border rounded-lg px-2 py-1.5 text-sm text-right text-fg focus:outline-none ${short ? 'border-red-500/50' : 'border-white/10 focus:border-brand/60'}`} />
+                            <span className="text-fg/40 text-xs font-bold w-8">{l.unit}</span>
                           </div>
                         </div>
                       );
@@ -645,9 +858,9 @@ export default function ProcurementTab({ ctx }) {
                   <textarea value={receiveNotes} onChange={e => setReceiveNotes(e.target.value)} rows={2}
                     placeholder="Delivery notes (optional): damages, substitutions, backorders…" className={inputCls} />
                   <div className="flex items-center justify-end gap-2">
-                    <button onClick={() => setReceiveId(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-white/50 hover:text-white transition">Cancel</button>
+                    <button onClick={() => setReceiveId(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
                     <button onClick={() => submitReceive(po)} disabled={receiving || missingLines.length === 0}
-                      className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-4 py-2 rounded-xl transition">
+                      className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-fg font-bold text-sm px-4 py-2 rounded-xl transition">
                       {receiving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Confirm Received
                     </button>
                   </div>
@@ -664,13 +877,13 @@ export default function ProcurementTab({ ctx }) {
         <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !saving && setShowForm(false)}>
           <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-3xl my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
-              <h2 className="font-black text-white text-lg">{editId ? 'Edit Purchase Order' : 'New Purchase Order'}</h2>
-              <button onClick={() => !saving && setShowForm(false)} className="text-white/40 hover:text-white transition"><X size={20} /></button>
+              <h2 className="font-black text-fg text-lg">{editId ? 'Edit Purchase Order' : 'New Purchase Order'}</h2>
+              <button onClick={() => !saving && setShowForm(false)} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
             </div>
             <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
               <div className="grid sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Supplier</label>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/40 mb-1 block">Supplier</label>
                   {/* Always visible: pick a saved supplier, add a new one on the fly, or
                       just type the name manually below. Not gated on suppliers existing
                       yet, so the picker is discoverable even before any supplier is saved. */}
@@ -684,7 +897,7 @@ export default function ProcurementTab({ ctx }) {
                   <input value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value, supplierId: '' }))} placeholder="Or type supplier name manually" className={inputCls} />
                 </div>
                 <div>
-                  <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Expected Delivery</label>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/40 mb-1 block">Expected Delivery</label>
                   <input type="date" value={form.expectedDate} onChange={e => setForm(f => ({ ...f, expectedDate: e.target.value }))} className={inputCls} />
                 </div>
               </div>
@@ -692,7 +905,7 @@ export default function ProcurementTab({ ctx }) {
               {/* Line items */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-[11px] font-black uppercase tracking-wider text-white/40">Line Items</label>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/40">Line Items</label>
                   <button onClick={addLine} className="flex items-center gap-1 text-brand text-xs font-bold hover:text-brand/80 transition"><Plus size={13} /> Add line</button>
                 </div>
                 <div className="space-y-2">
@@ -700,39 +913,39 @@ export default function ProcurementTab({ ctx }) {
                     <div key={idx} className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-2">
                       <div className="flex items-center gap-2">
                         <select value={l.invId || ''} onChange={e => pickInventory(idx, e.target.value)}
-                          className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-brand/60">
+                          className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-brand/60">
                           <option value="">Pick from inventory (or type below)</option>
                           {inventory.map(i => <option key={i._id} value={i._id}>{i.itemName}{i.itemCode ? ` (${i.itemCode})` : ''}</option>)}
                         </select>
                         {form.lines.length > 1 && (
-                          <button onClick={() => removeLine(idx)} className="p-1.5 rounded-lg text-white/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={15} /></button>
+                          <button onClick={() => removeLine(idx)} className="p-1.5 rounded-lg text-fg/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={15} /></button>
                         )}
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        <input value={l.itemName} onChange={e => updateLine(idx, { itemName: e.target.value, invId: null })} placeholder="Item name" className="col-span-2 sm:col-span-3 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white placeholder-white/25 focus:outline-none focus:border-brand/60" />
-                        <input type="number" min="0" step="any" value={l.orderedQty} onChange={e => updateLine(idx, { orderedQty: e.target.value })} placeholder="Qty" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white placeholder-white/25 focus:outline-none focus:border-brand/60" />
-                        <select value={l.unit} onChange={e => updateLine(idx, { unit: e.target.value })} className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-brand/60">
+                        <input value={l.itemName} onChange={e => updateLine(idx, { itemName: e.target.value, invId: null })} placeholder="Item name" className="col-span-2 sm:col-span-3 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                        <input type="number" min="0" step="any" value={l.orderedQty} onChange={e => updateLine(idx, { orderedQty: e.target.value })} placeholder="Qty" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                        <select value={l.unit} onChange={e => updateLine(idx, { unit: e.target.value })} className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-brand/60">
                           {UNIT_OPTIONS.map(u => <option key={u || 'none'} value={u}>{u || 'Unit'}</option>)}
                         </select>
-                        <input type="number" min="0" step="any" value={l.unitCost} onChange={e => updateLine(idx, { unitCost: e.target.value })} placeholder="Unit cost" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white placeholder-white/25 focus:outline-none focus:border-brand/60" />
-                        <input type="number" min="0" step="any" value={l.packSize} onChange={e => updateLine(idx, { packSize: e.target.value })} title="Weight / volume per pack, in the selected unit" placeholder="Per-pack size (opt.)" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white placeholder-white/25 focus:outline-none focus:border-brand/60" />
-                        <input type="date" value={l.expiryDate} onChange={e => updateLine(idx, { expiryDate: e.target.value })} title="Expiry date (optional)" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white/70 focus:outline-none focus:border-brand/60" />
+                        <input type="number" min="0" step="any" value={l.unitCost} onChange={e => updateLine(idx, { unitCost: e.target.value })} placeholder="Unit cost" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                        <input type="number" min="0" step="any" value={l.packSize} onChange={e => updateLine(idx, { packSize: e.target.value })} title="Weight / volume per pack, in the selected unit" placeholder="Per-pack size (opt.)" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                        <input type="date" value={l.expiryDate} onChange={e => updateLine(idx, { expiryDate: e.target.value })} title="Expiry date (optional)" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg/70 focus:outline-none focus:border-brand/60" />
                       </div>
-                      <p className="text-right text-white/40 text-xs font-bold">Line: {money((Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0))}</p>
+                      <p className="text-right text-fg/40 text-xs font-bold">Line: {money((Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0))}</p>
                     </div>
                   ))}
                 </div>
               </div>
 
               <div>
-                <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Notes</label>
+                <label className="text-[11px] font-black uppercase tracking-wider text-fg/40 mb-1 block">Notes</label>
                 <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder="Optional notes" className={inputCls} />
               </div>
             </div>
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-white/10">
-              <span className="text-sm font-black text-white">Estimated total: <span className="text-brand">{money(formEstTotal)}</span></span>
+              <span className="text-sm font-black text-fg">Estimated total: <span className="text-brand">{money(formEstTotal)}</span></span>
               <div className="flex items-center gap-2">
-                <button onClick={() => !saving && setShowForm(false)} className="text-sm font-bold px-4 py-2 rounded-xl text-white/50 hover:text-white transition">Cancel</button>
+                <button onClick={() => !saving && setShowForm(false)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
                 <button onClick={saveDraft} disabled={saving} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
                   {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {editId ? 'Save Changes' : 'Create PO'}
                 </button>
@@ -747,39 +960,39 @@ export default function ProcurementTab({ ctx }) {
         <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !savingSupplier && setShowSupplierForm(false)}>
           <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-lg my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
-              <h2 className="font-black text-white text-lg">{supplierEditId ? 'Edit Supplier' : 'New Supplier'}</h2>
-              <button onClick={() => !savingSupplier && setShowSupplierForm(false)} className="text-white/40 hover:text-white transition"><X size={20} /></button>
+              <h2 className="font-black text-fg text-lg">{supplierEditId ? 'Edit Supplier' : 'New Supplier'}</h2>
+              <button onClick={() => !savingSupplier && setShowSupplierForm(false)} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
             </div>
             <div className="p-5 space-y-3">
               <div>
-                <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Name *</label>
+                <label className="text-[11px] font-black uppercase tracking-wider text-fg mb-1 block">Name *</label>
                 <input value={supplierForm.name} onChange={e => setSupplierForm(f => ({ ...f, name: e.target.value }))} placeholder="Supplier name" className={inputCls} />
               </div>
               <div className="grid sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Contact Person</label>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-fg mb-1 block">Contact Person</label>
                   <input value={supplierForm.contactPerson} onChange={e => setSupplierForm(f => ({ ...f, contactPerson: e.target.value }))} placeholder="Contact name" className={inputCls} />
                 </div>
                 <div>
-                  <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Phone</label>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-fg mb-1 block">Phone</label>
                   <input value={supplierForm.phone} onChange={e => setSupplierForm(f => ({ ...f, phone: e.target.value }))} placeholder="Phone" className={inputCls} />
                 </div>
               </div>
               <div>
-                <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Email</label>
+                <label className="text-[11px] font-black uppercase tracking-wider text-fg mb-1 block">Email</label>
                 <input value={supplierForm.email} onChange={e => setSupplierForm(f => ({ ...f, email: e.target.value }))} placeholder="Email" className={inputCls} />
               </div>
               <div>
-                <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Address</label>
+                <label className="text-[11px] font-black uppercase tracking-wider text-fg mb-1 block">Address</label>
                 <input value={supplierForm.address} onChange={e => setSupplierForm(f => ({ ...f, address: e.target.value }))} placeholder="Address" className={inputCls} />
               </div>
               <div>
-                <label className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-1 block">Notes</label>
+                <label className="text-[11px] font-black uppercase tracking-wider text-fg mb-1 block">Notes</label>
                 <textarea value={supplierForm.notes} onChange={e => setSupplierForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder="Optional notes" className={inputCls} />
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
-              <button onClick={() => !savingSupplier && setShowSupplierForm(false)} className="text-sm font-bold px-4 py-2 rounded-xl text-white/50 hover:text-white transition">Cancel</button>
+              <button onClick={() => !savingSupplier && setShowSupplierForm(false)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
               <button onClick={saveSupplier} disabled={savingSupplier} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
                 {savingSupplier ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {supplierEditId ? 'Save Changes' : 'Create Supplier'}
               </button>
@@ -794,13 +1007,13 @@ export default function ProcurementTab({ ctx }) {
           <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-3xl my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
               <div>
-                <h2 className="font-black text-white text-lg">Import Purchase Orders</h2>
-                <p className="text-white/40 text-xs mt-0.5">
+                <h2 className="font-black text-fg text-lg">Import Purchase Orders</h2>
+                <p className="text-fg/40 text-xs mt-0.5">
                   {importPreview.pos.length} PO(s) · {importPreview.pos.reduce((s, p) => s + p.lines.length, 0)} line item(s)
                   {importPreview.skipped > 0 && ` · ${importPreview.skipped} row(s) skipped`}
                 </p>
               </div>
-              <button onClick={() => !importing && setImportPreview(null)} className="text-white/40 hover:text-white transition"><X size={20} /></button>
+              <button onClick={() => !importing && setImportPreview(null)} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
             </div>
             <div className="p-5 space-y-3 max-h-[60vh] overflow-y-auto">
               {importPreview.pos.map((p, pi) => {
@@ -808,15 +1021,15 @@ export default function ProcurementTab({ ctx }) {
                 return (
                   <div key={pi} className="bg-white/5 border border-white/10 rounded-xl p-3">
                     <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-                      <span className="font-black text-white text-sm">{p.supplier || 'Unknown supplier'}</span>
-                      <div className="flex items-center gap-2 text-[11px] text-white/40 font-bold">
+                      <span className="font-black text-fg text-sm">{p.supplier || 'Unknown supplier'}</span>
+                      <div className="flex items-center gap-2 text-[11px] text-fg/40 font-bold">
                         {p.poNo && <span>PO {p.poNo}</span>}
                         <span className="text-brand">{money(total)}</span>
                       </div>
                     </div>
                     <div className="space-y-0.5">
                       {p.lines.map((l, li) => (
-                        <div key={li} className="flex items-center justify-between text-xs text-white/60">
+                        <div key={li} className="flex items-center justify-between text-xs text-fg/60">
                           <span className="truncate pr-2">{l.itemCode ? `${l.itemCode} · ` : ''}{l.itemName}</span>
                           <span className="whitespace-nowrap font-mono">{l.orderedQty} {l.unit} × {money(l.unitCost)}</span>
                         </div>
@@ -827,8 +1040,8 @@ export default function ProcurementTab({ ctx }) {
               })}
             </div>
             <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
-              <button onClick={() => !importing && setImportPreview(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-white/50 hover:text-white transition">Cancel</button>
-              <button onClick={confirmImport} disabled={importing} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+              <button onClick={() => !importing && setImportPreview(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
+              <button onClick={confirmImport} disabled={importing} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-fg font-bold text-sm px-5 py-2 rounded-xl transition">
                 {importing ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Import {importPreview.pos.length} PO(s)
               </button>
             </div>
@@ -845,14 +1058,14 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
   if (!pos.length) {
     return (
       <div>
-        <p className="text-[11px] font-black uppercase tracking-wider text-white/30 mb-2">{title}</p>
-        <div className="text-center py-8 text-white/30 text-sm font-bold border border-dashed border-white/10 rounded-2xl">{empty}</div>
+        <p className="text-[11px] font-black uppercase tracking-wider text-fg/30 mb-2">{title}</p>
+        <div className="text-center py-8 text-fg/30 text-sm font-bold border border-dashed border-white/10 rounded-2xl">{empty}</div>
       </div>
     );
   }
   return (
     <div>
-      <p className="text-[11px] font-black uppercase tracking-wider text-white/30 mb-2">{title} <span className="text-white/20">({pos.length})</span></p>
+      <p className="text-[11px] font-black uppercase tracking-wider text-fg/30 mb-2">{title} <span className="text-fg/20">({pos.length})</span></p>
       <div className="space-y-2">
         {pos.map(po => {
           const isOpen = open[po._id];
@@ -860,20 +1073,20 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
             <div key={po._id} className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
               <div className="flex items-center gap-3 px-4 py-3.5">
                 <button onClick={() => setOpen(o => ({ ...o, [po._id]: !o[po._id] }))} className="flex-1 min-w-0 flex items-center gap-3 text-left">
-                  <ChevronRight size={16} className={`text-white/30 shrink-0 transition ${isOpen ? 'rotate-90' : ''}`} />
+                  <ChevronRight size={16} className={`text-fg/30 shrink-0 transition ${isOpen ? 'rotate-90' : ''}`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-black text-white text-sm">{po.poNumber}</span>
+                      <span className="font-black text-fg text-sm">{po.poNumber}</span>
                       <StatusBadge status={po.status} />
                     </div>
-                    <p className="text-white/40 text-xs font-bold mt-0.5 truncate">
+                    <p className="text-fg/40 text-xs font-bold mt-0.5 truncate">
                       {po.supplier || 'No supplier'} · {po.lines?.length || 0} item(s)
                       {showReceived && po.receivedAt ? ` · Received ${fmtDate(po.receivedAt)}` : ` · Expected ${fmtDate(po.expectedDate)}`}
                     </p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-white/60 font-black text-sm">{money(showReceived && po.actualTotal ? po.actualTotal : po.estTotal)}</p>
-                    {showReceived && po.actualTotal > 0 && <p className="text-white/30 text-[10px] font-bold">est {money(po.estTotal)}</p>}
+                    <p className="text-fg/60 font-black text-sm">{money(showReceived && po.actualTotal ? po.actualTotal : po.estTotal)}</p>
+                    {showReceived && po.actualTotal > 0 && <p className="text-fg/30 text-[10px] font-bold">est {money(po.estTotal)}</p>}
                   </div>
                 </button>
                 {renderActions && <div className="shrink-0">{renderActions(po)}</div>}
@@ -882,7 +1095,7 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
                 <div className="border-t border-white/10 px-4 py-3 bg-black/20">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-white/30 text-[10px] font-black uppercase tracking-wider text-left">
+                      <tr className="text-fg/30 text-[10px] font-black uppercase tracking-wider text-left">
                         <th className="pb-1.5">Item</th>
                         <th className="pb-1.5 text-right">Ordered</th>
                         {showReceived && <th className="pb-1.5 text-right">Received</th>}
@@ -890,12 +1103,12 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
                         <th className="pb-1.5 text-right">Total</th>
                       </tr>
                     </thead>
-                    <tbody className="text-white/70">
+                    <tbody className="text-fg/70">
                       {po.lines.map((l, i) => {
                         const short = showReceived && l.receivedQty != null && l.receivedQty < l.orderedQty;
                         return (
                           <tr key={l._id || i} className="border-t border-white/5">
-                            <td className="py-1.5 font-bold text-white/80">{l.itemName}</td>
+                            <td className="py-1.5 font-bold text-fg/80">{l.itemName}</td>
                             <td className="py-1.5 text-right">{l.orderedQty} {l.unit}</td>
                             {showReceived && <td className={`py-1.5 text-right font-bold ${short ? 'text-red-300' : 'text-green-300'}`}>{l.receivedQty ?? '-'} {l.unit}</td>}
                             <td className="py-1.5 text-right">{money(l.unitCost)}</td>
@@ -905,8 +1118,8 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
                       })}
                     </tbody>
                   </table>
-                  {po.notes && <p className="text-white/40 text-xs mt-2 pt-2 border-t border-white/5"><span className="font-black uppercase tracking-wider text-[10px] text-white/30">Notes: </span>{po.notes}</p>}
-                  {po.receivedBy && <p className="text-white/30 text-[11px] mt-1.5 font-bold">Received by {po.receivedBy}</p>}
+                  {po.notes && <p className="text-fg/40 text-xs mt-2 pt-2 border-t border-white/5"><span className="font-black uppercase tracking-wider text-[10px] text-fg/30">Notes: </span>{po.notes}</p>}
+                  {po.receivedBy && <p className="text-fg/30 text-[11px] mt-1.5 font-bold">Received by {po.receivedBy}</p>}
                 </div>
               )}
             </div>

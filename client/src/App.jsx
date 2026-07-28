@@ -25,6 +25,8 @@ function ModeMismatchBanner() {
   );
 }
 
+import UiProvider from './shared/ui/UiProvider';
+
 const CustomerMenu = lazy(() => import('./features/menu/CustomerMenu'));
 const AdminDashboard = lazy(() => import('./features/dashboard/AdminDashboard'));
 const SuperAdminPanel = lazy(() => import('./features/super-admin/SuperAdminPanel'));
@@ -40,7 +42,7 @@ class ErrorBoundary extends Component {
       return (
         <div className="min-h-screen bg-page-bg flex flex-col items-center justify-center text-center px-6">
           <p className="text-4xl mb-4">⚠️</p>
-          <h1 className="text-white text-xl font-bold mb-2">Something went wrong</h1>
+          <h1 className="text-fg text-xl font-bold mb-2">Something went wrong</h1>
           <p className="text-gray-400 text-sm mb-6">{this.state.error.message}</p>
           <button
             onClick={() => { this.setState({ error: null }); window.location.reload(); }}
@@ -57,11 +59,20 @@ class ErrorBoundary extends Component {
 
 function App() {
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', import.meta.env.VITE_THEME || 'default');
+    // Theme is a per-DEVICE preference, not a business setting: the same shop can
+    // have a dark tablet at the register and a light one in a sunlit warehouse.
+    // A saved choice wins; VITE_THEME remains the shipped default.
+    let saved = null;
+    try { saved = localStorage.getItem('dash.theme'); } catch { /* private mode */ }
+    document.documentElement.setAttribute('data-theme', saved || import.meta.env.VITE_THEME || 'default');
   }, []);
 
   return (
     <ErrorBoundary>
+      {/* UiProvider wraps the whole app (not just the dashboard) so the customer
+          menu and client portal get the same toasts/confirms instead of the
+          browser's native dialogs. */}
+      <UiProvider>
       <ModeMismatchBanner />
       <Router>
         <Suspense fallback={
@@ -84,6 +95,7 @@ function App() {
           </Routes>
         </Suspense>
       </Router>
+      </UiProvider>
     </ErrorBoundary>
   );
 }

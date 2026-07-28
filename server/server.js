@@ -18,6 +18,7 @@ import pinoHttp from 'pino-http';
 import { assertBalanced, debitAccountFor, suggestedSettleAccount } from './lib/ledger.js';
 import { ACCOUNTS, EXPENSE_CATEGORIES, CODE_MAP } from './lib/chartOfAccounts.js';
 import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf } from './lib/units.js';
+import { title, code, lower, freeText, zTitle, zText, zMoneyLoose } from './lib/normalize.js';
 import { addBatch, consumeBatches, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
 import { requireStaff, evaluateClientAccess, requirePermission, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS, setCustomRolePermissions } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
@@ -38,6 +39,8 @@ import registerAdminTools from './features/admin-tools.js';
 import registerAudit from './features/audit.js';
 import registerSettings from './features/settings.js';
 import registerPurchaseOrders from './features/purchase-orders.js';
+import registerNotifications from './features/notifications.js';
+import registerClients from './features/clients.js';
 
 const log = pino({
   level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
@@ -343,7 +346,14 @@ const validate = (schema) => (req, res, next) => {
 };
 
 // Reusable field primitives
+// zName stays RAW (trim only) — it backs loginSchema and userCreateSchema, and
+// canonicalizing a staff login name would break existing accounts whose stored
+// name doesn't survive a round-trip (e.g. "JM" → "Jm"). Use zLabel for anything
+// that is a display label rather than an identity.
 const zName  = z.string().trim().min(1).max(120);
+// zLabel canonicalizes user-facing names so "abc trading" / "ABC Trading" /
+// "  ABC   Trading " collapse to one stored value.
+const zLabel = zTitle(z, 120);
 const zMoney = z.number().finite().min(0);
 const zRole  = z.enum(['superadmin', 'Manager', 'Staff', 'Cashier']).or(z.string().trim().min(1).max(40));
 
@@ -353,7 +363,7 @@ const loginSchema    = z.object({ name: zName, password: z.string().min(1).max(2
 // permissions passes through so the create route can honour an explicit override.
 const userCreateSchema = z.object({ name: zName, password: z.string().min(4).max(200), role: zRole.optional(), permissions: z.array(z.string()).optional() });
 const addonSchema    = z.object({
-  name: zName, price: zMoney, category: z.string().trim().max(60).optional(),
+  name: zLabel, price: zMoneyLoose(z), category: zTitle(z, 60).optional(),
   recipe: z.array(z.object({ invId: z.string(), name: z.string(), qty: z.number(), cost: z.number().optional(), unit: z.string().optional() })).optional(),
 });
 
@@ -366,8 +376,8 @@ const zRecipe = z.array(z.object({
 // Mass-assignment fixes: each schema OMITS server-controlled fields
 // (codes, isArchived, timestamps) so a client can never set them via create().
 const productSchema = z.object({
-  name: zName, description: z.string().max(2000).optional(), category: z.string().trim().max(80).optional(),
-  basePrice: zMoney, discountPercent: z.number().min(0).max(100).optional(),
+  name: zLabel, description: zText(z, 2000).optional(), category: zTitle(z, 80).optional(),
+  basePrice: zMoneyLoose(z), discountPercent: z.number().min(0).max(100).optional(),
   clientDiscounts: z.array(z.object({ clientId: z.string(), percent: z.number().min(0).max(100) })).optional(),
   baseSize: z.string().max(40).optional(), baseRecipe: zRecipe,
   sizes: z.array(z.object({ sizeCode: z.string().optional(), name: z.string().optional(), price: zMoney.optional(), recipe: zRecipe })).optional(),
@@ -376,16 +386,18 @@ const productSchema = z.object({
   modifierGroups: z.array(z.string()).optional(),
 });
 const comboSchema = z.object({
-  name: zName, description: z.string().max(2000).optional(), price: zMoney, image: z.string().optional(),
+  name: zLabel, description: zText(z, 2000).optional(), price: zMoneyLoose(z), image: z.string().optional(),
   isActive: z.boolean().optional(),
   items: z.array(z.object({ productId: z.string().optional(), name: z.string().optional(), sizeName: z.string().optional(), quantity: z.number().int().positive().optional() })).optional(),
 });
 const discountSchema = z.object({
-  name: zName, percentage: z.number().min(0).max(100).optional(), isSCPWD: z.boolean().optional(),
+  name: zLabel, percentage: z.number().min(0).max(100).optional(), isSCPWD: z.boolean().optional(),
 });
 const roleSchema = z.object({ name: zName, permissions: z.array(z.string()).optional() });
+// roleSchema keeps zName: role names are matched against stored user.role values
+// and the built-in 'superadmin' literal, so canonicalizing them would break authz.
 const modifierGroupSchema = z.object({
-  name: zName, isRequired: z.boolean().optional(),
+  name: zLabel, isRequired: z.boolean().optional(),
   minSelect: z.number().int().min(0).optional(), maxSelect: z.number().int().min(0).optional(),
   options: z.array(z.object({ name: z.string(), price: zMoney.optional(), recipe: zRecipe })).optional(),
 });
@@ -639,18 +651,35 @@ const runStartupTasks = async () => {
         await Counter.collection.updateOne({ _id: prefix }, { $max: { seq } }, { upsert: true });
       }
 
-      // Client accounts (customer ID): legacy CLT-AXXXX, standard format is now
-      // CUS-1000-AXXXX. Each prefix keeps its own counter — existing CLT- codes
-      // are untouched, new signups get CUS-1000-.
+      // ── ONE-TIME MIGRATION: legacy CLT-AXXXX → CUS-1000-AXXXX ──────────────
+      // Every ClientAccount is a real client (walk-ins never get one — see
+      // WALK_IN_CUSTOMER_CODE). Renumber any surviving CLT- codes into the standard
+      // sequence, oldest account first, continuing after whatever CUS-1000 codes
+      // already exist. Idempotent: once no CLT- codes remain, this is a no-op.
+      const legacyClients = await ClientAccount.find({ clientCode: /^CLT-A\d+$/ }, { clientCode: 1 }).sort({ createdAt: 1 }).lean();
+      if (legacyClients.length) {
+        const existingCus = await ClientAccount.find({ clientCode: /^CUS-1000-A\d+$/ }, { clientCode: 1 }).lean();
+        let seq = 1; // A0001 stays reserved for walk-in — never reissue it
+        for (const c of existingCus) {
+          const m = c.clientCode.match(/^CUS-1000-A(\d+)$/);
+          if (m) seq = Math.max(seq, parseInt(m[1], 10));
+        }
+        for (const c of legacyClients) {
+          seq += 1;
+          const newCode = `CUS-1000-A${String(seq).padStart(4, '0')}`;
+          await ClientAccount.updateOne({ _id: c._id }, { $set: { clientCode: newCode } });
+        }
+        log.info(`✅ Migrated ${legacyClients.length} legacy CLT- client code(s) to CUS-1000- format`);
+      }
+
+      // Client accounts (customer ID): CUS-1000-AXXXX is the standard format.
       const allClients = await ClientAccount.find({}, { clientCode: 1 }).lean();
-      const maxClientSeq = { 'CLT': 0, 'CUS-1000': 0 };
+      let maxClientSeq = 0;
       for (const c of allClients) {
-        const m = c.clientCode?.match(/^(CLT|CUS-1000)-A(\d+)$/);
-        if (m) maxClientSeq[m[1]] = Math.max(maxClientSeq[m[1]], parseInt(m[2], 10));
+        const m = c.clientCode?.match(/^CUS-1000-A(\d+)$/);
+        if (m) maxClientSeq = Math.max(maxClientSeq, parseInt(m[1], 10));
       }
-      for (const [prefix, seq] of Object.entries(maxClientSeq)) {
-        if (seq > 0) await Counter.collection.updateOne({ _id: prefix }, { $max: { seq } }, { upsert: true });
-      }
+      if (maxClientSeq > 0) await Counter.collection.updateOne({ _id: 'CUS-1000' }, { $max: { seq: maxClientSeq } }, { upsert: true });
       // A0001 is reserved for walk-in/guest sales (WALK_IN_CUSTOMER_CODE) — never
       // issued to a real signup. Floor the counter at 1 so the next real
       // generateNextSequence() call always lands on A0002 or higher.
@@ -1066,7 +1095,13 @@ const JournalEntrySchema = new mongoose.Schema({
     credit: { type: Number, default: 0 }
   }],
   totalDebit: Number,
-  totalCredit: Number
+  totalCredit: Number,
+  // Supplier attribution for A/P entries — set when goods are received on credit
+  // and when the supplier is paid. Without this, "how much do we owe Best Beans?"
+  // can only be answered by reading descriptions. Optional and additive: entries
+  // that predate it simply group under "Unattributed".
+  supplierId:   { type: String, default: null, index: true },
+  supplierName: { type: String, default: '' },
 }, { timestamps: true });
 const JournalEntry = mongoose.model('JournalEntry', JournalEntrySchema);
 
@@ -1390,6 +1425,17 @@ const ClientAccountSchema = new mongoose.Schema({
   name:          { type: String, required: true },
   paymentMethod: { type: String, default: 'Cash' },             // pre-set; can be overridden per order
   isActive:      { type: Boolean, default: true },
+  // 'portal' = real client-portal login (username/password usable). 'pos' = auto-promoted
+  // from a repeat POS walk-in (3+ Completed orders under the same name) — carries a
+  // placeholder username/unusable password since it has no login of its own.
+  source:        { type: String, enum: ['portal', 'pos'], default: 'portal' },
+  // Credit limit in pesos for on-account (non-cash) buying.
+  //   null  = no per-client limit set — falls back to the global limit if the
+  //           active mode uses one.
+  //   0     = an explicit "no credit at all" (different from null on purpose).
+  // Whether either limit is enforced at all is decided by the `creditLimitMode`
+  // setting; see resolveCreditLimit().
+  creditLimit:   { type: Number, default: null },
 }, { timestamps: true });
 const ClientAccount = mongoose.model('ClientAccount', ClientAccountSchema);
 
@@ -1487,6 +1533,18 @@ const SupplierSchema = new mongoose.Schema({
   notes:         { type: String, default: '' },
   isActive:      { type: Boolean, default: true },
   tenantId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  // Catalog: what this supplier says they sell + their quoted price — set by staff,
+  // independent of whether a PO has ever been placed. This is what lets "who's
+  // cheaper for X" be answered before ever buying, not just from purchase history.
+  catalog: [{
+    invId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
+    itemName:  { type: String, required: true },
+    itemCode:  { type: String, default: '' },
+    unit:      { type: String, default: '' },
+    packSize:  { type: Number, default: null },
+    unitCost:  { type: Number, required: true },
+    notes:     { type: String, default: '' },
+  }],
 }, { timestamps: true });
 const Supplier = mongoose.model('Supplier', SupplierSchema);
 
@@ -2189,6 +2247,8 @@ registerAdminTools(ctx);
 registerAudit(ctx);
 registerSettings(ctx);
 registerPurchaseOrders(ctx);
+registerNotifications(ctx);
+registerClients(ctx);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Not found.' });

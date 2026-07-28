@@ -124,7 +124,7 @@ export default function HistoryTab({ ctx }) {
       {[['daily','Current Shift'],['shifts','Shift History'],['hours','Timesheets'],['deposits','Bank Deposits']].map(([id, label]) => (
         <button key={id}
           onClick={() => { setHistorySubTab(id); if (id === 'shifts') fetchShiftHistory(1); if (id === 'hours') fetchClockEntries(1); }}
-          className={`px-5 py-2.5 rounded-xl font-black text-sm uppercase tracking-wider transition ${historySubTab === id ? 'bg-brand text-white shadow-md' : 'bg-surface-2 text-white/50 hover:text-white'}`}
+          className={`px-5 py-2.5 rounded-xl font-black text-sm uppercase tracking-wider transition ${historySubTab === id ? 'bg-brand text-white shadow-md' : 'bg-surface-2 text-fg/50 hover:text-fg'}`}
         >{label}</button>
       ))}
     </div>
@@ -136,38 +136,38 @@ export default function HistoryTab({ ctx }) {
 
           {/* ===== BANK DEPOSITS (list; posted during shift close) ===== */}
           {historySubTab === 'deposits' && (
-            <div className="bg-surface border border-white/8 rounded-2xl p-5 animate-fade-in">
+            <div className="bg-surface border border-white/10 rounded-2xl p-5 animate-fade-in">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <div>
-                  <h3 className="text-lg font-black text-white">Bank Deposits</h3>
-                  <p className="text-white/40 text-xs">Cash-to-bank deposits (posted when a shift is closed &amp; reconciled).</p>
+                  <h3 className="text-lg font-black text-fg">Bank Deposits</h3>
+                  <p className="text-fg/60 text-xs">Cash-to-bank deposits (posted when a shift is closed &amp; reconciled).</p>
                 </div>
-                <button onClick={loadDeposits} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
+                <button onClick={loadDeposits} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
               </div>
               {deposits === null ? (
-                <p className="text-white/40 text-sm">Loading…</p>
+                <p className="text-fg/40 text-sm">Loading…</p>
               ) : deposits.length === 0 ? (
-                <p className="text-white/40 text-sm">No bank deposits recorded yet.</p>
+                <p className="text-fg/40 text-sm">No bank deposits recorded yet.</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-white/30 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
+                      <tr className="text-fg/30 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
                         <th className="py-2">Date</th><th className="py-2">Reference</th><th className="py-2">Deposited By</th><th className="py-2 text-right">Amount</th>
                       </tr>
                     </thead>
-                    <tbody className="text-white/75">
+                    <tbody className="text-fg/75">
                       {deposits.map((d) => (
                         <tr key={d._id} className="border-b border-white/5">
-                          <td className="py-1.5 text-white/50 text-xs">{d.createdAt ? new Date(d.createdAt).toLocaleDateString() : ''}</td>
+                          <td className="py-1.5 text-fg/50 text-xs">{d.createdAt ? new Date(d.createdAt).toLocaleDateString() : ''}</td>
                           <td className="py-1.5 font-mono text-xs">{d.reference}</td>
                           <td className="py-1.5">{d.depositedBy}</td>
-                          <td className="py-1.5 text-right font-mono font-bold text-white/90">₱{Number(d.amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                          <td className="py-1.5 text-right font-mono font-bold text-fg/90">₱{Number(d.amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
-                      <tr className="font-black text-white border-t-2 border-white/20">
+                      <tr className="font-black text-fg border-t-2 border-white/20">
                         <td className="py-2" colSpan={3}>Total</td>
                         <td className="py-2 text-right font-mono text-brand">₱{deposits.reduce((s, d) => s + Number(d.amount || 0), 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                       </tr>
@@ -183,29 +183,29 @@ export default function HistoryTab({ ctx }) {
             <div className="space-y-4 animate-fade-in">
               <div className="flex flex-wrap gap-3 items-center">
                 <input type="date" value={sssRange.start} onChange={e => setSssRange(p => ({ ...p, start: e.target.value }))}
-                  className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-white text-sm outline-none focus:border-brand/50" />
-                <span className="text-white/30 font-bold text-sm">→</span>
+                  className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
+                <span className="text-fg/30 font-bold text-sm">→</span>
                 <input type="date" value={sssRange.end} onChange={e => setSssRange(p => ({ ...p, end: e.target.value }))}
-                  className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-white text-sm outline-none focus:border-brand/50" />
+                  className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
                 <button onClick={fetchSalesSummary} className="px-5 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition">Load</button>
                 <div className="flex rounded-xl overflow-hidden border border-white/10">
                   {[['order', 'Per Order'], ['day', 'Per Day']].map(([g, lbl]) => (
                     <button key={g} onClick={() => setSssGroup(g)}
-                      className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition ${sssGroup === g ? 'bg-brand text-white' : 'bg-surface text-white/50 hover:text-white'}`}>{lbl}</button>
+                      className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition ${sssGroup === g ? 'bg-brand text-white' : 'bg-surface text-fg/50 hover:text-fg'}`}>{lbl}</button>
                   ))}
                 </div>
-                {salesSummary && <button onClick={exportSalesSummaryPDF} className="ml-auto bg-white/5 text-white/70 hover:text-white hover:bg-white/10 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition flex items-center gap-1.5"><Download size={13} /> PDF</button>}
+                {salesSummary && <button onClick={exportSalesSummaryPDF} className="ml-auto bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition flex items-center gap-1.5"><Download size={13} /> PDF</button>}
               </div>
 
               {!salesSummary ? (
-                <p className="text-white/30 text-sm text-center p-6 font-bold">Pick a range and click Load.</p>
+                <p className="text-fg/30 text-sm text-center p-6 font-bold">Pick a range and click Load.</p>
               ) : sssRows.length === 0 ? (
-                <p className="text-white/30 text-sm text-center p-6 font-bold">No completed sales in this range.</p>
+                <p className="text-fg/30 text-sm text-center p-6 font-bold">No completed sales in this range.</p>
               ) : (
-                <div className="bg-surface border border-white/8 rounded-xl overflow-hidden">
+                <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs whitespace-nowrap">
-                      <thead className="text-white/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                      <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                         <tr>
                           <th className="px-3 py-2.5">Date</th>
                           <th className="px-3 py-2.5">Customer ID</th>
@@ -220,19 +220,19 @@ export default function HistoryTab({ ctx }) {
                       <tbody>
                         {sssPage.pageItems.map((r, i) => (
                           <tr key={i} className={`border-b border-white/5 ${i % 2 ? 'bg-white/[0.015]' : ''}`}>
-                            <td className="px-3 py-2.5 text-white/70">{new Date(r.date).toLocaleDateString()}</td>
-                            <td className="px-3 py-2.5 text-white/70">{sssGroup === 'day' ? '-' : (r.customerId || '-')}</td>
-                            <td className="px-3 py-2.5 text-white/70">{sssGroup === 'day' ? '-' : (r.customerName || 'Guest')}</td>
-                            <td className="px-3 py-2.5 font-bold text-white">{sssGroup === 'day' ? r.count : r.orderNumber}</td>
+                            <td className="px-3 py-2.5 text-fg/70">{new Date(r.date).toLocaleDateString()}</td>
+                            <td className="px-3 py-2.5 text-fg/70">{sssGroup === 'day' ? '-' : (r.customerId || '-')}</td>
+                            <td className="px-3 py-2.5 text-fg/70">{sssGroup === 'day' ? '-' : (r.customerName || 'Guest')}</td>
+                            <td className="px-3 py-2.5 font-bold text-fg">{sssGroup === 'day' ? r.count : r.orderNumber}</td>
                             {SSS_COLS.map(([label, methods]) => { const v = sssColVal(r, methods); return (
-                              <td key={label} className="px-3 py-2.5 text-right tabular-nums text-white/80">{v ? `₱${v.toFixed(2)}` : '-'}</td>
+                              <td key={label} className="px-3 py-2.5 text-right tabular-nums text-fg/80">{v ? `₱${v.toFixed(2)}` : '-'}</td>
                             ); })}
                             <td className="px-3 py-2.5 text-right tabular-nums font-black text-brand">₱{r.total.toFixed(2)}</td>
                           </tr>
                         ))}
                       </tbody>
                       <tfoot>
-                        <tr className="border-t-2 border-white/10 bg-brand/5 font-black text-white">
+                        <tr className="border-t-2 border-white/10 bg-brand/5 font-black text-fg">
                           <td className="px-3 py-3 uppercase text-[10px] tracking-wider">Totals</td>
                           <td className="px-3 py-3"></td>
                           <td className="px-3 py-3"></td>
@@ -252,20 +252,20 @@ export default function HistoryTab({ ctx }) {
           )}
 
           {historySubTab === 'hours' && (
-            <div className="bg-surface border border-gray-800 rounded-xl overflow-hidden">
-              <div className="px-5 py-3 border-b border-gray-800 flex items-center gap-3">
-                <h3 className="text-white font-black uppercase tracking-wider text-sm">Staff Hours</h3>
+            <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-white/10 flex items-center gap-3">
+                <h3 className="text-fg font-black uppercase tracking-wider text-sm">Staff Hours</h3>
                 <span className="text-[10px] text-gray-500 font-bold">{clockEntriesTotal} records</span>
-                <button onClick={() => fetchClockEntries(1)} className="ml-auto flex items-center gap-1.5 text-[10px] bg-white/5 text-white/50 hover:text-white px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">
+                <button onClick={() => fetchClockEntries(1)} className="ml-auto flex items-center gap-1.5 text-[10px] bg-white/5 text-fg/50 hover:text-fg px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">
                   <RefreshCw size={11} /> Load
                 </button>
               </div>
               {clockEntries.length === 0 ? (
-                <p className="text-white/20 text-sm p-6 text-center font-bold">Click Load to view staff clock-in/out records.</p>
+                <p className="text-fg/20 text-sm p-6 text-center font-bold">Click Load to view staff clock-in/out records.</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[480px]">
-                    <thead className="text-white/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                    <thead className="text-fg/80 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                       <tr>
                         <th className="px-5 py-2.5">Date</th>
                         <th className="px-5 py-2.5">Staff</th>
@@ -278,11 +278,11 @@ export default function HistoryTab({ ctx }) {
                     <tbody>
                       {clockEntries.map((e, i) => (
                         <tr key={e._id||i} className={`border-b border-white/5 hover:bg-white/3 ${i%2===0?'':'bg-white/[0.015]'}`}>
-                          <td className="px-5 py-2.5 text-white/50">{e.date}</td>
-                          <td className="px-5 py-2.5 text-white font-bold">{e.staffName}</td>
-                          <td className="px-5 py-2.5 text-white/50 capitalize">{e.staffRole || '-'}</td>
-                          <td className="px-5 py-2.5 text-white/70">{e.clockIn ? new Date(e.clockIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}) : '-'}</td>
-                          <td className={`px-5 py-2.5 ${e.clockOut ? 'text-white/70' : 'text-yellow-400/70 italic'}`}>
+                          <td className="px-5 py-2.5 text-fg/50">{e.date}</td>
+                          <td className="px-5 py-2.5 text-fg font-bold">{e.staffName}</td>
+                          <td className="px-5 py-2.5 text-fg/50 capitalize">{e.staffRole || '-'}</td>
+                          <td className="px-5 py-2.5 text-fg/70">{e.clockIn ? new Date(e.clockIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}) : '-'}</td>
+                          <td className={`px-5 py-2.5 ${e.clockOut ? 'text-fg/70' : 'text-yellow-400/70 italic'}`}>
                             {e.clockOut ? new Date(e.clockOut).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}) : 'Still in'}
                           </td>
                           <td className="px-5 py-2.5 text-right font-bold text-brand/80 tabular-nums">
@@ -298,15 +298,15 @@ export default function HistoryTab({ ctx }) {
           )}
 
           {historySubTab === 'shifts' && (
-            <div className="bg-surface border border-gray-800 rounded-xl overflow-hidden">
-              <div className="p-4 border-b border-gray-800 flex justify-between items-center">
-                <h3 className="text-white font-black uppercase tracking-wider text-sm">Shift History Archive</h3>
+            <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
+              <div className="p-4 border-b border-white/10 flex justify-between items-center">
+                <h3 className="text-fg font-black uppercase tracking-wider text-sm">Shift History Archive</h3>
                 <div className="flex gap-2 text-[10px] text-gray-500 font-bold uppercase">{shiftHistoryTotal} records</div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
-                    <tr className="text-gray-500 border-b border-gray-800 text-xs uppercase tracking-wider bg-black/20">
+                    <tr className="text-white border-b border-white/10 text-xs uppercase tracking-wider bg-accent">
                       <th className="p-3">Cashier</th>
                       <th className="p-3">Shift Start</th>
                       <th className="p-3">Shift End</th>
@@ -322,14 +322,14 @@ export default function HistoryTab({ ctx }) {
                     {shiftHistory.length === 0 ? (
                       <tr><td colSpan="9" className="py-8 text-center text-gray-600 font-bold uppercase tracking-widest text-xs">No shift records found.</td></tr>
                     ) : shiftHistory.map(sh => (
-                      <tr key={sh._id} className={`border-b border-gray-800/50 hover:bg-white/2 transition ${sh.isLive || sh.status === 'Open' ? 'bg-yellow-500/5 border-l-2 border-l-yellow-500' : ''}`}>
-                        <td className="p-3 font-bold text-white">{sh.cashierName}</td>
+                      <tr key={sh._id} className={`border-b border-white/10 hover:bg-white/2 transition ${sh.isLive || sh.status === 'Open' ? 'bg-yellow-500/5 border-l-2 border-l-yellow-500' : ''}`}>
+                        <td className="p-3 font-bold text-fg">{sh.cashierName}</td>
                         <td className="p-3 text-gray-400 text-xs">{new Date(sh.shiftStart).toLocaleString()}</td>
                         <td className="p-3 text-gray-400 text-xs">{sh.shiftEnd ? new Date(sh.shiftEnd).toLocaleString() : '- (ongoing)'}</td>
-                        <td className="p-3 text-right font-mono text-sm text-white">₱{(sh.startingCash||0).toFixed(2)}</td>
+                        <td className="p-3 text-right font-mono text-sm text-fg">₱{(sh.startingCash||0).toFixed(2)}</td>
                         <td className="p-3 text-right font-mono text-sm text-brand">₱{(sh.salesTotal||0).toFixed(2)}{(sh.isLive || sh.status === 'Open') && <span className="text-[8px] text-yellow-400 font-black ml-1 align-top">LIVE</span>}</td>
-                        <td className="p-3 text-right font-mono text-sm text-white">₱{(sh.expectedCash||0).toFixed(2)}</td>
-                        <td className="p-3 text-right font-mono text-sm text-white">₱{(sh.actualCash||0).toFixed(2)}</td>
+                        <td className="p-3 text-right font-mono text-sm text-fg">₱{(sh.expectedCash||0).toFixed(2)}</td>
+                        <td className="p-3 text-right font-mono text-sm text-fg">₱{(sh.actualCash||0).toFixed(2)}</td>
                         <td className={`p-3 text-right font-black text-sm ${(sh.variance||0) < 0 ? 'text-red-400' : (sh.variance||0) > 0 ? 'text-yellow-400' : 'text-green-400'}`}>
                           {(sh.variance||0) >= 0 ? '+' : ''}₱{(sh.variance||0).toFixed(2)}
                         </td>
@@ -343,10 +343,10 @@ export default function HistoryTab({ ctx }) {
               </div>
               {/* Pagination */}
               {Math.ceil(shiftHistoryTotal / SHIFT_HIST_PAGE_SIZE) > 1 && (
-                <div className="flex justify-between items-center p-3 border-t border-gray-800">
-                  <button onClick={() => fetchShiftHistory(shiftHistoryPage - 1)} disabled={shiftHistoryPage === 1} className="px-4 py-1.5 rounded font-bold text-xs bg-surface-2 border border-gray-700 text-white disabled:opacity-30 transition">← Prev</button>
+                <div className="flex justify-between items-center p-3 border-t border-white/10">
+                  <button onClick={() => fetchShiftHistory(shiftHistoryPage - 1)} disabled={shiftHistoryPage === 1} className="px-4 py-1.5 rounded font-bold text-xs bg-surface-2 border border-white/10 text-fg disabled:opacity-30 transition">← Prev</button>
                   <span className="text-gray-500 text-xs font-bold">Page {shiftHistoryPage} / {Math.ceil(shiftHistoryTotal / SHIFT_HIST_PAGE_SIZE)}</span>
-                  <button onClick={() => fetchShiftHistory(shiftHistoryPage + 1)} disabled={shiftHistoryPage >= Math.ceil(shiftHistoryTotal / SHIFT_HIST_PAGE_SIZE)} className="px-4 py-1.5 rounded font-bold text-xs bg-surface-2 border border-gray-700 text-white disabled:opacity-30 transition">Next →</button>
+                  <button onClick={() => fetchShiftHistory(shiftHistoryPage + 1)} disabled={shiftHistoryPage >= Math.ceil(shiftHistoryTotal / SHIFT_HIST_PAGE_SIZE)} className="px-4 py-1.5 rounded font-bold text-xs bg-surface-2 border border-white/10 text-fg disabled:opacity-30 transition">Next →</button>
                 </div>
               )}
             </div>
@@ -359,13 +359,13 @@ export default function HistoryTab({ ctx }) {
                 <span className="w-2 h-2 rounded-full bg-page-bg animate-pulse"></span> Active Register
               </h3>
               <div className="flex items-center gap-2">
-                <button onClick={printXReading} className="flex items-center gap-1.5 bg-page-bg border border-gray-700 text-gray-300 hover:text-white hover:border-brand px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition">
+                <button onClick={printXReading} className="flex items-center gap-1.5 bg-page-bg border border-white/10 text-fg/80 hover:text-fg hover:border-brand px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition">
                   <Printer size={12} /> X-Reading
                 </button>
-                <button onClick={printZReading} className="flex items-center gap-1.5 bg-green-900/30 border border-green-600/30 text-green-400 hover:bg-green-900/50 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition">
+                <button onClick={printZReading} className="flex items-center gap-1.5 bg-page-bg border border-white/10 text-fg/80 hover:text-fg hover:border-brand px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition">
                   <FileText size={12} /> Z-Reading
                 </button>
-                <select className="bg-page-bg text-white p-2 rounded text-xs font-bold outline-none border border-gray-700 shadow-sm" value={shiftFilter} onChange={e => setShiftFilter(e.target.value)}>
+                <select className="bg-page-bg text-fg p-2 rounded text-xs font-bold outline-none border border-white/10 shadow-sm" value={shiftFilter} onChange={e => setShiftFilter(e.target.value)}>
                   <option value="All">All Shifts (Store Total)</option>
                   {users.map(u => <option key={u._id} value={u.name}>{u.name}'s Shift</option>)}
                 </select>
@@ -389,7 +389,7 @@ export default function HistoryTab({ ctx }) {
                 </div>
                 <div className="text-right">
                   <p className="text-white text-[10px] font-bold uppercase tracking-wider">Avg Ticket</p>
-                  <p className="text-lg font-bold text-gray-300">P{todayShiftOrders.length > 0 ? (shiftRevenue / todayShiftOrders.length).toFixed(2) : '0.00'}</p>
+                  <p className="text-lg font-bold text-white">P{todayShiftOrders.length > 0 ? (shiftRevenue / todayShiftOrders.length).toFixed(2) : '0.00'}</p>
                 </div>
               </div>
             </div>
@@ -398,10 +398,10 @@ export default function HistoryTab({ ctx }) {
             </button>
           </div>
 
-          <div className="bg-surface border border-gray-800 rounded-xl p-1 overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-page-bg/20 rounded-t-xl">
-              <h3 className="text-gray-300 font-bold text-sm tracking-wider uppercase">Sales History</h3>
-              <button onClick={exportAllToPDF} className="text-[10px] bg-accent border border-gray-600 text-gray-300 px-3 py-1.5 rounded hover:bg-page-bg hover:text-accent transition font-bold uppercase tracking-wider">
+          <div className="bg-surface border border-white/10 rounded-xl p-1 overflow-hidden flex flex-col">
+            <div className="p-4  border-white/10 flex justify-between items-center bg-page-bg/20 rounded-t-xl">
+              <h3 className="text-fg font-bold text-sm tracking-wider uppercase">Sales History</h3>
+              <button onClick={exportAllToPDF} className="text-[10px] bg-accent border border-gray-600 text-white px-3 py-1.5 rounded hover:bg-page-bg hover:text-accent transition font-bold uppercase tracking-wider">
                 Export All
               </button>
             </div>
@@ -409,21 +409,21 @@ export default function HistoryTab({ ctx }) {
             {/* Archive search + date filter */}
             <div className="flex flex-wrap gap-2 mb-4">
               <div className="relative flex-1 min-w-[180px]">
-                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30 pointer-events-none" />
+                <Search size={13} className="absolute left-3 top-1/3 -translate-y-1/2 text-fg/30 pointer-events-none" />
                 <input type="text" placeholder="Search name, order #, cashier…"
                   value={archiveSearch}
                   onChange={e => { setArchiveSearch(e.target.value); }}
                   onKeyDown={e => { if (e.key === 'Enter') fetchOrders(); }}
-                  className="w-full pl-8 pr-3 py-2 bg-page-bg border border-gray-700 rounded-xl text-white text-xs font-bold placeholder-white/20 outline-none focus:border-brand/50"
+                  className="w-full pl-8 pr-3 py-2 bg-page-bg border border-white/10 rounded-xl text-fg text-xs font-bold placeholder-white/20 outline-none focus:border-brand/50"
                 />
               </div>
               <input type="date" value={archiveDateRange.start}
                 onChange={e => setArchiveDateRange(p => ({...p, start: e.target.value}))}
-                className="bg-page-bg border border-gray-700 rounded-xl px-3 py-2 text-white text-xs font-bold outline-none focus:border-brand/50"
+                className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg text-xs font-bold outline-none focus:border-brand/50"
               />
               <input type="date" value={archiveDateRange.end}
                 onChange={e => setArchiveDateRange(p => ({...p, end: e.target.value}))}
-                className="bg-page-bg border border-gray-700 rounded-xl px-3 py-2 text-white text-xs font-bold outline-none focus:border-brand/50"
+                className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg text-xs font-bold outline-none focus:border-brand/50"
               />
               <button onClick={() => fetchOrders()}
                 className="px-4 py-2 bg-brand text-white rounded-xl text-xs font-black uppercase tracking-wider hover:bg-brand/90 transition">
@@ -431,21 +431,21 @@ export default function HistoryTab({ ctx }) {
               </button>
               {(archiveSearch || archiveDateRange.start || archiveDateRange.end) && (
                 <button onClick={() => { setArchiveSearch(''); setArchiveDateRange({start:'',end:''}); fetchOrders(); }}
-                  className="px-4 py-2 bg-white/5 text-white/50 rounded-xl text-xs font-bold hover:bg-white/10 transition">
+                  className="px-4 py-2 bg-white/5 text-fg/50 rounded-xl text-xs font-bold hover:bg-white/10 transition">
                   Clear
                 </button>
               )}
-              {archiveTotal > 0 && <span className="text-[10px] text-white/30 font-bold self-center">{archiveTotal} results</span>}
+              {archiveTotal > 0 && <span className="text-[10px] text-fg/60 font-bold self-center">{archiveTotal} results</span>}
             </div>
 
             <div className="max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
               {Object.keys(groupedArchives).length === 0 ? (
-                <p className="text-gray-600 text-sm p-6 text-center">No past days archived.</p>
+                <p className="text-fg text-sm p-6 text-center">No past days archived.</p>
               ) : (
                 Object.entries(groupedArchives).map(([date, data]) => (
-                  <div key={date} className="border-b border-gray-800/50 last:border-0">
+                  <div key={date} className="border-b border-white/10 last:border-0">
                     <button onClick={() => toggleDay(date)} className="w-full flex justify-between items-center p-4 hover:bg-page-bg/50 transition text-left">
-                      <span className="font-bold text-sm text-gray-200">{date}</span>
+                      <span className="font-bold text-sm text-fg">{date}</span>
                       <div className="flex items-center gap-3">
                         <span className="text-accent font-bold">P{data.revenue.toFixed(2)}</span>
                         {expandedDays[date] ? <ChevronUp size={14} className="text-gray-500" /> : <ChevronDown size={14} className="text-gray-500" />}
@@ -453,20 +453,20 @@ export default function HistoryTab({ ctx }) {
                     </button>
                     
                     {expandedDays[date] && (
-                      <div className="p-4 bg-page-bg/30 border-t border-gray-800/30 flex flex-col gap-4">
+                      <div className="p-4 bg-page-bg/30 border-t border-white/10 flex flex-col gap-4">
                         <div className="grid grid-cols-2 gap-4">
                           <div><p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Orders</p><p className="text-sm font-semibold">{data.orders.filter(o => o.status === 'Completed').length}</p></div>
                           <div><p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">VAT</p><p className="text-sm font-semibold">P{data.vat.toFixed(2)}</p></div>
                           <div className="col-span-2"><p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Discounts</p><p className="text-sm font-semibold text-red-400">-P{data.discounts.toFixed(2)}</p></div>
                         </div>
 
-                        <div className="border-t border-gray-800/30 pt-3 mt-1">
+                        <div className="border-t border-white/10 pt-3 mt-1">
                           <div className="flex justify-between items-center">
-                            <button onClick={() => toggleOrderList(date)} className="flex items-center gap-2 text-xs font-bold text-gray-400 hover:text-white transition">
+                            <button onClick={() => toggleOrderList(date)} className="flex items-center gap-2 text-xs font-bold text-fg hover:text-fg transition">
                               <span>{expandedOrderLists[date] ? 'Hide Orders' : 'View All Orders'}</span>
                               {expandedOrderLists[date] ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                             </button>
-                            <button onClick={() => exportDayToPDF(date, data.orders)} className="text-[10px] bg-surface-2 border border-white/10 text-white/60 px-2 py-1 rounded hover:bg-white/10 hover:text-white transition font-bold uppercase tracking-wider">
+                            <button onClick={() => exportDayToPDF(date, data.orders)} className="text-[10px] bg-surface-2 border border-white/10 text-fg/60 px-2 py-1 rounded hover:bg-white/10 hover:text-fg transition font-bold uppercase tracking-wider">
                               Export Day
                             </button>
                           </div>
@@ -474,23 +474,23 @@ export default function HistoryTab({ ctx }) {
                           {expandedOrderLists[date] && (
                             <div className="mt-3 space-y-3 max-h-60 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-gray-700">
                               {data.orders.map(order => (
-                                <div key={order._id} className="bg-page-bg/50 p-3 rounded border border-gray-800/50">
-                                  <div className="flex justify-between items-center mb-2 border-b border-gray-800/50 pb-2">
+                                <div key={order._id} className="bg-page-bg/50 p-3 rounded border border-white/10">
+                                  <div className="flex justify-between items-center mb-2 border-b border-white/10 pb-2">
                                     <span className="font-bold text-sm text-accent">{order.orderNumber}</span>
                                     <div className="flex items-center gap-2">
-                                      <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${order.status === 'Cancelled' ? 'bg-red-900/50 text-red-400' : 'bg-green-900/50 text-green-400'}`}>{order.status}</span>
-                                      <span className="text-xs font-bold text-white">P{order.total.toFixed(2)}</span>
+                                      <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${order.status === 'Cancelled' ? 'bg-red-400/50 text-red-600' : 'bg-green-400/50 text-green-600'}`}>{order.status}</span>
+                                      <span className="text-xs font-bold text-fg">P{order.total.toFixed(2)}</span>
                                     </div>
                                   </div>
                                   <div className="space-y-1">
                                     {order.items.map((item, idx) => (
-                                      <div key={idx} className="flex justify-between text-[11px] text-white">
+                                      <div key={idx} className="flex justify-between text-[11px] text-fg">
                                         <span>{item.quantity}x {item.name}</span><span>P{(item.price * item.quantity).toFixed(2)}</span>
                                       </div>
                                     ))}
                                   </div>
                                   {(order.discount > 0 || order.vatAmount > 0) && (
-                                    <div className="mt-2 pt-2 border-t border-gray-800/50 flex justify-between text-[10px] text-gray-500">
+                                    <div className="mt-2 pt-2 border-t border-white/10 flex justify-between text-[10px] text-gray-500">
                                       <span>VAT: P{order.vatAmount.toFixed(2)}</span>
                                       {order.discount > 0 && <span className="text-red-400">Disc: -P{order.discount.toFixed(2)}</span>}
                                     </div>

@@ -1,6 +1,8 @@
 // inventory routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { title } from '../lib/normalize.js';
+import { withOptionalTransaction } from '../lib/txn.js';
 export default function registerInventory(ctx) {
   const {
     app,
@@ -404,7 +406,12 @@ app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
 
 app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   try {
-    const existing = await Inventory.findOne({ itemName: { $regex: new RegExp(`^${escapeRegex(req.body.itemName.trim())}$`, 'i') } });
+    // Canonicalize first so the stored name is stable ("test milk" → "Test Milk")
+    // and the existing case-insensitive dup check compares like with like.
+    // title() leaves digit-bearing tokens uppercase, so pack labels survive: "1L".
+    req.body.itemName = title(req.body.itemName);
+    if (!req.body.itemName) return res.status(400).json({ success: false, error: 'Item name required.' });
+    const existing = await Inventory.findOne({ itemName: { $regex: new RegExp(`^${escapeRegex(req.body.itemName)}$`, 'i') } });
     if (existing) return res.status(400).json({ success: false, error: 'Item already exists.' });
 
     // Inject RML code
@@ -624,7 +631,9 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
       if (typeof update.itemName !== 'string' || !update.itemName.trim()) {
         return res.status(400).json({ success: false, error: 'Item name required.' });
       }
-      update.itemName = update.itemName.trim();
+      // Same canonical form as create, so an edit can't reintroduce a variant
+      // spelling that the create path would have collapsed.
+      update.itemName = title(update.itemName);
       // Prevent duplicate-name collisions (case-insensitive)
       const dupe = await Inventory.findOne({
         _id: { $ne: req.params.id },
@@ -1118,69 +1127,69 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
 // --- SPOILAGE / WASTE LOGGING ---
 app.post('/api/inventory/spoilage/:id', verifyToken, requireStaff, async (req, res) => {
   // Money/stock event — the stock write, the stock-card row, and the balanced
-  // journal entry all commit together (or not at all), like the void/refund engines.
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  // journal entry commit together. withOptionalTransaction keeps that guarantee
+  // on a replica set and still runs (non-atomically, with a warning) on a
+  // standalone MongoDB, so dev/e2e environments can exercise this path.
   try {
     const { qty, reason, note } = req.body;
     const spoilQty = parseFloat(qty);
-    if (!spoilQty || spoilQty <= 0) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Invalid quantity.' }); }
-    if (!reason) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Reason is required.' }); }
+    if (!spoilQty || spoilQty <= 0) return res.status(400).json({ success: false, error: 'Invalid quantity.' });
+    if (!reason) return res.status(400).json({ success: false, error: 'Reason is required.' });
 
-    const item = await Inventory.findById(req.params.id).session(session);
-    if (!item) { await session.abortTransaction(); session.endSession(); return res.status(404).json({ success: false, error: 'Item not found.' }); }
-    if (item.stockQty < spoilQty) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Cannot spoil more than available stock.' }); }
+    const item = await withOptionalTransaction(mongoose, async (session) => {
+      const it = await Inventory.findById(req.params.id).session(session ?? null);
+      if (!it) throw Object.assign(new Error('Item not found.'), { httpStatus: 404 });
+      if (it.stockQty < spoilQty) throw Object.assign(new Error('Cannot spoil more than available stock.'), { httpStatus: 400 });
 
-    const spoilageCost = spoilQty * (item.unitCost || 0);
-    item.stockQty = +(item.stockQty - spoilQty).toFixed(6);
-    // FEFO-consume from batches (oldest first — typical spoilage pattern)
-    if (item.expiryBatches && item.expiryBatches.length > 0) {
-      const r = consumeBatches(item.expiryBatches, spoilQty);
-      item.expiryBatches = r.batches;
-    }
-    item.expiryDate = soonestExpiry(item.expiryBatches || []);
-    // If spoilage zeros out the item, also clear any remaining batches
-    if (item.stockQty <= 0.0001) {
-      item.expiryBatches = [];
-      item.expiryDate = null;
-    }
-    await item.save({ session });
+      const spoilageCost = spoilQty * (it.unitCost || 0);
+      it.stockQty = +(it.stockQty - spoilQty).toFixed(6);
+      // FEFO-consume from batches (oldest first — typical spoilage pattern)
+      if (it.expiryBatches && it.expiryBatches.length > 0) {
+        const r = consumeBatches(it.expiryBatches, spoilQty);
+        it.expiryBatches = r.batches;
+      }
+      it.expiryDate = soonestExpiry(it.expiryBatches || []);
+      // If spoilage zeros out the item, also clear any remaining batches
+      if (it.stockQty <= 0.0001) {
+        it.expiryBatches = [];
+        it.expiryDate = null;
+      }
+      await it.save({ session });
 
-    const spoilRef = await mkSeqRef('INV-SPOIL');
+      const spoilRef = await mkSeqRef('INV-SPOIL');
 
-    await StockCard.create([{
-      inventoryId: item._id,
-      itemName: item.itemName,
-      type: 'Spoilage',
-      reference: spoilRef,
-      qtyChange: -spoilQty,
-      balanceAfter: item.stockQty,
-      unitCost: item.unitCost,
-      remarks: `${reason}${note ? ': ' + note : ''}`
-    }], { session });
-
-    if (spoilageCost > 0.001) {
-      const lines = [
-        { accountCode: '535000', accountName: 'Spoilage, Variance & Waste Expense', debit: spoilageCost, credit: 0 },
-        { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: spoilageCost }
-      ];
-      assertBalanced(lines, spoilRef);
-      await JournalEntry.create([{
+      await StockCard.create([{
+        inventoryId: it._id,
+        itemName: it.itemName,
+        type: 'Spoilage',
         reference: spoilRef,
-        description: `Spoilage/Waste: ${spoilQty}${item.unit} of ${item.itemName} (${reason})`,
-        lines,
-        totalDebit: spoilageCost,
-        totalCredit: spoilageCost
+        qtyChange: -spoilQty,
+        balanceAfter: it.stockQty,
+        unitCost: it.unitCost,
+        remarks: `${reason}${note ? ': ' + note : ''}`
       }], { session });
-    }
 
-    await session.commitTransaction();
-    session.endSession();
+      if (spoilageCost > 0.001) {
+        const lines = [
+          { accountCode: '535000', accountName: 'Spoilage, Variance & Waste Expense', debit: spoilageCost, credit: 0 },
+          { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: spoilageCost }
+        ];
+        assertBalanced(lines, spoilRef);
+        await JournalEntry.create([{
+          reference: spoilRef,
+          description: `Spoilage/Waste: ${spoilQty}${it.unit} of ${it.itemName} (${reason})`,
+          lines,
+          totalDebit: spoilageCost,
+          totalCredit: spoilageCost
+        }], { session });
+      }
+      return it;
+    }, { log });
+
     emitToMgr('erpUpdated');
     res.json({ success: true, item });
   } catch (err) {
-    await session.abortTransaction();
-    session.endSession();
+    if (err?.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.message });
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
 });

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, memo, useMemo, useCallback } from '
 import { createPortal } from 'react-dom';
 import { io } from 'socket.io-client';
 import { Coffee, ShoppingCart, Plus, Minus, X, Clock, CheckCircle, Package, AlertCircle, Users, Lock, RefreshCw, ChevronLeft } from 'lucide-react';
+import * as ui from '../../shared/ui';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://192.168.100.2:5002';
 const socket = io(API_URL, { transports: ['websocket'], upgrade: false });
@@ -39,7 +40,7 @@ const MenuItemCard = memo(({ product, onAdd }) => {
     <div className="aspect-[4/3] relative overflow-hidden bg-black/30 flex items-center justify-center p-2">
       {product.image
         ? <img src={product.image} alt={product.name} loading="lazy" className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500 drop-shadow-md" />
-        : <div className="w-full h-full flex items-center justify-center"><Coffee size={32} className="text-white/10" /></div>
+        : <div className="w-full h-full flex items-center justify-center"><Coffee size={32} className="text-fg/10" /></div>
       }
       {outOfStock ? (
         <span className="absolute top-2 left-2 text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg bg-red-900/80 text-red-300 border border-red-700/40">
@@ -51,16 +52,16 @@ const MenuItemCard = memo(({ product, onAdd }) => {
           className="absolute bottom-2 right-2 w-9 h-9 bg-brand rounded-xl flex items-center justify-center shadow-lg shadow-brand/40 hover:bg-brand-dark transition active:scale-90"
           aria-label={`Add ${product.name}`}
         >
-          <Plus size={18} className="text-white" strokeWidth={2.5} />
+          <Plus size={18} className="text-fg" strokeWidth={2.5} />
         </button>
       )}
     </div>
     <div className="p-3">
-      <h3 className="font-bold text-white text-sm leading-tight truncate">{product.name}</h3>
-      {product.description && <p className="text-white/40 text-xs mt-0.5 line-clamp-1">{product.description}</p>}
+      <h3 className="font-bold text-fg text-sm leading-tight truncate">{product.name}</h3>
+      {product.description && <p className="text-fg/40 text-xs mt-0.5 line-clamp-1">{product.description}</p>}
       <p className="text-brand font-black text-sm mt-2">
         ₱{(product.basePrice || 0).toFixed(2)}
-        {product.sizes?.length > 0 && <span className="text-white/30 font-normal text-xs ml-1">& up</span>}
+        {product.sizes?.length > 0 && <span className="text-fg/30 font-normal text-xs ml-1">& up</span>}
       </p>
     </div>
   </div>
@@ -484,12 +485,12 @@ export default function CustomerMenu() {
         requestNotificationPermission();
       } else {
         // Kitchen closed (403) or validation error — tell the customer and let them retry.
-        alert(data.error || 'Sorry, we could not place your order right now. Please ask our staff at the counter.');
+        ui.alert(data.error || 'Sorry, we could not place your order right now. Please ask our staff at the counter.');
         setIsSubmitting(false);
       }
     } catch (error) {
       console.error("Order failed", error);
-      alert('Network problem - your order was not sent. Please try again or ask our staff.');
+      ui.alert('Network problem - your order was not sent. Please try again or ask our staff.');
       setIsSubmitting(false);
     }
   };
@@ -536,8 +537,8 @@ export default function CustomerMenu() {
           <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center mx-auto mb-5">
             <AlertCircle size={28} className="text-red-400" />
           </div>
-          <h1 className="text-2xl font-black text-white uppercase tracking-widest mb-3">Session Expired</h1>
-          <p className="text-white/40 text-sm leading-relaxed">This ordering link has expired. Please ask staff to generate a new QR code for your table.</p>
+          <h1 className="text-2xl font-black text-fg uppercase tracking-widest mb-3">Session Expired</h1>
+          <p className="text-fg/40 text-sm leading-relaxed">This ordering link has expired. Please ask staff to generate a new QR code for your table.</p>
         </div>
       </div>
     );
@@ -550,10 +551,10 @@ export default function CustomerMenu() {
           <div className="w-20 h-20 rounded-full bg-brand/20 flex items-center justify-center mx-auto mb-6">
             <CheckCircle size={36} className="text-brand" />
           </div>
-          <h2 className="text-3xl font-black text-white mb-3 uppercase tracking-widest">Thank You!</h2>
-          <p className="text-white/50 font-medium mb-8">We hope you enjoy your order. Come back soon!</p>
+          <h2 className="text-3xl font-black text-fg mb-3 uppercase tracking-widest">Thank You!</h2>
+          <p className="text-fg/50 font-medium mb-8">We hope you enjoy your order. Come back soon!</p>
           <div className="border-t border-white/5 pt-6">
-            <p className="text-white/20 text-xs uppercase font-bold tracking-widest">You may now close this page.</p>
+            <p className="text-fg/20 text-xs uppercase font-bold tracking-widest">You may now close this page.</p>
           </div>
         </div>
       </div>
@@ -575,8 +576,8 @@ export default function CustomerMenu() {
             {lockedOrder?.status === 'Pending' && (
               <>
                 <div className="text-6xl mb-6 animate-pulse">📡</div>
-                <h1 className="text-2xl font-black text-white mb-3 uppercase tracking-widest">Sending Order…</h1>
-                <p className="text-white/50 text-sm leading-relaxed">Please proceed to the cashier to confirm payment of <span className="text-brand font-bold">₱{(lockedOrder.total||0).toFixed(2)}</span>.</p>
+                <h1 className="text-2xl font-black text-fg mb-3 uppercase tracking-widest">Sending Order…</h1>
+                <p className="text-fg/50 text-sm leading-relaxed">Please proceed to the cashier to confirm payment of <span className="text-brand font-bold">₱{(lockedOrder.total||0).toFixed(2)}</span>.</p>
               </>
             )}
             {lockedOrder?.status === 'Preparing' && (() => {
@@ -593,7 +594,7 @@ export default function CustomerMenu() {
                   </h1>
                   {totalCount > 0 && (
                     <div className="mb-4">
-                      <div className="flex justify-between text-[10px] text-white/30 font-bold mb-1.5">
+                      <div className="flex justify-between text-[10px] text-fg/30 font-bold mb-1.5">
                         <span>{deliveredCount} of {totalCount} items served</span>
                         <span>{progressPct}%</span>
                       </div>
@@ -606,8 +607,8 @@ export default function CustomerMenu() {
                     {allItems.map((item, i) => {
                       const done = item.itemStatus === 'Delivered';
                       return (
-                        <div key={i} className={`flex items-center gap-2 text-xs font-semibold transition-all ${done ? 'text-white/25 line-through' : 'text-white/70'}`}>
-                          <span className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 text-[9px] font-black ${done ? 'bg-green-500/20 text-green-400' : 'bg-white/8 text-white/20'}`}>
+                        <div key={i} className={`flex items-center gap-2 text-xs font-semibold transition-all ${done ? 'text-fg/25 line-through' : 'text-fg/70'}`}>
+                          <span className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 text-[9px] font-black ${done ? 'bg-green-500/20 text-green-400' : 'bg-white/10 text-fg/20'}`}>
                             {done ? '✓' : '·'}
                           </span>
                           {item.quantity}x {item.name}
@@ -615,7 +616,7 @@ export default function CustomerMenu() {
                       );
                     })}
                   </div>
-                  <p className="text-white/30 text-xs mt-3">
+                  <p className="text-fg/30 text-xs mt-3">
                     {hasPartial ? 'More items on the way!' : 'Our team is crafting your order. Hang tight!'}
                   </p>
                 </>
@@ -624,7 +625,7 @@ export default function CustomerMenu() {
             {(lockedOrder?.status === 'Ready' || lockedOrder?.status === 'Completed') && (
               <>
                 <div className="text-7xl mb-6 animate-bounce">✨</div>
-                <h1 className="text-3xl font-black text-white mb-3 uppercase tracking-widest">Order Ready!</h1>
+                <h1 className="text-3xl font-black text-fg mb-3 uppercase tracking-widest">Order Ready!</h1>
                 <p className="text-emerald-300 font-bold mb-8">Please collect your items at the counter.</p>
                 <button onClick={handleReceived} className="w-full bg-white text-emerald-900 font-black py-4 rounded-2xl hover:bg-emerald-50 transition shadow-xl active:scale-95 uppercase tracking-widest">
                   I Got My Order ✓
@@ -632,7 +633,7 @@ export default function CustomerMenu() {
               </>
             )}
             <div className="mt-8 pt-5 border-t border-white/5 flex justify-between items-center">
-              <span className="text-white/30 font-bold text-xs uppercase tracking-widest">Order ID</span>
+              <span className="text-fg/30 font-bold text-xs uppercase tracking-widest">Order ID</span>
               <span className="bg-white/5 border border-white/10 px-3 py-1 rounded-lg text-brand font-mono font-bold text-sm">{lockedOrder?.orderNumber}</span>
             </div>
           </div>
@@ -651,8 +652,8 @@ export default function CustomerMenu() {
           <div className="w-28 h-28 rounded-3xl bg-brand flex items-center justify-center mb-8 shadow-2xl shadow-brand/40">
             <Coffee size={48} className="text-white" />
           </div>
-          <h1 className="text-5xl font-black text-white tracking-tight leading-none mb-2">{BIZ_NAME}</h1>
-          <div className="flex items-center gap-3 text-white/30 text-sm font-bold uppercase tracking-widest mb-16">
+          <h1 className="text-5xl font-black text-fg tracking-tight leading-none mb-2">{BIZ_NAME}</h1>
+          <div className="flex items-center gap-3 text-fg/30 text-sm font-bold uppercase tracking-widest mb-16">
             <div className="h-px w-8 bg-white/20" />
             Table {tableNum}
             <div className="h-px w-8 bg-white/20" />
@@ -663,7 +664,7 @@ export default function CustomerMenu() {
           >
             Start Order
           </button>
-          <p className="text-white/20 text-xs mt-5 font-medium">Scan QR at your table to order</p>
+          <p className="text-fg/20 text-xs mt-5 font-medium">Scan QR at your table to order</p>
         </div>
       </div>
     );
@@ -675,19 +676,19 @@ export default function CustomerMenu() {
         <div className="w-full max-w-sm">
           <button
             onClick={() => setFlowState('landing')}
-            className="flex items-center gap-1.5 text-white/30 hover:text-white text-sm mb-10 transition font-bold"
+            className="flex items-center gap-1.5 text-fg/30 hover:text-fg text-sm mb-10 transition font-bold"
           >
             <ChevronLeft size={16} /> Back
           </button>
-          <h2 className="text-3xl font-black text-white mb-2">What's your name?</h2>
-          <p className="text-white/40 text-sm mb-8 leading-relaxed">We'll use this to call your order when it's ready.</p>
+          <h2 className="text-3xl font-black text-fg mb-2">What's your name?</h2>
+          <p className="text-fg/40 text-sm mb-8 leading-relaxed">We'll use this to call your order when it's ready.</p>
           <input
             type="text"
             placeholder="Your nickname…"
             aria-label="Your name"
             value={customerName}
             onChange={e => setCustomerName(e.target.value)}
-            className="w-full bg-white/5 border-2 border-white/10 focus:border-brand text-white text-center py-5 rounded-2xl outline-none mb-5 font-bold text-xl transition placeholder-white/20"
+            className="w-full bg-white/5 border-2 border-white/10 focus:border-brand text-fg text-center py-5 rounded-2xl outline-none mb-5 font-bold text-xl transition placeholder-white/20"
             autoFocus
             onKeyDown={e => e.key === 'Enter' && customerName.trim().length > 0 && setFlowState('menu')}
           />
@@ -695,7 +696,7 @@ export default function CustomerMenu() {
             onClick={() => setFlowState('menu')}
             disabled={customerName.trim().length === 0}
             className={`w-full font-black py-5 rounded-2xl text-lg transition shadow-2xl uppercase tracking-widest
-              ${customerName.trim().length === 0 ? 'bg-white/5 text-white/20 cursor-not-allowed' : 'bg-brand text-white hover:bg-brand-dark shadow-brand/30 active:scale-95'}`}
+              ${customerName.trim().length === 0 ? 'bg-white/5 text-fg/20 cursor-not-allowed' : 'bg-brand text-white hover:bg-brand-dark shadow-brand/30 active:scale-95'}`}
           >
             Browse Menu →
           </button>
@@ -706,7 +707,7 @@ export default function CustomerMenu() {
 
   // --- MAIN MENU SCREEN (flowState === 'menu') ---
   return (
-    <div className="min-h-[100dvh] bg-page-bg text-white animate-fade-in">
+    <div className="min-h-[100dvh] bg-page-bg text-fg animate-fade-in">
 
       {/* SUCCESS FLASH */}
       {successMessage && (
@@ -715,8 +716,8 @@ export default function CustomerMenu() {
             <div className="w-16 h-16 rounded-full bg-brand/20 flex items-center justify-center mx-auto mb-5">
               <CheckCircle size={32} className="text-brand" />
             </div>
-            <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-widest">Order Sent!</h2>
-            <p className="text-white/50 text-sm">Your order is on its way to the kitchen.</p>
+            <h2 className="text-2xl font-black text-fg mb-2 uppercase tracking-widest">Order Sent!</h2>
+            <p className="text-fg/50 text-sm">Your order is on its way to the kitchen.</p>
           </div>
         </div>
       )}
@@ -725,8 +726,8 @@ export default function CustomerMenu() {
       <header className="sticky top-0 z-30 bg-page-bg/90 backdrop-blur-xl border-b border-white/5">
         <div className="flex items-center justify-between px-5 pt-4 pb-2">
           <div>
-            <h1 className="text-xl font-black text-white tracking-tight leading-none">{BIZ_NAME}</h1>
-            <p className="text-white/30 text-xs font-bold uppercase tracking-widest mt-0.5">Table {tableNum} · {customerName}</p>
+            <h1 className="text-xl font-black text-fg tracking-tight leading-none">{BIZ_NAME}</h1>
+            <p className="text-fg/30 text-xs font-bold uppercase tracking-widest mt-0.5">Table {tableNum} · {customerName}</p>
           </div>
           {cart.length > 0 && (
             <button
@@ -751,7 +752,7 @@ export default function CustomerMenu() {
               className={`px-4 py-2 rounded-full whitespace-nowrap text-sm font-bold flex-shrink-0 transition
                 ${activeCategory === cat
                   ? 'bg-brand text-white shadow-md shadow-brand/20'
-                  : 'bg-white/5 text-white/50 border border-white/5 hover:text-white'}`}
+                  : 'bg-white/5 text-fg/50 border border-white/5 hover:text-fg'}`}
             >
               {cat}
             </button>
@@ -769,9 +770,9 @@ export default function CustomerMenu() {
               {combos.filter(c => c.isActive !== false).map(c => (
                 <div key={c._id} onClick={() => addComboToCart(c)}
                   className="bg-brand/10 rounded-2xl overflow-hidden border border-brand/30 hover:border-brand/60 cursor-pointer active:scale-[0.97] transition-all p-4 flex flex-col">
-                  <h3 className="font-black text-white text-sm leading-tight">{c.name}</h3>
-                  {c.description && <p className="text-white/40 text-xs mt-0.5 line-clamp-1">{c.description}</p>}
-                  <p className="text-white/30 text-[10px] mt-1 line-clamp-2">{(c.items||[]).map(i => `${i.quantity>1?i.quantity+'× ':''}${i.name}`).join(' + ')}</p>
+                  <h3 className="font-black text-fg text-sm leading-tight">{c.name}</h3>
+                  {c.description && <p className="text-fg/40 text-xs mt-0.5 line-clamp-1">{c.description}</p>}
+                  <p className="text-fg/30 text-[10px] mt-1 line-clamp-2">{(c.items||[]).map(i => `${i.quantity>1?i.quantity+'× ':''}${i.name}`).join(' + ')}</p>
                   <p className="text-brand font-black text-base mt-auto pt-2">₱{Number(c.price).toFixed(2)}</p>
                 </div>
               ))}
@@ -779,14 +780,14 @@ export default function CustomerMenu() {
           </div>
         )}
         {displayedCategories.length === 0
-          ? <p className="text-center text-white/30 mt-20 font-bold">No items available.</p>
+          ? <p className="text-center text-fg/30 mt-20 font-bold">No items available.</p>
           : displayedCategories.map(category => {
               const catProducts = visibleProducts.filter(p => p.category === category);
               if (catProducts.length === 0) return null;
               return (
                 <div key={category} className="mb-10">
                   {activeCategory === 'All' && (
-                    <h2 className="text-base font-black text-white/60 mb-4 uppercase tracking-widest px-0.5">{category}</h2>
+                    <h2 className="text-base font-black text-fg/60 mb-4 uppercase tracking-widest px-0.5">{category}</h2>
                   )}
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                     {catProducts.map(p => (
@@ -827,8 +828,8 @@ export default function CustomerMenu() {
             </div>
             {/* Drawer header */}
             <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
-              <h3 className="font-black text-white text-lg">Your Basket</h3>
-              <button onClick={() => setCartOpen(false)} className="p-2 rounded-xl text-white/40 hover:text-white hover:bg-white/10 transition">
+              <h3 className="font-black text-fg text-lg">Your Basket</h3>
+              <button onClick={() => setCartOpen(false)} className="p-2 rounded-xl text-fg/40 hover:text-fg hover:bg-white/10 transition">
                 <X size={20} />
               </button>
             </div>
@@ -841,25 +842,25 @@ export default function CustomerMenu() {
                   <div key={item.cartItemId} className="flex items-start gap-3 bg-white/5 rounded-2xl p-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2 mb-1">
-                        <h4 className="font-bold text-white text-sm leading-tight">{item.name}</h4>
-                        <button onClick={() => removeFromCart(item.cartItemId)} aria-label={`Remove ${item.name}`} className="text-white/30 hover:text-red-400 transition p-0.5 flex-shrink-0">
+                        <h4 className="font-bold text-fg text-sm leading-tight">{item.name}</h4>
+                        <button onClick={() => removeFromCart(item.cartItemId)} aria-label={`Remove ${item.name}`} className="text-fg/30 hover:text-red-400 transition p-0.5 flex-shrink-0">
                           <X size={14} />
                         </button>
                       </div>
                       {item.selectedAddOns && item.selectedAddOns.length > 0 && (
                         <div className="space-y-0.5 mb-2">
                           {item.selectedAddOns.map((a,i) => (
-                            <p key={i} className="text-brand/70 text-xs">+ {a.name} <span className="text-white/30">(+₱{a.price.toFixed(2)})</span></p>
+                            <p key={i} className="text-brand/70 text-xs">+ {a.name} <span className="text-fg/30">(+₱{a.price.toFixed(2)})</span></p>
                           ))}
                         </div>
                       )}
                       <div className="flex items-center justify-between mt-2">
                         <div className="flex items-center gap-0.5 bg-black/30 rounded-xl p-1">
-                          <button onClick={() => updateQuantity(item.cartItemId, -1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-white/60 hover:text-red-400 hover:bg-white/10 transition">
+                          <button onClick={() => updateQuantity(item.cartItemId, -1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-fg/60 hover:text-red-400 hover:bg-white/10 transition">
                             <Minus size={13} />
                           </button>
-                          <span className="text-white font-bold w-6 text-center text-sm">{item.quantity}</span>
-                          <button onClick={() => updateQuantity(item.cartItemId, 1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-white/60 hover:text-brand hover:bg-white/10 transition">
+                          <span className="text-fg font-bold w-6 text-center text-sm">{item.quantity}</span>
+                          <button onClick={() => updateQuantity(item.cartItemId, 1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-fg/60 hover:text-brand hover:bg-white/10 transition">
                             <Plus size={13} />
                           </button>
                         </div>
@@ -873,29 +874,29 @@ export default function CustomerMenu() {
             {/* Footer */}
             <div className="px-5 py-4 border-t border-white/5 space-y-3">
               <div className="flex justify-between items-center">
-                <span className="text-white/60 font-bold text-sm">Total</span>
-                <span className="text-white font-black text-2xl">₱{total.toFixed(2)}</span>
+                <span className="text-fg/60 font-bold text-sm">Total</span>
+                <span className="text-fg font-black text-2xl">₱{total.toFixed(2)}</span>
               </div>
               {/* Special instructions */}
               <div>
-                <label className="text-[11px] text-white/40 font-bold uppercase tracking-wider block mb-1.5">Special Instructions (optional)</label>
+                <label className="text-[11px] text-fg/40 font-bold uppercase tracking-wider block mb-1.5">Special Instructions (optional)</label>
                 <textarea
                   rows={2}
                   maxLength={300}
                   value={orderNotes}
                   onChange={e => setOrderNotes(e.target.value)}
                   placeholder="e.g. No sugar, extra ice, allergy note…"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-brand/50 resize-none placeholder-white/20 transition"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/50 resize-none placeholder-white/20 transition"
                   aria-label="Special instructions for your order"
                 />
                 {orderNotes.length > 0 && (
-                  <p className="text-[10px] text-white/20 text-right mt-0.5">{orderNotes.length}/300</p>
+                  <p className="text-[10px] text-fg/20 text-right mt-0.5">{orderNotes.length}/300</p>
                 )}
               </div>
               <button
                 onClick={async () => { await confirmOrder(); setCartOpen(false); }}
                 disabled={isSubmitting}
-                className="w-full bg-brand hover:bg-brand-dark text-white font-black py-4 rounded-2xl text-lg transition shadow-2xl shadow-brand/30 uppercase tracking-widest active:scale-95 disabled:opacity-60"
+                className="w-full bg-brand hover:bg-brand-dark text-fg font-black py-4 rounded-2xl text-lg transition shadow-2xl shadow-brand/30 uppercase tracking-widest active:scale-95 disabled:opacity-60"
               >
                 {isSubmitting ? 'Sending…' : 'Send to Kitchen'}
               </button>
@@ -912,10 +913,10 @@ export default function CustomerMenu() {
             {/* Modal header */}
             <div className="flex items-start justify-between p-5 border-b border-white/5 flex-shrink-0">
               <div className="flex-1">
-                <h3 className="text-xl font-black text-white leading-tight">{selectedProduct.name}</h3>
-                {selectedProduct.description && <p className="text-white/40 text-xs mt-1 line-clamp-2">{selectedProduct.description}</p>}
+                <h3 className="text-xl font-black text-fg leading-tight">{selectedProduct.name}</h3>
+                {selectedProduct.description && <p className="text-fg/40 text-xs mt-1 line-clamp-2">{selectedProduct.description}</p>}
               </div>
-              <button onClick={() => setSelectedProduct(null)} className="p-2 rounded-xl text-white/40 hover:text-white hover:bg-white/10 transition ml-3 flex-shrink-0">
+              <button onClick={() => setSelectedProduct(null)} className="p-2 rounded-xl text-fg/40 hover:text-fg hover:bg-white/10 transition ml-3 flex-shrink-0">
                 <X size={18} />
               </button>
             </div>
@@ -931,7 +932,7 @@ export default function CustomerMenu() {
                       <label key={`hot-${idx}`} className={`flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition ${selectedSize?.name === size.name ? 'border-brand bg-brand/10' : 'border-white/10 hover:border-white/20 bg-white/5'}`}>
                         <div className="flex items-center gap-3">
                           <input type="radio" name="size" className="accent-brand" checked={selectedSize?.name === size.name} onChange={() => setSelectedSize(size)} />
-                          <span className="font-bold text-white capitalize text-sm">{size.displayName}</span>
+                          <span className="font-bold text-fg capitalize text-sm">{size.displayName}</span>
                         </div>
                         <span className="text-brand font-bold text-sm">₱{size.price.toFixed(2)}</span>
                       </label>
@@ -949,7 +950,7 @@ export default function CustomerMenu() {
                       <label key={`iced-${idx}`} className={`flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition ${selectedSize?.name === size.name ? 'border-brand bg-brand/10' : 'border-white/10 hover:border-white/20 bg-white/5'}`}>
                         <div className="flex items-center gap-3">
                           <input type="radio" name="size" className="accent-brand" checked={selectedSize?.name === size.name} onChange={() => setSelectedSize(size)} />
-                          <span className="font-bold text-white capitalize text-sm">{size.displayName}</span>
+                          <span className="font-bold text-fg capitalize text-sm">{size.displayName}</span>
                         </div>
                         <span className="text-brand font-bold text-sm">₱{size.price.toFixed(2)}</span>
                       </label>
@@ -959,13 +960,13 @@ export default function CustomerMenu() {
               )}
               {groupedSizes.Standard && (
                 <div>
-                  {Object.keys(groupedSizes).length > 1 && <p className="text-white/40 text-xs font-black uppercase tracking-widest mb-2">Other Options</p>}
+                  {Object.keys(groupedSizes).length > 1 && <p className="text-fg/40 text-xs font-black uppercase tracking-widest mb-2">Other Options</p>}
                   <div className="space-y-2">
                     {groupedSizes.Standard.map((size, idx) => (
                       <label key={`std-${idx}`} className={`flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition ${selectedSize?.name === size.name ? 'border-brand bg-brand/10' : 'border-white/10 hover:border-white/20 bg-white/5'}`}>
                         <div className="flex items-center gap-3">
                           <input type="radio" name="size" className="accent-brand" checked={selectedSize?.name === size.name} onChange={() => setSelectedSize(size)} />
-                          <span className="font-bold text-white text-sm">{size.displayName}</span>
+                          <span className="font-bold text-fg text-sm">{size.displayName}</span>
                         </div>
                         <span className="text-brand font-bold text-sm">₱{size.price.toFixed(2)}</span>
                       </label>
@@ -978,7 +979,7 @@ export default function CustomerMenu() {
                 <div className="border-t border-white/5 pt-4 space-y-4">
                   {(selectedProduct.modifierGroups || []).map((mg, mgIdx) => (
                     <div key={mgIdx}>
-                      <p className="text-white/80 text-xs font-black uppercase tracking-widest mb-2 flex items-center gap-2">
+                      <p className="text-fg/80 text-xs font-black uppercase tracking-widest mb-2 flex items-center gap-2">
                         {mg.name}
                         {mg.isRequired && <span className="text-red-400 text-[9px] font-black bg-red-900/30 px-1.5 py-0.5 rounded uppercase">Required</span>}
                       </p>
@@ -1002,7 +1003,7 @@ export default function CustomerMenu() {
                                 <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isSelected ? 'border-brand bg-brand' : 'border-white/30'}`}>
                                   {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
                                 </div>
-                                <span className="font-bold text-white text-sm">{opt.name}</span>
+                                <span className="font-bold text-fg text-sm">{opt.name}</span>
                               </div>
                               {opt.price > 0 && <span className="text-brand font-bold text-sm">+₱{opt.price.toFixed(2)}</span>}
                             </label>
@@ -1016,13 +1017,13 @@ export default function CustomerMenu() {
 
               {selectedProduct.addOns && selectedProduct.addOns.length > 0 && (
                 <div className="border-t border-white/5 pt-4">
-                  <p className="text-white/60 text-xs font-black uppercase tracking-widest mb-3">Optional Add-Ons</p>
+                  <p className="text-fg/60 text-xs font-black uppercase tracking-widest mb-3">Optional Add-Ons</p>
                   <div className="space-y-2">
                     {selectedProduct.addOns.map((addOn, idx) => (
                       <label key={`addon-${idx}`} className={`flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition ${selectedAddOns.some(a => a.name === addOn.name) ? 'border-brand bg-brand/10' : 'border-white/10 hover:border-white/20 bg-white/5'}`}>
                         <div className="flex items-center gap-3">
                           <input type="checkbox" className="accent-brand" checked={selectedAddOns.some(a => a.name === addOn.name)} onChange={() => toggleAddOn(addOn)} />
-                          <span className="font-bold text-white text-sm">{addOn.name}</span>
+                          <span className="font-bold text-fg text-sm">{addOn.name}</span>
                         </div>
                         <span className="text-brand font-bold text-sm">+₱{addOn.price.toFixed(2)}</span>
                       </label>
@@ -1033,7 +1034,7 @@ export default function CustomerMenu() {
             </div>
             {/* Modal footer - always visible, never scrolled away */}
             <div className="flex gap-3 p-5 border-t border-white/5 flex-shrink-0">
-              <button onClick={() => setSelectedProduct(null)} className="flex-1 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white font-bold py-3.5 rounded-2xl transition text-sm">
+              <button onClick={() => setSelectedProduct(null)} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold py-3.5 rounded-2xl transition text-sm">
                 Cancel
               </button>
               <button
@@ -1044,10 +1045,10 @@ export default function CustomerMenu() {
                     const selected = selectedAddOns.filter(a => a.name.startsWith(mg.name+': ')).length;
                     return selected < (mg.minSelect||1);
                   });
-                  if (unmet.length > 0) { alert(`Please choose: ${unmet.map(mg=>mg.name).join(', ')}`); return; }
+                  if (unmet.length > 0) { ui.alert(`Please choose: ${unmet.map(mg=>mg.name).join(', ')}`); return; }
                   addToCart(selectedProduct, selectedSize, selectedAddOns);
                 }}
-                className="flex-2 flex-1 bg-brand hover:bg-brand-dark text-white font-black py-3.5 rounded-2xl transition shadow-lg shadow-brand/20 text-sm">
+                className="flex-2 flex-1 bg-brand hover:bg-brand-dark text-fg font-black py-3.5 rounded-2xl transition shadow-lg shadow-brand/20 text-sm">
                 Add to Cart
               </button>
             </div>

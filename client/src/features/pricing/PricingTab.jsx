@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
+import * as ui from '../../shared/ui';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
@@ -113,32 +114,32 @@ export default function PricingTab({ ctx }) {
         <div className="flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-180px)]">
 
           {/* LEFT COLUMN: Read-Only Pricing Table */}
-          <div className="flex-1 bg-surface border border-gray-800 rounded-xl p-6 overflow-y-auto custom-scrollbar min-h-[400px] lg:min-h-0 lg:h-full">
-            <h3 className="text-xl font-bold mb-4 text-accent border-b border-gray-800 pb-2">Product Pricing Masterlist</h3>
+          <div className="flex-1 bg-surface border border-white/10 rounded-xl p-6 overflow-y-auto custom-scrollbar min-h-[400px] lg:min-h-0 lg:h-full">
+            <h3 className="text-xl font-bold mb-4 text-accent border-b border-white/10 pb-2">Product Pricing Masterlist</h3>
 
             {/* Filter bar */}
             <div className="flex flex-wrap gap-2 mb-4">
-              <div className="relative shrink-0">
+              <div className="relative shrink-0 self-center">
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
                 <input
                   type="text"
                   placeholder="Search product name…"
                   value={pricingSearch}
                   onChange={e => handleSearchChange(e.target.value)}
-                  className="bg-page-bg border border-gray-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white outline-none focus:border-accent w-full sm:w-56"
+                  className="bg-page-bg border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-xs text-fg outline-none focus:border-accent w-full sm:w-56"
                 />
               </div>
-              <div className="flex rounded-lg overflow-hidden border border-gray-700 shrink-0">
-                <button onClick={() => handleSortChange('az')} className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition ${pricingSort === 'az' ? 'bg-accent text-white' : 'bg-page-bg text-gray-400 hover:text-white'}`}>A→Z</button>
-                <button onClick={() => handleSortChange('za')} className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition border-l border-gray-700 ${pricingSort === 'za' ? 'bg-accent text-white' : 'bg-page-bg text-gray-400 hover:text-white'}`}>Z→A</button>
+              <div className="flex rounded-lg overflow-hidden border border-white/10 shrink-0">
+                <button onClick={() => handleSortChange('az')} className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition ${pricingSort === 'az' ? 'bg-accent text-white' : 'bg-page-bg text-gray-400 hover:text-fg'}`}>A→Z</button>
+                <button onClick={() => handleSortChange('za')} className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition border-l border-white/10 ${pricingSort === 'za' ? 'bg-accent text-white' : 'bg-page-bg text-gray-400 hover:text-fg'}`}>Z→A</button>
               </div>
               <select value={pricingCatFilter} onChange={e => handleCatChange(e.target.value)}
-                className="bg-page-bg border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none focus:border-accent min-w-[140px]">
+                className="bg-page-bg border border-white/10 rounded-lg px-3 py-1.5 text-xs text-fg font-bold outline-none focus:border-accent min-w-[140px]">
                 <option value="">All Categories</option>
                 {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
               {pricingCatFilter && (
-                <button onClick={() => handleCatChange('')} className="text-xs text-gray-400 hover:text-white px-2">✕ Clear</button>
+                <button onClick={() => handleCatChange('')} className="text-xs text-gray-400 hover:text-fg px-2">✕ Clear</button>
               )}
             </div>
 
@@ -146,7 +147,7 @@ export default function PricingTab({ ctx }) {
             <div className="overflow-x-auto pr-2">
               <table className="w-full text-left text-sm min-w-[700px]">
                 <thead>
-                  <tr className="text-gray-400 border-b border-gray-800">
+                  <tr className="text-fg/80 border-b border-gray-800">
                     <th className="pb-3 uppercase tracking-wider text-xs">Product Name</th>
                     <th className="pb-3 uppercase tracking-wider text-xs">Category</th>
                     <th className="pb-3 text-right uppercase tracking-wider text-xs">Size / Option</th>
@@ -195,14 +196,14 @@ export default function PricingTab({ ctx }) {
                     const margin = row.price > 0 ? ((row.price - (row.cost || 0)) / row.price) * 100 : null;
                     const isUnavailable = row.isBase && row.product.isAvailable === false;
                     return (
-                    <tr key={row.id} className={`border-gray-800/50 hover:bg-page-bg/30 transition ${row.name !== '' ? 'border-t' : ''} ${isUnavailable ? 'opacity-50' : ''}`}>
-                      <td className={`py-2 font-bold ${row.name !== '' ? 'text-gray-200 pt-4' : ''}`}>
+                    <tr key={row.id} className={`border-white/10 hover:bg-page-bg/30 transition ${row.name !== '' ? 'border-t' : ''} ${isUnavailable ? 'opacity-50' : ''}`}>
+                      <td className={`py-2 font-bold ${row.name !== '' ? 'text-fg pt-4' : ''}`}>
                         {row.name}
-                        {isUnavailable && <span className="ml-2 text-[9px] bg-red-900/60 text-red-400 border border-red-700/40 rounded px-1 py-0.5 font-black uppercase tracking-wider">Removed</span>}
-                        {row.isBase && row.product.isOutOfStock && <span className="ml-2 text-[9px] bg-amber-900/60 text-amber-400 border border-amber-700/40 rounded px-1 py-0.5 font-black uppercase tracking-wider">OOS</span>}
+                        {isUnavailable && <span className="ml-2 text-[9px] bg-red-500 text-white border border-red-500 rounded px-1 py-0.5 font-black uppercase tracking-wider">Removed</span>}
+                        {row.isBase && row.product.isOutOfStock && <span className="ml-2 text-[9px] bg-amber-500 text-white border border-amber-500 rounded px-1 py-0.5 font-black uppercase tracking-wider">OOS</span>}
                       </td>
-                      <td className={`py-2 text-xs text-gray-500 ${row.name !== '' ? 'pt-4' : ''}`}>{row.cat}</td>
-                      <td className={`py-2 text-right text-gray-400 ${row.name !== '' ? 'pt-4' : ''}`}>{row.size}</td>
+                      <td className={`py-2 text-xs text-fg ${row.name !== '' ? 'pt-4' : ''}`}>{row.cat}</td>
+                      <td className={`py-2 text-right text-fg ${row.name !== '' ? 'pt-4' : ''}`}>{row.size}</td>
 
                       {/* --- INLINE EDITING UI --- */}
                       <td className={`py-2 text-right font-mono font-bold text-accent ${row.name !== '' ? 'pt-4' : ''}`}>
@@ -211,7 +212,7 @@ export default function PricingTab({ ctx }) {
                             <input
                               type="number"
                               step="0.01"
-                              className="w-20 bg-page-bg border border-accent rounded px-2 py-1 text-white outline-none text-right"
+                              className="w-20 bg-page-bg border border-accent rounded px-2 py-1 text-fg outline-none text-right"
                               value={editPriceVal}
                               onChange={(e) => setEditPriceVal(e.target.value)}
                               autoFocus
@@ -240,7 +241,7 @@ export default function PricingTab({ ctx }) {
                               step="0.01"
                               min="0"
                               placeholder="0.00"
-                              className="w-20 bg-page-bg border border-orange-500/60 rounded px-2 py-1 text-white outline-none text-right text-xs"
+                              className="w-20 bg-page-bg border border-orange-500/60 rounded px-2 py-1 text-fg outline-none text-right text-xs"
                               value={editCostVal}
                               onChange={(e) => setEditCostVal(e.target.value)}
                               autoFocus
@@ -287,8 +288,8 @@ export default function PricingTab({ ctx }) {
                               title={isUnavailable ? 'Click to restore (un-remove)' : 'Click to REMOVE from menu (kept in reporting until stock is zero)'}
                               className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition border ${
                                 isUnavailable
-                                  ? 'bg-red-900/50 text-red-400 border-red-700/40 hover:bg-green-900/50 hover:text-green-400 hover:border-green-700/40'
-                                  : 'bg-transparent text-gray-600 border-gray-700 hover:bg-red-900/40 hover:text-red-400 hover:border-red-700/40'
+                                  ? 'bg-red-500 text-white border-red-500 hover:bg-green-500 hover:text-white hover:border-green-500'
+                                  : 'bg-transparent text-gray-600 border-white/10 hover:bg-red-500 hover:text-white hover:border-red-500'
                               }`}
                             >
                               {isUnavailable ? 'REMOVED' : 'LIVE'}
@@ -305,8 +306,8 @@ export default function PricingTab({ ctx }) {
                               title={row.product.isOutOfStock ? 'Click to mark back in stock' : 'Click to mark OUT OF STOCK (still on menu, badged)'}
                               className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition border ${
                                 row.product.isOutOfStock
-                                  ? 'bg-amber-900/50 text-amber-400 border-amber-700/40 hover:bg-emerald-900/50 hover:text-emerald-400 hover:border-emerald-700/40'
-                                  : 'bg-transparent text-gray-600 border-gray-700 hover:bg-amber-900/40 hover:text-amber-400 hover:border-amber-700/40'
+                                  ? 'bg-amber-500 text-white border-amber-500 hover:bg-emerald-500 hover:text-white hover:border-emerald-500'
+                                  : 'bg-transparent text-gray-600 border-white/10 hover:bg-amber-500 hover:text-white hover:border-amber-500'
                               }`}
                             >
                               {row.product.isOutOfStock ? 'OOS' : 'OK'}
@@ -322,11 +323,11 @@ export default function PricingTab({ ctx }) {
             </div>
             {/* --- PRICING PAGINATION CONTROLS --- */}
             {localTotalPages > 1 && (
-              <div className="flex justify-between items-center bg-page-bg p-3 rounded-lg border border-gray-800 mt-4 shrink-0">
+              <div className="flex justify-between items-center bg-page-bg p-3 rounded-lg border border-white/10 mt-4 shrink-0">
                 <button
                   onClick={() => setLocalPage(prev => Math.max(prev - 1, 1))}
                   disabled={localPage === 1}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${localPage === 1 ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${localPage === 1 ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
                 >
                   <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                 </button>
@@ -336,7 +337,7 @@ export default function PricingTab({ ctx }) {
                 <button
                   onClick={() => setLocalPage(prev => Math.min(prev + 1, localTotalPages))}
                   disabled={localPage === localTotalPages}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${localPage === localTotalPages ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${localPage === localTotalPages ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
                 >
                   <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                 </button>
@@ -346,28 +347,28 @@ export default function PricingTab({ ctx }) {
 
           {/* RIGHT COLUMN: Discount CRUD */}
           {/* Changed width breaks to lg:w-80 so it perfectly fits beside the table on tablets */}
-          <div className="w-full lg:w-80 xl:w-96 bg-surface border border-gray-800 rounded-xl p-6 min-h-[400px] lg:min-h-0 lg:h-full overflow-y-auto custom-scrollbar flex flex-col">
-            <h3 className="text-xl font-bold mb-4 text-accent border-b border-gray-800 pb-2">Discount Rules</h3>
+          <div className="w-full lg:w-80 xl:w-96 bg-surface border border-white/10 rounded-xl p-6 min-h-[400px] lg:min-h-0 lg:h-full overflow-y-auto custom-scrollbar flex flex-col">
+            <h3 className="text-xl font-bold mb-4 text-accent border-b border-white/10 pb-2">Discount Rules</h3>
             
             <div className="flex-1 overflow-y-auto mb-6 pr-2 scrollbar-thin scrollbar-thumb-gray-700">
               <div className="space-y-3">
                 {discounts.length === 0 ? (
                   <p className="text-sm text-gray-500 italic text-center py-4">No custom discounts set.</p>
                 ) : discounts.map(d => (
-                  <div key={d._id} className="bg-page-bg p-3 rounded-lg border border-gray-700 flex justify-between items-center">
+                  <div key={d._id} className="bg-page-bg p-3 rounded-lg border border-white/10 flex justify-between items-center">
                     <div>
                       {/* Fixed black text bug here! */}
-                      <p className="font-bold text-accent text-sm">{d.name}</p>
+                      <p className="font-bold text-fg text-sm">{d.name}</p>
                       <p className="text-xs text-gray-400 font-mono">{d.percentage}% OFF</p>
                     </div>
                     <button 
                       onClick={async () => {
-                        if (window.confirm(`Delete ${d.name} discount?`)) {
+                        if (await ui.confirm(`Delete ${d.name} discount?`)) {
                           await apiFetch(`/api/discounts/${d._id}`, { method: 'DELETE' });
                           fetchData(); // Refresh the list
                         }
                       }} 
-                      className="text-red-500 hover:text-red-400 font-bold px-2 py-1 bg-red-900/20 rounded transition"
+                      className="text-white hover:text-red-400 font-bold px-2 py-1 bg-red-500 rounded transition"
                     >
                       Del
                     </button>
@@ -376,8 +377,8 @@ export default function PricingTab({ ctx }) {
               </div>
             </div>
 
-            <div className="border-t border-gray-800 pt-4 mt-auto shrink-0">
-              <h4 className="text-sm font-bold text-white uppercase tracking-wider mb-3">Add New Discount</h4>
+            <div className="border-t border-white/10 pt-4 mt-auto shrink-0">
+              <h4 className="text-sm font-bold text-fg uppercase tracking-wider mb-3">Add New Discount</h4>
               <form 
                 onSubmit={async (e) => {
                   e.preventDefault();
@@ -393,11 +394,11 @@ export default function PricingTab({ ctx }) {
               >
                 <div>
                   <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1 block">Discount Name</label>
-                  <input type="text" placeholder="e.g., PWD, Senior Citizen" value={discountForm.name} onChange={(e) => setDiscountForm({...discountForm, name: e.target.value})} className="w-full bg-page-bg border border-gray-700 rounded p-2 text-sm text-white outline-none focus:border-accent" required />
+                  <input type="text" placeholder="e.g., PWD, Senior Citizen" value={discountForm.name} onChange={(e) => setDiscountForm({...discountForm, name: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" required />
                 </div>
                 <div>
                   <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1 block">Percentage (%)</label>
-                  <input type="number" placeholder="e.g., 20" max="100" min="1" value={discountForm.percentage} onChange={(e) => setDiscountForm({...discountForm, percentage: e.target.value})} className="w-full bg-page-bg border border-gray-700 rounded p-2 text-sm text-white outline-none focus:border-accent" required />
+                  <input type="number" placeholder="e.g., 20" max="100" min="1" value={discountForm.percentage} onChange={(e) => setDiscountForm({...discountForm, percentage: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" required />
                 </div>
                 <button type="submit" className="w-full bg-accent text-white font-black py-3 rounded hover:bg-brand-dark transition shadow-lg shadow-accent/20 uppercase tracking-wider text-xs">
                   Save Rule

@@ -6,6 +6,25 @@ import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
 import { queueOrder, requestNotificationPermission, notify, queueClock, getQueuedClock, flushClockQueue } from '../../shared/pwa';
 import * as auth from '../auth/auth';
+import { DashboardProvider } from './DashboardContext';
+// Modals extracted out of this file. They read shared state via useDashboard()
+// rather than props — see DashboardContext for why.
+import EditInventoryModal from '../inventory/modals/EditInventoryModal';
+import SpoilageModal from '../inventory/modals/SpoilageModal';
+import SettleArModal from '../ledger/modals/SettleArModal';
+import RevolvingFundNewModal from '../ledger/modals/RevolvingFundNewModal';
+import RevolvingFundDisburseModal from '../ledger/modals/RevolvingFundDisburseModal';
+import RevolvingFundReplenishModal from '../ledger/modals/RevolvingFundReplenishModal';
+import RefundModal from '../orders/modals/RefundModal';
+import NotificationBell from '../notifications/NotificationBell';
+import CommandPalette from './CommandPalette';
+import ShiftEndModal from '../shifts/modals/ShiftEndModal';
+import StockHistoryModal from '../inventory/modals/StockHistoryModal';
+import ImportModal from '../inventory/modals/ImportModal';
+import PartialFulfillModal from '../orders/modals/PartialFulfillModal';
+import ClockModal from './modals/ClockModal';
+import ChangePasswordModal from './modals/ChangePasswordModal';
+import * as ui from '../../shared/ui';
 // Tabs are lazy-loaded so only the active tab's code ships on first dashboard
 // paint; the rest load on demand when the operator opens them.
 const AnalyticsTab  = lazy(() => import('../analytics/AnalyticsTab'));
@@ -18,10 +37,11 @@ const AuditTab      = lazy(() => import('../audit/AuditTab'));
 const ProductsTab   = lazy(() => import('../products/ProductsTab'));
 const ProcurementTab = lazy(() => import('../procurement/ProcurementTab'));
 const SettingsTab   = lazy(() => import('../settings/SettingsTab'));
+const ClientsTab    = lazy(() => import('../clients/ClientsTab'));
 
 // Small fallback shown while a tab chunk loads.
 const TabFallback = () => (
-  <div className="p-12 flex items-center justify-center text-white/40 text-sm gap-2">
+  <div className="p-12 flex items-center justify-center text-fg/40 text-sm gap-2">
     <RefreshCw size={16} className="animate-spin" /> Loading…
   </div>
 );
@@ -172,10 +192,15 @@ export default function AdminDashboard() {
   const [discountInputs, setDiscountInputs] = useState({});
   
   const [editingProduct, setEditingProduct] = useState(null);
-  const [formData, setFormData] = useState({ 
-    name: '', description: '', category: '', basePrice: '', baseSize: '', sizes: [], image: '',
-    baseRecipe: [], addOns: [], modifierGroups: [], imageUrl: ''
+  // Single source of truth for the empty product form — it used to be spelled out
+  // at every reset site, and the copies drifted (some omitted discountPercent /
+  // clientDiscounts, leaving stale values in the next product you added).
+  const emptyProductForm = () => ({
+    name: '', description: '', category: '', basePrice: '', discountPercent: 0, clientDiscounts: [],
+    baseSize: '', sizes: [], image: '', baseRecipe: [], addOns: [], modifierGroups: [], imageUrl: ''
   });
+  const [formData, setFormData] = useState(emptyProductForm);
+  const resetProductForm = () => { setEditingProduct(null); setFormData(emptyProductForm()); };
   const [catForm, setCatForm] = useState({ name: '', department: 'Kitchen' });
   const [editingCategory, setEditingCategory] = useState(null);
 
@@ -276,7 +301,9 @@ export default function AdminDashboard() {
   // --- AP OUTSTANDING ---
   const [apData, setApData] = useState(null);
   const [apPayModal, setApPayModal] = useState(false);
-  const [apPayForm, setApPayForm] = useState({ amount: '', payFromAccount: '111000', description: '', vendorName: '' });
+  const [apPayForm, setApPayForm] = useState({ amount: '', payFromAccount: '111000', description: '', vendorName: '', supplierId: '' });
+  // Supplier list for the A/P payment picker (the Procurement tab keeps its own).
+  const [suppliers, setSuppliers] = useState([]);
   const [apPaySubmitting, setApPaySubmitting] = useState(false);
   const [activeInventoryItem, setActiveInventoryItem] = useState(null); // For the restock modal
 
@@ -438,7 +465,11 @@ export default function AdminDashboard() {
   });
   const [bsmView, setBsmView] = useState('period');
   const [arOutstanding, setArOutstanding] = useState({ orders: [], totalOutstanding: 0 });
+  // Per-client A/R ageing + each client's credit limit and headroom.
+  const [arAgeing, setArAgeing] = useState({ clients: [], totals: null, mode: 'off' });
   const [expenseModal, setExpenseModal] = useState(false);
+  // Recent expenses + per-category totals backing the Expenses page.
+  const [expenseList, setExpenseList] = useState({ expenses: [], byCategory: [], total: 0 });
   const [expenseCategories, setExpenseCategories] = useState([]);
   const [expenseForm, setExpenseForm] = useState({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', date: new Date().toISOString().slice(0,10) });
   const [expenseSubmitting, setExpenseSubmitting] = useState(false);
@@ -493,6 +524,16 @@ export default function AdminDashboard() {
 
   // --- FULLSCREEN LOGIC ---
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Command palette. Ctrl/Cmd+K is the accelerator; the header button is the
+  // discoverable route for touchscreen users, who are most of the staff here.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPaletteOpen(o => !o); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Collapse the sidebar's utility tools (Fullscreen/QR/Password/toggles/Install)
   // to reclaim space. Persisted so the choice sticks across reloads.
@@ -510,6 +551,22 @@ export default function AdminDashboard() {
   // --- PAGINATION STATE ---
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 8; // You can change this number! 12 fits nicely on a tablet screen.
+
+  // --- MENU ITEMS SEARCH / FILTER (Products tab left column) ---
+  // A shop with 200 SKUs can't page through 8-at-a-time to find one item, so the
+  // list is filtered BEFORE the pagination slice below.
+  const [prodSearch, setProdSearch] = useState('');
+  const [prodFilters, setProdFilters] = useState({
+    category: 'all',
+    image: 'all',      // all | with | without
+    stock: 'all',      // all | in | low | out | untracked
+    discount: 'all',   // all | discounted | full
+    sizes: 'all',      // all | multi | single
+    sort: 'name',      // name | name-desc | price | price-desc | category
+  });
+  // Any filter change invalidates the current page number (page 5 of a 2-page
+  // result renders an empty list with no way back).
+  useEffect(() => { setCurrentPage(1); }, [prodSearch, prodFilters]);
 
   // NEW: Inventory Pagination
   const [invPage, setInvPage] = useState(1);
@@ -550,9 +607,9 @@ export default function AdminDashboard() {
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', import.meta.env.VITE_THEME || 'default');
-  }, []);
+  // Theme is applied once in App.jsx (saved device choice → VITE_THEME default).
+  // This component must NOT re-apply it: mounting the dashboard would stomp the
+  // user's saved theme back to the build-time default on every page load.
 
   const toggleFullScreen = () => {
     if (!document.fullscreenElement) {
@@ -595,7 +652,12 @@ export default function AdminDashboard() {
       const data = await res.json();
 
       if (!data.success) {
-        setLoginError('Invalid name or password.');
+        // Show the server's reason when it gives one. Flattening every failure to
+        // "invalid name or password" tells a rate-limited user their password is
+        // wrong, so they retry harder and stay locked out longer.
+        setLoginError(res.status === 429
+          ? (data.error || 'Too many failed attempts. Please wait and try again.')
+          : (data.error || 'Invalid name or password.'));
         return;
       }
 
@@ -645,7 +707,7 @@ export default function AdminDashboard() {
   const handleEndShift = async () => {
     // Use denomination total if bills were counted; fall back to manual entry
     const actual = denomTotal > 0 ? denomTotal : parseFloat(shiftReconcile.actualCash);
-    if (isNaN(actual) || actual < 0) return alert('Please count your bills or enter a cash amount.');
+    if (isNaN(actual) || actual < 0) return ui.alert('Please count your bills or enter a cash amount.');
     setShiftEndLoading(true);
     try {
       const res = await apiFetch('/api/shifts/end', {
@@ -742,7 +804,7 @@ export default function AdminDashboard() {
     if (Math.abs(newPrice - oldPrice) < 0.005) { setEditPriceId(null); return; }
     const reason = window.prompt(`Reason for changing price of "${product.name}" from ₱${oldPrice.toFixed(2)} → ₱${newPrice.toFixed(2)}?`, '');
     if (reason === null) return; // cancelled
-    if (!reason.trim()) return alert('A reason is required for every price change.');
+    if (!reason.trim()) return ui.alert('A reason is required for every price change.');
 
     const updatedProduct = { ...product };
     if (sizeIndex === null) updatedProduct.basePrice = newPrice;
@@ -770,7 +832,7 @@ export default function AdminDashboard() {
     if (Math.abs(newCost - oldCost) < 0.005) { setEditCostId(null); return; }
     const reason = window.prompt(`Reason for changing recipe cost of "${product.name}" from ₱${oldCost.toFixed(2)} → ₱${newCost.toFixed(2)}?`, '');
     if (reason === null) return;
-    if (!reason.trim()) return alert('A reason is required for every recipe cost change.');
+    if (!reason.trim()) return ui.alert('A reason is required for every recipe cost change.');
 
     const updatedProduct = { ...product };
     if (sizeIndex === null) {
@@ -838,13 +900,15 @@ export default function AdminDashboard() {
   // 3. Add these two handler functions right above your return() statement:
   const handleSaveAddOn = async (e) => {
     e.preventDefault();
-    await apiFetch(`/api/addons`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(addOnForm) });
+    const { _id, ...body } = addOnForm;
+    const url = _id ? `/api/addons/${_id}` : '/api/addons';
+    await apiFetch(url, { method: _id ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     setAddOnForm({ name: '', price: '', category: 'Extras' });
     fetchData();
   };
   
   const deleteAddOn = async (id) => {
-    if(window.confirm('Delete this Add-on?')) await apiFetch(`/api/addons/${id}`, { method: 'DELETE' });
+    if(await ui.confirm('Delete this Add-on?')) await apiFetch(`/api/addons/${id}`, { method: 'DELETE' });
     fetchData();
   };
 
@@ -986,7 +1050,7 @@ export default function AdminDashboard() {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(jePayload) 
     });
     fetchERPData();
-    alert(`₱${amount.toFixed(2)} injected into Cash on Hand.`);
+    ui.alert(`₱${amount.toFixed(2)} injected into Cash on Hand.`);
   };
 
   const fetchStockHistory = async (item) => {
@@ -1038,35 +1102,35 @@ export default function AdminDashboard() {
     try { const r = await apiFetch('/api/coa'); const d = await r.json(); if (d.success) setCoaAccounts(d.accounts); } catch { /* ignore */ }
   }, []);
   const addCoaChild = async () => {
-    if (!coaParent || !coaNewName.trim()) return alert('Pick a parent account and enter a name.');
+    if (!coaParent || !coaNewName.trim()) return ui.alert('Pick a parent account and enter a name.');
     setCoaBusy(true);
     try {
       const r = await apiFetch('/api/accounts', { method: 'POST', body: JSON.stringify({ parentCode: coaParent, name: coaNewName.trim() }) });
       const d = await r.json();
-      if (d.success) { setCoaNewName(''); fetchCoa(); } else alert(d.error || 'Failed to add account.');
-    } catch { alert('Failed to add account.'); } finally { setCoaBusy(false); }
+      if (d.success) { setCoaNewName(''); fetchCoa(); } else ui.alert(d.error || 'Failed to add account.');
+    } catch { ui.alert('Failed to add account.'); } finally { setCoaBusy(false); }
   };
   const renameCoaChild = async (id) => {
     if (!coaEditName.trim()) return setCoaEditId(null);
     try {
       const r = await apiFetch(`/api/accounts/${id}`, { method: 'PUT', body: JSON.stringify({ name: coaEditName.trim() }) });
       const d = await r.json();
-      if (d.success) { setCoaEditId(null); fetchCoa(); } else alert(d.error || 'Rename failed.');
-    } catch { alert('Rename failed.'); }
+      if (d.success) { setCoaEditId(null); fetchCoa(); } else ui.alert(d.error || 'Rename failed.');
+    } catch { ui.alert('Rename failed.'); }
   };
   const deleteCoaChild = async (id) => {
-    if (!window.confirm('Delete this custom account? (Blocked if it has posted entries.)')) return;
+    if (!(await ui.confirm('Delete this custom account? (Blocked if it has posted entries.)'))) return;
     try {
       const r = await apiFetch(`/api/accounts/${id}`, { method: 'DELETE' });
       const d = await r.json();
-      if (d.success) fetchCoa(); else alert(d.error || 'Delete failed.');
-    } catch { alert('Delete failed.'); }
+      if (d.success) fetchCoa(); else ui.alert(d.error || 'Delete failed.');
+    } catch { ui.alert('Delete failed.'); }
   };
 
   // Re-run the boot-time seed for payment-method sub-accounts. Safe to invoke
   // repeatedly — idempotent server-side. Surfaces what got created vs skipped.
   const seedPaymentSubaccounts = async () => {
-    if (!window.confirm('Create the standard payment-method sub-accounts (GCash, Maya, Foodpanda, etc.)? Existing accounts are skipped.')) return;
+    if (!(await ui.confirm('Create the standard payment-method sub-accounts (GCash, Maya, Foodpanda, etc.)? Existing accounts are skipped.'))) return;
     try {
       const r = await apiFetch('/api/admin/seed-payment-subaccounts', { method: 'POST' });
       const d = await r.json();
@@ -1077,10 +1141,10 @@ export default function AdminDashboard() {
           d.skipped.length ? `\n⚠️ Skipped: ${d.skipped.length}` : '',
           ...d.skipped.map(s => `  • ${s.code} ${s.name} - ${s.reason}`),
         ].filter(Boolean);
-        alert(lines.join('\n'));
+        ui.alert(lines.join('\n'));
         fetchCoa(); fetchPaymentMap?.();
-      } else alert(d.error || 'Seed failed.');
-    } catch (e) { alert('Network error: ' + (e?.message || e)); }
+      } else ui.alert(d.error || 'Seed failed.');
+    } catch (e) { ui.alert('Network error: ' + (e?.message || e)); }
   };
 
   // ── Closed accounting periods ───────────────────────────────────────────────
@@ -1091,23 +1155,40 @@ export default function AdminDashboard() {
   }, []);
   const closePeriod = async () => {
     const y = Number(periodCloseForm.year), m = Number(periodCloseForm.month);
-    if (!y || !m || m < 1 || m > 12) return alert('Pick a valid year and month.');
-    if (!window.confirm(`Lock ${y}-${String(m).padStart(2,'0')}? Back-dated journal entries into that month will be blocked.`)) return;
+    if (!y || !m || m < 1 || m > 12) return ui.alert('Pick a valid year and month.');
+    if (!(await ui.confirm(`Lock ${y}-${String(m).padStart(2,'0')}? Back-dated journal entries into that month will be blocked.`))) return;
     try {
       const r = await apiFetch('/api/periods/close', { method: 'POST', body: JSON.stringify({ year: y, month: m, notes: periodCloseForm.notes }) });
       const d = await r.json();
-      if (d.success) { fetchClosedPeriods(); setPeriodCloseForm({ ...periodCloseForm, notes: '' }); }
-      else alert(d.error || 'Failed to close period.');
-    } catch { alert('Network error closing period.'); }
+      if (d.success) {
+        fetchClosedPeriods();
+        setPeriodCloseForm({ ...periodCloseForm, notes: '' });
+        // Closing takes effect immediately (it must — it's a lock), so this is a
+        // real reversal via the existing reopen route, not a deferred write.
+        const periodId = d.period?._id;
+        if (periodId) {
+          await ui.undoable(async () => {
+            const rr = await apiFetch(`/api/periods/${periodId}/reopen`, { method: 'POST' });
+            const dd = await rr.json();
+            if (!dd.success) throw new Error(dd.error || 'reopen failed');
+            fetchClosedPeriods();
+          }, {
+            message: `Locked ${y}-${String(m).padStart(2, '0')}.`,
+            undoMessage: `Reopened ${y}-${String(m).padStart(2, '0')}.`,
+          });
+        }
+      }
+      else ui.alert(d.error || 'Failed to close period.');
+    } catch { ui.alert('Network error closing period.'); }
   };
   const reopenPeriod = async (id) => {
-    if (!window.confirm('Reopen this period? Back-dated journal entries will be allowed again.')) return;
+    if (!(await ui.confirm('Reopen this period? Back-dated journal entries will be allowed again.'))) return;
     try {
       const r = await apiFetch(`/api/periods/${id}/reopen`, { method: 'POST' });
       const d = await r.json();
       if (d.success) fetchClosedPeriods();
-      else alert(d.error || 'Failed to reopen.');
-    } catch { alert('Network error.'); }
+      else ui.alert(d.error || 'Failed to reopen.');
+    } catch { ui.alert('Network error.'); }
   };
 
   // ── Tenancy backfill report ─────────────────────────────────────────────────
@@ -1117,13 +1198,13 @@ export default function AdminDashboard() {
     try { const r = await apiFetch('/api/admin/tenancy-report'); const d = await r.json(); if (d.success) setTenancyReport(d); } catch { /* ignore */ }
   }, []);
   const runTenancyRebackfill = async () => {
-    if (!window.confirm('Stamp current businessType on every legacy doc that is missing it?')) return;
+    if (!(await ui.confirm('Stamp current businessType on every legacy doc that is missing it?'))) return;
     setTenancyBusy(true);
     try {
       const r = await apiFetch('/api/admin/tenancy-rebackfill', { method: 'POST' });
       const d = await r.json();
-      if (d.success) { await fetchTenancyReport(); alert(`Stamped: Orders ${d.stamped.Order}, Products ${d.stamped.Product}, Inventory ${d.stamped.Inventory}, Categories ${d.stamped.Category}.`); }
-      else alert(d.error || 'Re-backfill failed.');
+      if (d.success) { await fetchTenancyReport(); ui.alert(`Stamped: Orders ${d.stamped.Order}, Products ${d.stamped.Product}, Inventory ${d.stamped.Inventory}, Categories ${d.stamped.Category}.`); }
+      else ui.alert(d.error || 'Re-backfill failed.');
     } finally { setTenancyBusy(false); }
   };
 
@@ -1131,19 +1212,19 @@ export default function AdminDashboard() {
   const [backdateForm, setBackdateForm] = useState({ date: '', customerName: '', amount: '', paymentMethod: 'Cash', notes: '' });
   const [backdateBusy, setBackdateBusy] = useState(false);
   const submitBackdateSale = async () => {
-    if (!backdateForm.date) return alert('Date is required.');
+    if (!backdateForm.date) return ui.alert('Date is required.');
     const amt = parseFloat(backdateForm.amount);
-    if (!amt || amt <= 0) return alert('Enter a positive amount.');
-    if (!window.confirm(`Record a backdated sale of ₱${amt.toFixed(2)} on ${backdateForm.date}? A balanced journal entry will be posted to the chosen payment account.`)) return;
+    if (!amt || amt <= 0) return ui.alert('Enter a positive amount.');
+    if (!(await ui.confirm(`Record a backdated sale of ₱${amt.toFixed(2)} on ${backdateForm.date}? A balanced journal entry will be posted to the chosen payment account.`))) return;
     setBackdateBusy(true);
     try {
       const r = await apiFetch('/api/admin/backdate-sale', { method: 'POST', body: JSON.stringify(backdateForm) });
       const d = await r.json();
       if (d.success) {
-        alert(`Backdated sale recorded: ${d.order.orderNumber}\nJournal ref: ${d.journalReference}`);
+        ui.alert(`Backdated sale recorded: ${d.order.orderNumber}\nJournal ref: ${d.journalReference}`);
         setBackdateForm({ date: '', customerName: '', amount: '', paymentMethod: 'Cash', notes: '' });
-      } else alert(d.error || 'Failed to record backdated sale.');
-    } catch { alert('Network error.'); }
+      } else ui.alert(d.error || 'Failed to record backdated sale.');
+    } catch { ui.alert('Network error.'); }
     finally { setBackdateBusy(false); }
   };
 
@@ -1157,11 +1238,11 @@ export default function AdminDashboard() {
       const r = await apiFetch('/api/payment-method-map', { method: 'PUT', body: JSON.stringify({ method, accountCode }) });
       const d = await r.json();
       if (d.success) setPaymentMap(prev => ({ ...prev, effective: d.effective, overrides: { ...prev.overrides, [method]: accountCode } }));
-      else alert(d.error || 'Failed to save mapping.');
-    } catch { alert('Network error saving mapping.'); }
+      else ui.alert(d.error || 'Failed to save mapping.');
+    } catch { ui.alert('Network error saving mapping.'); }
   };
   const resetPaymentMapping = async (method) => {
-    if (!window.confirm(`Reset "${method}" back to its default account?`)) return;
+    if (!(await ui.confirm(`Reset "${method}" back to its default account?`))) return;
     try {
       const r = await apiFetch(`/api/payment-method-map/${encodeURIComponent(method)}`, { method: 'DELETE' });
       const d = await r.json();
@@ -1169,8 +1250,8 @@ export default function AdminDashboard() {
         const ov = { ...prev.overrides }; delete ov[method];
         return { ...prev, effective: d.effective, overrides: ov };
       });
-      else alert(d.error || 'Failed to reset.');
-    } catch { alert('Network error.'); }
+      else ui.alert(d.error || 'Failed to reset.');
+    } catch { ui.alert('Network error.'); }
   };
 
   // ── Audit log fetch ─────────────────────────────────────────────────────────
@@ -1242,7 +1323,7 @@ export default function AdminDashboard() {
       const remaining = (it.quantity || 0) - (it.fulfilledQty || 0);
       return { index: i, qty: Math.max(0, Math.min(remaining, Number(partialQtys[i] ?? remaining))) };
     });
-    if (!fulfill.some(f => f.qty > 0)) return alert('Enter at least one unit to fulfill now.');
+    if (!fulfill.some(f => f.qty > 0)) return ui.alert('Enter at least one unit to fulfill now.');
     setPartialBusy(true);
     try {
       const res = await apiFetch(`/api/orders/${partialModal._id}/partial-fulfill`, {
@@ -1250,9 +1331,9 @@ export default function AdminDashboard() {
         body: JSON.stringify({ fulfill, paymentMode: partialMode, paymentMethod: partialPayment || 'Cash' }),
       });
       const d = await res.json();
-      if (d.success) { setPartialModal(null); fetchOrders(); fetchERPData?.(); alert(d.order?.status === 'Completed' ? 'Order fully fulfilled and completed.' : 'Partial fulfillment saved. Remaining stays on the same order.'); }
-      else alert(d.error || 'Partial fulfillment failed.');
-    } catch { alert('Partial fulfillment failed.'); } finally { setPartialBusy(false); }
+      if (d.success) { setPartialModal(null); fetchOrders(); fetchERPData?.(); ui.alert(d.order?.status === 'Completed' ? 'Order fully fulfilled and completed.' : 'Partial fulfillment saved. Remaining stays on the same order.'); }
+      else ui.alert(d.error || 'Partial fulfillment failed.');
+    } catch { ui.alert('Partial fulfillment failed.'); } finally { setPartialBusy(false); }
   };
   useEffect(() => { if (isAuthenticated) { fetchSettings(); fetchClockStatus(); fetchParked(); } }, [isAuthenticated]);
 
@@ -1342,7 +1423,7 @@ export default function AdminDashboard() {
     });
     if (unmetGroups.length > 0) {
       const names = unmetGroups.map(mg => typeof mg === 'object' ? mg.name : modifierGroups.find(g => g._id === mg)?.name || mg).join(', ');
-      return alert(`Please make a selection for: ${names}`);
+      return ui.alert(`Please make a selection for: ${names}`);
     }
 
     let finalPrice = posSelectedProduct.basePrice || posSelectedProduct.price || 0;
@@ -1385,12 +1466,12 @@ export default function AdminDashboard() {
   const submitManualOrder = async () => {
     // Synchronous double-tap guard — blocks a second submit before React re-renders.
     if (posSubmittingRef.current) return;
-    if (posCart.length === 0) return alert("Cart is empty!");
-    if (!posCustomerName) return alert("Please enter Customer / Driver Name.");
+    if (posCart.length === 0) return ui.alert("Cart is empty!");
+    if (!posCustomerName) return ui.alert("Please enter Customer / Driver Name.");
     const isDelivery = posTable === 'Manual Delivery';
     const isPickup = posTable === 'Pickup';
-    if (isDelivery && !posDeliveryAddress) return alert("Please enter delivery address.");
-    if ((isDelivery || isPickup) && !posCustomerPhone) return alert("Please enter customer phone number.");
+    if (isDelivery && !posDeliveryAddress) return ui.alert("Please enter delivery address.");
+    if ((isDelivery || isPickup) && !posCustomerPhone) return ui.alert("Please enter customer phone number.");
 
     posSubmittingRef.current = true;
     setPosSubmitting(true);
@@ -1443,7 +1524,7 @@ export default function AdminDashboard() {
       queueOrder(payload, idemKey);
       refreshQueue();
       resetPosForm();
-      alert('You are offline. Order saved and will sync automatically when the connection returns.');
+      ui.alert('You are offline. Order saved and will sync automatically when the connection returns.');
       posSubmittingRef.current = false; setPosSubmitting(false);
       return;
     }
@@ -1466,7 +1547,7 @@ export default function AdminDashboard() {
         resetPosForm();
         fetchOrders();
       } else {
-        alert(data.error);
+        ui.alert(data.error);
       }
     } catch (e) {
       // Network died mid-request — queue it under the SAME idempotency key so the
@@ -1475,7 +1556,7 @@ export default function AdminDashboard() {
       queueOrder(payload, idemKey);
       refreshQueue();
       resetPosForm();
-      alert('Connection lost. Order saved and will sync automatically when the connection returns.');
+      ui.alert('Connection lost. Order saved and will sync automatically when the connection returns.');
     } finally {
       posSubmittingRef.current = false;
       setPosSubmitting(false);
@@ -1522,7 +1603,7 @@ const updateStatus = async (orderId, newStatus) => {
       const data = await res.json();
 
       if (!data.success) {
-        alert(data.error);
+        ui.alert(data.error);
         fetchOrders();
       } else if (newStatus === 'Preparing' && BUSINESS_TYPE === 'log') {
         const prepOrder = { ...order, ...payload, ...data.order };
@@ -1555,7 +1636,7 @@ const updateStatus = async (orderId, newStatus) => {
   };
 
   const removeAddOnFromOrder = async (order, itemIndex, addOnIndex) => {
-    if (!window.confirm("Remove this add-on from the customer's order?")) return;
+    if (!(await ui.confirm("Remove this add-on from the customer's order?"))) return;
     
     const newItems = [...order.items];
     newItems[itemIndex].selectedAddOns = newItems[itemIndex].selectedAddOns.filter((_, idx) => idx !== addOnIndex);
@@ -1573,7 +1654,7 @@ const updateStatus = async (orderId, newStatus) => {
       if (data.success) {
         fetchOrders(); // Refresh to get the accurate new total
       } else {
-        alert(data.error);
+        ui.alert(data.error);
         fetchOrders(); // Revert on fail
       }
     } catch (err) {
@@ -1583,7 +1664,7 @@ const updateStatus = async (orderId, newStatus) => {
 
   const applyComplimentary = async (orderId) => {
     const reasonType = compReasonTypes[orderId];
-    if (!reasonType) return alert("Select a reason type for the complimentary order.");
+    if (!reasonType) return ui.alert("Select a reason type for the complimentary order.");
     const forEmployee = compSelections[orderId] || activeAdmin?.name || 'Unknown';
     const approvedBy = activeAdmin?.name || 'Manager';
     setCompOverride(prev => ({ ...prev, [orderId]: { isComplimentary: true, employeeName: forEmployee } }));
@@ -1600,12 +1681,12 @@ const updateStatus = async (orderId, newStatus) => {
       const data = await res.json();
       if (!data.success) {
         setCompOverride(prev => { const n = { ...prev }; delete n[orderId]; return n; });
-        alert(data.error || 'Failed to apply complimentary.');
+        ui.alert(data.error || 'Failed to apply complimentary.');
       }
     } catch (err) {
       setCompOverride(prev => { const n = { ...prev }; delete n[orderId]; return n; });
       console.error('Failed to apply complimentary:', err);
-      alert('Network error - complimentary not applied.');
+      ui.alert('Network error - complimentary not applied.');
     }
   };
 
@@ -1620,7 +1701,7 @@ const updateStatus = async (orderId, newStatus) => {
   const applyDiscount = async (orderId, isRemoving = false) => {
     const order = orders.find(o => o._id === orderId);
     const percent = isRemoving ? 0 : parseFloat(discountInputs[orderId] || 0);
-    if (percent < 0 || percent > 100) return alert('Discount must be between 0% and 100%');
+    if (percent < 0 || percent > 100) return ui.alert('Discount must be between 0% and 100%');
     
     // Grab the ticked checkboxes
     const selectedIndices = isRemoving ? [] : getSelectedItems(order);
@@ -1698,7 +1779,7 @@ const updateStatus = async (orderId, newStatus) => {
     } catch (err) { console.error('fetchPnlMonthly', err); }
   };
   const exportPnlMonthlyPDF = async () => {
-    if (!pnlMonthly) return alert('Load the Monthly P&L first.');
+    if (!pnlMonthly) return ui.alert('Load the Monthly P&L first.');
     const { jsPDF, autoTable } = await loadPdfLibs();
     const m = pnlMonthly;
     const doc = new jsPDF(pnlmView === 'matrix' ? 'landscape' : 'portrait');
@@ -1740,7 +1821,7 @@ const updateStatus = async (orderId, newStatus) => {
     } catch (err) { console.error('fetchBsMonthly', err); }
   };
   const exportBsMonthlyPDF = async () => {
-    if (!bsMonthly) return alert('Load the Monthly Balance Sheet first.');
+    if (!bsMonthly) return ui.alert('Load the Monthly Balance Sheet first.');
     const { jsPDF, autoTable } = await loadPdfLibs();
     const b = bsMonthly;
     const doc = new jsPDF(bsmView === 'matrix' ? 'landscape' : 'portrait');
@@ -1781,15 +1862,15 @@ const updateStatus = async (orderId, newStatus) => {
   };
   // Resolve negative/incorrect book inventory by reconciling 130000 to actual on-hand value.
   const reconcileInventory = async () => {
-    if (!window.confirm('Reconcile book Inventory (130000) to the ACTUAL on-hand value (Σ stock × unit cost)?\n\nThis posts a balancing journal entry offset to Owner\'s Capital - use it to set opening inventory / fix a negative inventory balance.')) return;
+    if (!(await ui.confirm('Reconcile book Inventory (130000) to the ACTUAL on-hand value (Σ stock × unit cost)?\n\nThis posts a balancing journal entry offset to Owner\'s Capital - use it to set opening inventory / fix a negative inventory balance.'))) return;
     try {
       const res = await apiFetch('/api/inventory/revalue', { method: 'POST', body: JSON.stringify({ offsetAccount: '310000' }) });
       const d = await res.json();
-      if (!d.success) return alert(d.error || 'Reconcile failed.');
-      if (d.diff === 0) alert('Inventory already matches on-hand value - nothing to adjust.');
-      else alert(`Inventory reconciled.\n\nActual on-hand:  ₱${d.onHand.toFixed(2)}\nWas (book):      ₱${d.book.toFixed(2)}\nAdjustment:      ${d.diff >= 0 ? '+' : ''}₱${d.diff.toFixed(2)}`);
+      if (!d.success) return ui.alert(d.error || 'Reconcile failed.');
+      if (d.diff === 0) ui.alert('Inventory already matches on-hand value - nothing to adjust.');
+      else ui.alert(`Inventory reconciled.\n\nActual on-hand:  ₱${d.onHand.toFixed(2)}\nWas (book):      ₱${d.book.toFixed(2)}\nAdjustment:      ${d.diff >= 0 ? '+' : ''}₱${d.diff.toFixed(2)}`);
       fetchBalanceSheet(); if (pnlMonthly) fetchPnlMonthly(); if (bsMonthly) fetchBsMonthly(); fetchERPData();
-    } catch { alert('Network error.'); }
+    } catch { ui.alert('Network error.'); }
   };
   const fetchArOutstanding = async () => {
     if (activeAdmin?.role !== 'superadmin') return;
@@ -1798,6 +1879,30 @@ const updateStatus = async (orderId, newStatus) => {
       const data = await res.json();
       if (data.success) setArOutstanding({ orders: data.orders, totalOutstanding: data.totalOutstanding });
     } catch (err) { console.error('fetchArOutstanding', err); }
+  };
+  // Per-client ageing is server-computed so the buckets, the credit limits and
+  // the order-time enforcement all read from one rule set.
+  const fetchExpenses = async () => {
+    try {
+      const res = await apiFetch('/api/expenses');
+      const d = await res.json();
+      if (d.success) setExpenseList({ expenses: d.expenses || [], byCategory: d.byCategory || [], total: d.total || 0 });
+    } catch (err) { console.error('fetchExpenses', err); }
+  };
+  const fetchSuppliers = async () => {
+    try {
+      const res = await apiFetch('/api/suppliers');
+      const d = await res.json();
+      if (d.success) setSuppliers(d.suppliers || []);
+    } catch (err) { console.error('fetchSuppliers', err); }
+  };
+  const fetchArAgeing = async () => {
+    if (activeAdmin?.role !== 'superadmin') return;
+    try {
+      const res = await apiFetch('/api/finance/ar-ageing');
+      const data = await res.json();
+      if (data.success) setArAgeing({ clients: data.clients || [], totals: data.totals, mode: data.mode });
+    } catch (err) { console.error('fetchArAgeing', err); }
   };
   // ── REVOLVING FUND FETCHERS ─────────────────────────────────────────────────
   const fetchRfFunds = async () => {
@@ -1828,8 +1933,8 @@ const updateStatus = async (orderId, newStatus) => {
   const submitRfNew = async () => {
     if (rfNewSubmitting) return;
     const amt = parseFloat(rfNewForm.initialAmount);
-    if (!rfNewForm.name.trim()) return alert('Fund name is required.');
-    if (!amt || amt <= 0) return alert('Enter a valid initial amount.');
+    if (!rfNewForm.name.trim()) return ui.alert('Fund name is required.');
+    if (!amt || amt <= 0) return ui.alert('Enter a valid initial amount.');
     setRfNewSubmitting(true);
     try {
       const res = await apiFetch('/api/revolving-funds', {
@@ -1838,19 +1943,19 @@ const updateStatus = async (orderId, newStatus) => {
         body: JSON.stringify({ name: rfNewForm.name.trim(), initialAmount: amt, description: rfNewForm.description, sourceAccount: rfNewForm.sourceAccount }),
       });
       const data = await res.json();
-      if (!data.success) return alert(data.error || 'Failed to create fund.');
+      if (!data.success) return ui.alert(data.error || 'Failed to create fund.');
       setRfNewModal(false);
       setRfNewForm({ name: '', initialAmount: '', description: '', sourceAccount: '111000' });
       await fetchRfFunds();
-    } catch (err) { alert('Network error.'); }
+    } catch (err) { ui.alert('Network error.'); }
     finally { setRfNewSubmitting(false); }
   };
 
   const submitRfDisb = async () => {
     if (rfDisbSubmitting || !rfActiveFund) return;
     const amt = parseFloat(rfDisbForm.amount);
-    if (!amt || amt <= 0) return alert('Enter a valid amount.');
-    if (!rfDisbForm.description.trim()) return alert('Description is required.');
+    if (!amt || amt <= 0) return ui.alert('Enter a valid amount.');
+    if (!rfDisbForm.description.trim()) return ui.alert('Description is required.');
     setRfDisbSubmitting(true);
     try {
       const res = await apiFetch(`/api/revolving-funds/${rfActiveFund._id}/disburse`, {
@@ -1859,14 +1964,14 @@ const updateStatus = async (orderId, newStatus) => {
         body: JSON.stringify({ amount: amt, description: rfDisbForm.description.trim(), categoryCode: rfDisbForm.categoryCode }),
       });
       const data = await res.json();
-      if (!data.success) return alert(data.error || 'Disbursement failed.');
+      if (!data.success) return ui.alert(data.error || 'Disbursement failed.');
       setRfDisbModal(false);
       setRfDisbForm({ amount: '', description: '', categoryCode: '760000' });
       // Update local fund balance without full refetch
       setRfFunds(prev => prev.map(f => f._id === data.fund._id ? data.fund : f));
       setRfActiveFund(data.fund);
       await fetchRfTxs(rfActiveFund._id, 1);
-    } catch (err) { alert('Network error.'); }
+    } catch (err) { ui.alert('Network error.'); }
     finally { setRfDisbSubmitting(false); }
   };
 
@@ -1882,25 +1987,25 @@ const updateStatus = async (orderId, newStatus) => {
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (!data.success) return alert(data.error || 'Replenishment failed.');
+      if (!data.success) return ui.alert(data.error || 'Replenishment failed.');
       setRfReplModal(false);
       setRfReplForm({ amount: '', note: '', sourceAccount: '111000' });
       setRfFunds(prev => prev.map(f => f._id === data.fund._id ? data.fund : f));
       setRfActiveFund(data.fund);
       await fetchRfTxs(rfActiveFund._id, 1);
-    } catch (err) { alert('Network error.'); }
+    } catch (err) { ui.alert('Network error.'); }
     finally { setRfReplSubmitting(false); }
   };
 
   const closeRfFund = async (fundId) => {
-    if (!window.confirm('Close this revolving fund? This cannot be undone.')) return;
+    if (!(await ui.confirm('Close this revolving fund? This cannot be undone.'))) return;
     try {
       const res = await apiFetch(`/api/revolving-funds/${fundId}/close`, { method: 'PATCH' });
       const data = await res.json();
-      if (!data.success) return alert(data.error || 'Failed.');
+      if (!data.success) return ui.alert(data.error || 'Failed.');
       setRfFunds(prev => prev.filter(f => f._id !== fundId));
       if (rfActiveFund?._id === fundId) { setRfActiveFund(null); setRfTxs([]); }
-    } catch (err) { alert('Network error.'); }
+    } catch (err) { ui.alert('Network error.'); }
   };
   // ────────────────────────────────────────────────────────────────────────────
 
@@ -1914,9 +2019,9 @@ const updateStatus = async (orderId, newStatus) => {
   };
   const submitExpense = async () => {
     if (expenseSubmitting) return;
-    if (!expenseForm.amount || parseFloat(expenseForm.amount) <= 0) return alert('Enter a valid amount.');
-    if (!expenseForm.categoryCode) return alert('Select a category.');
-    if (!expenseForm.description?.trim()) return alert('Description is required.');
+    if (!expenseForm.amount || parseFloat(expenseForm.amount) <= 0) return ui.alert('Enter a valid amount.');
+    if (!expenseForm.categoryCode) return ui.alert('Select a category.');
+    if (!expenseForm.description?.trim()) return ui.alert('Description is required.');
     setExpenseSubmitting(true);
     try {
       const res = await apiFetch(`/api/expenses`, { method: 'POST', body: JSON.stringify(expenseForm) });
@@ -1924,14 +2029,17 @@ const updateStatus = async (orderId, newStatus) => {
       if (data.success) {
         setExpenseModal(false);
         setExpenseForm({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', date: new Date().toISOString().slice(0,10) });
+        // Refresh the Expenses page list so the new entry appears immediately —
+        // on a page (unlike the old popup) the result is visible right there.
+        fetchExpenses();
         if (ledgerSubTab === 'pnl') fetchPnl();
         if (ledgerSubTab === 'balance') fetchBalanceSheet();
-        alert('Expense recorded.');
+        ui.alert('Expense recorded.');
       } else {
-        alert(data.error || 'Failed to record expense.');
+        ui.alert(data.error || 'Failed to record expense.');
       }
     } catch (err) {
-      alert('Network error.');
+      ui.alert('Network error.');
     } finally {
       setExpenseSubmitting(false);
     }
@@ -1939,7 +2047,7 @@ const updateStatus = async (orderId, newStatus) => {
   const submitArSettlement = async () => {
     if (settleSubmitting || !settleModal?.order) return;
     const amt = parseFloat(settleForm.amount);
-    if (!amt || amt <= 0) return alert('Enter a valid amount.');
+    if (!amt || amt <= 0) return ui.alert('Enter a valid amount.');
     setSettleSubmitting(true);
     try {
       const res = await apiFetch(`/api/orders/${settleModal.order._id}/settle-ar`, {
@@ -1951,12 +2059,13 @@ const updateStatus = async (orderId, newStatus) => {
         setSettleModal(null);
         setSettleForm({ amount: '', paymentMethod: 'Cash on Hand', note: '' });
         fetchArOutstanding();
-        alert('A/R settled successfully.');
+        fetchArAgeing();
+        ui.alert('A/R settled successfully.');
       } else {
-        alert(data.error || 'Failed to settle A/R.');
+        ui.alert(data.error || 'Failed to settle A/R.');
       }
     } catch (err) {
-      alert('Network error.');
+      ui.alert('Network error.');
     } finally {
       setSettleSubmitting(false);
     }
@@ -1972,7 +2081,7 @@ const updateStatus = async (orderId, newStatus) => {
       a.download = `journal_${pnlRange.start}_to_${pnlRange.end}.csv`;
       a.click();
       URL.revokeObjectURL(a.href);
-    } catch (err) { alert('CSV export failed.'); }
+    } catch (err) { ui.alert('CSV export failed.'); }
   };
 
   const printXReading = async () => {
@@ -2007,18 +2116,18 @@ const updateStatus = async (orderId, newStatus) => {
   };
 
   const archiveDay = async () => {
-    if (!window.confirm("Are you sure you want to close the day? This will archive everything.")) return;
+    if (!(await ui.confirm("Are you sure you want to close the day? This will archive everything."))) return;
     
     try { 
       const res = await apiFetch(`/api/orders/archive`, { method: 'POST' }); 
       const data = await res.json();
       
       if (data.success) {
-        alert("Register closed and day archived successfully!");
+        ui.alert("Register closed and day archived successfully!");
         setOrders([]); // Instantly clears active orders from the screen
         await fetchOrders(); // Refreshes to pull the new archive list
       } else {
-        alert("Failed to archive day.");
+        ui.alert("Failed to archive day.");
       }
     } catch (err) { 
       console.error("Failed to archive:", err); 
@@ -2370,7 +2479,7 @@ const updateStatus = async (orderId, newStatus) => {
     
     if (!reason) return;
     if (reason !== 'Restock' && reason !== 'Spoilage') {
-      return alert("Action Cancelled. You must type exactly 'Restock' or 'Spoilage'.");
+      return ui.alert("Action Cancelled. You must type exactly 'Restock' or 'Spoilage'.");
     }
 
     try {
@@ -2382,11 +2491,11 @@ const updateStatus = async (orderId, newStatus) => {
       const data = await res.json();
       
       if (data.success) {
-        alert(`Order Voided Successfully. Inventory & Ledger updated for ${reason}.`);
+        ui.alert(`Order Voided Successfully. Inventory & Ledger updated for ${reason}.`);
         fetchOrders();
         fetchERPData();
       } else {
-        alert("Failed to void order: " + data.error);
+        ui.alert("Failed to void order: " + data.error);
       }
     } catch (err) {
       console.error(err);
@@ -2399,7 +2508,7 @@ const updateStatus = async (orderId, newStatus) => {
     const link = `${window.location.origin}/client/portal`;
     try {
       await navigator.clipboard.writeText(link);
-      alert(`Portal link copied:\n${link}`);
+      ui.alert(`Portal link copied:\n${link}`);
     } catch {
       window.prompt('Copy the client portal link:', link);
     }
@@ -2439,7 +2548,7 @@ const updateStatus = async (orderId, newStatus) => {
         })
       });
       if (res.ok) {
-        alert("Stock received. Weighted Average Cost updated!");
+        ui.alert("Stock received. Weighted Average Cost updated!");
         setActiveInventoryItem(null);
         setRestockData({ addedStock: '', totalCost: '', creditAccount: '111000' });
         fetchERPData(); // Re-fetch inventory
@@ -2470,14 +2579,14 @@ const updateStatus = async (orderId, newStatus) => {
       const data = await res.json();
       
       if (data.success) {
-        alert('End of Day counts successfully locked and recorded.');
+        ui.alert('End of Day counts successfully locked and recorded.');
         setPhysicalCounts({});
         setVarianceReasons({});
         setVarianceNoteMode({});
         fetchERPData(); // Refresh the live data
         setInvSubTab('live'); // Kick them back to the live tab so they see the updated numbers!
       } else {
-        alert('Failed to submit counts: ' + data.error);
+        ui.alert('Failed to submit counts: ' + data.error);
       }
     } catch (err) {
       console.error('Failed to submit counts', err);
@@ -2490,14 +2599,14 @@ const updateStatus = async (orderId, newStatus) => {
     const eff = BUSINESS_TYPE === 'log'
       ? { ...invForm, unitPerPack: invForm.unitPerPack || '1', unit: invForm.unit || 'pcs' }
       : invForm;
-    if (!eff.itemName || !eff.packQty || !eff.costPerPack) return alert("Please fill in Item Name, Qty, and Price.");
-    if (BUSINESS_TYPE !== 'log' && (!eff.unitPerPack || !eff.unit)) return alert("Please fill in all inventory fields.");
+    if (!eff.itemName || !eff.packQty || !eff.costPerPack) return ui.alert("Please fill in Item Name, Qty, and Price.");
+    if (BUSINESS_TYPE !== 'log' && (!eff.unitPerPack || !eff.unit)) return ui.alert("Please fill in all inventory fields.");
     const invFormEff = eff;
 
     const qtyBought   = parseFloat(invFormEff.packQty);
     const costPerPack = parseFloat(invFormEff.costPerPack);
-    if (isNaN(qtyBought) || qtyBought <= 0) return alert("Qty Bought must be a positive number.");
-    if (isNaN(costPerPack) || costPerPack <= 0) return alert("Price Paid Per Pack must be a positive number.");
+    if (isNaN(qtyBought) || qtyBought <= 0) return ui.alert("Qty Bought must be a positive number.");
+    if (isNaN(costPerPack) || costPerPack <= 0) return ui.alert("Price Paid Per Pack must be a positive number.");
 
     let itemNameClean = invFormEff.itemName.trim();
     const totalCost = qtyBought * costPerPack;
@@ -2530,7 +2639,7 @@ const updateStatus = async (orderId, newStatus) => {
         const pack = packInfo(existingItem);
         restockBase = qtyBought * (pack.packBase || 1);
       }
-      if (!window.confirm(`Restock "${existingItem.itemName}"?\n\nQty: +${qtyBought} pcs\nCost per pack: ₱${costPerPack.toFixed(2)}\nTotal cost: ₱${totalCost.toFixed(2)}`)) return;
+      if (!(await ui.confirm(`Restock "${existingItem.itemName}"?\n\nQty: +${qtyBought} pcs\nCost per pack: ₱${costPerPack.toFixed(2)}\nTotal cost: ₱${totalCost.toFixed(2)}`))) return;
       await apiFetch(`/api/inventory/restock/${existingItem._id}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ addedStock: restockBase, totalCost, expiryDate: invFormEff.expiryDate || null, creditAccount: invFormEff.creditAccount || '111000' })
@@ -2553,13 +2662,13 @@ const updateStatus = async (orderId, newStatus) => {
       payload.creditAccount = invForm.creditAccount || '111000';
       const res = await apiFetch(`/api/inventory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await res.json();
-      if (!data.success) return alert(data.error);
+      if (!data.success) return ui.alert(data.error);
     }
 
     setInvForm({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000' });
     fetchERPData();
   };
-  const deleteInventory = async (id) => { if(window.confirm('Delete inventory item?')) { await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' }); fetchERPData(); } };
+  const deleteInventory = async (id) => { if(await ui.confirm('Delete inventory item?')) { await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' }); fetchERPData(); } };
 
   // --- OPEN EDIT INVENTORY MODAL: pre-fill from item ---
   // ============================================================
@@ -2679,7 +2788,7 @@ const updateStatus = async (orderId, newStatus) => {
       const wb = XLSX.read(buf, { type: 'array' });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-      if (rows.length === 0) return alert('No rows found in the file.');
+      if (rows.length === 0) return ui.alert('No rows found in the file.');
 
       // Normalise column names (case-insensitive). Standard header:
       //   Code, Product, Qty Unit, Unit Cost, Expiry date
@@ -2832,19 +2941,21 @@ const updateStatus = async (orderId, newStatus) => {
       setImportModal(true);
     } catch (err) {
       console.error('parseImportFile', err);
-      alert('Failed to parse file. Make sure it is a valid .xlsx, .xls, or .csv with columns: itemName, displayUnit, qty, unitCost');
+      ui.alert('Failed to parse file. Make sure it is a valid .xlsx, .xls, or .csv with columns: itemName, displayUnit, qty, unitCost');
     }
   };
 
   const submitImport = async () => {
     if (importSubmitting) return;
     const validRows = importRows.filter(r => !r._error && !r._isCategory && r.itemName && r.displayUnit);
-    if (validRows.length === 0) return alert('No valid rows to import.');
-    if (!window.confirm(
-      `This will REPLACE current stock for ${validRows.length} item(s). ` +
-      `New items will be created. ` +
-      `Differences will be booked as journal adjustments. Continue?`
-    )) return;
+    if (validRows.length === 0) return ui.alert('No valid rows to import.');
+    if (!(await ui.confirm({
+      title: 'Replace stock from import?',
+      message: `This will REPLACE current stock for ${validRows.length} item(s).`,
+      detail: 'New items will be created. Differences will be booked as journal adjustments.',
+      confirmLabel: 'Import',
+      tone: 'danger',
+    }))) return;
     setImportSubmitting(true);
     setImportProgress(0);
     // Animate to ~88% while waiting for the server response
@@ -2877,7 +2988,7 @@ const updateStatus = async (orderId, newStatus) => {
         setImportProgress(100);
         await new Promise(r => setTimeout(r, 500)); // show 100% briefly
         const s = data.summary;
-        alert(
+        ui.alert(
           `Import complete.\n\n` +
           `Created: ${s.created}\n` +
           `Updated: ${s.updated}\n` +
@@ -2891,12 +3002,12 @@ const updateStatus = async (orderId, newStatus) => {
         setImportRows([]);
         fetchERPData();
       } else {
-        alert(data.error || 'Import failed.');
+        ui.alert(data.error || 'Import failed.');
       }
     } catch (err) {
       clearInterval(progInterval);
       console.error('submitImport', err);
-      alert('Network error during import.');
+      ui.alert('Network error during import.');
     } finally {
       setImportSubmitting(false);
       setImportProgress(-1);
@@ -2923,10 +3034,10 @@ const updateStatus = async (orderId, newStatus) => {
   // --- SUBMIT EDIT: PUT /api/inventory/:id (metadata only — stock changes via Restock / Spoilage) ---
   const submitEditInventory = async () => {
     if (editInvSubmitting || !editInvModal?.item) return;
-    if (!editInvForm.itemName?.trim()) return alert('Item name is required.');
-    if (!editInvForm.unit?.trim()) return alert('Unit is required.');
+    if (!editInvForm.itemName?.trim()) return ui.alert('Item name is required.');
+    if (!editInvForm.unit?.trim()) return ui.alert('Unit is required.');
     const unitCostNum = parseFloat(editInvForm.unitCost);
-    if (Number.isNaN(unitCostNum) || unitCostNum < 0) return alert('Unit cost must be a non-negative number.');
+    if (Number.isNaN(unitCostNum) || unitCostNum < 0) return ui.alert('Unit cost must be a non-negative number.');
 
     setEditInvSubmitting(true);
     try {
@@ -2960,11 +3071,11 @@ const updateStatus = async (orderId, newStatus) => {
         setEditInvModal(null);
         fetchERPData();
       } else {
-        alert(data.error || 'Failed to update item.');
+        ui.alert(data.error || 'Failed to update item.');
       }
     } catch (err) {
       console.error('submitEditInventory', err);
-      alert('Network error.');
+      ui.alert('Network error.');
     } finally {
       setEditInvSubmitting(false);
     }
@@ -2978,7 +3089,7 @@ const updateStatus = async (orderId, newStatus) => {
 
   // 1. Inventory & Movement History PDF (Unchanged)
   const exportInventoryToPDF = async () => {
-    if (inventory.length === 0) return alert("No inventory to export.");
+    if (inventory.length === 0) return ui.alert("No inventory to export.");
     try {
       const res = await apiFetch(`/api/inventory/history`);
       const data = await res.json();
@@ -3019,11 +3130,11 @@ const updateStatus = async (orderId, newStatus) => {
         body: stockBody, theme: 'grid', headStyles: { fillColor: [204, 163, 0], textColor: [0,0,0] }
       });
       doc.save(`Inventory_Movement_${new Date().toISOString().split('T')[0]}.pdf`);
-    } catch (err) { alert("Failed to generate PDF: " + err.message); }
+    } catch (err) { ui.alert("Failed to generate PDF: " + err.message); }
   };
 
   const exportLedgerToPDF = async () => {
-    if (journalEntries.length === 0) return alert("No entries to export.");
+    if (journalEntries.length === 0) return ui.alert("No entries to export.");
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - General Ledger Report`, 14, 15);
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 22);
@@ -3048,7 +3159,7 @@ const updateStatus = async (orderId, newStatus) => {
   // 1. COMPLETE SALES HISTORY (Master Summary + Daily Breakdown)
   const exportAllToPDF = async () => {
     const allOrders = [...orders.filter(o => o.status !== 'Pending' && o.status !== 'Preparing' && o.status !== 'Ready'), ...archivedOrders].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    if (allOrders.length === 0) return alert("No orders to export.");
+    if (allOrders.length === 0) return ui.alert("No orders to export.");
     
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Complete Sales History`, 14, 15);
@@ -3156,7 +3267,7 @@ const updateStatus = async (orderId, newStatus) => {
 
   // 2. EXPORT SPECIFIC DAY 
   const exportDayToPDF = async (dateString, dayOrders) => {
-    if (dayOrders.length === 0) return alert("No orders to export.");
+    if (dayOrders.length === 0) return ui.alert("No orders to export.");
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Sales Report: ${dateString}`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -3225,7 +3336,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportAnalyticsToPDF = async () => {
     // STRICT FILTER: Analytics must ONLY track Completed orders. Voided orders must never touch analytics.
     const allCompletedOrders = [...orders.filter(o => o.status === 'Completed'), ...archivedOrders.filter(o => o.status === 'Completed')].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    if (allCompletedOrders.length === 0) return alert("No analytics data to export.");
+    if (allCompletedOrders.length === 0) return ui.alert("No analytics data to export.");
     
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Analytics Report`, 14, 15);
@@ -3294,7 +3405,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportMonthlyToPDF = async () => {
     // STRICT FILTER: Only Completed orders.
     const allCompletedOrders = [...orders.filter(o => o.status === 'Completed'), ...archivedOrders.filter(o => o.status === 'Completed')].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    if (allCompletedOrders.length === 0) return alert("No orders to export.");
+    if (allCompletedOrders.length === 0) return ui.alert("No orders to export.");
     
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Monthly Sales Summary`, 14, 15);
@@ -3338,7 +3449,7 @@ const updateStatus = async (orderId, newStatus) => {
     fetchData();
   };
 
-  const deleteCategory = async (id) => { if(window.confirm('Delete category?')) await apiFetch(`/api/categories/${id}`, { method: 'DELETE' }); };
+  const deleteCategory = async (id) => { if(await ui.confirm('Delete category?')) await apiFetch(`/api/categories/${id}`, { method: 'DELETE' }); };
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
@@ -3369,15 +3480,14 @@ const updateStatus = async (orderId, newStatus) => {
     };
     const res = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await res.json();
-    if (!data.success) { alert(data.error || 'Failed to save product.'); return; }
-    setEditingProduct(null);
-    setFormData({ name: '', description: '', category: '', basePrice: '', discountPercent: 0, clientDiscounts: [], baseSize: '', sizes: [], image: '', baseRecipe: [], addOns: [], modifierGroups: [], imageUrl: '' });
+    if (!data.success) { ui.alert(data.error || 'Failed to save product.'); return; }
+    resetProductForm();
     fetchData();
   };
-  const deleteProduct = async (id) => { 
-    if(window.confirm("Delete this product permanently?")) {
-      await apiFetch(`/api/products/${id}`, { method: 'DELETE' }); 
-      if (editingProduct && editingProduct._id === id) { setEditingProduct(null); setFormData({ name: '', description: '', category: '', basePrice: '', discountPercent: 0, clientDiscounts: [], baseSize: '', sizes: [], image: '', baseRecipe: [], addOns: [], modifierGroups: [], imageUrl: '' }); }
+  const deleteProduct = async (id) => {
+    if(await ui.confirm("Delete this product permanently?")) {
+      await apiFetch(`/api/products/${id}`, { method: 'DELETE' });
+      if (editingProduct && editingProduct._id === id) resetProductForm();
     }
   };
   
@@ -3430,8 +3540,8 @@ const updateStatus = async (orderId, newStatus) => {
 
   // ── Modifier Group editor (create / update / delete) ─────────────────────────
   const saveModifierGroup = async () => {
-    if (!modForm.name.trim()) return alert('Group name is required.');
-    if (!modForm.options.length || modForm.options.some(o => !o.name.trim())) return alert('Add at least one named option.');
+    if (!modForm.name.trim()) return ui.alert('Group name is required.');
+    if (!modForm.options.length || modForm.options.some(o => !o.name.trim())) return ui.alert('Add at least one named option.');
     const method = editingModifier ? 'PUT' : 'POST';
     const url = editingModifier ? `/api/modifier-groups/${editingModifier._id}` : '/api/modifier-groups';
     const payload = {
@@ -3443,7 +3553,7 @@ const updateStatus = async (orderId, newStatus) => {
     };
     const res = await apiFetch(url, { method, body: JSON.stringify(payload) });
     const data = await res.json();
-    if (!data.success) return alert(data.error || 'Failed to save modifier group.');
+    if (!data.success) return ui.alert(data.error || 'Failed to save modifier group.');
     setEditingModifier(null);
     setModForm({ name: '', isRequired: true, minSelect: 1, maxSelect: 1, options: [] });
     fetchModifierGroups();
@@ -3454,7 +3564,7 @@ const updateStatus = async (orderId, newStatus) => {
       options: (g.options || []).map(o => ({ name: o.name, price: o.price || 0, recipe: o.recipe || [] })) });
   };
   const deleteModifierGroup = async (id) => {
-    if (!window.confirm('Delete this modifier group? Products using it will lose the requirement.')) return;
+    if (!(await ui.confirm('Delete this modifier group? Products using it will lose the requirement.'))) return;
     await apiFetch(`/api/modifier-groups/${id}`, { method: 'DELETE' });
     if (editingModifier?._id === id) { setEditingModifier(null); setModForm({ name: '', isRequired: true, minSelect: 1, maxSelect: 1, options: [] }); }
     fetchModifierGroups();
@@ -3466,9 +3576,9 @@ const updateStatus = async (orderId, newStatus) => {
     catch (err) { console.error('fetchCombos', err); }
   };
   const saveCombo = async () => {
-    if (!comboForm.name.trim()) return alert('Combo name is required.');
-    if (!(parseFloat(comboForm.price) > 0)) return alert('Enter a positive combo price.');
-    if (!comboForm.items.length) return alert('Add at least one component product.');
+    if (!comboForm.name.trim()) return ui.alert('Combo name is required.');
+    if (!(parseFloat(comboForm.price) > 0)) return ui.alert('Enter a positive combo price.');
+    if (!comboForm.items.length) return ui.alert('Add at least one component product.');
     const method = editingCombo ? 'PUT' : 'POST';
     const url = editingCombo ? `/api/combos/${editingCombo._id}` : '/api/combos';
     const payload = {
@@ -3478,7 +3588,7 @@ const updateStatus = async (orderId, newStatus) => {
     };
     const res = await apiFetch(url, { method, body: JSON.stringify(payload) });
     const data = await res.json();
-    if (!data.success) return alert(data.error || 'Failed to save combo.');
+    if (!data.success) return ui.alert(data.error || 'Failed to save combo.');
     setEditingCombo(null);
     setComboForm({ name: '', description: '', price: '', image: '', items: [] });
     fetchCombos();
@@ -3488,7 +3598,7 @@ const updateStatus = async (orderId, newStatus) => {
     setComboForm({ name: c.name, description: c.description || '', price: c.price, image: c.image || '', items: c.items || [] });
   };
   const deleteCombo = async (id) => {
-    if (!window.confirm('Delete this combo?')) return;
+    if (!(await ui.confirm('Delete this combo?'))) return;
     await apiFetch(`/api/combos/${id}`, { method: 'DELETE' });
     if (editingCombo?._id === id) { setEditingCombo(null); setComboForm({ name: '', description: '', price: '', image: '', items: [] }); }
     fetchCombos();
@@ -3508,22 +3618,22 @@ const updateStatus = async (orderId, newStatus) => {
     catch (err) { console.error('fetchParked', err); }
   };
   const parkCurrentOrder = async () => {
-    if (posCart.length === 0) return alert('Cart is empty - nothing to park.');
+    if (posCart.length === 0) return ui.alert('Cart is empty - nothing to park.');
     const res = await apiFetch('/api/orders/park', { method: 'POST', body: JSON.stringify({
       items: posCart, customerName: posCustomerName || 'Guest', table: posTable, orderNotes: posNotes, guestCount: posGuestCount,
     }) });
     const data = await res.json();
-    if (!data.success) return alert(data.error || 'Failed to park order.');
+    if (!data.success) return ui.alert(data.error || 'Failed to park order.');
     setPosCart([]); setPosCustomerName(''); setPosNotes(''); setPosGuestCount(1);
     setIsPosOpen(false);
     await fetchParked();        // refresh the parked list + dropdown count
     setOrderFilter('Parked');   // jump straight to the Parked view so it's visible
-    alert('Order parked. It is now under the "Parked" filter - tap Resume to ring it up.');
+    ui.alert('Order parked. It is now under the "Parked" filter - tap Resume to ring it up.');
   };
   const resumeParked = async (id) => {
     const res = await apiFetch(`/api/orders/parked/${id}`, { method: 'DELETE' });
     const data = await res.json();
-    if (!data.success) return alert(data.error || 'Failed to resume.');
+    if (!data.success) return ui.alert(data.error || 'Failed to resume.');
     const o = data.order;
     setPosCart(o.items || []);
     setPosCustomerName(o.customerName === 'Guest' ? '' : o.customerName);
@@ -3549,13 +3659,13 @@ const updateStatus = async (orderId, newStatus) => {
       const res = await apiFetch('/api/reports/purchase-order?days=7');
       const d = await res.json();
       if (d.success) setPurchaseOrder(d);
-      else alert(d.error || 'Failed to generate purchase order.');
-    } catch (err) { console.error('fetchPurchaseOrder', err); alert('Network error generating purchase order.'); }
+      else ui.alert(d.error || 'Failed to generate purchase order.');
+    } catch (err) { console.error('fetchPurchaseOrder', err); ui.alert('Network error generating purchase order.'); }
   };
 
   // Purchase Order → PDF in the requested "Product | Qty Unit" format
   const exportPurchaseOrderPDF = async () => {
-    if (!purchaseOrder || !(purchaseOrder.lines || []).length) return alert('Generate a purchase order first.');
+    if (!purchaseOrder || !(purchaseOrder.lines || []).length) return ui.alert('Generate a purchase order first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
     const today = new Date().toLocaleDateString('en-PH');
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
@@ -3580,7 +3690,7 @@ const updateStatus = async (orderId, newStatus) => {
 
   // Profit & Loss → PDF (replaces CSV export)
   const exportPnlPDF = async () => {
-    if (!pnlData) return alert('Run the P&L report first.');
+    if (!pnlData) return ui.alert('Run the P&L report first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
     const range = `${pnlRange.start} to ${pnlRange.end}`;
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
@@ -3617,7 +3727,7 @@ const updateStatus = async (orderId, newStatus) => {
   };
 
   const exportBalanceSheetPDF = async () => {
-    if (!bsData) return alert('Load the Balance Sheet first.');
+    if (!bsData) return ui.alert('Load the Balance Sheet first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
     const asOf = bsData.asOf ? new Date(bsData.asOf).toLocaleDateString() : new Date().toLocaleDateString();
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
@@ -3673,7 +3783,7 @@ const updateStatus = async (orderId, newStatus) => {
   // Superadmin-only: enable/disable the automatic midnight close & day archive.
   const toggleAutoClose = async () => {
     const next = systemSettings.autoCloseEnabled === false; // currently off → turning on
-    if (!next && !window.confirm('Disable automatic midnight close?\n\nThe day will stay OPEN past midnight and a superadmin must close & archive it manually.')) return;
+    if (!next && !await ui.confirm('Disable automatic midnight close?\n\nThe day will stay OPEN past midnight and a superadmin must close & archive it manually.')) return;
     try {
       const res = await apiFetch('/api/settings/autoCloseEnabled', { method: 'PATCH', body: JSON.stringify({ value: next }) });
       const d = await res.json(); if (d.success) fetchSettings();
@@ -3681,6 +3791,20 @@ const updateStatus = async (orderId, newStatus) => {
   };
 
   // Toggle whether product images are shown across the app (menu, portal, product list).
+  // Generic setting writer for non-boolean settings (credit limit mode, global
+  // limit). The toggle* helpers above stay as they are — they encode their own
+  // confirm/labelling rules.
+  const saveSetting = async (key, value) => {
+    try {
+      const res = await apiFetch(`/api/settings/${encodeURIComponent(key)}`, {
+        method: 'PATCH', body: JSON.stringify({ value }),
+      });
+      const d = await res.json();
+      if (d.success) fetchSettings();
+      else ui.alert(d.error || 'Could not save setting.');
+    } catch (err) { console.error('saveSetting', err); ui.alert('Could not save setting.'); }
+  };
+
   const toggleImages = async () => {
     const next = systemSettings.imagesEnabled === false; // currently off -> turning on
     try {
@@ -3722,7 +3846,7 @@ const updateStatus = async (orderId, newStatus) => {
   }, [salesSummary, sssGroup]);
 
   const exportSalesSummaryPDF = async () => {
-    if (!salesSummary) return alert('Load the Summary Sales report first.');
+    if (!salesSummary) return ui.alert('Load the Summary Sales report first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
     doc.setFontSize(16); doc.text(`${BIZ_NAME} - Sales Summary`, 14, 14);
     doc.setFontSize(9); doc.text(`${sssRange.start} to ${sssRange.end}  ·  ${sssGroup === 'day' ? 'Per Day' : 'Per Order'}`, 14, 20);
@@ -3759,7 +3883,7 @@ const updateStatus = async (orderId, newStatus) => {
     catch (err) { console.error('fetchSalesLineItems', err); }
   };
   const exportSalesLineItemsPDF = async () => {
-    if (!salesLineItems) return alert('Load the Sales Line Items report first.');
+    if (!salesLineItems) return ui.alert('Load the Sales Line Items report first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
     doc.setFontSize(16); doc.text(`${BIZ_NAME} - Sales Line Items`, 14, 14);
     doc.setFontSize(9); doc.text(`${sliRange.start} to ${sliRange.end}`, 14, 20);
@@ -3778,14 +3902,14 @@ const updateStatus = async (orderId, newStatus) => {
 
   // ── Refund ──────────────────────────────────────────────────────────────────
   const handleRefund = async () => {
-    if (!refundModal || !refundForm.reason.trim()) return alert('Reason required.');
+    if (!refundModal || !refundForm.reason.trim()) return ui.alert('Reason required.');
     setRefundSubmitting(true);
     try {
       const res = await apiFetch(`/api/orders/${refundModal._id}/refund`, { method: 'POST', body: JSON.stringify({ reason: refundForm.reason, refundAmount: parseFloat(refundForm.refundAmount) || refundModal.total, inventoryAction: refundForm.inventoryAction }) });
       const d = await res.json();
-      if (d.success) { setRefundModal(null); setRefundForm({ reason: '', refundAmount: '', inventoryAction: 'Restock' }); fetchOrders(); alert('Refund processed. Reversal journal created.'); }
-      else alert(d.error || 'Refund failed.');
-    } catch { alert('Network error.'); }
+      if (d.success) { setRefundModal(null); setRefundForm({ reason: '', refundAmount: '', inventoryAction: 'Restock' }); fetchOrders(); ui.alert('Refund processed. Reversal journal created.'); }
+      else ui.alert(d.error || 'Refund failed.');
+    } catch { ui.alert('Network error.'); }
     finally { setRefundSubmitting(false); }
   };
 
@@ -3835,11 +3959,11 @@ const updateStatus = async (orderId, newStatus) => {
     if (!navigator.onLine) {
       queueClock('in');
       setClockStatus((s) => ({ ...s, isClockedIn: true, onBreak: false }));
-      alert('Clocked in (offline - will sync when back online).');
+      ui.alert('Clocked in (offline - will sync when back online).');
       return;
     }
-    try { const res = await apiFetch('/api/clock/in', { method: 'POST', body: '{}' }); const d = await res.json(); if (d.success) { fetchClockStatus(); alert('Clocked in.'); } else alert(d.error||'Clock-in failed.'); }
-    catch { alert('Network error.'); }
+    try { const res = await apiFetch('/api/clock/in', { method: 'POST', body: '{}' }); const d = await res.json(); if (d.success) { fetchClockStatus(); ui.alert('Clocked in.'); } else ui.alert(d.error||'Clock-in failed.'); }
+    catch { ui.alert('Network error.'); }
   };
   // Pressing the clock button while working opens the choice modal (break vs end shift).
   const handleClockButton = () => {
@@ -3852,22 +3976,22 @@ const updateStatus = async (orderId, newStatus) => {
       const res = await apiFetch('/api/clock/break/start', { method: 'POST', body: '{}' });
       const d = await res.json();
       if (d.success) { setClockModalOpen(false); fetchClockStatus(); }
-      else alert(d.error || 'Could not start break.');
-    } catch { alert('Network error.'); }
+      else ui.alert(d.error || 'Could not start break.');
+    } catch { ui.alert('Network error.'); }
   };
   const endBreak = async () => {
     try {
       const res = await apiFetch('/api/clock/break/end', { method: 'POST', body: '{}' });
       const d = await res.json();
-      if (d.success) { fetchClockStatus(); } else alert(d.error || 'Could not end break.');
-    } catch { alert('Network error.'); }
+      if (d.success) { fetchClockStatus(); } else ui.alert(d.error || 'Could not end break.');
+    } catch { ui.alert('Network error.'); }
   };
   const handleClockOut = async () => {
     if (!navigator.onLine) {
       queueClock('out');
       setClockStatus((s) => ({ ...s, isClockedIn: false, onBreak: false }));
       setClockModalOpen(false);
-      alert('Clocked out (offline - will sync when back online).');
+      ui.alert('Clocked out (offline - will sync when back online).');
       return;
     }
     try {
@@ -3877,9 +4001,9 @@ const updateStatus = async (orderId, newStatus) => {
         setClockModalOpen(false); fetchClockStatus();
         const m = d.entry?.workedMinutes ?? d.entry?.durationMinutes ?? 0;
         const b = d.entry?.breakMinutes || 0;
-        alert(`Clocked out. Worked ${Math.floor(m/60)}h ${m%60}m${b ? ` (${b}m break)` : ''}.`);
-      } else alert(d.error||'Clock-out failed.');
-    } catch { alert('Network error.'); }
+        ui.alert(`Clocked out. Worked ${Math.floor(m/60)}h ${m%60}m${b ? ` (${b}m break)` : ''}.`);
+      } else ui.alert(d.error||'Clock-out failed.');
+    } catch { ui.alert('Network error.'); }
   };
 
   // ── Billing Statement print (log mode) ──────────────────────────────────────
@@ -4092,10 +4216,137 @@ const updateStatus = async (orderId, newStatus) => {
     win.onload = () => { win.focus(); win.print(); };
   };
 
+  // ── Delivery Receipt print (logistics) ───────────────────────────────────────
+  // Prints TWO copies in one job: ORIGINAL for the customer, DUPLICATE for the
+  // office. Both are identical apart from the copy label, so a signature on the
+  // duplicate is proof of delivery.
+  //
+  // Item lines are pre-filled from the order, but the delivery details (driver,
+  // plate, received-by, date, signature) are printed as blank ruled fields — the
+  // crew fills those in by hand at the drop-off, which is how the paper DR is
+  // actually used.
+  const printDeliveryReceipt = (order) => {
+    const win = window.open('', '_blank', 'width=900,height=1000');
+    if (!win) return ui.alert('Pop-up blocked - allow pop-ups for this site.');
+
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const BILL_NAME  = import.meta.env.VITE_BILLING_NAME     || BIZ_NAME;
+    const BILL_ADDR1 = import.meta.env.VITE_BILLING_ADDRESS1 || '';
+    const BILL_ADDR2 = import.meta.env.VITE_BILLING_ADDRESS2 || '';
+    const BILL_PHONE = import.meta.env.VITE_BILLING_PHONE    || '';
+
+    const drNo = order.billingNumber || order.orderNumber || '';
+    const dateStr = new Date(order.createdAt || Date.now()).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    const rows = (order.items || []).map((item, i) => {
+      const addOns = (item.selectedAddOns || []).map(a => a.name).join(', ');
+      const desc = esc(item.name) + (item.size ? ` (${esc(item.size)})` : '') + (addOns ? ` + ${esc(addOns)}` : '');
+      return `<tr>
+        <td class="n">${i + 1}</td>
+        <td class="c">${esc(item.productCode || '')}</td>
+        <td class="d">${desc}</td>
+        <td class="q">${esc(item.quantity)}</td>
+        <td class="u"></td>
+      </tr>`;
+    }).join('');
+
+    // Pad to a fixed number of rows so the form keeps its shape and leaves room
+    // for hand-written additions.
+    const MIN_ROWS = 10;
+    const padding = Math.max(0, MIN_ROWS - (order.items || []).length);
+    const padRows = Array.from({ length: padding }, () =>
+      '<tr><td class="n">&nbsp;</td><td class="c"></td><td class="d"></td><td class="q"></td><td class="u"></td></tr>'
+    ).join('');
+
+    const copy = (label, note) => `
+      <section class="dr">
+        <div class="copy-tag">${label}<span class="copy-note">${note}</span></div>
+        <header>
+          <div class="biz">
+            <div class="biz-name">${esc(BILL_NAME)}</div>
+            ${BILL_ADDR1 ? `<div class="biz-line">${esc(BILL_ADDR1)}</div>` : ''}
+            ${BILL_ADDR2 ? `<div class="biz-line">${esc(BILL_ADDR2)}</div>` : ''}
+            ${BILL_PHONE ? `<div class="biz-line">Tel: ${esc(BILL_PHONE)}</div>` : ''}
+          </div>
+          <div class="doc">
+            <div class="doc-title">DELIVERY RECEIPT</div>
+            <div class="doc-no">No. <b>${esc(drNo)}</b></div>
+            <div class="doc-date">Date: ${esc(dateStr)}</div>
+          </div>
+        </header>
+
+        <div class="party">
+          <div class="fld wide"><span class="lbl">Delivered To</span><span class="val">${esc(order.customerName || '')}</span></div>
+          <div class="fld wide"><span class="lbl">Address</span><span class="val"></span></div>
+          <div class="fld"><span class="lbl">P.O. / Ref No.</span><span class="val"></span></div>
+          <div class="fld"><span class="lbl">Terms</span><span class="val">${esc(order.termsOfPayment || '')}</span></div>
+        </div>
+
+        <table>
+          <thead>
+            <tr><th class="n">#</th><th class="c">Item Code</th><th class="d">Description</th><th class="q">Qty</th><th class="u">Unit</th></tr>
+          </thead>
+          <tbody>${rows}${padRows}</tbody>
+        </table>
+
+        ${order.orderNotes ? `<div class="notes"><b>Notes:</b> ${esc(order.orderNotes)}</div>` : ''}
+
+        <div class="sigs">
+          <div class="sig"><div class="line"></div><div class="cap">Prepared By</div></div>
+          <div class="sig"><div class="line"></div><div class="cap">Driver / Plate No.</div></div>
+          <div class="sig"><div class="line"></div><div class="cap">Received By (Signature over Printed Name)</div></div>
+          <div class="sig narrow"><div class="line"></div><div class="cap">Date Received</div></div>
+        </div>
+        <div class="foot">Received the above goods in good order and condition.</div>
+      </section>`;
+
+    win.document.write(`<!DOCTYPE html><html><head><title>Delivery Receipt ${esc(drNo)}</title><style>
+      * { box-sizing: border-box; }
+      body { font-family: Arial, Helvetica, sans-serif; margin:0; color:#000; font-size:11px; }
+      .dr { padding:10mm 10mm 6mm; border-bottom:1px dashed #999; position:relative; }
+      /* Each copy fills half a page so both land on one sheet; the second starts
+         a new page only if the content genuinely overflows. */
+      .copy-tag { position:absolute; top:4mm; right:10mm; font-size:10px; font-weight:bold; letter-spacing:1px; border:1px solid #000; padding:2px 8px; }
+      .copy-note { font-weight:normal; letter-spacing:0; margin-left:6px; color:#444; }
+      header { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #000; padding-bottom:4mm; margin-bottom:4mm; }
+      .biz-name { font-size:15px; font-weight:bold; text-transform:uppercase; }
+      .biz-line { font-size:10px; color:#333; }
+      .doc { text-align:right; }
+      .doc-title { font-size:14px; font-weight:bold; letter-spacing:1px; }
+      .doc-no, .doc-date { font-size:11px; margin-top:2px; }
+      .party { display:grid; grid-template-columns:1fr 1fr; gap:2mm 6mm; margin-bottom:4mm; }
+      .fld { display:flex; align-items:flex-end; gap:4px; }
+      .fld.wide { grid-column:span 2; }
+      .lbl { font-size:9px; text-transform:uppercase; color:#555; white-space:nowrap; }
+      .val { flex:1; border-bottom:1px solid #000; min-height:14px; padding:0 4px 1px; font-weight:bold; }
+      table { width:100%; border-collapse:collapse; }
+      th, td { border:1px solid #000; padding:3px 5px; }
+      th { background:#eee; font-size:9px; text-transform:uppercase; text-align:left; }
+      td { height:16px; }
+      .n { width:6%; text-align:center; } .c { width:16%; } .q { width:10%; text-align:center; } .u { width:12%; }
+      .notes { margin-top:3mm; font-size:10px; border:1px solid #000; padding:3px 5px; }
+      .sigs { display:flex; gap:6mm; margin-top:6mm; }
+      .sig { flex:1; } .sig.narrow { flex:0 0 28%; }
+      .line { border-bottom:1px solid #000; height:9mm; }
+      .cap { font-size:8.5px; text-transform:uppercase; color:#333; margin-top:2px; text-align:center; }
+      .foot { margin-top:3mm; font-size:9px; font-style:italic; color:#333; text-align:center; }
+      @media print {
+        @page { size:A4; margin:0; }
+        .dr { page-break-inside:avoid; }
+        body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+      }
+    </style></head><body>
+      ${copy('ORIGINAL', 'Customer&rsquo;s Copy')}
+      ${copy('DUPLICATE', 'Office Copy')}
+    </body></html>`);
+    win.document.close();
+    win.onload = () => { win.focus(); win.print(); };
+  };
+
   // ── Kitchen ticket print ─────────────────────────────────────────────────────
   const printKitchenTicket = (order) => {
     const win = window.open('', '_blank', 'width=320,height=600');
-    if (!win) return alert('Pop-up blocked - allow pop-ups for this site.');
+    if (!win) return ui.alert('Pop-up blocked - allow pop-ups for this site.');
     // Escape all dynamic values — customerName / orderNotes / item names can be
     // customer-supplied (QR menu) and are written into raw HTML below.
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -4183,7 +4434,7 @@ const updateStatus = async (orderId, newStatus) => {
         body: JSON.stringify({ isAvailable: next }),
       });
       if (res.ok) fetchData(); // refresh products
-      else alert('Failed to update availability.');
+      else ui.alert('Failed to update availability.');
     } catch (err) { console.error('toggleProductAvailability', err); }
   };
 
@@ -4196,7 +4447,7 @@ const updateStatus = async (orderId, newStatus) => {
         body: JSON.stringify({ isOutOfStock: next }),
       });
       if (res.ok) fetchData();
-      else alert('Failed to update OOS status.');
+      else ui.alert('Failed to update OOS status.');
     } catch (err) { console.error('toggleProductOOS', err); }
   };
 
@@ -4215,7 +4466,7 @@ const updateStatus = async (orderId, newStatus) => {
       });
       const data = await res.json();
       if (data.success) {
-        alert('Password changed successfully.');
+        ui.alert('Password changed successfully.');
         setChangePwModal(false);
         setChangePwForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
       } else {
@@ -4245,7 +4496,7 @@ const updateStatus = async (orderId, newStatus) => {
 
   const submitApPayment = async () => {
     const amt = parseFloat(apPayForm.amount);
-    if (!amt || amt <= 0) return alert('Enter a valid amount.');
+    if (!amt || amt <= 0) return ui.alert('Enter a valid amount.');
     setApPaySubmitting(true);
     try {
       const res = await apiFetch('/api/finance/ap-payment', {
@@ -4254,12 +4505,12 @@ const updateStatus = async (orderId, newStatus) => {
       });
       const data = await res.json();
       if (data.success) {
-        alert('AP payment recorded.');
+        ui.alert('AP payment recorded.');
         setApPayModal(false);
-        setApPayForm({ amount: '', payFromAccount: '111000', description: '', vendorName: '' });
+        setApPayForm({ amount: '', payFromAccount: '111000', description: '', vendorName: '', supplierId: '' });
         fetchApData();
-      } else alert(data.error || 'Failed to record payment.');
-    } catch { alert('Network error.'); }
+      } else ui.alert(data.error || 'Failed to record payment.');
+    } catch { ui.alert('Network error.'); }
     finally { setApPaySubmitting(false); }
   };
 
@@ -4455,7 +4706,7 @@ const updateStatus = async (orderId, newStatus) => {
   if (authBootstrapping) {
     return (
       <div className="min-h-screen bg-page-bg flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4 text-white/60">
+        <div className="flex flex-col items-center gap-4 text-fg/60">
           <RefreshCw size={32} className="animate-spin text-brand" />
           <span className="text-sm">Restoring session…</span>
         </div>
@@ -4472,8 +4723,8 @@ const updateStatus = async (orderId, newStatus) => {
               <Lock size={40} className="text-brand" />
             </div>
             <p className="text-5xl font-black text-brand tracking-tight leading-none mb-3">{BIZ_NAME}</p>
-            <p className="text-white/25 font-bold uppercase tracking-[0.3em] text-sm">SEMIVRA LIBELLUS</p>
-            <p className="text-white/15 text-xs mt-12 font-medium">Restaurant POS &amp; Management System</p>
+            <p className="text-fg/25 font-bold uppercase tracking-[0.3em] text-sm">SEMIVRA LIBELLUS</p>
+            <p className="text-fg/15 text-xs mt-12 font-medium">Restaurant POS &amp; Management System</p>
           </div>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center p-6 lg:p-12">
@@ -4481,8 +4732,8 @@ const updateStatus = async (orderId, newStatus) => {
           <div className="lg:hidden w-14 h-14 bg-brand/20 border border-brand/30 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-brand/20">
             <Lock size={24} className="text-brand" />
           </div>
-          <h2 className="text-2xl font-black text-white tracking-widest mb-1 uppercase">System Locked</h2>
-          <p className="text-white/40 text-sm mb-6">Enter credentials to begin your shift.</p>
+          <h2 className="text-2xl font-black text-fg tracking-widest mb-1 uppercase">System Locked</h2>
+          <p className="text-fg/40 text-sm mb-6">Enter credentials to begin your shift.</p>
 
           {loginError && (
             <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl px-4 py-3 mb-4 text-left">
@@ -4497,7 +4748,7 @@ const updateStatus = async (orderId, newStatus) => {
             placeholder="Staff Name"
             value={loginForm.name}
             onChange={e => setLoginForm({...loginForm, name: e.target.value})}
-            className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-white placeholder-white/20 text-center py-3 rounded-xl outline-none mb-3 font-bold transition"
+            className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-fg placeholder-white/20 text-center py-3 rounded-xl outline-none mb-3 font-bold transition"
             required
             autoFocus
           />
@@ -4507,7 +4758,7 @@ const updateStatus = async (orderId, newStatus) => {
             placeholder="Password"
             value={loginForm.password}
             onChange={e => setLoginForm({...loginForm, password: e.target.value})}
-            className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-white placeholder-white/20 text-center py-3 rounded-xl outline-none mb-3 font-bold tracking-widest transition"
+            className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-fg placeholder-white/20 text-center py-3 rounded-xl outline-none mb-3 font-bold tracking-widest transition"
             required
           />
           <div className="relative mb-1">
@@ -4520,13 +4771,13 @@ const updateStatus = async (orderId, newStatus) => {
               step="0.01"
               value={startingCash}
               onChange={e => setStartingCash(e.target.value)}
-              className="w-full bg-white/5 border border-brand/30 focus:border-brand text-white text-center py-3 pl-8 rounded-xl outline-none font-black text-lg transition"
+              className="w-full bg-white/5 border border-brand/30 focus:border-brand text-fg text-center py-3 pl-8 rounded-xl outline-none font-black text-lg transition"
             />
           </div>
-          <p className="text-white/25 text-xs mb-5 text-center font-medium">
+          <p className="text-fg/25 text-xs mb-5 text-center font-medium">
             Required for staff · Optional for Superadmin
           </p>
-          <button type="submit" className="w-full bg-brand hover:bg-brand-dark text-white font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest">
+          <button type="submit" className="w-full bg-brand hover:bg-brand-dark text-fg font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest">
             Start Shift
           </button>
         </form>
@@ -4535,13 +4786,72 @@ const updateStatus = async (orderId, newStatus) => {
     );
   }
 
+  // --- MENU ITEMS SEARCH / FILTER / SORT ---
+  const filteredProducts = (() => {
+    const q = prodSearch.trim().toLowerCase();
+    const f = prodFilters;
+    let list = products.filter(p => {
+      if (q && !(
+        p.name?.toLowerCase().includes(q) ||
+        p.category?.toLowerCase().includes(q) ||
+        p.description?.toLowerCase().includes(q) ||
+        p.productCode?.toLowerCase().includes(q)
+      )) return false;
+
+      if (f.category !== 'all' && p.category !== f.category) return false;
+
+      const hasImage = !!p.image;
+      if (f.image === 'with' && !hasImage) return false;
+      if (f.image === 'without' && hasImage) return false;
+
+      if (f.stock !== 'all') {
+        // null = no recipe linked, so stock isn't tracked for this product.
+        const est = getEstimatedStock(p.baseRecipe);
+        if (f.stock === 'untracked' && est !== null) return false;
+        if (f.stock === 'out'  && !(est !== null && est <= 0)) return false;
+        if (f.stock === 'low'  && !(est !== null && est > 0 && est <= 5)) return false;
+        if (f.stock === 'in'   && !(est !== null && est > 5)) return false;
+      }
+
+      const disc = Number(p.discountPercent || 0) > 0 || (p.clientDiscounts || []).length > 0;
+      if (f.discount === 'discounted' && !disc) return false;
+      if (f.discount === 'full' && disc) return false;
+
+      const multi = (p.sizes || []).length > 0;
+      if (f.sizes === 'multi' && !multi) return false;
+      if (f.sizes === 'single' && multi) return false;
+
+      return true;
+    });
+
+    const price = p => Number(p.basePrice ?? p.price ?? 0);
+    const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
+    const sorters = {
+      'name': byName,
+      'name-desc': (a, b) => byName(b, a),
+      'price': (a, b) => price(a) - price(b),
+      'price-desc': (a, b) => price(b) - price(a),
+      'category': (a, b) => (a.category || '').localeCompare(b.category || '') || byName(a, b),
+    };
+    return [...list].sort(sorters[f.sort] || byName);
+  })();
+
+  const prodFiltersActive =
+    prodSearch.trim() !== '' ||
+    Object.entries(prodFilters).some(([k, v]) => k !== 'sort' && v !== 'all');
+
+  const resetProdFilters = () => {
+    setProdSearch('');
+    setProdFilters({ category: 'all', image: 'all', stock: 'all', discount: 'all', sizes: 'all', sort: 'name' });
+  };
+
   // --- PAGINATION MATH ---
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  
-  // Only grab the 12 items for the current page
-  const currentProducts = products.slice(indexOfFirstItem, indexOfLastItem);
-  const totalPages = Math.ceil(products.length / itemsPerPage);
+
+  // Only grab the items for the current page, out of the FILTERED list.
+  const currentProducts = filteredProducts.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
 
   // --- INVENTORY SEARCH / FILTER / SORT ---
   const invFilteredSorted = (() => {
@@ -4622,13 +4932,13 @@ const updateStatus = async (orderId, newStatus) => {
         <div className="w-20 h-20 bg-brand/15 border border-brand/30 rounded-3xl flex items-center justify-center mb-6">
           <Clock size={40} className="text-brand" />
         </div>
-        <h1 className="text-white text-2xl font-black mb-1">Clock in to start</h1>
-        <p className="text-white/50 text-sm mb-8 max-w-xs">Hi {activeAdmin?.name} - you must clock in before taking orders or using the system.</p>
+        <h1 className="text-fg text-2xl font-black mb-1">Clock in to start</h1>
+        <p className="text-fg/50 text-sm mb-8 max-w-xs">Hi {activeAdmin?.name} - you must clock in before taking orders or using the system.</p>
         <button onClick={handleClockIn}
           className="bg-brand text-white px-10 py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-brand/90 active:scale-98 transition shadow-lg shadow-brand/20 min-h-[56px] flex items-center gap-2">
           <Clock size={18} /> Clock In
         </button>
-        <button onClick={performLogout} className="mt-5 text-white/40 hover:text-white/70 text-xs font-bold uppercase tracking-wider transition">
+        <button onClick={performLogout} className="mt-5 text-fg/40 hover:text-fg/70 text-xs font-bold uppercase tracking-wider transition">
           Log out
         </button>
       </div>
@@ -4643,20 +4953,21 @@ const updateStatus = async (orderId, newStatus) => {
           undiscoverable and is intentionally gone. */}
       <div className="p-5 border-b border-white/5">
         <p className="text-2xl font-black text-brand tracking-tight leading-none drop-shadow-sm">{BIZ_NAME}</p>
-        <p className="text-[10px] text-white/25 font-bold uppercase tracking-[0.25em] mt-0.5">
+        <p className="text-[10px] text-fg/80 font-bold uppercase tracking-[0.25em] mt-0.5">
           SEMIVRA <span className="text-brand/80">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span>
-          <span className="text-white/40 normal-case tracking-normal font-bold"> · {navMode === 'libellus' ? 'Operations' : 'Management'}</span>
+          <span className="text-fg/40 normal-case tracking-normal font-bold"> · {navMode === 'libellus' ? 'Operations' : 'Management'}</span>
         </p>
         <span className="inline-block mt-1.5 text-[8px] font-black bg-brand/15 border border-brand/30 text-brand px-2 py-0.5 rounded-full uppercase tracking-widest">NON-VAT REGISTERED</span>
       </div>
 
       {/* Nav */}
-      <nav className="p-3 space-y-0.5 lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
-        <p className="text-[9px] text-white/20 font-bold uppercase tracking-[0.2em] px-4 pt-2 pb-1">Operations</p>
+      <nav className="p-3 space-y-0.5 lg:flex-1 lg:min-h-0 lg:overflow-y-auto custom-scrollbar">
+        <p className="text-[9px] text-fg/80 font-bold uppercase tracking-[0.2em] px-4 pt-2 pb-1">Operations</p>
         {[
           { id: 'orders', label: 'Orders & POS', icon: ShoppingCart, perm: 'orders.view' },
           { id: 'inventory', label: 'Inventory & Stock', icon: Package, perm: 'inventory.view' },
           { id: 'procurement', label: 'Procurement', icon: Truck, perm: 'procurement.view' },
+          { id: 'clients', label: 'Clients', icon: Users, perm: 'orders.view' },
           { id: 'products', label: 'Menu Setup', icon: ChefHat, perm: 'products.view' },
         ].filter(({ perm }) => can(perm)).map(({ id, label, icon: Icon }) => {
           // invBadgeCount and invBadgeColor are hoisted to component scope above
@@ -4666,11 +4977,11 @@ const updateStatus = async (orderId, newStatus) => {
             <button key={id}
               onClick={() => { setActiveTab(id); setNavMode('libellus'); closeFn?.(); }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
-                ${activeTab === id && navMode === 'libellus' ? 'bg-brand text-white shadow-sm' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+                ${activeTab === id && navMode === 'libellus' ? 'bg-brand text-white shadow-sm' : 'text-fg/50 hover:text-fg hover:bg-white/5'}`}
             >
               <Icon size={16} />
               {label}
-              {badgeCount > 0 && <span className={`ml-auto text-[9px] text-white font-black px-1.5 py-0.5 rounded-full ${badgeColor}`}>{badgeCount}</span>}
+              {badgeCount > 0 && <span className={`ml-auto text-[9px] text-fg font-black px-1.5 py-0.5 rounded-full ${badgeColor}`}>{badgeCount}</span>}
               {activeTab === id && navMode === 'libellus' && badgeCount === 0 && <ChevronRight size={13} className="ml-auto" />}
             </button>
           );
@@ -4697,12 +5008,12 @@ const updateStatus = async (orderId, newStatus) => {
           if (mgmtItems.length === 0 && !isSuperAdmin) return null;
           return (
             <>
-              <p className="text-[9px] text-white/20 font-bold uppercase tracking-[0.2em] px-4 pt-4 pb-1">Management</p>
+              <p className="text-[9px] text-fg/80 font-bold uppercase tracking-[0.2em] px-4 pt-4 pb-1">Management</p>
               {mgmtItems.map(({ id, label, icon: Icon, sub }) => (
                 <button key={id}
                   onClick={() => { setActiveTab(id); setNavMode('negotium'); closeFn?.(); if (id === 'analytics') fetchAnalytics(); if (sub) setLedgerSubTab(sub); }}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
-                    ${activeTab === id && navMode === 'negotium' ? 'bg-brand text-white shadow-sm' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+                    ${activeTab === id && navMode === 'negotium' ? 'bg-brand text-white shadow-sm' : 'text-fg/50 hover:text-fg hover:bg-white/5'}`}
                 >
                   <Icon size={16} />
                   {label}
@@ -4714,11 +5025,11 @@ const updateStatus = async (orderId, newStatus) => {
                 // account, role & tenant management), outside the tabbed dashboard.
                 <button key="admin-panel"
                   onClick={() => { closeFn?.(); navigate('/admin/admin-panel'); }}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm text-white/50 hover:text-white hover:bg-white/5"
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm text-fg/50 hover:text-fg hover:bg-white/5"
                 >
                   <ShieldCheck size={16} className="text-brand shrink-0" />
                   <span className="whitespace-nowrap">Admin Panel</span>
-                  <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand/15 border border-brand/30 text-brand px-1.5 py-0.5 rounded">Super</span>
+                  <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand border border-brand text-white px-1.5 py-0.5 rounded">Super</span>
                 </button>
               )}
             </>
@@ -4729,12 +5040,12 @@ const updateStatus = async (orderId, newStatus) => {
       {/* Bottom */}
       <div className="p-3 border-t border-white/5 space-y-0.5">
         <div className="flex items-center justify-between px-4 py-2">
-          <span className="text-[10px] text-white/25 font-bold uppercase tracking-wider">Auto-Close</span>
+          <span className="text-[10px] text-fg/60 font-bold uppercase tracking-wider">Auto-Close</span>
           <MidnightCountdown />
         </div>
         {/* Clock In/Out/Break - always visible (frequent, critical action) */}
         <button onClick={handleClockButton}
-          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20' : clockStatus.isClockedIn ? 'text-green-400 bg-green-500/10 hover:bg-green-500/20' : 'text-white/40 hover:text-white hover:bg-white/5'}`}>
+          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-white bg-amber-500 hover:bg-amber-600' : clockStatus.isClockedIn ? 'text-white bg-accent hover:bg-accent/80' : 'text-fg/40 hover:text-fg hover:bg-white/5'}`}>
           <Clock size={15} />
           {clockStatus.onBreak
             ? `On Break - tap to resume`
@@ -4747,7 +5058,7 @@ const updateStatus = async (orderId, newStatus) => {
             Product-Images toggles and Change Password now live on this page
             instead of being crammed into the sidebar dropdown. */}
         <button onClick={() => { setActiveTab('settings'); setNavMode('negotium'); closeFn?.(); }}
-          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${activeTab === 'settings' ? 'bg-brand text-white shadow-sm' : 'text-white/40 hover:text-white hover:bg-white/5'}`}>
+          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${activeTab === 'settings' ? 'bg-brand text-white shadow-sm' : 'text-fg/40 hover:text-fg hover:bg-white/5'}`}>
           <Settings size={15} />
           Settings
           {activeTab === 'settings' && <ChevronRight size={13} className="ml-auto" />}
@@ -4755,13 +5066,13 @@ const updateStatus = async (orderId, newStatus) => {
 
         {/* Collapsible quick tools - Fullscreen / QR / Install (frequent, low-stakes) */}
         <button onClick={toggleOpsTools}
-          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition font-bold text-[11px] uppercase tracking-wider">
+          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/40 hover:text-fg hover:bg-white/5 transition font-bold text-[11px] uppercase tracking-wider">
           {opsToolsOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
           Quick Tools
         </button>
         {opsToolsOpen && (
           <div className="space-y-0.5">
-            <button onClick={toggleFullScreen} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition font-bold text-sm">
+            <button onClick={toggleFullScreen} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/40 hover:text-fg hover:bg-white/5 transition font-bold text-sm">
               {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
               {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
             </button>
@@ -4789,8 +5100,8 @@ const updateStatus = async (orderId, newStatus) => {
               <span className="text-brand font-black text-xs">{activeAdmin?.name?.charAt(0)?.toUpperCase()}</span>
             </div>
             <div className="min-w-0">
-              <p className="text-white/60 text-xs font-bold truncate">{activeAdmin?.name}</p>
-              <p className="text-white/25 text-[10px] uppercase tracking-widest">{activeAdmin?.role}</p>
+              <p className="text-fg/60 text-xs font-bold truncate">{activeAdmin?.name}</p>
+              <p className="text-fg/25 text-[10px] uppercase tracking-widest">{activeAdmin?.role}</p>
             </div>
           </div>
         </div>
@@ -4812,12 +5123,18 @@ const updateStatus = async (orderId, newStatus) => {
     users, activeAdmin, isSuperAdmin, canVoidRefund, can,
     // ── Core helpers ────────────────────────────────────────────────────────
     fetchOrders, fetchData, fetchERPData, fetchEODData,
-    apiFetch, updateStatus, printOrderSlip, printBillingStatement, handleVoidOrder,
+    apiFetch, updateStatus, printOrderSlip, printBillingStatement, printDeliveryReceipt, handleVoidOrder,
     peso, BIZ_NAME, COMP_REASON_LABELS, API_URL, FRONTEND_URL,
     // ── Analytics ───────────────────────────────────────────────────────────
     analyticsData, analyticsLoading, fetchAnalytics, exportAnalyticsToPDF,
     // ── Navigation ──────────────────────────────────────────────────────────
-    activeTab, setActiveTab, navMode,
+    activeTab, setActiveTab, navMode, setNavMode,
+    // ── Shift end / bank deposit (ShiftEndModal) ────────────────────────────
+    shiftEndModal, setShiftEndModal, shiftEndLoading, shiftReconcile, setShiftReconcile,
+    handleEndShift, handleBankDeposit, performLogout, startingCash,
+    depositAmount, setDepositAmount, depositError, setDepositError, depositLoading,
+    // ── Stock history / import / partial fulfil modals ──────────────────────
+    submitImport, loadPdfLibs,
     // ── Ledger sub-tabs ─────────────────────────────────────────────────────
     ledgerSubTab, setLedgerSubTab, jeForm, setJeForm, cashOnHand, standardAccounts,
     // ── Chart of Accounts CRUD ──
@@ -4846,9 +5163,11 @@ const updateStatus = async (orderId, newStatus) => {
     pnlData, pnlRange, setPnlRange, fetchPnl, bsData, fetchBalanceSheet, reconcileInventory,
     pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF,
     bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF,
-    arOutstanding, fetchArOutstanding,
+    arOutstanding, fetchArOutstanding, arAgeing, fetchArAgeing, suppliers, fetchSuppliers,
     expenseModal, setExpenseModal, expenseCategories, fetchExpenseCategories,
+    expenseForm, setExpenseForm, expenseSubmitting, submitExpense, expenseList, fetchExpenses,
     settleModal, setSettleModal, settleForm, setSettleForm, settleSubmitting, setSettleSubmitting,
+    submitArSettlement,
     // ── Revolving funds ─────────────────────────────────────────────────────
     rfFunds, rfLoading, rfActiveFund, setRfActiveFund, rfTxs, rfTxTotal, rfTxPage, rfTxPages,
     rfNewModal, setRfNewModal, rfNewForm, setRfNewForm, rfNewSubmitting,
@@ -4885,10 +5204,11 @@ const updateStatus = async (orderId, newStatus) => {
     invBadgeCount, expandedBatchRows, setExpandedBatchRows,
     editInvModal, setEditInvModal, editInvForm, setEditInvForm, editInvSubmitting,
     importModal, setImportModal, importRows, setImportRows, importSubmitting,
-    spoilageModal, setSpoilageModal, spoilageForm, setSpoilageForm, spoilageLoading,
+    spoilageModal, setSpoilageModal, spoilageForm, setSpoilageForm, spoilageLoading, setSpoilageLoading,
     handleRestockSubmit, submitPhysicalCounts,
     // ── Inventory helpers ────────────────────────────────────────────────────
     effectiveDisplay, itemDisplay, packInfo, fetchStockHistory,
+    resolveUnitFE, submitEditInventory,
     openEditInventory, deleteInventory, parseImportFile,
     printXReading, handleSaveAddOn,
     // ── History ─────────────────────────────────────────────────────────────
@@ -4910,6 +5230,10 @@ const updateStatus = async (orderId, newStatus) => {
     catForm, setCatForm, editingCategory, setEditingCategory,
     discountList, newDiscount, setNewDiscount, addOnForm, setAddOnForm,
     currentPage, setCurrentPage, itemsPerPage,
+    resetProductForm,
+    // ── Menu items search / filter ───────────────────────────────────────────
+    prodSearch, setProdSearch, prodFilters, setProdFilters,
+    filteredProducts, prodFiltersActive, resetProdFilters,
     // ── Computed pagination slices ───────────────────────────────────────────
     currentProducts, totalPages,
     currentInventory, totalInvPages,
@@ -4948,7 +5272,7 @@ const updateStatus = async (orderId, newStatus) => {
     // ── Profit by Category ───────────────────────────────────────────────────
     profitByCategory, fetchProfitByCategory,
     // ── System Settings / QR Toggle ─────────────────────────────────────────
-    systemSettings, toggleQROrders, toggleAutoClose, toggleImages,
+    systemSettings, toggleQROrders, toggleAutoClose, toggleImages, saveSetting,
     // ── Sales by Payment ─────────────────────────────────────────────────────
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     // ── Summary Sales (channel breakdown) ────────────────────────────────────
@@ -4984,7 +5308,8 @@ const updateStatus = async (orderId, newStatus) => {
   };
 
   return (
-    <div className="min-h-screen bg-page-bg flex text-white">
+    <DashboardProvider value={ctx}>
+    <div className="min-h-screen bg-page-bg flex text-fg">
 
       {/* ── IN-APP ORDER TOASTS (sound plays on newOrder; this shows the visual) ── */}
       {orderToasts.length > 0 && (
@@ -4995,7 +5320,7 @@ const updateStatus = async (orderId, newStatus) => {
               <Bell size={16} className="shrink-0 animate-bounce"/>
               <div>
                 <p className="font-black text-sm leading-none">New Order! #{t.orderNumber}</p>
-                <p className="text-white/70 text-xs mt-0.5">{t.table} · {t.ts}</p>
+                <p className="text-fg/70 text-xs mt-0.5">{t.table} · {t.ts}</p>
               </div>
             </div>
           ))}
@@ -5037,7 +5362,7 @@ const updateStatus = async (orderId, newStatus) => {
         <header className="lg:hidden sticky top-0 z-30 flex items-center gap-3 px-4 h-16 bg-sidebar-bg border-b border-white/5 flex-shrink-0">
           <button
             onClick={() => setDashDrawerOpen(true)}
-            className="p-2 rounded-xl text-white/50 hover:text-white hover:bg-white/10 transition"
+            className="p-2 rounded-xl text-fg/50 hover:text-fg hover:bg-white/10 transition"
             aria-label={dashDrawerOpen ? 'Close navigation' : 'Open navigation'}
             aria-expanded={dashDrawerOpen}
           >
@@ -5045,7 +5370,7 @@ const updateStatus = async (orderId, newStatus) => {
           </button>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <p className="font-black text-white text-sm uppercase tracking-widest truncate">{BIZ_NAME}</p>
+              <p className="font-black text-fg text-sm uppercase tracking-widest truncate">{BIZ_NAME}</p>
               <span className="text-[8px] font-black bg-brand/20 border border-brand/30 text-brand px-1.5 py-0.5 rounded-full uppercase tracking-widest flex-shrink-0">NON-VAT</span>
             </div>
             <p className="text-brand text-[10px] font-bold uppercase truncate">{activeAdmin?.name} · {navMode === 'libellus' ? 'Operations' : 'Management'}</p>
@@ -5057,10 +5382,16 @@ const updateStatus = async (orderId, newStatus) => {
                 {queuedCount > 0 ? queuedCount : 'Off'}
               </span>
             )}
+            <button onClick={() => setPaletteOpen(true)}
+              title="Quick jump (Ctrl+K)" aria-label="Open quick jump"
+              className="flex items-center gap-1.5 bg-white/5 text-fg/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 hover:text-fg transition">
+              <Search size={13} /><span className="hidden lg:inline">Jump</span>
+            </button>
+            <NotificationBell />
             <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="flex items-center gap-1.5 bg-brand/20 text-brand border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
               <QrCode size={13} /> {BUSINESS_TYPE === 'log' ? 'Portal' : 'QR'}
             </button>
-            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="flex items-center gap-1.5 bg-white/5 text-white/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
+            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="flex items-center gap-1.5 bg-white/5 text-fg/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
               <Settings size={13} />
             </button>
             <button onClick={handleLogout} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 border border-red-500/20 px-3 py-2 rounded-xl font-bold text-xs hover:bg-red-500/20 transition">
@@ -5101,8 +5432,8 @@ const updateStatus = async (orderId, newStatus) => {
       {showQR && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-surface p-6 md:p-8 rounded-xl border border-gray-700 shadow-2xl flex flex-col items-center max-w-sm w-full relative max-h-[95vh] overflow-y-auto custom-scrollbar">
-            <button onClick={() => setShowQR(false)} className="absolute top-4 right-4 text-gray-400 hover:text-white font-bold text-2xl shrink-0">✕</button>
-            <h2 className="text-2xl font-bold mb-1 text-white shrink-0">Customer QR</h2>
+            <button onClick={() => setShowQR(false)} className="absolute top-4 right-4 text-gray-400 hover:text-fg font-bold text-2xl shrink-0">✕</button>
+            <h2 className="text-2xl font-bold mb-1 text-fg shrink-0">Customer QR</h2>
             <div className="bg-page-bg px-6 py-2 rounded-full border border-gray-700 mb-6 mt-2 flex items-center gap-2 shrink-0">
               <span className="text-gray-400 text-sm font-bold uppercase tracking-wider">Session ID:</span>
               <span className="text-accent font-black text-lg">{autoTableId}</span>
@@ -5118,13 +5449,13 @@ const updateStatus = async (orderId, newStatus) => {
             
             <button 
               onClick={(e) => { e.preventDefault(); handleShowQR(); }} 
-              className="mt-6 w-full bg-surface border border-accent text-accent font-bold py-3 rounded-md hover:bg-accent hover:text-white transition uppercase tracking-widest text-sm shrink-0"
+              className="mt-6 w-full bg-surface border border-accent text-accent font-bold py-3 rounded-md hover:bg-accent hover:text-fg transition uppercase tracking-widest text-sm shrink-0"
             >
               Generate Next QR
             </button>
             <button 
               onClick={() => setShowQR(false)} 
-              className="mt-3 w-full bg-page-bg border border-gray-600 text-accent font-bold py-3 rounded-md hover:bg-accent hover:text-white transition text-sm shrink-0"
+              className="mt-3 w-full bg-page-bg border border-gray-600 text-accent font-bold py-3 rounded-md hover:bg-accent hover:text-fg transition text-sm shrink-0"
             >
               Close
             </button>
@@ -5135,156 +5466,7 @@ const updateStatus = async (orderId, newStatus) => {
       {/* ============================================================
           END-OF-SHIFT RECONCILIATION MODAL
           ============================================================ */}
-      {shiftEndModal && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-8 flex flex-col gap-5">
-
-            {shiftReconcile.result ? (
-              /* ── RESULTS SCREEN ── */
-              <>
-                <div className="text-center">
-                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3 ${shiftReconcile.result.variance >= 0 ? 'bg-green-500/20 border border-green-500/40' : 'bg-red-500/20 border border-red-500/40'}`}>
-                    {shiftReconcile.result.variance >= 0
-                      ? <CheckCircle size={32} className="text-green-400" />
-                      : <AlertCircle size={32} className="text-red-400" />}
-                  </div>
-                  <h2 className="text-xl font-black text-white tracking-wider uppercase">Shift Summary</h2>
-                  <p className="text-gray-400 text-xs mt-1">Recorded for {shiftReconcile.result.cashierName}</p>
-                </div>
-
-                <div className="bg-surface-2 rounded-xl p-4 space-y-3 text-sm">
-                  <div className="flex justify-between"><span className="text-gray-400">Opening Cash</span><span className="font-bold text-white">₱{(shiftReconcile.result.startingCash||0).toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span className="text-gray-400">Cash Sales</span><span className="font-bold text-accent">+₱{(shiftReconcile.result.salesTotal||0).toFixed(2)}</span></div>
-                  <div className="flex justify-between border-t border-gray-700 pt-3"><span className="text-gray-400">Expected in Register</span><span className="font-black text-white text-base">₱{(shiftReconcile.result.expectedCash||0).toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span className="text-gray-400">Actual Cash Count</span><span className="font-black text-white text-base">₱{(shiftReconcile.result.actualCash||0).toFixed(2)}</span></div>
-                  <div className={`flex justify-between pt-1 border-t border-gray-700 font-black text-base ${shiftReconcile.result.variance >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    <span>Variance</span>
-                    <span>{shiftReconcile.result.variance >= 0 ? '+' : ''}₱{(shiftReconcile.result.variance||0).toFixed(2)}</span>
-                  </div>
-                </div>
-
-                {shiftReconcile.result.variance < 0 && (
-                  <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-3 text-xs text-red-300 font-medium">
-                    Short by ₱{Math.abs(shiftReconcile.result.variance).toFixed(2)} - report to manager before leaving.
-                  </div>
-                )}
-
-                {/* ── BANK DEPOSIT ── */}
-                {shiftReconcile.result.isReconciled ? (
-                  <div className="bg-green-900/20 border border-green-500/30 rounded-xl px-4 py-3 text-xs text-green-300 font-bold text-center flex items-center justify-center gap-2">
-                    <CheckCircle size={14} /> Drawer Reconciled - cash matches starting fund.
-                  </div>
-                ) : (
-                  <div className="bg-surface-2 rounded-xl p-4 space-y-3 text-sm border border-blue-500/20">
-                    <h3 className="text-blue-400 font-black uppercase tracking-wider text-xs flex items-center gap-2">
-                      <Building2 size={14} /> Bank Deposit
-                    </h3>
-                    <div className="space-y-1 text-xs">
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Cash on Hand</span>
-                        <span className="font-bold text-white">₱{Math.max(0, (shiftReconcile.result.actualCash || 0) - (shiftReconcile.result.depositedAmount || 0)).toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Keep in Drawer</span>
-                        <span className="font-bold text-white">₱{(shiftReconcile.result.startingCash || 0).toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between border-t border-gray-700 pt-1">
-                        <span className="text-gray-400">Suggested Deposit</span>
-                        <span className="font-bold text-blue-400">₱{Math.max(0, (shiftReconcile.result.actualCash || 0) - (shiftReconcile.result.depositedAmount || 0) - (shiftReconcile.result.startingCash || 0)).toFixed(2)}</span>
-                      </div>
-                    </div>
-                    <div className="relative">
-                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-400 font-black pointer-events-none">₱</span>
-                      <input
-                        type="number" min="0" step="0.01" placeholder="Deposit amount"
-                        value={depositAmount}
-                        onChange={e => { setDepositAmount(e.target.value); setDepositError(''); }}
-                        className="w-full bg-gray-800 border-2 border-blue-500/50 focus:border-blue-400 text-white py-2.5 pl-8 pr-4 rounded-xl outline-none font-bold text-sm"
-                      />
-                    </div>
-                    {depositError && <p className="text-red-400 text-xs">{depositError}</p>}
-                    <button
-                      onClick={handleBankDeposit}
-                      disabled={depositLoading || !depositAmount}
-                      className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-3 rounded-xl uppercase tracking-wider transition disabled:opacity-50 text-sm"
-                    >
-                      {depositLoading ? 'Posting…' : 'Post Bank Deposit'}
-                    </button>
-                  </div>
-                )}
-
-                <button
-                  onClick={performLogout}
-                  className="w-full bg-accent text-white font-black py-4 rounded-xl uppercase tracking-widest hover:bg-brand-dark transition"
-                >
-                  Confirm & Log Out
-                </button>
-              </>
-            ) : (
-              /* ── COUNT SCREEN ── */
-              <>
-                <div className="text-center">
-                  <div className="w-14 h-14 bg-accent/10 border border-accent/30 rounded-2xl flex items-center justify-center mx-auto mb-3">
-                    <DollarSign size={26} className="text-accent" />
-                  </div>
-                  <h2 className="text-xl font-black text-white tracking-wider uppercase">End of Shift</h2>
-                  <p className="text-gray-400 text-sm mt-1">Count your register before logging out.</p>
-                </div>
-
-                {/* Bill/coin denomination breakdown */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Count Your Bills & Coins</label>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {DENOMS.map(d => (
-                      <div key={d} className="flex items-center gap-1.5 bg-surface-2 rounded-xl px-2.5 py-2 border border-white/5">
-                        <span className="text-white/50 font-bold text-xs w-10 shrink-0">₱{d}</span>
-                        <input type="number" min="0" placeholder="0"
-                          value={denomCounts[d] || ''}
-                          onChange={e => setDenomCounts(p => ({ ...p, [d]: e.target.value }))}
-                          className="w-full bg-transparent text-white text-right font-black text-sm tabular-nums outline-none"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex justify-between items-center bg-brand/10 border border-brand/30 rounded-xl px-4 py-2.5">
-                    <span className="text-brand font-black uppercase tracking-wider text-xs">Total Count</span>
-                    <span className="text-brand font-black text-xl tabular-nums">₱{denomTotal.toFixed(2)}</span>
-                  </div>
-                  <p className="text-[10px] text-white/30 text-center">Or type total directly:</p>
-                  <input type="number" min="0" step="0.01" placeholder="0.00"
-                    value={shiftReconcile.actualCash}
-                    onChange={e => setShiftReconcile(prev => ({ ...prev, actualCash: e.target.value }))}
-                    className="w-full bg-surface-2 border border-white/10 text-center text-white py-2 rounded-xl outline-none font-bold text-sm"
-                  />
-                </div>
-
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setShiftEndModal(false)}
-                    className="flex-1 py-3 bg-surface-2 border border-white/10 text-white/50 font-bold rounded-xl hover:text-white transition text-sm uppercase"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleEndShift}
-                    disabled={shiftEndLoading}
-                    className="flex-1 py-3 bg-accent text-white font-black rounded-xl hover:bg-brand-dark transition text-sm uppercase tracking-wider disabled:opacity-60"
-                  >
-                    {shiftEndLoading ? 'Processing...' : 'Submit Count'}
-                  </button>
-                </div>
-
-                <button
-                  onClick={performLogout}
-                  className="text-xs text-gray-600 hover:text-red-400 transition text-center w-full"
-                >
-                  Skip & force logout (emergency only)
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      <ShiftEndModal />
 
       {/* --- ANALYTICS DASHBOARD TAB --- */}
       {activeTab === 'analytics' && <Suspense fallback={<TabFallback />}><AnalyticsTab ctx={ctx} /></Suspense>}
@@ -5306,282 +5488,18 @@ const updateStatus = async (orderId, newStatus) => {
       {/* ===== REVOLVING FUND MODALS ===== */}
 
       {/* NEW FUND MODAL */}
-      {rfNewModal && (
-        <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm" onClick={e => { if (e.target === e.currentTarget) setRfNewModal(false); }}>
-          <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 shrink-0">
-              <div>
-                <h2 className="text-white font-black text-lg">New Revolving Fund</h2>
-                <p className="text-white/30 text-xs font-bold uppercase tracking-widest mt-0.5">Set up a petty cash pool</p>
-              </div>
-              <button onClick={() => setRfNewModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition"><X size={16}/></button>
-            </div>
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 custom-scrollbar">
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Fund Name *</label>
-                <input type="text" placeholder="e.g. Kasa Lokal Petty Cash" value={rfNewForm.name}
-                  onChange={e => setRfNewForm({...rfNewForm, name: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white outline-none focus:border-brand/60 placeholder-white/20"/>
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Initial Amount (₱) *</label>
-                <input type="number" min="0" step="1" placeholder="e.g. 5000" value={rfNewForm.initialAmount}
-                  onChange={e => setRfNewForm({...rfNewForm, initialAmount: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white text-xl font-black tabular-nums outline-none focus:border-brand/60"/>
-                <p className="text-white/30 text-[10px] mt-1">This is the fixed float amount. The source account below will be reduced by this amount in the journal.</p>
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Paid From *</label>
-                <select value={rfNewForm.sourceAccount} onChange={e => setRfNewForm({...rfNewForm, sourceAccount: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white font-bold outline-none focus:border-brand/60">
-                  {(cashAndBankAccounts || []).map(a => (
-                    <option key={a.code} value={a.code}>{a.name} ({a.code})</option>
-                  ))}
-                </select>
-                <p className="text-white/30 text-[10px] mt-1">Where the float comes from - this account is credited (reduced) in the opening journal entry.</p>
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Purpose / Notes</label>
-                <textarea rows={2} placeholder="What is this fund used for?" value={rfNewForm.description}
-                  onChange={e => setRfNewForm({...rfNewForm, description: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white outline-none focus:border-brand/60 resize-none placeholder-white/20"/>
-              </div>
-            </div>
-            <div className="px-5 py-4 border-t border-white/8 shrink-0 flex gap-3">
-              <button onClick={() => setRfNewModal(false)} className="flex-1 bg-white/5 text-white/60 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
-              <button onClick={submitRfNew} disabled={rfNewSubmitting}
-                className="flex-1 bg-brand text-white rounded-xl py-3 font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">
-                {rfNewSubmitting ? 'Creating…' : 'Create Fund'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <RevolvingFundNewModal />
 
       {/* DISBURSE MODAL */}
-      {rfDisbModal && rfActiveFund && (
-        <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm" onClick={e => { if (e.target === e.currentTarget) setRfDisbModal(false); }}>
-          <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 shrink-0">
-              <div>
-                <h2 className="text-white font-black text-lg">Disburse from Fund</h2>
-                <p className="text-white/30 text-xs font-bold uppercase tracking-widest mt-0.5">
-                  {rfActiveFund.name} · Available: <span className="text-brand">₱{rfActiveFund.currentBalance.toFixed(2)}</span>
-                </p>
-              </div>
-              <button onClick={() => setRfDisbModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition"><X size={16}/></button>
-            </div>
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 custom-scrollbar">
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Amount (₱) *</label>
-                <input type="number" min="0" step="0.01" placeholder="0.00" value={rfDisbForm.amount}
-                  onChange={e => setRfDisbForm({...rfDisbForm, amount: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white text-xl font-black tabular-nums outline-none focus:border-danger/60"/>
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">What was it spent on? *</label>
-                <input type="text" placeholder="e.g. Printer ink, cleaning supplies…" value={rfDisbForm.description}
-                  onChange={e => setRfDisbForm({...rfDisbForm, description: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white outline-none focus:border-danger/60 placeholder-white/20"/>
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Expense Category</label>
-                <select value={rfDisbForm.categoryCode} onChange={e => setRfDisbForm({...rfDisbForm, categoryCode: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white outline-none focus:border-danger/60">
-                  <option value="630000">Rent</option>
-                  <option value="640000">Utilities (Electricity / Water / Internet)</option>
-                  <option value="610000">Salaries & Wages</option>
-                  <option value="650000">Supplies (Non-Inventory)</option>
-                  <option value="660000">Marketing & Advertising</option>
-                  <option value="680000">Repairs & Maintenance</option>
-                  <option value="720000">Bank Charges</option>
-                  <option value="760000">Other Operating Expense</option>
-                </select>
-              </div>
-              <div className="bg-danger/10 border border-danger/20 rounded-xl p-3 text-xs text-danger/80">
-                This will deduct from the revolving fund balance and post a journal entry:<br/>
-                <span className="font-bold">DR Expense / CR Petty Cash / Revolving Fund</span>
-              </div>
-            </div>
-            <div className="px-5 py-4 border-t border-white/8 shrink-0 flex gap-3">
-              <button onClick={() => setRfDisbModal(false)} className="flex-1 bg-white/5 text-white/60 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
-              <button onClick={submitRfDisb} disabled={rfDisbSubmitting}
-                className="flex-1 bg-danger text-white rounded-xl py-3 font-bold text-sm hover:bg-danger/90 transition disabled:opacity-50">
-                {rfDisbSubmitting ? 'Recording…' : 'Record Disbursement'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <RevolvingFundDisburseModal />
 
       {/* REPLENISH MODAL */}
-      {rfReplModal && rfActiveFund && (
-        <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm" onClick={e => { if (e.target === e.currentTarget) setRfReplModal(false); }}>
-          <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 shrink-0">
-              <div>
-                <h2 className="text-white font-black text-lg">Replenish Fund</h2>
-                <p className="text-white/30 text-xs font-bold uppercase tracking-widest mt-0.5">
-                  {rfActiveFund.name} · Shortfall: <span className="text-brand">₱{(rfActiveFund.initialAmount - rfActiveFund.currentBalance).toFixed(2)}</span>
-                </p>
-              </div>
-              <button onClick={() => setRfReplModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition"><X size={16}/></button>
-            </div>
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 custom-scrollbar">
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Amount to Add (₱)</label>
-                <input type="number" min="0" step="0.01" value={rfReplForm.amount}
-                  onChange={e => setRfReplForm({...rfReplForm, amount: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white text-xl font-black tabular-nums outline-none focus:border-brand/60"/>
-                <p className="text-white/30 text-[10px] mt-1">Leave blank to auto-fill the full shortfall (₱{(rfActiveFund.initialAmount - rfActiveFund.currentBalance).toFixed(2)}).</p>
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Get funds from *</label>
-                <select value={rfReplForm.sourceAccount} onChange={e => setRfReplForm({...rfReplForm, sourceAccount: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white font-bold outline-none focus:border-brand/60">
-                  {(cashAndBankAccounts || []).map(a => (
-                    <option key={a.code} value={a.code}>{a.name} ({a.code})</option>
-                  ))}
-                </select>
-                <p className="text-white/30 text-[10px] mt-1">This account is credited (reduced) when the petty cash float is funded.</p>
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Note</label>
-                <input type="text" placeholder="e.g. Weekly replenishment from daily sales" value={rfReplForm.note}
-                  onChange={e => setRfReplForm({...rfReplForm, note: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white outline-none focus:border-brand/60 placeholder-white/20"/>
-              </div>
-              <div className="bg-brand/10 border border-brand/20 rounded-xl p-3 text-xs text-brand/80">
-                Journal entry that will be posted:<br/>
-                <span className="font-bold">DR Petty Cash / Revolving Fund &nbsp;|&nbsp; CR {(cashAndBankAccounts || []).find(a => a.code === rfReplForm.sourceAccount)?.name || 'Cash on Hand'}</span>
-              </div>
-            </div>
-            <div className="px-5 py-4 border-t border-white/8 shrink-0 flex gap-3">
-              <button onClick={() => setRfReplModal(false)} className="flex-1 bg-white/5 text-white/60 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
-              <button onClick={submitRfRepl} disabled={rfReplSubmitting}
-                className="flex-1 bg-brand text-white rounded-xl py-3 font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">
-                {rfReplSubmitting ? 'Replenishing…' : 'Replenish Fund'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <RevolvingFundReplenishModal />
 
       {/* ===== EXPENSE ENTRY MODAL ===== */}
-      {expenseModal && (
-        <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in" onClick={e => { if (e.target === e.currentTarget) setExpenseModal(false); }} role="dialog" aria-modal="true" aria-label="Add expense">
-          <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden animate-scale-in">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 shrink-0">
-              <div>
-                <h2 className="text-white font-black text-lg">Add Expense</h2>
-                <p className="text-white/30 text-xs font-bold uppercase tracking-widest mt-0.5">Operating cost entry</p>
-              </div>
-              <button onClick={() => setExpenseModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
-            </div>
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 custom-scrollbar">
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Amount (₱) *</label>
-                <input type="number" min="0" step="0.01" value={expenseForm.amount} onChange={e => setExpenseForm({...expenseForm, amount: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white text-xl font-black tabular-nums outline-none focus:border-brand/60" />
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Category *</label>
-                <select value={expenseForm.categoryCode} onChange={e => setExpenseForm({...expenseForm, categoryCode: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white font-bold outline-none focus:border-brand/60">
-                  <option value="">Select category…</option>
-                  {expenseCategories.map(c => (
-                    <option key={c.code} value={c.code}>{c.code} - {c.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Paid From *</label>
-                <select value={expenseForm.paymentMethod} onChange={e => setExpenseForm({...expenseForm, paymentMethod: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white font-bold outline-none focus:border-brand/60">
-                  <option>Cash on Hand</option>
-                  <option>Bank Transfer</option>
-                  <option>GCash</option>
-                  <option>Maya</option>
-                  <option>Maribank</option>
-                  <option>On Account</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Description *</label>
-                <input type="text" placeholder="e.g. June electricity bill" value={expenseForm.description} onChange={e => setExpenseForm({...expenseForm, description: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold placeholder-white/25 outline-none focus:border-brand/60" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Vendor (optional)</label>
-                  <input type="text" placeholder="Meralco" value={expenseForm.vendor} onChange={e => setExpenseForm({...expenseForm, vendor: e.target.value})}
-                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold placeholder-white/25 outline-none focus:border-brand/60" />
-                </div>
-                <div>
-                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Date</label>
-                  <input type="date" value={expenseForm.date} onChange={e => setExpenseForm({...expenseForm, date: e.target.value})}
-                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold outline-none focus:border-brand/60" />
-                </div>
-              </div>
-              <p className="text-[10px] text-white/30 italic">A balanced journal entry will be created automatically: <span className="text-white/50">DR Expense / CR {expenseForm.paymentMethod}</span></p>
-            </div>
-            <div className="px-5 pb-5 pt-3 border-t border-white/8 shrink-0">
-              <button onClick={submitExpense} disabled={expenseSubmitting}
-                className="w-full py-4 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active-press transition shadow-elev-2 disabled:opacity-50 min-h-[56px] flex items-center justify-center gap-2">
-                <Check size={18}/> {expenseSubmitting ? 'Saving…' : 'Record Expense'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ===== A/R SETTLEMENT MODAL ===== */}
-      {settleModal && (
-        <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in" onClick={e => { if (e.target === e.currentTarget) setSettleModal(null); }} role="dialog" aria-modal="true" aria-label="Settle A/R">
-          <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col animate-scale-in">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
-              <div>
-                <h2 className="text-white font-black text-lg">Settle A/R</h2>
-                <p className="text-white/40 text-xs mt-0.5">{settleModal.order.orderNumber} · {settleModal.order.paymentMethod}</p>
-              </div>
-              <button onClick={() => setSettleModal(null)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
-            </div>
-            <div className="px-5 py-4 space-y-3">
-              <div className="bg-white/5 rounded-xl p-3 border border-white/8">
-                <p className="text-white/40 text-[10px] font-bold uppercase">Outstanding</p>
-                <p className="text-3xl text-brand font-black tabular-nums">₱{settleModal.order.total.toFixed(2)}</p>
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Amount Received *</label>
-                <input type="number" min="0" step="0.01" value={settleForm.amount} onChange={e => setSettleForm({...settleForm, amount: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white text-xl font-black tabular-nums outline-none focus:border-brand/60" />
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Deposited To *</label>
-                <select value={settleForm.paymentMethod} onChange={e => setSettleForm({...settleForm, paymentMethod: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-white font-bold outline-none focus:border-brand/60">
-                  <option>Cash on Hand</option>
-                  <option>Bank Transfer</option>
-                  <option>GCash</option>
-                  <option>Maya</option>
-                  <option>Maribank</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Note (optional)</label>
-                <input type="text" placeholder="Grab payout batch #..." value={settleForm.note} onChange={e => setSettleForm({...settleForm, note: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold placeholder-white/25 outline-none focus:border-brand/60" />
-              </div>
-            </div>
-            <div className="px-5 pb-5 pt-3 border-t border-white/8">
-              <button onClick={submitArSettlement} disabled={settleSubmitting}
-                className="w-full py-4 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active-press transition shadow-elev-2 disabled:opacity-50 min-h-[56px] flex items-center justify-center gap-2">
-                <Check size={18}/> {settleSubmitting ? 'Settling…' : 'Confirm Settlement'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SettleArModal />
 
       {/* --- PRICING & DISCOUNTS TAB --- */}
       {activeTab === 'pricing' && <Suspense fallback={<TabFallback />}><PricingTab ctx={ctx} /></Suspense>}
@@ -5595,629 +5513,42 @@ const updateStatus = async (orderId, newStatus) => {
 {/* --- PROCUREMENT (PURCHASE ORDERS) --- */}
       {activeTab === 'procurement' && <Suspense fallback={<TabFallback />}><ProcurementTab ctx={ctx} /></Suspense>}
 
+      {/* --- CLIENTS TAB --- */}
+      {activeTab === 'clients' && <Suspense fallback={<TabFallback />}><ClientsTab /></Suspense>}
+
 {/* --- SETTINGS --- */}
       {activeTab === 'settings' && <Suspense fallback={<TabFallback />}><SettingsTab ctx={ctx} /></Suspense>}
 
       {/* --- STOCK MOVEMENT HISTORY MODAL --- */}
-      {historyModalOpen && (() => {
-        const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
-        const pagedHistory = stockHistory.slice((historyPage - 1) * HIST_PAGE_SIZE, historyPage * HIST_PAGE_SIZE);
-        // For log mode: convert base-unit quantities to pcs using packBase from item name
-        const hPack = BUSINESS_TYPE === 'log' && historyItem ? packInfo(historyItem) : null;
-        const hBase = hPack?.packBase || 1;
-        const fmtQty = (n) => BUSINESS_TYPE === 'log' ? +(n / hBase).toFixed(4) : n;
-        const fmtCost = (c) => BUSINESS_TYPE === 'log' ? (c || 0) * hBase : (c || 0);
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
-            <div className="bg-surface p-6 rounded-xl border border-gray-700 shadow-2xl flex flex-col max-w-2xl w-full max-h-[85vh]">
-              <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-3 flex-shrink-0">
-                <div>
-                  <h2 className="text-xl font-bold text-white">Stock Card: <span className="text-accent">{historyItemName}</span></h2>
-                  {stockHistory.length > 0 && <p className="text-[10px] text-gray-500 mt-0.5">{stockHistory.length} entries total{BUSINESS_TYPE === 'log' ? ' · qty in pcs' : ''}</p>}
-                </div>
-                <button onClick={() => setHistoryModalOpen(false)} className="text-gray-400 hover:text-white font-bold text-xl">✕</button>
-              </div>
-
-              <div className="overflow-y-auto custom-scrollbar flex-1">
-                <table className="w-full text-left text-sm">
-                  <thead className="sticky top-0 bg-surface">
-                    <tr className="text-gray-500 border-b border-gray-800 text-xs uppercase tracking-wider">
-                      <th className="pb-2">Date</th>
-                      <th className="pb-2">Type</th>
-                      <th className="pb-2 text-right">In/Out ({BUSINESS_TYPE === 'log' ? 'pcs' : 'units'})</th>
-                      <th className="pb-2 text-right">Cost/Pack</th>
-                      <th className="pb-2 text-right">Balance ({BUSINESS_TYPE === 'log' ? 'pcs' : 'units'})</th>
-                      <th className="pb-2 pl-4">Remarks / Ref</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stockHistory.length === 0 ? (
-                      <tr><td colSpan="6" className="py-4 text-center text-gray-500">No movement history recorded yet.</td></tr>
-                    ) : pagedHistory.map((log, idx) => {
-                      const dispChange = fmtQty(log.qtyChange);
-                      const dispBalance = fmtQty(log.balanceAfter);
-                      const dispCost = fmtCost(log.unitCost);
-                      return (
-                      <tr key={idx} className="border-b border-gray-800/50 hover:bg-page-bg/30">
-                        <td className="py-2 text-gray-400 text-xs">{new Date(log.date).toLocaleString()}</td>
-                        <td className="py-2 font-bold text-gray-300">{log.type}</td>
-                        <td className={`py-2 text-right font-mono font-bold ${dispChange < 0 ? 'text-red-400' : 'text-green-400'}`}>
-                          {dispChange > 0 ? `+${dispChange}` : dispChange}
-                        </td>
-                        <td className="py-2 text-right text-gray-400 font-mono text-xs">₱{dispCost.toFixed(2)}</td>
-                        <td className="py-2 text-right text-accent font-bold font-mono">{dispBalance}</td>
-                        <td className="py-2 pl-4 text-gray-500 text-xs">{log.remarks || log.reference}</td>
-                      </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              {totalHistPages > 1 && (
-                <div className="flex justify-between items-center border-t border-gray-800 pt-3 mt-3 flex-shrink-0">
-                  <button
-                    onClick={() => setHistoryPage(p => Math.max(p - 1, 1))}
-                    disabled={historyPage === 1}
-                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${historyPage === 1 ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface-2 border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
-                  >
-                    <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
-                  </button>
-                  <span className="text-gray-400 text-xs font-bold tracking-widest">
-                    PAGE <span className="text-accent text-sm">{historyPage}</span> OF {totalHistPages}
-                  </span>
-                  <button
-                    onClick={() => setHistoryPage(p => Math.min(p + 1, totalHistPages))}
-                    disabled={historyPage === totalHistPages}
-                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${historyPage === totalHistPages ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface-2 border border-gray-700 text-white hover:border-accent hover:text-accent'}`}
-                  >
-                    <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })()}
+      <StockHistoryModal />
 
       {/* ============================================================
           WASTE / SPOILAGE LOGGING MODAL
           ============================================================ */}
       {/* ===== BULK INVENTORY IMPORT MODAL ===== */}
-      {importModal && (
-        <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in" onClick={e => { if (e.target === e.currentTarget) setImportModal(false); }} role="dialog" aria-modal="true" aria-label="Inventory import preview">
-          <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-4xl shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden animate-scale-in">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 shrink-0">
-              <div>
-                <h2 className="text-white font-black text-lg">Bulk Import - Stock Take</h2>
-                <p className="text-white/40 text-xs font-bold uppercase tracking-widest mt-0.5">Replaces current quantities · audited via journal entries</p>
-              </div>
-              <button onClick={() => setImportModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
-            </div>
-
-            {/* Summary chips */}
-            {(() => {
-              const valid = importRows.filter(r => !r._error && !r._isCategory);
-              const newCount = valid.filter(r => r._newItem).length;
-              const batchCount = valid.filter(r => !r._newItem && r._newBatch).length;
-              const upCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff > 0).length;
-              const downCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff < 0).length;
-              const sameCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff === 0).length;
-              const errCount = importRows.filter(r => r._error).length;
-              return (
-                <div className="px-5 py-3 flex flex-wrap gap-2 border-b border-white/8 shrink-0">
-                  <span className="text-[10px] font-black uppercase tracking-widest bg-blue-500/20 text-blue-300 px-2.5 py-1.5 rounded">NEW · {newCount}</span>
-                  {batchCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-purple-500/20 text-purple-300 px-2.5 py-1.5 rounded">NEW BATCH · {batchCount}</span>}
-                  <span className="text-[10px] font-black uppercase tracking-widest bg-green-500/20 text-green-300 px-2.5 py-1.5 rounded">↑ INCREASE · {upCount}</span>
-                  <span className="text-[10px] font-black uppercase tracking-widest bg-red-500/20 text-red-300 px-2.5 py-1.5 rounded">↓ DECREASE · {downCount}</span>
-                  <span className="text-[10px] font-black uppercase tracking-widest bg-white/5 text-white/40 px-2.5 py-1.5 rounded">UNCHANGED · {sameCount}</span>
-                  {errCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-red-500/40 text-red-200 px-2.5 py-1.5 rounded">ERRORS · {errCount}</span>}
-                </div>
-              );
-            })()}
-
-            <div className="flex-1 overflow-y-auto custom-scrollbar">
-              <table className="w-full text-xs">
-                <thead className="bg-white/5 sticky top-0">
-                  <tr className="text-white/40 text-[10px] uppercase tracking-widest">
-                    <th className="text-left px-4 py-3">Item</th>
-                    <th className="text-left px-2 py-3">Status</th>
-                    <th className="text-right px-2 py-3">Current</th>
-                    <th className="text-right px-2 py-3">New</th>
-                    <th className="text-right px-2 py-3">Δ Diff</th>
-                    <th className="text-right px-2 py-3">Unit Cost</th>
-                    <th className="text-right px-4 py-3">Value Δ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {importRows.map((r, i) => {
-                    if (r._isCategory) return (
-                      <tr key={i} className="bg-white/5">
-                        <td colSpan={7} className="px-4 py-2 text-white/50 font-black text-[10px] uppercase tracking-[0.2em]">{r.category}</td>
-                      </tr>
-                    );
-                    const isErr = !!r._error;
-                    const isNew = r._newItem;
-                    const isBatch = !isNew && !!r._newBatch;
-                    const diff = Number(r._diff || 0);
-                    const valueDiff = (isNew || isBatch ? r.qty : diff) * (r.unitCost === '' ? (r._existing?.unitCost ? r._existing.unitCost * (r._existing.unitMultiplier || 1) : 0) : Number(r.unitCost || 0));
-                    return (
-                      <tr key={i} className={`border-b border-white/5 ${isErr ? 'bg-red-500/10' : isBatch ? 'bg-purple-500/5' : ''}`}>
-                        <td className="px-4 py-2.5 text-white font-bold">
-                          {r.itemCode && <span className="text-white/30 font-mono text-[10px] mr-1.5">{r.itemCode}</span>}
-                          {r.itemName || <span className="text-red-300">(missing)</span>}
-                          {r._needsSize && (
-                            <span title="No unit/size found in the name or a Unit column - imported as pcs. Edit the item afterward to set its real size." className="ml-1.5 text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1.5 py-0.5 rounded uppercase align-middle">SET SIZE</span>
-                          )}
-                          {isBatch && r.expiryDate && <span className="ml-1.5 text-purple-300/60 text-[10px]">exp {r.expiryDate}</span>}
-                        </td>
-                        <td className="px-2 py-2.5">
-                          {isErr && <span className="text-[10px] font-black bg-red-500/30 text-red-200 px-1.5 py-0.5 rounded uppercase">{r._error}</span>}
-                          {!isErr && isNew && <span className="text-[10px] font-black bg-blue-500/30 text-blue-200 px-1.5 py-0.5 rounded uppercase">NEW</span>}
-                          {!isErr && isBatch && <span className="text-[10px] font-black bg-purple-500/30 text-purple-200 px-1.5 py-0.5 rounded uppercase">NEW BATCH</span>}
-                          {!isErr && !isNew && !isBatch && diff > 0 && <span className="text-[10px] font-black bg-green-500/30 text-green-200 px-1.5 py-0.5 rounded uppercase">↑ INC</span>}
-                          {!isErr && !isNew && !isBatch && diff < 0 && <span className="text-[10px] font-black bg-red-500/30 text-red-200 px-1.5 py-0.5 rounded uppercase">↓ DEC</span>}
-                          {!isErr && !isNew && !isBatch && diff === 0 && <span className="text-[10px] font-black bg-white/10 text-white/40 px-1.5 py-0.5 rounded uppercase">SAME</span>}
-                        </td>
-                        <td className="px-2 py-2.5 text-right text-white/60 tabular-nums">{isNew || isErr ? '-' : `${r._oldDisplay.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r._oldDisplay.unit}`}</td>
-                        <td className="px-2 py-2.5 text-right text-white font-bold tabular-nums">{isErr ? '-' : `${Number(r.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`}</td>
-                        <td className={`px-2 py-2.5 text-right tabular-nums font-bold ${diff > 0 ? 'text-green-400' : diff < 0 ? 'text-red-400' : 'text-white/40'}`}>
-                          {isErr || isNew ? '-' : (diff > 0 ? '+' : '') + diff.toLocaleString(undefined, { maximumFractionDigits: 3 })}
-                        </td>
-                        <td className="px-2 py-2.5 text-right text-white/70 tabular-nums">{isErr || r.unitCost === '' ? '-' : peso(r.unitCost)}</td>
-                        <td className={`px-4 py-2.5 text-right tabular-nums font-bold ${valueDiff > 0 ? 'text-green-400' : valueDiff < 0 ? 'text-red-400' : 'text-white/40'}`}>{isErr ? '-' : peso(Math.abs(valueDiff)) + (valueDiff < 0 ? ' loss' : valueDiff > 0 ? ' gain' : '')}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Progress bar */}
-            {importProgress >= 0 && (
-              <div className="px-5 pt-3 shrink-0">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-white/50">
-                    {importProgress < 100 ? 'Processing…' : 'Done!'}
-                  </span>
-                  <span className="text-[10px] font-mono text-white/50">{importProgress}%</span>
-                </div>
-                <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-150 ${importProgress === 100 ? 'bg-green-400' : 'bg-brand'}`}
-                    style={{ width: `${importProgress}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className="px-5 py-4 border-t border-white/8 flex items-center gap-3 shrink-0">
-              <button onClick={() => setImportModal(false)} disabled={importSubmitting} className="flex-1 sm:flex-initial px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white font-bold text-xs uppercase tracking-wider transition min-h-[44px] disabled:opacity-40 disabled:pointer-events-none">
-                Cancel
-              </button>
-              <button onClick={async () => {
-                const { jsPDF, autoTable } = await loadPdfLibs();
-                const doc = new jsPDF('landscape');
-                doc.setFontSize(16); doc.text(`${BIZ_NAME} - Bulk Import Preview`, 14, 14);
-                doc.setFontSize(9); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 21);
-                const body = importRows.map(r => {
-                  const isErr = !!r._error;
-                  const isNew = r._newItem;
-                  const isBatch = !isNew && !!r._newBatch;
-                  const diff = Number(r._diff || 0);
-                  const status = isErr ? r._error : isNew ? 'NEW' : isBatch ? 'NEW BATCH' : diff > 0 ? '↑ INC' : diff < 0 ? '↓ DEC' : 'SAME';
-                  const current = isNew || isErr ? '-' : `${r._oldDisplay.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r._oldDisplay.unit}`;
-                  const next = isErr ? '-' : `${Number(r.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`;
-                  const delta = isErr || isNew ? '-' : (diff > 0 ? '+' : '') + diff.toLocaleString(undefined, { maximumFractionDigits: 3 });
-                  const cost = isErr || r.unitCost === '' ? '-' : `P${Number(r.unitCost).toFixed(2)}`;
-                  return [r.itemCode || '-', r.itemName || '(missing)', status, current, next, delta, cost];
-                });
-                autoTable(doc, {
-                  startY: 26,
-                  head: [['Code', 'Item Name', 'Status', 'Current', 'New Qty', 'Δ Diff', 'Unit Cost']],
-                  body,
-                  theme: 'grid',
-                  headStyles: { fillColor: [40, 40, 40] },
-                  styles: { fontSize: 8 },
-                  columnStyles: { 0: { cellWidth: 22 }, 2: { halign: 'center' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
-                });
-                doc.save(`import-preview-${new Date().toISOString().slice(0,10)}.pdf`);
-              }} className="px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white font-bold text-xs uppercase tracking-wider transition min-h-[44px]">
-                Export PDF
-              </button>
-              <button onClick={submitImport} disabled={importSubmitting || importRows.every(r => r._error)}
-                className="flex-1 px-5 py-3 rounded-xl bg-brand hover:bg-brand-dark text-white font-black text-sm uppercase tracking-widest transition shadow-elev-2 disabled:opacity-50 min-h-[44px] flex items-center justify-center gap-2">
-                <Check size={16}/> {importSubmitting ? 'Importing…' : 'Confirm Import'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ImportModal />
 
       {/* ===== EDIT INVENTORY ITEM MODAL ===== */}
-      {editInvModal && (
-        <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in" onClick={e => { if (e.target === e.currentTarget) setEditInvModal(null); }} role="dialog" aria-modal="true" aria-label="Edit inventory item">
-          <div className="bg-[#111] border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden animate-scale-in">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 shrink-0">
-              <div>
-                <h2 className="text-white font-black text-lg">Edit Inventory Item</h2>
-                <p className="text-white/30 text-xs font-bold uppercase tracking-widest mt-0.5">{editInvModal.item.itemCode}</p>
-              </div>
-              <button onClick={() => setEditInvModal(null)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
-            </div>
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 custom-scrollbar">
-              <div className="bg-white/5 rounded-xl p-3 border border-white/8">
-                <p className="text-white/40 text-[10px] font-bold uppercase">Current Stock</p>
-                <p className="text-2xl text-brand font-black tabular-nums">{BUSINESS_TYPE === 'log' ? itemDisplay(editInvModal.item).packQty.toLocaleString(undefined, { maximumFractionDigits: 3 }) : itemDisplay(editInvModal.item).qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} <span className="text-sm text-white/40 font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : itemDisplay(editInvModal.item).unit}</span></p>
-                <p className="text-[10px] text-white/30 mt-1 italic">To change quantity, use Restock or Waste - not this form.</p>
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Item Name *</label>
-                <input type="text" value={editInvForm.itemName} onChange={e => setEditInvForm({...editInvForm, itemName: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold outline-none focus:border-brand/60 transition" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Display Unit *</label>
-                  <select value={editInvForm.displayUnit} onChange={e => setEditInvForm({...editInvForm, displayUnit: e.target.value, unit: resolveUnitFE(e.target.value).base })}
-                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold outline-none focus:border-brand/60">
-                    <option value="">- Pick -</option>
-                    <option value="L">L (Liters)</option>
-                    <option value="kg">kg (Kilograms)</option>
-                    <option value="pcs">pcs (Pieces)</option>
-                  </select>
-                  <p className="text-[9px] text-white/30 mt-1">Recipes still use precise base units internally.</p>
-                </div>
-                <div>
-                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Unit Cost (₱/{BUSINESS_TYPE === 'log' ? (packInfo({ itemName: editInvForm.itemName, unit: editInvForm.unit, displayUnit: editInvForm.displayUnit, packSize: editInvForm.packSize === '' ? null : parseFloat(editInvForm.packSize) }).label || 'pack') : (editInvForm.displayUnit || 'unit')})</label>
-                  <input type="number" min="0" step="0.01" value={editInvForm.unitCost} onChange={e => setEditInvForm({...editInvForm, unitCost: e.target.value})}
-                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold tabular-nums outline-none focus:border-brand/60" />
-                  <p className="text-[9px] text-yellow-400/70 mt-1">⚠ Will not retro-update existing COGS.</p>
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Per-Qty Size ({editInvForm.displayUnit || editInvForm.unit || 'unit'} per pack, optional)</label>
-                <input type="number" min="0" step="any" placeholder="e.g. 1 for a 1L pack" value={editInvForm.packSize} onChange={e => setEditInvForm({...editInvForm, packSize: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold tabular-nums outline-none focus:border-brand/60" />
-                <p className="text-[10px] text-white/30 mt-1">How much one purchased pack/unit holds, e.g. "Milk 1L" → 1. Leave blank if not tracked.</p>
-              </div>
-              <div>
-                <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Low Stock Threshold ({BUSINESS_TYPE === 'log' ? 'pcs' : (editInvForm.displayUnit || editInvForm.unit || 'unit')})</label>
-                <input type="number" min="0" value={editInvForm.lowStockThreshold} onChange={e => setEditInvForm({...editInvForm, lowStockThreshold: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold tabular-nums outline-none focus:border-brand/60" />
-                <p className="text-[10px] text-white/30 mt-1">Alert when stock drops to or below. 0 = disable.</p>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Expiry Date</label>
-                  <input type="date" value={editInvForm.expiryDate} onChange={e => setEditInvForm({...editInvForm, expiryDate: e.target.value})}
-                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold outline-none focus:border-brand/60" />
-                  {editInvForm.expiryDate && (
-                    <button type="button" onClick={() => setEditInvForm({...editInvForm, expiryDate: ''})} className="text-[10px] text-red-400 hover:text-red-300 mt-1 font-bold uppercase">Clear expiry</button>
-                  )}
-                </div>
-                <div>
-                  <label className="text-[10px] text-white/40 font-bold uppercase block mb-1">Warn (days before)</label>
-                  <input type="number" min="1" max="365" value={editInvForm.expiryWarnDays} onChange={e => setEditInvForm({...editInvForm, expiryWarnDays: e.target.value})}
-                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold tabular-nums outline-none focus:border-brand/60" />
-                </div>
-              </div>
-            </div>
-            <div className="px-5 pb-5 pt-3 border-t border-white/8 shrink-0">
-              <button onClick={submitEditInventory} disabled={editInvSubmitting}
-                className="w-full py-4 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active-press transition shadow-elev-2 disabled:opacity-50 min-h-[56px] flex items-center justify-center gap-2">
-                <Check size={18}/> {editInvSubmitting ? 'Saving…' : 'Save Changes'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <EditInventoryModal />
 
       {/* ── PARTIAL FULFILLMENT MODAL ─────────────────────────────────────── */}
-      {partialModal && (() => {
-        const items = partialModal.items || [];
-        const rem = (it) => (it.quantity || 0) - (it.fulfilledQty || 0);
-        const fNow = (it, i) => Math.max(0, Math.min(rem(it), Number(partialQtys[i] ?? rem(it))));
-        const netUnit = (it) => (it.price || 0) * (1 - (it.productDiscountPercent || 0) / 100);
-        const fTotal = items.reduce((s, it, i) => s + netUnit(it) * fNow(it, i), 0);
-        const rTotal = items.reduce((s, it, i) => s + netUnit(it) * (rem(it) - fNow(it, i)), 0);
-        return (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-md w-full p-6 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-lg font-black text-white">Partial Fulfillment</h2>
-                <p className="text-xs text-gray-400 mt-0.5">{partialModal.orderNumber} · set fulfilled quantities</p>
-              </div>
-              <button onClick={() => setPartialModal(null)} className="text-gray-500 hover:text-white text-xl font-bold">✕</button>
-            </div>
-
-            <div className="space-y-2">
-              {items.map((it, i) => {
-                const remaining = rem(it);
-                const fq = fNow(it, i);
-                const short = remaining - fq;
-                if (remaining <= 0) return (
-                  <div key={i} className="bg-page-bg border border-white/8 rounded-xl px-3 py-2 opacity-50">
-                    <p className="text-sm font-bold text-white truncate">{it.name} <span className="text-emerald-400 text-[10px]">· fully fulfilled</span></p>
-                  </div>
-                );
-                return (
-                  <div key={i} className="bg-page-bg border border-white/8 rounded-xl px-3 py-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-sm font-bold text-white truncate">{it.name}</p>
-                        <p className="text-[10px] text-white/40">Remaining: {remaining} of {it.quantity} · ₱{netUnit(it).toFixed(2)} ea{(it.productDiscountPercent||0) > 0 ? ` (${it.productDiscountPercent}% off)` : ''}</p>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button onClick={() => setPartialQtys(p => ({ ...p, [i]: Math.max(0, fq - 1) }))} className="w-7 h-7 rounded-lg bg-white/5 text-white hover:bg-white/10 font-black">−</button>
-                        <input type="number" min="0" max={remaining} value={fq}
-                          onChange={e => setPartialQtys(p => ({ ...p, [i]: e.target.value }))}
-                          className="w-12 text-center bg-surface border border-white/10 rounded-lg py-1 text-white text-sm font-bold outline-none" />
-                        <button onClick={() => setPartialQtys(p => ({ ...p, [i]: Math.min(remaining, fq + 1) }))} className="w-7 h-7 rounded-lg bg-white/5 text-white hover:bg-white/10 font-black">+</button>
-                      </div>
-                    </div>
-                    {short > 0 && <p className="text-[10px] text-amber-400 mt-1 font-bold">{short} stays on this order (fulfill later)</p>}
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="bg-page-bg border border-white/8 rounded-xl px-3 py-2 text-xs space-y-1">
-              <div className="flex justify-between text-white/70"><span>Fulfilled now</span><span className="font-mono font-bold text-white">₱{fTotal.toFixed(2)}</span></div>
-              <div className="flex justify-between text-white/70"><span>Remaining on order</span><span className="font-mono font-bold text-amber-400">₱{rTotal.toFixed(2)}</span></div>
-            </div>
-
-            <div>
-              <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1.5">Payment Method</label>
-              <select value={partialPayment} onChange={e => setPartialPayment(e.target.value)}
-                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm font-bold outline-none focus:border-brand/60">
-                <optgroup label="In-Store Payments">
-                  <option value="Cash">Cash</option>
-                  <option value="Bank Transfer">Bank Transfer</option>
-                </optgroup>
-                <optgroup label="E-Wallets">
-                  <option value="GCash">GCash</option>
-                  <option value="Maya">Maya</option>
-                  <option value="Maribank">Maribank / Seabank</option>
-                  <option value="Other E-Wallet">Other E-Wallet</option>
-                </optgroup>
-                <optgroup label="Delivery Partners">
-                  <option value="Grab Delivery">Grab Delivery</option>
-                  <option value="Lalamove">Lalamove</option>
-                  <option value="Manual Delivery">Manual / Direct</option>
-                </optgroup>
-              </select>
-            </div>
-
-            <div>
-              <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1.5">Payment</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => setPartialMode('partial')}
-                  className={`py-2.5 rounded-xl border text-xs font-bold transition ${partialMode === 'partial' ? 'bg-brand/20 border-brand/60 text-white' : 'bg-page-bg border-white/10 text-white/50'}`}>
-                  Pay partial only<br/><span className="text-[9px] font-normal opacity-70">₱{fTotal.toFixed(2)} now · rest billed later</span>
-                </button>
-                <button type="button" onClick={() => setPartialMode('full')}
-                  className={`py-2.5 rounded-xl border text-xs font-bold transition ${partialMode === 'full' ? 'bg-brand/20 border-brand/60 text-white' : 'bg-page-bg border-white/10 text-white/50'}`}>
-                  Pay full now<br/><span className="text-[9px] font-normal opacity-70">remaining prepaid (deposit)</span>
-                </button>
-              </div>
-            </div>
-
-            <button onClick={submitPartialFulfill} disabled={partialBusy}
-              className="w-full py-3 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand-dark transition disabled:opacity-50">
-              {partialBusy ? 'Processing…' : 'Fulfill & Set Aside Remaining'}
-            </button>
-          </div>
-        </div>
-        );
-      })()}
+      <PartialFulfillModal />
 
       {/* ── REFUND MODAL ──────────────────────────────────────────────────── */}
-      {refundModal && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-4">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-lg font-black text-white">Issue Refund</h2>
-                <p className="text-xs text-gray-400 mt-0.5">{refundModal.orderNumber} · ₱{(refundModal.total||0).toFixed(2)}</p>
-              </div>
-              <button onClick={() => setRefundModal(null)} className="text-gray-500 hover:text-white text-xl font-bold">✕</button>
-            </div>
-            <div>
-              <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1">Refund Amount (₱)</label>
-              <input type="number" min="0.01" max={refundModal.total} step="0.01"
-                value={refundForm.refundAmount || refundModal.total}
-                onChange={e => setRefundForm(p=>({...p,refundAmount:e.target.value}))}
-                className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-white font-black tabular-nums outline-none focus:border-brand/60" />
-              <p className="text-[10px] text-white/30 mt-1">Max: ₱{(refundModal.total||0).toFixed(2)}</p>
-            </div>
-            <div>
-              <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1">Reason *</label>
-              <textarea rows={2} value={refundForm.reason} onChange={e => setRefundForm(p=>({...p,reason:e.target.value}))}
-                placeholder="e.g. Wrong order, product defect, customer complaint"
-                className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-brand/60 resize-none placeholder-white/20" />
-            </div>
-            {(() => {
-              const amt = parseFloat(refundForm.refundAmount) || refundModal.total;
-              const isFull = Math.abs(amt - (refundModal.total || 0)) <= 0.01;
-              return (
-                <div>
-                  <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1">Inventory & COGS</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { v: 'Restock', label: 'Restock', hint: 'Goods returned' },
-                      { v: 'Spoilage', label: 'Spoilage', hint: 'Goods wasted' },
-                      { v: 'None', label: 'No change', hint: 'Cash only' },
-                    ].map(opt => (
-                      <button key={opt.v} type="button" disabled={!isFull}
-                        onClick={() => setRefundForm(p => ({ ...p, inventoryAction: opt.v }))}
-                        className={`flex flex-col items-center py-2 rounded-xl border text-[11px] font-bold transition disabled:opacity-40
-                          ${refundForm.inventoryAction === opt.v ? 'bg-brand/20 border-brand/60 text-white' : 'bg-page-bg border-gray-700 text-gray-400 hover:border-brand/40'}`}>
-                        {opt.label}
-                        <span className="text-[9px] font-normal text-white/30">{opt.hint}</span>
-                      </button>
-                    ))}
-                  </div>
-                  {!isFull && <p className="text-[10px] text-amber-400/70 mt-1">Partial refunds adjust cash & revenue only - inventory/COGS unchanged.</p>}
-                </div>
-              );
-            })()}
-            <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-2 text-xs text-red-300">
-              ⚠ Returns ₱{(parseFloat(refundForm.refundAmount)||refundModal.total).toFixed(2)} to customer. Creates reversal journal entry. Cannot be undone.
-            </div>
-            <button onClick={handleRefund} disabled={refundSubmitting}
-              className="w-full py-3 bg-red-600 text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-red-500 transition disabled:opacity-50">
-              {refundSubmitting ? 'Processing…' : 'Confirm Refund'}
-            </button>
-          </div>
-        </div>
-      )}
+      <RefundModal />
 
       {/* ── CLOCK OUT / BREAK CHOICE MODAL ───────────────────────────────── */}
-      {clockModalOpen && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-4">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-lg font-black text-white uppercase tracking-wider">End Shift or Break?</h2>
-                <p className="text-xs text-gray-400 mt-0.5">Break used: {clockStatus.breakUsedMinutes || 0}m of 60m</p>
-              </div>
-              <button onClick={() => setClockModalOpen(false)} className="text-gray-500 hover:text-white text-xl font-bold">✕</button>
-            </div>
-
-            {/* Take a break - disabled once the 1-hour break is used up */}
-            {(clockStatus.breakRemainingMinutes ?? 60) > 0 ? (
-              <button onClick={startBreak}
-                className="w-full py-3 bg-amber-500/15 border border-amber-500/40 text-amber-300 font-black rounded-xl uppercase tracking-wider text-sm hover:bg-amber-500/25 transition flex items-center justify-center gap-2">
-                <Coffee size={16} /> Take a Break ({clockStatus.breakRemainingMinutes ?? 60}m left)
-              </button>
-            ) : (
-              <div className="w-full py-3 bg-white/5 border border-white/10 text-white/30 font-bold rounded-xl text-xs text-center">
-                Break used up - 1-hour break already taken
-              </div>
-            )}
-
-            <button onClick={handleClockOut}
-              className="w-full py-3 bg-red-600 text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-red-500 transition flex items-center justify-center gap-2">
-              <LogOut size={16} /> End Shift (Clock Out)
-            </button>
-            <button onClick={() => setClockModalOpen(false)}
-              className="w-full py-2 bg-surface-2 border border-white/10 text-white/50 font-bold rounded-xl text-xs uppercase hover:text-white transition">
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <ClockModal />
 
       {/* ── CHANGE PASSWORD MODAL ─────────────────────────────────────────── */}
-      {changePwModal && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-lg font-black text-white uppercase tracking-wider">Change Password</h2>
-              <button onClick={() => { setChangePwModal(false); setChangePwError(''); setChangePwForm({ currentPassword: '', newPassword: '', confirmPassword: '' }); }}
-                className="text-gray-500 hover:text-white text-xl font-bold">✕</button>
-            </div>
-            {changePwError && (
-              <div className="bg-red-900/30 border border-red-500/40 rounded-xl px-4 py-3 text-xs text-red-300 font-bold">{changePwError}</div>
-            )}
-            {[
-              ['Current Password', 'currentPassword', 'Your existing password'],
-              ['New Password', 'newPassword', 'Minimum 6 characters'],
-              ['Confirm New Password', 'confirmPassword', 'Repeat the new password'],
-            ].map(([label, field, hint]) => (
-              <div key={field}>
-                <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1">{label}</label>
-                <input type="password" value={changePwForm[field]}
-                  onChange={e => setChangePwForm(p => ({ ...p, [field]: e.target.value }))}
-                  placeholder={hint}
-                  className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-white outline-none focus:border-brand/60 placeholder-white/20 text-sm"
-                />
-              </div>
-            ))}
-            <button onClick={handleChangePassword} disabled={changePwLoading}
-              className="w-full py-3 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 transition disabled:opacity-50">
-              {changePwLoading ? 'Saving…' : 'Update Password'}
-            </button>
-          </div>
-        </div>
-      )}
+      <ChangePasswordModal />
 
-      {spoilageModal && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-4">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-lg font-black text-white uppercase tracking-wider">Log Waste / Spoilage</h2>
-                <p className="text-orange-400 text-xs font-bold mt-0.5">{spoilageModal.item.itemName}</p>
-              </div>
-              <button onClick={() => setSpoilageModal(null)} className="text-gray-500 hover:text-white text-xl font-bold">✕</button>
-            </div>
-            <div className="bg-surface-2 rounded-xl p-3 text-sm flex justify-between">
-              <span className="text-gray-400">Current Stock</span>
-              <span className="font-black text-white">{BUSINESS_TYPE === 'log' ? itemDisplay(spoilageModal.item).packQty.toLocaleString(undefined, { maximumFractionDigits: 3 }) : spoilageModal.item.stockQty} {BUSINESS_TYPE === 'log' ? 'pcs' : spoilageModal.item.unit}</span>
-            </div>
-            <div>
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Quantity to Discard ({BUSINESS_TYPE === 'log' ? 'pcs' : spoilageModal.item.unit})</label>
-              <input type="number" min="0.001" step="any" placeholder="0.00" value={spoilageForm.qty}
-                onChange={e => setSpoilageForm(f => ({ ...f, qty: e.target.value }))}
-                className="w-full bg-surface-2 border border-orange-500/40 focus:border-orange-400 text-white py-2.5 px-3 rounded-xl outline-none font-black text-lg text-center"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Reason *</label>
-              <select value={spoilageForm.reason} onChange={e => setSpoilageForm(f => ({ ...f, reason: e.target.value }))}
-                className="w-full bg-surface-2 border border-gray-600 focus:border-orange-400 text-white py-2.5 px-3 rounded-xl outline-none text-sm font-bold"
-              >
-                <option value="">- Select Reason -</option>
-                <option value="Spoilage">Spoilage / Expired</option>
-                <option value="Damage">Damage / Breakage</option>
-                <option value="Theft">Theft / Pilferage</option>
-                <option value="Encoding Error">Encoding Error</option>
-                <option value="Supplier Discrepancy">Supplier Discrepancy</option>
-                <option value="Quality Rejection">Quality Rejection</option>
-                <option value="Other">Other</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Notes (optional)</label>
-              <input type="text" placeholder="Additional details..." value={spoilageForm.note}
-                onChange={e => setSpoilageForm(f => ({ ...f, note: e.target.value }))}
-                className="w-full bg-surface-2 border border-gray-700 focus:border-orange-400 text-white py-2.5 px-3 rounded-xl outline-none text-sm"
-              />
-            </div>
-            <div className="flex gap-3 mt-2">
-              <button onClick={() => setSpoilageModal(null)} className="flex-1 py-3 bg-surface-2 border border-white/10 text-white/50 font-bold rounded-xl hover:text-white transition text-sm uppercase">Cancel</button>
-              <button
-                disabled={spoilageLoading || !spoilageForm.qty || !spoilageForm.reason}
-                onClick={async () => {
-                  setSpoilageLoading(true);
-                  try {
-                    const spoilPack = BUSINESS_TYPE === 'log' ? packInfo(spoilageModal.item) : null;
-                    const spoilQtyBase = spoilPack
-                      ? parseFloat(spoilageForm.qty) * (spoilPack.packBase || 1)
-                      : parseFloat(spoilageForm.qty);
-                    const res = await apiFetch(`/api/inventory/spoilage/${spoilageModal.item._id}`, {
-                      method: 'POST',
-                      body: JSON.stringify({ qty: spoilQtyBase, reason: spoilageForm.reason, note: spoilageForm.note })
-                    });
-                    const data = await res.json();
-                    if (data.success) { setSpoilageModal(null); fetchERPData(); }
-                    else alert(data.error || 'Failed to log spoilage.');
-                  } finally { setSpoilageLoading(false); }
-                }}
-                className="flex-1 py-3 bg-orange-600 text-white font-black rounded-xl hover:bg-orange-500 transition text-sm uppercase tracking-wider disabled:opacity-50"
-              >
-                {spoilageLoading ? 'Logging…' : 'Log Waste'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SpoilageModal />
 
         </div>
       </div>
     </div>
+    </DashboardProvider>
   );
 }

@@ -7,6 +7,15 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 
+// Reports bucket by the SERVER'S LOCAL day (a shop's day is its own wall clock),
+// so "today" must be built locally. toISOString() is UTC and, between local
+// midnight and the UTC offset, names yesterday — which silently excluded orders
+// that had just been created.
+const localToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 let ctx, app;
 const T = {};
 const ids = {};
@@ -197,7 +206,7 @@ describe('sales-summary resolves the customer\'s standard CUS-A0000 code; sales-
     const done = await complete(o.body.order._id);
     expect(done.status).toBe(200);
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     const summary = await req('get', `/api/reports/sales-summary?start=${today}&end=${today}`, T.super);
     expect(summary.status).toBe(200);
     const sRow = summary.body.rows.find(r => r.orderNumber === o.body.order.orderNumber);
@@ -222,7 +231,7 @@ describe('sales-summary resolves the customer\'s standard CUS-A0000 code; sales-
   it('a genuine walk-in (no linked ClientAccount) gets the reserved CUS-1000-A0001 code', async () => {
     const o = await mkOrder({ ...line('productId'), paymentMethod: 'Cash' });
     await complete(o.body.order._id);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     const summary = await req('get', `/api/reports/sales-summary?start=${today}&end=${today}`, T.super);
     const sRow = summary.body.rows.find(r => r.orderNumber === o.body.order.orderNumber);
     expect(sRow).toBeTruthy();

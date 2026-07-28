@@ -63,7 +63,7 @@ const UserCard = memo(({ user, isSelected, onSelect, onEdit, onDelete }) => {
         onClick={() => !isProtected && onSelect(user._id)}
         className={`w-5 h-5 flex-shrink-0 rounded border flex items-center justify-center transition
           ${isProtected ? 'opacity-0 pointer-events-none' : isSelected
-            ? 'bg-brand border-brand' : 'border-white/20 hover:border-brand'}`}
+            ? 'bg-brand border-brand' : 'border-fg/60 hover:border-brand'}`}
         aria-label={isSelected ? 'Deselect' : 'Select'}
       >
         {isSelected && <Check size={11} className="text-white" strokeWidth={3} />}
@@ -74,8 +74,8 @@ const UserCard = memo(({ user, isSelected, onSelect, onEdit, onDelete }) => {
       </div>
 
       <div className="flex-1 min-w-0">
-        <p className="font-bold text-white truncate">{user.name}</p>
-        <p className="text-xs text-white/40 font-mono">{user.userCode}</p>
+        <p className="font-bold text-fg truncate">{user.name}</p>
+        <p className="text-xs text-fg/40 font-mono">{user.userCode}</p>
       </div>
 
       <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border flex-shrink-0
@@ -87,7 +87,7 @@ const UserCard = memo(({ user, isSelected, onSelect, onEdit, onDelete }) => {
         <div className="flex gap-1 flex-shrink-0">
           <button
             onClick={() => onEdit(user)}
-            className="p-2 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition"
+            className="p-2 rounded-lg text-fg/40 hover:text-fg hover:bg-white/10 transition"
             aria-label={`Edit ${user.name}`}
           >
             <Edit2 size={14} />
@@ -101,7 +101,7 @@ const UserCard = memo(({ user, isSelected, onSelect, onEdit, onDelete }) => {
           </button>
         </div>
       ) : (
-        <Lock size={13} className="text-white/20 flex-shrink-0" />
+        <Lock size={13} className="text-fg/20 flex-shrink-0" />
       )}
     </div>
   );
@@ -125,11 +125,11 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
             <Monitor size={16} className="text-brand" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-black text-white text-xs uppercase tracking-widest leading-none">Command</p>
+            <p className="font-black text-fg text-xs uppercase tracking-widest leading-none">Command</p>
             <p className="font-black text-brand text-xs uppercase tracking-widest leading-none mt-0.5">Center</p>
           </div>
           {onClose && (
-            <button onClick={onClose} className="p-1 rounded text-white/30 hover:text-white transition" aria-label="Close menu">
+            <button onClick={onClose} className="p-1 rounded text-fg/30 hover:text-fg transition" aria-label="Close menu">
               <X size={18} />
             </button>
           )}
@@ -143,7 +143,7 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
             onClick={() => { onSectionChange(id); onClose?.(); }}
             aria-current={activeSection === id ? 'page' : undefined}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
-              ${activeSection === id ? 'bg-brand/20 text-brand' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+              ${activeSection === id ? 'bg-brand/20 text-brand' : 'text-fg/50 hover:text-fg hover:bg-white/5'}`}
           >
             <Icon size={16} />
             {label}
@@ -155,7 +155,7 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
       <div className="p-3 border-t border-white/5 space-y-0.5">
         <button
           onClick={onPOS}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition font-bold text-sm"
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-fg/40 hover:text-fg hover:bg-white/5 transition font-bold text-sm"
         >
           <Monitor size={16} />
           POS Dashboard
@@ -239,7 +239,7 @@ export default function SuperAdminPanel() {
   const [clients, setClients]           = useState([]);
   const [clientsLoading, setClientsLoading] = useState(false);
   const [clientModal, setClientModal]   = useState({ open: false, mode: 'create', client: null });
-  const [clientForm, setClientForm]     = useState({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false });
+  const [clientForm, setClientForm]     = useState({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '' });
   const [clientFormLoading, setClientFormLoading] = useState(false);
   const [clientFormError, setClientFormError] = useState('');
 
@@ -318,7 +318,11 @@ export default function SuperAdminPanel() {
         auth.setToken(data.token);
         setIsAuthenticated(true);
       } else {
-        setLoginError('Invalid name or password.');
+        // Surface the server's reason (e.g. rate-limit lockout) rather than
+        // always blaming the credentials — see AdminDashboard.handleSystemLogin.
+        setLoginError(res.status === 429
+          ? (data.error || 'Too many failed attempts. Please wait and try again.')
+          : (data.error || 'Invalid name or password.'));
       }
     } catch { setLoginError('Network error. Please try again.'); }
     finally { setLoginLoading(false); }
@@ -531,13 +535,15 @@ export default function SuperAdminPanel() {
   }, [isAuthenticated, fetchClients]);
 
   const openClientCreate = () => {
-    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false });
+    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '' });
     setClientFormError('');
     setClientModal({ open: true, mode: 'create', client: null });
   };
 
   const openClientEdit = (client) => {
-    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false });
+    // null/undefined means "no limit set"; 0 is a real value (cash only), so it
+    // must render as "0" rather than collapsing to an empty field.
+    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false, creditLimit: client.creditLimit === null || client.creditLimit === undefined ? '' : String(client.creditLimit) });
     setClientFormError('');
     setClientModal({ open: true, mode: 'edit', client });
   };
@@ -558,13 +564,13 @@ export default function SuperAdminPanel() {
       if (clientModal.mode === 'create') {
         const res = await apiFetch('/api/client-accounts', {
           method: 'POST',
-          body: JSON.stringify({ username: clientForm.username.trim(), password: clientForm.password, name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod }),
+          body: JSON.stringify({ username: clientForm.username.trim(), password: clientForm.password, name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, creditLimit: clientForm.creditLimit }),
         });
         const data = await res.json();
         if (data.success) { showToast('Client account created.'); closeClientModal(); fetchClients(); }
         else setClientFormError(data.error || 'Failed to create client.');
       } else {
-        const body = { name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive };
+        const body = { name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive, creditLimit: clientForm.creditLimit };
         if (clientForm.username.trim()) body.username = clientForm.username.trim();
         if (clientForm.password) body.password = clientForm.password;
         const res = await apiFetch(`/api/client-accounts/${clientModal.client._id}`, { method: 'PATCH', body: JSON.stringify(body) });
@@ -602,7 +608,7 @@ export default function SuperAdminPanel() {
   // =========================================================================
   if (authBootstrapping) {
     return (
-      <div className="min-h-screen bg-page-bg flex items-center justify-center text-white/60 text-sm">
+      <div className="min-h-screen bg-page-bg flex items-center justify-center text-fg/60 text-sm">
         Restoring session…
       </div>
     );
@@ -616,8 +622,8 @@ export default function SuperAdminPanel() {
             <div className="w-14 h-14 rounded-2xl bg-brand/20 flex items-center justify-center mb-4">
               <Shield size={26} className="text-brand" />
             </div>
-            <h2 className="text-xl font-black text-white uppercase tracking-widest">Command Center</h2>
-            <p className="text-white/40 text-xs mt-1">Superadmin credentials required</p>
+            <h2 className="text-xl font-black text-fg uppercase tracking-widest">Command Center</h2>
+            <p className="text-fg/40 text-xs mt-1">Superadmin credentials required</p>
           </div>
 
           {loginError && (
@@ -634,7 +640,7 @@ export default function SuperAdminPanel() {
               aria-label="Admin Name"
               value={loginForm.name}
               onChange={e => setLoginForm(f => ({ ...f, name: e.target.value }))}
-              className="w-full bg-white/5 border border-white/10 focus:border-brand text-white placeholder-white/30 px-4 py-3 rounded-xl outline-none transition text-sm font-medium"
+              className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/30 px-4 py-3 rounded-xl outline-none transition text-sm font-medium"
               required
               autoFocus
             />
@@ -645,13 +651,13 @@ export default function SuperAdminPanel() {
                 aria-label="Password"
                 value={loginForm.password}
                 onChange={e => setLoginForm(f => ({ ...f, password: e.target.value }))}
-                className="w-full bg-white/5 border border-white/10 focus:border-brand text-white placeholder-white/30 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
+                className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/30 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
                 required
               />
               <button
                 type="button"
                 onClick={() => setLoginForm(f => ({ ...f, showPassword: !f.showPassword }))}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/70 transition"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/30 hover:text-fg/70 transition"
                 aria-label={loginForm.showPassword ? 'Hide password' : 'Show password'}
               >
                 {loginForm.showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -662,7 +668,7 @@ export default function SuperAdminPanel() {
           <button
             type="submit"
             disabled={loginLoading}
-            className="w-full bg-brand hover:bg-brand-dark text-white font-black py-3 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
+            className="w-full bg-brand hover:bg-brand-dark text-fg font-black py-3 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
           >
             {loginLoading ? <Loader2 size={15} className="animate-spin" /> : <Lock size={15} />}
             {loginLoading ? 'Authenticating…' : 'Authenticate'}
@@ -671,7 +677,7 @@ export default function SuperAdminPanel() {
           <button
             type="button"
             onClick={() => navigate('/admin')}
-            className="w-full text-white/30 hover:text-white/60 text-xs font-bold uppercase tracking-widest transition mt-4"
+            className="w-full text-fg/30 hover:text-fg/60 text-xs font-bold uppercase tracking-widest transition mt-4"
           >
             Return to POS
           </button>
@@ -684,7 +690,7 @@ export default function SuperAdminPanel() {
   // MAIN SHELL
   // =========================================================================
   return (
-    <div className="min-h-screen bg-page-bg flex text-white">
+    <div className="min-h-screen bg-page-bg flex text-fg">
 
       {/* Toast */}
       <div className={`fixed top-4 right-4 z-[100] transition-all duration-300
@@ -735,14 +741,14 @@ export default function SuperAdminPanel() {
         <header className="lg:hidden flex items-center gap-3 px-4 h-16 bg-sidebar-bg border-b border-white/5 flex-shrink-0">
           <button
             onClick={() => setDrawerOpen(true)}
-            className="p-2 rounded-xl text-white/50 hover:text-white hover:bg-white/10 transition"
+            className="p-2 rounded-xl text-fg/50 hover:text-fg hover:bg-white/10 transition"
             aria-label="Open navigation menu"
             aria-expanded={drawerOpen}
           >
             <Menu size={21} />
           </button>
           <div className="flex-1 min-w-0">
-            <p className="font-black text-white text-sm uppercase tracking-widest truncate">Command Center</p>
+            <p className="font-black text-fg text-sm uppercase tracking-widest truncate">Command Center</p>
             <p className="text-brand text-[10px] font-bold uppercase tracking-[0.15em] truncate">
               Management &rsaquo; {sectionLabel}
             </p>
@@ -752,10 +758,10 @@ export default function SuperAdminPanel() {
         {/* Sticky section header */}
         <div className="sticky top-0 z-20 bg-page-bg/90 backdrop-blur-md border-b border-white/5 px-6 py-4 flex items-center justify-between gap-4">
           <div>
-            <p className="text-white/30 text-[10px] font-bold uppercase tracking-[0.2em]">
+            <p className="text-fg/80 text-[10px] font-bold uppercase tracking-[0.2em]">
               Management &rsaquo; {sectionLabel}
             </p>
-            <h1 className="text-xl font-black text-white mt-0.5">{sectionLabel}</h1>
+            <h1 className="text-xl font-black text-fg mt-0.5">{sectionLabel}</h1>
           </div>
           {activeSection === 'users' && (
             <button
@@ -769,7 +775,7 @@ export default function SuperAdminPanel() {
           {activeSection === 'clients' && (
             <button
               onClick={openClientCreate}
-              className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-white font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex-shrink-0"
+              className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-fg font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex-shrink-0"
             >
               <Plus size={15} />
               New Client
@@ -786,26 +792,26 @@ export default function SuperAdminPanel() {
             {/* Search + filter */}
             <div className="flex flex-col sm:flex-row gap-3">
               <div className="relative flex-1">
-                <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30" />
+                <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-fg/30" />
                 <input
                   type="text"
                   placeholder="Search name, code, or role…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-white placeholder-white/30
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/30
                     pl-10 pr-4 py-2.5 rounded-xl outline-none transition text-sm"
                 />
               </div>
               <select
                 value={filterRole}
                 onChange={e => setFilterRole(e.target.value)}
-                className="bg-white/5 border border-white/10 focus:border-brand text-white px-4 py-2.5 rounded-xl outline-none text-sm font-medium"
+                className="bg-white/5 border border-white/10 focus:border-brand text-fg px-4 py-2.5 rounded-xl outline-none text-sm font-medium"
               >
-                <option className="bg-[#1a1a1a] text-white" value="All">All Roles</option>
-                <option className="bg-[#1a1a1a] text-white" value="superadmin">Superadmin</option>
-                <option className="bg-[#1a1a1a] text-white" value="Admin">Admin</option>
-                <option className="bg-[#1a1a1a] text-white" value="Staff">Staff</option>
-                {roles.map(r => <option className="bg-[#1a1a1a] text-white" key={r._id} value={r.name}>{r.name}</option>)}
+                <option className="bg-surface text-fg" value="All">All Roles</option>
+                <option className="bg-surface text-fg" value="superadmin">Superadmin</option>
+                <option className="bg-surface text-fg" value="Admin">Admin</option>
+                <option className="bg-surface text-fg" value="Staff">Staff</option>
+                {roles.map(r => <option className="bg-surface text-fg" key={r._id} value={r.name}>{r.name}</option>)}
               </select>
             </div>
 
@@ -814,10 +820,10 @@ export default function SuperAdminPanel() {
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleSelectAll}
-                  className="flex items-center gap-2 text-xs font-bold text-white/40 hover:text-white transition uppercase tracking-wider"
+                  className="flex items-center gap-2 text-xs font-bold text-accent hover:text-fg transition uppercase tracking-wider"
                 >
                   <div className={`w-4 h-4 rounded border flex items-center justify-center transition
-                    ${allSelected ? 'bg-brand border-brand' : 'border-white/20'}`}>
+                    ${allSelected ? 'bg-brand border-brand' : 'border-fg/60'}`}>
                     {allSelected && <Check size={10} className="text-white" strokeWidth={3} />}
                   </div>
                   {allSelected ? 'Deselect All' : 'Select All'}
@@ -835,8 +841,8 @@ export default function SuperAdminPanel() {
                 : filteredUsers.length === 0
                   ? (
                     <div className="flex flex-col items-center py-20 text-center">
-                      <Users size={40} className="text-white/10 mb-4" />
-                      <p className="text-white/40 font-bold text-sm mb-1">
+                      <Users size={40} className="text-fg/10 mb-4" />
+                      <p className="text-fg/40 font-bold text-sm mb-1">
                         {search ? 'No users match your search.' : 'No users yet.'}
                       </p>
                       {!search && (
@@ -874,8 +880,8 @@ export default function SuperAdminPanel() {
               : clients.length === 0
                 ? (
                   <div className="flex flex-col items-center py-20 text-center">
-                    <Package size={40} className="text-white/10 mb-4" />
-                    <p className="text-white/40 font-bold text-sm">No client accounts yet.</p>
+                    <Package size={40} className="text-fg/10 mb-4" />
+                    <p className="text-fg/40 font-bold text-sm">No client accounts yet.</p>
                     <button
                       onClick={openClientCreate}
                       className="mt-4 flex items-center gap-2 bg-brand/20 hover:bg-brand/30 text-brand font-bold px-4 py-2 rounded-xl transition text-sm"
@@ -890,21 +896,23 @@ export default function SuperAdminPanel() {
                       {client.name.slice(0, 2).toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-bold text-white truncate">{client.name}</p>
-                      <p className="text-xs text-white/40 font-mono">{client.clientCode} · @{client.username}</p>
+                      <p className="font-bold text-fg truncate">{client.name}</p>
+                      <p className="text-xs text-fg/40 font-mono">
+                        {client.clientCode} · {client.source === 'pos' ? 'no portal login (auto-promoted)' : `@${client.username}`}
+                      </p>
                     </div>
-                    <span className="text-[10px] font-bold text-white/50 bg-white/10 px-2 py-1 rounded-full flex-shrink-0">
+                    <span className="text-[10px] font-bold text-fg/50 bg-white/10 px-2 py-1 rounded-full flex-shrink-0">
                       {client.paymentMethod}
                     </span>
                     <button
                       onClick={() => toggleClientActive(client)}
-                      className={`flex-shrink-0 transition ${client.isActive ? 'text-emerald-400' : 'text-white/20'}`}
+                      className={`flex-shrink-0 transition ${client.isActive ? 'text-emerald-400' : 'text-fg/20'}`}
                       title={client.isActive ? 'Active - click to deactivate' : 'Inactive - click to activate'}
                     >
                       {client.isActive ? <ToggleRight size={22} /> : <ToggleLeft size={22} />}
                     </button>
                     <div className="flex gap-1 flex-shrink-0">
-                      <button onClick={() => openClientEdit(client)} className="p-2 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition" aria-label="Edit">
+                      <button onClick={() => openClientEdit(client)} className="p-2 rounded-lg text-fg/40 hover:text-fg hover:bg-white/10 transition" aria-label="Edit">
                         <Edit2 size={14} />
                       </button>
                       <button onClick={() => handleClientDelete(client)} className="p-2 rounded-lg text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition" aria-label="Delete">
@@ -925,9 +933,9 @@ export default function SuperAdminPanel() {
             {/* Role maker — name + the permissions this role grants by default */}
             <form onSubmit={handleSaveRole} className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-black text-white text-sm">{roleForm.id ? 'Edit Role' : 'New Role'}</h3>
+                <h3 className="font-black text-fg text-sm">{roleForm.id ? 'Edit Role' : 'New Role'}</h3>
                 {roleForm.id && (
-                  <button type="button" onClick={resetRoleForm} className="text-xs font-bold text-white/40 hover:text-white transition">Cancel edit</button>
+                  <button type="button" onClick={resetRoleForm} className="text-xs font-bold text-fg/40 hover:text-fg transition">Cancel edit</button>
                 )}
               </div>
               <input
@@ -935,18 +943,18 @@ export default function SuperAdminPanel() {
                 placeholder="Role name (e.g. Barista, Bookkeeper)"
                 value={roleForm.name}
                 onChange={e => setRoleForm(f => ({ ...f, name: e.target.value }))}
-                className="w-full bg-white/5 border border-white/10 focus:border-brand text-white placeholder-white/30 px-4 py-2.5 rounded-xl outline-none transition text-sm mb-4"
+                className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/30 px-4 py-2.5 rounded-xl outline-none transition text-sm mb-4"
               />
 
-              <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-2">What this role can do</p>
+              <p className="text-[10px] font-bold text-fg/80 uppercase tracking-widest mb-2">What this role can do</p>
               <div className="space-y-3 bg-black/20 border border-white/10 rounded-xl p-3 max-h-72 overflow-y-auto">
-                {groupedPerms.length === 0 && <p className="text-white/30 text-xs">Loading permissions…</p>}
+                {groupedPerms.length === 0 && <p className="text-fg/30 text-xs">Loading permissions…</p>}
                 {groupedPerms.map(([group, perms]) => (
                   <div key={group}>
-                    <p className="text-[10px] font-black uppercase tracking-wider text-white/30 mb-1">{group}</p>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-fg/80 mb-1">{group}</p>
                     <div className="grid sm:grid-cols-2 gap-x-3 gap-y-1">
                       {perms.map(p => (
-                        <label key={p.key} className="flex items-center gap-2 text-[13px] text-white/70 cursor-pointer hover:text-white transition">
+                        <label key={p.key} className="flex items-center gap-2 text-[13px] text-fg/70 cursor-pointer hover:text-fg transition">
                           <input type="checkbox" checked={roleForm.permissions.includes(p.key)} onChange={() => toggleRolePerm(p.key)} className="accent-brand shrink-0" />
                           <span className="leading-tight">{p.label}</span>
                         </label>
@@ -974,25 +982,25 @@ export default function SuperAdminPanel() {
                 <div key={r.name} className="bg-white/5 border border-white/5 px-5 py-4 rounded-xl">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <Lock size={13} className="text-white/40" />
-                      <span className="font-bold text-white text-sm">{r.name}</span>
-                      <span className="text-white/30 text-xs">{r.permissions.length} permissions</span>
+                      <Lock size={13} className="text-fg/40" />
+                      <span className="font-bold text-fg text-sm">{r.name}</span>
+                      <span className="text-fg/30 text-xs">{r.permissions.length} permissions</span>
                     </div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider bg-white/5 text-white/40 border border-white/10 px-2 py-0.5 rounded-full">Built-in</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider bg-white/5 text-fg/40 border border-white/10 px-2 py-0.5 rounded-full">Built-in</span>
                   </div>
                   <div className="flex flex-wrap gap-1.5 mt-2.5 pl-6">
                     {r.permissions.map(k => {
                       const meta = permCatalog.find(p => p.key === k);
-                      return <span key={k} className="text-[10px] font-bold bg-white/5 border border-white/10 text-white/50 px-2 py-0.5 rounded-full">{meta ? meta.label : k}</span>;
+                      return <span key={k} className="text-[10px] font-bold bg-white/5 border border-white/10 text-fg/50 px-2 py-0.5 rounded-full">{meta ? meta.label : k}</span>;
                     })}
                   </div>
                 </div>
               ))}
               {roles.length === 0 ? (
                 <div className="flex flex-col items-center py-10 text-center">
-                  <Tag size={32} className="text-white/10 mb-3" />
-                  <p className="text-white/40 font-bold text-sm">No custom roles yet.</p>
-                  <p className="text-white/20 text-xs mt-1">Create one above to extend beyond the built-in roles.</p>
+                  <Tag size={32} className="text-fg/10 mb-3" />
+                  <p className="text-fg/40 font-bold text-sm">No custom roles yet.</p>
+                  <p className="text-fg/20 text-xs mt-1">Create one above to extend beyond the built-in roles.</p>
                 </div>
               ) : roles.map(r => (
                 <div
@@ -1002,13 +1010,13 @@ export default function SuperAdminPanel() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <Tag size={13} className="text-brand" />
-                      <span className="font-bold text-white text-sm">{r.name}</span>
-                      <span className="text-white/30 text-xs">{(r.permissions?.length || 0)} permission{(r.permissions?.length === 1 ? '' : 's')}</span>
+                      <span className="font-bold text-fg text-sm">{r.name}</span>
+                      <span className="text-fg/30 text-xs">{(r.permissions?.length || 0)} permission{(r.permissions?.length === 1 ? '' : 's')}</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => editRole(r)}
-                        className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition"
+                        className="p-1.5 rounded-lg text-fg/40 hover:text-fg hover:bg-white/10 transition"
                         aria-label={`Edit ${r.name} role`}
                       >
                         <Edit2 size={14} />
@@ -1041,19 +1049,19 @@ export default function SuperAdminPanel() {
       {/* BATCH ACTION FLOATING BAR                                            */}
       {/* =================================================================== */}
       {selected.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-3
-          bg-[#1f1f1f] border border-white/15 shadow-2xl px-5 py-3 rounded-2xl animate-fade-in">
-          <span className="text-white/50 text-sm font-bold whitespace-nowrap">{selected.size} selected</span>
+        <div className="fixed bottom-6 right-4 -translate-x-1/2 z-30 flex items-center gap-3
+          bg-surface-2 border border-white/15 shadow-2xl px-5 py-3 rounded-2xl animate-fade-in">
+          <span className="text-fg/80 text-sm font-bold whitespace-nowrap">{selected.size} selected</span>
           <div className="w-px h-5 bg-white/10 flex-shrink-0" />
           <select
             value={batchRole}
             onChange={e => setBatchRole(e.target.value)}
-            className="bg-white/10 border border-white/10 text-white text-sm px-3 py-1.5 rounded-lg outline-none"
+            className="bg-white/10 border border-white/10 text-fg text-sm px-3 py-1.5 rounded-lg outline-none"
           >
-            <option className="bg-[#1a1a1a] text-white" value="">Change role…</option>
-            <option className="bg-[#1a1a1a] text-white" value="Admin">Admin</option>
-            <option className="bg-[#1a1a1a] text-white" value="Staff">Staff</option>
-            {roles.map(r => <option className="bg-[#1a1a1a] text-white" key={r._id} value={r.name}>{r.name}</option>)}
+            <option className="bg-surface text-fg" value="">Change role…</option>
+            <option className="bg-surface text-fg" value="Admin">Admin</option>
+            <option className="bg-surface text-fg" value="Staff">Staff</option>
+            {roles.map(r => <option className="bg-surface text-fg" key={r._id} value={r.name}>{r.name}</option>)}
           </select>
           <button
             onClick={handleBatchChangeRole}
@@ -1073,7 +1081,7 @@ export default function SuperAdminPanel() {
           </button>
           <button
             onClick={() => setSelected(new Set())}
-            className="p-1 text-white/30 hover:text-white transition"
+            className="p-1 text-fg/30 hover:text-fg transition"
             aria-label="Clear selection"
           >
             <X size={17} />
@@ -1089,16 +1097,16 @@ export default function SuperAdminPanel() {
           <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md animate-fade-in">
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
               <div>
-                <h2 className="font-black text-white text-lg">
+                <h2 className="font-black text-fg text-lg">
                   {modal.mode === 'create' ? 'New User' : 'Edit User'}
                 </h2>
-                <p className="text-white/40 text-xs mt-0.5">
+                <p className="text-fg/40 text-xs mt-0.5">
                   {modal.mode === 'create' ? 'Create a new staff account.' : `Editing ${modal.user?.name}`}
                 </p>
               </div>
               <button
                 onClick={closeModal}
-                className="p-2 rounded-xl text-white/30 hover:text-white hover:bg-white/10 transition"
+                className="p-2 rounded-xl text-fg/30 hover:text-fg hover:bg-white/10 transition"
                 aria-label="Close modal"
               >
                 <X size={17} />
@@ -1115,7 +1123,7 @@ export default function SuperAdminPanel() {
 
               {/* Name field */}
               <div>
-                <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest block mb-1.5">
+                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
                   Employee Name
                 </label>
                 <input
@@ -1124,7 +1132,7 @@ export default function SuperAdminPanel() {
                   onChange={e => handleFormChange('name', e.target.value)}
                   placeholder="e.g. Maria Santos"
                   autoFocus
-                  className={`w-full bg-white/5 border text-white placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm
+                  className={`w-full bg-white/5 border text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm
                     ${formErrors.name ? 'border-red-500/60' : 'border-white/10 focus:border-brand'}`}
                 />
                 {formErrors.name && (
@@ -1136,7 +1144,7 @@ export default function SuperAdminPanel() {
 
               {/* Password field */}
               <div>
-                <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest block mb-1.5">
+                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
                   {modal.mode === 'edit' ? 'New Password (leave blank to keep)' : 'Password / PIN'}
                 </label>
                 <div className="relative">
@@ -1145,13 +1153,13 @@ export default function SuperAdminPanel() {
                     value={form.password}
                     onChange={e => handleFormChange('password', e.target.value)}
                     placeholder={modal.mode === 'edit' ? '(unchanged)' : 'Min. 4 characters'}
-                    className={`w-full bg-white/5 border text-white placeholder-white/20 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest
+                    className={`w-full bg-white/5 border text-fg placeholder-white/20 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest
                       ${formErrors.password ? 'border-red-500/60' : 'border-white/10 focus:border-brand'}`}
                   />
                   <button
                     type="button"
                     onClick={() => setForm(f => ({ ...f, showPassword: !f.showPassword }))}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/70 transition"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/30 hover:text-fg/70 transition"
                     aria-label={form.showPassword ? 'Hide password' : 'Show password'}
                   >
                     {form.showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
@@ -1166,42 +1174,42 @@ export default function SuperAdminPanel() {
 
               {/* Role field */}
               <div>
-                <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest block mb-1.5">
+                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
                   Access Level
                 </label>
                 <select
                   value={form.role}
                   onChange={e => handleFormChange('role', e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-white px-4 py-3 rounded-xl outline-none transition text-sm font-medium"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-4 py-3 rounded-xl outline-none transition text-sm font-medium"
                 >
-                  <option className="bg-[#1a1a1a] text-white" value="Staff">Staff (Standard)</option>
-                  <option className="bg-[#1a1a1a] text-white" value="Admin">Admin (Manager)</option>
-                  {roles.map(r => <option className="bg-[#1a1a1a] text-white" key={r._id} value={r.name}>{r.name}</option>)}
+                  <option className="bg-surface text-fg" value="Staff">Staff (Standard)</option>
+                  <option className="bg-surface text-fg" value="Admin">Admin (Manager)</option>
+                  {roles.map(r => <option className="bg-surface text-fg" key={r._id} value={r.name}>{r.name}</option>)}
                 </select>
               </div>
 
               {/* Granular permissions — override the role defaults per user */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Permissions</label>
-                  <label className="flex items-center gap-1.5 cursor-pointer text-white/50 hover:text-white/80 text-xs font-bold transition">
+                  <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest">Permissions</label>
+                  <label className="flex items-center gap-1.5 cursor-pointer text-fg/50 hover:text-fg/80 text-xs font-bold transition">
                     <input type="checkbox" checked={form.customPerms} onChange={e => handleFormChange('customPerms', e.target.checked)} className="accent-brand" />
                     Customize
                   </label>
                 </div>
                 {!form.customPerms ? (
-                  <p className="text-white/40 text-xs bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                  <p className="text-fg/40 text-xs bg-white/5 border border-white/10 rounded-xl px-4 py-3">
                     Using the default permissions for the <span className="text-brand font-bold">{form.role}</span> access level. Tick “Customize” to set exactly what this person can do.
                   </p>
                 ) : (
                   <div className="space-y-3 bg-white/5 border border-white/10 rounded-xl p-3 max-h-60 overflow-y-auto">
-                    {groupedPerms.length === 0 && <p className="text-white/30 text-xs">Loading permissions…</p>}
+                    {groupedPerms.length === 0 && <p className="text-fg/30 text-xs">Loading permissions…</p>}
                     {groupedPerms.map(([group, perms]) => (
                       <div key={group}>
-                        <p className="text-[10px] font-black uppercase tracking-wider text-white/30 mb-1">{group}</p>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-fg/30 mb-1">{group}</p>
                         <div className="grid sm:grid-cols-2 gap-x-3 gap-y-1">
                           {perms.map(p => (
-                            <label key={p.key} className="flex items-center gap-2 text-[13px] text-white/70 cursor-pointer hover:text-white transition">
+                            <label key={p.key} className="flex items-center gap-2 text-[13px] text-fg/70 cursor-pointer hover:text-fg transition">
                               <input type="checkbox" checked={form.permissions.includes(p.key)} onChange={() => togglePerm(p.key)} className="accent-brand shrink-0" />
                               <span className="leading-tight">{p.label}</span>
                             </label>
@@ -1217,7 +1225,7 @@ export default function SuperAdminPanel() {
                 <button
                   type="button"
                   onClick={closeModal}
-                  className="flex-1 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white font-bold py-3 rounded-xl transition text-sm"
+                  className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-3 rounded-xl transition text-sm"
                 >
                   Cancel
                 </button>
@@ -1246,17 +1254,17 @@ export default function SuperAdminPanel() {
                 <Trash2 size={17} className="text-red-400" />
               </div>
               <div>
-                <h2 className="font-black text-white">Remove User?</h2>
-                <p className="text-white/40 text-xs mt-0.5">{confirmDelete.user?.name}</p>
+                <h2 className="font-black text-fg">Remove User?</h2>
+                <p className="text-fg/40 text-xs mt-0.5">{confirmDelete.user?.name}</p>
               </div>
             </div>
-            <p className="text-white/40 text-sm mb-6 pl-[52px]">
+            <p className="text-fg/40 text-sm mb-6 pl-[52px]">
               This permanently revokes their access and cannot be undone.
             </p>
             <div className="flex gap-3">
               <button
                 onClick={() => setConfirmDelete({ open: false, user: null })}
-                className="flex-1 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white font-bold py-3 rounded-xl transition text-sm"
+                className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-3 rounded-xl transition text-sm"
               >
                 Cancel
               </button>
@@ -1281,14 +1289,14 @@ export default function SuperAdminPanel() {
           <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md animate-fade-in">
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
               <div>
-                <h2 className="font-black text-white text-lg">
+                <h2 className="font-black text-fg text-lg">
                   {clientModal.mode === 'create' ? 'New Client Account' : 'Edit Client'}
                 </h2>
-                <p className="text-white/40 text-xs mt-0.5">
+                <p className="text-fg/40 text-xs mt-0.5">
                   {clientModal.mode === 'create' ? 'Pre-register a client for logistics ordering.' : `Editing ${clientModal.client?.name}`}
                 </p>
               </div>
-              <button onClick={closeClientModal} className="p-2 rounded-xl text-white/30 hover:text-white hover:bg-white/10 transition" aria-label="Close">
+              <button onClick={closeClientModal} className="p-2 rounded-xl text-fg/30 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
                 <X size={17} />
               </button>
             </div>
@@ -1302,31 +1310,31 @@ export default function SuperAdminPanel() {
               )}
 
               <div>
-                <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest block mb-1.5">Client / Company Name</label>
+                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Client / Company Name</label>
                 <input
                   type="text"
                   value={clientForm.name}
                   onChange={e => setClientForm(f => ({ ...f, name: e.target.value }))}
                   placeholder="e.g. Acme Corp"
                   autoFocus
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-white placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest block mb-1.5">Username</label>
+                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Username</label>
                 <input
                   type="text"
                   value={clientForm.username}
                   onChange={e => setClientForm(f => ({ ...f, username: e.target.value }))}
                   placeholder="e.g. acme_corp"
                   autoComplete="off"
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-white placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest block mb-1.5">
+                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
                   {clientModal.mode === 'edit' ? 'New Password (leave blank to keep)' : 'Password'}
                 </label>
                 <div className="relative">
@@ -1336,12 +1344,12 @@ export default function SuperAdminPanel() {
                     onChange={e => setClientForm(f => ({ ...f, password: e.target.value }))}
                     placeholder={clientModal.mode === 'edit' ? '(unchanged)' : 'Set a password'}
                     autoComplete="new-password"
-                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-white placeholder-white/20 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
                   />
                   <button
                     type="button"
                     onClick={() => setClientForm(f => ({ ...f, showPassword: !f.showPassword }))}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/70 transition"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/30 hover:text-fg/70 transition"
                   >
                     {clientForm.showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                   </button>
@@ -1349,26 +1357,42 @@ export default function SuperAdminPanel() {
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest block mb-1.5">Default Payment Method</label>
+                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Default Payment Method</label>
                 <select
                   value={clientForm.paymentMethod}
                   onChange={e => setClientForm(f => ({ ...f, paymentMethod: e.target.value }))}
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-white px-4 py-3 rounded-xl outline-none text-sm"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-4 py-3 rounded-xl outline-none text-sm"
                 >
-                  <option className="bg-[#1a1a1a]" value="Cash">Cash on Delivery</option>
-                  <option className="bg-[#1a1a1a]" value="E-Wallet">E-Wallet</option>
-                  <option className="bg-[#1a1a1a]" value="Bank Transfer">Bank Transfer</option>
-                  <option className="bg-[#1a1a1a]" value="Credit Card">Credit Card</option>
+                  <option className="bg-surface" value="Cash">Cash on Delivery</option>
+                  <option className="bg-surface" value="E-Wallet">E-Wallet</option>
+                  <option className="bg-surface" value="Bank Transfer">Bank Transfer</option>
+                  <option className="bg-surface" value="Credit Card">Credit Card</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Credit Limit (₱)</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={clientForm.creditLimit}
+                  onChange={e => setClientForm(f => ({ ...f, creditLimit: e.target.value }))}
+                  placeholder="Leave blank for no limit"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
+                />
+                <p className="text-[10px] text-fg/30 mt-1.5 leading-relaxed">
+                  Blank = no limit for this client. <span className="text-fg/50 font-bold">0 = cash only</span> (blocks all on-account orders).
+                  Whether limits apply at all is set in Settings &rarr; Credit Limits.
+                </p>
               </div>
 
               {clientModal.mode === 'edit' && (
                 <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-                  <span className="text-sm font-bold text-white">Account Active</span>
+                  <span className="text-sm font-bold text-fg">Account Active</span>
                   <button
                     type="button"
                     onClick={() => setClientForm(f => ({ ...f, isActive: !f.isActive }))}
-                    className={`transition ${clientForm.isActive ? 'text-emerald-400' : 'text-white/20'}`}
+                    className={`transition ${clientForm.isActive ? 'text-emerald-400' : 'text-fg/20'}`}
                   >
                     {clientForm.isActive ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}
                   </button>
@@ -1376,13 +1400,13 @@ export default function SuperAdminPanel() {
               )}
 
               <div className="flex gap-3 pt-2">
-                <button type="button" onClick={closeClientModal} className="flex-1 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white font-bold py-3 rounded-xl transition text-sm">
+                <button type="button" onClick={closeClientModal} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-3 rounded-xl transition text-sm">
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={clientFormLoading}
-                  className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="flex-1 bg-brand hover:bg-brand-dark text-fg font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {clientFormLoading && <Loader2 size={14} className="animate-spin" />}
                   {clientFormLoading ? 'Saving…' : clientModal.mode === 'create' ? 'Create Client' : 'Save Changes'}

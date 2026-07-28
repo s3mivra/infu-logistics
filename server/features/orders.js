@@ -1,6 +1,10 @@
 // orders routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { resolveCreditLimit, checkCreditAvailable } from '../lib/credit.js';
+import { title } from '../lib/normalize.js';
+import { withOptionalTransaction } from '../lib/txn.js';
+import { dayStart, dayEnd } from '../lib/reportRange.js';
 export default function registerOrders(ctx) {
   const {
     app,
@@ -174,6 +178,53 @@ export default function registerOrders(ctx) {
     verifyOrderAuth,
   } = ctx;
 
+// Repeat-walk-in auto-promotion: a POS sale with a real (non-"Guest") customerName
+// that isn't already tied to a ClientAccount. Once the same name has 3 Completed
+// orders, they're "our client" — get their own CUS-1000-Axxxx code instead of
+// sharing WALK_IN_CUSTOMER_CODE. The promoted account has no usable login (staff
+// can add one later via /api/client-accounts if the client wants portal access).
+// Fire-and-forget after the triggering request has already responded — never let
+// this delay or fail an order completion.
+async function maybePromoteWalkInClient(order) {
+  try {
+    if (order.clientAccountId || order.placedByClient) return;
+    const name = (order.customerName || '').trim();
+    if (!name || name.toLowerCase() === 'guest') return;
+
+    const nameRegex = new RegExp(`^${escapeRegex(name)}$`, 'i');
+
+    let account = await ClientAccount.findOne({ name: nameRegex, source: 'pos' });
+    if (!account) {
+      const count = await Order.countDocuments({
+        businessType: BUSINESS_TYPE,
+        customerName: nameRegex,
+        status: 'Completed',
+        clientAccountId: { $in: [null, ''] },
+      });
+      if (count < 3) return; // "bought more than 2" == promote on the 3rd
+
+      const clientCode = await generateNextSequence(ClientAccount, 'CUS-1000', 'clientCode');
+      const placeholderUsername = `_pos_${clientCode.toLowerCase()}`;
+      const placeholderPassword = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
+      account = await ClientAccount.create({
+        clientCode, name, username: placeholderUsername, password: placeholderPassword,
+        isActive: true, source: 'pos',
+      });
+      log.info({ clientCode, name }, 'Auto-promoted repeat walk-in to client');
+
+      // Backfill this customer's past walk-in orders so ledger/reports roll up under one code.
+      await Order.updateMany(
+        { businessType: BUSINESS_TYPE, customerName: nameRegex, clientAccountId: { $in: [null, ''] } },
+        { $set: { clientAccountId: String(account._id) } }
+      );
+    } else {
+      await Order.updateOne({ _id: order._id }, { $set: { clientAccountId: String(account._id) } });
+    }
+  } catch (err) {
+    log.error({ err }, 'Walk-in client auto-promotion failed');
+  }
+}
+
 // Orders
 app.get('/api/orders', verifyToken, requireStaff, async (req, res) => {
   try {
@@ -210,8 +261,8 @@ app.get('/api/orders/archives', verifyToken, requireSuperAdmin, async (req, res)
     }
     if (start || end) {
       filter.createdAt = {};
-      if (start) filter.createdAt.$gte = new Date(start);
-      if (end) { const d = new Date(end); d.setHours(23, 59, 59, 999); filter.createdAt.$lte = d; }
+      if (start) filter.createdAt.$gte = dayStart(start);
+      if (end) { filter.createdAt.$lte = dayEnd(end); }
     }
     const pageNum = Math.max(1, parseInt(page) || 1);
     const pageSize = Math.min(500, parseInt(lim) || 200);
@@ -295,6 +346,12 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     }
 
     let { items, discountPercent = 0, discountFlat = 0, table, customerName, sessionId, isComplimentary = false, employeeName = '', orderNotes = '', guestCount = 1, payments: paymentsInput, paymentMethod: bodyPaymentMethod, termsOfPayment, reserveOnly = false } = req.body;
+
+    // Canonicalize the buyer's name. It is printed on receipts, billing
+    // statements and delivery receipts, and it is the key that repeat walk-ins
+    // are matched on — so "acme trading corp" and "ACME Trading Corp" must not
+    // become two different customers, nor go onto a printed DR in lower case.
+    if (typeof customerName === 'string' && customerName.trim()) customerName = title(customerName);
 
     // Block QR-originated orders when kitchen has toggled off (staff POS unaffected)
     if (req.qrSession) {
@@ -466,6 +523,60 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     const resolvedPaymentMethod = paymentsInput?.length > 0
       ? (paymentsInput.length === 1 ? paymentsInput[0].method : 'Split')
       : (bodyPaymentMethod || clientPresetPayment || 'Cash');
+
+    // ── CREDIT LIMIT GATE ──────────────────────────────────────────────────
+    // Only on-account (non-cash) buying consumes credit — a cash sale settles
+    // immediately and can never grow the receivable. Checked here, after the
+    // total is server-authoritative and before anything is written, so a
+    // rejected order leaves no partial state behind.
+    const creditClientId = _buyerClientId;
+    if (creditClientId && resolvedPaymentMethod !== 'Cash' && !isComplimentary && finalTotal > 0) {
+      const [modeRow, globalRow, client] = await Promise.all([
+        Settings.findOne({ key: 'creditLimitMode' }).lean(),
+        Settings.findOne({ key: 'globalCreditLimit' }).lean(),
+        ClientAccount.findById(creditClientId).lean(),
+      ]);
+      const limit = resolveCreditLimit({
+        mode: modeRow?.value,
+        globalLimit: globalRow?.value,
+        clientLimit: client?.creditLimit,
+      });
+      if (limit !== null) {
+        // Outstanding = everything already sold to them on account and not yet
+        // settled. Mirrors the A/R report's definition exactly.
+        // Match BOTH identity fields: a portal order carries `clientId`, while an
+        // order a cashier placed on the client's behalf carries `clientAccountId`.
+        // Checking only one lets a client run up unlimited debt via the other route.
+        //
+        // Statuses: exposure is everything COMMITTED, not just what has already
+        // become a book receivable. Orders sit at Pending/Preparing for a while,
+        // and counting only 'Completed' would let a client place ten orders in a
+        // row before any of them lands — trivially defeating the limit. Only
+        // terminal non-debts (Cancelled/Voided/Refunded) and parked drafts are
+        // excluded.
+        const openRows = await Order.find({
+          businessType: BUSINESS_TYPE,
+          $or: [
+            { clientAccountId: String(creditClientId) },
+            { clientId: String(creditClientId) },
+          ],
+          status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
+          isParked: { $ne: true },
+          paymentMethod: { $ne: 'Cash' },
+          isComplimentary: { $ne: true },
+          arSettled: { $ne: true },
+        }, { total: 1 }).lean();
+        const outstanding = openRows.reduce((s, r) => s + (Number(r.total) || 0), 0);
+        const check = checkCreditAvailable({ limit, outstanding, orderTotal: finalTotal });
+        if (!check.allowed) {
+          return res.status(409).json({
+            success: false,
+            error: `Credit limit reached. Limit ₱${check.limit.toFixed(2)}, already owing ₱${check.outstanding.toFixed(2)}, available ₱${check.available.toFixed(2)}.`,
+            creditLimit: check,
+          });
+        }
+      }
+    }
 
     const newOrder = await Order.create({
       orderNumber, table, items: validatedItems,
@@ -1011,6 +1122,7 @@ app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
     // stockAvailable — catches the moment an ingredient hits zero during service.
     if (status === 'Completed') emitToAll('menuUpdated');
     res.json({ success: true, order });
+    if (status === 'Completed' && wasNotCompleted) maybePromoteWalkInClient(order);
 
   } catch (error) {
     await session.abortTransaction();
@@ -1020,8 +1132,118 @@ app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
+// --- UNVOID (reverse a void) ---
+// A void is never erased — it is REVERSED, which is also the correct accounting
+// treatment: the original void entry stays in the ledger and a mirrored entry
+// cancels it, so the audit trail shows both events.
+//
+// Rather than recompute recipes (which could drift if a product's BOM changed
+// since the void), this mirrors the void's OWN trail: its journal entry is
+// re-posted with debits and credits swapped, and each stock-card row it wrote is
+// inverted. That guarantees the reversal is exactly equal and opposite.
+app.post('/api/orders/:id/unvoid', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const adminName = req.user.name;
+    const out = await withOptionalTransaction(mongoose, async (session) => {
+      const order = await Order.findById(req.params.id).session(session ?? null);
+      if (!order) throw Object.assign(new Error('Order not found'), { httpStatus: 404 });
+      if (order.status !== 'Voided') {
+        throw Object.assign(new Error('Only a voided order can be un-voided.'), { httpStatus: 400 });
+      }
+      // Refunds use the same status but a different flow; reversing one here
+      // would leave the refund's cash movement stranded.
+      if (String(order.voidReason || '').startsWith('REFUND:')) {
+        throw Object.assign(new Error('Refunds cannot be un-voided. Re-enter the sale instead.'), { httpStatus: 400 });
+      }
+
+      // Same day-close and period guards the void itself respects.
+      const orderDateStr = new Date(order.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+      const eodRecord = await EODRecord.findOne({ dateString: orderDateStr }).session(session ?? null);
+      if (eodRecord?.status === 'LOCKED') {
+        throw Object.assign(new Error(`EOD locked for ${orderDateStr}. Cannot un-void after the day is closed.`), { httpStatus: 403 });
+      }
+      const lock = await periodLockFor(order.createdAt);
+      if (lock) {
+        throw Object.assign(new Error(`Period ${lock.year}-${String(lock.month).padStart(2, '0')} is closed. Reopen it first.`), { httpStatus: 423 });
+      }
+
+      const voidRef = mkRef('VOID', order.orderNumber);
+      const unvoidRef = mkRef('UNVOID', order.orderNumber);
+
+      // Guard against a double un-void producing a second reversal.
+      const already = await JournalEntry.findOne({ reference: unvoidRef }).session(session ?? null);
+      if (already) throw Object.assign(new Error('This void has already been reversed.'), { httpStatus: 409 });
+
+      // 1. Mirror the void's journal entry (swap debit/credit).
+      const voidEntry = await JournalEntry.findOne({ reference: voidRef }).session(session ?? null);
+      if (voidEntry) {
+        const lines = voidEntry.lines.map(l => ({
+          accountCode: l.accountCode, accountName: l.accountName,
+          debit: l.credit || 0, credit: l.debit || 0,
+        }));
+        assertBalanced(lines, unvoidRef);
+        await JournalEntry.create([{
+          reference: unvoidRef,
+          description: `UNVOID of ${voidRef} by ${adminName}`,
+          lines,
+          totalDebit: voidEntry.totalCredit,
+          totalCredit: voidEntry.totalDebit,
+        }], { session });
+      }
+
+      // 2. Re-deduct the stock the void restored, inverting each card it wrote.
+      const voidCards = await StockCard.find({ reference: voidRef }).session(session ?? null);
+      for (const card of voidCards) {
+        const inv = await Inventory.findById(card.inventoryId).session(session ?? null);
+        if (!inv) continue;
+        const qty = Number(card.qtyChange) || 0;   // positive when the void restored stock
+        if (qty === 0) continue;
+        inv.stockQty = +(inv.stockQty - qty).toFixed(6);
+        await inv.save({ session });
+        await StockCard.create([{
+          inventoryId: inv._id, itemName: inv.itemName, type: 'Adjustment',
+          reference: unvoidRef, qtyChange: -qty, balanceAfter: inv.stockQty,
+          unitCost: inv.unitCost, remarks: `Un-voided order ${order.orderNumber}`,
+        }], { session });
+      }
+
+      // 3. Restore the order.
+      order.status = 'Completed';
+      order.voidReason = '';
+      order.voidedBy = '';
+      order.voidedAt = null;
+      await order.save({ session });
+      return order;
+    }, { log });
+
+    await logAudit(req, { action: 'unvoid', entity: 'Order', entityId: out._id, after: { orderNumber: out.orderNumber, by: adminName } });
+    emitToMgr('erpUpdated');
+    emitToOps('orderUpdated', out);
+    res.json({ success: true, order: out });
+  } catch (err) {
+    if (err?.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
 // --- 🚨 SAFE VOID & REFUND ENGINE 🚨 ---
+// Retry wrapper: two transactions touching the same order/inventory documents can
+// collide with a WriteConflict, which previously surfaced to the operator as a
+// bare 500 on a VOID — a money action they then had to guess about. Mirrors the
+// retry the restock route already does. Only retried when nothing has been sent
+// yet, so a validation response is never re-sent.
 app.post('/api/orders/:id/void', verifyToken, requireSuperAdmin, async (req, res) => {
+  const MAX_VOID_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_VOID_ATTEMPTS; attempt++) {
+    // Strict `=== true`: the handler's validation paths `return res.status(...)`,
+    // which yields a truthy Response object. Only the explicit retry signal counts,
+    // or a rejected void would be re-executed.
+    const retry = await voidOrderOnce(req, res, attempt < MAX_VOID_ATTEMPTS);
+    if (retry !== true) return;
+  }
+});
+
+const voidOrderOnce = async (req, res, mayRetry) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -1217,10 +1439,14 @@ app.post('/api/orders/:id/void', verifyToken, requireSuperAdmin, async (req, res
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
+    const msg = String(error?.errorLabels || error?.message || '');
+    const isTransient = (error?.errorLabels || []).includes('TransientTransactionError') || /WriteConflict|Write conflict/i.test(msg);
+    if (isTransient && mayRetry && !res.headersSent) return true;   // ask the caller to retry
     console.error("Void Error:", error);
-    res.status(500).json({ success: false, error: error.message });
+    if (!res.headersSent) res.status(500).json({ success: false, error: error.message });
   }
-});
+  return false;
+};
 
 app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
   try {
@@ -1432,6 +1658,7 @@ app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (re
     emitToMgr('erpUpdated');
     emitToOps('orderUpdated', order);
     res.json({ success: true, order });
+    if (allFulfilled) maybePromoteWalkInClient(order);
   } catch (err) {
     await session.abortTransaction();
     session.endSession();

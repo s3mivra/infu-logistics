@@ -7,11 +7,14 @@ import { login } from './helpers.js';
 const TABS = [
   'Orders & POS',
   'Inventory & Stock',
+  'Procurement',
+  'Clients',
   'Menu Setup',
-  'Daily History & Shifts',
   'Analytics',
-  'Accounting & Ledger',
+  'Reports',
+  'Ledger',
   'Pricing Control',
+  'Shifts & Cash',
   'Audit Report',
 ];
 
@@ -23,7 +26,12 @@ test('every dashboard tab opens without runtime errors', async ({ page }) => {
   await login(page); // logs in as Super Admin (sees all management tabs)
 
   for (const label of TABS) {
-    await page.getByRole('button', { name: label, exact: true }).first().click();
+    // Anchored regex rather than `exact: true`: some nav buttons carry a live
+    // alert badge (e.g. "Inventory & Stock 2"), so their accessible name depends
+    // on current stock. Matching the start of the label keeps this test about
+    // navigation instead of about how much stock happens to be low.
+    const name = new RegExp('^' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    await page.getByRole('button', { name }).first().click();
     // Lazy tab chunk finished mounting once the Suspense "Loading…" fallback is gone.
     await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
     await page.waitForTimeout(500); // let the tab's async fetches settle
@@ -40,7 +48,7 @@ test('ledger sub-views load (Journal, P&L, Balance Sheet, A/R, A/P)', async ({ p
   page.on('pageerror', (e) => errors.push(String(e)));
 
   await login(page);
-  await page.getByRole('button', { name: 'Accounting & Ledger', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Ledger', exact: true }).first().click();
   await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
 
   // Click through the ledger sub-tabs that exist; tolerate naming differences.

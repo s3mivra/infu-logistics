@@ -175,7 +175,36 @@ export default function registerSettings(ctx) {
     requirePermission,
   } = ctx;
 
+// Client-portal branding/copy. These are the ONLY settings readable without a
+// staff token — the portal is served to logged-out clients, so anything listed
+// here is effectively public. Never add operational settings (credit limits,
+// auto-close, ...) to this list.
+const PUBLIC_PORTAL_KEYS = [
+  'portalWelcomeTitle',
+  'portalWelcomeMessage',
+  'portalAnnouncement',
+  'portalSupportLink',
+  'portalSupportLabel',
+  'portalPaymentInstructions',
+  'portalShowPrices',
+  'portalAllowNotes',
+  'portalCompanyName',
+  'portalCompanyAddress',
+  'portalCompanyPhone',
+  'portalCompanyEmail',
+  'portalSlipFooter',
+];
+
 // ── SETTINGS ROUTES ──────────────────────────────────────────────────────────
+
+// Unauthenticated: the client portal reads its own copy/branding from here.
+app.get('/api/public/portal-settings', async (req, res) => {
+  try {
+    const rows = await Settings.find({ key: { $in: PUBLIC_PORTAL_KEYS } }).lean();
+    res.json({ success: true, settings: Object.fromEntries(rows.map(s => [s.key, s.value])) });
+  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+});
+
 app.get('/api/settings', verifyToken, requireStaff, async (req, res) => {
   try {
     const rows = await Settings.find().lean();

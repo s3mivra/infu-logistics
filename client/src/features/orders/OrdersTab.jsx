@@ -1,5 +1,39 @@
 import React from 'react';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Footprints, Utensils, ShoppingBag, Bike, Car, UserX, UserCheck } from 'lucide-react';
+import * as ui from '../../shared/ui';
+
+// Icon-based replacement for a native <select> — browsers can't render custom
+// icons inside native <option> popups, so this is a real dropdown (button +
+// floating panel) instead.
+function IconSelect({ value, onChange, options, className = '' }) {
+  const [open, setOpen] = React.useState(false);
+  const selected = options.find(o => o.value === value) || options[0];
+  return (
+    <div className={`relative ${className}`}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg/80 font-bold text-sm outline-none focus:border-brand/60 transition">
+        {selected?.Icon && <selected.Icon size={16} className="text-brand shrink-0" />}
+        <span className="flex-1 text-left truncate">{selected?.label}</span>
+        <ChevronDown size={14} className={`text-fg/40 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute z-20 mt-1 w-full bg-surface border border-white/10 rounded-xl overflow-hidden shadow-xl py-1 max-h-64 overflow-y-auto">
+            {options.map(o => (
+              <button key={o.value} type="button"
+                onClick={() => { onChange(o.value); setOpen(false); }}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-sm font-bold text-left transition ${o.value === value ? 'bg-brand text-white' : 'text-fg/80 hover:bg-white/10'}`}>
+                <o.Icon size={16} className={o.value === value ? 'text-fg' : 'text-fg/50'} />
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 // Logistics dispatches to the storage/logistics team; food & bev sends to the kitchen.
@@ -51,7 +85,7 @@ export default function OrdersTab({ ctx }) {
     posCustomerPhone, posDeliveryAddress, posDeliveryFee, posDeliveryFeeNum, posDiscountAmt,
     posDiscountType, posDiscountValue, posItemDiscountAmt, posGrandTotal, posSubmitting, posPage, posPayment,
     posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable,
-    pricingItemsPerPage, pricingPage, printOrderSlip, printBillingStatement, printXReading, products,
+    pricingItemsPerPage, pricingPage, printOrderSlip, printBillingStatement, printDeliveryReceipt, printXReading, products,
     removeAddOnFromOrder, removeComplimentary, removeMaterial, removeSize, restockData,
     rfActiveFund, rfDisbForm, rfDisbModal, rfDisbSubmitting, rfFunds,
     rfLoading, rfNewForm, rfNewModal, rfNewSubmitting, rfReplForm,
@@ -89,6 +123,10 @@ export default function OrdersTab({ ctx }) {
     users, varianceNoteMode, varianceReasons,
   } = ctx;
 
+  // UI-only hint for the walk-in picker below — not persisted; the real
+  // guest-vs-regular classification comes from whether a customer name is entered.
+  const [walkInMode, setWalkInMode] = React.useState('guest');
+
   return (
           <div className="w-full">
             {isPosOpen ? (
@@ -98,15 +136,15 @@ export default function OrdersTab({ ctx }) {
               <div className="flex flex-col lg:flex-row gap-4 h-auto lg:h-[calc(100vh-172px)] w-full animate-fade-in">
 
                 {/* LEFT COLUMN: Product Browser */}
-                <div className="flex-1 flex flex-col min-h-[520px] lg:min-h-0 bg-surface border border-white/8 rounded-2xl overflow-hidden shadow-xl">
+                <div className="flex-1 flex flex-col min-h-[520px] lg:min-h-0 bg-surface border border-white/10 rounded-2xl overflow-hidden shadow-xl">
 
                   {/* Header */}
-                  <div className="px-4 py-3 border-b border-white/8 bg-page-bg/60 shrink-0 flex items-center justify-between gap-3">
+                  <div className="px-4 py-3 border-b border-white/10 bg-page-bg/60 shrink-0 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <ShoppingCart size={18} className="text-brand" />
-                      <span className="font-black text-white tracking-widest uppercase text-sm">POS Register</span>
+                      <span className="font-black text-fg tracking-widest uppercase text-sm">POS Register</span>
                     </div>
-                    <button onClick={() => setIsPosOpen(false)} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-red-500/20 text-white/40 hover:text-red-400 font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
+                    <button onClick={() => setIsPosOpen(false)} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-red-500/20 text-fg/40 hover:text-red-400 font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
                       <ChevronLeft size={13} /> Orders
                     </button>
                   </div>
@@ -114,13 +152,13 @@ export default function OrdersTab({ ctx }) {
                   {/* Search + Category pills */}
                   <div className="px-4 pt-3 pb-2 shrink-0 space-y-2">
                     <div className="relative">
-                      <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+                      <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30" />
                       <input
                         type="text"
                         placeholder="Search menu items…"
                         value={posSearch}
                         onChange={e => { setPosSearch(e.target.value); setPosPage(1); }}
-                        className="w-full bg-page-bg border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-white text-sm font-medium placeholder-white/25 outline-none focus:border-brand/60 transition"
+                        className="w-full bg-page-bg border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-fg text-sm font-medium placeholder-white/25 outline-none focus:border-brand/60 transition"
                       />
                     </div>
                     <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
@@ -128,7 +166,7 @@ export default function OrdersTab({ ctx }) {
                         <button
                           key={c._id}
                           onClick={() => { setPosCategory(c.name === 'All' ? 'All' : c.name); setPosPage(1); }}
-                          className={`px-4 py-2 rounded-xl font-bold whitespace-nowrap text-xs uppercase tracking-wider transition min-h-[40px] shrink-0 ${posCategory === (c.name === 'All' ? 'All' : c.name) ? 'bg-brand text-white shadow-md' : 'bg-white/5 text-white/50 hover:text-white hover:bg-white/10'}`}
+                          className={`px-4 py-2 rounded-xl font-bold whitespace-nowrap text-xs uppercase tracking-wider transition min-h-[40px] shrink-0 ${posCategory === (c.name === 'All' ? 'All' : c.name) ? 'bg-brand text-white shadow-md' : 'bg-white/5 text-fg/50 hover:text-fg hover:bg-white/10'}`}
                         >
                           {c.name}
                         </button>
@@ -155,9 +193,9 @@ export default function OrdersTab({ ctx }) {
                               {activeCombos.map(c => (
                                 <button key={c._id} onClick={() => addComboToPosCart(c)}
                                   className="shrink-0 w-28 bg-brand/10 border border-brand/30 rounded-xl p-2.5 text-left hover:bg-brand/20 active-press transition">
-                                  <p className="text-[11px] font-black text-white leading-tight line-clamp-2">{c.name}</p>
+                                  <p className="text-[11px] font-black text-fg leading-tight line-clamp-2">{c.name}</p>
                                   <p className="text-brand font-black text-sm mt-1 tabular-nums">₱{Number(c.price).toFixed(2)}</p>
-                                  <p className="text-[8px] text-white/40 uppercase tracking-wide mt-0.5">{(c.items||[]).length} items</p>
+                                  <p className="text-[8px] text-fg/40 uppercase tracking-wide mt-0.5">{(c.items||[]).length} items</p>
                                 </button>
                               ))}
                             </div>
@@ -165,7 +203,7 @@ export default function OrdersTab({ ctx }) {
                         )}
                         <div className="flex-1 overflow-y-auto px-3 pb-3 grid grid-cols-3 sm:grid-cols-3 xl:grid-cols-4 gap-3 content-start custom-scrollbar">
                           {posPaged.length === 0 && (
-                            <div className="col-span-full flex flex-col items-center justify-center py-16 text-white/20">
+                            <div className="col-span-full flex flex-col items-center justify-center py-16 text-fg/20">
                               <ShoppingCart size={32} className="mb-3 opacity-30" />
                               <p className="font-bold text-sm uppercase tracking-widest">No items found</p>
                             </div>
@@ -182,12 +220,12 @@ export default function OrdersTab({ ctx }) {
                               className={`relative bg-page-bg/60 border rounded-2xl p-3 flex flex-col items-center text-center shadow-elev-1 group min-h-[120px] transition-colors duration-180
                                 ${unavailable
                                   ? 'border-white/5 opacity-50 cursor-not-allowed'
-                                  : 'border-white/8 hover:border-brand/60 hover:bg-brand/5 active-press hover:shadow-elev-2 focus-visible:border-brand cursor-pointer'
+                                  : 'border-white/10 hover:border-brand/60 hover:bg-brand/5 active-press hover:shadow-elev-2 focus-visible:border-brand cursor-pointer'
                                 }`}
                             >
                               {unavailable && (
                                 <span className="absolute top-1.5 right-1.5 z-10 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-lg
-                                  bg-red-900/80 text-red-300 border border-red-700/40">
+                                  bg-red-600 text-white">
                                   {is86 ? '86' : 'Out'}
                                 </span>
                               )}
@@ -195,24 +233,24 @@ export default function OrdersTab({ ctx }) {
                                 <img src={p.image} alt="" loading="lazy" decoding="async" className="w-14 h-14 object-cover rounded-xl mb-2 group-hover:scale-105 transition-transform duration-240" />
                               ) : (
                                 <div className="w-14 h-14 bg-white/5 rounded-xl mb-2 flex items-center justify-center" aria-hidden="true">
-                                  <Package size={20} className="text-white/20" />
+                                  <Package size={20} className="text-fg/20" />
                                 </div>
                               )}
-                              <span className="font-bold text-xs text-white/80 line-clamp-2 leading-tight w-full">{p.name}</span>
+                              <span className="font-bold text-xs text-fg/80 line-clamp-2 leading-tight w-full">{p.name}</span>
                               <span className="text-brand font-black mt-auto pt-1 text-sm tabular-nums">₱{Number(p.basePrice || p.price || 0).toFixed(2)}</span>
                             </button>
                             );
                           })}
                         </div>
                         {posTotalPages > 1 && (
-                          <div className="shrink-0 flex items-center justify-between px-4 py-2.5 border-t border-white/8 bg-page-bg/40">
+                          <div className="shrink-0 flex items-center justify-between px-4 py-2.5 border-t white/10 bg-page-bg/40">
                             <button onClick={() => setPosPage(p => Math.max(1, p - 1))} disabled={posPage === 1}
-                              className="px-4 py-2 rounded-xl font-bold text-xs uppercase bg-white/5 text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-25 transition flex items-center gap-1 min-h-[40px]">
+                              className="px-4 py-2 rounded-xl font-bold text-xs uppercase bg-white/5 text-fg/50 hover:text-fg hover:bg-white/10 disabled:opacity-25 transition flex items-center gap-1 min-h-[40px]">
                               <ChevronLeft size={13}/> Prev
                             </button>
-                            <span className="text-xs text-white/30 font-bold">{posPage} / {posTotalPages}</span>
+                            <span className="text-xs text-fg/30 font-bold">{posPage} / {posTotalPages}</span>
                             <button onClick={() => setPosPage(p => Math.min(posTotalPages, p + 1))} disabled={posPage === posTotalPages}
-                              className="px-4 py-2 rounded-xl font-bold text-xs uppercase bg-white/5 text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-25 transition flex items-center gap-1 min-h-[40px]">
+                              className="px-4 py-2 rounded-xl font-bold text-xs uppercase bg-white/5 text-fg/50 hover:text-fg hover:bg-white/10 disabled:opacity-25 transition flex items-center gap-1 min-h-[40px]">
                               Next <ChevronRight size={13}/>
                             </button>
                           </div>
@@ -223,62 +261,69 @@ export default function OrdersTab({ ctx }) {
                 </div>
 
                 {/* RIGHT COLUMN: Cart Dock */}
-                <div className="w-full lg:w-[380px] flex flex-col shrink-0 h-[560px] lg:h-full bg-surface border border-white/8 rounded-2xl overflow-hidden shadow-xl min-h-0">
+                <div className="w-full lg:w-[380px] flex flex-col shrink-0 h-[560px] lg:h-full bg-surface border border-white/10 rounded-2xl overflow-hidden shadow-xl min-h-0">
 
                   {/* Customer info */}
-                  <div className="px-4 pt-4 pb-3 border-b border-white/8 bg-page-bg/60 shrink-0 space-y-2">
-                    {/* Client account picker - when set, server applies that client's per-product discount overrides. */}
-                    {(clientAccounts || []).length > 0 && (
-                      <select value={posClientId || ''}
-                        onChange={e => {
-                          const id = e.target.value;
+                  <div className="px-4 pt-4 pb-3 border-b border-white/10 bg-page-bg/60 shrink-0 space-y-2">
+                    {/* Client account picker - when set, server applies that client's per-product discount overrides.
+                       "Guest"/"Regular" walk-in are UI hints only, not stored state — the actual
+                       guest-vs-regular classification is driven by whether a customer name is
+                       entered (see the name field below); a regular walk-in who racks up 3
+                       Completed orders gets auto-promoted to their own CUS-1000-Axxxx client code. */}
+                    <IconSelect
+                      value={posClientId ? posClientId : (walkInMode === 'regular' ? '__regular__' : '')}
+                      onChange={id => {
+                        if (id === '__regular__') {
+                          setWalkInMode('regular');
+                          setPosClientId('');
+                        } else if (!id) {
+                          setWalkInMode('guest');
+                          setPosClientId('');
+                          setPosCustomerName('');
+                        } else {
+                          setWalkInMode('guest');
                           setPosClientId(id);
                           // Auto-fill the customer name from the chosen client (admin can still edit).
-                          if (id) {
-                            const c = clientAccounts.find(a => String(a._id) === id);
-                            if (c && !posCustomerName) setPosCustomerName(c.name || c.username || '');
-                          }
-                        }}
-                        className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white/80 font-bold text-sm outline-none focus:border-brand/60 transition">
-                        <option value="">- Walk-in / no client account -</option>
-                        {clientAccounts.map(c => (
-                          <option key={c._id} value={c._id}>{c.name || c.username} ({c.clientCode})</option>
-                        ))}
-                      </select>
-                    )}
+                          const c = clientAccounts.find(a => String(a._id) === id);
+                          if (c && !posCustomerName) setPosCustomerName(c.name || c.username || '');
+                        }
+                      }}
+                      options={[
+                        { value: '', label: 'Guest Walk-In', Icon: UserX },
+                        { value: '__regular__', label: 'Regular Walk-In', Icon: UserCheck },
+                        ...(clientAccounts || []).map(c => ({ value: String(c._id), label: `${c.name || c.username} (${c.clientCode})`, Icon: Users })),
+                      ]}
+                    />
                     <input type="text" placeholder="Customer / Driver Name *" value={posCustomerName} onChange={e => setPosCustomerName(e.target.value)}
-                      className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white font-bold placeholder-white/25 outline-none focus:border-brand/60 text-sm transition" />
-                    <select value={posTable} onChange={e => setPosTable(e.target.value)}
-                      className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-white/80 font-bold text-sm outline-none focus:border-brand/60 transition">
-                      {BUSINESS_TYPE === 'log' ? (<>
-                        <option value="Walk In">🚶 Walk In</option>
-                        <option value="Pickup">📦 Pickup</option>
-                        <option value="Manual Delivery">🛵 Manual Delivery</option>
-                        <option value="Grab Delivery">🟢 Grab Delivery</option>
-                        <option value="Lalamove">🚚 Lalamove</option>
-                      </>) : (<>
-                        <option value="Walk In">🚶 Walk In</option>
-                        <option value="Dine-In">🍽 Dine-In</option>
-                        <option value="Takeout">🥡 Takeout</option>
-                        <option value="Pickup">📦 Pickup</option>
-                        <option value="Manual Delivery">🛵 Manual Delivery</option>
-                        <option value="Grab Delivery">🟢 Grab Delivery</option>
-                        <option value="Foodpanda">🐼 Foodpanda</option>
-                      </>)}
-                    </select>
+                      className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60 text-sm transition" />
+                    <IconSelect value={posTable} onChange={setPosTable} options={BUSINESS_TYPE === 'log' ? [
+                      { value: 'Walk In', label: 'Walk In', Icon: Footprints },
+                      { value: 'Pickup', label: 'Pickup', Icon: Package },
+                      { value: 'Manual Delivery', label: 'Manual Delivery', Icon: Bike },
+                      { value: 'Grab Delivery', label: 'Grab Delivery', Icon: Car },
+                      { value: 'Lalamove', label: 'Lalamove', Icon: Truck },
+                    ] : [
+                      { value: 'Walk In', label: 'Walk In', Icon: Footprints },
+                      { value: 'Dine-In', label: 'Dine-In', Icon: Utensils },
+                      { value: 'Takeout', label: 'Takeout', Icon: ShoppingBag },
+                      { value: 'Pickup', label: 'Pickup', Icon: Package },
+                      { value: 'Manual Delivery', label: 'Manual Delivery', Icon: Bike },
+                      { value: 'Grab Delivery', label: 'Grab Delivery', Icon: Car },
+                      { value: 'Foodpanda', label: 'Foodpanda', Icon: Smartphone },
+                    ]} />
                     {(posTable === 'Manual Delivery' || posTable === 'Pickup' || posTable === 'Lalamove') && (
                       <div className="space-y-2 border border-brand/20 rounded-xl p-2.5 bg-brand/5">
                         <input type="tel" placeholder="Phone Number *" value={posCustomerPhone} onChange={e => setPosCustomerPhone(e.target.value)}
-                          className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50" />
+                          className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50" />
                         {(posTable === 'Manual Delivery' || posTable === 'Lalamove') && (
                           <input type="text" placeholder="Delivery Address *" value={posDeliveryAddress} onChange={e => setPosDeliveryAddress(e.target.value)}
-                            className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50" />
+                            className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50" />
                         )}
                         <div className="flex gap-2">
                           <input type="number" min="0" step="0.01" placeholder="Fee (₱)" value={posDeliveryFee} onChange={e => setPosDeliveryFee(e.target.value)}
-                            className="w-1/2 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50" />
+                            className="w-1/2 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50" />
                           <input type="time" value={posScheduledTime} onChange={e => setPosScheduledTime(e.target.value)}
-                            className="w-1/2 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-bold outline-none focus:border-brand/50" />
+                            className="w-1/2 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs font-bold outline-none focus:border-brand/50" />
                         </div>
                       </div>
                     )}
@@ -287,10 +332,10 @@ export default function OrdersTab({ ctx }) {
                   {/* Cart items */}
                   <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar min-h-0">
                     {posCart.length === 0 ? (
-                      <div className="h-full flex flex-col items-center justify-center gap-2 text-white/15">
+                      <div className="h-full flex flex-col items-center justify-center gap-2 text-fg/15">
                         <ShoppingCart size={36} className="opacity-40" />
                         <p className="font-black uppercase tracking-widest text-xs">Cart is Empty</p>
-                        <p className="text-[10px] text-white/10">Tap a menu item to add</p>
+                        <p className="text-[10px] text-fg/10">Tap a menu item to add</p>
                       </div>
                     ) : posCart.map((item, idx) => {
                       const addOnTotal = item.selectedAddOns.reduce((s, a) => s + Number(a.price), 0);
@@ -298,27 +343,27 @@ export default function OrdersTab({ ctx }) {
                       const lineDisc = lineBase * ((item.discountPercent || 0) / 100);
                       const lineTotal = lineBase - lineDisc;
                       return (
-                        <div key={idx} className="bg-page-bg/50 p-3 rounded-xl border border-white/8 flex justify-between items-start">
+                        <div key={idx} className="bg-page-bg/50 p-3 rounded-xl border border-white/10 flex justify-between items-start">
                           <div className="flex-1 pr-2 min-w-0">
-                            <p className="font-bold text-white/90 text-sm truncate leading-tight">{item.name}</p>
+                            <p className="font-bold text-fg/90 text-sm truncate leading-tight">{item.name}</p>
                             {item.selectedAddOns.map((a, i) => (
-                              <p key={i} className="text-[10px] text-white/35 truncate">+ {a.name} ₱{a.price}</p>
+                              <p key={i} className="text-[10px] text-fg/35 truncate">+ {a.name} ₱{a.price}</p>
                             ))}
                             <div className="flex items-center gap-2 mt-2">
                               <button onClick={() => setPosCart(posCart.map((c, i) => i === idx ? {...c, quantity: Math.max(1, c.quantity - 1)} : c))}
-                                className="w-8 h-8 bg-white/8 hover:bg-white/15 rounded-lg text-white font-black flex items-center justify-center transition text-base active:scale-90">−</button>
-                              <span className="font-black text-sm text-white w-6 text-center">{item.quantity}</span>
+                                className="w-8 h-8 bg-white/10 hover:bg-white/15 rounded-lg text-fg font-black flex items-center justify-center transition text-base active:scale-90">−</button>
+                              <span className="font-black text-sm text-fg w-6 text-center">{item.quantity}</span>
                               <button onClick={() => setPosCart(posCart.map((c, i) => i === idx ? {...c, quantity: c.quantity + 1} : c))}
-                                className="w-8 h-8 bg-white/8 hover:bg-brand/30 rounded-lg text-white font-black flex items-center justify-center transition text-base active:scale-90">+</button>
+                                className="w-8 h-8 bg-white/10 hover:bg-brand/30 rounded-lg text-fg font-black flex items-center justify-center transition text-base active:scale-90">+</button>
                               <div className="relative ml-1">
                                 <input
                                   type="number" min="0" max="100" step="1"
                                   placeholder="0"
                                   value={item.discountPercent || ''}
                                   onChange={e => setPosCart(posCart.map((c, i) => i === idx ? {...c, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))} : c))}
-                                  className="w-14 bg-white/5 border border-white/10 rounded-lg pl-2 pr-5 py-1 text-white text-xs font-bold outline-none focus:border-brand/60 placeholder-white/20 tabular-nums"
+                                  className="w-14 bg-white/5 border border-white/10 rounded-lg pl-2 pr-5 py-1 text-fg text-xs font-bold outline-none focus:border-brand/60 placeholder-white/20 tabular-nums"
                                 />
-                                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-white/30 text-[10px] font-bold pointer-events-none">%</span>
+                                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-fg/30 text-[10px] font-bold pointer-events-none">%</span>
                               </div>
                             </div>
                           </div>
@@ -336,9 +381,9 @@ export default function OrdersTab({ ctx }) {
                   </div>
 
                   {/* Totals + CTA */}
-                  <div className="px-4 pb-4 pt-2 border-t border-white/8 bg-page-bg/60 shrink-0">
+                  <div className="px-4 pb-4 pt-2 border-t border-white/10 bg-page-bg/60 shrink-0">
                     <div className="space-y-1 mb-3">
-                      <div className="flex justify-between text-xs text-white/40 font-bold">
+                      <div className="flex justify-between text-xs text-fg/40 font-bold">
                         <span>Subtotal</span><span>₱{posSubtotal.toFixed(2)}</span>
                       </div>
                       {posItemDiscountAmt > 0 && (
@@ -352,28 +397,28 @@ export default function OrdersTab({ ctx }) {
                         </div>
                       )}
                       {posDeliveryFeeNum > 0 && (
-                        <div className="flex justify-between text-xs text-white/40 font-bold">
+                        <div className="flex justify-between text-xs text-fg/40 font-bold">
                           <span>Delivery Fee</span><span>₱{posDeliveryFeeNum.toFixed(2)}</span>
                         </div>
                       )}
-                      <div className="flex justify-between items-baseline pt-1.5 border-t border-white/8">
-                        <span className="text-xs text-white/50 font-bold uppercase tracking-widest">Total</span>
-                        <span className="text-3xl font-black text-white">₱<span className="tabular-nums">{posGrandTotal.toFixed(2)}</span></span>
+                      <div className="flex justify-between items-baseline pt-1.5 border-t border-white/10">
+                        <span className="text-xs text-fg/50 font-bold uppercase tracking-widest">Total</span>
+                        <span className="text-3xl font-black text-fg">₱<span className="tabular-nums">{posGrandTotal.toFixed(2)}</span></span>
                       </div>
                     </div>
-                    <p className="text-center text-[9px] text-white/15 font-black uppercase tracking-[0.2em] mb-2">NON-VAT TRANSACTION</p>
+                    <p className="text-center text-[9px] text-fg/15 font-black uppercase tracking-[0.2em] mb-2">NON-VAT TRANSACTION</p>
                     {/* Reserve-only: skip payment now. Order is held with status Reserved
                         and the cashier promotes it later (Pending → Preparing). */}
                     <label className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg bg-white/5 border border-white/10 cursor-pointer hover:bg-white/10 transition">
                       <input type="checkbox" checked={!!posReserveOnly} onChange={e => setPosReserveOnly(e.target.checked)}
                         className="w-4 h-4 accent-brand" />
-                      <span className="text-[11px] font-bold text-white/70">Reserve only (pay later)</span>
-                      <span className="ml-auto text-[9px] uppercase tracking-widest font-black text-white/30">Status: {posReserveOnly ? 'Reserved' : 'Pending'}</span>
+                      <span className="text-[11px] font-bold text-fg/70">Reserve only (pay later)</span>
+                      <span className="ml-auto text-[9px] uppercase tracking-widest font-black text-fg/30">Status: {posReserveOnly ? 'Reserved' : 'Pending'}</span>
                     </label>
                     <div className="flex gap-2">
                       <button
                         onClick={parkCurrentOrder}
-                        className="px-4 py-4 bg-white/5 border border-white/10 text-white/60 font-black rounded-xl uppercase tracking-wider text-xs hover:bg-white/10 hover:text-white active:scale-98 transition flex items-center justify-center gap-1.5 min-h-[56px]"
+                        className="px-4 py-4 bg-white/5 border border-white/10 text-fg/60 font-black rounded-xl uppercase tracking-wider text-xs hover:bg-white/10 hover:text-fg active:scale-98 transition flex items-center justify-center gap-1.5 min-h-[56px]"
                         title="Hold this order as an open tab">
                         <Clock size={16}/> Park
                       </button>
@@ -402,22 +447,22 @@ export default function OrdersTab({ ctx }) {
                     <div className="bg-surface p-6 rounded-xl border border-gray-700 max-w-sm w-full shadow-2xl flex flex-col max-h-[90vh]">
                       
                       <div className="shrink-0 mb-4 border-b border-gray-800 pb-4">
-                        <h3 className="text-2xl font-black text-white leading-tight">{posSelectedProduct.name}</h3>
-                        <p className="text-xs text-gray-400 uppercase tracking-widest mt-1">Configure Options</p>
+                        <h3 className="text-2xl font-black text-fg leading-tight">{posSelectedProduct.name}</h3>
+                        <p className="text-xs text-fg uppercase tracking-widest mt-1">Configure Options</p>
                       </div>
                       
                       <div className="overflow-y-auto custom-scrollbar flex-1 pr-2 pb-2">
                         
                         {/* --- SIZES (Now ALWAYS shows, even if only 1 size exists) --- */}
                         <div className="mb-6">
-                          <label className="text-xs font-bold text-gray-400 mb-2 block uppercase tracking-wider">Size Selection</label>
+                          <label className="text-xs font-bold text-fg mb-2 block uppercase tracking-wider">Size Selection</label>
                           <div className="grid grid-cols-2 gap-3">
                             {/* FIX: Now correctly displays the Base Price instead of +P0 */}
-                            <button onClick={() => setPosActiveSize(null)} className={`py-3 rounded-lg font-bold text-sm border transition ${posActiveSize === null ? 'bg-accent/20 border-accent text-accent' : 'bg-page-bg border-gray-700 text-white hover:border-gray-500'}`}>
+                            <button onClick={() => setPosActiveSize(null)} className={`py-3 rounded-lg font-bold text-sm border transition ${posActiveSize === null ? 'bg-accent/20 border-accent text-accent' : 'bg-page-bg border-gray-700 text-fg hover:border-gray-500'}`}>
                               {posSelectedProduct.baseSize || 'Regular'} <span className="block text-xs mt-1 opacity-70">₱{Number(posSelectedProduct.basePrice || posSelectedProduct.price || 0).toFixed(2)}</span>
                             </button>
                             {(posSelectedProduct.sizes || []).map((s, idx) => (
-                              <button key={idx} onClick={() => setPosActiveSize(idx)} className={`py-3 rounded-lg font-bold text-sm border transition ${posActiveSize === idx ? 'bg-accent/20 border-accent text-accent' : 'bg-page-bg border-gray-700 text-white hover:border-gray-500'}`}>
+                              <button key={idx} onClick={() => setPosActiveSize(idx)} className={`py-3 rounded-lg font-bold text-sm border transition ${posActiveSize === idx ? 'bg-accent/20 border-accent text-accent' : 'bg-page-bg border-gray-700 text-fg hover:border-gray-500'}`}>
                                 {s.name} <span className="block text-xs mt-1 opacity-70">₱{Number(s.price).toFixed(2)}</span>
                               </button>
                             ))}
@@ -438,7 +483,7 @@ export default function OrdersTab({ ctx }) {
                                         if (e.target.checked) setPosActiveAddOns([...posActiveAddOns, { name: addon.name, price: addon.price }]);
                                         else setPosActiveAddOns(posActiveAddOns.filter(a => a.name !== addon.name));
                                       }} className="w-5 h-5 accent-accent rounded" />
-                                      <span className={`text-sm font-bold ${isSelected ? 'text-white' : 'text-white'}`}>{addon.name}</span>
+                                      <span className={`text-sm font-bold ${isSelected ? 'text-fg' : 'text-fg'}`}>{addon.name}</span>
                                     </div>
                                     <span className="text-xs text-accent font-black">+₱{addon.price}</span>
                                   </label>
@@ -450,16 +495,16 @@ export default function OrdersTab({ ctx }) {
                       </div>
 
                       <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-800 shrink-0">
-                        <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Quantity</span>
+                        <span className="text-xs font-bold text-fg uppercase tracking-wider">Quantity</span>
                         <div className="flex items-center gap-3">
-                          <button onClick={() => setPosItemQty(q => Math.max(1, q - 1))} className="w-9 h-9 rounded-lg bg-page-bg border border-gray-700 text-white text-lg font-black hover:border-accent hover:text-accent transition flex items-center justify-center">−</button>
-                          <span className="w-8 text-center text-white font-black text-lg">{posItemQty}</span>
-                          <button onClick={() => setPosItemQty(q => q + 1)} className="w-9 h-9 rounded-lg bg-page-bg border border-gray-700 text-white text-lg font-black hover:border-accent hover:text-accent transition flex items-center justify-center">+</button>
+                          <button onClick={() => setPosItemQty(q => Math.max(1, q - 1))} className="w-9 h-9 rounded-lg bg-page-bg border border-gray-700 text-fg text-lg font-black hover:border-accent hover:text-accent transition flex items-center justify-center">−</button>
+                          <span className="w-8 text-center text-fg font-black text-lg">{posItemQty}</span>
+                          <button onClick={() => setPosItemQty(q => q + 1)} className="w-9 h-9 rounded-lg bg-page-bg border border-gray-700 text-fg text-lg font-black hover:border-accent hover:text-accent transition flex items-center justify-center">+</button>
                         </div>
                       </div>
 
                       <div className="flex gap-3 mt-3 shrink-0">
-                        <button onClick={() => setPosSelectedProduct(null)} className="flex-1 py-4 bg-page-bg border border-gray-700 text-white hover:text-accent font-bold rounded-xl uppercase tracking-wider text-xs transition">Cancel</button>
+                        <button onClick={() => setPosSelectedProduct(null)} className="flex-1 py-4 bg-page-bg border border-gray-700 text-fg hover:text-accent font-bold rounded-xl uppercase tracking-wider text-xs transition">Cancel</button>
                         <button onClick={confirmPosItem} className="flex-1 py-4 bg-accent text-white hover:bg-brand-dark font-black rounded-xl uppercase tracking-wider text-xs shadow-lg shadow-accent/20 transition">Add to Cart</button>
                       </div>
                     </div>
@@ -475,16 +520,16 @@ export default function OrdersTab({ ctx }) {
                 <div className="flex justify-between items-center mb-6 bg-surface-2 p-3 rounded-xl border border-white/10 shadow-sm relative flex-wrap gap-3">
                   {/* Search bar */}
                   <div className="relative w-full sm:flex-1 sm:max-w-md order-last sm:order-none">
-                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30 pointer-events-none" />
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30 pointer-events-none" />
                     <input
                       type="text"
                       placeholder="Search name or #order…"
                       value={orderSearch}
                       onChange={e => { setOrderSearch(e.target.value); setOrdersPage(1); }}
-                      className="w-full pl-8 pr-3 py-2 bg-page-bg border border-white/10 rounded-lg text-white text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50 transition"
+                      className="w-full pl-8 pr-3 py-2 bg-page-bg border border-white/10 rounded-lg text-fg text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50 transition"
                     />
                     {orderSearch && (
-                      <button onClick={() => setOrderSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/70 transition">
+                      <button onClick={() => setOrderSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/30 hover:text-fg/70 transition">
                         <X size={12} />
                       </button>
                     )}
@@ -494,7 +539,7 @@ export default function OrdersTab({ ctx }) {
                       <button
                         key={dept}
                         onClick={() => setDepartmentFilter(dept)}
-                        className={`px-5 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition whitespace-nowrap ${departmentFilter === dept ? 'bg-brand text-white shadow-md shadow-brand/20' : 'bg-transparent text-white/50 hover:text-white/80 hover:bg-white/5'}`}
+                        className={`px-5 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition whitespace-nowrap ${departmentFilter === dept ? 'bg-brand text-white shadow-md shadow-brand/20' : 'bg-transparent text-fg/50 hover:text-fg/80 hover:bg-white/5'}`}
                       >
                         {dept} View
                       </button>
@@ -505,7 +550,7 @@ export default function OrdersTab({ ctx }) {
                     <div className="relative">
                       <button 
                         onClick={() => setIsStatusMenuOpen(!isStatusMenuOpen)}
-                        className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-lg font-bold uppercase tracking-wider text-xs hover:bg-gray-800 transition shadow-md"
+                        className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-lg font-bold uppercase tracking-wider text-xs hover:bg-transparent hover:text-brand transition shadow-md"
                       >
                         <Menu size={16} /> {orderFilter}
                       </button>
@@ -524,7 +569,7 @@ export default function OrdersTab({ ctx }) {
                               <button
                                 key={filter}
                                 onClick={() => { setOrderFilter(filter); setIsStatusMenuOpen(false); if (filter === 'Parked') fetchParked(); }}
-                                className={`px-4 py-3 text-left text-sm font-bold transition hover:bg-white/5 ${orderFilter === filter ? 'bg-brand/10 text-brand border-l-4 border-brand' : 'text-white/70 border-l-4 border-transparent'} ${showBadge ? 'flex items-center justify-between' : ''}`}
+                                className={`px-4 py-3 text-left text-sm font-bold transition hover:bg-white/5 ${orderFilter === filter ? 'bg-brand/10 text-brand border-l-4 border-brand' : 'text-fg/70 border-l-4 border-transparent'} ${showBadge ? 'flex items-center justify-between' : ''}`}
                               >
                                 {filter}
                                 {showBadge && <span className={`text-[10px] ${badgeCls} px-1.5 py-0.5 rounded-full`}>{badge}</span>}
@@ -562,7 +607,7 @@ export default function OrdersTab({ ctx }) {
                   const tables = Object.values(tableMap).sort((a,b) => a.table.localeCompare(b.table));
                   return (
                     <div className="mb-4 flex flex-wrap gap-2 items-center">
-                      <span className="text-[10px] text-white/30 font-black uppercase tracking-widest shrink-0">Active Tables:</span>
+                      <span className="text-[10px] text-fg/30 font-black uppercase tracking-widest shrink-0">Active Tables:</span>
                       {tables.map(({ table, count, status }) => (
                         <button key={table}
                           onClick={() => { setOrderFilter('All'); setOrderSearch(table); }}
@@ -587,10 +632,10 @@ export default function OrdersTab({ ctx }) {
                       <div className="w-16 h-16 rounded-2xl bg-surface-2 border border-white/5 flex items-center justify-center mb-5">
                         <ShoppingCart size={28} className="text-brand/60" />
                       </div>
-                      <p className="text-white/80 font-black uppercase tracking-widest text-sm mb-1.5">
+                      <p className="text-fg/80 font-black uppercase tracking-widest text-sm mb-1.5">
                         No orders in {departmentFilter === 'All' ? 'any' : departmentFilter} queue
                       </p>
-                      <p className="text-white/35 text-xs mb-6 max-w-xs">
+                      <p className="text-fg/35 text-xs mb-6 max-w-xs">
                         New orders appear here instantly, whether staff ring them up or customers order by QR.
                       </p>
                       <button
@@ -634,7 +679,7 @@ export default function OrdersTab({ ctx }) {
                         <div className="flex justify-between items-center px-4 pt-4 pb-3 gap-2">
                           <div className="flex flex-col min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-white font-black text-sm">{order.orderNumber}</span>
+                              <span className="text-fg font-black text-sm">{order.orderNumber}</span>
                               {order.customerName && (
                                 <span className="text-[11px] bg-white/10 text-gray-300 px-2 py-0.5 rounded font-semibold">{order.customerName}</span>
                               )}
@@ -675,7 +720,7 @@ export default function OrdersTab({ ctx }) {
                               <ChefHat size={13} />
                             </button>
                             {BUSINESS_TYPE !== 'log' && (
-                              <button onClick={() => printOrderSlip(order)} className="p-1.5 bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition" title="Print Receipt">
+                              <button onClick={() => printOrderSlip(order)} className="p-1.5 bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-fg transition" title="Print Receipt">
                                 <Printer size={13} />
                               </button>
                             )}
@@ -684,9 +729,14 @@ export default function OrdersTab({ ctx }) {
                                 <FileText size={13} />
                               </button>
                             )}
+                            {BUSINESS_TYPE === 'log' && (
+                              <button onClick={() => printDeliveryReceipt(order)} className="p-1.5 bg-white/5 text-brand/70 rounded-lg hover:bg-brand/10 hover:text-brand transition" title="Print Delivery Receipt (2 copies: original + duplicate)">
+                                <Truck size={13} />
+                              </button>
+                            )}
                             <button
                               onClick={() => setCollapsedOrders(prev => ({ ...prev, [order._id]: !prev[order._id] }))}
-                              className="p-1.5 bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition"
+                              className="p-1.5 bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-fg transition"
                             >
                               {collapsedOrders[order._id] ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
                             </button>
@@ -696,21 +746,21 @@ export default function OrdersTab({ ctx }) {
                         {/* DELIVERY/PICKUP INFO STRIP */}
                         {['Manual Delivery','Pickup','Grab Delivery','Foodpanda'].includes(order.table) && (
                           <div className="mx-4 mb-2 bg-black/30 rounded-lg px-3 py-2 border border-white/5 text-[10px] space-y-1">
-                            {order.customerPhone && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-white/40 uppercase tracking-widest">Phone</span> {order.customerPhone}</div>}
-                            {order.deliveryAddress && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-white/40 uppercase tracking-widest">Address</span> {order.deliveryAddress}</div>}
-                            {order.deliveryFee > 0 && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-white/40 uppercase tracking-widest">Delivery Fee</span> ₱{order.deliveryFee.toFixed(2)}</div>}
-                            {order.scheduledTime && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-white/40 uppercase tracking-widest">Scheduled</span> {order.scheduledTime}</div>}
+                            {order.customerPhone && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-fg/40 uppercase tracking-widest">Phone</span> {order.customerPhone}</div>}
+                            {order.deliveryAddress && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-fg/40 uppercase tracking-widest">Address</span> {order.deliveryAddress}</div>}
+                            {order.deliveryFee > 0 && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-fg/40 uppercase tracking-widest">Delivery Fee</span> ₱{order.deliveryFee.toFixed(2)}</div>}
+                            {order.scheduledTime && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-fg/40 uppercase tracking-widest">Scheduled</span> {order.scheduledTime}</div>}
                             {/* DISPATCH PIPELINE */}
                             {order.dispatchStatus && (
                               <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-white/5 mt-1">
-                                <span className="font-black text-white/40 uppercase tracking-widest">Dispatch</span>
+                                <span className="font-black text-fg/40 uppercase tracking-widest">Dispatch</span>
                                 {(['Preparing','Out for Delivery','Awaiting Pickup','Delivered','Picked Up']).map(s => {
                                   const isActive = order.dispatchStatus === s;
                                   return (
                                     <button key={s} onClick={async () => {
                                       const res = await apiFetch(`/api/orders/${order._id}/dispatch`, { method: 'PATCH', body: JSON.stringify({ dispatchStatus: s }) });
                                       if (res.ok) fetchOrders();
-                                    }} className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider transition ${isActive ? 'bg-brand text-white' : 'bg-white/5 text-gray-500 hover:bg-white/10 hover:text-white'}`}>
+                                    }} className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider transition ${isActive ? 'bg-brand text-white' : 'bg-white/5 text-gray-500 hover:bg-white/10 hover:text-fg'}`}>
                                       {s}
                                     </button>
                                   );
@@ -736,7 +786,7 @@ export default function OrdersTab({ ctx }) {
                                       <div key={item.originalIdx} className="mb-2 last:mb-0">
                                         <div className="flex justify-between items-start gap-2">
                                           <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                                            <span className={`font-semibold text-sm leading-tight ${item.itemStatus === 'Delivered' ? 'text-gray-600 line-through' : 'text-white'}`}>
+                                            <span className={`font-semibold text-sm leading-tight ${item.itemStatus === 'Delivered' ? 'text-gray-600 line-through' : 'text-fg'}`}>
                                               {item.quantity}x {item.name}
                                             </span>
                                           </div>
@@ -747,7 +797,7 @@ export default function OrdersTab({ ctx }) {
                                                   <button onClick={() => updateItemStatus(order, item.originalIdx, 'Preparing')} className="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 hover:bg-yellow-500 hover:text-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition">Prep</button>
                                                 )}
                                                 {item.itemStatus === 'Preparing' && (
-                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Finished')} className="bg-accent/10 text-accent border border-accent/20 hover:bg-accent hover:text-white px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition">Finish</button>
+                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Finished')} className="bg-accent/10 text-accent border border-accent/20 hover:bg-accent hover:text-fg px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition">Finish</button>
                                                 )}
                                                 {item.itemStatus === 'Finished' && departmentFilter === 'All' && (
                                                   <button onClick={() => updateItemStatus(order, item.originalIdx, 'Delivered')} className="bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500 hover:text-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition flex items-center gap-1">
@@ -798,9 +848,9 @@ export default function OrdersTab({ ctx }) {
                                                           placeholder="0"
                                                           value={item.discountPercent || ''}
                                                           onChange={e => applyItemDiscount(order._id, item.originalIdx, e.target.value)}
-                                                          className="w-14 bg-white/5 border border-white/10 rounded pl-1.5 pr-5 py-0.5 text-white text-[10px] font-bold outline-none focus:border-brand/60 placeholder-white/20 tabular-nums"
+                                                          className="w-14 bg-white/5 border border-white/10 rounded pl-1.5 pr-5 py-0.5 text-fg text-[10px] font-bold outline-none focus:border-brand/60 placeholder-white/20 tabular-nums"
                                                         />
-                                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-white/30 text-[9px] font-bold pointer-events-none">%</span>
+                                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-fg/30 text-[9px] font-bold pointer-events-none">%</span>
                                                       </div>
                                                     )}
                                                   </div>
@@ -845,7 +895,7 @@ export default function OrdersTab({ ctx }) {
                               <div className="flex flex-col gap-1.5 border-t border-white/5 pt-2.5">
                                 {isComp ? (
                                   /* ── APPLIED STATE: audit badge ── */
-                                  <div className="flex items-start gap-2 bg-white/3 border border-white/8 rounded-lg p-2">
+                                  <div className="flex items-start gap-2 bg-white/3 border border-white/10 rounded-lg p-2">
                                     <Gift size={11} className="text-gray-500 flex-shrink-0 mt-0.5" />
                                     <div className="flex-1 min-w-0 space-y-0.5">
                                       <div className="flex items-center gap-2">
@@ -952,18 +1002,18 @@ export default function OrdersTab({ ctx }) {
                                         <span className="whitespace-nowrap uppercase tracking-wider text-[9px]">Promo</span>
                                         {order.status === 'Pending' && (
                                           hasScpwd ? (
-                                            <span className="text-[9px] text-white/20 italic ml-auto">SC/PWD active</span>
+                                            <span className="text-[9px] text-fg/20 italic ml-auto">SC/PWD active</span>
                                           ) : (
                                             <div className="flex gap-1 items-center flex-1 justify-end">
                                               <select
-                                                className="w-full max-w-[110px] bg-page-bg border border-white/10 rounded px-1 text-[10px] text-white outline-none h-6"
+                                                className="w-full max-w-[110px] bg-page-bg border border-white/10 rounded px-1 text-[10px] text-fg outline-none h-6"
                                                 value={discountInputs[order._id] || ''}
                                                 onChange={(e) => setDiscountInputs(prev => ({ ...prev, [order._id]: e.target.value }))}
                                               >
                                                 <option value="">No promo</option>
                                                 {promoDiscounts.map(d => <option key={d._id} value={d.percentage}>{d.name} ({d.percentage}%)</option>)}
                                               </select>
-                                              <button onClick={() => applyDiscount(order._id)} className="bg-accent/10 hover:bg-accent text-accent hover:text-white px-2 rounded font-black transition h-6 flex items-center border border-accent/20"><Check size={12} /></button>
+                                              <button onClick={() => applyDiscount(order._id)} className="bg-accent/10 hover:bg-accent text-accent hover:text-fg px-2 rounded font-black transition h-6 flex items-center border border-accent/20"><Check size={12} /></button>
                                               {order.discountPercent > 0 && order.discountType !== 'SC/PWD' && (
                                                 <button onClick={() => applyDiscount(order._id, true)} className="bg-red-500/10 text-red-400 px-2 rounded font-black h-6 border border-red-500/20 flex items-center"><X size={12} /></button>
                                               )}
@@ -976,7 +1026,7 @@ export default function OrdersTab({ ctx }) {
                                     {scpwdDiscounts.length > 0 && order.status === 'Pending' && (
                                       <div className="border-b border-white/5 pb-1.5 space-y-1">
                                         {hasPromo ? (
-                                          <span className="text-[9px] uppercase tracking-wider text-white/20 italic">SC/PWD - Promo active</span>
+                                          <span className="text-[9px] uppercase tracking-wider text-fg/20 italic">SC/PWD - Promo active</span>
                                         ) : (
                                           <>
                                             <button
@@ -991,7 +1041,7 @@ export default function OrdersTab({ ctx }) {
                                                   <div key={idx} className="flex items-center gap-2">
                                                     <span className="text-[11px] text-gray-400 font-semibold flex-1 truncate min-w-0">{item.quantity}x {item.name}</span>
                                                     <select
-                                                      className="bg-page-bg border border-white/10 rounded text-[10px] text-white outline-none px-1 py-0.5 h-6 cursor-pointer flex-shrink-0"
+                                                      className="bg-page-bg border border-white/10 rounded text-[10px] text-fg outline-none px-1 py-0.5 h-6 cursor-pointer flex-shrink-0"
                                                       value={item.discountPercent || ''}
                                                       onChange={(e) => applyItemDiscount(order._id, idx, e.target.value)}
                                                     >
@@ -1015,7 +1065,7 @@ export default function OrdersTab({ ctx }) {
                                 );
                               })()}
                               <div className="flex justify-between font-black text-base pt-1 border-t border-white/10">
-                                <span className="text-white">Total</span>
+                                <span className="text-fg">Total</span>
                                 <span className="text-accent font-mono tracking-wider">P{displayTotal.toFixed(2)}</span>
                               </div>
                             </div>)}
@@ -1032,12 +1082,12 @@ export default function OrdersTab({ ctx }) {
                                   <div className="flex gap-2">
                                     <button
                                       onClick={() => updateStatus(order._id, 'Pending')}
-                                      className="flex-1 bg-purple-500 text-white py-2.5 rounded-lg hover:bg-purple-400 font-black text-xs uppercase tracking-widest transition flex items-center justify-center gap-1.5"
+                                      className="flex-1 bg-purple-500 text-fg py-2.5 rounded-lg hover:bg-purple-400 font-black text-xs uppercase tracking-widest transition flex items-center justify-center gap-1.5"
                                       title="Unlock - promote to Pending so payment can be collected"
                                     >
                                       <Unlock size={12} /> Unlock & Take Payment
                                     </button>
-                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-white font-black text-xs transition uppercase border border-red-500/20">Drop</button>
+                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop</button>
                                   </div>
                                 </div>
                               )}
@@ -1060,7 +1110,7 @@ export default function OrdersTab({ ctx }) {
                                         >
                                           Send to {SEND_TARGET}
                                         </button>
-                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-white font-black text-xs transition uppercase border border-red-500/20">Drop</button>
+                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop</button>
                                       </div>
                                     </div>
                                   );
@@ -1075,7 +1125,7 @@ export default function OrdersTab({ ctx }) {
                                       <select
                                         value={displayPayment}
                                         onChange={(e) => setPaymentSelections(prev => ({ ...prev, [order._id]: e.target.value }))}
-                                        className="w-full border rounded-lg p-2 text-sm font-bold outline-none transition bg-page-bg text-white border-white/10 focus:border-accent/50"
+                                        className="w-full border rounded-lg p-2 text-sm font-bold outline-none transition bg-page-bg text-fg border-white/10 focus:border-accent/50"
                                       >
                                         {/* Canonical payment methods — these stay even when no
                                             sub-accounts have been added so the cashier always has
@@ -1137,7 +1187,7 @@ export default function OrdersTab({ ctx }) {
                                               placeholder={`≥ P${displayTotal.toFixed(2)}`}
                                               value={cashTendered[order._id] || ''}
                                               onChange={(e) => setCashTendered(prev => ({ ...prev, [order._id]: e.target.value }))}
-                                              className="flex-1 bg-white/5 border border-white/10 focus:border-accent/50 rounded-lg px-2 py-1.5 text-sm font-mono text-white outline-none"
+                                              className="flex-1 bg-white/5 border border-white/10 focus:border-accent/50 rounded-lg px-2 py-1.5 text-sm font-mono text-fg outline-none"
                                               aria-label="Cash tendered"
                                             />
                                           </div>
@@ -1159,14 +1209,14 @@ export default function OrdersTab({ ctx }) {
                                             }
                                             setTimeout(() => updateStatus(order._id, 'Preparing'), 0);
                                           }}
-                                          className={`flex-1 py-2.5 rounded-lg font-black text-xs uppercase tracking-widest transition ${isUnderpaid ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-accent text-white hover:bg-accentShadow'}`}
+                                          className={`flex-1 py-2.5 rounded-lg font-black text-xs uppercase tracking-widest transition ${isUnderpaid ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-accent text-fg hover:bg-accentShadow'}`}
                                         >
                                           Pay & Send to {SEND_TARGET}
                                         </button>
-                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-white font-black text-xs transition uppercase border border-red-500/20">Drop</button>
+                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop</button>
                                       </div>
                                       {BUSINESS_TYPE === 'log' && (order.items?.length > 0) && (
-                                        <button onClick={() => openPartial(order)} className="w-full bg-amber-500/10 text-amber-400 py-2 rounded-lg hover:bg-amber-500 hover:text-white font-black text-[11px] transition uppercase tracking-widest border border-amber-500/20">
+                                        <button onClick={() => openPartial(order)} className="w-full bg-amber-500/10 text-amber-400 py-2 rounded-lg hover:bg-amber-500 hover:text-fg font-black text-[11px] transition uppercase tracking-widest border border-amber-500/20">
                                           Partial Fulfill
                                         </button>
                                       )}
@@ -1186,10 +1236,10 @@ export default function OrdersTab({ ctx }) {
                                         Partially fulfilled · {doneQty}/{totalQty} units{order.depositRemaining > 0 ? ' · prepaid' : ''}
                                       </span>
                                     </div>
-                                    <button onClick={() => openPartial(order)} className="w-full bg-accent text-white py-2.5 rounded-lg hover:bg-accentShadow font-black text-xs uppercase tracking-widest transition">
+                                    <button onClick={() => openPartial(order)} className="w-full bg-accent text-fg py-2.5 rounded-lg hover:bg-accentShadow font-black text-xs uppercase tracking-widest transition">
                                       Fulfill Remaining
                                     </button>
-                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2 px-4 rounded-lg hover:bg-red-500 hover:text-white font-black text-[11px] transition uppercase border border-red-500/20">Drop Remaining</button>
+                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2 px-4 rounded-lg hover:bg-red-500 hover:text-fg font-black text-[11px] transition uppercase border border-red-500/20">Drop Remaining</button>
                                   </div>
                                 );
                               })()}
@@ -1227,7 +1277,7 @@ export default function OrdersTab({ ctx }) {
                                     </div>
                                   )}
                                   {departmentFilter === 'All' && !allDelivered && (
-                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="w-full bg-red-500/10 text-red-400 py-2 rounded-lg hover:bg-red-500 hover:text-white font-black text-xs transition uppercase border border-red-500/20">Drop Order</button>
+                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="w-full bg-red-500/10 text-red-400 py-2 rounded-lg hover:bg-red-500 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop Order</button>
                                   )}
                                 </div>
                               )}
@@ -1242,14 +1292,14 @@ export default function OrdersTab({ ctx }) {
                                   )}
                                   <div className="flex gap-2">
                                     <button onClick={() => updateStatus(order._id, 'Completed')} className="flex-1 bg-green-600 text-white py-2.5 rounded-lg hover:bg-green-500 font-black uppercase tracking-widest text-xs transition">Mark All Delivered</button>
-                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-3 rounded-lg hover:bg-red-500 hover:text-white font-black text-xs transition uppercase border border-red-500/20">Drop</button>
+                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-3 rounded-lg hover:bg-red-500 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop</button>
                                   </div>
                                   <button
                                     onClick={async () => {
                                       try {
                                         const res = await apiFetch(`/api/orders/${order._id}/partial-delivery`, { method: 'POST' });
                                         const data = await res.json();
-                                        if (!data.success) alert(data.error);
+                                        if (!data.success) ui.alert(data.error);
                                       } catch (err) { console.error(err); }
                                     }}
                                     className="w-full bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 py-2 rounded-lg hover:bg-yellow-500/20 font-bold text-xs uppercase tracking-widest transition"
@@ -1273,10 +1323,10 @@ export default function OrdersTab({ ctx }) {
 
                               {order.status === 'Completed' && departmentFilter === 'All' && canVoidRefund && (
                                 <div className="flex gap-2">
-                                  <button onClick={() => handleVoidOrder(order._id)} className="flex-1 bg-red-500/10 border border-red-500/20 text-red-400 py-2 rounded-lg hover:bg-red-500 hover:text-white font-bold text-xs uppercase tracking-widest transition">
+                                  <button onClick={() => handleVoidOrder(order._id)} className="flex-1 bg-red-500/10 border border-red-500/20 text-red-400 py-2 rounded-lg hover:bg-red-500 hover:text-fg font-bold text-xs uppercase tracking-widest transition">
                                     Void
                                   </button>
-                                  <button onClick={() => { setRefundModal(order); }} className="flex-1 bg-orange-500/10 border border-orange-500/20 text-orange-400 py-2 rounded-lg hover:bg-orange-500 hover:text-white font-bold text-xs uppercase tracking-widest transition">
+                                  <button onClick={() => { setRefundModal(order); }} className="flex-1 bg-orange-500/10 border border-orange-500/20 text-orange-400 py-2 rounded-lg hover:bg-orange-500 hover:text-fg font-bold text-xs uppercase tracking-widest transition">
                                     Refund
                                   </button>
                                 </div>

@@ -1,6 +1,16 @@
 // client-portal routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { title, lower } from '../lib/normalize.js';
+
+// A credit limit of 0 means "cash only" and must survive as 0, while '' / null
+// mean "no limit set". Truthiness would collapse those two into one.
+const parseCreditLimit = (v) => {
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number(String(v).replace(/[,\s₱]/g, ''));
+  return Number.isFinite(n) && n >= 0 ? n : null;
+};
+
 export default function registerClientPortal(ctx) {
   const {
     app,
@@ -179,7 +189,12 @@ app.post('/api/client-auth/login', loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ success: false, error: 'Username and password are required.' });
-    const client = await ClientAccount.findOne({ username: username.trim() });
+    // Case-insensitive on purpose: new accounts store a lowercased username, but
+    // accounts created before that change still hold mixed case. An exact match
+    // would lock those clients out of their own portal.
+    const client = await ClientAccount.findOne({
+      username: { $regex: `^${escapeRegex(lower(username))}$`, $options: 'i' },
+    });
     if (!client || !client.isActive) return res.status(401).json({ success: false, error: 'Invalid credentials or account is inactive.' });
     const match = await bcrypt.compare(password, client.password);
     if (!match) return res.status(401).json({ success: false, error: 'Invalid credentials.' });
@@ -205,7 +220,8 @@ app.get('/api/client/orders', verifyClientToken, async (req, res) => {
     }
     const orders = await Order.find(
       { clientId: String(clientId) },
-      { orderNumber: 1, billingNumber: 1, status: 1, total: 1, items: 1, paymentMethod: 1, createdAt: 1, transactionType: 1, clientReceived: 1 }
+      // orderNotes is the client's own text — it belongs on their order slip.
+      { orderNumber: 1, billingNumber: 1, status: 1, total: 1, items: 1, paymentMethod: 1, createdAt: 1, transactionType: 1, clientReceived: 1, orderNotes: 1 }
     ).sort({ createdAt: -1 }).limit(30).lean();
     res.json({ success: true, orders });
   } catch (err) {
@@ -267,11 +283,15 @@ app.get('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res)
 
 app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { username, password, name, paymentMethod } = req.body;
-    if (!username?.trim() || !password || !name?.trim()) {
+    const { username, password, name, paymentMethod, creditLimit } = req.body;
+    // Usernames are stored lowercase so "KasaLokal" and "kasalokal" are the same
+    // account — mixed case here is the classic duplicate-login bug.
+    const cleanUsername = lower(username);
+    const cleanName = title(name);
+    if (!cleanUsername || !password || !cleanName) {
       return res.status(400).json({ success: false, error: 'username, password, and name are required.' });
     }
-    const exists = await ClientAccount.findOne({ username: username.trim() });
+    const exists = await ClientAccount.findOne({ username: cleanUsername });
     if (exists) return res.status(409).json({ success: false, error: 'Username already taken.' });
     const hashed = await bcrypt.hash(password, BCRYPT_ROUNDS);
     // Standard customer ID format: CUS-1000-A0000 ("1000" is a fixed segment;
@@ -279,8 +299,8 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
     // used for client/product codes elsewhere, just with the fixed segment folded
     // into the prefix so generateNextSequence's `${prefix}-A${seq}` template fits).
     const clientCode = await generateNextSequence(ClientAccount, 'CUS-1000', 'clientCode');
-    const client = await ClientAccount.create({ clientCode, username: username.trim(), password: hashed, name: name.trim(), paymentMethod: paymentMethod || 'Cash' });
-    res.json({ success: true, client: { _id: client._id, clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive } });
+    const client = await ClientAccount.create({ clientCode, username: cleanUsername, password: hashed, name: cleanName, paymentMethod: paymentMethod || 'Cash', creditLimit: parseCreditLimit(creditLimit) });
+    res.json({ success: true, client: { _id: client._id, clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, creditLimit: client.creditLimit } });
   } catch (err) {
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
@@ -288,12 +308,14 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
 
 app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { username, password, name, paymentMethod, isActive } = req.body;
+    const { username, password, name, paymentMethod, isActive, creditLimit } = req.body;
     const update = {};
-    if (username) update.username = username.trim();
-    if (name) update.name = name.trim();
+    if (username) update.username = lower(username);
+    if (name) update.name = title(name);
     if (paymentMethod) update.paymentMethod = paymentMethod;
     if (typeof isActive === 'boolean') update.isActive = isActive;
+    // Sent explicitly (including '' / null to clear it back to "no limit").
+    if (creditLimit !== undefined) update.creditLimit = parseCreditLimit(creditLimit);
     if (password) update.password = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const client = await ClientAccount.findByIdAndUpdate(req.params.id, { $set: update }, { returnDocument: 'after', select: '-password' });
     if (!client) return res.status(404).json({ success: false, error: 'Client account not found.' });

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Package, Eye, EyeOff, AlertCircle, Loader2, LogIn } from 'lucide-react';
+import { saveSession, loadSession, clientIdOf } from './clientSession';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://192.168.100.2:5002';
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Semivra').toUpperCase();
@@ -10,6 +11,13 @@ export default function ClientLogin() {
   const [form, setForm] = useState({ username: '', password: '', showPassword: false });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Already signed in (e.g. reopened the tab, or hit the login URL from a
+  // bookmark)? Go straight back to the order page instead of asking again.
+  useEffect(() => {
+    const session = loadSession();
+    if (session) navigate(`/client/portal/${clientIdOf(session.info) || ''}`, { replace: true });
+  }, [navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -23,8 +31,7 @@ export default function ClientLogin() {
       });
       const data = await res.json();
       if (data.success) {
-        sessionStorage.setItem('client_token', data.token);
-        sessionStorage.setItem('client_info', JSON.stringify(data.client));
+        saveSession(data.token, data.client);
         const uid = data.client?._id || data.client?.clientCode || '';
         navigate(`/client/portal/${uid}`);
       } else {
@@ -47,8 +54,8 @@ export default function ClientLogin() {
           <div className="w-14 h-14 rounded-2xl bg-brand/20 flex items-center justify-center mb-4">
             <Package size={26} className="text-brand" />
           </div>
-          <h2 className="text-xl font-black text-white uppercase tracking-widest">{BIZ_NAME}</h2>
-          <p className="text-white/40 text-xs mt-1">Client Portal - Sign in to order</p>
+          <h2 className="text-xl font-black text-fg uppercase tracking-widest">{BIZ_NAME}</h2>
+          <p className="text-fg/40 text-xs mt-1">Client Portal - Sign in to order</p>
         </div>
 
         {error && (
@@ -65,7 +72,7 @@ export default function ClientLogin() {
             aria-label="Username"
             value={form.username}
             onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-            className="w-full bg-white/5 border border-white/10 focus:border-brand text-white placeholder-white/30 px-4 py-3 rounded-xl outline-none transition text-sm font-medium"
+            className="w-full bg-white border border-white/10 focus:border-brand text-black placeholder-black/30 px-4 py-3 rounded-xl outline-none transition text-sm font-medium"
             required
             autoFocus
             autoComplete="username"
@@ -77,14 +84,14 @@ export default function ClientLogin() {
               aria-label="Password"
               value={form.password}
               onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-              className="w-full bg-white/5 border border-white/10 focus:border-brand text-white placeholder-white/30 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
+              className="w-full bg-white border border-white/10 focus:border-brand text-black placeholder-black/30 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
               required
               autoComplete="current-password"
             />
             <button
               type="button"
               onClick={() => setForm(f => ({ ...f, showPassword: !f.showPassword }))}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/70 transition"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/30 hover:text-fg/70 transition"
               aria-label={form.showPassword ? 'Hide password' : 'Show password'}
             >
               {form.showPassword ? <EyeOff size={16} /> : <Eye size={16} />}

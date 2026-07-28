@@ -1,5 +1,5 @@
-import React from 'react';
-import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock } from 'lucide-react';
+import React, { useState } from 'react';
+import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText } from 'lucide-react';
 
 // ── SettingsTab — system preferences & account controls ───────────────────────
 // Houses the toggles that used to live crammed in the sidebar's "Tools" dropdown
@@ -21,15 +21,15 @@ function Toggle({ on, onChange, disabled }) {
 }
 
 function SettingRow({ icon: Icon, title, desc, children, tone = 'default' }) {
-  const iconTone = tone === 'default' ? 'text-brand bg-brand/15 border-brand/30' : 'text-white/50 bg-white/5 border-white/10';
+  const iconTone = tone === 'default' ? 'text-brand bg-brand/15 border-brand/30' : 'text-fg/50 bg-white/5 border-white/10';
   return (
     <div className="flex items-center gap-4 px-4 py-4">
       <div className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${iconTone}`}>
         <Icon size={16} />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="font-bold text-white text-sm">{title}</p>
-        {desc && <p className="text-white/40 text-xs mt-0.5 leading-snug">{desc}</p>}
+        <p className="font-bold text-fg text-sm">{title}</p>
+        {desc && <p className="text-fg/40 text-xs mt-0.5 leading-snug">{desc}</p>}
       </div>
       <div className="shrink-0">{children}</div>
     </div>
@@ -39,21 +39,101 @@ function SettingRow({ icon: Icon, title, desc, children, tone = 'default' }) {
 function Card({ title, children }) {
   return (
     <div>
-      <p className="text-[11px] font-black uppercase tracking-wider text-white/30 mb-2 px-1">{title}</p>
+      <p className="text-[11px] font-black uppercase tracking-wider text-fg/30 mb-2 px-1">{title}</p>
       <div className="bg-white/5 border border-white/10 rounded-2xl divide-y divide-white/5">{children}</div>
     </div>
   );
 }
 
+// How credit limits are applied across the business. Mirrors CREDIT_MODES on
+// the server — the server is authoritative and rejects anything else.
+const CREDIT_MODES = [
+  { value: 'off',        label: 'No limits',        desc: 'Clients can buy on account without restriction.' },
+  { value: 'per_client', label: 'Per client',       desc: 'Only clients with their own limit are restricted.' },
+  { value: 'global',     label: 'Same for all',     desc: 'One limit applies to every client.' },
+  { value: 'both',       label: 'Both',             desc: 'A shared default, overridden by a client’s own limit.' },
+];
+
+// Appearance is a per-device preference (localStorage), not a business setting —
+// one shop can run a dark register and a light warehouse tablet.
+const THEMES = [
+  { value: 'default', label: 'Forest',  hint: 'Dark charcoal + olive' },
+  { value: 'light',   label: 'Light',   hint: 'Off-white, for bright rooms' },
+  { value: 'yellow',  label: 'Amber',   hint: 'Dark + high-vis yellow' },
+  { value: 'ocean',   label: 'Ocean',   hint: 'Dark + electric blue' },
+];
+
+const readTheme = () => {
+  try { return localStorage.getItem('dash.theme') || import.meta.env.VITE_THEME || 'default'; }
+  catch { return 'default'; }
+};
+
+const LANGUAGES = [
+  { value: 'en', label: 'English' },
+  { value: 'fil', label: 'Taglish' },
+];
+
+// Free-text setting: saves on blur so we don't PATCH on every keystroke.
+// `defaultValue` + a key tied to the stored value keeps it uncontrolled while
+// still picking up an external refresh after save.
+function TextSetting({ label, hint, value, onSave, placeholder, multiline, maxLength = 400 }) {
+  const common = {
+    defaultValue: value ?? '',
+    placeholder,
+    maxLength,
+    onBlur: e => {
+      const next = e.target.value.trim();
+      if (next !== String(value ?? '')) onSave(next);
+    },
+    className: 'w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-3 py-2.5 rounded-xl outline-none transition text-sm',
+  };
+  return (
+    <div>
+      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">{label}</label>
+      {multiline
+        ? <textarea key={String(value ?? '')} rows={2} {...common} className={`${common.className} resize-none`} />
+        : <input key={String(value ?? '')} type="text" {...common} />}
+      {hint && <p className="text-[10px] text-fg/40 mt-1 leading-snug">{hint}</p>}
+    </div>
+  );
+}
+
+const readLang = () => {
+  try { return localStorage.getItem('dash.lang') || 'en'; } catch { return 'en'; }
+};
+
 export default function SettingsTab({ ctx }) {
   const {
     systemSettings = {}, toggleQROrders, toggleAutoClose, toggleImages,
     isSuperAdmin, setChangePwModal, setChangePwError, BIZ_NAME, activeAdmin,
+    saveSetting,
   } = ctx;
 
   const qrOn    = systemSettings.isAcceptingQROrders !== false;
   const autoOn  = systemSettings.autoCloseEnabled !== false;
   const imgOn   = systemSettings.imagesEnabled !== false;
+
+  const [theme, setTheme] = useState(readTheme);
+  const [lang, setLang] = useState(readLang);
+
+  const applyTheme = (v) => {
+    setTheme(v);
+    document.documentElement.setAttribute('data-theme', v);
+    try { localStorage.setItem('dash.theme', v); } catch { /* private mode: applies for this session only */ }
+  };
+  const applyLang = (v) => {
+    setLang(v);
+    try { localStorage.setItem('dash.lang', v); } catch { /* as above */ }
+  };
+
+  // Defaults match the portal's own fallbacks: prices stay hidden unless
+  // explicitly enabled (log pricing is confirmed by staff), notes stay on.
+  const portalShowPrices = systemSettings.portalShowPrices === true;
+  const portalAllowNotes = systemSettings.portalAllowNotes !== false;
+
+  const creditMode = systemSettings.creditLimitMode || 'off';
+  const globalLimit = systemSettings.globalCreditLimit ?? '';
+  const usesGlobal = creditMode === 'global' || creditMode === 'both';
 
   return (
     <div className="p-4 sm:p-6 max-w-3xl mx-auto">
@@ -63,8 +143,8 @@ export default function SettingsTab({ ctx }) {
           <SlidersHorizontal size={19} className="text-brand" />
         </div>
         <div>
-          <h1 className="text-xl font-black text-white leading-none">Settings</h1>
-          <p className="text-white/40 text-xs font-bold mt-1">System preferences &amp; account</p>
+          <h1 className="text-xl font-black text-fg leading-none">Settings</h1>
+          <p className="text-fg/60 text-xs font-bold mt-1">System preferences &amp; account</p>
         </div>
       </div>
 
@@ -89,18 +169,232 @@ export default function SettingsTab({ ctx }) {
           </Card>
         ) : (
           <Card title="System">
-            <div className="flex items-center gap-3 px-4 py-5 text-white/40">
+            <div className="flex items-center gap-3 px-4 py-5 text-fg/60">
               <Lock size={15} />
               <span className="text-sm font-bold">System toggles are superadmin-only.</span>
             </div>
           </Card>
         )}
 
+        {/* Credit limits — superadmin only, and only meaningful where clients
+            buy on account. */}
+        {isSuperAdmin && (
+          <Card title="Credit Limits">
+            <div className="px-4 py-4">
+              <div className="flex items-start gap-4">
+                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                  <CreditCard size={16} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-fg text-sm">How limits apply</p>
+                  <p className="text-fg/60 text-xs mt-0.5 leading-snug">
+                    {CREDIT_MODES.find(m => m.value === creditMode)?.desc}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 mt-3">
+                    {CREDIT_MODES.map(m => (
+                      <button key={m.value}
+                        onClick={() => saveSetting?.('creditLimitMode', m.value)}
+                        className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
+                          creditMode === m.value
+                            ? 'bg-brand text-white border-brand'
+                            : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'
+                        }`}>
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                  {usesGlobal && (
+                    <div className="mt-4">
+                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
+                        Limit for all clients (₱)
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        defaultValue={globalLimit}
+                        onBlur={e => saveSetting?.('globalCreditLimit', e.target.value === '' ? null : Number(String(e.target.value).replace(/[,\s₱]/g, '')))}
+                        placeholder="e.g. 50000"
+                        className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
+                      />
+                      <p className="text-[10px] text-fg/60 mt-1.5">
+                        Applies to every client{creditMode === 'both' ? ' that has no limit of its own' : ''}.
+                        Blank = no shared limit.
+                      </p>
+                    </div>
+                  )}
+                  <p className="text-[10px] text-fg/60 mt-3 leading-relaxed">
+                    Only <span className="text-fg/80 font-bold">on-account</span> (non-cash) orders use credit.
+                    Cash sales settle immediately and are never blocked.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* Client Portal — copy & branding shown to logged-in clients and on the
+            order slip. Superadmin-only, and only meaningful in logistics mode
+            (the portal is a log-only surface). Read publicly by the portal via
+            /api/public/portal-settings, so keep operational settings out. */}
+        {isSuperAdmin && BUSINESS_TYPE === 'log' && (
+          <Card title="Client Portal">
+            <SettingRow icon={Tag} title="Show Prices"
+              desc={portalShowPrices
+                ? 'Clients see each product’s price and a running cart total.'
+                : 'Prices are hidden; the portal shows “Inquire price” and staff confirm the total.'}>
+              <Toggle on={portalShowPrices} onChange={() => saveSetting?.('portalShowPrices', !portalShowPrices)} />
+            </SettingRow>
+
+            <SettingRow icon={MessageSquare} title="Order Notes"
+              desc={portalAllowNotes
+                ? 'Clients can attach notes/special instructions to an order.'
+                : 'The notes box is hidden from the checkout drawer.'}>
+              <Toggle on={portalAllowNotes} onChange={() => saveSetting?.('portalAllowNotes', !portalAllowNotes)} />
+            </SettingRow>
+
+            {/* Welcome & announcements */}
+            <div className="flex items-start gap-4 px-4 py-4">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                <Package size={16} />
+              </div>
+              <div className="flex-1 min-w-0 space-y-3">
+                <div>
+                  <p className="font-bold text-fg text-sm">Welcome &amp; Announcements</p>
+                  <p className="text-fg/40 text-xs mt-0.5 leading-snug">Shown at the top of the portal after a client signs in.</p>
+                </div>
+                <TextSetting label="Welcome title" value={systemSettings.portalWelcomeTitle}
+                  placeholder="e.g. Welcome back" maxLength={60}
+                  onSave={v => saveSetting?.('portalWelcomeTitle', v)} />
+                <TextSetting label="Welcome message" value={systemSettings.portalWelcomeMessage} multiline
+                  placeholder="e.g. Browse the catalogue and send us your order — we’ll confirm pricing on Messenger."
+                  onSave={v => saveSetting?.('portalWelcomeMessage', v)} />
+                <TextSetting label="Announcement banner" value={systemSettings.portalAnnouncement} multiline
+                  hint="Highlighted notice, e.g. holiday cut-off dates. Leave blank to hide."
+                  placeholder="e.g. Cut-off for Dec 24 deliveries is Dec 20, 5PM."
+                  onSave={v => saveSetting?.('portalAnnouncement', v)} />
+              </div>
+            </div>
+
+            {/* Support & payment */}
+            <div className="flex items-start gap-4 px-4 py-4">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                <MessageSquare size={16} />
+              </div>
+              <div className="flex-1 min-w-0 space-y-3">
+                <div>
+                  <p className="font-bold text-fg text-sm">Support &amp; Payment</p>
+                  <p className="text-fg/40 text-xs mt-0.5 leading-snug">Where clients send payment proof and reach you. Overrides VITE_FB_LINK.</p>
+                </div>
+                <TextSetting label="Support link" value={systemSettings.portalSupportLink}
+                  placeholder="https://m.me/yourpage" maxLength={300}
+                  onSave={v => saveSetting?.('portalSupportLink', v)} />
+                <TextSetting label="Support button label" value={systemSettings.portalSupportLabel}
+                  placeholder="Send payment proof" maxLength={40}
+                  onSave={v => saveSetting?.('portalSupportLabel', v)} />
+                <TextSetting label="Payment instructions" value={systemSettings.portalPaymentInstructions} multiline
+                  hint="Shown in the checkout drawer and on the success screen."
+                  placeholder="e.g. GCash 0917-000-0000 (Juan D.). Send the receipt on Messenger."
+                  onSave={v => saveSetting?.('portalPaymentInstructions', v)} />
+              </div>
+            </div>
+
+            {/* Order slip letterhead */}
+            <div className="flex items-start gap-4 px-4 py-4">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                <FileText size={16} />
+              </div>
+              <div className="flex-1 min-w-0 space-y-3">
+                <div>
+                  <p className="font-bold text-fg text-sm">Order Slip Letterhead</p>
+                  <p className="text-fg/40 text-xs mt-0.5 leading-snug">Printed at the top of the client’s order slip and its PDF.</p>
+                </div>
+                <TextSetting label="Company name" value={systemSettings.portalCompanyName}
+                  placeholder={BIZ_NAME} maxLength={80}
+                  onSave={v => saveSetting?.('portalCompanyName', v)} />
+                <TextSetting label="Address" value={systemSettings.portalCompanyAddress} multiline
+                  placeholder="e.g. 123 Warehouse Rd, Cebu City" maxLength={160}
+                  onSave={v => saveSetting?.('portalCompanyAddress', v)} />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <TextSetting label="Phone" value={systemSettings.portalCompanyPhone}
+                    placeholder="+63 917 000 0000" maxLength={40}
+                    onSave={v => saveSetting?.('portalCompanyPhone', v)} />
+                  <TextSetting label="Email" value={systemSettings.portalCompanyEmail}
+                    placeholder="orders@example.com" maxLength={80}
+                    onSave={v => saveSetting?.('portalCompanyEmail', v)} />
+                </div>
+                <TextSetting label="Slip footer / terms" value={systemSettings.portalSlipFooter} multiline
+                  hint="Leave blank to use the default “final total is confirmed by our team” note."
+                  placeholder="e.g. Goods remain our property until paid in full."
+                  onSave={v => saveSetting?.('portalSlipFooter', v)} />
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* Appearance & language — per device, so every role can set their own. */}
+        <Card title="This Device">
+          <div className="px-4 py-4">
+            <div className="flex items-start gap-4">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                <Palette size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-fg text-sm">Appearance</p>
+                <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                  {THEMES.find(t => t.value === theme)?.hint} · saved on this device only
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
+                  {THEMES.map(t => (
+                    <button key={t.value} onClick={() => applyTheme(t.value)}
+                      className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
+                        theme === t.value
+                          ? 'bg-brand text-white border-brand'
+                          : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                      }`}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-4 py-4">
+            <div className="flex items-start gap-4">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-fg/50 bg-white/5 border-white/10">
+                <Languages size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-fg text-sm">Language</p>
+                <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                  Interface language for this device.
+                </p>
+                <div className="grid grid-cols-2 gap-2 mt-3 max-w-xs">
+                  {LANGUAGES.map(l => (
+                    <button key={l.value} onClick={() => applyLang(l.value)}
+                      className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
+                        lang === l.value
+                          ? 'bg-brand text-white border-brand'
+                          : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                      }`}>
+                      {l.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-fg/60 mt-2 leading-relaxed">
+                  Your choice is saved, but most screens are still English-only —
+                  translations are being added screen by screen.
+                </p>
+              </div>
+            </div>
+          </div>
+        </Card>
+
         {/* Account */}
         <Card title="Account">
           <SettingRow icon={KeyRound} title="Password" desc="Change the password for your account." tone="muted">
             <button onClick={() => { setChangePwError?.(''); setChangePwModal?.(true); }}
-              className="text-sm font-bold px-4 py-2 rounded-xl bg-white/5 text-white/70 hover:bg-white/10 hover:text-white transition">
+              className="text-sm font-bold px-4 py-2 rounded-xl bg-white/5 text-fg/70 hover:bg-white/10 hover:text-fg transition">
               Change
             </button>
           </SettingRow>

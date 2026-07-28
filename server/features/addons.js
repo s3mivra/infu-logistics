@@ -194,6 +194,18 @@ app.post('/api/addons', verifyToken, requireSuperAdmin, validate(addonSchema), a
   }
 });
 
+// requireSuperAdmin: only superadmin can edit add-ons (menu integrity)
+app.patch('/api/addons/:id', verifyToken, requireSuperAdmin, validate(addonSchema), async (req, res) => {
+  try {
+    const addon = await AddOn.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!addon) return res.status(404).json({ success: false, error: 'Add-on not found' });
+    emitToAll('menuUpdated');
+    res.json({ success: true, addon });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
 app.delete('/api/addons/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     await AddOn.findByIdAndDelete(req.params.id);

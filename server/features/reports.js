@@ -1,6 +1,7 @@
 // reports routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { dayStart, dayEnd } from '../lib/reportRange.js';
 export default function registerReports(ctx) {
   const {
     app,
@@ -186,8 +187,8 @@ export default function registerReports(ctx) {
 app.get('/api/reports/pnl', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
-    const startDate = start ? new Date(start) : new Date(new Date().setHours(0,0,0,0));
-    const endDate = end ? new Date(end) : new Date();
+    const startDate = start ? dayStart(start) : new Date(new Date().setHours(0,0,0,0));
+    const endDate = end ? dayEnd(end) : new Date();
     endDate.setHours(23,59,59,999);
 
     const agg = await JournalEntry.aggregate([
@@ -259,9 +260,9 @@ app.get('/api/reports/pnl', verifyToken, ...canViewReports, async (req, res) => 
 app.get('/api/reports/pnl-monthly', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
-    const startDate = start ? new Date(start) : new Date(new Date().getFullYear(), 0, 1);
-    const endDate = end ? new Date(end) : new Date();
-    endDate.setHours(23, 59, 59, 999);
+    const startDate = start ? dayStart(start) : new Date(new Date().getFullYear(), 0, 1);
+    const endDate = end ? dayEnd(end) : new Date();
+    if (!end) endDate.setHours(23, 59, 59, 999);
 
     const agg = await JournalEntry.aggregate([
       { $match: { date: { $gte: startDate, $lte: endDate } } },
@@ -337,8 +338,8 @@ app.get('/api/reports/pnl-monthly', verifyToken, ...canViewReports, async (req, 
 // ============================================================
 app.get('/api/reports/balance-sheet', verifyToken, ...canViewReports, async (req, res) => {
   try {
-    const asOf = req.query.asOf ? new Date(req.query.asOf) : new Date();
-    asOf.setHours(23, 59, 59, 999);
+    const asOf = req.query.asOf ? dayEnd(req.query.asOf) : new Date();
+    if (!req.query.asOf) asOf.setHours(23, 59, 59, 999);
 
     const agg = await JournalEntry.aggregate([
       { $match: { date: { $lte: asOf } } },
@@ -413,9 +414,9 @@ app.get('/api/reports/balance-sheet', verifyToken, ...canViewReports, async (req
 app.get('/api/reports/balance-sheet-monthly', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
-    const startDate = start ? new Date(start) : new Date(new Date().getFullYear(), 0, 1);
-    const endDate = end ? new Date(end) : new Date();
-    endDate.setHours(23, 59, 59, 999);
+    const startDate = start ? dayStart(start) : new Date(new Date().getFullYear(), 0, 1);
+    const endDate = end ? dayEnd(end) : new Date();
+    if (!end) endDate.setHours(23, 59, 59, 999);
 
     const agg = await JournalEntry.aggregate([
       { $match: { date: { $lte: endDate } } }, // everything up to range end (balances are cumulative)
@@ -725,8 +726,8 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (
     const match = { ...bizScope, status: 'Completed', isComplimentary: { $ne: true } };
     if (start || end) {
       match.createdAt = {};
-      if (start) match.createdAt.$gte = new Date(start);
-      if (end) { const d = new Date(end); d.setHours(23,59,59,999); match.createdAt.$lte = d; }
+      if (start) match.createdAt.$gte = dayStart(start);
+      if (end) { match.createdAt.$lte = dayEnd(end); }
     }
     const [ordersData, prods, invItems] = await Promise.all([
       Order.find(match, { items: 1 }).lean(),
@@ -843,8 +844,8 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async
     const match = { ...bizScope, status: 'Completed', isComplimentary: { $ne: true } };
     if (start || end) {
       match.createdAt = {};
-      if (start) match.createdAt.$gte = new Date(start);
-      if (end) { const d = new Date(end); d.setHours(23,59,59,999); match.createdAt.$lte = d; }
+      if (start) match.createdAt.$gte = dayStart(start);
+      if (end) { match.createdAt.$lte = dayEnd(end); }
     }
     const [ordersData, prods, invItems] = await Promise.all([
       Order.find(match, { items: 1 }).lean(),
@@ -882,8 +883,8 @@ app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, async (
     const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
     if (start || end) {
       match.createdAt = {};
-      if (start) match.createdAt.$gte = new Date(start);
-      if (end) { const d = new Date(end); d.setHours(23,59,59,999); match.createdAt.$lte = d; }
+      if (start) match.createdAt.$gte = dayStart(start);
+      if (end) { match.createdAt.$lte = dayEnd(end); }
     }
     const result = await Order.aggregate([
       { $match: match },
@@ -901,8 +902,8 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req
     const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
     if (start || end) {
       match.createdAt = {};
-      if (start) match.createdAt.$gte = new Date(start);
-      if (end) { const d = new Date(end); d.setHours(23, 59, 59, 999); match.createdAt.$lte = d; }
+      if (start) match.createdAt.$gte = dayStart(start);
+      if (end) { match.createdAt.$lte = dayEnd(end); }
     }
     const orders = await Order.find(match, {
       orderNumber: 1, total: 1, paymentMethod: 1, payments: 1, createdAt: 1,
@@ -960,8 +961,8 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (
     const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
     if (start || end) {
       match.createdAt = {};
-      if (start) match.createdAt.$gte = new Date(start);
-      if (end) { const d = new Date(end); d.setHours(23, 59, 59, 999); match.createdAt.$lte = d; }
+      if (start) match.createdAt.$gte = dayStart(start);
+      if (end) { match.createdAt.$lte = dayEnd(end); }
     }
     const orders = await Order.find(match, {
       orderNumber: 1, paymentMethod: 1, createdAt: 1, customerName: 1, clientId: 1, clientAccountId: 1, items: 1,
@@ -1006,8 +1007,8 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (re
     if (!start || !end) {
       return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
     }
-    const startDate = new Date(start);
-    const endDate = new Date(end);
+    const startDate = dayStart(start);
+    const endDate = dayStart(end);
     if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
       return res.status(400).json({ success: false, error: 'Invalid date range.' });
     }

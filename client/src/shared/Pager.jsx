@@ -8,7 +8,7 @@ export default function Pager({ page, setPage, totalPages, total, pageSize, labe
   const from = (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
   return (
-    <div className="flex items-center justify-between gap-3 pt-3 mt-2 border-t border-white/10 text-xs text-white/50">
+    <div className="flex items-center justify-between gap-3 pt-3 mt-2 border-t border-white/10 text-xs text-fg/50">
       <span className="tabular-nums">{from}–{to} of {total} {label}</span>
       <div className="flex items-center gap-1">
         <button

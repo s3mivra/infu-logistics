@@ -1,6 +1,8 @@
 // finance routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { ageingBuckets, ageingByClient, resolveCreditLimit, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
+import { dayStart, dayEnd } from '../lib/reportRange.js';
 export default function registerFinance(ctx) {
   const {
     app,
@@ -137,6 +139,7 @@ export default function registerFinance(ctx) {
     User,
     ClientAccountSchema,
     ClientAccount,
+    Supplier,
     RefreshSessionSchema,
     RefreshSession,
     RoleSchema,
@@ -266,8 +269,8 @@ app.get('/api/reports/trial-balance', verifyToken, ...canViewAcct, async (req, r
     const match = {};
     if (start || end) {
       match.date = {};
-      if (start) match.date.$gte = new Date(start);
-      if (end) { const e = new Date(end); e.setHours(23, 59, 59, 999); match.date.$lte = e; }
+      if (start) match.date.$gte = dayStart(start);
+      if (end) { match.date.$lte = dayEnd(end); }
     }
     const agg = await JournalEntry.aggregate([
       ...(Object.keys(match).length ? [{ $match: match }] : []),
@@ -304,6 +307,63 @@ app.get('/api/reports/trial-balance', verifyToken, ...canViewAcct, async (req, r
 // ============================================================
 app.get('/api/expenses/categories', verifyToken, ...canViewAcct, async (req, res) => {
   res.json({ success: true, categories: EXPENSE_CATEGORIES });
+});
+
+// Recent expenses + a per-category summary for the range.
+// Expenses aren't their own collection — they're journal entries whose debit
+// side is an expense account. Reading them back that way keeps one source of
+// truth (the ledger) rather than a parallel list that could drift from it.
+app.get('/api/expenses', verifyToken, ...canViewAcct, async (req, res) => {
+  try {
+    const codes = EXPENSE_CATEGORIES.map(c => c.code);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
+
+    // Optional range; defaults to the current month, which is what an operator
+    // checking "what have we spent" almost always means.
+    const now = new Date();
+    const start = req.query.start ? dayStart(req.query.start) : new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = req.query.end ? dayEnd(req.query.end) : now;
+    if (!req.query.end) end.setHours(23, 59, 59, 999);
+
+    const rows = await JournalEntry.aggregate([
+      { $match: { date: { $gte: start, $lte: end } } },
+      { $unwind: '$lines' },
+      { $match: { 'lines.accountCode': { $in: codes }, 'lines.debit': { $gt: 0 } } },
+      { $group: {
+        _id: '$_id',
+        date:        { $first: '$date'        },
+        reference:   { $first: '$reference'   },
+        description: { $first: '$description' },
+        categoryCode: { $first: '$lines.accountCode' },
+        categoryName: { $first: '$lines.accountName' },
+        amount:      { $sum: '$lines.debit'   },
+      }},
+      { $sort: { date: -1, _id: -1 } },
+      { $limit: limit },
+    ]);
+
+    // Category totals span the whole range, not just the page of rows above —
+    // a truncated list must not silently understate the totals.
+    const byCategoryAgg = await JournalEntry.aggregate([
+      { $match: { date: { $gte: start, $lte: end } } },
+      { $unwind: '$lines' },
+      { $match: { 'lines.accountCode': { $in: codes }, 'lines.debit': { $gt: 0 } } },
+      { $group: { _id: '$lines.accountCode', name: { $first: '$lines.accountName' }, total: { $sum: '$lines.debit' }, count: { $sum: 1 } } },
+      { $sort: { total: -1 } },
+    ]);
+
+    const byCategory = byCategoryAgg.map(c => ({
+      code: c._id, name: c.name, total: +(c.total || 0).toFixed(2), count: c.count,
+    }));
+    const total = +byCategory.reduce((s, c) => s + c.total, 0).toFixed(2);
+
+    res.json({
+      success: true, expenses: rows, byCategory, total,
+      range: { start: start.toISOString(), end: end.toISOString() },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
 });
 
 app.post('/api/expenses', verifyToken, ...canPostAcct, async (req, res) => {
@@ -370,6 +430,97 @@ app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, 
   }
 });
 
+// A/R AGEING — the same receivables as ar-outstanding, split into 30/60/90 buckets
+// and grouped per client, plus each client's credit limit and headroom.
+// "How much does this client owe me, and how old is it?" is a three-tab question
+// today; this answers it in one call.
+app.get('/api/finance/ar-ageing', verifyToken, ...canViewAcct, async (req, res) => {
+  try {
+    const rows = await Order.find({
+      businessType: BUSINESS_TYPE,
+      status: 'Completed',
+      paymentMethod: { $ne: 'Cash' },
+      isComplimentary: { $ne: true },
+      arSettled: { $ne: true },
+    }, { customerName: 1, total: 1, createdAt: 1, clientAccountId: 1, clientId: 1 }).lean();
+
+    const [modeRow, globalRow, clients] = await Promise.all([
+      Settings.findOne({ key: 'creditLimitMode' }).lean(),
+      Settings.findOne({ key: 'globalCreditLimit' }).lean(),
+      ClientAccount.find({}, { name: 1, creditLimit: 1 }).lean(),
+    ]);
+    const mode = modeRow?.value || DEFAULT_CREDIT_MODE;
+    const globalLimit = globalRow?.value ?? null;
+    const byId = new Map(clients.map(c => [String(c._id), c]));
+
+    // Group by client account where we have one, else by the typed name — the
+    // same key the A/R list shows, so the two views never disagree.
+    // Both identity fields are consulted: portal orders carry `clientId`, while
+    // cashier-placed on-behalf orders carry `clientAccountId`. Using one alone
+    // would split a single client's debt across two rows.
+    const keyOf = (r) =>
+      byId.get(String(r.clientAccountId || ''))?.name
+      || byId.get(String(r.clientId || ''))?.name
+      || r.customerName || 'Walk-in';
+
+    // Committed exposure — everything on account that isn't cancelled/void, INCLUDING
+    // orders still in flight. This is what the credit gate spends, and it differs
+    // from the aged A/R above (which counts only Completed = a real book
+    // receivable). Reporting only the accounting figure would leave an owner
+    // asking why a client showing ₱0 owing can't place an order.
+    const committed = await Order.find({
+      businessType: BUSINESS_TYPE,
+      status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
+      isParked: { $ne: true },
+      paymentMethod: { $ne: 'Cash' },
+      isComplimentary: { $ne: true },
+      arSettled: { $ne: true },
+    }, { customerName: 1, total: 1, clientAccountId: 1, clientId: 1 }).lean();
+
+    const exposureByClient = new Map();
+    for (const r of committed) {
+      const k = keyOf(r);
+      exposureByClient.set(k, (exposureByClient.get(k) || 0) + (Number(r.total) || 0));
+    }
+
+    const totals = ageingBuckets(rows);
+    const seen = new Set();
+    const perClient = ageingByClient(rows, keyOf).map((row) => {
+      seen.add(row.client);
+      const match = clients.find(c => c.name === row.client);
+      const limit = resolveCreditLimit({ mode, globalLimit, clientLimit: match?.creditLimit });
+      const exposure = Math.round((exposureByClient.get(row.client) || 0) * 100) / 100;
+      return {
+        ...row,
+        exposure,
+        creditLimit: limit,
+        available: limit === null ? null : Math.max(0, Math.round((limit - exposure) * 100) / 100),
+        overLimit: limit !== null && exposure > limit,
+      };
+    });
+
+    // Clients with committed orders but no aged receivable yet would otherwise be
+    // invisible here — exactly the ones consuming credit right now.
+    for (const [client, exposure] of exposureByClient) {
+      if (seen.has(client)) continue;
+      const match = clients.find(c => c.name === client);
+      const limit = resolveCreditLimit({ mode, globalLimit, clientLimit: match?.creditLimit });
+      perClient.push({
+        client, current: 0, d31_60: 0, d61_90: 0, d90_plus: 0, total: 0, count: 0,
+        exposure: Math.round(exposure * 100) / 100,
+        creditLimit: limit,
+        available: limit === null ? null : Math.max(0, Math.round((limit - exposure) * 100) / 100),
+        overLimit: limit !== null && exposure > limit,
+      });
+    }
+    perClient.sort((a, b) => (b.total || b.exposure) - (a.total || a.exposure));
+
+    res.json({ success: true, mode, globalLimit, totals, clients: perClient, asOf: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
 // ──────────────────────────────────────────────────────────────────────────────
 // ACCOUNTS PAYABLE — outstanding balance + recent entries + payment
 // Payables are journal lines with accountCode '220000':
@@ -390,15 +541,18 @@ app.get('/api/finance/ap-outstanding', verifyToken, ...canViewAcct, async (req, 
     const bal = agg[0] || { totalCredit: 0, totalDebit: 0 };
     const outstandingBalance = +(bal.totalCredit - bal.totalDebit).toFixed(2);
 
-    // Recent AP journal entries (both directions)
+    // Recent AP journal entries (both directions), now carrying the supplier so
+    // the history reads "who" rather than only "how much".
     const recent = await JournalEntry.aggregate([
       { $unwind: '$lines' },
       { $match: { 'lines.accountCode': '220000' } },
       { $group: {
         _id: '$_id',
-        date:        { $first: '$date'        },
-        reference:   { $first: '$reference'   },
-        description: { $first: '$description' },
+        date:         { $first: '$date'         },
+        reference:    { $first: '$reference'    },
+        description:  { $first: '$description'  },
+        supplierId:   { $first: '$supplierId'   },
+        supplierName: { $first: '$supplierName' },
         credit:      { $sum: { $cond: [{ $gt: ['$lines.credit', 0] }, '$lines.credit', 0] } },
         debit:       { $sum: { $cond: [{ $gt: ['$lines.debit',  0] }, '$lines.debit',  0] } },
       }},
@@ -406,7 +560,39 @@ app.get('/api/finance/ap-outstanding', verifyToken, ...canViewAcct, async (req, 
       { $limit: 50 }
     ]);
 
-    res.json({ success: true, outstandingBalance, recent, totalCredit: bal.totalCredit, totalDebit: bal.totalDebit });
+    // Per-supplier balance: credits (goods received on account) minus debits
+    // (payments made). Entries written before supplier attribution existed have
+    // no supplierId and group under "Unattributed" rather than being dropped —
+    // silently hiding real debt would be worse than showing it unlabelled.
+    const bySupplierAgg = await JournalEntry.aggregate([
+      { $unwind: '$lines' },
+      { $match: { 'lines.accountCode': '220000' } },
+      { $group: {
+        _id: { $ifNull: ['$supplierId', null] },
+        name:    { $first: '$supplierName' },
+        credit:  { $sum: '$lines.credit' },
+        debit:   { $sum: '$lines.debit'  },
+        entries: { $sum: 1 },
+      }},
+    ]);
+    const bySupplier = bySupplierAgg
+      .map(s => ({
+        supplierId: s._id ? String(s._id) : null,
+        // The null group must NEVER borrow a name — $first there returns whichever
+        // unattributed entry happened to sort first, which would print another
+        // supplier's name over debt that isn't theirs.
+        supplier: s._id ? (s.name || 'Unknown supplier') : 'Unattributed',
+        incurred: +(s.credit || 0).toFixed(2),
+        paid:     +(s.debit  || 0).toFixed(2),
+        balance:  +((s.credit || 0) - (s.debit || 0)).toFixed(2),
+        entries:  s.entries,
+      }))
+      // A fully-settled supplier isn't a payable any more; keep the list to who
+      // is actually owed (or overpaid, which is worth seeing).
+      .filter(s => Math.abs(s.balance) >= 0.01)
+      .sort((a, b) => b.balance - a.balance);
+
+    res.json({ success: true, outstandingBalance, recent, bySupplier, totalCredit: bal.totalCredit, totalDebit: bal.totalDebit });
   } catch (err) {
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
@@ -415,9 +601,19 @@ app.get('/api/finance/ap-outstanding', verifyToken, ...canViewAcct, async (req, 
 // POST /api/finance/ap-payment — record a supplier payment (DR 2000 AP / CR cash account)
 app.post('/api/finance/ap-payment', verifyToken, ...canPostAcct, async (req, res) => {
   try {
-    const { amount, payFromAccount, description, vendorName } = req.body;
+    const { amount, payFromAccount, description, vendorName, supplierId } = req.body;
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Amount must be positive.' });
+
+    // Resolve the supplier server-side so the stored name is the canonical record,
+    // not whatever the client typed. vendorName remains accepted for ad-hoc payees
+    // that have no supplier record.
+    let supplier = null;
+    if (supplierId && mongoose.Types.ObjectId.isValid(String(supplierId))) {
+      supplier = await Supplier.findById(supplierId).lean();
+      if (!supplier) return res.status(404).json({ success: false, error: 'Supplier not found.' });
+    }
+    const payeeName = supplier?.name || vendorName || '';
 
     // Accept any cash/bank/e-wallet account (canonical or custom sub-account).
     const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
@@ -425,7 +621,7 @@ app.post('/api/finance/ap-payment', verifyToken, ...canPostAcct, async (req, res
     const srcCode = (srcMeta && isCashLike(payFromAccount)) ? payFromAccount : '111000';
     const srcName = acctMeta(srcCode)?.name || 'Cash on Hand';
 
-    const desc = description?.trim() || `AP payment${vendorName ? ` to ${vendorName}` : ''}`;
+    const desc = description?.trim() || `AP payment${payeeName ? ` to ${payeeName}` : ''}`;
     const reference = await mkSeqRef('AP-PAY');
 
     const lines = [
@@ -433,13 +629,18 @@ app.post('/api/finance/ap-payment', verifyToken, ...canPostAcct, async (req, res
       { accountCode: srcCode, accountName: srcName,           debit: 0,   credit: amt },
     ];
     assertBalanced(lines, reference);
-    const je = await JournalEntry.create({ date: new Date(), reference, description: desc, lines, totalDebit: amt, totalCredit: amt });
+    const je = await JournalEntry.create({
+      date: new Date(), reference, description: desc, lines,
+      totalDebit: amt, totalCredit: amt,
+      supplierId: supplier ? String(supplier._id) : null,
+      supplierName: payeeName,
+    });
 
     await AuditLog.create({
       userId: req.user?.name || 'System',
       action: 'AP_PAYMENT',
       targetReference: reference,
-      details: { amount: amt, payFromAccount: srcCode, vendorName, recordedBy: req.user?.name }
+      details: { amount: amt, payFromAccount: srcCode, vendorName: payeeName, supplierId: supplier ? String(supplier._id) : null, recordedBy: req.user?.name }
     });
 
     emitToMgr('erpUpdated'); // auto-refresh the general ledger

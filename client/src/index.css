@@ -15,8 +15,8 @@
 :root,
 [data-theme="default"] {
   /* --- PRIMARY BRAND COLOR (RGB channels for opacity modifier support) --- */
-  --brand:        111 135 77;   /* #6f874d - olive green                   */
-  --brand-dark:   90 110 61;    /* #5a6e3d - hover/pressed state           */
+  --brand:        22 163 74;   /* #6f874d - olive green                   */
+  --brand-dark:   21 128 61;    /* #5a6e3d - hover/pressed state           */
 
   /* --- SURFACE SYSTEM --- */
   --surface:      26 26 26;     /* #1a1a1a - card panels                   */
@@ -67,6 +67,46 @@
   --fg-muted:     180 180 180;
 }
 
+/* =====================================================================
+ * THEME 4 — LIGHT: warm off-white canvas + the same olive accent.
+ * For bright rooms / daytime warehouse use.
+ *
+ * The whole UI reads colour through these tokens, so flipping --fg and the
+ * surfaces is enough. Two things deliberately do NOT follow the tokens:
+ *   • text sitting ON a coloured button (bg-brand / bg-red-600 …) stays white
+ *   • the white/N overlay tints below are re-tinted to dark, because a white
+ *     wash over a white page is invisible
+ * ===================================================================== */
+[data-theme="light"] {
+  /*--brand:        90 110 61;*/    /* #5a6e3d - darker olive for AA on white  */
+  --brand:       21 128 61;
+  --brand-dark:   22 101 52;     /* pressed state                            */
+  --surface:      255 255 255;  /* cards                                    */
+  --surface-2:    244 244 241;  /* nested panels                            */
+  --bg:           250 250 247;
+  --page-bg:      250 250 247;  /* warm off-white canvas                    */
+  --sidebar-bg:   255 255 255;
+  --fg:           26 26 26;     /* near-black body text                     */
+  --fg-muted:     90 90 90;
+}
+
+/* The UI leans on white/N for borders, dividers and hover washes. On a light
+   canvas those vanish, so invert them to a dark wash of the same weight.
+   Scoped to the light theme only — dark themes keep the originals. */
+[data-theme="light"] .bg-white\/5   { background-color: rgb(0 0 0 / 0.04); }
+[data-theme="light"] .bg-white\/8   { background-color: rgb(0 0 0 / 0.06); }
+[data-theme="light"] .bg-white\/10  { background-color: rgb(0 0 0 / 0.08); }
+[data-theme="light"] .bg-white\/15  { background-color: rgb(0 0 0 / 0.12); }
+[data-theme="light"] .hover\:bg-white\/5:hover  { background-color: rgb(0 0 0 / 0.04); }
+[data-theme="light"] .hover\:bg-white\/10:hover { background-color: rgb(0 0 0 / 0.08); }
+[data-theme="light"] .border-white\/5  { border-color: rgb(0 0 0 / 0.06); }
+[data-theme="light"] .border-white\/8  { border-color: rgb(0 0 0 / 0.08); }
+[data-theme="light"] .border-white\/10 { border-color: rgb(0 0 0 / 0.10); }
+[data-theme="light"] .divide-white\/5 > * + * { border-color: rgb(0 0 0 / 0.06); }
+[data-theme="light"] .placeholder-white\/20::placeholder,
+[data-theme="light"] .placeholder-white\/25::placeholder { color: rgb(0 0 0 / 0.35); }
+/* Modal scrims stay dark — a light scrim wouldn't separate the dialog. */
+
 /* ============================================================
  * BASE RESETS + GLOBAL UX RULES
  * ============================================================ */
@@ -76,6 +116,11 @@ html {
   -webkit-text-size-adjust: 100%;        /* prevent iOS landscape font bloat */
   scroll-behavior: smooth;
   text-rendering: optimizeLegibility;
+  /* The canvas (the area painted beyond the document, e.g. when overscrolling)
+     comes from the ROOT element when it has a background, and only falls back to
+     <body> otherwise. Setting it here keeps the rubber-band area on-theme —
+     without it the page flashed the dark default behind a light theme. */
+  background-color: rgb(var(--page-bg));
 }
 
 body {
@@ -84,8 +129,13 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';   /* Inter typographic refinements */
-  background: rgb(var(--page-bg));
-  color: rgb(var(--bg));
+  /* Background lives on <html> (see above), not here. Declaring it on both left
+     body holding a stale dark value in some engines while the root was light. */
+  background: transparent;
+  /* Was rgb(var(--bg)) — the BACKGROUND token, i.e. body text the same colour as
+     the page. It never showed because every element overrides with text-fg, but
+     any unstyled text was invisible. */
+  color: rgb(var(--fg));
   overflow-x: hidden;                     /* prevent horizontal-scroll bugs */
   overscroll-behavior-y: none;            /* kill rubber-band on iPads */
 }
@@ -104,7 +154,6 @@ body, aside, header, nav, main {
 
 /* Fat-finger safe: enforce 44×44 touch baseline */
 button, [role="button"], select {
-  min-height: 44px;
   touch-action: manipulation;             /* removes 300ms tap delay on iPad/Android */
 }
 button.btn-icon-sm { min-height: 28px; }  /* exception for tight icon rows */

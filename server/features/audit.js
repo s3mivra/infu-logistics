@@ -1,6 +1,7 @@
 // audit routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { dayStart, dayEnd } from '../lib/reportRange.js';
 export default function registerAudit(ctx) {
   const {
     app,
@@ -217,8 +218,8 @@ app.get('/api/audit-logs', verifyToken, ...canViewAudit, async (req, res) => {
     if (action && action !== 'all') filter.action = action;
     if (start || end) {
       filter.timestamp = {};
-      if (start) filter.timestamp.$gte = new Date(start);
-      if (end)   { const d = new Date(end); d.setHours(23,59,59,999); filter.timestamp.$lte = d; }
+      if (start) filter.timestamp.$gte = dayStart(start);
+      if (end)   { filter.timestamp.$lte = dayEnd(end); }
     }
 
     const [logs, total] = await Promise.all([
