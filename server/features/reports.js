@@ -2,6 +2,8 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { dayStart, dayEnd } from '../lib/reportRange.js';
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerReports(ctx) {
   const {
     app,
@@ -250,7 +252,7 @@ app.get('/api/reports/pnl', verifyToken, ...canViewReports, async (req, res) => 
     });
   } catch (err) {
     log.error({ err }, 'P&L report failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -330,7 +332,7 @@ app.get('/api/reports/pnl-monthly', verifyToken, ...canViewReports, async (req, 
         otherincome: sum(sec.otherincome), otherexpense: sum(sec.otherexpense), netIncome: sum(netIncome),
       },
     });
-  } catch (err) { log.error({ err }, 'pnl-monthly failed'); res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { log.error({ err }, 'pnl-monthly failed'); (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // ============================================================
@@ -404,7 +406,7 @@ app.get('/api/reports/balance-sheet', verifyToken, ...canViewReports, async (req
     });
   } catch (err) {
     log.error({ err }, 'Balance sheet failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -463,7 +465,7 @@ app.get('/api/reports/balance-sheet-monthly', verifyToken, ...canViewReports, as
     const tot = (rows) => months.reduce((o, m) => { o[m] = +rows.reduce((s, r) => s + (r.byMonth[m] || 0), 0).toFixed(2); return o; }, {});
     res.json({ success: true, period: { start: startDate, end: endDate }, months, asOf: lastM, assets, liabilities, equity,
       monthTotals: { assets: tot(assets), liabilities: tot(liabilities), equity: tot(equity) } });
-  } catch (err) { log.error({ err }, 'bs-monthly failed'); res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { log.error({ err }, 'bs-monthly failed'); (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req, res) => {
@@ -714,7 +716,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
     });
   } catch (err) {
     log.error({ err }, 'analytics/dashboard error');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -761,7 +763,7 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (
     });
     rows.sort((a, b) => b.revenue - a.revenue);
     res.json({ success: true, items: rows, avgQty, avgMargin });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // ── REPORT: CASHIER VARIANCE TREND ───────────────────────────────────────────
@@ -781,7 +783,7 @@ app.get('/api/reports/cashier-variance', verifyToken, ...canViewReports, async (
       { $sort: { avgVariance: 1 } },
     ]);
     res.json({ success: true, cashiers: agg.map(c => ({ cashierName: c._id || 'Unknown', ...c })) });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // ── REPORT: PURCHASE ORDER SUGGESTION (from low stock + velocity) ────────────
@@ -833,7 +835,7 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
     }).filter(l => l.suggestedOrder > 0 || l.lowStock).sort((a, b) => (b.lowStock - a.lowStock) || (b.suggestedOrder - a.suggestedOrder));
     const totalEstCost = lines.reduce((s, l) => s + l.estCost, 0);
     res.json({ success: true, coverDays: days, lines, totalEstCost });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // ── GROSS PROFIT BY CATEGORY ─────────────────────────────────────────────────
@@ -873,7 +875,7 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async
       margin: c.revenue > 0 ? ((c.revenue - c.estimatedCOGS) / c.revenue) * 100 : 0
     })).sort((a, b) => b.revenue - a.revenue);
     res.json({ success: true, categories: result });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // ── SALES BY PAYMENT METHOD ───────────────────────────────────────────────────
@@ -893,7 +895,7 @@ app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, async (
     ]);
     const grandTotal = result.reduce((s, r) => s + (r.total || 0), 0);
     res.json({ success: true, grandTotal, breakdown: result.map(r => ({ method: r._id, count: r.count, total: r.total, subtotal: r.subtotal, discount: r.discount, pct: grandTotal > 0 ? (r.total / grandTotal * 100) : 0 })) });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req, res) => {
@@ -948,7 +950,7 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req
     }, { cash: 0, ewallet: 0, bank: 0, delivery: 0, total: 0, methods: {} });
 
     res.json({ success: true, rows, totals });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // ── SALES LINE ITEMS ─────────────────────────────────────────────────────────
@@ -991,7 +993,7 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (
     }
     const grandTotal = rows.reduce((s, r) => s + r.lineTotal, 0);
     res.json({ success: true, rows, grandTotal });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // ── REPORT: NON-VAT PERCENTAGE TAX (3%) ──────────────────────────────────────
@@ -1041,7 +1043,7 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (re
     });
   } catch (err) {
     log.error({ err }, 'Percentage-tax report failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 }

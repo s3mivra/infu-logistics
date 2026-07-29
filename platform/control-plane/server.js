@@ -294,6 +294,46 @@ app.post('/api/tenants/:slug/wipe', requireAuth, async (req, res) => {
   }
 });
 
+// ── error analytics ──────────────────────────────────────────────────────────
+// Each tenant's API writes 5xx events to a capped `errorevents` collection in
+// its OWN database. We aggregate them here for a cross-client view. Queried via
+// mongosh over docker exec so the control plane needs no database driver and no
+// credentials of its own.
+app.get('/api/errors', requireAuth, async (req, res) => {
+  const hours = Math.min(Math.max(Number(req.query.hours) || 24, 1), 720);
+  const only = String(req.query.tenant || '').trim();
+  const slugs = (await listSlugs()).filter((s) => !only || s === only);
+
+  const script = `
+    const since = new Date(Date.now() - ${hours} * 3600000);
+    const out = [];
+    for (const slug of ${JSON.stringify(slugs)}) {
+      const d = db.getSiblingDB('semivra_' + slug);
+      if (!d.getCollectionNames().includes('errorevents')) continue;
+      d.errorevents.aggregate([
+        { $match: { at: { $gte: since } } },
+        { $group: { _id: '$signature', count: { $sum: 1 },
+            lastSeen: { $max: '$at' }, firstSeen: { $min: '$at' },
+            method: { $first: '$method' }, route: { $first: '$route' },
+            message: { $first: '$message' }, status: { $first: '$status' },
+            kind: { $first: '$kind' }, stack: { $first: '$stack' } } },
+        { $sort: { count: -1 } }, { $limit: 40 },
+      ]).forEach(r => { r.tenant = slug; out.push(r); });
+    }
+    out.sort((a, b) => b.count - a.count);
+    print(JSON.stringify(out.slice(0, 100)));
+  `;
+
+  try {
+    const raw = await docker(['exec', 'semivra-platform-mongo-1', 'mongosh', '--quiet', '--eval', script],
+      { timeout: 60_000 });
+    const line = raw.trim().split('\n').filter((l) => l.trim().startsWith('[')).pop() || '[]';
+    res.json({ groups: JSON.parse(line), hours, tenants: slugs });
+  } catch (err) {
+    res.status(500).json({ error: String(err.stderr || err.message).slice(-2000) });
+  }
+});
+
 app.delete('/api/tenants/:slug', requireAuth, async (req, res) => {
   const slug = req.params.slug;
   if (!(await listSlugs()).includes(slug)) return res.status(404).json({ error: 'No such tenant.' });

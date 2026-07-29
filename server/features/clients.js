@@ -8,6 +8,8 @@
 /* eslint-disable no-unused-vars */
 import { ageingBuckets, resolveCreditLimit, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
 
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerClients(ctx) {
   const {
     app,
@@ -121,7 +123,7 @@ export default function registerClients(ctx) {
 
       res.json({ success: true, mode, globalLimit, showMoney, clients: rows });
     } catch (err) {
-      res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+      (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
   });
 
@@ -147,7 +149,7 @@ export default function registerClients(ctx) {
         orders: orders.map(o => ({ ...o, itemCount: (o.items || []).length, items: undefined })),
       });
     } catch (err) {
-      res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+      (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
   });
 }

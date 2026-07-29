@@ -2,6 +2,8 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { dayStart, dayEnd } from '../lib/reportRange.js';
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerAudit(ctx) {
   const {
     app,
@@ -200,7 +202,7 @@ app.get('/api/audit-log', verifyToken, ...canViewAudit, async (req, res) => {
     ]);
     res.json({ success: true, entries, total, page, pageSize, pages: Math.ceil(total / pageSize) });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -228,7 +230,7 @@ app.get('/api/audit-logs', verifyToken, ...canViewAudit, async (req, res) => {
     ]);
     res.json({ success: true, logs, total, page: pageNum, pages: Math.ceil(total / pageSize) });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 }

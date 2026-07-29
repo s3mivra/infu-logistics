@@ -1,6 +1,8 @@
 // products routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerProducts(ctx) {
   const {
     app,
@@ -181,7 +183,7 @@ app.get('/api/categories', async (req, res) => {
     const categories = await Category.find({ businessType: BUSINESS_TYPE }).lean();
     res.json({ success: true, categories });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -195,7 +197,7 @@ app.post('/api/categories', verifyToken, requireStaff, async (req, res) => {
     emitToAll('menuUpdated');
     res.json({ success: true, category: newCat });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -210,7 +212,7 @@ app.put('/api/categories/:id', verifyToken, requireStaff, async (req, res) => {
     emitToAll('menuUpdated');
     res.json({ success: true, category: updated });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -220,7 +222,7 @@ app.delete('/api/categories/:id', verifyToken, requireStaff, async (req, res) =>
     emitToAll('menuUpdated');
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -314,7 +316,7 @@ app.get('/api/products', async (req, res) => {
     res.json({ success: true, products });
   } catch (err) {
     log.error({ err }, 'GET /api/products failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -337,7 +339,7 @@ app.post('/api/products', verifyToken, requireStaff, validate(productSchema), as
   emitToAll('menuUpdated');
   res.json({ success: true, product: newProduct });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -407,7 +409,7 @@ app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
     emitToAll('menuUpdated');
     res.json({ success: true, product: updatedProduct });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -430,7 +432,7 @@ app.patch('/api/products/:id/availability', verifyToken, requireSuperAdmin, asyn
     res.json({ success: true, product });
   } catch (err) {
     log.error({ err }, 'PATCH /api/products/:id/availability failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -454,7 +456,7 @@ app.patch('/api/products/:id/oos', verifyToken, requireSuperAdmin, async (req, r
     res.json({ success: true, product });
   } catch (err) {
     log.error({ err }, 'PATCH /api/products/:id/oos failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -480,6 +482,7 @@ app.delete('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
     emitToAll('menuUpdated');
     res.json({ success: true, message: 'Product securely archived.' });
   } catch (error) {
+    captureError(req, error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -487,22 +490,22 @@ app.delete('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
 // ── MODIFIER GROUP CRUD ──────────────────────────────────────────────────────
 app.get('/api/modifier-groups', verifyToken, requireStaff, async (req, res) => {
   try { res.json({ success: true, groups: await ModifierGroup.find().lean() }); }
-  catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.post('/api/modifier-groups', verifyToken, requireSuperAdmin, validate(modifierGroupSchema), async (req, res) => {
   try { const group = await ModifierGroup.create(req.body); emitToAll('menuUpdated'); res.json({ success: true, group }); }
-  catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.put('/api/modifier-groups/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try { const group = await ModifierGroup.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after', runValidators: true }); emitToAll('menuUpdated'); res.json({ success: true, group }); }
-  catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.delete('/api/modifier-groups/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try { await ModifierGroup.findByIdAndDelete(req.params.id); emitToAll('menuUpdated'); res.json({ success: true }); }
-  catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // ── COMBO / BUNDLE CRUD (Product Promos) ─────────────────────────────────────
@@ -510,7 +513,7 @@ app.get('/api/combos', async (req, res) => {
   try {
     const combos = await Combo.find(req.query.all ? {} : { isActive: true }).lean();
     res.json({ success: true, combos });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.post('/api/combos', verifyToken, requireSuperAdmin, validate(comboSchema), async (req, res) => {
@@ -521,16 +524,16 @@ app.post('/api/combos', verifyToken, requireSuperAdmin, validate(comboSchema), a
     const combo = await Combo.create(req.body);
     emitToAll('menuUpdated');
     res.json({ success: true, combo });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.put('/api/combos/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try { const combo = await Combo.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' }); emitToAll('menuUpdated'); res.json({ success: true, combo }); }
-  catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.delete('/api/combos/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try { await Combo.findByIdAndDelete(req.params.id); emitToAll('menuUpdated'); res.json({ success: true }); }
-  catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 }

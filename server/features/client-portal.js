@@ -11,6 +11,8 @@ const parseCreditLimit = (v) => {
   return Number.isFinite(n) && n >= 0 ? n : null;
 };
 
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerClientPortal(ctx) {
   const {
     app,
@@ -207,7 +209,7 @@ app.post('/api/client-auth/login', loginLimiter, async (req, res) => {
     );
     res.json({ success: true, token, client: { _id: String(client._id), clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod } });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -225,7 +227,7 @@ app.get('/api/client/orders', verifyClientToken, async (req, res) => {
     ).sort({ createdAt: -1 }).limit(30).lean();
     res.json({ success: true, orders });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -244,7 +246,7 @@ app.post('/api/client/orders/:id/received', verifyClientToken, async (req, res) 
     emitToOps('orderUpdated', order);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -267,7 +269,7 @@ app.post('/api/client/orders/:id/cancel', verifyClientToken, async (req, res) =>
     emitToMgr('erpUpdated');
     res.json({ success: true, order });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -277,7 +279,7 @@ app.get('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res)
     const clients = await ClientAccount.find({}, { password: 0 }).sort({ createdAt: -1 });
     res.json({ success: true, clients });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -302,7 +304,7 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
     const client = await ClientAccount.create({ clientCode, username: cleanUsername, password: hashed, name: cleanName, paymentMethod: paymentMethod || 'Cash', creditLimit: parseCreditLimit(creditLimit) });
     res.json({ success: true, client: { _id: client._id, clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, creditLimit: client.creditLimit } });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -322,7 +324,7 @@ app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req
     res.json({ success: true, client });
   } catch (err) {
     if (err.code === 11000) return res.status(409).json({ success: false, error: 'Username already taken.' });
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -331,7 +333,7 @@ app.delete('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (re
     await ClientAccount.findByIdAndDelete(req.params.id);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 }

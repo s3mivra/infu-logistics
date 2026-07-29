@@ -8,6 +8,8 @@
 // can send the user straight to the offending record instead of just telling
 // them something is wrong.
 /* eslint-disable no-unused-vars */
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerNotifications(ctx) {
   const {
     app,
@@ -180,7 +182,7 @@ export default function registerNotifications(ctx) {
         generatedAt: now.toISOString(),
       });
     } catch (err) {
-      res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+      (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
   });
 }

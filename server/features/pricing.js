@@ -1,6 +1,8 @@
 // pricing routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerPricing(ctx) {
   const {
     app,
@@ -180,7 +182,7 @@ app.get('/api/discounts', verifyToken, requireStaff, async (req, res) => {
     const discounts = await Discount.find();
     res.json({ success: true, discounts });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -189,7 +191,7 @@ app.post('/api/discounts', verifyToken, requireStaff, validate(discountSchema), 
     const newDiscount = await Discount.create(req.body);
     res.json({ success: true, discount: newDiscount });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -198,7 +200,7 @@ app.delete('/api/discounts/:id', verifyToken, requireStaff, async (req, res) => 
     await Discount.findByIdAndDelete(req.params.id);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 }

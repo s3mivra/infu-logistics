@@ -1,6 +1,8 @@
 // users routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerUsers(ctx) {
   const {
     app,
@@ -189,7 +191,7 @@ app.get('/api/users/me', verifyToken, requireStaff, async (req, res) => {
     const user = await User.findById(req.user._id).select('-password').lean();
     if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
     res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.get('/api/roles', verifyToken, requireStaff, async (req, res) => {
@@ -197,7 +199,7 @@ app.get('/api/roles', verifyToken, requireStaff, async (req, res) => {
     const roles = await Role.find();
     res.json({ success: true, roles });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -209,7 +211,7 @@ app.post('/api/roles', verifyToken, requireSuperAdmin, validate(roleSchema), asy
     await refreshCustomRolePerms?.(); // new grants take effect on next login/refresh
     res.json({ success: true, role: newRole });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -224,7 +226,7 @@ app.patch('/api/roles/:id', verifyToken, requireSuperAdmin, async (req, res) => 
     await refreshCustomRolePerms?.();
     res.json({ success: true, role });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -234,7 +236,7 @@ app.delete('/api/roles/:id', verifyToken, requireSuperAdmin, async (req, res) =>
     await refreshCustomRolePerms?.();
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -252,7 +254,7 @@ app.post('/api/users/login', loginLimiter, validate(loginSchema), async (req, re
       res.status(401).json({ success: false, message: 'Invalid name or password' });
     }
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -288,7 +290,7 @@ app.post('/api/auth/refresh', requireTrustedOrigin, async (req, res) => {
     const newToken = signAccessToken(user);
     res.json({ success: true, token: newToken, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -301,7 +303,7 @@ app.post('/api/auth/logout', requireTrustedOrigin, async (req, res) => {
     res.clearCookie(REFRESH_COOKIE, { ...refreshCookieOptions(), maxAge: undefined });
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -310,7 +312,7 @@ app.get('/api/users', verifyToken, requireStaff, async (req, res) => {
     const users = await User.find().select('-password').sort({ userCode: 1 });
     res.json({ success: true, users });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -332,7 +334,7 @@ app.post('/api/users', verifyToken, requireSuperAdmin, validate(userCreateSchema
     const newUser = await User.create({ name: req.body.name, password: hashedPassword, userCode, role, permissions, tenantId: req.user?.tenantId || null });
     res.json({ success: true, user: { _id: newUser._id, name: newUser.name, userCode: newUser.userCode, role: newUser.role, permissions: resolvePermissions(newUser) } });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -349,7 +351,7 @@ app.put('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
     if (updateData.password) await revokeUserSessions(req.params.id); // force re-login after password change
     res.json({ success: true, user: updated });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -368,7 +370,7 @@ app.patch('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => 
     if (updates.password || updates.role || updates.permissions) await revokeUserSessions(req.params.id);
     res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -378,7 +380,7 @@ app.delete('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) =>
     await revokeUserSessions(req.params.id); // kill any active sessions for the deleted account
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -416,7 +418,7 @@ app.patch('/api/users/me/password', verifyToken, requireStaff, async (req, res) 
     res.json({ success: true, message: 'Password changed successfully.', token });
   } catch (err) {
     log.error({ err }, 'PATCH /api/users/me/password failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 }

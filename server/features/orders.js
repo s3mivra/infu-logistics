@@ -5,6 +5,8 @@ import { resolveCreditLimit, checkCreditAvailable } from '../lib/credit.js';
 import { title } from '../lib/normalize.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerOrders(ctx) {
   const {
     app,
@@ -247,7 +249,7 @@ app.get('/api/orders', verifyToken, requireStaff, async (req, res) => {
     const orders = await query;
     res.json({ success: true, orders });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -272,7 +274,7 @@ app.get('/api/orders/archives', verifyToken, requireSuperAdmin, async (req, res)
     ]);
     res.json({ success: true, archives, total, page: pageNum });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -292,14 +294,14 @@ app.post('/api/orders/park', verifyToken, requireStaff, async (req, res) => {
       subtotal, total: subtotal, status: 'Parked', isParked: true, cashier: req.user?.name || 'System',
     });
     res.json({ success: true, order: parked });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.get('/api/orders/parked', verifyToken, requireStaff, async (req, res) => {
   try {
     const parked = await Order.find({ isParked: true, isArchived: false, businessType: BUSINESS_TYPE, ...tenantScope(req) }).sort({ createdAt: -1 }).lean();
     res.json({ success: true, parked });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.delete('/api/orders/parked/:id', verifyToken, requireStaff, async (req, res) => {
@@ -308,7 +310,7 @@ app.delete('/api/orders/parked/:id', verifyToken, requireStaff, async (req, res)
     if (!order) return res.status(404).json({ success: false, error: 'Parked order not found.' });
     await Order.findByIdAndDelete(req.params.id);
     res.json({ success: true, order });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // Fetch a single order by ID (Used for Customer Status Lock)
@@ -332,6 +334,7 @@ app.get('/api/orders/:id', async (req, res) => {
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
     res.json(order); // sent as the raw order object so the frontend can read it directly
   } catch (error) {
+    captureError(req, error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
@@ -609,6 +612,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     res.json({ success: true, order: newOrder });
   } catch (error) {
     console.error("Order Creation Error:", error);
+    captureError(req, error);
     res.status(500).json({ success: false, error: 'Order failed' });
   }
 });
@@ -647,7 +651,7 @@ app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, 
     res.json({ success: true, order });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -677,7 +681,7 @@ app.delete('/api/orders/:id/complimentary', verifyToken, requireStaff, async (re
     res.json({ success: true, order });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -1128,6 +1132,7 @@ app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
     await session.abortTransaction();
     session.endSession();
     console.error("[ERP CRITICAL ERROR] Failed to process order:", error);
+    captureError(req, error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -1222,7 +1227,7 @@ app.post('/api/orders/:id/unvoid', verifyToken, requireSuperAdmin, async (req, r
     res.json({ success: true, order: out });
   } catch (err) {
     if (err?.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.message });
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -1443,6 +1448,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
     const isTransient = (error?.errorLabels || []).includes('TransientTransactionError') || /WriteConflict|Write conflict/i.test(msg);
     if (isTransient && mayRetry && !res.headersSent) return true;   // ask the caller to retry
     console.error("Void Error:", error);
+    captureError(req, error);
     if (!res.headersSent) res.status(500).json({ success: false, error: error.message });
   }
   return false;
@@ -1469,6 +1475,7 @@ app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error("Archive Error:", error);
+    captureError(req, error);
     res.status(500).json({ success: false });
   }
 });
@@ -1527,7 +1534,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     res.json({ success: true, order });
   } catch (err) {
     log.error({ err }, 'A/R settlement failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -1545,7 +1552,7 @@ app.post('/api/orders/:id/partial-delivery', verifyToken, requireStaff, async (r
     emitToOps('orderUpdated', order);
     res.json({ success: true, order });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -1663,7 +1670,7 @@ app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (re
     await session.abortTransaction();
     session.endSession();
     log.error({ err }, 'POST /api/orders/:id/partial-fulfill failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -1795,7 +1802,7 @@ app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req,
   } catch (err) {
     await session.abortTransaction(); session.endSession();
     log.error({ err }, 'POST /api/orders/:id/refund failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -1808,7 +1815,7 @@ app.patch('/api/orders/:id/dispatch', verifyToken, requireStaff, async (req, res
     emitToOps('orderUpdated', order);
     res.json({ success: true, order });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 }

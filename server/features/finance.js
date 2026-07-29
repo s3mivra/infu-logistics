@@ -3,6 +3,8 @@
 /* eslint-disable no-unused-vars */
 import { ageingBuckets, ageingByClient, resolveCreditLimit, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerFinance(ctx) {
   const {
     app,
@@ -207,7 +209,7 @@ app.get('/api/journal', verifyToken, ...canViewAcct, async (req, res) => {
     ]);
     res.json({ success: true, entries, total, page: pageNum, pages: Math.ceil(total / pageSize) });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -236,7 +238,7 @@ app.post('/api/journal', verifyToken, ...canPostAcct, async (req, res) => {
     emitToMgr('erpUpdated');
     res.json({ success: true, entry: newEntry });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -256,7 +258,7 @@ app.get('/api/finance/balances', verifyToken, ...canViewAcct, async (req, res) =
     const cashOnHand = (row.totalDebit || 0) - (row.totalCredit || 0);
     res.json({ success: true, cashOnHand });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -297,7 +299,7 @@ app.get('/api/reports/trial-balance', verifyToken, ...canViewAcct, async (req, r
     const totalCredit = +rows.reduce((s, r) => s + r.credit, 0).toFixed(2);
     res.json({ success: true, rows, totalDebit, totalCredit, balanced: Math.abs(totalDebit - totalCredit) < 0.01 });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -362,7 +364,7 @@ app.get('/api/expenses', verifyToken, ...canViewAcct, async (req, res) => {
       range: { start: start.toISOString(), end: end.toISOString() },
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -408,7 +410,7 @@ app.post('/api/expenses', verifyToken, ...canPostAcct, async (req, res) => {
     res.json({ success: true, entry: je });
   } catch (err) {
     log.error({ err }, 'POST /api/expenses failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -426,7 +428,7 @@ app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, 
     const totalOutstanding = rows.reduce((s, r) => s + (r.total || 0), 0);
     res.json({ success: true, orders: rows, totalOutstanding });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -517,7 +519,7 @@ app.get('/api/finance/ar-ageing', verifyToken, ...canViewAcct, async (req, res) 
 
     res.json({ success: true, mode, globalLimit, totals, clients: perClient, asOf: new Date().toISOString() });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -594,7 +596,7 @@ app.get('/api/finance/ap-outstanding', verifyToken, ...canViewAcct, async (req, 
 
     res.json({ success: true, outstandingBalance, recent, bySupplier, totalCredit: bal.totalCredit, totalDebit: bal.totalDebit });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -647,7 +649,7 @@ app.post('/api/finance/ap-payment', verifyToken, ...canPostAcct, async (req, res
     res.json({ success: true, journalEntry: je });
   } catch (err) {
     log.error({ err }, 'POST /api/finance/ap-payment failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -695,7 +697,7 @@ app.get('/api/journal/export', verifyToken, ...canViewAcct, async (req, res) => 
   } catch (err) {
     log.error({ err }, 'Journal export failed');
     // Headers/body already streaming — can't switch to a JSON error; just end the stream.
-    if (!res.headersSent) res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    if (!res.headersSent) (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     else res.end();
   }
 });
@@ -763,7 +765,7 @@ app.post('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
     emitToMgr('erpUpdated'); // auto-refresh the general ledger (bank deposit)
     res.json({ success: true, deposit, shift, drawerBalanceAfter, isReconciled });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -773,7 +775,7 @@ app.get('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
     const deposits = await BankDeposit.find(filter).sort({ createdAt: -1 });
     res.json({ success: true, deposits });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -782,7 +784,7 @@ app.get('/api/accounts', verifyToken, requireStaff, async (req, res) => {
     const accounts = await Account.find().sort({ code: 1 });
     res.json({ success: true, accounts });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -800,7 +802,7 @@ app.get('/api/coa', verifyToken, requireStaff, async (req, res) => {
     }));
     res.json({ success: true, accounts: [...canonical, ...customMapped] });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -833,7 +835,7 @@ app.post('/api/accounts', verifyToken, ...canPostAcct, async (req, res) => {
     await refreshCustomMeta();
     res.json({ success: true, account });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -849,7 +851,7 @@ app.put('/api/accounts/:id', verifyToken, ...canPostAcct, async (req, res) => {
     await refreshCustomMeta();
     res.json({ success: true, account: acct });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -866,7 +868,7 @@ app.delete('/api/accounts/:id', verifyToken, ...canPostAcct, async (req, res) =>
     await logAudit(req, { action: 'delete', entity: 'Account', entityId: acct._id, before });
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -876,7 +878,7 @@ app.get('/api/periods', verifyToken, requireStaff, async (req, res) => {
     const periods = await ClosedPeriod.find().sort({ year: -1, month: -1 }).lean();
     res.json({ success: true, periods });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -901,7 +903,7 @@ app.post('/api/periods/close', verifyToken, ...canPostAcct, async (req, res) => 
     await logAudit(req, { action: 'close', entity: 'Period', entityId: `${year}-${String(month).padStart(2,'0')}`, after: { year, month }, notes });
     res.json({ success: true, period: upsert });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -917,7 +919,7 @@ app.post('/api/periods/:id/reopen', verifyToken, ...canPostAcct, async (req, res
     await logAudit(req, { action: 'reopen', entity: 'Period', entityId: p._id, after: { year: p.year, month: p.month } });
     res.json({ success: true, period: p });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -933,7 +935,7 @@ app.get('/api/payment-method-map', verifyToken, requireStaff, async (req, res) =
       effective: { ...ctx.PAYMENT_MAP_CACHE },
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -953,7 +955,7 @@ app.put('/api/payment-method-map', verifyToken, ...canPostAcct, async (req, res)
     await logAudit(req, { action: 'update', entity: 'PaymentMethodMap', entityId: method, before, after: doc });
     res.json({ success: true, mapping: doc, effective: { ...ctx.PAYMENT_MAP_CACHE } });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -965,7 +967,7 @@ app.delete('/api/payment-method-map/:method', verifyToken, ...canPostAcct, async
     await logAudit(req, { action: 'delete', entity: 'PaymentMethodMap', entityId: req.params.method, before });
     res.json({ success: true, effective: { ...ctx.PAYMENT_MAP_CACHE } });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -975,7 +977,7 @@ app.get('/api/revolving-funds', verifyToken, ...canViewAcct, async (req, res) =>
     const funds = await RevolvingFund.find({ isActive: true }).sort({ createdAt: -1 });
     res.json({ success: true, funds });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -1023,7 +1025,7 @@ app.post('/api/revolving-funds', verifyToken, ...canPostAcct, async (req, res) =
     emitToMgr('erpUpdated'); // auto-refresh the general ledger (fund opened)
     res.json({ success: true, fund });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -1069,7 +1071,7 @@ app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, async (
     emitToMgr('erpUpdated'); // auto-refresh the general ledger (fund disbursement)
     res.json({ success: true, fund, tx });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -1118,7 +1120,7 @@ app.post('/api/revolving-funds/:id/replenish', verifyToken, ...canPostAcct, asyn
     emitToMgr('erpUpdated'); // auto-refresh the general ledger (fund replenishment)
     res.json({ success: true, fund, tx });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -1132,7 +1134,7 @@ app.get('/api/revolving-funds/:id/transactions', verifyToken, ...canViewAcct, as
       .sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit);
     res.json({ success: true, txs, total, page, pages: Math.ceil(total / limit) });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -1143,7 +1145,7 @@ app.patch('/api/revolving-funds/:id/close', verifyToken, ...canPostAcct, async (
     if (!fund) return res.status(404).json({ success: false, error: 'Fund not found.' });
     res.json({ success: true, fund });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 }

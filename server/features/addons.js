@@ -1,6 +1,8 @@
 // addons routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerAddons(ctx) {
   const {
     app,
@@ -179,7 +181,7 @@ app.get('/api/addons', async (req, res) => {
     const addons = await AddOn.find();
     res.json({ success: true, addons });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -190,7 +192,7 @@ app.post('/api/addons', verifyToken, requireSuperAdmin, validate(addonSchema), a
     emitToAll('menuUpdated');
     res.json({ success: true, addon: newAddOn });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -202,7 +204,7 @@ app.patch('/api/addons/:id', verifyToken, requireSuperAdmin, validate(addonSchem
     emitToAll('menuUpdated');
     res.json({ success: true, addon });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -212,7 +214,7 @@ app.delete('/api/addons/:id', verifyToken, requireSuperAdmin, async (req, res) =
     emitToAll('menuUpdated');
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 }

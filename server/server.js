@@ -23,6 +23,7 @@ import { addBatch, consumeBatches, soonestExpiry, sortBatchesFEFO, batchesTotal 
 import { requireStaff, evaluateClientAccess, requirePermission, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS, setCustomRolePermissions } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { validateDateRange } from './lib/reportRange.js';
+import { initErrorLog } from './lib/errorLog.js';
 import registerTenants from './features/tenants.js';
 import registerAddons from './features/addons.js';
 import registerUsers from './features/users.js';
@@ -700,7 +701,10 @@ mongoose.connect(process.env.MONGO_URI, {
   socketTimeoutMS: 45000,
   maxPoolSize: 20,
 })
-  .then(runStartupTasks)
+  // The capped error collection has to be registered once the connection is up;
+  // captureError() is a no-op until then, so early boot errors are simply not
+  // recorded rather than crashing the process.
+  .then(() => { initErrorLog(); return runStartupTasks(); })
   .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
   // --- 🔒 NEW: JWT MIDDLEWARE 🔒 ---

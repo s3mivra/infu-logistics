@@ -86,6 +86,17 @@
       <div id="createErr" class="err"></div>
     </div>
 
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px">
+        <h2 style="margin:0">Errors</h2>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="errHours" style="width:auto"><option value="1">last hour</option><option value="24" selected>last 24h</option><option value="168">last 7 days</option></select>
+          <button class="ghost" id="errRefresh">Refresh</button>
+        </div>
+      </div>
+      <div id="errList"><p class="muted">Not loaded yet.</p></div>
+    </div>
+
     <div class="card hide" id="logCard">
       <h2>Output</h2>
       <pre id="logOut"></pre>
@@ -118,7 +129,7 @@ async function login() {
     sessionStorage.setItem('cp_token', TOKEN);
     $('loginView').classList.add('hide'); $('mainView').classList.remove('hide');
     $('domainLabel').textContent = '*.' + DOMAIN + (LOCAL ? ' · local mode' : '');
-    refresh();
+    refresh(); loadErrors();
   } catch (e) { $('loginErr').textContent = e.message; }
 }
 
@@ -210,13 +221,51 @@ $('createBtn').addEventListener('click', async () => {
   finally { btn.disabled = false; $('createNote').textContent = ''; refresh(); }
 });
 
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const ago = (d) => {
+  const m = Math.round((Date.now() - new Date(d).getTime()) / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + 'm ago';
+  if (m < 1440) return Math.round(m / 60) + 'h ago';
+  return Math.round(m / 1440) + 'd ago';
+};
+
+async function loadErrors() {
+  const btn = $('errRefresh'); btn.disabled = true;
+  $('errList').innerHTML = '<p class="muted">Loading&hellip;</p>';
+  try {
+    const d = await api('/api/errors?hours=' + $('errHours').value);
+    if (!d.groups.length) { $('errList').innerHTML = '<p class="muted">No errors in this window.</p>'; return; }
+    $('errList').innerHTML = d.groups.map((g) => `
+      <div class="row" style="align-items:flex-start">
+        <div style="flex:1;min-width:260px">
+          <div><span class="pill bad">${g.count}&times;</span>
+            <strong>${esc(g.method)} ${esc(g.route)}</strong>
+            <span class="pill">${esc(g.tenant)}</span>
+            ${g.kind !== 'request' ? '<span class="pill bad">' + esc(g.kind) + '</span>' : ''}</div>
+          <div class="muted" style="margin-top:3px">${esc(g.message)}</div>
+          <div class="muted" style="margin-top:3px">first ${ago(g.firstSeen)} &middot; last ${ago(g.lastSeen)}</div>
+        </div>
+        <button class="ghost" data-stack="${esc(g.stack || '(no stack)')}">Stack</button>
+      </div>`).join('');
+  } catch (e) { $('errList').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+  finally { btn.disabled = false; }
+}
+
+$('errList').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-stack]');
+  if (b) showLog(b.dataset.stack);
+});
+$('errRefresh').addEventListener('click', loadErrors);
+$('errHours').addEventListener('change', loadErrors);
+
 $('loginBtn').addEventListener('click', login);
 $('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });
 
 if (TOKEN) {
   api('/api/tenants').then(() => {
     $('loginView').classList.add('hide'); $('mainView').classList.remove('hide');
-    refresh();
+    refresh(); loadErrors();
   }).catch(() => sessionStorage.removeItem('cp_token'));
 }
 </script>

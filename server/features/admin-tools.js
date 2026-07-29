@@ -1,6 +1,8 @@
 // admin-tools routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerAdminTools(ctx) {
   const {
     app,
@@ -196,7 +198,7 @@ app.get('/api/admin/tenancy-report', verifyToken, requireSuperAdmin, async (req,
     const isClean = rows.every(r => r.missingBusinessType === 0 && r.otherBusinessType === 0);
     res.json({ success: true, currentBusinessType: BUSINESS_TYPE, rows, isClean });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -214,7 +216,7 @@ app.post('/api/admin/tenancy-rebackfill', verifyToken, requireSuperAdmin, async 
     await logAudit(req, { action: 'rebackfill', entity: 'Tenancy', entityId: BUSINESS_TYPE, after: stamped });
     res.json({ success: true, stamped });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -271,7 +273,7 @@ app.post('/api/admin/seed-payment-subaccounts', verifyToken, requireSuperAdmin, 
     res.json({ success: true, created, skipped, effectiveMap: { ...ctx.PAYMENT_MAP_CACHE } });
   } catch (err) {
     log?.error?.({ err }, 'POST /api/admin/seed-payment-subaccounts failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -354,7 +356,7 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
   } catch (err) {
     await session.abortTransaction(); session.endSession();
     log.error?.({ err }, 'POST /api/admin/backdate-sale failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -407,7 +409,7 @@ app.post('/api/admin/backdate-sale/backfill-ledger', verifyToken, requireSuperAd
     res.json({ success: true, ...results });
   } catch (err) {
     log.error?.({ err }, 'POST /api/admin/backdate-sale/backfill-ledger failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 }
