@@ -198,6 +198,13 @@ app.post('/api/tenants', requireAuth, async (req, res) => {
 
   const host = `${slug}.${DOMAIN}`;
   const scheme = LOCAL_MODE ? 'http' : 'https';
+  // Every hostname the app is served on must also be an allowed origin, or
+  // Socket.IO rejects the websocket handshake with a bare 400 — REST keeps
+  // working, so it looks like a proxy fault rather than a CORS one. In local
+  // mode that means the .localhost alias too.
+  const origins = LOCAL_MODE
+    ? `${scheme}://${host},http://${slug}.localhost`
+    : `${scheme}://${host}`;
   const env = {
     TENANT: slug,
     STACK_ROOT,
@@ -205,7 +212,7 @@ app.post('/api/tenants', requireAuth, async (req, res) => {
     MONGO_URI: `mongodb://mongo:27017/semivra_${slug}?replicaSet=rs0`,
     JWT_SECRET: crypto.randomBytes(32).toString('hex'),
     ADMIN_PASS: adminPass,
-    ALLOWED_ORIGINS: `${scheme}://${host}`,
+    ALLOWED_ORIGINS: origins,
     LOG_LEVEL: 'info',
     VITE_BUSINESS_TYPE: businessType,
     VITE_BUSINESS_NAME: businessName,
