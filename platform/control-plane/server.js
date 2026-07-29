@@ -231,9 +231,11 @@ app.post('/api/tenants', requireAuth, async (req, res) => {
     }, null, 2));
 
     // Caddy vhost. In LOCAL_MODE we bind plain http on :80 so the whole flow can
-    // be rehearsed without public DNS or a real certificate.
+    // be rehearsed without public DNS or a real certificate, and we ALSO answer
+    // on <slug>.localhost — browsers resolve anything under .localhost to
+    // loopback (RFC 6761), so the rehearsal is reachable with no hosts-file edit.
     const vhost = LOCAL_MODE
-      ? `http://${host} {\n\treverse_proxy ${slug}-web:80\n}\n`
+      ? `http://${host}, http://${slug}.localhost {\n\treverse_proxy ${slug}-web:80\n}\n`
       : `${host} {\n\treverse_proxy ${slug}-web:80\n}\n`;
     await fs.writeFile(caddyPath(slug), vhost);
 
