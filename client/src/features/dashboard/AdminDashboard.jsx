@@ -45,7 +45,9 @@ const TabFallback = () => (
     <RefreshCw size={16} className="animate-spin" /> Loading…
   </div>
 );
-const API_URL = import.meta.env.VITE_API_URL || 'http://192.168.100.2:5002';
+// '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
+// — an UNSET var still falls back to the dev LAN box.
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
 const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL || 'http://192.168.100.2:3000';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 

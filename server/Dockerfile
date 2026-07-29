@@ -10,6 +10,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package*.json ./
 COPY server.js ./
 COPY lib ./lib
+# server.js imports 18 modules from ./features — without this the container
+# crashes on boot with ERR_MODULE_NOT_FOUND.
+COPY features ./features
 RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app
 USER app
 EXPOSE 5002

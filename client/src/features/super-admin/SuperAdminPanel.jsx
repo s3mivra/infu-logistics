@@ -9,7 +9,9 @@ import {
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://192.168.100.2:5002';
+// '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
+// — an UNSET var still falls back to the dev LAN box.
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
 
 const ROLE_META = {
   superadmin: { label: 'Superadmin', bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30' },

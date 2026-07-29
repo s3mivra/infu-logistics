@@ -14,7 +14,9 @@ const loadPdfLib = () => {
   return _pdfLibPromise;
 };
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://192.168.100.2:5002';
+// '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
+// — an UNSET var still falls back to the dev LAN box.
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Semivra').toUpperCase();
 const socket = io(API_URL, { transports: ['websocket'], upgrade: false });
 
@@ -49,12 +51,17 @@ const STATUS_VIEW = (status) => {
       return { label: 'Partially fulfilled', tone: 'blue', msg: 'Some items are ready; the rest will follow.' };
     case 'Out for Delivery':
       return { label: 'Out for delivery', tone: 'blue', msg: 'Your order is on the way.' };
+    // "Ready for pickup" is only true while the order is still WAITING to be
+    // collected. Once it's been handed over, saying so contradicts the fully
+    // filled progress rail — these are terminal states, so name them.
     case 'Awaiting Pickup':
       return { label: 'Ready for pickup', tone: 'blue', msg: 'Your order is ready for pickup.' };
     case 'Delivered':
+      return { label: 'Delivered', tone: 'green', msg: 'Your order has been delivered.', canConfirm: true };
     case 'Picked Up':
+      return { label: 'Picked up', tone: 'green', msg: 'Your order has been picked up.', canConfirm: true };
     case 'Completed':
-      return { label: 'Ready for pickup', tone: 'green', msg: 'Your order is ready for pickup.', canConfirm: true };
+      return { label: 'Completed', tone: 'green', msg: 'This order is complete. Thank you!', canConfirm: true };
     case 'Cancelled':
       return { label: 'Cancelled', tone: 'red', msg: 'This order was cancelled.' };
     case 'Voided':
@@ -381,33 +388,35 @@ export default function ClientOrderPage() {
       if (order.paymentMethod) { value(`Payment: ${order.paymentMethod}`, colR, y, 8.5); y += 4.5; }
       y += 4;
 
-      // ── Item table ──
-      const xQty = R - (showPrices ? 62 : 16);
+      // ── Item table (always priced — see the on-screen slip for why) ──
+      const xQty = R - 62;
       doc.setFillColor(242); doc.rect(L, y - 4.5, W, 7, 'F');
       label('#', L + 1.5, y); label('Item', L + 9, y);
       doc.setFontSize(7.5); doc.setTextColor(130); doc.setFont(undefined, 'bold');
       doc.text('QTY', xQty, y, { align: 'right' });
-      if (showPrices) {
-        doc.text('UNIT', R - 34, y, { align: 'right' });
-        doc.text('AMOUNT', R - 1.5, y, { align: 'right' });
-      }
+      doc.text('UNIT', R - 34, y, { align: 'right' });
+      doc.text('AMOUNT', R - 1.5, y, { align: 'right' });
       y += 7;
 
       const items = order.items || [];
       items.forEach((it, idx) => {
         if (y > 258) { doc.addPage(); y = 20; }
-        const unit = Number(it.price || 0) * (1 - Number(it.discountPercent || 0) / 100);
+        const pct = Number(it.discountPercent || 0);
+        const unit = Number(it.price || 0) * (1 - pct / 100);
         value(String(idx + 1), L + 1.5, y, 9);
-        const name = doc.splitTextToSize(String(it.name || ''), (showPrices ? xQty - 24 : xQty - 14));
+        const name = doc.splitTextToSize(String(it.name || ''), xQty - 24);
         value(name[0], L + 9, y, 9);
         doc.text(String(it.quantity ?? 0), xQty, y, { align: 'right' });
-        if (showPrices) {
-          doc.text(peso(unit), R - 34, y, { align: 'right' });
-          doc.text(peso(unit * Number(it.quantity || 0)), R - 1.5, y, { align: 'right' });
-        }
+        doc.text(peso(unit), R - 34, y, { align: 'right' });
+        doc.text(peso(unit * Number(it.quantity || 0)), R - 1.5, y, { align: 'right' });
         y += 5.5;
         // Wrapped remainder of a long product name.
         name.slice(1).forEach(extra => { value(extra, L + 9, y, 9); y += 4.5; });
+        if (pct > 0) {
+          doc.setFontSize(7.5); doc.setTextColor(140); doc.setFont(undefined, 'normal');
+          doc.text(`list ${peso(Number(it.price || 0))} · less ${pct}%`, L + 9, y - 1);
+          y += 4;
+        }
         doc.setDrawColor(235); doc.setLineWidth(0.15); doc.line(L, y - 2, R, y - 2);
       });
       if (!items.length) { value('No items on this order.', L + 9, y, 9); y += 6; }
@@ -416,10 +425,8 @@ export default function ClientOrderPage() {
       // ── Totals ──
       const totalQty = items.reduce((s, i) => s + Number(i.quantity || 0), 0);
       label('Total quantity', L, y); value(String(totalQty), L + 32, y, 9.5);
-      if (showPrices) {
-        doc.setFontSize(11); doc.setFont(undefined, 'bold'); doc.setTextColor(20);
-        doc.text(`TOTAL  ${peso(orderTotal(order))}`, R, y, { align: 'right' });
-      }
+      doc.setFontSize(11); doc.setFont(undefined, 'bold'); doc.setTextColor(20);
+      doc.text(`TOTAL  ${peso(orderTotal(order))}`, R, y, { align: 'right' });
       y += 8; line(y); y += 6;
 
       // ── Notes & terms ──
@@ -437,7 +444,7 @@ export default function ClientOrderPage() {
     } finally {
       setSlipDownloading(false);
     }
-  }, [companyName, portal, clientInfo, showPrices, slipFooter, orderTotal]);
+  }, [companyName, portal, clientInfo, slipFooter, orderTotal]);
 
   // Cart helpers
   const addToCart = useCallback((product) => {
@@ -559,16 +566,27 @@ export default function ClientOrderPage() {
           </p>
           <SupportLink className="mt-2" />
         </div>
+        {/* Same rule as the slip: the order exists, so its line prices are known
+            and shown. Gating this on showPrices while the slip one tap away
+            printed a total made the two screens contradict each other. */}
         <div className="bg-sidebar-bg border border-white/10 rounded-2xl p-5 w-full max-w-sm mb-6 text-left space-y-2">
-          {successOrder.items?.map((item, i) => (
-            <div key={i} className="flex justify-between gap-3 text-sm">
-              <span className="text-fg font-bold min-w-0 truncate">{item.name}</span>
-              <span className="text-fg/70 font-mono shrink-0">×{item.quantity}</span>
-            </div>
-          ))}
-          <div className="border-t border-white/10 pt-2 text-[11px] text-fg/40 italic">
-            {showPrices ? `Total: ${peso(orderTotal(successOrder))}` : 'Final total will be confirmed by our team.'}
+          {successOrder.items?.map((item, i) => {
+            const unit = Number(item.price || 0) * (1 - Number(item.discountPercent || 0) / 100);
+            return (
+              <div key={i} className="flex justify-between gap-3 text-sm">
+                <span className="text-fg font-bold min-w-0 truncate">
+                  {item.name}
+                  <span className="text-fg/40 font-normal font-mono"> ×{item.quantity}</span>
+                </span>
+                <span className="text-fg/70 font-mono shrink-0 tabular-nums">{peso(unit * Number(item.quantity || 0))}</span>
+              </div>
+            );
+          })}
+          <div className="border-t border-white/10 pt-2 flex justify-between items-baseline gap-3">
+            <span className="text-[11px] font-black uppercase tracking-widest text-fg/40">Total</span>
+            <span className="text-fg font-black text-base tabular-nums">{peso(orderTotal(successOrder))}</span>
           </div>
+          <p className="text-[11px] text-fg/40 italic">Final total is confirmed by our team.</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full max-w-sm">
           <button
@@ -609,7 +627,7 @@ export default function ClientOrderPage() {
 
           {/* Sticky close bar — the document itself has no chrome */}
           <div className="flex items-center justify-between px-4 sm:px-5 py-3 border-b border-white/10 flex-shrink-0">
-            <p className="font-black text-fg/50 text-[10px] uppercase tracking-widest">Order Slip</p>
+            <p className="font-black text-accent text-[10px] uppercase tracking-widest">Order Slip</p>
             <button onClick={() => setSlipOrder(null)} className="p-2 -mr-2 rounded-xl text-fg/40 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
               <X size={16} />
             </button>
@@ -629,7 +647,7 @@ export default function ClientOrderPage() {
                     ))}
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-neutral-400">Order Slip</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-accent">Order Slip</p>
                     <p className="font-mono font-black text-sm mt-0.5">{slipOrder.orderNumber}</p>
                   </div>
                 </div>
@@ -638,18 +656,18 @@ export default function ClientOrderPage() {
               {/* Billed to / order meta */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 px-5 py-4 border-b border-neutral-200">
                 <div>
-                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-neutral-400 mb-1">Billed to</p>
+                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-accent mb-1">Billed to</p>
                   <p className="font-bold text-sm leading-tight">{clientInfo?.name || clientInfo?.username || 'Client'}</p>
-                  {clientInfo?.clientCode && <p className="text-[11px] text-neutral-500 font-mono">{clientInfo.clientCode}</p>}
+                  {clientInfo?.clientCode && <p className="text-[11px] text-accent font-mono">{clientInfo.clientCode}</p>}
                 </div>
                 <div className="sm:text-right space-y-0.5">
-                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-neutral-400 mb-1">Details</p>
-                  <p className="text-[11.5px]"><span className="text-neutral-500">Placed </span>{new Date(slipOrder.createdAt).toLocaleString()}</p>
+                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-accent mb-1">Details</p>
+                  <p className="text-[11.5px]"><span className="text-accent">Placed </span>{new Date(slipOrder.createdAt).toLocaleString()}</p>
                   {slipOrder.billingNumber && (
-                    <p className="text-[11.5px]"><span className="text-neutral-500">Billing </span><span className="font-mono">{slipOrder.billingNumber}</span></p>
+                    <p className="text-[11.5px]"><span className="text-accent">Billing </span><span className="font-mono">{slipOrder.billingNumber}</span></p>
                   )}
                   {slipOrder.paymentMethod && (
-                    <p className="text-[11.5px]"><span className="text-neutral-500">Payment </span>{PAYMENT_LABELS[slipOrder.paymentMethod] || slipOrder.paymentMethod}</p>
+                    <p className="text-[11.5px]"><span className="text-accent">Payment </span>{PAYMENT_LABELS[slipOrder.paymentMethod] || slipOrder.paymentMethod}</p>
                   )}
                 </div>
               </div>
@@ -664,21 +682,25 @@ export default function ClientOrderPage() {
                     {v.label}
                   </span>
                 </div>
+                {/* Each step owns an equal-width cell with the dot dead centre
+                    and its label centred beneath. The connector is split into
+                    two halves per cell (hidden at the two outer ends) so the
+                    track meets each dot instead of trailing off one side. */}
                 {terminated ? (
-                  <p className="text-[11.5px] text-neutral-500">{v.msg}</p>
+                  <p className="text-[11.5px] text-accent">{v.msg}</p>
                 ) : (
                   <ol className="flex items-start gap-0">
                     {SLIP_STEPS.map((s, i) => {
                       const done = i <= stepIdx;
+                      const track = (filled) => filled ? 'bg-neutral-900' : 'bg-neutral-200';
                       return (
                         <li key={s} className="flex-1 min-w-0">
                           <div className="flex items-center">
+                            <span className={`h-0.5 flex-1 ${i === 0 ? 'bg-transparent' : track(i <= stepIdx)}`} />
                             <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${done ? 'bg-neutral-900' : 'bg-neutral-300'}`} />
-                            {i < SLIP_STEPS.length - 1 && (
-                              <span className={`h-0.5 flex-1 ${i < stepIdx ? 'bg-neutral-900' : 'bg-neutral-200'}`} />
-                            )}
+                            <span className={`h-0.5 flex-1 ${i === SLIP_STEPS.length - 1 ? 'bg-transparent' : track(i < stepIdx)}`} />
                           </div>
-                          <p className={`text-[8.5px] leading-tight mt-1.5 pr-1 ${done ? 'text-neutral-900 font-bold' : 'text-neutral-400'}`}>{s}</p>
+                          <p className={`text-[8.5px] leading-tight mt-1.5 px-0.5 text-center ${done ? 'text-neutral-900 font-bold' : 'text-neutral-400'}`}>{s}</p>
                         </li>
                       );
                     })}
@@ -686,41 +708,52 @@ export default function ClientOrderPage() {
                 )}
               </div>
 
-              {/* Item table */}
+              {/* Item table.
+                  Prices are ALWAYS itemised here, regardless of portalShowPrices.
+                  That setting governs the CATALOGUE, where a rate isn't agreed yet
+                  ("Inquire price"); by the time an order exists its line prices are
+                  recorded on the order itself, so the slip can state what was
+                  charged. The footer still notes the team confirms the final total. */}
               <div className="px-5 py-4">
-                <div className={`grid gap-2 pb-2 mb-2 border-b border-neutral-300 text-[9px] font-black uppercase tracking-[0.12em] text-neutral-400 ${showPrices ? 'grid-cols-[1.4rem_1fr_2.2rem_4.5rem]' : 'grid-cols-[1.4rem_1fr_2.5rem]'}`}>
+                <div className="grid gap-2 pb-2 mb-2 border-b border-neutral-300 text-[9px] font-black uppercase tracking-[0.12em] text-accent grid-cols-[1.25rem_1fr_2rem_5rem]">
                   <span>#</span>
                   <span>Item</span>
                   <span className="text-right">Qty</span>
-                  {showPrices && <span className="text-right">Amount</span>}
+                  <span className="text-right">Amount</span>
                 </div>
-                {items.length === 0 && <p className="text-[11.5px] text-neutral-400 italic py-2">No items on this order.</p>}
+                {items.length === 0 && <p className="text-[11.5px] text-accent italic py-2">No items on this order.</p>}
                 {items.map((item, i) => {
-                  const unit = Number(item.price || 0) * (1 - Number(item.discountPercent || 0) / 100);
+                  const gross = Number(item.price || 0);
+                  const pct = Number(item.discountPercent || 0);
+                  const unit = gross * (1 - pct / 100);
                   return (
-                    <div key={i} className={`grid gap-2 py-2 border-b border-neutral-100 text-[12px] items-start ${showPrices ? 'grid-cols-[1.4rem_1fr_2.2rem_4.5rem]' : 'grid-cols-[1.4rem_1fr_2.5rem]'}`}>
-                      <span className="text-neutral-400 tabular-nums">{i + 1}</span>
+                    <div key={i} className="grid gap-2 py-2 border-b border-neutral-100 text-[12px] items-start grid-cols-[1.25rem_1fr_2rem_5rem]">
+                      <span className="text-accent tabular-nums">{i + 1}</span>
                       <span className="min-w-0">
                         <span className="font-semibold block leading-snug break-words">{item.name}</span>
-                        {item.productCode && <span className="text-[10px] text-neutral-400 font-mono">{item.productCode}</span>}
-                        {showPrices && <span className="text-[10px] text-neutral-500 block">{peso(unit)} each</span>}
+                        {item.productCode && <span className="text-[10px] text-accent font-mono">{item.productCode}</span>}
+                        <span className="text-[10px] text-accent block">
+                          {peso(unit)} each
+                          {pct > 0 && (
+                            <> · <span className="line-through">{peso(gross)}</span> <span className="font-bold">-{pct}%</span></>
+                          )}
+                        </span>
                       </span>
                       <span className="text-right tabular-nums font-semibold">{item.quantity}</span>
-                      {showPrices && <span className="text-right tabular-nums font-semibold">{peso(unit * Number(item.quantity || 0))}</span>}
+                      <span className="text-right tabular-nums font-semibold">{peso(unit * Number(item.quantity || 0))}</span>
                     </div>
                   );
                 })}
 
                 {/* Totals */}
-                <div className="flex items-baseline justify-between pt-3 mt-1">
-                  <span className="text-[10px] font-black uppercase tracking-[0.12em] text-neutral-400">
+                <div className="flex items-baseline justify-between gap-3 pt-3 mt-1">
+                  <span className="text-[10px] font-black uppercase tracking-[0.12em] text-accent">
                     {totalQty} item{totalQty === 1 ? '' : 's'}
                   </span>
-                  {showPrices ? (
-                    <span className="font-black text-base tabular-nums">{peso(orderTotal(slipOrder))}</span>
-                  ) : (
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Total confirmed by staff</span>
-                  )}
+                  <span className="text-right">
+                    <span className="text-[9px] font-black uppercase tracking-[0.12em] text-accent block leading-none mb-0.5">Total</span>
+                    <span className="font-black text-base tabular-nums leading-none">{peso(orderTotal(slipOrder))}</span>
+                  </span>
                 </div>
               </div>
 

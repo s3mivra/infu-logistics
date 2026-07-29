@@ -9,7 +9,7 @@ function ModeMismatchBanner() {
   const [serverType, setServerType] = useState(null);
   const clientType = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
   useEffect(() => {
-    const api = import.meta.env.VITE_API_URL || '';
+    const api = import.meta.env.VITE_API_URL ?? '';
     fetch(`${api}/health`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (d?.businessType) setServerType(String(d.businessType).toLowerCase()); })

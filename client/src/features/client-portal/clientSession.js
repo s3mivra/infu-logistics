@@ -26,7 +26,7 @@ const drop = (key) => {
 const readEither = (key) => read(localStorage, key) ?? read(sessionStorage, key);
 
 /** True when the JWT is absent, malformed, or past its `exp`. */
-export function isExpired(token) {
+function isExpired(token) {
   if (!token) return true;
   try {
     const payload = JSON.parse(atob(token.split('.')[1]));
@@ -79,9 +79,4 @@ export function saveDraft(info, draft) {
   const id = clientIdOf(info);
   if (!id) return;
   write(DRAFT_PREFIX + id, JSON.stringify(draft));
-}
-
-export function clearDraft(info) {
-  const id = clientIdOf(info);
-  if (id) drop(DRAFT_PREFIX + id);
 }

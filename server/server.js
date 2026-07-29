@@ -796,7 +796,14 @@ mongoose.connect(process.env.MONGO_URI, {
 // --- DATABASE SCHEMAS ---
 const CategorySchema = new mongoose.Schema({
   name: { type: String, required: true },
-  department: { type: String, enum: ['Kitchen', 'Bar'], default: 'Kitchen' },
+  // fb routes to Kitchen/Bar; log routes to Logistics/Warehouse. The enum must
+  // cover both or category creation 500s in log mode, where the Products tab
+  // only offers the logistics pair. Default follows the running BUSINESS_TYPE.
+  department: {
+    type: String,
+    enum: ['Kitchen', 'Bar', 'Logistics', 'Warehouse'],
+    default: () => (BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen'),
+  },
   // Tenancy seed: which business type owns this category. Defaults to the env
   // BUSINESS_TYPE on create. Old docs without this field still read fine.
   businessType: { type: String, default: () => BUSINESS_TYPE, index: true },

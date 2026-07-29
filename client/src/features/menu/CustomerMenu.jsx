@@ -4,7 +4,9 @@ import { io } from 'socket.io-client';
 import { Coffee, ShoppingCart, Plus, Minus, X, Clock, CheckCircle, Package, AlertCircle, Users, Lock, RefreshCw, ChevronLeft } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://192.168.100.2:5002';
+// '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
+// — an UNSET var still falls back to the dev LAN box.
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
 const socket = io(API_URL, { transports: ['websocket'], upgrade: false });
 
 const playCustomerDing = () => {

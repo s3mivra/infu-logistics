@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { Package, Eye, EyeOff, AlertCircle, Loader2, LogIn } from 'lucide-react';
 import { saveSession, loadSession, clientIdOf } from './clientSession';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://192.168.100.2:5002';
+// '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
+// — an UNSET var still falls back to the dev LAN box.
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Semivra').toUpperCase();
 
 export default function ClientLogin() {
