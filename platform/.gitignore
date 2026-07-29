@@ -1,0 +1,6 @@
+# Generated per-tenant state — contains secrets (JWT_SECRET, ADMIN_PASS).
+# Back these up out-of-band; never commit them.
+tenants/
+tenants-caddy/
+backups/
+.env

@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Semivra control plane</title>
+<style>
+  :root{--bg:#15171a;--card:#1c1f23;--line:#2a2e34;--fg:#e8eaed;--mut:#8b9098;--brand:#4f9d69;--danger:#c9483f}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:28px 20px 80px}
+  h1{font-size:19px;margin:0;letter-spacing:.14em;text-transform:uppercase}
+  h2{font-size:13px;margin:0 0 12px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:24px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--mut);margin-bottom:5px}
+  input,select{width:100%;background:#0f1113;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:9px 11px;font:inherit;outline:none}
+  input:focus,select:focus{border-color:var(--brand)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+  button{background:var(--brand);color:#fff;border:0;border-radius:8px;padding:9px 16px;font:inherit;font-weight:600;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg);font-weight:500}
+  button.danger{background:transparent;border:1px solid var(--danger);color:#e7857c;font-weight:500}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .row:last-child{border-bottom:0}
+  .pill{display:inline-block;font-size:11px;padding:2px 9px;border-radius:99px;border:1px solid var(--line);color:var(--mut)}
+  .ok{color:#7fd39b;border-color:#2f5c40}
+  .bad{color:#e7857c;border-color:#5c2f2f}
+  a{color:var(--brand)}
+  pre{background:#0f1113;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;max-height:340px;font-size:12px;white-space:pre-wrap;word-break:break-word}
+  .muted{color:var(--mut);font-size:12px}
+  .err{color:#e7857c;font-size:13px;margin-top:10px}
+  .hide{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="loginView">
+    <header><h1>Semivra control plane</h1></header>
+    <div class="card" style="max-width:380px">
+      <h2>Sign in</h2>
+      <label for="pw">Control plane password</label>
+      <input id="pw" type="password" autocomplete="current-password" autofocus>
+      <div style="margin-top:14px"><button id="loginBtn">Sign in</button></div>
+      <div id="loginErr" class="err"></div>
+      <p class="muted" style="margin-bottom:0">Reached over an SSH tunnel. This panel controls the Docker daemon &mdash; it is never exposed publicly.</p>
+    </div>
+  </div>
+
+  <div id="mainView" class="hide">
+    <header>
+      <h1>Semivra control plane</h1>
+      <span class="muted" id="domainLabel"></span>
+    </header>
+
+    <div class="card">
+      <h2>Clients</h2>
+      <div id="tenantList"><p class="muted">Loading&hellip;</p></div>
+    </div>
+
+    <div class="card">
+      <h2>Add a client</h2>
+      <div class="grid">
+        <div><label for="f_slug">Subdomain</label><input id="f_slug" placeholder="acme"></div>
+        <div><label for="f_name">Business name</label><input id="f_name" placeholder="Acme Trading Co."></div>
+        <div><label for="f_type">Business type</label>
+          <select id="f_type"><option value="log">log &mdash; logistics</option><option value="fb">fb &mdash; food &amp; beverage</option></select></div>
+        <div><label for="f_theme">Theme</label>
+          <select id="f_theme"><option value="default">default</option><option value="light">light</option><option value="yellow">yellow</option><option value="ocean">ocean</option></select></div>
+        <div><label for="f_pass">Superadmin password</label><input id="f_pass" type="text" placeholder="min 12 characters"></div>
+        <div><label for="f_fb">Support link (optional)</label><input id="f_fb" placeholder="https://m.me/yourpage"></div>
+      </div>
+      <p class="muted" style="margin:14px 0 6px">Billing letterhead (optional, printed on statements)</p>
+      <div class="grid">
+        <div><label for="f_baddr1">Address line 1</label><input id="f_baddr1"></div>
+        <div><label for="f_baddr2">Address line 2</label><input id="f_baddr2"></div>
+        <div><label for="f_bphone">Phone</label><input id="f_bphone"></div>
+        <div><label for="f_bemail">Email</label><input id="f_bemail"></div>
+        <div><label for="f_bbank">Bank</label><input id="f_bbank"></div>
+        <div><label for="f_bacctname">Account name</label><input id="f_bacctname"></div>
+        <div><label for="f_bacctno">Account number</label><input id="f_bacctno"></div>
+      </div>
+      <div style="margin-top:16px"><button id="createBtn">Create client</button>
+        <span class="muted" id="createNote" style="margin-left:10px"></span></div>
+      <div id="createErr" class="err"></div>
+    </div>
+
+    <div class="card hide" id="logCard">
+      <h2>Output</h2>
+      <pre id="logOut"></pre>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let TOKEN = sessionStorage.getItem('cp_token') || '';
+let DOMAIN = '', LOCAL = false;
+
+async function api(pathname, opts = {}) {
+  const res = await fetch(pathname, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...(TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {}), ...(opts.headers || {}) },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+
+function showLog(text) { $('logCard').classList.remove('hide'); $('logOut').textContent = text || '(no output)'; }
+
+async function login() {
+  $('loginErr').textContent = '';
+  try {
+    const d = await api('/api/login', { method: 'POST', body: JSON.stringify({ password: $('pw').value }) });
+    TOKEN = d.token; DOMAIN = d.domain; LOCAL = d.localMode;
+    sessionStorage.setItem('cp_token', TOKEN);
+    $('loginView').classList.add('hide'); $('mainView').classList.remove('hide');
+    $('domainLabel').textContent = '*.' + DOMAIN + (LOCAL ? ' · local mode' : '');
+    refresh();
+  } catch (e) { $('loginErr').textContent = e.message; }
+}
+
+function statusPill(s) {
+  const good = s === 'healthy' || s === 'running';
+  return '<span class="pill ' + (good ? 'ok' : 'bad') + '">' + s + '</span>';
+}
+
+async function refresh() {
+  try {
+    const { tenants } = await api('/api/tenants');
+    if (!tenants.length) { $('tenantList').innerHTML = '<p class="muted">No clients yet.</p>'; return; }
+    $('tenantList').innerHTML = tenants.map((t) => `
+      <div class="row">
+        <div>
+          <div><strong>${t.businessName || t.slug}</strong> <span class="pill">${t.businessType || '?'}</span></div>
+          <div class="muted"><a href="${t.url}" target="_blank" rel="noopener">${t.url}</a></div>
+        </div>
+        <div>api ${statusPill(t.status.api)} web ${statusPill(t.status.web)}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="ghost" data-act="rebuild" data-slug="${t.slug}">Rebuild</button>
+          <button class="ghost" data-act="stop" data-slug="${t.slug}">Stop</button>
+          <button class="ghost" data-act="start" data-slug="${t.slug}">Start</button>
+          <button class="ghost" data-act="logs" data-slug="${t.slug}">Logs</button>
+          <button class="danger" data-act="wipe" data-slug="${t.slug}">Wipe data</button>
+          <button class="danger" data-act="destroy" data-slug="${t.slug}">Delete</button>
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    if (/signed in/i.test(e.message)) { sessionStorage.removeItem('cp_token'); location.reload(); return; }
+    $('tenantList').innerHTML = '<p class="err">' + e.message + '</p>';
+  }
+}
+
+async function act(slug, action, btn) {
+  const label = btn.textContent; btn.disabled = true; btn.textContent = '…';
+  try {
+    if (action === 'logs') { showLog((await api(`/api/tenants/${slug}/logs`)).log); }
+    else if (action === 'wipe') {
+      const confirmSlug = prompt(`Wipe ALL data for "${slug}"?\n\nThe database is dropped and the superadmin re-seeded. Business config in .env is kept.\n\nType the client name to confirm:`);
+      if (confirmSlug !== slug) return;
+      const dangerPassword = prompt('Second password (required for destructive actions):');
+      if (!dangerPassword) return;
+      const d = await api(`/api/tenants/${slug}/wipe`, { method: 'POST', body: JSON.stringify({ confirmSlug, dangerPassword }) });
+      showLog(d.message);
+    } else if (action === 'destroy') {
+      const confirmSlug = prompt(`DELETE client "${slug}" entirely?\n\nContainers, database, config and subdomain are all removed. This cannot be undone.\n\nType the client name to confirm:`);
+      if (confirmSlug !== slug) return;
+      const dangerPassword = prompt('Second password (required for destructive actions):');
+      if (!dangerPassword) return;
+      await api(`/api/tenants/${slug}`, { method: 'DELETE', headers: { 'x-danger-password': dangerPassword, 'x-confirm-slug': confirmSlug } });
+      showLog(`Client ${slug} removed.`);
+    } else {
+      showLog((await api(`/api/tenants/${slug}/${action}`, { method: 'POST' })).log);
+    }
+  } catch (e) { showLog('Error: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = label; refresh(); }
+}
+
+$('tenantList').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-act]');
+  if (b) act(b.dataset.slug, b.dataset.act, b);
+});
+
+$('createBtn').addEventListener('click', async () => {
+  const btn = $('createBtn');
+  $('createErr').textContent = '';
+  btn.disabled = true;
+  $('createNote').textContent = 'Building the client bundle — this takes a few minutes.';
+  try {
+    const d = await api('/api/tenants', { method: 'POST', body: JSON.stringify({
+      slug: $('f_slug').value.trim().toLowerCase(),
+      businessName: $('f_name').value.trim(),
+      businessType: $('f_type').value,
+      theme: $('f_theme').value,
+      adminPass: $('f_pass').value,
+      fbLink: $('f_fb').value.trim(),
+      billingAddress1: $('f_baddr1').value.trim(),
+      billingAddress2: $('f_baddr2').value.trim(),
+      billingPhone: $('f_bphone').value.trim(),
+      billingEmail: $('f_bemail').value.trim(),
+      billingBank: $('f_bbank').value.trim(),
+      billingAccountName: $('f_bacctname').value.trim(),
+      billingAccountNo: $('f_bacctno').value.trim(),
+    }) });
+    showLog(`Created ${d.slug} at ${d.url}\n\n` + d.log);
+    ['f_slug','f_name','f_pass','f_fb'].forEach((i) => { $(i).value = ''; });
+  } catch (e) { $('createErr').textContent = e.message; }
+  finally { btn.disabled = false; $('createNote').textContent = ''; refresh(); }
+});
+
+$('loginBtn').addEventListener('click', login);
+$('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });
+
+if (TOKEN) {
+  api('/api/tenants').then(() => {
+    $('loginView').classList.add('hide'); $('mainView').classList.remove('hide');
+    refresh();
+  }).catch(() => sessionStorage.removeItem('cp_token'));
+}
+</script>
+</body>
+</html>

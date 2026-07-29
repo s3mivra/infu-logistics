@@ -1,0 +1,14 @@
+{
+  "name": "semivra-control-plane",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Provisions and manages per-client Semivra stacks on a single VPS.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
