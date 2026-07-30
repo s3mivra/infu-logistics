@@ -1,7 +1,6 @@
 import { X, Check } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 // Edit an inventory item's identity/costing fields. Quantity is deliberately
 // NOT editable here — stock only moves through Restock or Waste so every change
@@ -19,8 +18,8 @@ export default function EditInventoryModal() {
     itemName: editInvForm.itemName, unit: editInvForm.unit, displayUnit: editInvForm.displayUnit,
     packSize: editInvForm.packSize === '' ? null : parseFloat(editInvForm.packSize),
   }).label || 'pack';
-  const costUnit = BUSINESS_TYPE === 'log' ? packLabel : (editInvForm.displayUnit || 'unit');
-  const thresholdUnit = BUSINESS_TYPE === 'log' ? 'pcs' : (editInvForm.displayUnit || editInvForm.unit || 'unit');
+  const costUnit = packLabel;
+  const thresholdUnit = d.isPacked ? 'pcs' : (editInvForm.displayUnit || editInvForm.unit || 'unit');
   const set = (patch) => setEditInvForm({ ...editInvForm, ...patch });
 
   return (
@@ -37,8 +36,8 @@ export default function EditInventoryModal() {
           <div className="bg-white/5 rounded-xl p-3 border border-white/10">
             <p className="text-fg/60 text-[10px] font-bold uppercase">Current Stock</p>
             <p className="text-2xl text-brand font-black tabular-nums">
-              {(BUSINESS_TYPE === 'log' ? d.packQty : d.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })}{' '}
-              <span className="text-sm text-fg/60 font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : d.unit}</span>
+              {d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}{' '}
+              <span className="text-sm text-fg/60 font-bold">{d.isPacked ? 'pcs' : d.unit}</span>
             </p>
             <p className="text-[10px] text-fg/60 mt-1 italic">To change quantity, use Restock or Waste - not this form.</p>
           </div>

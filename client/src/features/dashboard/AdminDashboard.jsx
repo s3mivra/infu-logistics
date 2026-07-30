@@ -2566,7 +2566,7 @@ const updateStatus = async (orderId, newStatus) => {
       for (const [id, val] of Object.entries(physicalCounts)) {
         if (val === '' || val === undefined || val === null) continue;
         const item = inventory.find(i => i._id === id);
-        const mult = item ? (BUSINESS_TYPE === 'log' ? (itemDisplay(item).packBase || 1) : effectiveDisplay(item).mult) : 1;
+        const mult = item ? (itemDisplay(item).packBase || 1) : 1;
         countsBase[id] = Number(val) * mult;
       }
       const res = await apiFetch(`/api/inventory/count`, {
@@ -3024,7 +3024,7 @@ const updateStatus = async (orderId, newStatus) => {
   const openEditInventory = (item) => {
     const eff = effectiveDisplay(item);
     // LOG: cost & threshold are per package (₱200/250G, N pcs); FB: per display unit.
-    const costBasis = BUSINESS_TYPE === 'log' ? packInfo(item).packBase : eff.mult;
+    const costBasis = packInfo(item).packBase || eff.mult;
     setEditInvForm({
       itemName: item.itemName || '',
       unit: item.unit || '',
@@ -3054,9 +3054,7 @@ const updateStatus = async (orderId, newStatus) => {
       // LOG: the entered cost is per package — divide by the pack size (the
       // explicit field the user just edited, falling back to a name-parse for
       // legacy items). FB: per display unit — divide by display multiplier.
-      const costBasis = BUSINESS_TYPE === 'log'
-        ? packInfo({ itemName: editInvForm.itemName.trim(), unit: resolved.base, displayUnit: editInvForm.displayUnit, unitMultiplier: mult, packSize: editInvForm.packSize === '' ? null : parseFloat(editInvForm.packSize) }).packBase
-        : mult;
+      const costBasis = packInfo({ itemName: editInvForm.itemName.trim(), unit: resolved.base, displayUnit: editInvForm.displayUnit, unitMultiplier: mult, packSize: editInvForm.packSize === '' ? null : parseFloat(editInvForm.packSize) }).packBase || mult;
       const payload = {
         itemName: editInvForm.itemName.trim(),
         unit: resolved.base,                            // base storage unit (g/ml/pcs)
