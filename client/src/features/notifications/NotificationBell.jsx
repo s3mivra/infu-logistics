@@ -19,7 +19,10 @@ const SEVERITY = {
 // signals change second-to-second, and the POS tablet has better things to do.
 const POLL_MS = 120000;
 
-export default function NotificationBell() {
+// `align` controls which way the dropdown opens. The default 'right' suits a
+// top bar (panel hangs left from the button); 'left' is for the desktop
+// sidebar, where a right-anchored panel would run off the left of the screen.
+export default function NotificationBell({ align = 'right', full = false }) {
   const { apiFetch, setActiveTab, setLedgerSubTab } = useDashboard();
   const [open, setOpen] = useState(false);
   const [data, setData] = useState({ items: [], count: 0, criticalCount: 0 });
@@ -85,7 +88,7 @@ export default function NotificationBell() {
         onClick={() => { setOpen(o => !o); if (!open) load(); }}
         aria-label={count ? `Notifications: ${count} item(s) need attention` : 'Notifications: nothing needs attention'}
         aria-expanded={open}
-        className={`relative flex items-center gap-1.5 px-3 py-2 rounded-xl font-bold text-xs border transition ${
+        className={`relative flex items-center gap-1.5 px-3 py-2 rounded-xl font-bold text-xs border transition ${full ? 'w-full' : ''} ${
           data.criticalCount > 0
             ? 'bg-red-500/15 text-red-400 border-red-500/30 hover:bg-red-500/25'
             : count > 0
@@ -108,7 +111,7 @@ export default function NotificationBell() {
           ref={panelRef}
           role="dialog"
           aria-label="Notifications"
-          className="absolute right-0 mt-2 w-[min(92vw,26rem)] max-h-[70vh] overflow-hidden flex flex-col bg-surface border border-white/10 rounded-2xl shadow-elev-3 z-[9999] animate-scale-in"
+          className={`absolute ${align === 'left' ? 'left-0' : 'right-0'} mt-2 w-[min(92vw,26rem)] max-h-[70vh] overflow-hidden flex flex-col bg-surface border border-white/10 rounded-2xl shadow-elev-3 z-[9999] animate-scale-in`}
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
             <div>

@@ -5059,6 +5059,13 @@ const updateStatus = async (orderId, newStatus) => {
         {/* Settings — system preferences & account. The QR-Orders / Auto-Close /
             Product-Images toggles and Change Password now live on this page
             instead of being crammed into the sidebar dropdown. */}
+        {/* Notifications. The mobile top bar has its own bell, and that bar is
+            lg:hidden — so without this the bell vanished entirely on desktop.
+            Opens rightwards out of the sidebar rather than off the screen edge. */}
+        <div className="hidden lg:block px-1 pb-1">
+          <NotificationBell align="left" full />
+        </div>
+
         <button onClick={() => { setActiveTab('settings'); setNavMode('negotium'); closeFn?.(); }}
           className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${activeTab === 'settings' ? 'bg-brand text-white shadow-sm' : 'text-fg/40 hover:text-fg hover:bg-white/5'}`}>
           <Settings size={15} />
