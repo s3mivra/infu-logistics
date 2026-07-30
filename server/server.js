@@ -1447,6 +1447,11 @@ const ClientAccountSchema = new mongoose.Schema({
   // Whether either limit is enforced at all is decided by the `creditLimitMode`
   // setting; see resolveCreditLimit().
   creditLimit:   { type: Number, default: null },
+  // The client's OWN portal appearance, stored on the account so it follows them
+  // across devices. Deliberately separate from the staff-side `dash.theme`
+  // (per-device localStorage): a shop changing its POS theme must not restyle
+  // its customers' portals. null = follow the shipped default.
+  theme:         { type: String, enum: ['default', 'light', 'yellow', 'ocean', null], default: null },
 }, { timestamps: true });
 const ClientAccount = mongoose.model('ClientAccount', ClientAccountSchema);
 

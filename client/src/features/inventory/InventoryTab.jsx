@@ -276,7 +276,7 @@ export default function InventoryTab({ ctx }) {
                         <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-white'}`}>{(BUSINESS_TYPE === 'log' ? d.packQty : d.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
                         <td className="py-3 text-right text-white text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(effThreshold / (BUSINESS_TYPE === 'log' ? (itemDisplay(item).packBase || 1) : effectiveDisplay(item).mult)).toLocaleString(undefined, { maximumFractionDigits: 3 })}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
                         <td className="py-3 text-white pl-2 font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : d.unit}</td>
-                        <td className="py-3 text-right text-white font-mono text-xs tabular-nums">{BUSINESS_TYPE === 'log' ? (<>{peso(d.packCost)}<span className="text-white">/{d.packLabel}</span></>) : (<>{peso(d.cost)}<span className="text-fg/40">/{d.unit}</span></>)}</td>
+                        <td className="py-3 text-right text-white font-mono text-xs tabular-nums">{BUSINESS_TYPE === 'log' ? (<>{peso(d.packCost)}<span className="text-white">/{d.packLabel}</span></>) : (<>{peso(d.cost)}<span className="text-white">/{d.unit}</span></>)}</td>
                         <td className="py-3 text-right text-white font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
                         </>); })()}
                         <td className="py-3 text-center">
@@ -690,7 +690,7 @@ export default function InventoryTab({ ctx }) {
                   return (
                   <div key={i._id} className="flex justify-between text-xs">
                     <span className="text-red-300 font-bold">{i.itemName}</span>
-                    <span className="text-red-400 font-mono tabular-nums">{BUSINESS_TYPE === 'log' ? d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 }) : d.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {BUSINESS_TYPE === 'log' ? 'pcs' : d.unit} (min: {minDisp})</span>
+                    <span className="text-red-400 font-mono tabular-nums">{BUSINESS_TYPE === 'log' ? d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 }) : d.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {BUSINESS_TYPE == 'log' ? 'pcs' : d.unit} (min: {minDisp})</span>
                   </div>
                   );
                 })}

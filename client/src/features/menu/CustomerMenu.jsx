@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { io } from 'socket.io-client';
 import { Coffee, ShoppingCart, Plus, Minus, X, Clock, CheckCircle, Package, AlertCircle, Users, Lock, RefreshCw, ChevronLeft } from 'lucide-react';
 import * as ui from '../../shared/ui';
+import { loadDraft, saveDraft, clearDraft } from '../../shared/draft';
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // — an UNSET var still falls back to the dev LAN box.
@@ -83,6 +84,11 @@ const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Kasa Lokal').toUpperCas
 export default function CustomerMenu() {
   // --- UI FLOW STATE MACHINE ---
   const [flowState, setFlowState] = useState('landing'); // 'landing' -> 'name_input' -> 'menu' -> 'status'
+
+  // Draft persistence for the QR flow. Keyed by session token so two tables
+  // scanning at once never share a basket. draftReady gates the save effect so
+  // the first render (empty cart) can't overwrite what we're about to restore.
+  const draftReady = useRef(false);
   const [selectedAddOns, setSelectedAddOns] = useState([]);
 
   const [products, setProducts] = useState([]);
@@ -181,6 +187,18 @@ export default function CustomerMenu() {
         if (heartbeatData.success) {
           setIsAuthorized(true);
           setTableNum(heartbeatData.table);
+
+          // Restore an in-progress basket so an accidental refresh (or the OS
+          // evicting the tab while they switch apps) doesn't restart the order.
+          const draft = loadDraft(`qr:${session}`);
+          if (draft) {
+            if (Array.isArray(draft.cart)) setCart(draft.cart);
+            if (typeof draft.customerName === 'string') setCustomerName(draft.customerName);
+            if (typeof draft.orderNotes === 'string') setOrderNotes(draft.orderNotes);
+            if (draft.activeCategory) setActiveCategory(draft.activeCategory);
+            // Only resume mid-flow screens; 'status' is driven by a real order.
+            if (draft.flowState === 'menu' || draft.flowState === 'name_input') setFlowState(draft.flowState);
+          }
         } else {
           setIsAuthorized(false);
         }
@@ -188,10 +206,19 @@ export default function CustomerMenu() {
         setIsAuthorized(false);
       }
       setIsCheckingSession(false);
+      draftReady.current = true;
     };
 
     validateSessionAndCheckMemory();
   }, []);
+
+  // Persist the in-progress basket on every change. Cheap (one small JSON write)
+  // and it means a refresh mid-order costs the customer nothing. Not saved once
+  // the order is placed — from then on `semivra_active_order` owns the state.
+  useEffect(() => {
+    if (!draftReady.current || !sessionToken || flowState === 'status') return;
+    saveDraft(`qr:${sessionToken}`, { cart, customerName, orderNotes, activeCategory, flowState });
+  }, [sessionToken, cart, customerName, orderNotes, activeCategory, flowState]);
 
 // --- DYNAMIC INACTIVITY TRACKER (20 mins / Infinite / 15 mins) ---
   useEffect(() => {
@@ -330,6 +357,7 @@ export default function CustomerMenu() {
 
     localStorage.removeItem('semivra_active_order');
     localStorage.removeItem('semivra_order_time');
+    clearDraft(`qr:${sessionToken}`);
 
     // PERMANENTLY DESTROY THE LINK
     await fetch(`${API_URL}/api/sessions/${sessionToken}/close`, { method: 'POST' });
@@ -476,6 +504,7 @@ export default function CustomerMenu() {
 
       if (data.success) {
         setCart([]);
+        clearDraft(`qr:${sessionToken}`);   // it's a real order now, not a draft
         setSuccessMessage(true);
         setTimeout(() => setSuccessMessage(false), 5000);
 

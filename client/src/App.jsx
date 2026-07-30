@@ -62,6 +62,10 @@ function App() {
     // Theme is a per-DEVICE preference, not a business setting: the same shop can
     // have a dark tablet at the register and a light one in a sunlit warehouse.
     // A saved choice wins; VITE_THEME remains the shipped default.
+    // The client portal owns its own appearance (see clientTheme.js) — a shop
+    // restyling its POS must not restyle its customers' portals, so skip the
+    // staff theme entirely on portal routes.
+    if (window.location.pathname.startsWith('/client')) return;
     let saved = null;
     try { saved = localStorage.getItem('dash.theme'); } catch { /* private mode */ }
     document.documentElement.setAttribute('data-theme', saved || import.meta.env.VITE_THEME || 'default');

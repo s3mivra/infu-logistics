@@ -207,7 +207,7 @@ app.post('/api/client-auth/login', loginLimiter, async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '8h' }
     );
-    res.json({ success: true, token, client: { _id: String(client._id), clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod } });
+    res.json({ success: true, token, client: { _id: String(client._id), clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, theme: client.theme || null } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -268,6 +268,100 @@ app.post('/api/client/orders/:id/cancel', verifyClientToken, async (req, res) =>
     emitToOps('orderUpdated', order);
     emitToMgr('erpUpdated');
     res.json({ success: true, order });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ── Client self-service ──────────────────────────────────────────────────────
+// A client manages their own login and appearance. Scoped strictly to the
+// account in their own token — never accepts an id from the request body.
+
+const THEMES = ['default', 'light', 'yellow', 'ocean'];
+
+const ownClient = async (req) => {
+  const clientId = req.user?.clientId || req.user?._id;
+  if (!clientId || req.user?.role !== 'client') return null;
+  return ClientAccount.findById(clientId);
+};
+
+app.get('/api/client/profile', verifyClientToken, async (req, res) => {
+  try {
+    const me = await ownClient(req);
+    if (!me) return res.status(403).json({ success: false, error: 'Client session required.' });
+    res.json({ success: true, profile: {
+      _id: String(me._id), clientCode: me.clientCode, username: me.username,
+      name: me.name, paymentMethod: me.paymentMethod, theme: me.theme || null,
+    } });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.patch('/api/client/profile', verifyClientToken, async (req, res) => {
+  try {
+    const me = await ownClient(req);
+    if (!me) return res.status(403).json({ success: false, error: 'Client session required.' });
+
+    if (req.body.theme !== undefined) {
+      const t = req.body.theme === null || req.body.theme === '' ? null : String(req.body.theme);
+      if (t !== null && !THEMES.includes(t)) {
+        return res.status(400).json({ success: false, error: 'Unknown theme.' });
+      }
+      me.theme = t;
+    }
+
+    if (req.body.username !== undefined) {
+      const next = lower(String(req.body.username).trim());
+      if (next.length < 3 || next.length > 40) {
+        return res.status(400).json({ success: false, error: 'Username must be 3-40 characters.' });
+      }
+      if (!/^[a-z0-9._-]+$/.test(next)) {
+        return res.status(400).json({ success: false, error: 'Username may use letters, digits, dot, dash and underscore only.' });
+      }
+      if (next !== lower(me.username)) {
+        // Case-insensitive check: logins are matched case-insensitively, so two
+        // accounts differing only by case would be indistinguishable at sign-in.
+        const clash = await ClientAccount.findOne({
+          _id: { $ne: me._id },
+          username: { $regex: `^${escapeRegex(next)}$`, $options: 'i' },
+        }).lean();
+        if (clash) return res.status(409).json({ success: false, error: 'That username is already taken.' });
+        me.username = next;
+      }
+    }
+
+    await me.save();
+    res.json({ success: true, profile: {
+      _id: String(me._id), clientCode: me.clientCode, username: me.username,
+      name: me.name, paymentMethod: me.paymentMethod, theme: me.theme || null,
+    } });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.post('/api/client/password', verifyClientToken, async (req, res) => {
+  try {
+    const me = await ownClient(req);
+    if (!me) return res.status(403).json({ success: false, error: 'Client session required.' });
+
+    const current = String(req.body.currentPassword || '');
+    const next = String(req.body.newPassword || '');
+    if (next.length < 8) {
+      return res.status(400).json({ success: false, error: 'New password must be at least 8 characters.' });
+    }
+    // Requiring the current password is what stops a stolen session token from
+    // being escalated into permanent account takeover.
+    if (!current || !(await bcrypt.compare(current, me.password))) {
+      return res.status(401).json({ success: false, error: 'Current password is incorrect.' });
+    }
+    if (await bcrypt.compare(next, me.password)) {
+      return res.status(400).json({ success: false, error: 'New password must be different.' });
+    }
+    me.password = await bcrypt.hash(next, BCRYPT_ROUNDS);
+    await me.save();
+    res.json({ success: true, message: 'Password changed.' });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
