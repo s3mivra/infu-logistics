@@ -2749,6 +2749,11 @@ const updateStatus = async (orderId, newStatus) => {
       packLabel: pack.label,                                // pack size label from the name (e.g. "250g")
       packBase: pack.packBase,                              // base units in one package (e.g. 250)
       packQty: pack.packBase ? (item.stockQty || 0) / pack.packBase : 0, // stock as a count of packages
+      // True only when a REAL pack size is known. packInfo() falls back to the
+      // plain display unit when there isn't one, in which case packQty/packCost
+      // already equal qty/cost — so the pack-first columns stay correct, but the
+      // unit must still read "kg", not "pcs".
+      isPacked: pack.label !== unit,
     };
   };
   // Pretty currency

@@ -36,14 +36,18 @@ export default function registerNotifications(ctx) {
   // units. Reporting the raw base number here would read as a different figure
   // entirely — "200 left" for 200 g of an item the user thinks of in kg. So the
   // feed converts exactly the way the tables do.
+  // Pack-first in BOTH modes, matching the Inventory Hub table: an item with a
+  // known pack size is counted in whole packs, anything else in its display
+  // unit. Reporting kg here while the table shows packs would have staff
+  // reconciling two different numbers for the same shortage.
   const display = (item) => {
     const qty = Number(item.stockQty) || 0;
-    if (BUSINESS_TYPE === 'log') {
-      // Log mode counts whole packs/pieces.
-      const packBase = (Number(item.packSize) || 1) * (Number(item.unitMultiplier) || 1);
+    const { displayUnit, mult } = effectiveDisplay(item);
+    const packSize = Number(item.packSize) || 0;
+    if (packSize > 0) {
+      const packBase = packSize * (mult || 1);
       return { qty: qty / (packBase || 1), unit: 'pcs', div: packBase || 1 };
     }
-    const { displayUnit, mult } = effectiveDisplay(item);
     return { qty: qty / (mult || 1), unit: displayUnit, div: mult || 1 };
   };
 
