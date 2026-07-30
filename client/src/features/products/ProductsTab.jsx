@@ -266,7 +266,7 @@ export default function ProductsTab({ ctx }) {
             {/* 2. Manage Categories */}
             <div className="mt-8 border-t border-white/10 pt-6">
               <h3 className="text-xl font-bold mb-4 text-fg border-b border-white/10 pb-2">Manage Categories & Routing</h3>
-              <form onSubmit={handleSaveCategory} className="flex gap-3 mb-6">
+              <form onSubmit={handleSaveCategory} className="flex flex-wrap gap-3 mb-6">
                 <input
                   type="text"
                   value={catForm.name}
@@ -321,7 +321,7 @@ export default function ProductsTab({ ctx }) {
             {/* 3. MANAGE GLOBAL ADD-ONS — attaching an add-on to a product needs one to exist first */}
             <div className="mt-8 border-t border-white/10 pt-6">
               <h3 className="text-xl font-bold mb-4 text-fg border-b border-white/10 pb-2">Manage Add-Ons</h3>
-              <form onSubmit={handleSaveAddOn} className="flex gap-3 mb-6">
+              <form onSubmit={handleSaveAddOn} className="flex flex-wrap gap-3 mb-6">
                 <input
                   type="text"
                   placeholder={BUSINESS_TYPE === 'log' ? 'Name (e.g. Custom Grind)' : 'Name (e.g. Popping Boba)'}
@@ -396,8 +396,8 @@ export default function ProductsTab({ ctx }) {
                     ) : (
                       <div className="w-16 h-16 bg-white/5 border border-white/10 rounded-lg flex items-center justify-center text-xs text-fg/25 font-bold">None</div>
                     )}
-                    <div className="flex flex-col gap-2">
-                      <input type="file" accept="image/*" onChange={handleImageUpload} className="text-sm text-fg/40 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-bold file:bg-accent file:text-white hover:file:bg-accent/80 cursor-pointer transition" />
+                    <div className="flex flex-col gap-2 min-w-0">
+                      <input type="file" accept="image/*" onChange={handleImageUpload} className="max-w-full text-sm text-fg/40 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-bold file:bg-accent file:text-white hover:file:bg-accent/80 cursor-pointer transition" />
                       {formData.image && (
                         <button type="button" onClick={() => setFormData({ ...formData, image: '', imageUrl: '' })}
                           className="self-start text-sm font-bold bg-red-500 rounded-xl py-2 px-4 text-white hover:text-white/60 transition">
@@ -771,7 +771,7 @@ export default function ProductsTab({ ctx }) {
                     className="w-28 bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-sm font-black outline-none focus:border-accent" />
                   <input type="text" placeholder="Description (optional)" value={comboForm.description}
                     onChange={e => setComboForm({ ...comboForm, description: e.target.value })}
-                    className="flex-1 bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-accent placeholder-white/20" />
+                    className="flex-1 min-w-0 bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-accent placeholder-white/20" />
                 </div>
                 <div className="space-y-1.5">
                   <p className="text-[10px] text-fg/40 font-bold uppercase">Components</p>

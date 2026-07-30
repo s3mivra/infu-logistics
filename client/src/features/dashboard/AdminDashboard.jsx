@@ -5389,26 +5389,30 @@ const updateStatus = async (orderId, newStatus) => {
             </div>
             <p className="text-brand text-[10px] font-bold uppercase truncate">{activeAdmin?.name} · {navMode === 'libellus' ? 'Operations' : 'Management'}</p>
           </div>
-          <div className="flex items-center gap-2">
+          {/* min-w-0 + overflow-x lets this action group scroll internally on a
+              very narrow phone (≤320px) rather than pushing the whole page wider;
+              shrink-0 keeps each control its natural size. At 375px+ it all fits,
+              so no scrollbar shows. */}
+          <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-hide">
             {(!isOnline || queuedCount > 0) && (
-              <span className={`flex items-center gap-1 px-2 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider ${isOnline ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30' : 'bg-red-500/15 text-red-400 border border-red-500/30'}`}>
+              <span className={`shrink-0 flex items-center gap-1 px-2 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider ${isOnline ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30' : 'bg-red-500/15 text-red-400 border border-red-500/30'}`}>
                 {isOnline ? <RefreshCw size={12} className={queuedCount > 0 ? 'animate-spin' : ''} /> : <WifiOff size={12} />}
                 {queuedCount > 0 ? queuedCount : 'Off'}
               </span>
             )}
             <button onClick={() => setPaletteOpen(true)}
               title="Quick jump (Ctrl+K)" aria-label="Open quick jump"
-              className="flex items-center gap-1.5 bg-white/5 text-fg/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 hover:text-fg transition">
+              className="shrink-0 flex items-center gap-1.5 bg-white/5 text-fg/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 hover:text-fg transition">
               <Search size={13} /><span className="hidden lg:inline">Jump</span>
             </button>
-            <NotificationBell />
-            <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="flex items-center gap-1.5 bg-brand/20 text-brand border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
+            <div className="shrink-0"><NotificationBell /></div>
+            <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="shrink-0 flex items-center gap-1.5 bg-brand/20 text-brand border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
               <QrCode size={13} /> {BUSINESS_TYPE === 'log' ? 'Portal' : 'QR'}
             </button>
-            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="flex items-center gap-1.5 bg-white/5 text-fg/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
+            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="shrink-0 flex items-center gap-1.5 bg-white/5 text-fg/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
               <Settings size={13} />
             </button>
-            <button onClick={handleLogout} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 border border-red-500/20 px-3 py-2 rounded-xl font-bold text-xs hover:bg-red-500/20 transition">
+            <button onClick={handleLogout} className="shrink-0 flex items-center gap-1.5 bg-red-500/10 text-red-400 border border-red-500/20 px-3 py-2 rounded-xl font-bold text-xs hover:bg-red-500/20 transition">
               {isSuperAdmin ? 'Log Out' : 'End Shift'}
             </button>
           </div>

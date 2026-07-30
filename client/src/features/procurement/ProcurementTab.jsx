@@ -548,7 +548,7 @@ export default function ProcurementTab({ ctx }) {
           </div>
         </div>
         {subTab === 'orders' && canManage && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button onClick={downloadPoTemplate} title="Download a blank template with the expected headers" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition">
               <FileText size={15} /> Template
             </button>
@@ -572,14 +572,17 @@ export default function ProcurementTab({ ctx }) {
       </div>
 
       {/* Sub-tab switch */}
-      <div className="inline-flex bg-white/5 border border-white/10 rounded-xl p-1 mb-5">
+      {/* max-w-full + overflow-x lets the 3 pills scroll on a narrow phone
+          instead of pushing the whole page wider; shrink-0 keeps each pill
+          its natural size. */}
+      <div className="flex max-w-full overflow-x-auto scrollbar-hide bg-white/5 border border-white/10 rounded-xl p-1 mb-5">
         {[
           { id: 'orders', label: 'Purchase Orders', icon: ClipboardList },
           { id: 'receiving', label: 'Receiving', icon: PackageCheck, badge: activePOs.length },
           { id: 'suppliers', label: 'Suppliers', icon: Building2 },
         ].map(({ id, label, icon: Icon, badge }) => (
           <button key={id} onClick={() => setSubTab(id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition ${subTab === id ? 'bg-brand text-white shadow-sm' : 'text-fg/50 hover:text-fg'}`}>
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition shrink-0 ${subTab === id ? 'bg-brand text-white shadow-sm' : 'text-fg/50 hover:text-fg'}`}>
             <Icon size={15} /> {label}
             {badge > 0 && <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${subTab === id ? 'bg-white/20' : 'bg-brand/20 text-brand'}`}>{badge}</span>}
           </button>

@@ -358,7 +358,7 @@ export default function HistoryTab({ ctx }) {
               <h3 className="text-white font-black tracking-widest uppercase text-sm flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-page-bg animate-pulse"></span> Active Register
               </h3>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button onClick={printXReading} className="flex items-center gap-1.5 bg-page-bg border border-white/10 text-fg/80 hover:text-fg hover:border-brand px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition">
                   <Printer size={12} /> X-Reading
                 </button>
