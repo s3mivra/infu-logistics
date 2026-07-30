@@ -4956,13 +4956,22 @@ const updateStatus = async (orderId, newStatus) => {
       {/* Brand — display only. Mode switching happens via the nav items below,
           which are always visible; the old hidden logo-click toggle was
           undiscoverable and is intentionally gone. */}
-      <div className="p-5 border-b border-white/5">
-        <p className="text-2xl font-black text-brand tracking-tight leading-none drop-shadow-sm">{BIZ_NAME}</p>
-        <p className="text-[10px] text-fg/80 font-bold uppercase tracking-[0.25em] mt-0.5">
-          SEMIVRA <span className="text-brand/80">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span>
-          <span className="text-fg/40 normal-case tracking-normal font-bold"> · {navMode === 'libellus' ? 'Operations' : 'Management'}</span>
-        </p>
-        <span className="inline-block mt-1.5 text-[8px] font-black bg-brand/15 border border-brand/30 text-brand px-2 py-0.5 rounded-full uppercase tracking-widest">NON-VAT REGISTERED</span>
+      <div className="p-5 border-b border-white/5 flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-2xl font-black text-brand tracking-tight leading-none drop-shadow-sm">{BIZ_NAME}</p>
+          <p className="text-[10px] text-fg/80 font-bold uppercase tracking-[0.25em] mt-0.5">
+            SEMIVRA <span className="text-brand/80">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span>
+            <span className="text-fg/40 normal-case tracking-normal font-bold"> · {navMode === 'libellus' ? 'Operations' : 'Management'}</span>
+          </p>
+          <span className="inline-block mt-1.5 text-[8px] font-black bg-brand/15 border border-brand/30 text-brand px-2 py-0.5 rounded-full uppercase tracking-widest">NON-VAT REGISTERED</span>
+        </div>
+        {/* Notifications live HERE, not in the <nav> below — that list scrolls
+            (lg:overflow-y-auto), so a bell inside it disappears the moment the
+            menu is long enough. This header block is always on screen.
+            Desktop only: the lg:hidden mobile top bar has its own bell. */}
+        <div className="hidden lg:block shrink-0">
+          <NotificationBell align="left" />
+        </div>
       </div>
 
       {/* Nav */}
@@ -5062,13 +5071,6 @@ const updateStatus = async (orderId, newStatus) => {
         {/* Settings — system preferences & account. The QR-Orders / Auto-Close /
             Product-Images toggles and Change Password now live on this page
             instead of being crammed into the sidebar dropdown. */}
-        {/* Notifications. The mobile top bar has its own bell, and that bar is
-            lg:hidden — so without this the bell vanished entirely on desktop.
-            Opens rightwards out of the sidebar rather than off the screen edge. */}
-        <div className="hidden lg:block px-1 pb-1">
-          <NotificationBell align="left" full />
-        </div>
-
         <button onClick={() => { setActiveTab('settings'); setNavMode('negotium'); closeFn?.(); }}
           className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${activeTab === 'settings' ? 'bg-brand text-white shadow-sm' : 'text-fg/40 hover:text-fg hover:bg-white/5'}`}>
           <Settings size={15} />
