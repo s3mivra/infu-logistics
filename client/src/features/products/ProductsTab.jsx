@@ -75,7 +75,7 @@ export default function ProductsTab({ ctx }) {
     settleForm, settleModal, settleSubmitting, shiftFilter, shiftHistory,
     shiftHistoryPage, shiftHistoryTotal, spoilageForm, spoilageLoading, spoilageModal,
     standardAccounts, stockHistory, submitManualOrder, submitPhysicalCounts, submitRfDisb,
-    submitRfNew, submitRfRepl, toggleDay, toggleOrderList, toggleVat,
+    submitRfNew, submitRfRepl, toggleDay, toggleOrderList,
     totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
     users, varianceNoteMode, varianceReasons,
@@ -225,6 +225,7 @@ export default function ProductsTab({ ctx }) {
                         setFormData({ 
                           name: p.name || '', category: p.category || '', description: p.description || '',
                           basePrice: Number(p.basePrice || p.price || 0), discountPercent: Number(p.discountPercent || 0),
+                          vatExempt: p.vatExempt === true,
                           clientDiscounts: (p.clientDiscounts || []).map(d => ({ clientId: String(d.clientId), percent: Number(d.percent || 0) })),
                           baseSize: p.baseSize || '',
                           sizes: p.sizes || [], image: p.image || '', baseRecipe: p.baseRecipe || [], addOns: p.addOns || [],
@@ -442,6 +443,24 @@ export default function ProductsTab({ ctx }) {
                     )}
                   </div>
                   <p className="text-[10px] text-fg/60 mb-3">Discount applies to this product only, on every order line - not the whole order. Overrides below apply when a specific client buys this product.</p>
+
+                  {/* VAT classification. Products are VATable unless flagged here —
+                      the exception list, not the opt-in list. Only meaningful once
+                      the business is VAT-registered in Settings. */}
+                  <label className="flex items-start gap-2.5 mb-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.vatExempt === true}
+                      onChange={e => setFormData({ ...formData, vatExempt: e.target.checked })}
+                      className="mt-0.5 w-4 h-4 accent-brand shrink-0"
+                    />
+                    <span className="text-xs font-bold text-fg">VAT-exempt item</span>
+                  </label>
+                  <p className="text-[10px] text-fg/60 mb-3">
+                    Leave unticked for normal goods. Tick only for items exempt by law — raw
+                    agricultural produce, prescription medicines. Ignored while the business is
+                    set to Non-VAT in Settings.
+                  </p>
 
                   {/* Per-client overrides - a specific client's special rate on THIS product.
                       Client Accounts are a logistics-only concept, so this section only

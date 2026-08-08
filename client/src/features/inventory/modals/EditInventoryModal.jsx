@@ -42,6 +42,12 @@ export default function EditInventoryModal() {
             <p className="text-[10px] text-fg/60 mt-1 italic">To change quantity, use Restock or Waste - not this form.</p>
           </div>
           <div>
+            <label className="text-[10px] text-fg/60 font-bold uppercase block mb-1">Item Code *</label>
+            <input type="text" value={editInvForm.itemCode ?? ''} onChange={e => set({ itemCode: e.target.value.toUpperCase() })}
+              className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold font-mono outline-none focus:border-brand/60 transition" />
+            <p className="text-[10px] text-yellow-400/70 mt-1">⚠ Changing this also updates the linked product code. Must stay unique.</p>
+          </div>
+          <div>
             <label className="text-[10px] text-fg/60 font-bold uppercase block mb-1">Item Name *</label>
             <input type="text" value={editInvForm.itemName} onChange={e => set({ itemName: e.target.value })}
               className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60 transition" />

@@ -22,6 +22,7 @@ import { title, code, lower, freeText, zTitle, zText, zMoneyLoose } from './lib/
 import { addBatch, consumeBatches, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
 import { requireStaff, evaluateClientAccess, requirePermission, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS, setCustomRolePermissions } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
+import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from './lib/vat.js';
 import { validateDateRange } from './lib/reportRange.js';
 import { initErrorLog } from './lib/errorLog.js';
 import registerTenants from './features/tenants.js';
@@ -384,6 +385,7 @@ const productSchema = z.object({
   sizes: z.array(z.object({ sizeCode: z.string().optional(), name: z.string().optional(), price: zMoney.optional(), recipe: zRecipe })).optional(),
   addOns: z.array(z.object({ name: z.string(), price: zMoney.optional(), recipe: zRecipe })).optional(),
   image: z.string().optional(), isAvailable: z.boolean().optional(),
+  vatExempt: z.boolean().optional(),
   modifierGroups: z.array(z.string()).optional(),
 });
 const comboSchema = z.object({
@@ -879,6 +881,12 @@ const ProductSchema = new mongoose.Schema({
   // Per-product discount (%). Applies only to this product's order lines, not the
   // whole order. 0 = no discount. Applies to ALL buyers by default.
   discountPercent: { type: Number, default: 0 },
+  // VAT classification. Defaults to VATable (false), the ERP convention: the
+  // company-level VAT setting governs, and you flag the EXCEPTIONS here — raw
+  // agricultural produce, prescription medicines, and the like. Defaulting the
+  // other way would silently under-remit VAT on any product left unconfigured,
+  // which surfaces at audit rather than at the counter.
+  vatExempt: { type: Boolean, default: false },
   // Optional per-client overrides. When a logged-in client buys this product, the
   // matching entry's percent is used instead of the default discountPercent. Lets
   // you give a specific client a special rate on a specific product (pre-reg, VIP,
@@ -954,6 +962,10 @@ items: [{
     quantity: Number,
     fulfilledQty: { type: Number, default: 0 },        // units fulfilled so far (partial fulfillment)
     productDiscountPercent: { type: Number, default: 0 }, // per-product discount applied to this line
+    // VAT classification COPIED from the product at ring-up. Stamped rather than
+    // looked up later: reclassifying a product must never rewrite the tax on
+    // receipts already issued.
+    vatExempt: { type: Boolean, default: false },
     selectedAddOns: [{ name: String, price: Number }],
     hasDiscount: { type: Boolean, default: true },
     department: { type: String, default: 'Kitchen' }, // <-- NEW: Routes to Kitchen or Bar
@@ -977,7 +989,16 @@ items: [{
   discountPercent: { type: Number, default: 0 },
   discount: { type: Number, default: 0 },
   total: { type: Number, default: 0 },
-  isVatExempt: { type: Boolean, default: true },
+  // SC/PWD exemption for this sale. Defaults FALSE — an ordinary sale is VATable.
+  // This used to default true, which was harmless only while VAT was disabled
+  // system-wide; with VAT live it would have exempted every legacy order and
+  // quietly zeroed the output VAT on all of them.
+  isVatExempt: { type: Boolean, default: false },
+  // Which SC/PWD basis was in force when this order was rung up. Stamped per
+  // order, not read from settings at read time: changing the setting must never
+  // retroactively alter a receipt that has already been issued, and the math
+  // validator has to be able to reproduce a historical total exactly.
+  scPwdOrder: { type: String, default: 'vat-first' },
   // --- ENTERPRISE FIELDS ---
   cashier: { type: String, default: 'System', index: true },
   // --- PARTIAL FULFILLMENT (logistics — single order, fulfilled in batches) ---
@@ -1840,47 +1861,52 @@ const validateOrderMath = (order) => {
   }
 
   let expectedGross = 0;
-  let expectedDiscount = 0;
-  let expectedVat = 0;
+  let baseAfterLineDisc = 0;
+  let discountableBase = 0;
+  let exemptBase = 0;
 
   for (const item of order.items) {
     if (item.price === undefined || item.quantity === undefined) return { valid: false, error: "Line item missing price or quantity." };
-    
+
     const addOnTotal = (item.selectedAddOns || []).reduce((sum, a) => sum + Number(a.price || 0), 0);
     const itemBase = (item.price + addOnTotal) * item.quantity;
     expectedGross += itemBase;
 
-    const getsDiscount = item.hasDiscount !== false;
     // Same MAX rule as the totals recalc — server-resolved per-product/per-client
     // discount and the cashier per-item override coexist; take the higher.
     const prodPct = Number(item.productDiscountPercent || 0);
     const cashierPct = Number(item.discountPercent || 0);
     const linePct = Math.max(prodPct, cashierPct);
-
-    if (order.isComplimentary) {
-      expectedDiscount += itemBase;
-    } else if (linePct > 0) {
-      const itemDisc = itemBase * (linePct / 100);
-      expectedDiscount += itemDisc;
-      if (!order.isVatExempt) expectedVat += (itemBase - itemDisc) * 0; // VAT DISABLED
-    } else if (getsDiscount && order.discountPercent > 0) {
-      if (order.isVatExempt || order.discountType === 'SC/PWD') {
-        expectedDiscount += itemBase * (order.discountPercent / 100);
-      } else {
-        const itemDisc = itemBase * (order.discountPercent / 100);
-        expectedDiscount += itemDisc;
-        if (!order.isVatExempt) expectedVat += (itemBase - itemDisc) * 0; // VAT DISABLED
-      }
-    } else {
-      if (!order.isVatExempt) expectedVat += (itemBase * 0); // VAT DISABLED
-    }
+    const lineDisc = +(itemBase * linePct / 100).toFixed(2);
+    baseAfterLineDisc += itemBase - lineDisc;
+    if (linePct === 0 && item.hasDiscount !== false) discountableBase += itemBase;
+    if (item.vatExempt === true) exemptBase += itemBase - lineDisc;
   }
 
+  // Re-derive through the SAME function the create path used, rather than
+  // restating the rules here. The previous duplicate drifted out of step with
+  // the real calculation, which is exactly how a validator starts rejecting
+  // correct orders. The order carries its own rate and basis, so a historical
+  // receipt still validates after the settings change.
+  const expected = order.isComplimentary
+    ? { total: 0, vatAmount: 0, discount: +baseAfterLineDisc.toFixed(2) }
+    : computeOrderVat({
+        grossInclusive: baseAfterLineDisc,
+        discountableGross: discountableBase,
+        exemptGross: exemptBase,
+        discountPercent: Number(order.discountPercent || 0),
+        flatDiscount: 0,
+        vatEnabled: Number(order.vatRate || 0) > 0,
+        vatRate: Number(order.vatRate || 0),
+        isVatExempt: !!order.isVatExempt,
+        scPwdOrder: order.scPwdOrder === 'discount-first' ? 'discount-first' : 'vat-first',
+        vatInclusive: order.isVatInclusive !== false,
+      });
+
   if (Math.abs(expectedGross - order.subtotal) > TOLERANCE) return { valid: false, error: `Gross mismatch. Expected P${expectedGross.toFixed(2)}, got P${order.subtotal}` };
-  if (Math.abs(expectedVat - order.vatAmount) > TOLERANCE) return { valid: false, error: `VAT invalid. Expected P${expectedVat.toFixed(2)}, got P${order.vatAmount}` };
-  const expectedTotal = expectedGross - expectedDiscount + expectedVat;
-  if (Math.abs(expectedTotal - order.total) > TOLERANCE) return { valid: false, error: `Total invalid. Expected P${expectedTotal.toFixed(2)}, got P${order.total}` };
-  
+  if (Math.abs(expected.vatAmount - order.vatAmount) > TOLERANCE) return { valid: false, error: `VAT invalid. Expected P${expected.vatAmount.toFixed(2)}, got P${order.vatAmount}` };
+  if (Math.abs(expected.total - order.total) > TOLERANCE) return { valid: false, error: `Total invalid. Expected P${expected.total.toFixed(2)}, got P${order.total}` };
+
   return { valid: true };
 };
 // Start the timer when the server boots up
@@ -2104,6 +2130,10 @@ const ctx = {
   evaluateClientAccess,
   computePercentageTax,
   PERCENTAGE_TAX_RATE,
+  computeOrderVat,
+  extractVat,
+  normaliseVatRate,
+  DEFAULT_VAT_RATE,
   validateDateRange,
   log,
   SENTRY_ON,

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer } from 'lucide-react';
+import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt } from 'lucide-react';
 
 // ── SettingsTab — system preferences & account controls ───────────────────────
 // Houses the toggles that used to live crammed in the sidebar's "Tools" dropdown
@@ -135,6 +135,15 @@ export default function SettingsTab({ ctx }) {
   const globalLimit = systemSettings.globalCreditLimit ?? '';
   const usesGlobal = creditMode === 'global' || creditMode === 'both';
 
+  // VAT. Off by default so an untouched system keeps behaving as a non-VAT
+  // (percentage-tax) business, which is what every existing install is.
+  const vatOn = systemSettings.vatEnabled === true;
+  const vatRate = systemSettings.vatRate ?? 12;
+  const scPwdOrder = systemSettings.scPwdOrder === 'discount-first' ? 'discount-first' : 'vat-first';
+  // Default inclusive — Philippine retail convention, and how every order booked
+  // before this option existed was priced.
+  const vatInclusive = systemSettings.vatInclusive !== false;
+
   return (
     <div className="p-4 sm:p-6 max-w-3xl mx-auto">
       {/* Header */}
@@ -178,6 +187,126 @@ export default function SettingsTab({ ctx }) {
 
         {/* Credit limits — superadmin only, and only meaningful where clients
             buy on account. */}
+        {isSuperAdmin && (
+          <Card title="VAT">
+            <div className="px-4 py-4">
+              <div className="flex items-start gap-4">
+                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                  <Receipt size={16} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="font-bold text-fg text-sm">VAT-registered</p>
+                      <p className="text-fg/60 text-xs mt-0.5 leading-snug">
+                        {vatOn
+                          ? 'Receipts break out output VAT. The 3% percentage-tax report is switched off — a VAT-registered business does not owe it.'
+                          : 'Non-VAT. Sales are reported under the 3% percentage tax.'}
+                      </p>
+                    </div>
+                    <Toggle on={vatOn} onChange={() => saveSetting?.('vatEnabled', !vatOn)} />
+                  </div>
+
+                  {vatOn && (
+                    <>
+                      <div className="mt-4">
+                        <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
+                          VAT rate (%)
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          defaultValue={vatRate}
+                          onBlur={e => {
+                            const n = Number(String(e.target.value).replace(/[\s%]/g, ''));
+                            // Reject garbage rather than writing it — the server
+                            // would fall back to 12% anyway, and a field showing
+                            // an impossible rate is worse than one that resets.
+                            if (!Number.isFinite(n) || n < 0 || n >= 100) { e.target.value = vatRate; return; }
+                            saveSetting?.('vatRate', n);
+                          }}
+                          placeholder="12"
+                          className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
+                        />
+                        <p className="text-[10px] text-fg/60 mt-1.5">
+                          Standard Philippine VAT is 12%.
+                        </p>
+                      </div>
+
+                      <div className="mt-4">
+                        <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
+                          Price basis
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {[
+                            { v: true, label: 'VAT-inclusive' },
+                            { v: false, label: 'VAT-exclusive' },
+                          ].map(opt => (
+                            <button key={String(opt.v)}
+                              onClick={() => saveSetting?.('vatInclusive', opt.v)}
+                              className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
+                                vatInclusive === opt.v
+                                  ? 'bg-brand text-white border-brand'
+                                  : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'
+                              }`}>
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-fg/60 mt-1.5 leading-relaxed">
+                          {vatInclusive
+                            ? 'Listed prices already contain VAT. A ₱112 item stays ₱112 — the receipt just breaks out the ₱12 VAT inside it. Standard for Philippine retail.'
+                            : 'Listed prices are net; VAT is added on top. A ₱100 item rings up at ₱112. Common in B2B quoting.'}
+                          {' '}Switching this re-prices open orders.
+                        </p>
+                      </div>
+
+                      {/* SC/PWD ordering only bites under inclusive pricing — with
+                          exclusive prices there is no embedded VAT to sequence the
+                          discount against, so the choice would do nothing. */}
+                      {vatInclusive && (
+                        <div className="mt-4">
+                          <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
+                            SC/PWD calculation
+                          </label>
+                          <div className="grid grid-cols-2 gap-2">
+                            {[
+                              { v: 'vat-first', label: 'VAT first' },
+                              { v: 'discount-first', label: 'Discount first' },
+                            ].map(opt => (
+                              <button key={opt.v}
+                                onClick={() => saveSetting?.('scPwdOrder', opt.v)}
+                                className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
+                                  scPwdOrder === opt.v
+                                    ? 'bg-brand text-white border-brand'
+                                    : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'
+                                }`}>
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                          <p className="text-[10px] text-fg/60 mt-1.5 leading-relaxed">
+                            {scPwdOrder === 'vat-first'
+                              ? 'Strip the VAT, then apply the discount to the VAT-less amount. This is the BIR treatment.'
+                              : 'Apply the discount to the VAT-inclusive price, then strip the VAT from what remains.'}
+                            {' '}For percentage discounts both give the same total and differ only in the discount
+                            shown on the receipt; for flat peso discounts the totals genuinely differ.
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  <p className="text-[10px] text-fg/60 mt-3 leading-relaxed">
+                    Changing this affects <span className="text-fg/80 font-bold">new orders only</span>.
+                    Receipts already issued keep the rate they were rung up under.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </Card>
+        )}
+
         {isSuperAdmin && (
           <Card title="Credit Limits">
             <div className="px-4 py-4">

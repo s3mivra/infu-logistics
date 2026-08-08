@@ -45,6 +45,9 @@ export default function registerOrders(ctx) {
     requireStaff,
     evaluateClientAccess,
     computePercentageTax,
+    computeOrderVat,
+    normaliseVatRate,
+    DEFAULT_VAT_RATE,
     PERCENTAGE_TAX_RATE,
     validateDateRange,
     log,
@@ -179,6 +182,29 @@ export default function registerOrders(ctx) {
     requireSuperOrAdmin,
     verifyOrderAuth,
   } = ctx;
+
+// The business's VAT registration, read fresh per order. Deliberately not cached:
+// flipping the toggle must take effect on the very next sale, and one extra
+// indexed lookup is nothing next to the writes an order already performs.
+//
+// Absent settings mean a non-VAT business, which is how every install behaved
+// before VAT existed — so an untouched system keeps its current totals exactly.
+async function loadVatConfig() {
+  const [enabledRow, rateRow, orderRow, inclusiveRow] = await Promise.all([
+    Settings.findOne({ key: 'vatEnabled' }).lean(),
+    Settings.findOne({ key: 'vatRate' }).lean(),
+    Settings.findOne({ key: 'scPwdOrder' }).lean(),
+    Settings.findOne({ key: 'vatInclusive' }).lean(),
+  ]);
+  return {
+    enabled: enabledRow?.value === true || enabledRow?.value === 'true',
+    rate: normaliseVatRate(rateRow?.value, DEFAULT_VAT_RATE),
+    scPwdOrder: orderRow?.value === 'discount-first' ? 'discount-first' : 'vat-first',
+    // Default true: absent setting means the Philippine retail default, which is
+    // also how every order booked before this option existed was priced.
+    inclusive: inclusiveRow ? inclusiveRow.value !== false && inclusiveRow.value !== 'false' : true,
+  };
+}
 
 // Repeat-walk-in auto-promotion: a POS sale with a real (non-"Guest") customerName
 // that isn't already tied to a ClientAccount. Once the same name has 3 Completed
@@ -381,7 +407,10 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       } catch { /* invalid id — ignore, fall back to default discount */ }
     }
 
-    let isVatExempt = true;
+    // SC/PWD is a property of the SALE, not of the business's VAT registration —
+    // the cashier marks it per order and the POS already sends the flag. A non-VAT
+    // business still labels the discount SC/PWD; it simply has no VAT to strip.
+    const isVatExempt = req.body.isVatExempt === true;
     // FIX 1: Safely default to Takeout if the table is null or empty
     if (!table) table = 'Takeout';
 
@@ -453,7 +482,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     const _prodNames = items.map(i => i.name).filter(Boolean);
     const _discProds = await Product.find(
       { $or: [{ _id: { $in: _prodIds } }, { name: { $in: _prodNames } }] },
-      { _id: 1, name: 1, discountPercent: 1, clientDiscounts: 1 }
+      { _id: 1, name: 1, discountPercent: 1, clientDiscounts: 1, vatExempt: 1 }
     ).lean();
     const _discById = new Map(_discProds.map(p => [String(p._id), p]));
     const _discByName = new Map(_discProds.map(p => [p.name, p]));
@@ -473,6 +502,19 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       return Math.max(0, Math.min(100, Number(p.discountPercent || 0)));
     };
 
+    // Per-item pass resolves only the PRODUCT-level discounts. Order-level
+    // discount and VAT are settled afterwards in one place, because with
+    // VAT-inclusive pricing the split depends on the final collected amount and
+    // cannot be accumulated line by line without rounding drift.
+    let totalProductDisc = 0;
+    let baseAfterProductDisc = 0;
+    let exemptAfterProductDisc = 0;
+    // Server-authoritative VAT classification, same rule as the discount lookup:
+    // never trust a client-supplied flag, resolve it from the product record.
+    const productIsExempt = (item) => {
+      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+      return p?.vatExempt === true;
+    };
     const validatedItems = items.map(item => {
       item.hasDiscount = true;
       // Calculate Add-Ons Total
@@ -484,26 +526,36 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       const prodPct = productDiscPct(item);
       const prodDisc = +(itemBase * prodPct / 100).toFixed(2);
       item.productDiscountPercent = prodPct;
-      totalDiscount += prodDisc;
-      const lineBase = itemBase - prodDisc;   // base the order-level discount works on
+      totalProductDisc += prodDisc;
+      baseAfterProductDisc += itemBase - prodDisc;   // base the order-level discount works on
 
-      if (isComplimentary) {
-        totalDiscount += lineBase;
-      } else if (discountPercent > 0) {
-        // Order-wide discount (SC/PWD / promo) on top of any product discount.
-        totalDiscount += lineBase * (discountPercent / 100);
-      }
+      item.vatExempt = productIsExempt(item);
+      if (item.vatExempt) exemptAfterProductDisc += itemBase - prodDisc;
       return item;
     });
 
-    // Flat peso discount (POS "₱ off") — applied after the per-item percent pass,
-    // capped at the gross so the total never goes negative.
-    if (!isComplimentary && discountPercent === 0 && flatDiscount > 0) {
-      totalDiscount = Math.min(flatDiscount, totalGross);
-    }
+    const vatCfg = await loadVatConfig();
+    // Prices are VAT-INCLUSIVE, so enabling VAT does not change what the customer
+    // pays — it only splits the collected amount into net sales and output VAT.
+    const vatResult = isComplimentary
+      ? { total: 0, vatAmount: 0, vatableSales: 0, vatExemptSales: 0,
+          discount: +baseAfterProductDisc.toFixed(2), rate: vatCfg.rate }
+      : computeOrderVat({
+          grossInclusive: baseAfterProductDisc,
+          exemptGross: exemptAfterProductDisc,
+          discountPercent,
+          flatDiscount,
+          vatEnabled: vatCfg.enabled,
+          vatRate: vatCfg.rate,
+          isVatExempt,
+          scPwdOrder: vatCfg.scPwdOrder,
+          vatInclusive: vatCfg.inclusive,
+        });
 
-    const vatRate = 0; // VAT DISABLED
-    const finalTotal = totalGross - totalDiscount + totalVat; // Add VAT on top!
+    totalDiscount = +(totalProductDisc + vatResult.discount).toFixed(2);
+    totalVat = vatResult.vatAmount;
+    const vatRate = vatResult.rate;
+    const finalTotal = vatResult.total;
 
     const currentYear = new Date().getFullYear();
     const orderNumber = await generateNextSequence(Order, `ORD-${currentYear}`, 'orderNumber');
@@ -586,6 +638,11 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       subtotal: totalGross,
       vatRate: vatRate,
       vatAmount: totalVat,
+      vatableSales: vatResult.vatableSales,
+      vatExemptSales: vatResult.vatExemptSales,
+      // Stamped so this receipt can always be re-derived, even after the setting changes.
+      scPwdOrder: vatCfg.scPwdOrder,
+      isVatInclusive: vatCfg.inclusive,
       discountPercent: isComplimentary ? 0 : discountPercent,
       discount: totalDiscount,
       total: finalTotal,
@@ -765,9 +822,11 @@ app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
 
     // --- BULLETPROOF MATH RECALCULATION ---
     let totalGross = 0;
-    let totalDiscount = 0;
-    let totalVat = 0;
-    
+    let lineDiscTotal = 0;
+    let baseAfterLineDisc = 0;
+    let discountableBase = 0;
+    let exemptBase = 0;
+
     order.items.forEach(item => {
       const price = item.price || 0;
       const qty = item.quantity || 1;
@@ -783,34 +842,40 @@ app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
       const prodPct = Number(item.productDiscountPercent || 0);
       const cashierPct = Number(item.discountPercent || 0);
       const linePct = Math.max(prodPct, cashierPct);
+      const lineDisc = +(itemBase * linePct / 100).toFixed(2);
 
-      if (order.isComplimentary) {
-        totalDiscount += itemBase;
-      } else if (linePct > 0) {
-        // Per-line discount (product/client or cashier override) overrides the
-        // order-level discount for this line.
-        const itemDisc = itemBase * (linePct / 100);
-        totalDiscount += itemDisc;
-        if (!order.isVatExempt) totalVat += (itemBase - itemDisc) * 0; // VAT DISABLED
-      } else if (getsDiscount && order.discountPercent > 0) {
-        if (order.isVatExempt || order.discountType === 'SC/PWD') {
-          const scDisc = itemBase * (order.discountPercent / 100);
-          totalDiscount += scDisc;
-        } else {
-          const itemDisc = itemBase * (order.discountPercent / 100);
-          totalDiscount += itemDisc;
-          if (!order.isVatExempt) totalVat += (itemBase - itemDisc) * 0; // VAT DISABLED
-        }
-      } else {
-        if (!order.isVatExempt) totalVat += (itemBase * 0); // VAT DISABLED
-      }
+      lineDiscTotal += lineDisc;
+      baseAfterLineDisc += itemBase - lineDisc;
+      if (item.vatExempt === true) exemptBase += itemBase - lineDisc;
+      // A line already carrying its own discount, or one the cashier excluded,
+      // is not eligible for the order-wide percentage on top.
+      if (linePct === 0 && getsDiscount) discountableBase += itemBase;
     });
 
+    // Rate and SC/PWD basis come from the ORDER, not from current settings —
+    // editing a historical order must not re-price it under a rule that was
+    // adopted afterwards.
+    const editVat = order.isComplimentary
+      ? { total: 0, vatAmount: 0, vatableSales: 0, vatExemptSales: 0,
+          discount: +baseAfterLineDisc.toFixed(2), rate: Number(order.vatRate || 0) }
+      : computeOrderVat({
+          grossInclusive: baseAfterLineDisc,
+          discountableGross: discountableBase,
+          exemptGross: exemptBase,
+          discountPercent: Number(order.discountPercent || 0),
+          vatEnabled: Number(order.vatRate || 0) > 0,
+          vatRate: Number(order.vatRate || 0),
+          isVatExempt: !!order.isVatExempt,
+          scPwdOrder: order.scPwdOrder === 'discount-first' ? 'discount-first' : 'vat-first',
+          vatInclusive: order.isVatInclusive !== false,
+        });
+
     order.subtotal = Number(totalGross.toFixed(2));
-    order.discount = Number(totalDiscount.toFixed(2));
-    order.vatAmount = Number(totalVat.toFixed(2));
-    order.vatRate = 0;
-    order.total = Number((totalGross - totalDiscount + totalVat).toFixed(2));
+    order.discount = Number((lineDiscTotal + editVat.discount).toFixed(2));
+    order.vatAmount = Number(editVat.vatAmount.toFixed(2));
+    order.vatableSales = Number(editVat.vatableSales.toFixed(2));
+    order.vatExemptSales = Number(editVat.vatExemptSales.toFixed(2));
+    order.total = Number(editVat.total.toFixed(2));
 
     // Cash tendered — only for cash orders transitioning to Preparing
     if (status === 'Preparing' && amountTendered !== undefined && (order.paymentMethod === 'Cash' || paymentMethod === 'Cash')) {

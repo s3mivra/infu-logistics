@@ -71,7 +71,7 @@ export default function AuditTab({ ctx }) {
     settleForm, settleModal, settleSubmitting, shiftFilter, shiftHistory,
     shiftHistoryPage, shiftHistoryTotal, spoilageForm, spoilageLoading, spoilageModal,
     standardAccounts, stockHistory, submitManualOrder, submitPhysicalCounts, submitRfDisb,
-    submitRfNew, submitRfRepl, toggleDay, toggleOrderList, toggleVat,
+    submitRfNew, submitRfRepl, toggleDay, toggleOrderList,
     totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
     users, varianceNoteMode, varianceReasons,

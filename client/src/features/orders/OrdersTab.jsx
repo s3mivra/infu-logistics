@@ -117,11 +117,17 @@ export default function OrdersTab({ ctx }) {
     settleForm, settleModal, settleSubmitting, shiftFilter, shiftHistory,
     shiftHistoryPage, shiftHistoryTotal, spoilageForm, spoilageLoading, spoilageModal,
     standardAccounts, stockHistory, submitManualOrder, submitPhysicalCounts, submitRfDisb,
-    submitRfNew, submitRfRepl, toggleDay, toggleOrderList, toggleVat,
+    submitRfNew, submitRfRepl, toggleDay, toggleOrderList,
     totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
     users, varianceNoteMode, varianceReasons,
+    systemSettings = {},
   } = ctx;
+
+  // The POS VAT row follows the business's registration in Settings. A non-VAT
+  // business has no VAT line to show at all — printing "VAT (0%)" on screen just
+  // invites someone to try switching it on here, which is not where that lives.
+  const vatOn = systemSettings.vatEnabled === true;
 
   // UI-only hint for the walk-in picker below — not persisted; the real
   // guest-vs-regular classification comes from whether a customer name is entered.
@@ -987,17 +993,25 @@ export default function OrdersTab({ ctx }) {
                               <div className="flex justify-between text-[11px] text-black">
                                 <span>Gross</span><span className="font-mono">P{order.subtotal.toFixed(2)}</span>
                               </div>
-                              <div className="flex justify-between items-center text-[11px] text-black">
-                                <div className="flex items-center gap-2">
-                                  <span>VAT ({order.vatRate > 0 ? (order.vatRate * 100).toFixed(0) : 0}%)</span>
-                                  {order.status === 'Pending' && (
-                                    <button onClick={() => toggleVat(order._id, order.vatRate)} className="bg-white/5 hover:bg-white/10 text-accent px-1.5 py-0.5 rounded text-[9px] uppercase font-black transition border border-white/10">
-                                      {order.vatRate > 0 ? 'Off' : 'On'}
-                                    </button>
-                                  )}
+                              {vatOn && (
+                                <div className="flex justify-between items-center text-[11px] text-black">
+                                  <div className="flex items-center gap-2">
+                                    {/* Rate comes from the ORDER, not from settings — an order rung
+                                        up before VAT was switched on genuinely carries 0%. */}
+                                    <span>VAT ({order.vatRate > 0 ? (order.vatRate * 100).toFixed(0) : 0}%)</span>
+                                    {/* Read-only. VAT is configured in Settings and exemption comes
+                                        from the SC/PWD control below — there is no per-order VAT
+                                        switch, because a cashier silently zeroing output VAT on one
+                                        sale is exactly what a tax audit looks for. */}
+                                    {order.isVatExempt && (
+                                      <span className="bg-amber-400/15 border border-amber-400/30 text-amber-500 px-1.5 py-0.5 rounded text-[9px] uppercase font-black">
+                                        SC/PWD Exempt
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="font-mono">P{order.vatAmount.toFixed(2)}</span>
                                 </div>
-                                <span className="font-mono">P{order.vatAmount.toFixed(2)}</span>
-                              </div>
+                              )}
                               {(() => {
                                 const promoDiscounts = discounts.filter(d => !d.name.toLowerCase().match(/pwd|senior/));
                                 const scpwdDiscounts = discounts.filter(d => d.name.toLowerCase().match(/pwd|senior/));

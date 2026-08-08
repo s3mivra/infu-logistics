@@ -1084,6 +1084,22 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (re
     }
     endDate.setHours(23, 59, 59, 999);
 
+    // A VAT-registered business owes 12% VAT and is NOT liable for the 3%
+    // percentage tax (NIRC §116) — the two are mutually exclusive. Returning a
+    // figure here while VAT is on would invite someone to pay a tax they do not
+    // owe, so the report reports its own inapplicability instead.
+    const vatRow = await Settings.findOne({ key: 'vatEnabled' }).lean();
+    if (vatRow?.value === true || vatRow?.value === 'true') {
+      return res.json({
+        success: true,
+        notApplicable: true,
+        reason: 'This business is VAT-registered. VAT-registered taxpayers are not liable for the 3% percentage tax under NIRC §116.',
+        period: { start: startDate, end: endDate },
+        orders: 0, grossSales: 0, discounts: 0, netCollected: 0,
+        rate: PERCENTAGE_TAX_RATE, taxDue: 0, lines: [],
+      });
+    }
+
     const agg = await Order.aggregate([
       { $match: { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: startDate, $lte: endDate } } },
       { $group: {

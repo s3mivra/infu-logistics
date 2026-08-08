@@ -219,7 +219,7 @@ export default function AdminDashboard() {
   const [invForm, setInvForm] = useState({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000' });
   // --- INVENTORY EDIT MODAL ---
   const [editInvModal, setEditInvModal] = useState(null);   // { item } | null
-  const [editInvForm, setEditInvForm] = useState({ itemName: '', unit: '', unitCost: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, displayUnit: '', packSize: '' });
+  const [editInvForm, setEditInvForm] = useState({ itemCode: '', itemName: '', unit: '', unitCost: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, displayUnit: '', packSize: '' });
   const [editInvSubmitting, setEditInvSubmitting] = useState(false);
   // --- BULK EXCEL IMPORT ---
   const [importModal, setImportModal] = useState(false);
@@ -252,6 +252,12 @@ export default function AdminDashboard() {
   const [profitByCategory, setProfitByCategory] = useState(null);
   // --- SYSTEM SETTINGS (QR toggle, etc.) ---
   const [systemSettings, setSystemSettings] = useState({ isAcceptingQROrders: true, autoCloseEnabled: true, imagesEnabled: true });
+  // Registration stamp for every printed document. Derived in one place because
+  // it appears on six of them, and a VAT-registered seller printing "NON-VAT
+  // REGISTERED" on an official receipt is a compliance problem, not a typo.
+  const vatRegistered = systemSettings.vatEnabled === true;
+  const vatRegLabel = vatRegistered ? 'VAT REGISTERED' : 'NON-VAT REGISTERED';
+  const vatStmtSuffix = vatRegistered ? '(VAT)' : '(Non-VAT)';
   // --- SALES BY PAYMENT ---
   const [salesByPayment, setSalesByPayment] = useState(null);
   const [sbpRange, setSbpRange] = useState({
@@ -1721,7 +1727,9 @@ const updateStatus = async (orderId, newStatus) => {
     setCompSelections(prev => { const n = { ...prev }; delete n[orderId]; return n; });
     await apiFetch(`/api/orders/${orderId}/complimentary`, { method: 'DELETE' });
   };
-  const toggleVat = async (orderId, currentVatRate) => { await apiFetch(`/api/orders/${orderId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isVatExempt: currentVatRate > 0 }) }); };
+  // (No per-order VAT handler. The rate is the business's registration and lives
+  // in Settings; SC/PWD exemption is applied through the SC/PWD discount control,
+  // which sets isVatExempt as a side effect of choosing that discount type.)
   const applyDiscount = async (orderId, isRemoving = false) => {
     const order = orders.find(o => o._id === orderId);
     const percent = isRemoving ? 0 : parseFloat(discountInputs[orderId] || 0);
@@ -2113,7 +2121,7 @@ const updateStatus = async (orderId, newStatus) => {
     const today = new Date().toLocaleDateString();
     const now = new Date().toLocaleTimeString();
     doc.setFontSize(16); doc.text(`${BIZ_NAME}`, 105, 18, { align: 'center' });
-    doc.setFontSize(10); doc.text('NON-VAT REGISTERED', 105, 24, { align: 'center' });
+    doc.setFontSize(10); doc.text(vatRegLabel, 105, 24, { align: 'center' });
     doc.text(`X-READING - ${today} ${now}`, 105, 30, { align: 'center' });
     doc.setFontSize(9);
     doc.text('(Mid-Shift Summary - Register NOT Closed)', 105, 36, { align: 'center' });
@@ -2191,6 +2199,22 @@ const updateStatus = async (orderId, newStatus) => {
       const summaryRows = [{ label: 'Subtotal', value: P(subTotal) }];
       if ((order.deliveryFee || 0) > 0) summaryRows.push({ label: 'Delivery Fee', value: P(order.deliveryFee) });
       if (discAmt > 0 && !order.isComplimentary) summaryRows.push({ label: `Discount (${order.discountType || ''})`, value: '-' + P(discAmt), cls: 'disc' });
+      // VAT breakdown — only for orders actually rung up under VAT. Read from
+      // the order's own stamped fields so a receipt reprinted after the setting
+      // changed still shows what was charged at the time.
+      if ((order.vatRate || 0) > 0) {
+        const vatPct = (order.vatRate * 100).toFixed(0);
+        // BIR wants VATable and VAT-Exempt shown as separate lines, and a basket
+        // can contain both — an SC/PWD sale, or exempt goods alongside VATable
+        // ones. Print whichever are non-zero rather than assuming one or other.
+        if ((order.vatableSales || 0) > 0) {
+          summaryRows.push({ label: 'VATable Sales', value: P(order.vatableSales) });
+        }
+        if ((order.vatExemptSales || 0) > 0) {
+          summaryRows.push({ label: 'VAT-Exempt Sales', value: P(order.vatExemptSales) });
+        }
+        summaryRows.push({ label: `VAT (${vatPct}%)`, value: P(order.vatAmount || 0) });
+      }
       if (order.isComplimentary) {
         summaryRows.push({ label: 'AMOUNT DUE', value: P(0), cls: 'tot' });
       } else {
@@ -2364,7 +2388,7 @@ const updateStatus = async (orderId, newStatus) => {
 
         b(INIT); b(CENTER); b(BOLD1); tx(`${lh.companyName}\n`); b(BOLD0);
         if (lh.address) tx(`${lh.address}\n`);
-        tx('NON-VAT REGISTERED\nOFFICIAL ORDER SLIP\n'); tx(SEP);
+        tx(vatRegLabel + '\nOFFICIAL ORDER SLIP\n'); tx(SEP);
 
         if (order.isComplimentary) {
           b(BOLD1); tx('** COMPLIMENTARY ORDER **\n'); b(BOLD0);
@@ -2667,11 +2691,24 @@ const updateStatus = async (orderId, newStatus) => {
   // unitCost is stored per base unit, so packCost = unitCost × packBaseUnits.
   const PACK_RE = /(\d+(?:\.\d+)?)\s*(mg|kg|g|ml|cl|l|pcs|pc|pack|unit)\b/i;
   const PACK_TO_BASE = { mg: 0.001, g: 1, kg: 1000, ml: 1, cl: 10, l: 1000, pcs: 1, pc: 1, pack: 1, unit: 1 };
+  // A pack under one whole kg/L reads better in the sub-unit: 0.377kg → 377g,
+  // 0.5L → 500ml. Only the display string changes; packBase (used for costing)
+  // stays in the stored unit. Math.round strips the ×1000 float noise
+  // (0.377 × 1000 = 377.0000…6).
+  const fmtPackLabel = (value, unit) => {
+    const v = Number(value);
+    const u = String(unit || '');
+    if (!Number.isFinite(v) || v <= 0) return `${value}${unit}`;
+    const ul = u.toLowerCase();
+    if (ul === 'kg' && v < 1) return `${Math.round(v * 1000 * 1000) / 1000}g`;
+    if (ul === 'l' && v < 1) return `${Math.round(v * 1000 * 1000) / 1000}ml`;
+    return `${v}${u}`; // ≥1 or already a sub-unit — keep the entered unit casing
+  };
   const packInfo = (item) => {
     if (item.packSize && item.packSize > 0) {
       const { unit, mult } = effectiveDisplay(item);
       const packBase = item.packSize * mult;
-      return { packBase, label: `${item.packSize}${unit}`, cost: (item.unitCost || 0) * packBase };
+      return { packBase, label: fmtPackLabel(item.packSize, unit), cost: (item.unitCost || 0) * packBase };
     }
     const mt = (item.itemName || '').match(PACK_RE);
     const baseFactor = PACK_TO_BASE[(item.unit || '').toLowerCase()] || 1;
@@ -2680,7 +2717,7 @@ const updateStatus = async (orderId, newStatus) => {
       const f = PACK_TO_BASE[mt[2].toLowerCase()];
       if (f !== undefined && val > 0) {
         const packBase = val * (f / baseFactor);
-        return { packBase, label: `${mt[1]}${mt[2]}`, cost: (item.unitCost || 0) * packBase };
+        return { packBase, label: fmtPackLabel(mt[1], mt[2]), cost: (item.unitCost || 0) * packBase };
       }
     }
     const { unit, mult } = effectiveDisplay(item);
@@ -2975,6 +3012,7 @@ const updateStatus = async (orderId, newStatus) => {
     // LOG: cost & threshold are per package (₱200/250G, N pcs); FB: per display unit.
     const costBasis = packInfo(item).packBase || eff.mult;
     setEditInvForm({
+      itemCode: item.itemCode || '',
       itemName: item.itemName || '',
       unit: item.unit || '',
       unitCost: ((item.unitCost || 0) * costBasis).toFixed(2),                      // base → per-pack (log) / per-display (fb)
@@ -3005,6 +3043,11 @@ const updateStatus = async (orderId, newStatus) => {
       // legacy items). FB: per display unit — divide by display multiplier.
       const costBasis = packInfo({ itemName: editInvForm.itemName.trim(), unit: resolved.base, displayUnit: editInvForm.displayUnit, unitMultiplier: mult, packSize: editInvForm.packSize === '' ? null : parseFloat(editInvForm.packSize) }).packBase || mult;
       const payload = {
+        // Only send itemCode when the operator actually changed it — the server
+        // treats a code change as a rename that cascades to the linked product,
+        // so we don't want to trigger that on every unrelated edit.
+        ...(editInvForm.itemCode?.trim() && editInvForm.itemCode.trim() !== editInvModal.item.itemCode
+          ? { itemCode: editInvForm.itemCode.trim() } : {}),
         itemName: editInvForm.itemName.trim(),
         unit: resolved.base,                            // base storage unit (g/ml/pcs)
         unitCost: unitCostNum / costBasis,              // per-pack (log) / per-display (fb) → ₱/baseUnit
@@ -3303,8 +3346,11 @@ const updateStatus = async (orderId, newStatus) => {
       if (!grouped[date]) grouped[date] = { ordersCount: 0, gross: 0, vatable: 0, vatExempt: 0, vat: 0, discount: 0, netSales: 0 };
       grouped[date].ordersCount++;
       grouped[date].gross += o.subtotal;
-      if (o.isVatExempt) { grouped[date].vatExempt += (o.subtotal / 1.12); }
-      else { grouped[date].vatable += (o.total / 1.12); }
+      // Prefer the figures the server stamped on the order. The /1.12 fallback
+      // is for legacy rows written before VAT was configurable — it assumes the
+      // 12% standard rate, which is all those rows can tell us.
+      if (o.isVatExempt) { grouped[date].vatExempt += (o.vatExemptSales ?? (o.subtotal / 1.12)); }
+      else { grouped[date].vatable += (o.vatableSales ?? (o.total / 1.12)); }
       grouped[date].vat += o.vatAmount || 0;
       grouped[date].discount += o.isComplimentary ? o.subtotal : (o.discount || 0); // comp = 100% discount
       grouped[date].netSales += o.total;
@@ -3648,7 +3694,7 @@ const updateStatus = async (orderId, newStatus) => {
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
     const range = `${pnlRange.start} to ${pnlRange.end}`;
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('PROFIT & LOSS STATEMENT (Non-VAT)', 105, 22, { align: 'center' });
+    doc.setFontSize(10); doc.text(`PROFIT & LOSS STATEMENT ${vatStmtSuffix}`, 105, 22, { align: 'center' });
     doc.setFontSize(9);  doc.text(range, 105, 28, { align: 'center' });
     const section = (title, rows, startY) => {
       autoTable(doc, {
@@ -3685,7 +3731,7 @@ const updateStatus = async (orderId, newStatus) => {
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
     const asOf = bsData.asOf ? new Date(bsData.asOf).toLocaleDateString() : new Date().toLocaleDateString();
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('BALANCE SHEET (Non-VAT)', 105, 22, { align: 'center' });
+    doc.setFontSize(10); doc.text(`BALANCE SHEET ${vatStmtSuffix}`, 105, 22, { align: 'center' });
     doc.setFontSize(9);  doc.text(`As of ${asOf}`, 105, 28, { align: 'center' });
     const rowName = (r) => r.accountName || r.name || r.label || '';
     const rowAmt = (r) => pdfMoney(r.amount ?? r.balance ?? r.total ?? 0);
@@ -4189,7 +4235,7 @@ const updateStatus = async (orderId, newStatus) => {
     const today = new Date().toLocaleDateString('en-PH');
     const now   = new Date().toLocaleTimeString('en-PH');
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('NON-VAT REGISTERED', 105, 21, { align: 'center' });
+    doc.setFontSize(10); doc.text(vatRegLabel, 105, 21, { align: 'center' });
     doc.setFontSize(12); doc.text('Z-READING', 105, 28, { align: 'center' });
     doc.setFontSize(9);  doc.text(`${today}  ${now}  -  OFFICIAL END-OF-DAY REPORT`, 105, 34, { align: 'center' });
     const completed  = archivedOrders.filter(o => o.status === 'Completed');
@@ -4767,7 +4813,7 @@ const updateStatus = async (orderId, newStatus) => {
             SEMIVRA <span className="text-brand/80">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span>
             <span className="text-fg/40 normal-case tracking-normal font-bold"> · {navMode === 'libellus' ? 'Operations' : 'Management'}</span>
           </p>
-          <span className="inline-block mt-1.5 text-[8px] font-black bg-brand/15 border border-brand/30 text-brand px-2 py-0.5 rounded-full uppercase tracking-widest">NON-VAT REGISTERED</span>
+          <span className="inline-block mt-1.5 text-[8px] font-black bg-brand/15 border border-brand/30 text-brand px-2 py-0.5 rounded-full uppercase tracking-widest">{vatRegLabel}</span>
         </div>
         {/* Notifications live HERE, not in the <nav> below — that list scrolls
             (lg:overflow-y-auto), so a bell inside it disappears the moment the
@@ -5116,7 +5162,7 @@ const updateStatus = async (orderId, newStatus) => {
     // ── Orders interactive handlers ──────────────────────────────────────────
     updateItemStatus, removeAddOnFromOrder,
     applyComplimentary, removeComplimentary,
-    applyDiscount, applyItemDiscount, toggleVat,
+    applyDiscount, applyItemDiscount,
     discountInputs, setDiscountInputs,
     scpwdOpen, setScpwdOpen,
     isStatusMenuOpen, setIsStatusMenuOpen,
