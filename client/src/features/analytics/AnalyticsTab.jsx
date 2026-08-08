@@ -283,10 +283,14 @@ export default function AnalyticsTab({ ctx }) {
                     <div key={idx} className="flex flex-col border-b border-accent/10 pb-3 last:border-0 last:pb-0">
                       <div className="flex justify-between items-center mb-2">
                         <span className="text-fg/80 font-bold text-sm truncate pr-2">{item.name}</span>
-                        <span className={`flex items-center gap-0.5 text-[10px] font-black px-2 py-0.5 rounded ${item.trend > 0.1 ? 'bg-red-100/40 text-red-400' : item.trend < -0.1 ? 'bg-green-900/30 text-green-400' : 'bg-accent/10 text-accent'}`}>
-                          {item.trend > 0.1 ? <ArrowUp size={10}/> : item.trend < -0.1 ? <ArrowDown size={10}/> : null}
-                          {Math.abs(item.trend * 100).toFixed(0)}% {item.trend > 0.1 ? 'rising' : item.trend < -0.1 ? 'easing' : 'stable'}
-                        </span>
+                        {item.isNewSku || item.trendPct == null ? (
+                          <span className="flex items-center gap-0.5 text-[10px] font-black px-2 py-0.5 rounded bg-blue-500/20 text-blue-400">NEW SKU</span>
+                        ) : (
+                          <span className={`flex items-center gap-0.5 text-[10px] font-black px-2 py-0.5 rounded ${item.trend > 0.1 ? 'bg-red-100/40 text-red-400' : item.trend < -0.1 ? 'bg-green-900/30 text-green-400' : 'bg-accent/10 text-accent'}`}>
+                            {item.trend > 0.1 ? <ArrowUp size={10}/> : item.trend < -0.1 ? <ArrowDown size={10}/> : null}
+                            {Math.abs((item.trendPct ?? item.trend * 100)).toFixed(0)}% {item.trend > 0.1 ? 'rising' : item.trend < -0.1 ? 'easing' : 'stable'}
+                          </span>
+                        )}
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                         {[['Daily Burn', `${((item.dailyAvg||0)/d.mult).toFixed(2)} ${d.unit}`], ['Lasts', item.daysLeft === Infinity || !isFinite(item.daysLeft) ? '∞' : `${item.daysLeft}d`], ['Buy 1wk', `${((item.weeklyNeed||0)/d.mult).toFixed(2)} ${d.unit}`], ['Buy 1mo', `${((item.monthlyNeed||0)/d.mult).toFixed(2)} ${d.unit}`]].map(([lbl, val]) => (

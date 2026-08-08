@@ -71,6 +71,22 @@
         <div><label for="f_pass">Superadmin password</label><input id="f_pass" type="text" placeholder="min 12 characters"></div>
         <div><label for="f_fb">Support link (optional)</label><input id="f_fb" placeholder="https://m.me/yourpage"></div>
       </div>
+      <p class="muted" style="margin:14px 0 6px">Resource limits &mdash; memory is enforced; CPU weight only applies under contention</p>
+      <div class="grid">
+        <div><label for="f_mem">Memory (MB)</label>
+          <select id="f_mem">
+            <option value="512">512 MB</option>
+            <option value="1024" selected>1 GB &mdash; default</option>
+            <option value="1536">1.5 GB</option>
+            <option value="2048">2 GB</option>
+          </select></div>
+        <div><label for="f_cpu">CPU weight</label>
+          <select id="f_cpu">
+            <option value="512">512 &mdash; low priority</option>
+            <option value="1024" selected>1024 &mdash; normal</option>
+            <option value="2048">2048 &mdash; high priority</option>
+          </select></div>
+      </div>
       <p class="muted" style="margin:14px 0 6px">Billing letterhead (optional, printed on statements)</p>
       <div class="grid">
         <div><label for="f_baddr1">Address line 1</label><input id="f_baddr1"></div>
@@ -138,18 +154,40 @@ function statusPill(s) {
   return '<span class="pill ' + (good ? 'ok' : 'bad') + '">' + s + '</span>';
 }
 
+function fmtBytes(n) {
+  if (n === null || n === undefined) return '—';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0; let v = Number(n);
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i += 1; }
+  return (v < 10 && i > 0 ? v.toFixed(1) : Math.round(v)) + ' ' + u[i];
+}
+
 async function refresh() {
   try {
-    const { tenants } = await api('/api/tenants');
+    // Usage is best-effort: a failure there must not blank the tenant list,
+    // which is the part you need to actually operate the platform.
+    const [{ tenants }, usage] = await Promise.all([
+      api('/api/tenants'),
+      api('/api/usage').catch(() => ({ tenants: [] })),
+    ]);
+    const byslug = Object.fromEntries((usage.tenants || []).map((u) => [u.slug, u]));
     if (!tenants.length) { $('tenantList').innerHTML = '<p class="muted">No clients yet.</p>'; return; }
-    $('tenantList').innerHTML = tenants.map((t) => `
+    $('tenantList').innerHTML = tenants.map((t) => {
+      const u = byslug[t.slug] || {};
+      const mem = u.memApi ? `${u.memApi.usage} (${u.memApi.perc})` : '—';
+      return `
       <div class="row">
         <div>
           <div><strong>${t.businessName || t.slug}</strong> <span class="pill">${t.businessType || '?'}</span></div>
           <div class="muted"><a href="${t.url}" target="_blank" rel="noopener">${t.url}</a></div>
+          <div class="muted">mem ${mem} of ${u.memLimitMb ?? t.memMb ?? 1024} MB
+            · cpu ${u.cpuShares ?? t.cpuShares ?? 1024}
+            · db ${fmtBytes(u.dbBytes)}
+            · out ${fmtBytes(u.egressBytes)}/24h</div>
         </div>
         <div>api ${statusPill(t.status.api)} web ${statusPill(t.status.web)}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="ghost" data-act="resources" data-slug="${t.slug}">Resources</button>
           <button class="ghost" data-act="rebuild" data-slug="${t.slug}">Rebuild</button>
           <button class="ghost" data-act="stop" data-slug="${t.slug}">Stop</button>
           <button class="ghost" data-act="start" data-slug="${t.slug}">Start</button>
@@ -157,7 +195,8 @@ async function refresh() {
           <button class="danger" data-act="wipe" data-slug="${t.slug}">Wipe data</button>
           <button class="danger" data-act="destroy" data-slug="${t.slug}">Delete</button>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   } catch (e) {
     if (/signed in/i.test(e.message)) { sessionStorage.removeItem('cp_token'); location.reload(); return; }
     $('tenantList').innerHTML = '<p class="err">' + e.message + '</p>';
@@ -168,6 +207,17 @@ async function act(slug, action, btn) {
   const label = btn.textContent; btn.disabled = true; btn.textContent = '…';
   try {
     if (action === 'logs') { showLog((await api(`/api/tenants/${slug}/logs`)).log); }
+    else if (action === 'resources') {
+      const memMb = prompt(`Memory limit for "${slug}" in MB (256-4096).\n\nThe container is recreated to apply it — a few seconds of downtime for this client only.`, '1024');
+      if (!memMb) return;
+      const cpuShares = prompt('CPU weight (256-4096, 1024 is normal):', '1024');
+      if (!cpuShares) return;
+      const d = await api(`/api/tenants/${slug}/resources`, {
+        method: 'PATCH',
+        body: JSON.stringify({ memMb: Number(memMb), cpuShares: Number(cpuShares) }),
+      });
+      showLog(`Applied: ${d.memMb} MB, cpu weight ${d.cpuShares}.\n\n${d.log || ''}`);
+    }
     else if (action === 'wipe') {
       const confirmSlug = prompt(`Wipe ALL data for "${slug}"?\n\nThe database is dropped and the superadmin re-seeded. Business config in .env is kept.\n\nType the client name to confirm:`);
       if (confirmSlug !== slug) return;
@@ -206,6 +256,8 @@ $('createBtn').addEventListener('click', async () => {
       businessType: $('f_type').value,
       theme: $('f_theme').value,
       adminPass: $('f_pass').value,
+      memMb: Number($('f_mem').value),
+      cpuShares: Number($('f_cpu').value),
       fbLink: $('f_fb').value.trim(),
       billingAddress1: $('f_baddr1').value.trim(),
       billingAddress2: $('f_baddr2').value.trim(),

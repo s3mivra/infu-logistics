@@ -103,7 +103,7 @@ export default function OrdersTab({ ctx }) {
     posNotes, setPosNotes, posGuestCount, setPosGuestCount,
     posPayments, setPosPayments,
     modifierGroups, printKitchenTicket,
-    refundModal, setRefundModal, handleRefund, openPartial,
+    refundModal, setRefundModal, handleRefund, openPartial, dropRemaining,
     combos, addComboToPosCart,
     parkedOrders, parkedModalOpen, setParkedModalOpen, fetchParked, parkCurrentOrder, resumeParked,
     setPnlRange, setPosActiveAddOns, setPosActiveSize, setPosCart, setPosCashTendered,
@@ -535,7 +535,7 @@ export default function OrdersTab({ ctx }) {
                     )}
                   </div>
                   <div className="flex gap-1 overflow-x-auto bg-page-bg border border-white/10 rounded-xl p-1">
-                    {(BUSINESS_TYPE === 'log' ? ['All', 'Storage Room'] : ['All', 'Kitchen', 'Bar']).map(dept => (
+                    {(BUSINESS_TYPE === 'log' ? ['All', 'Logistics', 'Warehouse'] : ['All', 'Kitchen', 'Bar']).map(dept => (
                       <button
                         key={dept}
                         onClick={() => setDepartmentFilter(dept)}
@@ -613,11 +613,11 @@ export default function OrdersTab({ ctx }) {
                           onClick={() => { setOrderFilter('All'); setOrderSearch(table); }}
                           title={`${count} order${count !== 1 ? 's' : ''} - click to filter`}
                           className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider border transition hover:opacity-90
-                            ${status === 'Ready'     ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' :
-                              status === 'Preparing'  ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' :
-                              status === 'Pending'    ? 'bg-red-500/20 text-red-300 border-red-500/30' :
-                              status === 'Reserved'   ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' :
-                                                        'bg-orange-500/20 text-orange-300 border-orange-500/30'}`}>
+                            ${status === 'Ready'     ? 'bg-blue-500 text-white border-blue-500' :
+                              status === 'Preparing'  ? 'bg-yellow-500 text-white border-yellow-500' :
+                              status === 'Pending'    ? 'bg-red-500 text-white border-red-500' :
+                              status === 'Reserved'   ? 'bg-purple-500 text-white border-purple-500' :
+                                                        'bg-orange-500 text-white border-orange-500'}`}>
                           {table}
                           {count > 1 && <span className="bg-white/20 rounded px-1">{count}</span>}
                         </button>
@@ -648,9 +648,7 @@ export default function OrdersTab({ ctx }) {
                   ) : displayOrders.map(order => {
                     // Items scoped to current department view (or all items when in All view)
                     const viewItems      = departmentFilter !== 'All'
-                      ? (BUSINESS_TYPE === 'log'
-                          ? order.items
-                          : order.items.filter(i => (i.department || 'Kitchen') === departmentFilter))
+                      ? order.items.filter(i => (i.department || SEND_TARGET) === departmentFilter)
                       : order.items;
                     const allDelivered   = order.items.length > 0 && order.items.every(i => i.itemStatus === 'Delivered');
                     const deliveredCount = viewItems.filter(i => i.itemStatus === 'Delivered').length;
@@ -681,31 +679,31 @@ export default function OrdersTab({ ctx }) {
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-fg font-black text-sm">{order.orderNumber}</span>
                               {order.customerName && (
-                                <span className="text-[11px] bg-white/10 text-gray-300 px-2 py-0.5 rounded font-semibold">{order.customerName}</span>
+                                <span className="text-[11px] bg-white/10 text-fg px-2 py-0.5 rounded font-semibold">{order.customerName}</span>
                               )}
                               {order.table && <span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">({order.table})</span>}
                               {allDeptDone && order.status !== 'Completed' && (
-                                <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30 flex items-center gap-1">
+                                <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-green-500 text-white border border-green-500 flex items-center gap-1">
                                   <CheckCircle size={9}/> All Done
                                 </span>
                               )}
                             </div>
                             {order.orderNotes && (
-                              <p className="text-[10px] text-yellow-300/70 mt-1 bg-yellow-500/5 border border-yellow-500/10 rounded px-2 py-1 flex items-start gap-1">
+                              <p className="text-[10px] text-yellow-white mt-1 bg-yellow-500 border border-yellow-500 rounded px-2 py-1 flex items-start gap-1">
                                 <span className="shrink-0 mt-0.5">📝</span>
                                 <span className="italic">{order.orderNotes}</span>
                               </p>
                             )}
                             <div className="flex items-center gap-2 mt-0.5">
                               <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                                order.status === 'Reserved'            ? 'bg-purple-500/15 text-purple-400' :
-                                order.status === 'Pending'             ? 'bg-red-500/15 text-red-400' :
-                                order.status === 'Preparing'           ? 'bg-yellow-500/15 text-yellow-400' :
-                                order.status === 'Ready'               ? 'bg-blue-500/15 text-blue-400' :
-                                order.status === 'Partially Delivered' ? 'bg-orange-500/15 text-orange-400' :
-                                order.status === 'Completed'           ? 'bg-green-500/15 text-green-400' :
-                                order.status === 'Refunded'            ? 'bg-purple-500/15 text-purple-400' :
-                                'bg-gray-500/15 text-gray-500'
+                                order.status === 'Reserved'            ? 'bg-purple-500 text-white' :
+                                order.status === 'Pending'             ? 'bg-red-500 text-white' :
+                                order.status === 'Preparing'           ? 'bg-yellow-500 text-white' :
+                                order.status === 'Ready'               ? 'bg-blue-500 text-white' :
+                                order.status === 'Partially Delivered' ? 'bg-orange-500 text-white' :
+                                order.status === 'Completed'           ? 'bg-green-500 text-white' :
+                                order.status === 'Refunded'            ? 'bg-purple-500 text-white' :
+                                'bg-gray-500 text-white'
                               }`}>{order.status}</span>
                               <span className="text-gray-600 text-[9px]">{new Date(order.createdAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
                             </div>
@@ -743,8 +741,10 @@ export default function OrdersTab({ ctx }) {
                           </div>
                         </div>
 
-                        {/* DELIVERY/PICKUP INFO STRIP */}
-                        {['Manual Delivery','Pickup','Grab Delivery','Foodpanda'].includes(order.table) && (
+                        {/* DELIVERY/PICKUP INFO STRIP — only when there's actually
+                            something to show, else it renders as an empty gray bar. */}
+                        {['Manual Delivery','Pickup','Grab Delivery','Foodpanda'].includes(order.table)
+                          && (order.customerPhone || order.deliveryAddress || order.deliveryFee > 0 || order.scheduledTime || order.dispatchStatus) && (
                           <div className="mx-4 mb-2 bg-black/30 rounded-lg px-3 py-2 border border-white/5 text-[10px] space-y-1">
                             {order.customerPhone && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-fg/40 uppercase tracking-widest">Phone</span> {order.customerPhone}</div>}
                             {order.deliveryAddress && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-fg/40 uppercase tracking-widest">Address</span> {order.deliveryAddress}</div>}
@@ -752,7 +752,7 @@ export default function OrdersTab({ ctx }) {
                             {order.scheduledTime && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-fg/40 uppercase tracking-widest">Scheduled</span> {order.scheduledTime}</div>}
                             {/* DISPATCH PIPELINE */}
                             {order.dispatchStatus && (
-                              <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-white/5 mt-1">
+                              <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-white/30 mt-1">
                                 <span className="font-black text-fg/40 uppercase tracking-widest">Dispatch</span>
                                 {(['Preparing','Out for Delivery','Awaiting Pickup','Delivered','Picked Up']).map(s => {
                                   const isActive = order.dispatchStatus === s;
@@ -771,36 +771,44 @@ export default function OrdersTab({ ctx }) {
                         )}
 
                         {!collapsedOrders[order._id] && (
-                          <div className="px-4 pb-4 flex flex-col gap-3 border-t border-white/5 pt-3">
+                          <div className="px-4 pb-4 flex flex-col gap-3 border-t border-white/30 pt-3">
                             <div className="space-y-2 max-h-56 overflow-y-auto custom-scrollbar pr-1">
-                              {(BUSINESS_TYPE === 'log' ? ['Storage Room'] : ['Kitchen', 'Bar']).map(dept => {
-                                const deptItems = BUSINESS_TYPE === 'log'
-                                  ? order.items.map((item, idx) => ({ ...item, originalIdx: idx }))
-                                  : order.items.map((item, idx) => ({ ...item, originalIdx: idx })).filter(i => (i.department || 'Kitchen') === dept);
+                              {(BUSINESS_TYPE === 'log' ? ['Logistics', 'Warehouse'] : ['Kitchen', 'Bar']).map(dept => {
+                                const deptItems = order.items
+                                  .map((item, idx) => ({ ...item, originalIdx: idx }))
+                                  .filter(i => (i.department || SEND_TARGET) === dept);
                                 if (deptItems.length === 0) return null;
                                 if (departmentFilter !== 'All' && departmentFilter !== dept) return null;
                                 return (
-                                  <div key={dept} className="bg-black/20 rounded-lg p-2.5 border border-white/5">
-                                    <h4 className="text-[9px] uppercase text-gray-500 font-black mb-2 tracking-widest">{dept}</h4>
+                                  <div key={dept} className="bg-white rounded-lg p-2.5 border border-white/5">
+                                    <h4 className="text-[9px] uppercase text-accent font-black mb-2 tracking-widest">{dept}</h4>
                                     {deptItems.map(item => (
                                       <div key={item.originalIdx} className="mb-2 last:mb-0">
                                         <div className="flex justify-between items-start gap-2">
-                                          <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                                            <span className={`font-semibold text-sm leading-tight ${item.itemStatus === 'Delivered' ? 'text-gray-600 line-through' : 'text-fg'}`}>
+                                          <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                                            <span className={`font-semibold text-sm leading-tight ${item.itemStatus === 'Delivered' ? 'text-gray-600 line-through' : 'text-black'}`}>
                                               {item.quantity}x {item.name}
                                             </span>
+                                            {(item.fulfilledQty || 0) > 0 && (item.fulfilledQty || 0) < (item.quantity || 0) && (
+                                              <span className="text-[9px] font-black uppercase tracking-wider text-emerald-600">
+                                                {item.fulfilledQty} fulfilled · {Math.max(0, (item.quantity || 0) - (item.fulfilledQty || 0))} remaining
+                                              </span>
+                                            )}
+                                            {(item.fulfilledQty || 0) >= (item.quantity || 0) && (item.quantity || 0) > 0 && order.status === 'Partially Fulfilled' && (
+                                              <span className="text-[9px] font-black uppercase tracking-wider text-emerald-600 flex items-center gap-0.5"><Check size={9} /> Fully fulfilled</span>
+                                            )}
                                           </div>
                                           <div className="flex items-center gap-1 flex-shrink-0">
                                             {(order.status === 'Preparing' || order.status === 'Ready') ? (
                                               <>
                                                 {item.itemStatus === 'Received' && (
-                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Preparing')} className="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 hover:bg-yellow-500 hover:text-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition">Prep</button>
+                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Preparing')} className="bg-yellow-500 text-white border border-yellow-500 hover:bg-yellow-400 hover:text-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition">Prep</button>
                                                 )}
                                                 {item.itemStatus === 'Preparing' && (
-                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Finished')} className="bg-accent/10 text-accent border border-accent/20 hover:bg-accent hover:text-fg px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition">Finish</button>
+                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Finished')} className="bg-accent text-white border border-accent hover:bg-accent hover:text-white/20 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition">Finish</button>
                                                 )}
                                                 {item.itemStatus === 'Finished' && departmentFilter === 'All' && (
-                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Delivered')} className="bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500 hover:text-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition flex items-center gap-1">
+                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Delivered')} className="bg-green-500 text-white border border-green-500 hover:bg-green-400 hover:text-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition flex items-center gap-1">
                                                     <Truck size={9} /> Give
                                                   </button>
                                                 )}
@@ -826,18 +834,18 @@ export default function OrdersTab({ ctx }) {
                                                   <div className="flex flex-col items-end gap-0.5">
                                                     {effPct > 0 ? (
                                                       <>
-                                                        <span className="text-gray-600 line-through text-[10px] font-mono">
+                                                        <span className="text-accent line-through text-[10px] font-mono">
                                                           P{lineGross.toFixed(2)}
                                                         </span>
                                                         <span className="text-accent font-mono font-bold text-xs">
                                                           P{(lineGross * (1 - effPct / 100)).toFixed(2)}
                                                         </span>
-                                                        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${isClientRate ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'}`}>
+                                                        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${isClientRate ? 'bg-emerald-500 text-white border border-emerald-500' : 'bg-amber-500 text-white border border-amber-500'}`}>
                                                           {isClientRate ? `Client −${effPct}%` : `−${effPct}%`}
                                                         </span>
                                                       </>
                                                     ) : (
-                                                      <span className="text-gray-400 font-mono text-xs">
+                                                      <span className="text-black font-mono text-xs">
                                                         P{lineGross.toFixed(2)}
                                                       </span>
                                                     )}
@@ -848,9 +856,9 @@ export default function OrdersTab({ ctx }) {
                                                           placeholder="0"
                                                           value={item.discountPercent || ''}
                                                           onChange={e => applyItemDiscount(order._id, item.originalIdx, e.target.value)}
-                                                          className="w-14 bg-white/5 border border-white/10 rounded pl-1.5 pr-5 py-0.5 text-fg text-[10px] font-bold outline-none focus:border-brand/60 placeholder-white/20 tabular-nums"
+                                                          className="w-14 bg-white border border-black rounded pl-1.5 pr-5 py-0.5 text-black text-[10px] font-bold outline-none focus:border-brand/60 placeholder-black tabular-nums"
                                                         />
-                                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-fg/30 text-[9px] font-bold pointer-events-none">%</span>
+                                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-black text-[9px] font-bold pointer-events-none">%</span>
                                                       </div>
                                                     )}
                                                   </div>
@@ -862,7 +870,7 @@ export default function OrdersTab({ ctx }) {
                                         {item.isCombo && (item.comboItems || []).length > 0 && (
                                           <div className="pl-5 mt-1 space-y-0.5">
                                             {item.comboItems.map((c, cIdx) => (
-                                              <div key={cIdx} className="flex items-center gap-1 text-[10px] text-brand/70">
+                                              <div key={cIdx} className="flex items-center gap-1 text-[10px] text-brand">
                                                 <ChevronRight size={8} className="flex-shrink-0" /> {c.quantity > 1 ? `${c.quantity}× ` : ''}{c.name}{c.sizeName ? ` (${c.sizeName})` : ''}
                                               </div>
                                             ))}
@@ -892,7 +900,7 @@ export default function OrdersTab({ ctx }) {
                             </div>
 
                             {order.status === 'Pending' && departmentFilter === 'All' && (
-                              <div className="flex flex-col gap-1.5 border-t border-white/5 pt-2.5">
+                              <div className="flex flex-col gap-1.5 border-t border-white/30 pt-2.5">
                                 {isComp ? (
                                   /* ── APPLIED STATE: audit badge ── */
                                   <div className="flex items-start gap-2 bg-white/3 border border-white/10 rounded-lg p-2">
@@ -926,11 +934,11 @@ export default function OrdersTab({ ctx }) {
                                   <div className="flex flex-col gap-1.5">
                                     <div className="flex items-center gap-1.5">
                                       <Gift size={10} className="text-gray-500 flex-shrink-0" />
-                                      <span className="text-gray-500 text-[9px] font-bold uppercase tracking-wider">Mark Complimentary</span>
+                                      <span className="text-fg text-[9px] font-bold uppercase tracking-wider">Mark Complimentary</span>
                                     </div>
                                     {/* Reason type - REQUIRED */}
                                     <select
-                                      className="w-full bg-surface-2 border border-white/10 text-gray-200 text-[10px] rounded p-1.5 outline-none font-semibold"
+                                      className="w-full bg-surface-2 border border-white/10 text-fg text-[10px] rounded p-1.5 outline-none font-semibold"
                                       value={compReasonTypes[order._id] || ''}
                                       onChange={(e) => setCompReasonTypes(prev => ({ ...prev, [order._id]: e.target.value }))}
                                     >
@@ -943,14 +951,14 @@ export default function OrdersTab({ ctx }) {
                                     <input
                                       type="text"
                                       placeholder="Additional note (optional)..."
-                                      className="w-full bg-surface-2 border border-white/10 text-gray-300 text-[10px] rounded p-1.5 outline-none"
+                                      className="w-full bg-surface-2 border border-white/10 text-fg text-[10px] rounded p-1.5 outline-none"
                                       value={compReasonNotes[order._id] || ''}
                                       onChange={(e) => setCompReasonNotes(prev => ({ ...prev, [order._id]: e.target.value }))}
                                     />
                                     {/* Beneficiary override + apply button */}
                                     <div className="flex items-center gap-1.5">
                                       <select
-                                        className="flex-1 min-w-0 bg-surface-2 border border-white/10 text-gray-400 text-[9px] rounded p-1.5 outline-none"
+                                        className="flex-1 min-w-0 bg-surface-2 border border-white/10 text-fg text-[9px] rounded p-1.5 outline-none"
                                         value={compSelections[order._id] || ''}
                                         onChange={(e) => setCompSelections({ ...compSelections, [order._id]: e.target.value })}
                                       >
@@ -959,7 +967,7 @@ export default function OrdersTab({ ctx }) {
                                       </select>
                                       <button
                                         onClick={() => applyComplimentary(order._id)}
-                                        className="flex-shrink-0 bg-yellow-500 hover:bg-yellow-400 text-black px-2.5 py-1.5 rounded font-black text-[10px] uppercase tracking-wider transition flex items-center gap-1"
+                                        className="flex-shrink-0 bg-yellow-500 hover:bg-yellow-400 text-white px-2.5 py-1.5 rounded font-black text-[10px] uppercase tracking-wider transition flex items-center gap-1"
                                       >
                                         <Check size={11} /> Apply
                                       </button>
@@ -969,17 +977,17 @@ export default function OrdersTab({ ctx }) {
                               </div>
                             )}
 
-                            {departmentFilter === 'All' && (<div className="bg-black/30 rounded-lg p-3 space-y-1.5">
+                            {departmentFilter === 'All' && (<div className="bg-white rounded-lg p-3 space-y-1.5">
                               {order.status === 'Completed' && order.paymentMethod && (
-                                <div className="flex justify-between text-[11px] text-gray-500">
+                                <div className="flex justify-between text-[11px] text-black">
                                   <span>Payment</span>
                                   <span className="font-mono text-brand/80 font-bold">{order.paymentMethod}</span>
                                 </div>
                               )}
-                              <div className="flex justify-between text-[11px] text-gray-500">
+                              <div className="flex justify-between text-[11px] text-black">
                                 <span>Gross</span><span className="font-mono">P{order.subtotal.toFixed(2)}</span>
                               </div>
-                              <div className="flex justify-between items-center text-[11px] text-gray-500">
+                              <div className="flex justify-between items-center text-[11px] text-black">
                                 <div className="flex items-center gap-2">
                                   <span>VAT ({order.vatRate > 0 ? (order.vatRate * 100).toFixed(0) : 0}%)</span>
                                   {order.status === 'Pending' && (
@@ -997,36 +1005,36 @@ export default function OrdersTab({ ctx }) {
                                 const hasPromo = order.discountPercent > 0 && order.discountType !== 'SC/PWD';
                                 return (
                                   <>
-                                    <div className="flex justify-between items-center text-[11px] text-gray-500 border-b border-white/5 pb-1.5">
+                                    <div className="flex justify-between items-center text-[11px] text-black border-b border-white/5 pb-1.5">
                                       <div className="flex items-center gap-2 flex-1 pr-2">
                                         <span className="whitespace-nowrap uppercase tracking-wider text-[9px]">Promo</span>
                                         {order.status === 'Pending' && (
                                           hasScpwd ? (
-                                            <span className="text-[9px] text-fg/20 italic ml-auto">SC/PWD active</span>
+                                            <span className="text-[9px] text-black italic ml-auto">SC/PWD active</span>
                                           ) : (
                                             <div className="flex gap-1 items-center flex-1 justify-end">
                                               <select
-                                                className="w-full max-w-[110px] bg-page-bg border border-white/10 rounded px-1 text-[10px] text-fg outline-none h-6"
+                                                className="w-full max-w-[110px] bg-white border border-black rounded px-1 text-[10px] text-black outline-none h-6"
                                                 value={discountInputs[order._id] || ''}
                                                 onChange={(e) => setDiscountInputs(prev => ({ ...prev, [order._id]: e.target.value }))}
                                               >
                                                 <option value="">No promo</option>
                                                 {promoDiscounts.map(d => <option key={d._id} value={d.percentage}>{d.name} ({d.percentage}%)</option>)}
                                               </select>
-                                              <button onClick={() => applyDiscount(order._id)} className="bg-accent/10 hover:bg-accent text-accent hover:text-fg px-2 rounded font-black transition h-6 flex items-center border border-accent/20"><Check size={12} /></button>
+                                              <button onClick={() => applyDiscount(order._id)} className="bg-accent hover:bg-accent/80 text-white hover:text-fg px-2 rounded font-black transition h-6 flex items-center border border-accent/20"><Check size={12} /></button>
                                               {order.discountPercent > 0 && order.discountType !== 'SC/PWD' && (
-                                                <button onClick={() => applyDiscount(order._id, true)} className="bg-red-500/10 text-red-400 px-2 rounded font-black h-6 border border-red-500/20 flex items-center"><X size={12} /></button>
+                                                <button onClick={() => applyDiscount(order._id, true)} className="bg-red-500 text-white px-2 rounded font-black h-6 border border-red-500 flex items-center"><X size={12} /></button>
                                               )}
                                             </div>
                                           )
                                         )}
                                       </div>
-                                      <span className="text-red-400 whitespace-nowrap font-mono">-P{displayDiscount.toFixed(2)}</span>
+                                      <span className="text-red-500 whitespace-nowrap font-mono">-P{displayDiscount.toFixed(2)}</span>
                                     </div>
                                     {scpwdDiscounts.length > 0 && order.status === 'Pending' && (
                                       <div className="border-b border-white/5 pb-1.5 space-y-1">
                                         {hasPromo ? (
-                                          <span className="text-[9px] uppercase tracking-wider text-fg/20 italic">SC/PWD - Promo active</span>
+                                          <span className="text-[9px] uppercase tracking-wider text-black italic">SC/PWD - Promo active</span>
                                         ) : (
                                           <>
                                             <button
@@ -1039,9 +1047,9 @@ export default function OrdersTab({ ctx }) {
                                               <div className="max-h-[130px] overflow-y-auto custom-scrollbar space-y-1.5 pt-0.5 pr-1">
                                                 {order.items.map((item, idx) => (
                                                   <div key={idx} className="flex items-center gap-2">
-                                                    <span className="text-[11px] text-gray-400 font-semibold flex-1 truncate min-w-0">{item.quantity}x {item.name}</span>
+                                                    <span className="text-[11px] text-black font-semibold flex-1 truncate min-w-0">{item.quantity}x {item.name}</span>
                                                     <select
-                                                      className="bg-page-bg border border-white/10 rounded text-[10px] text-fg outline-none px-1 py-0.5 h-6 cursor-pointer flex-shrink-0"
+                                                      className="bg-white border border-black rounded text-[10px] text-black outline-none px-1 py-0.5 h-6 cursor-pointer flex-shrink-0"
                                                       value={item.discountPercent || ''}
                                                       onChange={(e) => applyItemDiscount(order._id, idx, e.target.value)}
                                                     >
@@ -1064,8 +1072,8 @@ export default function OrdersTab({ ctx }) {
                                   </>
                                 );
                               })()}
-                              <div className="flex justify-between font-black text-base pt-1 border-t border-white/10">
-                                <span className="text-fg">Total</span>
+                              <div className="flex justify-between font-black text-base pt-1 border-t border-gray">
+                                <span className="text-black">Total</span>
                                 <span className="text-accent font-mono tracking-wider">P{displayTotal.toFixed(2)}</span>
                               </div>
                             </div>)}
@@ -1209,14 +1217,14 @@ export default function OrdersTab({ ctx }) {
                                             }
                                             setTimeout(() => updateStatus(order._id, 'Preparing'), 0);
                                           }}
-                                          className={`flex-1 py-2.5 rounded-lg font-black text-xs uppercase tracking-widest transition ${isUnderpaid ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-accent text-fg hover:bg-accentShadow'}`}
+                                          className={`flex-1 py-2.5 rounded-lg font-black text-xs uppercase tracking-widest transition ${isUnderpaid ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-accent text-white hover:bg-accentShadow'}`}
                                         >
                                           Pay & Send to {SEND_TARGET}
                                         </button>
-                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop</button>
+                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500 text-white py-2.5 px-4 rounded-lg hover:bg-red-400 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop</button>
                                       </div>
                                       {BUSINESS_TYPE === 'log' && (order.items?.length > 0) && (
-                                        <button onClick={() => openPartial(order)} className="w-full bg-amber-500/10 text-amber-400 py-2 rounded-lg hover:bg-amber-500 hover:text-fg font-black text-[11px] transition uppercase tracking-widest border border-amber-500/20">
+                                        <button onClick={() => openPartial(order)} className="w-full bg-amber-500 text-white py-2 rounded-lg hover:bg-amber-400 hover:text-fg font-black text-[11px] transition uppercase tracking-widest border border-amber-500/20">
                                           Partial Fulfill
                                         </button>
                                       )}
@@ -1228,18 +1236,27 @@ export default function OrdersTab({ ctx }) {
                               {order.status === 'Partially Fulfilled' && departmentFilter === 'All' && (() => {
                                 const totalQty = (order.items || []).reduce((s, it) => s + (it.quantity || 0), 0);
                                 const doneQty = (order.items || []).reduce((s, it) => s + (it.fulfilledQty || 0), 0);
+                                // Value of what's still outstanding (line price × units not yet fulfilled).
+                                const remainingValue = (order.items || []).reduce((s, it) => {
+                                  const rem = Math.max(0, (it.quantity || 0) - (it.fulfilledQty || 0));
+                                  const addOn = (it.selectedAddOns || []).reduce((a, x) => a + Number(x.price || 0), 0);
+                                  return s + rem * ((it.price || 0) + addOn);
+                                }, 0);
                                 return (
                                   <div className="flex flex-col gap-2">
-                                    <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-                                      <Package size={12} className="text-amber-400 flex-shrink-0" />
-                                      <span className="text-amber-400 text-[10px] font-black uppercase tracking-widest">
+                                    <div className="flex flex-col gap-1 bg-amber-500 border border-amber-500 rounded-lg px-3 py-2">
+                                      <span className="flex items-center gap-2 text-white text-[10px] font-black uppercase tracking-widest">
+                                        <Package size={12} className="flex-shrink-0" />
                                         Partially fulfilled · {doneQty}/{totalQty} units{order.depositRemaining > 0 ? ' · prepaid' : ''}
                                       </span>
+                                      {remainingValue > 0 && (
+                                        <span className="text-white/90 text-[10px] font-bold tracking-wide">Remaining to fulfill: ₱{remainingValue.toFixed(2)}</span>
+                                      )}
                                     </div>
-                                    <button onClick={() => openPartial(order)} className="w-full bg-accent text-fg py-2.5 rounded-lg hover:bg-accentShadow font-black text-xs uppercase tracking-widest transition">
+                                    <button onClick={() => openPartial(order)} className="w-full bg-accent text-white py-2.5 rounded-lg hover:bg-accentShadow font-black text-xs uppercase tracking-widest transition">
                                       Fulfill Remaining
                                     </button>
-                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2 px-4 rounded-lg hover:bg-red-500 hover:text-fg font-black text-[11px] transition uppercase border border-red-500/20">Drop Remaining</button>
+                                    <button onClick={() => dropRemaining(order)} className="bg-red-500 text-white py-2 px-4 rounded-lg hover:bg-red-500 hover:text-fg font-black text-[11px] transition uppercase border border-red-500/20">Drop Remaining</button>
                                   </div>
                                 );
                               })()}
@@ -1247,9 +1264,9 @@ export default function OrdersTab({ ctx }) {
                               {order.status === 'Preparing' && (
                                 <div className="flex flex-col gap-2">
                                   {deliveredCount > 0 && (
-                                    <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">
+                                    <div className="flex items-center gap-2 bg-green-500 border border-green-500 rounded-lg px-3 py-2">
                                       <Truck size={12} className="text-green-400 flex-shrink-0" />
-                                      <span className="text-green-400 text-[10px] font-black uppercase tracking-widest">{deliveredCount}/{viewItems.length} Given to Customer</span>
+                                      <span className="text-white text-[10px] font-black uppercase tracking-widest">{deliveredCount}/{viewItems.length} Given to Customer</span>
                                     </div>
                                   )}
                                   {departmentFilter !== 'All' ? (
@@ -1268,7 +1285,7 @@ export default function OrdersTab({ ctx }) {
                                       <CheckCircle size={13} /> Complete Order
                                     </button>
                                   ) : order.items.every(i => i.itemStatus === 'Finished' || i.itemStatus === 'Delivered') ? (
-                                    <div className="flex items-center justify-center gap-2 bg-blue-500/10 border border-blue-500/20 text-blue-400 rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
+                                    <div className="flex items-center justify-center gap-2 bg-blue-500 border border-blue-500 text-white rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
                                       <Truck size={11} /> Give items above to complete
                                     </div>
                                   ) : (
@@ -1277,7 +1294,7 @@ export default function OrdersTab({ ctx }) {
                                     </div>
                                   )}
                                   {departmentFilter === 'All' && !allDelivered && (
-                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="w-full bg-red-500/10 text-red-400 py-2 rounded-lg hover:bg-red-500 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop Order</button>
+                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="w-full bg-red-500 text-white py-2 rounded-lg hover:bg-red-400 hover:text-fg font-black text-xs transition uppercase border border-red-500">Drop Order</button>
                                   )}
                                 </div>
                               )}
@@ -1302,7 +1319,7 @@ export default function OrdersTab({ ctx }) {
                                         if (!data.success) ui.alert(data.error);
                                       } catch (err) { console.error(err); }
                                     }}
-                                    className="w-full bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 py-2 rounded-lg hover:bg-yellow-500/20 font-bold text-xs uppercase tracking-widest transition"
+                                    className="w-full bg-yellow-500 text-white border border-yellow-500 py-2 rounded-lg hover:bg-yellow-500/20 font-bold text-xs uppercase tracking-widest transition"
                                   >
                                     Give Partial - More Items Coming
                                   </button>
@@ -1323,10 +1340,10 @@ export default function OrdersTab({ ctx }) {
 
                               {order.status === 'Completed' && departmentFilter === 'All' && canVoidRefund && (
                                 <div className="flex gap-2">
-                                  <button onClick={() => handleVoidOrder(order._id)} className="flex-1 bg-red-500/10 border border-red-500/20 text-red-400 py-2 rounded-lg hover:bg-red-500 hover:text-fg font-bold text-xs uppercase tracking-widest transition">
+                                  <button onClick={() => handleVoidOrder(order._id)} className="flex-1 bg-red-500 border border-red-500 text-white py-2 rounded-lg hover:bg-red-500 hover:text-fg font-bold text-xs uppercase tracking-widest transition">
                                     Void
                                   </button>
-                                  <button onClick={() => { setRefundModal(order); }} className="flex-1 bg-orange-500/10 border border-orange-500/20 text-orange-400 py-2 rounded-lg hover:bg-orange-500 hover:text-fg font-bold text-xs uppercase tracking-widest transition">
+                                  <button onClick={() => { setRefundModal(order); }} className="flex-1 bg-orange-500 border border-orange-500 text-white py-2 rounded-lg hover:bg-orange-500 hover:text-fg font-bold text-xs uppercase tracking-widest transition">
                                     Refund
                                   </button>
                                 </div>

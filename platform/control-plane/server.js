@@ -11,6 +11,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import readline from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,7 +29,37 @@ const CP_DANGER_PASSWORD = process.env.CP_DANGER_PASSWORD || '';
 const PLATFORM_DIR = path.join(STACK_ROOT, 'platform');
 const TENANTS_DIR = path.join(PLATFORM_DIR, 'tenants');
 const CADDY_DIR = path.join(PLATFORM_DIR, 'tenants-caddy');
+const LOGS_DIR = path.join(PLATFORM_DIR, 'caddy-logs');
 const TENANT_COMPOSE = path.join(PLATFORM_DIR, 'tenant-compose.yml');
+
+// Resource envelope per tenant. Memory is a hard cgroup ceiling; CPU shares are
+// a relative weight under contention. On the 8 GB box, budget roughly:
+// mongod 2 GB cache + ~1 GB overhead, Caddy + control plane + OS ~1 GB, leaving
+// ~4 GB — four tenants at the 1 GB default.
+const MEM_MB_DEFAULT = 1024;
+const MEM_MB_MIN = 256;
+const MEM_MB_MAX = 4096;
+const CPU_SHARES_DEFAULT = 1024;
+const CPU_SHARES_MIN = 256;
+const CPU_SHARES_MAX = 4096;
+
+const clampInt = (v, lo, hi, fallback) => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.min(Math.max(n, lo), hi) : fallback;
+};
+
+// The cgroup limit alone isn't enough: V8 sizes its heap from the HOST's total
+// RAM, not the container's, so Node happily grows past mem_limit and gets
+// OOM-killed instead of collecting garbage. Pinning the old-space to ~75% of the
+// limit leaves room for the non-heap side (buffers, native, stack).
+function resourceEnv(memMb, cpuShares) {
+  return {
+    MEM_LIMIT: `${memMb}m`,
+    WEB_MEM_LIMIT: '128m',
+    NODE_OPTIONS: `--max-old-space-size=${Math.floor(memMb * 0.75)}`,
+    CPU_SHARES: String(cpuShares),
+  };
+}
 
 if (!CP_PASSWORD || !CP_DANGER_PASSWORD) {
   console.error('CP_PASSWORD and CP_DANGER_PASSWORD must be set — refusing to start.');
@@ -86,6 +118,100 @@ const tenantDir = (slug) => path.join(TENANTS_DIR, slug);
 const tenantEnvPath = (slug) => path.join(tenantDir(slug), '.env');
 const tenantMetaPath = (slug) => path.join(tenantDir(slug), 'tenant.json');
 const caddyPath = (slug) => path.join(CADDY_DIR, `${slug}.caddy`);
+const accessLogPath = (slug) => path.join(LOGS_DIR, `${slug}.log`);
+
+function renderVhost(slug, host) {
+  // The access log is what makes per-tenant bandwidth measurable at all —
+  // Docker cannot attribute traffic to a container, but Caddy knows which vhost
+  // served each response. roll_size bounds disk use, which means egress is
+  // counted over the CURRENT file only: a busy tenant rolls sooner and its
+  // window is shorter. Treat the number as a trend, not an invoice.
+  const body =
+    `\tlog {\n` +
+    `\t\toutput file /var/log/caddy/${slug}.log {\n` +
+    `\t\t\troll_size 20MiB\n` +
+    `\t\t\troll_keep 3\n` +
+    `\t\t}\n` +
+    `\t\tformat json\n` +
+    `\t}\n` +
+    `\treverse_proxy ${slug}-web:80\n`;
+  return LOCAL_MODE
+    ? `http://${host}, http://${slug}.localhost {\n${body}}\n`
+    : `${host} {\n${body}}\n`;
+}
+
+// Sums response bytes from the tenant's Caddy access log. Streamed line by line:
+// these files reach 20 MiB, and four of them read into memory at once on an
+// 8 GB box shared with mongod is not a trade worth making for a dashboard.
+async function readEgress(slug, sinceMs) {
+  let bytes = 0;
+  let requests = 0;
+  try {
+    const rl = readline.createInterface({
+      input: createReadStream(accessLogPath(slug), { encoding: 'utf8' }),
+      crlfDelay: Infinity,
+    });
+    for await (const line of rl) {
+      if (!line) continue;
+      let e;
+      try { e = JSON.parse(line); } catch { continue; }
+      // Caddy writes ts as float seconds.
+      if (typeof e.ts === 'number' && e.ts * 1000 < sinceMs) continue;
+      bytes += Number(e.size) || 0;
+      requests += 1;
+    }
+  } catch {
+    // No log file yet — a tenant that has never been hit.
+  }
+  return { bytes, requests };
+}
+
+// Live memory per container, from the Docker API. Returns bytes keyed by
+// container name (`<slug>-api-1` under compose project `<slug>`).
+async function readMemUsage() {
+  const out = {};
+  try {
+    const raw = await docker(
+      ['stats', '--no-stream', '--format', '{{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}'],
+      { timeout: 30_000 },
+    );
+    for (const line of raw.trim().split('\n')) {
+      const [name, usage, perc] = line.split('\t');
+      if (!name || !usage) continue;
+      out[name.trim()] = { usage: usage.trim(), perc: (perc || '').trim() };
+    }
+  } catch {
+    // Docker busy or stats unavailable; the dashboard degrades to "—".
+  }
+  return out;
+}
+
+// Per-tenant database size, straight from dbStats. This is the disk number:
+// MongoDB has no per-database quota, so it can be reported but not enforced.
+async function readDbSizes(slugs) {
+  if (!slugs.length) return {};
+  const script = `
+    const out = {};
+    for (const slug of ${JSON.stringify(slugs)}) {
+      try {
+        const s = db.getSiblingDB('semivra_' + slug).stats();
+        out[slug] = { dataSize: s.dataSize, storageSize: s.storageSize,
+                      indexSize: s.indexSize, objects: s.objects };
+      } catch (e) { out[slug] = null; }
+    }
+    print(JSON.stringify(out));
+  `;
+  try {
+    const raw = await docker(
+      ['exec', 'semivra-platform-mongo-1', 'mongosh', '--quiet', '--eval', script],
+      { timeout: 60_000 },
+    );
+    const line = raw.trim().split('\n').filter((l) => l.trim().startsWith('{')).pop() || '{}';
+    return JSON.parse(line);
+  } catch {
+    return {};
+  }
+}
 
 async function listSlugs() {
   try {
@@ -205,9 +331,13 @@ app.post('/api/tenants', requireAuth, async (req, res) => {
   const origins = LOCAL_MODE
     ? `${scheme}://${host},http://${slug}.localhost`
     : `${scheme}://${host}`;
+  const memMb = clampInt(b.memMb, MEM_MB_MIN, MEM_MB_MAX, MEM_MB_DEFAULT);
+  const cpuShares = clampInt(b.cpuShares, CPU_SHARES_MIN, CPU_SHARES_MAX, CPU_SHARES_DEFAULT);
+
   const env = {
     TENANT: slug,
     STACK_ROOT,
+    ...resourceEnv(memMb, cpuShares),
     // Each tenant gets its own database inside the one shared mongod.
     MONGO_URI: `mongodb://mongo:27017/semivra_${slug}?replicaSet=rs0`,
     JWT_SECRET: crypto.randomBytes(32).toString('hex'),
@@ -232,18 +362,18 @@ app.post('/api/tenants', requireAuth, async (req, res) => {
   try {
     await fs.mkdir(tenantDir(slug), { recursive: true });
     await fs.mkdir(CADDY_DIR, { recursive: true });
+    await fs.mkdir(LOGS_DIR, { recursive: true });
     await fs.writeFile(tenantEnvPath(slug), toEnvFile(env), { mode: 0o600 });
     await fs.writeFile(tenantMetaPath(slug), JSON.stringify({
-      slug, businessName, businessType, host, createdAt: new Date().toISOString(),
+      slug, businessName, businessType, host, memMb, cpuShares,
+      createdAt: new Date().toISOString(),
     }, null, 2));
 
     // Caddy vhost. In LOCAL_MODE we bind plain http on :80 so the whole flow can
     // be rehearsed without public DNS or a real certificate, and we ALSO answer
     // on <slug>.localhost — browsers resolve anything under .localhost to
     // loopback (RFC 6761), so the rehearsal is reachable with no hosts-file edit.
-    const vhost = LOCAL_MODE
-      ? `http://${host}, http://${slug}.localhost {\n\treverse_proxy ${slug}-web:80\n}\n`
-      : `${host} {\n\treverse_proxy ${slug}-web:80\n}\n`;
+    const vhost = renderVhost(slug, host);
     await fs.writeFile(caddyPath(slug), vhost);
 
     const buildLog = await docker([...composeArgs(slug), 'up', '-d', '--build']);
@@ -268,6 +398,76 @@ for (const [action, args] of [['start', ['up', '-d']], ['stop', ['stop']], ['reb
     }
   });
 }
+
+// Adjust a tenant's resource envelope. Rewrites only the resource keys in its
+// .env — every other value (secrets, billing, business type) is read back and
+// preserved, so this can never clobber configuration.
+app.patch('/api/tenants/:slug/resources', requireAuth, async (req, res) => {
+  const slug = req.params.slug;
+  if (!(await listSlugs()).includes(slug)) return res.status(404).json({ error: 'No such tenant.' });
+
+  const memMb = clampInt(req.body?.memMb, MEM_MB_MIN, MEM_MB_MAX, MEM_MB_DEFAULT);
+  const cpuShares = clampInt(req.body?.cpuShares, CPU_SHARES_MIN, CPU_SHARES_MAX, CPU_SHARES_DEFAULT);
+
+  try {
+    const current = parseEnvFile(await fs.readFile(tenantEnvPath(slug), 'utf8'));
+    const next = { ...current, ...resourceEnv(memMb, cpuShares) };
+    await fs.writeFile(tenantEnvPath(slug), toEnvFile(next), { mode: 0o600 });
+
+    const meta = (await readMeta(slug)) || {};
+    await fs.writeFile(tenantMetaPath(slug), JSON.stringify({
+      ...meta, memMb, cpuShares, resourcesUpdatedAt: new Date().toISOString(),
+    }, null, 2));
+
+    // `up -d` (not `restart`) — a cgroup limit is set at container creation, so
+    // the container must be recreated for the new value to take effect. No
+    // --build: the images are unchanged, and rebuilding would be a slow surprise.
+    const log = await docker([...composeArgs(slug), 'up', '-d'], { timeout: 5 * 60_000 });
+    res.json({ ok: true, memMb, cpuShares, log: log.slice(-2000) });
+  } catch (err) {
+    res.status(500).json({ error: String(err.stderr || err.message).slice(-4000) });
+  }
+});
+
+// Usage meters. Memory is a live reading against an enforced ceiling; disk and
+// bandwidth are observed only — see readDbSizes and readEgress for why neither
+// can be capped on this architecture.
+app.get('/api/usage', requireAuth, async (req, res) => {
+  const hours = Math.min(Math.max(Number(req.query.hours) || 24, 1), 720);
+  const sinceMs = Date.now() - hours * 3600_000;
+  const slugs = await listSlugs();
+
+  try {
+    const [mem, dbs, egressList] = await Promise.all([
+      readMemUsage(),
+      readDbSizes(slugs),
+      Promise.all(slugs.map((s) => readEgress(s, sinceMs))),
+    ]);
+
+    const tenants = slugs.map((slug, i) => {
+      const meta = dbs[slug];
+      return {
+        slug,
+        memLimitMb: null, // filled from tenant.json by the caller-side merge below
+        memApi: mem[`${slug}-api-1`] || null,
+        memWeb: mem[`${slug}-web-1`] || null,
+        dbBytes: meta ? (meta.storageSize || 0) + (meta.indexSize || 0) : null,
+        dbObjects: meta ? meta.objects : null,
+        egressBytes: egressList[i].bytes,
+        requests: egressList[i].requests,
+      };
+    });
+
+    const merged = await Promise.all(tenants.map(async (t) => {
+      const m = await readMeta(t.slug);
+      return { ...t, memLimitMb: m?.memMb ?? MEM_MB_DEFAULT, cpuShares: m?.cpuShares ?? CPU_SHARES_DEFAULT };
+    }));
+
+    res.json({ hours, tenants: merged });
+  } catch (err) {
+    res.status(500).json({ error: String(err.message).slice(-2000) });
+  }
+});
 
 app.get('/api/tenants/:slug/logs', requireAuth, async (req, res) => {
   const slug = req.params.slug;

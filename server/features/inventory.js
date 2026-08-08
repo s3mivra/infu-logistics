@@ -1020,15 +1020,17 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         if (syncProduct) {
           const cat = await Category.findOneAndUpdate(
             { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }, businessType: BUSINESS_TYPE },
-            { $setOnInsert: { name: productCategory, department: 'Bar', businessType: BUSINESS_TYPE } },
+            { $setOnInsert: { name: productCategory, department: 'Logistics', businessType: BUSINESS_TYPE } },
             { upsert: true, returnDocument: 'after', session }
           );
+          // Base recipe links the product to its OWN stock item (1:1).
+          const baseRecipe = [{ invId: existing._id, name: existing.itemName, qty: existing.unitMultiplier || mult, cost: existing.unitCost || 0, unit: existing.unit || baseUnit }];
           // basePrice must never appear in both $set and $setOnInsert — Mongo
           // rejects an update that targets the same path from two operators.
           // A valid SRP always wins (goes in $set); only fall back to
           // $setOnInsert (default 0 on first creation) when there's no SRP.
           const hasSrp = srp != null && !isNaN(srp);
-          await Product.findOneAndUpdate(
+          const prod = await Product.findOneAndUpdate(
             { productCode: existing.itemCode, businessType: BUSINESS_TYPE },
             {
               $set: {
@@ -1037,10 +1039,15 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
                 isAvailable: existing.stockQty > 0,
                 ...(hasSrp ? { basePrice: srp } : {}),
               },
-              $setOnInsert: { businessType: BUSINESS_TYPE, ...(hasSrp ? {} : { basePrice: 0 }) },
+              $setOnInsert: { businessType: BUSINESS_TYPE, baseRecipe, ...(hasSrp ? {} : { basePrice: 0 }) },
             },
             { upsert: true, returnDocument: 'after', session }
           );
+          // Backfill the stock link on a pre-existing menu entry that never had one.
+          if (prod && !(prod.baseRecipe || []).some(r => r.invId)) {
+            prod.baseRecipe = baseRecipe;
+            await prod.save({ session });
+          }
         }
       } else {
         // New item — onboard via Inventory Adjustment Gain (DR 1500 / CR 4200)
@@ -1098,9 +1105,13 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         if (syncProduct) {
           const cat = await Category.findOneAndUpdate(
             { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }, businessType: BUSINESS_TYPE },
-            { $setOnInsert: { name: productCategory, department: 'Bar', businessType: BUSINESS_TYPE } },
+            { $setOnInsert: { name: productCategory, department: 'Logistics', businessType: BUSINESS_TYPE } },
             { upsert: true, returnDocument: 'after', session }
           );
+          // Explicitly link the product's base recipe to its OWN stock item (1:1),
+          // so the menu shows the stock item as the base material and each sale
+          // deducts it directly — no reliance on the code/name fallback.
+          const baseRecipe = [{ invId: item._id, name: item.itemName, qty: mult, cost: item.unitCost || 0, unit: baseUnit }];
           const productExists = await Product.findOne({ productCode: item.itemCode, businessType: BUSINESS_TYPE }).session(session);
           if (!productExists) {
             await Product.create([{
@@ -1108,9 +1119,15 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
               name: item.itemName,
               category: cat.name,
               basePrice: srp != null && !isNaN(srp) ? srp : 0,
+              baseSize: displayUnit,
+              baseRecipe,
               isAvailable: newBaseQty > 0,
               businessType: BUSINESS_TYPE,
             }], { session });
+          } else if (!(productExists.baseRecipe || []).some(r => r.invId)) {
+            // Existing menu entry with no linked stock — backfill the link.
+            productExists.baseRecipe = baseRecipe;
+            await productExists.save({ session });
           }
         }
       }

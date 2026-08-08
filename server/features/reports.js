@@ -544,7 +544,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
 
       // 7. Inventory (needed for velocity + stock KPIs) — include unit fields so the
       //    UI can display kg/L/pcs correctly (effectiveDisplay needs unit/displayUnit/unitMultiplier).
-      Inventory.find(bizScope, { itemCode: 1, itemName: 1, stockQty: 1, unitCost: 1, unit: 1, displayUnit: 1, unitMultiplier: 1 }).lean(),
+      Inventory.find(bizScope, { itemCode: 1, itemName: 1, stockQty: 1, unitCost: 1, unit: 1, displayUnit: 1, unitMultiplier: 1, lowStockThreshold: 1, createdAt: 1 }).lean(),
     ]);
 
     // ── Today KPIs ─────────────────────────────────────────────────────────────
@@ -673,31 +673,73 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
     });
 
     const rmEntries = Object.values(rawMaterial);
+
+    // ── Professional velocity / risk tuning ─────────────────────────────────────
+    // Lead time = days from reorder to arrival; safety = buffer days of demand.
+    // Grace windows suppress false alarms on freshly-onboarded stock — a Day-1 SKU
+    // has no sales history to judge, so overstock/dead-stock alarms would be wrong.
+    const LEAD_TIME_DAYS = 7;
+    const SAFETY_DAYS = 3;
+    const OVERSTOCK_GRACE_DAYS = 14;
+    const DEADSTOCK_MIN_AGE_DAYS = 30;
+    const NEW_SKU_DAYS = 14;
+    const nowMs = Date.now();
+    const ageDays = (item) => item?.createdAt ? Math.max(0, (nowMs - new Date(item.createdAt).getTime()) / 86400000) : Infinity;
+    const aduByName = Object.fromEntries(rmEntries.map(e => [e.name.toLowerCase(), e]));
+    const uOf = (item) => aduByName[(item.itemName || '').toLowerCase()];
+
+    // Velocity & Forecast: Daily Burn, Lasts, Buy 1wk/1mo, dynamic ROP, trend tag.
     const mostUsedStock = rmEntries.filter(i => i.weightedAdu > 0).sort((a, b) => b.weightedAdu - a.weightedAdu).slice(0, 5)
-      .map(i => ({ ...i, dailyAvg: i.weightedAdu, daysLeft: i.weightedAdu > 0 ? Math.floor(i.currentStock / i.weightedAdu) : Infinity, weeklyNeed: Math.ceil(i.weightedAdu * 7), monthlyNeed: Math.ceil(i.weightedAdu * 30), reorderPoint: Math.ceil(i.weightedAdu * 3) }));
+      .map(i => {
+        const invItem = inventoryItems.find(it => it.itemName.toLowerCase() === i.name.toLowerCase());
+        const burn = i.weightedAdu;
+        const isNewSku = ageDays(invItem) < NEW_SKU_DAYS || i.adu30 === 0;
+        return {
+          ...i,
+          dailyAvg: burn,
+          daysLeft: burn > 0 ? Math.floor(i.currentStock / burn) : Infinity,
+          weeklyNeed: Math.ceil(burn * 7),
+          monthlyNeed: Math.ceil(burn * 30),
+          // Dynamic reorder point = cover the lead time + a safety buffer of demand.
+          reorderPoint: Math.ceil(burn * (LEAD_TIME_DAYS + SAFETY_DAYS)),
+          isNewSku,
+          trendPct: i.adu30 > 0 ? (i.adu7 / i.adu30 - 1) * 100 : null, // null = no baseline (NEW)
+        };
+      });
 
+    // Low Stock (risk): dynamic Reorder Point once a burn rate exists, else the
+    // static min-stock threshold for Day-1 items with no velocity yet.
     const lowestStock = inventoryItems
-      .filter(item => !isRemovedProductStock(item)) // hide stock tied only to removed products
-      .map(item => { const u = rmEntries.find(e => e.name.toLowerCase() === item.itemName.toLowerCase()); const adu = u ? u.weightedAdu : 0; return { ...item, adu, daysOfSupply: adu > 0 ? item.stockQty / adu : (item.stockQty <= 0 ? 0 : Infinity) }; })
-      .filter(i => i.daysOfSupply < Infinity).sort((a, b) => a.daysOfSupply - b.daysOfSupply).slice(0, 5);
+      .filter(item => !isRemovedProductStock(item))
+      .map(item => {
+        const adu = uOf(item)?.weightedAdu || 0;
+        const rop = adu > 0 ? Math.ceil(adu * (LEAD_TIME_DAYS + SAFETY_DAYS)) : (item.lowStockThreshold || 0);
+        return { ...item, adu, reorderPoint: rop,
+          daysOfSupply: adu > 0 ? item.stockQty / adu : (item.stockQty <= 0 ? 0 : Infinity),
+          belowRop: item.stockQty <= rop && rop > 0 };
+      })
+      .filter(i => i.belowRop || i.daysOfSupply < Infinity)
+      .sort((a, b) => a.daysOfSupply - b.daysOfSupply).slice(0, 5);
 
+    // Overstock watch: only after the launch grace period (else new bulk-buys alarm).
     const highestStock = inventoryItems
-      .map(item => { const u = rmEntries.find(e => e.name.toLowerCase() === item.itemName.toLowerCase()); const adu = u ? u.weightedAdu : 0; const dos = adu > 0 ? item.stockQty / adu : (item.stockQty > 0 ? Infinity : 0); return { ...item, adu, daysOfSupply: dos, tiedUpCapital: item.stockQty * (item.unitCost || 0) }; })
-      .filter(i => i.daysOfSupply > 30 && i.stockQty > 0).sort((a, b) => b.tiedUpCapital - a.tiedUpCapital).slice(0, 5);
+      .map(item => { const adu = uOf(item)?.weightedAdu || 0; const dos = adu > 0 ? item.stockQty / adu : (item.stockQty > 0 ? Infinity : 0); return { ...item, adu, daysOfSupply: dos, tiedUpCapital: item.stockQty * (item.unitCost || 0), daysActive: ageDays(item) }; })
+      .filter(i => i.daysActive > OVERSTOCK_GRACE_DAYS && i.daysOfSupply > 30 && i.stockQty > 0)
+      .sort((a, b) => b.tiedUpCapital - a.tiedUpCapital).slice(0, 5);
 
-    // ── Slow movers: in stock and DO sell, but slowly (long days-of-supply). ────
+    // Slow movers: sells, but slowly — needs a real operating window before judging.
     const slowMovers = inventoryItems
       .filter(item => !isRemovedProductStock(item))
-      .map(item => { const u = rmEntries.find(e => e.name.toLowerCase() === item.itemName.toLowerCase()); const adu = u ? u.weightedAdu : 0; return { ...item, adu, daysOfSupply: adu > 0 ? item.stockQty / adu : Infinity, tiedUpCapital: item.stockQty * (item.unitCost || 0) }; })
-      .filter(i => i.adu > 0 && i.stockQty > 0)
-      .sort((a, b) => a.adu - b.adu) // slowest velocity first
+      .map(item => { const adu = uOf(item)?.weightedAdu || 0; return { ...item, adu, daysOfSupply: adu > 0 ? item.stockQty / adu : Infinity, tiedUpCapital: item.stockQty * (item.unitCost || 0), daysActive: ageDays(item) }; })
+      .filter(i => i.adu > 0 && i.stockQty > 0 && i.daysActive > DEADSTOCK_MIN_AGE_DAYS)
+      .sort((a, b) => a.adu - b.adu)
       .slice(0, 8);
 
-    // ── Dead stock: in stock but ZERO movement in the last 30 days. ────────────
+    // Dead stock: in stock, ZERO movement — age guard keeps Day-1 launch stock out.
     const deadStock = inventoryItems
       .filter(item => !isRemovedProductStock(item))
-      .map(item => { const u = rmEntries.find(e => e.name.toLowerCase() === item.itemName.toLowerCase()); const adu = u ? u.weightedAdu : 0; return { ...item, adu, tiedUpCapital: item.stockQty * (item.unitCost || 0) }; })
-      .filter(i => i.adu === 0 && i.stockQty > 0)
+      .map(item => { const adu = uOf(item)?.weightedAdu || 0; return { ...item, adu, tiedUpCapital: item.stockQty * (item.unitCost || 0), daysActive: ageDays(item) }; })
+      .filter(i => i.adu === 0 && i.stockQty > 0 && i.daysActive > DEADSTOCK_MIN_AGE_DAYS)
       .sort((a, b) => b.tiedUpCapital - a.tiedUpCapital)
       .slice(0, 10);
 
@@ -976,6 +1018,15 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (
           .map(c => [String(c._id), c.clientCode]))
       : {};
 
+    // Resolve each combo component's own product code so the report shows it.
+    const compIds = [...new Set(orders.flatMap(o => (o.items || [])
+      .filter(it => it.isCombo && Array.isArray(it.comboItems))
+      .flatMap(it => it.comboItems.map(c => c.productId).filter(Boolean))))];
+    const codeByProductId = compIds.length
+      ? Object.fromEntries((await Product.find({ _id: { $in: compIds } }, { productCode: 1 }).lean())
+          .map(p => [String(p._id), p.productCode || '']))
+      : {};
+
     const rows = [];
     for (const o of orders) {
       const refId = o.clientId || o.clientAccountId || '';
@@ -984,11 +1035,28 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (
       for (const it of (o.items || [])) {
         const qty = Number(it.quantity) || 0;
         const lineTotal = (Number(it.price) || 0) * qty + (it.selectedAddOns || []).reduce((s, a) => s + (Number(a.price) || 0), 0) * qty;
+        const isCombo = it.isCombo && Array.isArray(it.comboItems) && it.comboItems.length > 0;
         rows.push({
           date: o.createdAt, orderNumber: o.orderNumber, paymentMethod: o.paymentMethod,
           customerId, customerName,
           itemCode: (it.productCode || '').toUpperCase(), itemName: (it.name || '').toUpperCase(), quantity: qty, lineTotal,
+          isCombo,
         });
+        // For a promo/combo, list the products it includes as indented sub-rows.
+        // They carry the component quantity but ₱0 — the combo row holds the price,
+        // so components are informational and don't double-count the grand total.
+        if (isCombo) {
+          for (const comp of it.comboItems) {
+            rows.push({
+              date: o.createdAt, orderNumber: o.orderNumber, paymentMethod: o.paymentMethod,
+              customerId, customerName,
+              itemCode: (codeByProductId[String(comp.productId)] || '').toUpperCase(),
+              itemName: (comp.name || '').toUpperCase() + (comp.sizeName ? ` (${comp.sizeName})` : ''),
+              quantity: (Number(comp.quantity) || 1) * qty, lineTotal: 0,
+              isComponent: true,
+            });
+          }
+        }
       }
     }
     const grandTotal = rows.reduce((s, r) => s + r.lineTotal, 0);

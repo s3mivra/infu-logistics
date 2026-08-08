@@ -2,6 +2,8 @@ import React from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+// Category routing default per business type — log routes to Logistics, fb to Kitchen.
+const DEFAULT_DEPARTMENT = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
 
 // ── ProductsTab — extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
@@ -296,7 +298,7 @@ export default function ProductsTab({ ctx }) {
                   {editingCategory ? 'Update' : 'Add'}
                 </button>
                 {editingCategory && (
-                  <button type="button" onClick={() => { setEditingCategory(null); setCatForm({ name: '', department: 'Kitchen' }); }} className="bg-white/10 text-fg/70 font-bold px-4 py-2 rounded-lg hover:bg-white/20 transition">
+                  <button type="button" onClick={() => { setEditingCategory(null); setCatForm({ name: '', department: DEFAULT_DEPARTMENT }); }} className="bg-white/10 text-fg/70 font-bold px-4 py-2 rounded-lg hover:bg-white/20 transition">
                     Cancel
                   </button>
                 )}
@@ -307,10 +309,10 @@ export default function ProductsTab({ ctx }) {
                   <div key={c._id} className="flex justify-between items-center p-3 border border-white/10 rounded-xl bg-surface-2">
                     <div>
                       <span className="font-bold text-sm text-fg block">{c.name}</span>
-                      <span className="text-[10px] uppercase font-bold text-fg/40 tracking-wider">Routes to: {c.department || 'Kitchen'}</span>
+                      <span className="text-[10px] uppercase font-bold text-fg/40 tracking-wider">Routes to: {c.department || DEFAULT_DEPARTMENT}</span>
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => { setEditingCategory(c); setCatForm({ name: c.name, department: c.department || 'Kitchen' }); }} className="text-fg/40 hover:text-brand p-1.5 rounded"><Edit size={16} /></button>
+                      <button onClick={() => { setEditingCategory(c); setCatForm({ name: c.name, department: c.department || DEFAULT_DEPARTMENT }); }} className="text-fg/40 hover:text-brand p-1.5 rounded"><Edit size={16} /></button>
                       <button onClick={() => deleteCategory(c._id)} className="text-red-400 hover:text-red-300 p-1.5 rounded"><Trash2 size={16} /></button>
                     </div>
                   </div>
@@ -753,8 +755,8 @@ export default function ProductsTab({ ctx }) {
                       <p className="text-[11px] text-fg/40 mt-0.5">{(c.items||[]).map(i => `${i.quantity>1?i.quantity+'× ':''}${i.name}${i.sizeName?` (${i.sizeName})`:''}`).join(' + ')}</p>
                     </div>
                     <div className="flex gap-1 shrink-0 ml-2">
-                      <button onClick={() => editCombo(c)} className="text-blue-300 hover:text-fg hover:bg-blue-600 text-xs font-bold px-2 py-1 bg-blue-900/30 rounded transition">Edit</button>
-                      <button onClick={() => deleteCombo(c._id)} className="text-red-400 hover:text-fg hover:bg-red-600 text-xs font-bold px-2 py-1 bg-red-900/30 rounded transition">Del</button>
+                      <button onClick={() => editCombo(c)} className="text-white hover:text-fg hover:bg-blue-600 text-xs font-bold px-2 py-1 bg-blue-500 rounded transition">Edit</button>
+                      <button onClick={() => deleteCombo(c._id)} className="text-white hover:text-fg hover:bg-red-600 text-xs font-bold px-2 py-1 bg-red-500 rounded transition">Del</button>
                     </div>
                   </div>
                 ))}

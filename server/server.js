@@ -983,6 +983,12 @@ items: [{
   // --- PARTIAL FULFILLMENT (logistics — single order, fulfilled in batches) ---
   amountPaid:       { type: Number, default: 0 },        // cash/AR collected so far
   depositRemaining: { type: Number, default: 0 },        // prepaid-but-unfulfilled value held as Customer Deposits
+  // When the remaining units of a partially-fulfilled order are dropped, the
+  // order finalizes as Completed at the fulfilled quantity and the dropped units
+  // are recorded here (they carry no ledger entries — they were never fulfilled).
+  droppedItems: [{ name: String, productCode: String, droppedQty: Number, price: Number }],
+  droppedBy:   { type: String, default: '' },
+  droppedAt:   { type: Date },
   clientReceived:   { type: Boolean, default: false },   // client confirmed receipt from the portal
   transactionType: { type: String, enum: ['NORMAL', 'COMPLIMENTARY', 'REFUND', 'VOID'], default: 'NORMAL' },
   isComplimentary: { type: Boolean, default: false },

@@ -417,7 +417,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       const catDeptMap = Object.fromEntries(cats.map(c => [c.name, c.department || 'Kitchen']));
       const prodCatMap = Object.fromEntries(prods.map(p => [p._id.toString(), p.category]));
       const prodCodeMap = Object.fromEntries(prods.map(p => [p._id.toString(), p.productCode]));
-      const defaultDept = BUSINESS_TYPE === 'log' ? 'Storage Room' : 'Kitchen';
+      const defaultDept = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
       const deptOf = (pid) => { const cat = prodCatMap[pid]; return cat ? (catDeptMap[cat] || defaultDept) : null; };
       for (const item of items) {
         if (item.productId && prodCodeMap[item.productId]) {
@@ -878,6 +878,32 @@ app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
             if (comp.sizeName) {
               const sz = compProduct.sizes?.find(s => s.name === comp.sizeName);
               if (sz?.recipe?.length) compRecipe = sz.recipe;
+            }
+            // LOGISTICS 1:1 FALLBACK for combo components: a component product with
+            // no recipe is a stocked good linked by code/name. Without this, combos
+            // of logistics products deduct nothing and post zero COGS.
+            if (!compRecipe.some(r => r.invId)) {
+              const linkInv = await resolveLinkedInventory(compProduct, compProduct.productCode, session);
+              if (linkInv) {
+                const deductQty = (comp.quantity || 1) * item.quantity * baseUnitsPerSale(compProduct, linkInv);
+                const updated = await Inventory.findOneAndUpdate(
+                  { _id: linkInv._id, stockQty: { $gte: deductQty } },
+                  { $inc: { stockQty: -deductQty } },
+                  { session, returnDocument: 'after' }
+                );
+                if (!updated) {
+                  await session.abortTransaction(); session.endSession();
+                  return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for combo "${item.name}": [${linkInv.itemName}] would drop below zero.` });
+                }
+                stockCardBatch.push({
+                  inventoryId: updated._id, itemName: updated.itemName, type: 'Sale',
+                  reference: mkRef('', order.orderNumber), qtyChange: -deductQty, balanceAfter: updated.stockQty,
+                  remarks: `Sold via Combo (${item.name} → ${comp.name})`
+                });
+                totalCogs += (linkInv.unitCost * deductQty);
+                if (updated.stockQty <= 0) depletedInvIds.add(String(linkInv._id));
+              }
+              continue; // component handled via 1:1 fallback
             }
             for (const ing of compRecipe) {
               if (!ing.invId) continue;
@@ -1576,43 +1602,89 @@ app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (re
     if (order.isComplimentary) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Complimentary orders cannot be partially fulfilled.' }); }
     if (!['Pending', 'Preparing', 'Ready', 'Partially Fulfilled'].includes(order.status)) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Only open orders can be partially fulfilled.' }); }
 
-    // Net (post-product-discount) unit price drives revenue so totals match order.total.
-    const netUnit = (it) => +((it.price || 0) * (1 - (it.productDiscountPercent || 0) / 100)).toFixed(4);
+    // Per-unit gross / discount / net — mirrors the full-completion per-line rules
+    // so a partial batch books exactly like the same slice of a normal sale:
+    // a per-item promo/client rate or cashier override wins for that line,
+    // otherwise the order-level SC/PWD or Promo applies. Net drives cash, gross
+    // drives revenue, and the difference posts to Sales Discounts.
+    const lineUnit = (it) => {
+      const addOnPer = (it.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
+      const gross = (it.price || 0) + addOnPer;
+      const linePct = Math.max(Number(it.productDiscountPercent || 0), Number(it.discountPercent || 0));
+      let disc = 0;
+      if (linePct > 0) disc = gross * (linePct / 100);
+      else if (it.hasDiscount !== false && (order.discountPercent || 0) > 0) disc = gross * (order.discountPercent / 100);
+      return { gross: +gross.toFixed(4), disc: +disc.toFixed(4), net: +(gross - disc).toFixed(4) };
+    };
 
     // Units to fulfill this round per line, clamped to what's still outstanding.
     const wantMap = new Map((fulfill || []).map(f => [Number(f.index), Math.max(0, Number(f.qty) || 0)]));
     const deltas = [];
-    let deltaValue = 0;
+    let grossValue = 0, discountValue = 0, netValue = 0;
     order.items.forEach((it, i) => {
       const remaining = (it.quantity || 0) - (it.fulfilledQty || 0);
       const want = Math.min(remaining, wantMap.has(i) ? wantMap.get(i) : remaining);
-      if (want > 0) { deltas.push({ i, want }); deltaValue += netUnit(it) * want; }
+      if (want > 0) {
+        const u = lineUnit(it);
+        deltas.push({ i, want });
+        grossValue += u.gross * want; discountValue += u.disc * want; netValue += u.net * want;
+      }
     });
-    deltaValue = +deltaValue.toFixed(2);
+    grossValue = +grossValue.toFixed(2); discountValue = +discountValue.toFixed(2); netValue = +netValue.toFixed(2);
+    const deltaValue = netValue; // net cash collectible for this round
     if (deltas.length === 0 || deltaValue <= 0) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Nothing to fulfill this round.' }); }
 
-    // Deduct inventory + COGS for the units fulfilled now (logistics 1:1 model).
+    // Deduct inventory + COGS for the units fulfilled now. Handles combos (deduct
+    // each component's stock) and normal logistics 1:1 lines.
     let totalCogs = 0; const stockCardBatch = [];
+    const deductInv = async (invId, qty, label) => {
+      const upd = await Inventory.findOneAndUpdate(
+        { _id: invId, stockQty: { $gte: qty } },
+        { $inc: { stockQty: -qty } },
+        { session, returnDocument: 'after' }
+      );
+      if (!upd) { await session.abortTransaction(); session.endSession(); res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for ${label}.` }); return null; }
+      totalCogs += (upd.unitCost || 0) * qty;
+      stockCardBatch.push({ inventoryId: upd._id, itemName: upd.itemName, type: 'Sale', reference: mkRef('', order.orderNumber), qtyChange: -qty, balanceAfter: upd.stockQty, remarks: label });
+      return upd;
+    };
     for (const { i, want } of deltas) {
       const it = order.items[i];
+      // COMBO line: deduct each component's stock, scaled by the units fulfilled now.
+      if (it.isCombo && Array.isArray(it.comboItems) && it.comboItems.length) {
+        for (const comp of it.comboItems) {
+          const compProduct = await Product.findById(comp.productId).session(session);
+          if (!compProduct) continue;
+          let compRecipe = compProduct.baseRecipe || [];
+          if (comp.sizeName) { const sz = compProduct.sizes?.find(s => s.name === comp.sizeName); if (sz?.recipe?.length) compRecipe = sz.recipe; }
+          if (!compRecipe.some(r => r.invId)) {
+            const linkInv = await resolveLinkedInventory(compProduct, compProduct.productCode, session);
+            if (linkInv) {
+              const deduct = (comp.quantity || 1) * want * baseUnitsPerSale(compProduct, linkInv);
+              if (!(await deductInv(linkInv._id, deduct, `Partial fulfillment combo (${it.name} → ${comp.name})`))) return;
+            }
+            continue;
+          }
+          for (const ing of compRecipe) {
+            if (!ing.invId) continue;
+            const deduct = ing.qty * (comp.quantity || 1) * want;
+            if (!(await deductInv(ing.invId, deduct, `Partial fulfillment combo (${it.name} → ${comp.name})`))) return;
+          }
+        }
+        continue;
+      }
+      // NORMAL line: logistics 1:1 link.
       const product = it.productId
         ? await Product.findById(it.productId).session(session)
         : await Product.findOne({ name: it.name }).session(session);
       const linkInv = await resolveLinkedInventory(product, it.productCode, session);
       if (!linkInv) continue;
       const deduct = want * baseUnitsPerSale(product, linkInv);
-      const upd = await Inventory.findOneAndUpdate(
-        { _id: linkInv._id, stockQty: { $gte: deduct } },
-        { $inc: { stockQty: -deduct } },
-        { session, returnDocument: 'after' }
-      );
-      if (!upd) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for ${linkInv.itemName}.` }); }
-      totalCogs += linkInv.unitCost * deduct;
-      stockCardBatch.push({ inventoryId: upd._id, itemName: upd.itemName, type: 'Sale', reference: mkRef('', order.orderNumber), qtyChange: -deduct, balanceAfter: upd.stockQty, remarks: `Partial fulfillment (${it.name})` });
+      if (!(await deductInv(linkInv._id, deduct, `Partial fulfillment (${it.name})`))) return;
     }
     if (stockCardBatch.length) await StockCard.insertMany(stockCardBatch, { session });
 
-    const goodsTotal = +order.items.reduce((s, it) => s + netUnit(it) * (it.quantity || 0), 0).toFixed(2);
+    const goodsTotal = +order.items.reduce((s, it) => s + lineUnit(it).net * (it.quantity || 0), 0).toFixed(2);
     const cash = debitAccountFor(paymentMethod || order.paymentMethod || 'Cash');
     const lines = [];
 
@@ -1646,11 +1718,24 @@ app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (re
       lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: +totalCogs.toFixed(2) });
     }
 
-    const reference = `${order.orderNumber}-PF${Date.now().toString(36).toUpperCase()}`;
+    // 4) Discount (promo / SC-PWD / per-item) for the units fulfilled now — gross
+    //    up revenue so it reflects list price and post the reduction to Sales
+    //    Discounts, exactly like a normal completed sale. Cash already reflects net.
+    if (discountValue > 0.005) {
+      lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: discountValue, credit: 0 });
+      lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: discountValue });
+    }
+
+    // Uniform reference: every posting for an order shares the order number (the
+    // source-document reference), exactly like a normal completed sale. The round
+    // number and pay-mode live in the description, so the ledger groups all of an
+    // order's entries together instead of scattering them under -PF{hash} refs.
+    const reference = order.orderNumber;
+    const priorRounds = await JournalEntry.countDocuments({ reference, description: { $regex: '^Partial fulfillment' } }).session(session);
     const totalDebit = +lines.reduce((s, l) => s + l.debit, 0).toFixed(2);
     const totalCredit = +lines.reduce((s, l) => s + l.credit, 0).toFixed(2);
     assertBalanced(lines, reference);
-    await JournalEntry.create([{ reference, description: `Partial fulfillment (${mode === 'full' ? 'pay full' : 'pay partial'}): ${order.orderNumber}`, lines, totalDebit, totalCredit }], { session });
+    await JournalEntry.create([{ reference, description: `Partial fulfillment round ${priorRounds + 1} (${mode === 'full' ? 'pay full' : 'pay partial'}): ${order.orderNumber}`, lines, totalDebit, totalCredit }], { session });
 
     // Apply fulfilled units and advance status on the SAME order.
     for (const { i, want } of deltas) order.items[i].fulfilledQty = (order.items[i].fulfilledQty || 0) + want;
@@ -1670,6 +1755,76 @@ app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (re
     await session.abortTransaction();
     session.endSession();
     log.error({ err }, 'POST /api/orders/:id/partial-fulfill failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// --- DROP REMAINING (logistics) — finalize a partially-fulfilled order ---------
+// The units already fulfilled are DONE and posted to the ledger; only the
+// not-yet-fulfilled units are dropped. The order finalizes as Completed at the
+// fulfilled quantity — the fulfilled revenue/COGS stay exactly as posted, and
+// the dropped units carry NO ledger entries because they were never fulfilled.
+// The one money movement is refunding any prepaid-but-undelivered deposit
+// (only possible when an earlier batch was paid in 'full' mode).
+app.post('/api/orders/:id/drop-remaining', verifyToken, requireStaff, async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const order = await Order.findById(req.params.id).session(session);
+    if (!order) { await session.abortTransaction(); session.endSession(); return res.status(404).json({ success: false, error: 'Order not found.' }); }
+    if (order.status !== 'Partially Fulfilled') { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Only a partially-fulfilled order can have its remaining dropped.' }); }
+
+    const netUnit = (it) => +((it.price || 0) * (1 - (it.productDiscountPercent || 0) / 100)).toFixed(4);
+
+    // Record the dropped units, then shrink each line to what was fulfilled.
+    const droppedItems = [];
+    for (const it of order.items) {
+      const dropped = Math.max(0, (it.quantity || 0) - (it.fulfilledQty || 0));
+      if (dropped > 0) droppedItems.push({ name: it.name, productCode: it.productCode || '', droppedQty: dropped, price: it.price || 0 });
+      it.quantity = it.fulfilledQty || 0;
+    }
+    // Lines that delivered nothing drop off the completed order entirely.
+    order.items = order.items.filter(it => (it.quantity || 0) > 0);
+    order.markModified('items');
+
+    // Refund any prepaid-but-undelivered value (deposit) back to cash.
+    if ((order.depositRemaining || 0) > 0.005) {
+      const cash = debitAccountFor(order.paymentMethod || 'Cash');
+      const refund = +order.depositRemaining.toFixed(2);
+      const lines = [
+        { accountCode: '260000', accountName: 'Customer Deposits', debit: refund, credit: 0 },
+        { accountCode: cash.code, accountName: cash.name, debit: 0, credit: refund },
+      ];
+      const reference = order.orderNumber;
+      assertBalanced(lines, reference);
+      await JournalEntry.create([{ reference, description: `Deposit refund on dropped remainder: ${order.orderNumber}`, lines, totalDebit: refund, totalCredit: refund }], { session });
+      order.amountPaid = +Math.max(0, (order.amountPaid || 0) - refund).toFixed(2);
+      order.depositRemaining = 0;
+    }
+
+    // Recompute the header to the fulfilled goods value so it matches the revenue
+    // already recognised (logistics = Non-VAT, so total == fulfilled goods value).
+    const fulfilledValue = +order.items.reduce((s, it) => s + netUnit(it) * (it.quantity || 0), 0).toFixed(2);
+    order.subtotal = fulfilledValue;
+    order.total = fulfilledValue;
+
+    order.droppedItems = droppedItems;
+    order.droppedBy = req.user?.name || 'system';
+    order.droppedAt = new Date();
+    order.status = 'Completed';
+    await order.save({ session });
+
+    await logAudit(req, { action: 'drop-remaining', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, droppedItems, droppedBy: order.droppedBy } });
+
+    await session.commitTransaction();
+    session.endSession();
+    emitToMgr('erpUpdated');
+    emitToOps('orderUpdated', order);
+    res.json({ success: true, order });
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    log.error({ err }, 'POST /api/orders/:id/drop-remaining failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });

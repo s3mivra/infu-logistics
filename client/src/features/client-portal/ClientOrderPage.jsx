@@ -4,6 +4,7 @@ import { io } from 'socket.io-client';
 import * as ui from '../../shared/ui';
 import { loadSession, clearSession, saveSession, loadDraft, saveDraft } from './clientSession';
 import { CLIENT_THEMES, applyClientTheme, cachedClientTheme, clearClientTheme } from './clientTheme';
+import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import {
   Package, ShoppingCart, Plus, Minus, X, LogOut, CheckCircle,
   CreditCard, Loader2, ChevronLeft, Search, Download, FileText, Menu, Megaphone,
@@ -400,101 +401,48 @@ export default function ClientOrderPage() {
     (s, i) => s + Number(i.price || 0) * (1 - Number(i.discountPercent || 0) / 100) * Number(i.quantity || 0), 0
   ), []);
 
-  // Renders the slip as a proper document: letterhead, bill-to / order meta,
-  // a ruled item table, then totals and terms — the same structure as the
-  // on-screen slip so the PDF is recognisably the same piece of paper.
+  // Renders the slip using the SAME shared A4 document template as the staff-side
+  // order slip / billing statement, so the client's copy is the identical layout.
+  // Letterhead/terms/deposit all come from the portal settings.
   const downloadOrderSlip = useCallback(async (order) => {
     setSlipDownloading(true);
     try {
-      const jsPDF = await loadPdfLib();
-      const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-      const L = 16, R = 194, W = R - L;
-      let y = 20;
-
-      const line = (yy) => { doc.setDrawColor(210); doc.setLineWidth(0.2); doc.line(L, yy, R, yy); };
-      const label = (t, x, yy) => { doc.setFontSize(7.5); doc.setTextColor(130); doc.setFont(undefined, 'bold'); doc.text(String(t).toUpperCase(), x, yy); };
-      const value = (t, x, yy, size = 9.5) => { doc.setFontSize(size); doc.setTextColor(20); doc.setFont(undefined, 'normal'); doc.text(String(t), x, yy); };
-
-      // ── Letterhead ──
-      doc.setFontSize(17); doc.setFont(undefined, 'bold'); doc.setTextColor(20);
-      doc.text(companyName, L, y);
-      doc.setFontSize(10); doc.setFont(undefined, 'bold'); doc.setTextColor(120);
-      doc.text('ORDER SLIP', R, y, { align: 'right' });
-      y += 5;
-      doc.setFontSize(8); doc.setFont(undefined, 'normal'); doc.setTextColor(130);
-      const contact = [companyAddress, companyPhone, companyEmail].filter(Boolean);
-      contact.forEach(c => { doc.text(c, L, y); y += 4; });
-      y += 2; line(y); y += 7;
-
-      // ── Bill to / order meta, two columns ──
-      const colR = L + W / 2;
-      label('Billed to', L, y); label('Order details', colR, y); y += 5;
-      value(clientInfo?.name || clientInfo?.username || 'Client', L, y, 10);
-      value(`No.  ${order.orderNumber}`, colR, y, 10); y += 5;
-      if (clientInfo?.clientCode) { value(`Client code: ${clientInfo.clientCode}`, L, y, 8.5); }
-      value(`Placed: ${new Date(order.createdAt).toLocaleString()}`, colR, y, 8.5); y += 4.5;
-      if (order.billingNumber) { value(`Billing: ${order.billingNumber}`, colR, y, 8.5); y += 4.5; }
-      value(`Status: ${STATUS_VIEW(order.status).label}`, colR, y, 8.5); y += 4.5;
-      if (order.paymentMethod) { value(`Payment: ${order.paymentMethod}`, colR, y, 8.5); y += 4.5; }
-      y += 4;
-
-      // ── Item table (always priced — see the on-screen slip for why) ──
-      const xQty = R - 62;
-      doc.setFillColor(242); doc.rect(L, y - 4.5, W, 7, 'F');
-      label('#', L + 1.5, y); label('Item', L + 9, y);
-      doc.setFontSize(7.5); doc.setTextColor(130); doc.setFont(undefined, 'bold');
-      doc.text('QTY', xQty, y, { align: 'right' });
-      doc.text('UNIT', R - 34, y, { align: 'right' });
-      doc.text('AMOUNT', R - 1.5, y, { align: 'right' });
-      y += 7;
-
-      const items = order.items || [];
-      items.forEach((it, idx) => {
-        if (y > 258) { doc.addPage(); y = 20; }
+      const items = (order.items || []).map((it, idx) => {
         const pct = Number(it.discountPercent || 0);
         const unit = Number(it.price || 0) * (1 - pct / 100);
-        value(String(idx + 1), L + 1.5, y, 9);
-        const name = doc.splitTextToSize(String(it.name || ''), xQty - 24);
-        value(name[0], L + 9, y, 9);
-        doc.text(String(it.quantity ?? 0), xQty, y, { align: 'right' });
-        doc.text(peso(unit), R - 34, y, { align: 'right' });
-        doc.text(peso(unit * Number(it.quantity || 0)), R - 1.5, y, { align: 'right' });
-        y += 5.5;
-        // Wrapped remainder of a long product name.
-        name.slice(1).forEach(extra => { value(extra, L + 9, y, 9); y += 4.5; });
-        if (pct > 0) {
-          doc.setFontSize(7.5); doc.setTextColor(140); doc.setFont(undefined, 'normal');
-          doc.text(`list ${peso(Number(it.price || 0))} · less ${pct}%`, L + 9, y - 1);
-          y += 4;
-        }
-        doc.setDrawColor(235); doc.setLineWidth(0.15); doc.line(L, y - 2, R, y - 2);
+        return {
+          code: it.productCode || String(idx + 1),
+          desc: String(it.name || '') + (pct > 0 ? ` (list ${peso(Number(it.price || 0))}, less ${pct}%)` : ''),
+          qty: it.quantity ?? 0,
+          unitPrice: unit,
+          total: unit * Number(it.quantity || 0),
+        };
       });
-      if (!items.length) { value('No items on this order.', L + 9, y, 9); y += 6; }
-
-      y += 3;
-      // ── Totals ──
-      const totalQty = items.reduce((s, i) => s + Number(i.quantity || 0), 0);
-      label('Total quantity', L, y); value(String(totalQty), L + 32, y, 9.5);
-      doc.setFontSize(11); doc.setFont(undefined, 'bold'); doc.setTextColor(20);
-      doc.text(`TOTAL  ${peso(orderTotal(order))}`, R, y, { align: 'right' });
-      y += 8; line(y); y += 6;
-
-      // ── Notes & terms ──
-      if (order.orderNotes) {
-        label('Notes', L, y); y += 4.5;
-        doc.splitTextToSize(String(order.orderNotes), W).forEach(t => { value(t, L, y, 8.5); y += 4.2; });
-        y += 3;
-      }
-      doc.setFontSize(8); doc.setTextColor(130); doc.setFont(undefined, 'italic');
-      doc.splitTextToSize(slipFooter, W).forEach(t => { doc.text(t, L, y); y += 4; });
-
-      doc.save(`${order.orderNumber}-order-slip.pdf`);
+      printBillingDoc(buildBillingDocHTML({
+        docTitle: 'ORDER SLIP',
+        dateLabel: 'Placed',
+        dateStr: new Date(order.createdAt).toLocaleString(),
+        settings: portal,
+        metaFields: [
+          { label: 'Billed To', value: clientInfo?.name || clientInfo?.username || 'Client' },
+          { label: 'Client Code', value: clientInfo?.clientCode || '' },
+          { label: 'Order No.', value: order.orderNumber },
+        ],
+        subFields: [
+          { label: 'Status', value: STATUS_VIEW(order.status).label },
+          ...(order.billingNumber ? [{ label: 'Billing No.', value: order.billingNumber }] : []),
+          ...(order.paymentMethod ? [{ label: 'Payment', value: order.paymentMethod }] : []),
+        ],
+        schedRows: order.orderNotes ? [{ label: 'Notes:', value: order.orderNotes }] : [],
+        items,
+        totals: [{ label: 'TOTAL', value: orderTotal(order), grand: true }],
+      }));
     } catch {
       ui.alert('Could not generate the slip. Please try again.');
     } finally {
       setSlipDownloading(false);
     }
-  }, [companyName, portal, clientInfo, slipFooter, orderTotal]);
+  }, [portal, clientInfo, orderTotal]);
 
   // Cart helpers
   const addToCart = useCallback((product) => {
@@ -780,6 +728,13 @@ export default function ClientOrderPage() {
                   <div className="text-right shrink-0">
                     <p className="text-[10px] font-black uppercase tracking-[0.18em] text-accent">Order Slip</p>
                     <p className="font-mono font-black text-sm mt-0.5">{slipOrder.orderNumber}</p>
+                    <span className={`inline-block mt-1.5 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                      terminated ? 'bg-red-100 text-red-700'
+                      : stepIdx >= 4 ? 'bg-emerald-100 text-emerald-700'
+                      : slipOrder.status === 'Partially Fulfilled' ? 'bg-blue-100 text-blue-700'
+                      : 'bg-amber-100 text-amber-800'}`}>
+                      {v.label}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -837,6 +792,19 @@ export default function ClientOrderPage() {
                     })}
                   </ol>
                 )}
+                {/* Partial dispatch: the rail sits at Preparing, so spell out that
+                    some units are already out while the rest are still being prepared,
+                    otherwise the timeline looks stuck and contradicts the badge. */}
+                {slipOrder.status === 'Partially Fulfilled' && (() => {
+                  const doneU = (slipOrder.items || []).reduce((s, it) => s + (it.fulfilledQty || 0), 0);
+                  const totU  = (slipOrder.items || []).reduce((s, it) => s + (it.quantity || 0), 0);
+                  return (
+                    <p className="text-[11px] font-bold text-blue-600 mt-2.5 flex items-center gap-1">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500" />
+                      Partial dispatch — {doneU} of {totU} unit{totU === 1 ? '' : 's'} delivered; the rest are being prepared.
+                    </p>
+                  );
+                })()}
               </div>
 
               {/* Item table.
@@ -869,6 +837,16 @@ export default function ClientOrderPage() {
                             <> · <span className="line-through">{peso(gross)}</span> <span className="font-bold">-{pct}%</span></>
                           )}
                         </span>
+                        {slipOrder.status === 'Partially Fulfilled' && (item.fulfilledQty || 0) > 0 && (item.fulfilledQty || 0) < (item.quantity || 0) && (
+                          <span className="text-[10px] font-black block mt-0.5">
+                            <span className="text-emerald-600">Fulfilled: {item.fulfilledQty}</span>
+                            <span className="text-neutral-400"> | </span>
+                            <span className="text-amber-600">Remaining: {Math.max(0, (item.quantity || 0) - (item.fulfilledQty || 0))}</span>
+                          </span>
+                        )}
+                        {slipOrder.status === 'Partially Fulfilled' && (item.fulfilledQty || 0) >= (item.quantity || 0) && (item.quantity || 0) > 0 && (
+                          <span className="text-[10px] font-black block mt-0.5 text-emerald-600">✓ Fulfilled: {item.quantity}</span>
+                        )}
                       </span>
                       <span className="text-right tabular-nums font-semibold">{item.quantity}</span>
                       <span className="text-right tabular-nums font-semibold">{peso(unit * Number(item.quantity || 0))}</span>

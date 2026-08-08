@@ -180,19 +180,38 @@ export default function registerProducts(ctx) {
 app.get('/api/categories', async (req, res) => {
   try {
     // Tenancy: only return rows belonging to this server's business type.
-    const categories = await Category.find({ businessType: BUSINESS_TYPE }).lean();
+    const categories = await Category.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).lean();
     res.json({ success: true, categories });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
+// Routing departments are mutually exclusive per business type: fb routes to
+// Kitchen/Bar, log to Logistics/Warehouse. A department from the other type
+// (e.g. 'Kitchen' on a log deployment) is coerced to this type's default rather
+// than rejected — keeping the invariant without failing the request. Returns the
+// department to store, or null when omitted (so the schema's per-type default applies).
+const DEPTS_BY_TYPE = { log: ['Logistics', 'Warehouse'], fb: ['Kitchen', 'Bar'] };
+function validDepartment(dept) {
+  const allowed = DEPTS_BY_TYPE[BUSINESS_TYPE] || DEPTS_BY_TYPE.fb;
+  if (dept == null || dept === '') return null;      // omitted → schema default
+  if (!allowed.includes(dept)) return allowed[0];    // wrong-type → coerce to default
+  return dept;
+}
+
 app.post('/api/categories', verifyToken, requireStaff, async (req, res) => {
   try {
-    // Save the department along with the name
+    const department = validDepartment(req.body.department);
+    // Stamp businessType/tenant so the row survives the scoped GET filter above —
+    // without this a new category is saved untagged and vanishes from the list.
+    // Let the schema default set the department (Logistics for log, Kitchen for fb)
+    // when none is supplied, instead of forcing 'Kitchen' onto log deployments.
     const newCat = await Category.create({
       name: req.body.name,
-      department: req.body.department || 'Kitchen'
+      ...(department ? { department } : {}),
+      businessType: BUSINESS_TYPE,
+      ...tenantScope(req),
     });
     emitToAll('menuUpdated');
     res.json({ success: true, category: newCat });
@@ -204,9 +223,14 @@ app.post('/api/categories', verifyToken, requireStaff, async (req, res) => {
 // --- NEW: UPDATE CATEGORY ROUTE ---
 app.put('/api/categories/:id', verifyToken, requireStaff, async (req, res) => {
   try {
+    const department = validDepartment(req.body.department);
+    // Only overwrite department when one was supplied; otherwise leave the stored
+    // value untouched (a bare rename shouldn't blank the routing).
+    const update = { name: req.body.name };
+    if (department) update.department = department;
     const updated = await Category.findByIdAndUpdate(
-      req.params.id, 
-      { name: req.body.name, department: req.body.department }, 
+      req.params.id,
+      update,
       { returnDocument: 'after' }
     );
     emitToAll('menuUpdated');
@@ -520,7 +544,15 @@ app.post('/api/combos', verifyToken, requireSuperAdmin, validate(comboSchema), a
   try {
     if (!req.body.name || !(req.body.price > 0)) return res.status(400).json({ success: false, error: 'Name and a positive price are required.' });
     if (!Array.isArray(req.body.items) || req.body.items.length === 0) return res.status(400).json({ success: false, error: 'A combo needs at least one component product.' });
-    req.body.comboCode = await generateNextSequence(Combo, 'CMB', 'comboCode');
+    // Promo/combo codes read "C10001", "C10002"… — a distinct C-series so they
+    // stand apart from product/stock codes on slips and in the ledger. Reuse the
+    // lowest freed number: if C10001 was deleted, the next new combo takes it back
+    // (no ever-growing gaps), which is what an operator expects from a short code.
+    const existing = await Combo.find({ comboCode: /^C\d+$/ }, { comboCode: 1 }).lean();
+    const used = new Set(existing.map(c => parseInt(c.comboCode.slice(1), 10)).filter(n => !Number.isNaN(n)));
+    let n = 10001;
+    while (used.has(n)) n++;
+    req.body.comboCode = `C${n}`;
     const combo = await Combo.create(req.body);
     emitToAll('menuUpdated');
     res.json({ success: true, combo });

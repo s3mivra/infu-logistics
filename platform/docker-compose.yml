@@ -24,6 +24,10 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./tenants-caddy:/etc/caddy/tenants
+      # Per-tenant access logs. A bind mount, not a named volume, so the control
+      # plane can read them straight off the host (it already mounts STACK_ROOT)
+      # without needing to exec into this container.
+      - ./caddy-logs:/var/log/caddy
       - caddy-data:/data
       - caddy-config:/config
     networks: [semivra-net]

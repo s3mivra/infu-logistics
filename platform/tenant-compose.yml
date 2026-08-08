@@ -11,7 +11,17 @@ services:
     build: ${STACK_ROOT}/server
     image: semivra-api:${TENANT}
     restart: unless-stopped
+    # Hard ceiling. Without it one tenant's runaway report query can exhaust the
+    # box and take every other client down with it. The kernel OOM-kills this
+    # container instead, and `restart: unless-stopped` brings it back.
+    # NODE_OPTIONS keeps V8's heap under the cgroup limit so Node garbage-collects
+    # rather than getting killed — set to ~75% of MEM_LIMIT by the control plane.
+    mem_limit: ${MEM_LIMIT:-1g}
+    # Relative weight under contention only; it reserves nothing and does not cap
+    # a tenant when the CPUs are otherwise idle. 1024 is Docker's default.
+    cpu_shares: ${CPU_SHARES:-1024}
     environment:
+      NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=768}
       NODE_ENV: production
       PORT: 5002
       BUSINESS_TYPE: ${VITE_BUSINESS_TYPE}
@@ -51,6 +61,11 @@ services:
         VITE_BILLING_ACCOUNT_NO: ${VITE_BILLING_ACCOUNT_NO}
     image: semivra-web:${TENANT}
     restart: unless-stopped
+    # nginx serving a static bundle needs very little; this is a guard against a
+    # pathological case, not a tuning knob. MEM_LIMIT is the tenant's real budget
+    # and applies to the API, which is where the memory actually goes.
+    mem_limit: ${WEB_MEM_LIMIT:-128m}
+    cpu_shares: ${CPU_SHARES:-1024}
     depends_on:
       api:
         condition: service_healthy

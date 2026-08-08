@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText } from 'lucide-react';
+import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer } from 'lucide-react';
 
 // ── SettingsTab — system preferences & account controls ───────────────────────
 // Houses the toggles that used to live crammed in the sidebar's "Tools" dropdown
@@ -328,6 +328,71 @@ export default function SettingsTab({ ctx }) {
                   onSave={v => saveSetting?.('portalSlipFooter', v)} />
               </div>
             </div>
+          </Card>
+        )}
+
+        {/* Printer Settings — superadmin only. Log prints an ORIGINAL + DUPLICATE
+            A4 document on order payment (format & paper size below). fb prints a
+            single thermal receipt by default (fast food / bar / restaurant);
+            the duplicate copy is optional and off unless toggled on. */}
+        {isSuperAdmin && (
+          <Card title="Printer Settings">
+            {BUSINESS_TYPE === 'log' ? (
+              <div className="flex items-start gap-4 px-4 py-4">
+                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                  <Printer size={16} />
+                </div>
+                <div className="flex-1 min-w-0 space-y-3">
+                  <div>
+                    <p className="font-bold text-fg text-sm">Receipt format &amp; paper</p>
+                    <p className="text-fg/40 text-xs mt-0.5 leading-snug">What prints when an order is paid, and on what paper. The A4 document always prints an original and a duplicate.</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-fg/60 mb-1.5">Receipt format</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { v: 'billing', label: 'Billing / A4' },
+                        { v: 'thermal', label: 'Thermal 80mm' },
+                        { v: 'both', label: 'Both' },
+                      ].map(opt => {
+                        const active = (systemSettings.logReceiptFormat || 'billing') === opt.v;
+                        return (
+                          <button key={opt.v} onClick={() => saveSetting?.('logReceiptFormat', opt.v)}
+                            className={`px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
+                              active ? 'bg-brand text-white border-brand' : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                            }`}>
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-fg/60 mb-1.5">Print size (A4 document)</p>
+                    <div className="grid grid-cols-4 gap-2">
+                      {['A4', 'Letter', 'Legal', 'A5'].map(sz => {
+                        const active = (systemSettings.portalPrintSize || 'A4') === sz;
+                        return (
+                          <button key={sz} onClick={() => saveSetting?.('portalPrintSize', sz)}
+                            className={`px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
+                              active ? 'bg-brand text-white border-brand' : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                            }`}>
+                            {sz}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <SettingRow icon={Printer} title="Duplicate Copy"
+                desc={systemSettings.fbDuplicateReceipt === true
+                  ? 'Each receipt prints twice — an original and a duplicate.'
+                  : 'A single receipt prints per order (typical for fast food, bars & restaurants).'}>
+                <Toggle on={systemSettings.fbDuplicateReceipt === true} onChange={() => saveSetting?.('fbDuplicateReceipt', !(systemSettings.fbDuplicateReceipt === true))} />
+              </SettingRow>
+            )}
           </Card>
         )}
 
