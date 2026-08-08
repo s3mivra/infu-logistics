@@ -23,6 +23,7 @@ import { addBatch, consumeBatches, soonestExpiry, sortBatchesFEFO, batchesTotal 
 import { requireStaff, evaluateClientAccess, requirePermission, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS, setCustomRolePermissions } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { validateDateRange } from './lib/reportRange.js';
+import { initErrorLog } from './lib/errorLog.js';
 import registerTenants from './features/tenants.js';
 import registerAddons from './features/addons.js';
 import registerUsers from './features/users.js';
@@ -700,7 +701,10 @@ mongoose.connect(process.env.MONGO_URI, {
   socketTimeoutMS: 45000,
   maxPoolSize: 20,
 })
-  .then(runStartupTasks)
+  // The capped error collection has to be registered once the connection is up;
+  // captureError() is a no-op until then, so early boot errors are simply not
+  // recorded rather than crashing the process.
+  .then(() => { initErrorLog(); return runStartupTasks(); })
   .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
   // --- 🔒 NEW: JWT MIDDLEWARE 🔒 ---
@@ -979,6 +983,12 @@ items: [{
   // --- PARTIAL FULFILLMENT (logistics — single order, fulfilled in batches) ---
   amountPaid:       { type: Number, default: 0 },        // cash/AR collected so far
   depositRemaining: { type: Number, default: 0 },        // prepaid-but-unfulfilled value held as Customer Deposits
+  // When the remaining units of a partially-fulfilled order are dropped, the
+  // order finalizes as Completed at the fulfilled quantity and the dropped units
+  // are recorded here (they carry no ledger entries — they were never fulfilled).
+  droppedItems: [{ name: String, productCode: String, droppedQty: Number, price: Number }],
+  droppedBy:   { type: String, default: '' },
+  droppedAt:   { type: Date },
   clientReceived:   { type: Boolean, default: false },   // client confirmed receipt from the portal
   transactionType: { type: String, enum: ['NORMAL', 'COMPLIMENTARY', 'REFUND', 'VOID'], default: 'NORMAL' },
   isComplimentary: { type: Boolean, default: false },
@@ -1443,6 +1453,11 @@ const ClientAccountSchema = new mongoose.Schema({
   // Whether either limit is enforced at all is decided by the `creditLimitMode`
   // setting; see resolveCreditLimit().
   creditLimit:   { type: Number, default: null },
+  // The client's OWN portal appearance, stored on the account so it follows them
+  // across devices. Deliberately separate from the staff-side `dash.theme`
+  // (per-device localStorage): a shop changing its POS theme must not restyle
+  // its customers' portals. null = follow the shipped default.
+  theme:         { type: String, enum: ['default', 'light', 'yellow', 'ocean', null], default: null },
 }, { timestamps: true });
 const ClientAccount = mongoose.model('ClientAccount', ClientAccountSchema);
 

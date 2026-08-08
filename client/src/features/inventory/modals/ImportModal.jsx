@@ -29,11 +29,11 @@ export default function ImportModal() {
             const errCount = importRows.filter(r => r._error).length;
             return (
               <div className="px-5 py-3 flex flex-wrap gap-2 border-b border-white/10 shrink-0">
-                <span className="text-[10px] font-black uppercase tracking-widest bg-blue-500/20 text-blue-300 px-2.5 py-1.5 rounded">NEW · {newCount}</span>
-                {batchCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-purple-500/20 text-purple-300 px-2.5 py-1.5 rounded">NEW BATCH · {batchCount}</span>}
-                <span className="text-[10px] font-black uppercase tracking-widest bg-green-500/20 text-green-300 px-2.5 py-1.5 rounded">↑ INCREASE · {upCount}</span>
-                <span className="text-[10px] font-black uppercase tracking-widest bg-red-500/20 text-red-300 px-2.5 py-1.5 rounded">↓ DECREASE · {downCount}</span>
-                <span className="text-[10px] font-black uppercase tracking-widest bg-white/5 text-fg/40 px-2.5 py-1.5 rounded">UNCHANGED · {sameCount}</span>
+                <span className="text-[10px] font-black uppercase tracking-widest bg-blue-500 text-white px-2.5 py-1.5 rounded">NEW · {newCount}</span>
+                {batchCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-purple-500 text-white px-2.5 py-1.5 rounded">NEW BATCH · {batchCount}</span>}
+                <span className="text-[10px] font-black uppercase tracking-widest bg-green-500 text-white px-2.5 py-1.5 rounded">↑ INCREASE · {upCount}</span>
+                <span className="text-[10px] font-black uppercase tracking-widest bg-red-500 text-white px-2.5 py-1.5 rounded">↓ DECREASE · {downCount}</span>
+                <span className="text-[10px] font-black uppercase tracking-widest bg-white/5 text-fg/60 px-2.5 py-1.5 rounded">UNCHANGED · {sameCount}</span>
                 {errCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-red-500/40 text-red-200 px-2.5 py-1.5 rounded">ERRORS · {errCount}</span>}
               </div>
             );
@@ -41,8 +41,8 @@ export default function ImportModal() {
 
           <div className="flex-1 overflow-y-auto custom-scrollbar">
             <table className="w-full text-xs">
-              <thead className="bg-white/5 sticky top-0">
-                <tr className="text-fg/40 text-[10px] uppercase tracking-widest">
+              <thead className="bg-accent sticky top-0">
+                <tr className="text-white text-[10px] uppercase tracking-widest">
                   <th className="text-left px-4 py-3">Item</th>
                   <th className="text-left px-2 py-3">Status</th>
                   <th className="text-right px-2 py-3">Current</th>
@@ -70,17 +70,17 @@ export default function ImportModal() {
                         {r.itemCode && <span className="text-fg/30 font-mono text-[10px] mr-1.5">{r.itemCode}</span>}
                         {r.itemName || <span className="text-red-300">(missing)</span>}
                         {r._needsSize && (
-                          <span title="No unit/size found in the name or a Unit column - imported as pcs. Edit the item afterward to set its real size." className="ml-1.5 text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1.5 py-0.5 rounded uppercase align-middle">SET SIZE</span>
+                          <span title="No unit/size found in the name or a Unit column - imported as pcs. Edit the item afterward to set its real size." className="ml-1.5 text-[9px] font-black bg-amber-500 text-white border border-amber-500/40 px-1.5 py-0.5 rounded uppercase align-middle">SET SIZE</span>
                         )}
                         {isBatch && r.expiryDate && <span className="ml-1.5 text-purple-300/60 text-[10px]">exp {r.expiryDate}</span>}
                       </td>
                       <td className="px-2 py-2.5">
-                        {isErr && <span className="text-[10px] font-black bg-red-500/30 text-red-200 px-1.5 py-0.5 rounded uppercase">{r._error}</span>}
-                        {!isErr && isNew && <span className="text-[10px] font-black bg-blue-500/30 text-blue-200 px-1.5 py-0.5 rounded uppercase">NEW</span>}
-                        {!isErr && isBatch && <span className="text-[10px] font-black bg-purple-500/30 text-purple-200 px-1.5 py-0.5 rounded uppercase">NEW BATCH</span>}
-                        {!isErr && !isNew && !isBatch && diff > 0 && <span className="text-[10px] font-black bg-green-500/30 text-green-200 px-1.5 py-0.5 rounded uppercase">↑ INC</span>}
-                        {!isErr && !isNew && !isBatch && diff < 0 && <span className="text-[10px] font-black bg-red-500/30 text-red-200 px-1.5 py-0.5 rounded uppercase">↓ DEC</span>}
-                        {!isErr && !isNew && !isBatch && diff === 0 && <span className="text-[10px] font-black bg-white/10 text-fg/40 px-1.5 py-0.5 rounded uppercase">SAME</span>}
+                        {isErr && <span className="text-[10px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">{r._error}</span>}
+                        {!isErr && isNew && <span className="text-[10px] font-black bg-blue-500 text-white px-1.5 py-0.5 rounded uppercase">NEW</span>}
+                        {!isErr && isBatch && <span className="text-[10px] font-black bg-purple-500 text-white px-1.5 py-0.5 rounded uppercase">NEW BATCH</span>}
+                        {!isErr && !isNew && !isBatch && diff > 0 && <span className="text-[10px] font-black bg-green-500 text-white px-1.5 py-0.5 rounded uppercase">↑ INC</span>}
+                        {!isErr && !isNew && !isBatch && diff < 0 && <span className="text-[10px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">↓ DEC</span>}
+                        {!isErr && !isNew && !isBatch && diff === 0 && <span className="text-[10px] font-black bg-white/10 text-fg/60 px-1.5 py-0.5 rounded uppercase">SAME</span>}
                       </td>
                       <td className="px-2 py-2.5 text-right text-fg/60 tabular-nums">{isNew || isErr ? '-' : `${r._oldDisplay.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r._oldDisplay.unit}`}</td>
                       <td className="px-2 py-2.5 text-right text-fg font-bold tabular-nums">{isErr ? '-' : `${Number(r.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`}</td>
@@ -149,7 +149,7 @@ export default function ImportModal() {
               Export PDF
             </button>
             <button onClick={submitImport} disabled={importSubmitting || importRows.every(r => r._error)}
-              className="flex-1 px-5 py-3 rounded-xl bg-brand hover:bg-brand-dark text-fg font-black text-sm uppercase tracking-widest transition shadow-elev-2 disabled:opacity-50 min-h-[44px] flex items-center justify-center gap-2">
+              className="flex-1 px-5 py-3 rounded-xl bg-brand hover:bg-brand-dark text-white font-black text-sm uppercase tracking-widest transition shadow-elev-2 disabled:opacity-50 min-h-[44px] flex items-center justify-center gap-2">
               <Check size={16}/> {importSubmitting ? 'Importing…' : 'Confirm Import'}
             </button>
           </div>

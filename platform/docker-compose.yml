@@ -1,0 +1,84 @@
+# Platform layer: the shared pieces every tenant uses.
+#
+#   caddy          — the only thing on :80/:443. Terminates TLS, routes by subdomain.
+#   mongo          — ONE mongod, one database per tenant. Never publishes a port.
+#   control-plane  — provisioning UI. Bound to 127.0.0.1 only; reach it over an
+#                    SSH tunnel. It holds the Docker socket, which is root on the
+#                    box, so it must never be exposed publicly.
+#
+# Tenant stacks live in their own compose projects and join semivra-net.
+# Start this first:  docker compose -f platform/docker-compose.yml up -d
+name: semivra-platform
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL}
+      CADDY_GLOBAL_EXTRA: ${CADDY_GLOBAL_EXTRA:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./tenants-caddy:/etc/caddy/tenants
+      # Per-tenant access logs. A bind mount, not a named volume, so the control
+      # plane can read them straight off the host (it already mounts STACK_ROOT)
+      # without needing to exec into this container.
+      - ./caddy-logs:/var/log/caddy
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [semivra-net]
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    # Replica set is mandatory: the app's money paths use multi-document
+    # transactions, which MongoDB only allows on a replica set.
+    command: ["--replSet", "rs0", "--bind_ip_all", "--wiredTigerCacheSizeGB", "2"]
+    volumes:
+      - mongo-data:/data/db
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok }"]
+      interval: 10s
+      timeout: 10s
+      start_period: 40s
+      retries: 12
+    networks: [semivra-net]
+
+  control-plane:
+    build: ./control-plane
+    restart: unless-stopped
+    # 127.0.0.1 ONLY. Changing this to 0.0.0.0 puts a root-equivalent panel on
+    # the public internet. Use: ssh -L 9000:localhost:9000 root@<vps>
+    ports:
+      - "127.0.0.1:9000:9000"
+    environment:
+      PORT: 9000
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+      # STACK_ROOT must be the SAME absolute path inside and outside this
+      # container, so `docker compose` can resolve build contexts correctly.
+      STACK_ROOT: ${STACK_ROOT}
+      CP_PASSWORD: ${CP_PASSWORD}
+      CP_DANGER_PASSWORD: ${CP_DANGER_PASSWORD}
+      LOCAL_MODE: ${LOCAL_MODE:-0}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${STACK_ROOT}:${STACK_ROOT}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks: [semivra-net]
+
+volumes:
+  mongo-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  semivra-net:
+    name: semivra-net

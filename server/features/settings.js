@@ -1,6 +1,8 @@
 // settings routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerSettings(ctx) {
   const {
     app,
@@ -202,14 +204,14 @@ app.get('/api/public/portal-settings', async (req, res) => {
   try {
     const rows = await Settings.find({ key: { $in: PUBLIC_PORTAL_KEYS } }).lean();
     res.json({ success: true, settings: Object.fromEntries(rows.map(s => [s.key, s.value])) });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.get('/api/settings', verifyToken, requireStaff, async (req, res) => {
   try {
     const rows = await Settings.find().lean();
     res.json({ success: true, settings: Object.fromEntries(rows.map(s => [s.key, s.value])) });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('settings.manage'), async (req, res) => {
@@ -218,6 +220,6 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
     const setting = await Settings.findOneAndUpdate({ key: req.params.key }, { value }, { upsert: true, returnDocument: 'after' });
     emitToAll('settingsUpdated', { key: req.params.key, value });
     res.json({ success: true, setting });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 }

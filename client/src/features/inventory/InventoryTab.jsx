@@ -92,7 +92,7 @@ export default function InventoryTab({ ctx }) {
       const next = { ...prev };
       for (const item of inventory) {
         if (next[item._id] === undefined) {
-          const mult = BUSINESS_TYPE === 'log' ? (itemDisplay(item).packBase || 1) : effectiveDisplay(item).mult;
+          const mult = itemDisplay(item).packBase || 1;
           next[item._id] = Number(((item.stockQty || 0) / (mult || 1)).toFixed(6));
           changed = true;
         }
@@ -268,15 +268,15 @@ export default function InventoryTab({ ctx }) {
                         <td className="py-3 font-bold text-white">
                           {item.itemName}
                           {isLow && <span className="ml-2 text-[9px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase animate-pulse">LOW</span>}
-                          {BUSINESS_TYPE === 'log' && !/\d/.test(itemDisplay(item).packLabel || '') && (
+                          {!itemDisplay(item).isPacked && (
                             <span title="No pack size in the name - add e.g. 250G / 1L / 500ML so cost shows per package" className="ml-2 text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1.5 py-0.5 rounded uppercase">SET SIZE</span>
                           )}
                         </td>
                         {(() => { const d = itemDisplay(item); return (<>
-                        <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-white'}`}>{(BUSINESS_TYPE === 'log' ? d.packQty : d.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
-                        <td className="py-3 text-right text-white text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(effThreshold / (BUSINESS_TYPE === 'log' ? (itemDisplay(item).packBase || 1) : effectiveDisplay(item).mult)).toLocaleString(undefined, { maximumFractionDigits: 3 })}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
-                        <td className="py-3 text-white pl-2 font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : d.unit}</td>
-                        <td className="py-3 text-right text-white font-mono text-xs tabular-nums">{BUSINESS_TYPE === 'log' ? (<>{peso(d.packCost)}<span className="text-white">/{d.packLabel}</span></>) : (<>{peso(d.cost)}<span className="text-fg/40">/{d.unit}</span></>)}</td>
+                        <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-white'}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
+                        <td className="py-3 text-right text-white text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(effThreshold / (d.packBase || 1)).toLocaleString(undefined, { maximumFractionDigits: 3 })}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
+                        <td className="py-3 text-white pl-2 font-bold">{d.isPacked ? 'pcs' : d.unit}</td>
+                        <td className="py-3 text-right text-white font-mono text-xs tabular-nums"><>{peso(d.packCost)}<span className="text-white">/{d.packLabel}</span></></td>
                         <td className="py-3 text-right text-white font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
                         </>); })()}
                         <td className="py-3 text-center">
@@ -299,7 +299,7 @@ export default function InventoryTab({ ctx }) {
                           <button onClick={() => {
                             const isExpired = expBadge && (expBadge.text.startsWith('EXPIRED') || expBadge.text === 'TODAY');
                             setSpoilageModal({ item });
-                            const autoQty = isExpired ? (BUSINESS_TYPE === 'log' ? itemDisplay(item).packQty : item.stockQty) : '';
+                            const autoQty = isExpired ? itemDisplay(item).packQty : '';
                             setSpoilageForm({
                               qty: isExpired ? autoQty.toString() : '',
                               reason: isExpired ? 'Spoilage' : '',
@@ -331,9 +331,9 @@ export default function InventoryTab({ ctx }) {
                                     .map((b, originalIdx) => ({ ...b, _originalIdx: originalIdx }))
                                     .sort((a, b) => (a.expiryDate ? new Date(a.expiryDate) : Infinity) - (b.expiryDate ? new Date(b.expiryDate) : Infinity))
                                     .map((b, displayIdx) => {
-                                      const bPackBase = BUSINESS_TYPE === 'log' ? (packInfo(item).packBase || 1) : (item.unitMultiplier || 1);
+                                      const bPackBase = packInfo(item).packBase || 1;
                                       const dispQty = (b.qty || 0) / bPackBase;
-                                      const bUnit = BUSINESS_TYPE === 'log' ? 'pcs' : (item.displayUnit || item.unit);
+                                      const bUnit = itemDisplay(item).isPacked ? 'pcs' : itemDisplay(item).unit;
                                       const exp = b.expiryDate ? new Date(b.expiryDate) : null;
                                       const today = new Date(); today.setHours(0,0,0,0);
                                       const diffDays = exp ? Math.ceil((exp - today) / 86400000) : null;
@@ -479,9 +479,8 @@ export default function InventoryTab({ ctx }) {
                     <tbody className={isLocked ? 'opacity-50 pointer-events-none' : ''}>
                       {currentInventory.map(item => {
                         // LOG: count in whole packages (pcs); FB: count in kg/L/pcs.
-                        const eff = BUSINESS_TYPE === 'log'
-                          ? { mult: itemDisplay(item).packBase || 1, unit: 'pcs' }
-                          : effectiveDisplay(item);
+                        const di = itemDisplay(item);
+                        const eff = { mult: di.packBase || 1, unit: di.isPacked ? 'pcs' : di.unit };
                         const actualInputDisplay = physicalCounts[item._id]; // entered in display units
                         const hasInput = actualInputDisplay !== undefined && actualInputDisplay !== '';
                         // Convert input → base for variance math; everything financial stays in base.
@@ -690,7 +689,7 @@ export default function InventoryTab({ ctx }) {
                   return (
                   <div key={i._id} className="flex justify-between text-xs">
                     <span className="text-red-300 font-bold">{i.itemName}</span>
-                    <span className="text-red-400 font-mono tabular-nums">{BUSINESS_TYPE === 'log' ? d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 }) : d.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {BUSINESS_TYPE === 'log' ? 'pcs' : d.unit} (min: {minDisp})</span>
+                    <span className="text-red-400 font-mono tabular-nums">{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? 'pcs' : d.unit} (min: {minDisp})</span>
                   </div>
                   );
                 })}
@@ -724,7 +723,7 @@ export default function InventoryTab({ ctx }) {
                     return (
                       <div key={i._id} className="flex justify-between text-xs items-center">
                         <span className={`font-bold ${color}`}>{i.itemName}</span>
-                        <span className={`tabular-nums ${color}`}>{BUSINESS_TYPE === 'log' ? d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 }) : d.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {BUSINESS_TYPE === 'log' ? 'pcs' : d.unit} · <span className="font-black">{txt}</span></span>
+                        <span className={`tabular-nums ${color}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? 'pcs' : d.unit} · <span className="font-black">{txt}</span></span>
                       </div>
                     );
                   })}
@@ -805,8 +804,10 @@ export default function InventoryTab({ ctx }) {
                         : 'border-white/10 text-fg focus:border-accent'
                       }`}
                     />
-                    {/* log: price change indicator on restock - uses packBase from item name, no unitPerPack needed */}
-                    {BUSINESS_TYPE === 'log' && (() => {
+                    {/* Price-change + WAC preview on restock. Pack-based in both
+                        modes now; packInfo() falls back to the plain display unit
+                        for items with no pack size, so this stays correct. */}
+                    {(() => {
                       const existingItem = inventory.find(i => i.itemName.toLowerCase() === invForm.itemName.toLowerCase().trim());
                       if (!existingItem || !invForm.costPerPack) return null;
                       const pack = packInfo(existingItem);
@@ -851,7 +852,11 @@ export default function InventoryTab({ ctx }) {
               <div>
                 <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Per-Qty Size (Weight/Vol per pack)</label>
                 <input type="number" placeholder={`Per pack, in ${invForm.unit || 'unit'}`} value={invForm.unitPerPack} onChange={e => setInvForm({...invForm, unitPerPack: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent" />
-                {BUSINESS_TYPE === 'log' && <p className="text-[9px] text-gray-500 mt-1">Appended to the item name for new items, e.g. "Milk 1L".</p>}
+                <p className="text-[9px] text-gray-500 mt-1">
+                  {BUSINESS_TYPE === 'log'
+                    ? 'Appended to the item name for new items, e.g. "Milk 1L".'
+                    : 'How much one purchased pack holds. Set it so stock counts in packs and cost shows per pack.'}
+                </p>
               </div>
 
               {(invForm.packQty && invForm.unitPerPack && invForm.costPerPack && invForm.unit) && (

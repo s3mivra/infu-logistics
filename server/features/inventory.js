@@ -3,6 +3,8 @@
 /* eslint-disable no-unused-vars */
 import { title } from '../lib/normalize.js';
 import { withOptionalTransaction } from '../lib/txn.js';
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerInventory(ctx) {
   const {
     app,
@@ -205,7 +207,7 @@ app.get('/api/inventory/eod-data', verifyToken, requireStaff, async (req, res) =
 
     res.json({ success: true, status: eod.status, lockedAt: eod.lockedAt, movement: movementMap });
   } catch(err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -289,6 +291,7 @@ app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => 
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
+    captureError(req, error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -309,7 +312,7 @@ app.post('/api/inventory/eod/reopen', verifyToken, requireStaff, async (req, res
     emitToMgr('erpUpdated'); // Tell all iPads the register is open again!
     res.json({ success: true, message: 'Day reopened successfully.' });
   } catch(err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -318,7 +321,7 @@ app.get('/api/inventory/history/:id', verifyToken, requireStaff, async (req, res
     const history = await StockCard.find({ inventoryId: req.params.id }).sort({ date: -1 });
     res.json({ success: true, history });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -328,7 +331,7 @@ app.get('/api/inventory/history', verifyToken, requireStaff, async (req, res) =>
     const history = await StockCard.find().sort({ date: -1 });
     res.json({ success: true, history });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -400,7 +403,7 @@ app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   const items = await Inventory.find(filter).sort({ itemName: 1 }).lean();
   res.json({ success: true, items: enrichThresholds(items, usage) });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -453,7 +456,7 @@ app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
     emitToMgr('erpUpdated');
     res.json({ success: true, item: newItem });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -487,7 +490,7 @@ app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, r
     await JournalEntry.create({ date: new Date(), reference, description: `Inventory revaluation to on-hand value (offset: ${offName})`, lines, totalDebit: Math.abs(diff), totalCredit: Math.abs(diff) });
     emitToMgr('erpUpdated');
     res.json({ success: true, onHand, book, diff, offset: offCode, reference });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // --- RESTOCK EXISTING INVENTORY (Weighted Average Cost, transactional) ---
@@ -608,9 +611,11 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
           await logAudit(req, { action: 'restock', entity: 'Inventory', entityId: req.params.id, after: { addedStock, totalCost, fallback: true } });
           return res.json({ success: true, item });
         } catch (fallbackErr) {
+          captureError(req, fallbackErr);
           return res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : fallbackErr.message });
         }
       }
+      captureError(req, error);
       return res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : error.message });
     } finally {
       session.endSession();
@@ -663,7 +668,7 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
     res.json({ success: true, item: updatedItem });
   } catch (err) {
     log.error({ err }, 'PUT /api/inventory/:id failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -704,7 +709,7 @@ app.get('/api/inventory/expiring', verifyToken, requireStaff, async (req, res) =
       cutoffDays: days
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -753,7 +758,7 @@ app.post('/api/inventory/:id/batches', verifyToken, requireSuperAdmin, async (re
     emitToMgr('erpUpdated');
     res.json({ success: true, item });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -797,7 +802,7 @@ app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmi
     emitToMgr('erpUpdated');
     res.json({ success: true, item });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -815,7 +820,7 @@ app.patch('/api/inventory/:id/expiry', verifyToken, requireStaff, async (req, re
     emitToMgr('erpUpdated');
     res.json({ success: true, item });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -830,7 +835,7 @@ app.delete('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res
     emitToMgr('erpUpdated');
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -1015,15 +1020,17 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         if (syncProduct) {
           const cat = await Category.findOneAndUpdate(
             { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }, businessType: BUSINESS_TYPE },
-            { $setOnInsert: { name: productCategory, department: 'Bar', businessType: BUSINESS_TYPE } },
+            { $setOnInsert: { name: productCategory, department: 'Logistics', businessType: BUSINESS_TYPE } },
             { upsert: true, returnDocument: 'after', session }
           );
+          // Base recipe links the product to its OWN stock item (1:1).
+          const baseRecipe = [{ invId: existing._id, name: existing.itemName, qty: existing.unitMultiplier || mult, cost: existing.unitCost || 0, unit: existing.unit || baseUnit }];
           // basePrice must never appear in both $set and $setOnInsert — Mongo
           // rejects an update that targets the same path from two operators.
           // A valid SRP always wins (goes in $set); only fall back to
           // $setOnInsert (default 0 on first creation) when there's no SRP.
           const hasSrp = srp != null && !isNaN(srp);
-          await Product.findOneAndUpdate(
+          const prod = await Product.findOneAndUpdate(
             { productCode: existing.itemCode, businessType: BUSINESS_TYPE },
             {
               $set: {
@@ -1032,10 +1039,15 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
                 isAvailable: existing.stockQty > 0,
                 ...(hasSrp ? { basePrice: srp } : {}),
               },
-              $setOnInsert: { businessType: BUSINESS_TYPE, ...(hasSrp ? {} : { basePrice: 0 }) },
+              $setOnInsert: { businessType: BUSINESS_TYPE, baseRecipe, ...(hasSrp ? {} : { basePrice: 0 }) },
             },
             { upsert: true, returnDocument: 'after', session }
           );
+          // Backfill the stock link on a pre-existing menu entry that never had one.
+          if (prod && !(prod.baseRecipe || []).some(r => r.invId)) {
+            prod.baseRecipe = baseRecipe;
+            await prod.save({ session });
+          }
         }
       } else {
         // New item — onboard via Inventory Adjustment Gain (DR 1500 / CR 4200)
@@ -1093,9 +1105,13 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         if (syncProduct) {
           const cat = await Category.findOneAndUpdate(
             { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }, businessType: BUSINESS_TYPE },
-            { $setOnInsert: { name: productCategory, department: 'Bar', businessType: BUSINESS_TYPE } },
+            { $setOnInsert: { name: productCategory, department: 'Logistics', businessType: BUSINESS_TYPE } },
             { upsert: true, returnDocument: 'after', session }
           );
+          // Explicitly link the product's base recipe to its OWN stock item (1:1),
+          // so the menu shows the stock item as the base material and each sale
+          // deducts it directly — no reliance on the code/name fallback.
+          const baseRecipe = [{ invId: item._id, name: item.itemName, qty: mult, cost: item.unitCost || 0, unit: baseUnit }];
           const productExists = await Product.findOne({ productCode: item.itemCode, businessType: BUSINESS_TYPE }).session(session);
           if (!productExists) {
             await Product.create([{
@@ -1103,9 +1119,15 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
               name: item.itemName,
               category: cat.name,
               basePrice: srp != null && !isNaN(srp) ? srp : 0,
+              baseSize: displayUnit,
+              baseRecipe,
               isAvailable: newBaseQty > 0,
               businessType: BUSINESS_TYPE,
             }], { session });
+          } else if (!(productExists.baseRecipe || []).some(r => r.invId)) {
+            // Existing menu entry with no linked stock — backfill the link.
+            productExists.baseRecipe = baseRecipe;
+            await productExists.save({ session });
           }
         }
       }
@@ -1120,7 +1142,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
     await session.abortTransaction();
     session.endSession();
     log.error({ err }, 'inventory import failed');
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -1190,7 +1212,7 @@ app.post('/api/inventory/spoilage/:id', verifyToken, requireStaff, async (req, r
     res.json({ success: true, item });
   } catch (err) {
     if (err?.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.message });
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 }

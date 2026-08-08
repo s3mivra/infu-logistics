@@ -2,10 +2,13 @@ import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import * as ui from '../../shared/ui';
-import { loadSession, clearSession, loadDraft, saveDraft } from './clientSession';
+import { loadSession, clearSession, saveSession, loadDraft, saveDraft } from './clientSession';
+import { CLIENT_THEMES, applyClientTheme, cachedClientTheme, clearClientTheme } from './clientTheme';
+import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import {
   Package, ShoppingCart, Plus, Minus, X, LogOut, CheckCircle,
   CreditCard, Loader2, ChevronLeft, Search, Download, FileText, Menu, Megaphone,
+  Settings, KeyRound, Palette, UserCircle, Eye, EyeOff,
 } from 'lucide-react';
 
 let _pdfLibPromise = null;
@@ -32,6 +35,19 @@ const PAYMENT_LABELS = {
 // Fallback support link. The `portalSupportLink` setting overrides it, so a shop
 // can change where clients send payment proof without a rebuild.
 const FB_LINK_ENV = import.meta.env.VITE_FB_LINK || '';
+
+// The billing block already configured for this deployment. Portal settings
+// override these; unset settings inherit them rather than showing blanks.
+const ENV_BILLING = {
+  name: import.meta.env.VITE_BILLING_NAME || '',
+  address1: import.meta.env.VITE_BILLING_ADDRESS1 || '',
+  address2: import.meta.env.VITE_BILLING_ADDRESS2 || '',
+  phone: import.meta.env.VITE_BILLING_PHONE || '',
+  email: import.meta.env.VITE_BILLING_EMAIL || '',
+  bank: import.meta.env.VITE_BILLING_BANK || '',
+  accountName: import.meta.env.VITE_BILLING_ACCOUNT_NAME || '',
+  accountNo: import.meta.env.VITE_BILLING_ACCOUNT_NO || '',
+};
 
 // Client-selectable payment methods — mirrors the POS order tab, minus delivery partners.
 const CLIENT_PAYMENT_METHODS = ['Cash', 'Bank Transfer', 'GCash', 'Maya', 'Maribank', 'Other E-Wallet'];
@@ -196,15 +212,46 @@ export default function ClientOrderPage() {
   const [slipDownloading, setSlipDownloading] = useState(false);
   const [announcementOpen, setAnnouncementOpen] = useState(true);
 
+  // Client's own account settings
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [theme, setTheme] = useState(cachedClientTheme);
+  const [nameForm, setNameForm] = useState('');
+  const [nameBusy, setNameBusy] = useState(false);
+  const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '', show: false });
+  const [pwBusy, setPwBusy] = useState(false);
+  const [settingsMsg, setSettingsMsg] = useState(null);   // { tone, text }
+
   // ── Derived portal config ───────────────────────────────────────────────────
-  const supportLink = (portal.portalSupportLink || FB_LINK_ENV || '').trim();
-  const supportLabel = (portal.portalSupportLabel || 'Send payment proof').trim();
+  // Every field falls back to the deployment's env before falling back to a
+  // generic default, so a fresh install already shows the right company details
+  // on the slip without an admin having to retype what's in .env.
+  const pick = (...vals) => {
+    for (const v of vals) { const s = String(v ?? '').trim(); if (s) return s; }
+    return '';
+  };
+  const supportLink = pick(portal.portalSupportLink, FB_LINK_ENV);
+  const supportLabel = pick(portal.portalSupportLabel, 'Send payment proof');
   const showPrices = portal.portalShowPrices === true;
   const allowNotes = portal.portalAllowNotes !== false;
-  const companyName = (portal.portalCompanyName || BIZ_NAME).trim();
-  const slipFooter = (portal.portalSlipFooter || '').trim()
-    || 'Final total is confirmed by our team - this slip is a reference only.';
-  const paymentInstructions = (portal.portalPaymentInstructions || '').trim();
+  const companyName = pick(portal.portalCompanyName, ENV_BILLING.name, BIZ_NAME);
+  const companyAddress = pick(
+    portal.portalCompanyAddress,
+    [ENV_BILLING.address1, ENV_BILLING.address2].filter(Boolean).join(', '),
+  );
+  const companyPhone = pick(portal.portalCompanyPhone, ENV_BILLING.phone);
+  const companyEmail = pick(portal.portalCompanyEmail, ENV_BILLING.email);
+  const slipFooter = pick(portal.portalSlipFooter,
+    'Final total is confirmed by our team - this slip is a reference only.');
+  const paymentInstructions = pick(
+    portal.portalPaymentInstructions,
+    // Nothing configured? Fall back to the bank details already in .env.
+    ENV_BILLING.bank && ENV_BILLING.accountNo
+      ? `${ENV_BILLING.bank} · ${ENV_BILLING.accountName || companyName} · ${ENV_BILLING.accountNo}`
+      : '',
+  );
+  const welcomeTitle = pick(portal.portalWelcomeTitle, 'Welcome back');
+  const welcomeMessage = pick(portal.portalWelcomeMessage,
+    'Browse the catalogue and send us your order. Our team confirms pricing before dispatch.');
 
   // On mount: restore session + any in-progress draft
   useEffect(() => {
@@ -214,6 +261,11 @@ export default function ClientOrderPage() {
     const { token: storedToken, info } = session;
     setToken(storedToken);
     setClientInfo(info);
+
+    // Apply the client's OWN theme immediately from the cached value (no flash),
+    // then from their account once the profile fetch lands. Never reads the
+    // staff `dash.theme` — see clientTheme.js.
+    applyClientTheme(info.theme || cachedClientTheme());
 
     // Restore the draft BEFORE falling back to the client's default payment
     // method, so a refresh mid-checkout keeps whatever they had picked.
@@ -349,102 +401,48 @@ export default function ClientOrderPage() {
     (s, i) => s + Number(i.price || 0) * (1 - Number(i.discountPercent || 0) / 100) * Number(i.quantity || 0), 0
   ), []);
 
-  // Renders the slip as a proper document: letterhead, bill-to / order meta,
-  // a ruled item table, then totals and terms — the same structure as the
-  // on-screen slip so the PDF is recognisably the same piece of paper.
+  // Renders the slip using the SAME shared A4 document template as the staff-side
+  // order slip / billing statement, so the client's copy is the identical layout.
+  // Letterhead/terms/deposit all come from the portal settings.
   const downloadOrderSlip = useCallback(async (order) => {
     setSlipDownloading(true);
     try {
-      const jsPDF = await loadPdfLib();
-      const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-      const L = 16, R = 194, W = R - L;
-      let y = 20;
-
-      const line = (yy) => { doc.setDrawColor(210); doc.setLineWidth(0.2); doc.line(L, yy, R, yy); };
-      const label = (t, x, yy) => { doc.setFontSize(7.5); doc.setTextColor(130); doc.setFont(undefined, 'bold'); doc.text(String(t).toUpperCase(), x, yy); };
-      const value = (t, x, yy, size = 9.5) => { doc.setFontSize(size); doc.setTextColor(20); doc.setFont(undefined, 'normal'); doc.text(String(t), x, yy); };
-
-      // ── Letterhead ──
-      doc.setFontSize(17); doc.setFont(undefined, 'bold'); doc.setTextColor(20);
-      doc.text(companyName, L, y);
-      doc.setFontSize(10); doc.setFont(undefined, 'bold'); doc.setTextColor(120);
-      doc.text('ORDER SLIP', R, y, { align: 'right' });
-      y += 5;
-      doc.setFontSize(8); doc.setFont(undefined, 'normal'); doc.setTextColor(130);
-      const contact = [portal.portalCompanyAddress, portal.portalCompanyPhone, portal.portalCompanyEmail]
-        .map(v => (v || '').trim()).filter(Boolean);
-      contact.forEach(c => { doc.text(c, L, y); y += 4; });
-      y += 2; line(y); y += 7;
-
-      // ── Bill to / order meta, two columns ──
-      const colR = L + W / 2;
-      label('Billed to', L, y); label('Order details', colR, y); y += 5;
-      value(clientInfo?.name || clientInfo?.username || 'Client', L, y, 10);
-      value(`No.  ${order.orderNumber}`, colR, y, 10); y += 5;
-      if (clientInfo?.clientCode) { value(`Client code: ${clientInfo.clientCode}`, L, y, 8.5); }
-      value(`Placed: ${new Date(order.createdAt).toLocaleString()}`, colR, y, 8.5); y += 4.5;
-      if (order.billingNumber) { value(`Billing: ${order.billingNumber}`, colR, y, 8.5); y += 4.5; }
-      value(`Status: ${STATUS_VIEW(order.status).label}`, colR, y, 8.5); y += 4.5;
-      if (order.paymentMethod) { value(`Payment: ${order.paymentMethod}`, colR, y, 8.5); y += 4.5; }
-      y += 4;
-
-      // ── Item table (always priced — see the on-screen slip for why) ──
-      const xQty = R - 62;
-      doc.setFillColor(242); doc.rect(L, y - 4.5, W, 7, 'F');
-      label('#', L + 1.5, y); label('Item', L + 9, y);
-      doc.setFontSize(7.5); doc.setTextColor(130); doc.setFont(undefined, 'bold');
-      doc.text('QTY', xQty, y, { align: 'right' });
-      doc.text('UNIT', R - 34, y, { align: 'right' });
-      doc.text('AMOUNT', R - 1.5, y, { align: 'right' });
-      y += 7;
-
-      const items = order.items || [];
-      items.forEach((it, idx) => {
-        if (y > 258) { doc.addPage(); y = 20; }
+      const items = (order.items || []).map((it, idx) => {
         const pct = Number(it.discountPercent || 0);
         const unit = Number(it.price || 0) * (1 - pct / 100);
-        value(String(idx + 1), L + 1.5, y, 9);
-        const name = doc.splitTextToSize(String(it.name || ''), xQty - 24);
-        value(name[0], L + 9, y, 9);
-        doc.text(String(it.quantity ?? 0), xQty, y, { align: 'right' });
-        doc.text(peso(unit), R - 34, y, { align: 'right' });
-        doc.text(peso(unit * Number(it.quantity || 0)), R - 1.5, y, { align: 'right' });
-        y += 5.5;
-        // Wrapped remainder of a long product name.
-        name.slice(1).forEach(extra => { value(extra, L + 9, y, 9); y += 4.5; });
-        if (pct > 0) {
-          doc.setFontSize(7.5); doc.setTextColor(140); doc.setFont(undefined, 'normal');
-          doc.text(`list ${peso(Number(it.price || 0))} · less ${pct}%`, L + 9, y - 1);
-          y += 4;
-        }
-        doc.setDrawColor(235); doc.setLineWidth(0.15); doc.line(L, y - 2, R, y - 2);
+        return {
+          code: it.productCode || String(idx + 1),
+          desc: String(it.name || '') + (pct > 0 ? ` (list ${peso(Number(it.price || 0))}, less ${pct}%)` : ''),
+          qty: it.quantity ?? 0,
+          unitPrice: unit,
+          total: unit * Number(it.quantity || 0),
+        };
       });
-      if (!items.length) { value('No items on this order.', L + 9, y, 9); y += 6; }
-
-      y += 3;
-      // ── Totals ──
-      const totalQty = items.reduce((s, i) => s + Number(i.quantity || 0), 0);
-      label('Total quantity', L, y); value(String(totalQty), L + 32, y, 9.5);
-      doc.setFontSize(11); doc.setFont(undefined, 'bold'); doc.setTextColor(20);
-      doc.text(`TOTAL  ${peso(orderTotal(order))}`, R, y, { align: 'right' });
-      y += 8; line(y); y += 6;
-
-      // ── Notes & terms ──
-      if (order.orderNotes) {
-        label('Notes', L, y); y += 4.5;
-        doc.splitTextToSize(String(order.orderNotes), W).forEach(t => { value(t, L, y, 8.5); y += 4.2; });
-        y += 3;
-      }
-      doc.setFontSize(8); doc.setTextColor(130); doc.setFont(undefined, 'italic');
-      doc.splitTextToSize(slipFooter, W).forEach(t => { doc.text(t, L, y); y += 4; });
-
-      doc.save(`${order.orderNumber}-order-slip.pdf`);
+      printBillingDoc(buildBillingDocHTML({
+        docTitle: 'ORDER SLIP',
+        dateLabel: 'Placed',
+        dateStr: new Date(order.createdAt).toLocaleString(),
+        settings: portal,
+        metaFields: [
+          { label: 'Billed To', value: clientInfo?.name || clientInfo?.username || 'Client' },
+          { label: 'Client Code', value: clientInfo?.clientCode || '' },
+          { label: 'Order No.', value: order.orderNumber },
+        ],
+        subFields: [
+          { label: 'Status', value: STATUS_VIEW(order.status).label },
+          ...(order.billingNumber ? [{ label: 'Billing No.', value: order.billingNumber }] : []),
+          ...(order.paymentMethod ? [{ label: 'Payment', value: order.paymentMethod }] : []),
+        ],
+        schedRows: order.orderNotes ? [{ label: 'Notes:', value: order.orderNotes }] : [],
+        items,
+        totals: [{ label: 'TOTAL', value: orderTotal(order), grand: true }],
+      }));
     } catch {
       ui.alert('Could not generate the slip. Please try again.');
     } finally {
       setSlipDownloading(false);
     }
-  }, [companyName, portal, clientInfo, slipFooter, orderTotal]);
+  }, [portal, clientInfo, orderTotal]);
 
   // Cart helpers
   const addToCart = useCallback((product) => {
@@ -493,9 +491,91 @@ export default function ClientOrderPage() {
   }, [products, activeCategory, productSearch]);
 
   const handleLogout = () => {
-    clearSession();   // also drops this client's saved draft
+    clearSession();      // also drops this client's saved draft
+    clearClientTheme();  // next client on this device starts from the default
     navigate('/client/portal', { replace: true });
   };
+
+  // ── Client account settings ─────────────────────────────────────────────────
+  const authHeaders = useMemo(
+    () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    [token]
+  );
+
+  // Pull the authoritative profile when the panel opens, so a theme changed on
+  // another device shows up here rather than the stale login snapshot.
+  useEffect(() => {
+    if (!settingsOpen || !token) return;
+    setSettingsMsg(null);
+    fetch(`${API_URL}/api/client/profile`, { headers: authHeaders })
+      .then(r => r.json())
+      .then(d => {
+        if (!d.success) return;
+        setNameForm(d.profile.username || '');
+        const t = applyClientTheme(d.profile.theme || cachedClientTheme());
+        setTheme(t);
+        setClientInfo(prev => {
+          const merged = { ...prev, ...d.profile };
+          saveSession(token, merged);   // keep the cached session in step
+          return merged;
+        });
+      })
+      .catch(() => { /* panel still usable offline */ });
+  }, [settingsOpen, token, authHeaders]);
+
+  const chooseTheme = useCallback(async (value) => {
+    const applied = applyClientTheme(value);   // optimistic: instant feedback
+    setTheme(applied);
+    try {
+      const res = await fetch(`${API_URL}/api/client/profile`, {
+        method: 'PATCH', headers: authHeaders, body: JSON.stringify({ theme: applied }),
+      });
+      const d = await res.json();
+      if (!d.success) { setSettingsMsg({ tone: 'bad', text: d.error || 'Could not save the theme.' }); return; }
+      setClientInfo(prev => { const m = { ...prev, theme: applied }; saveSession(token, m); return m; });
+      setSettingsMsg({ tone: 'ok', text: 'Appearance saved to your account.' });
+    } catch {
+      setSettingsMsg({ tone: 'bad', text: 'Saved on this device only - network error.' });
+    }
+  }, [authHeaders, token]);
+
+  const saveUsername = useCallback(async () => {
+    const next = nameForm.trim().toLowerCase();
+    if (!next || next === (clientInfo?.username || '')) return;
+    setNameBusy(true); setSettingsMsg(null);
+    try {
+      const res = await fetch(`${API_URL}/api/client/profile`, {
+        method: 'PATCH', headers: authHeaders, body: JSON.stringify({ username: next }),
+      });
+      const d = await res.json();
+      if (!d.success) { setSettingsMsg({ tone: 'bad', text: d.error || 'Could not change the username.' }); return; }
+      setClientInfo(prev => { const m = { ...prev, ...d.profile }; saveSession(token, m); return m; });
+      setNameForm(d.profile.username);
+      setSettingsMsg({ tone: 'ok', text: 'Username updated. Use it next time you sign in.' });
+    } catch {
+      setSettingsMsg({ tone: 'bad', text: 'Network error.' });
+    } finally { setNameBusy(false); }
+  }, [nameForm, clientInfo, authHeaders, token]);
+
+  const savePassword = useCallback(async () => {
+    if (pwForm.next !== pwForm.confirm) {
+      setSettingsMsg({ tone: 'bad', text: 'The two new passwords do not match.' });
+      return;
+    }
+    setPwBusy(true); setSettingsMsg(null);
+    try {
+      const res = await fetch(`${API_URL}/api/client/password`, {
+        method: 'POST', headers: authHeaders,
+        body: JSON.stringify({ currentPassword: pwForm.current, newPassword: pwForm.next }),
+      });
+      const d = await res.json();
+      if (!d.success) { setSettingsMsg({ tone: 'bad', text: d.error || 'Could not change the password.' }); return; }
+      setPwForm({ current: '', next: '', confirm: '', show: false });
+      setSettingsMsg({ tone: 'ok', text: 'Password changed. Your current session stays signed in.' });
+    } catch {
+      setSettingsMsg({ tone: 'bad', text: 'Network error.' });
+    } finally { setPwBusy(false); }
+  }, [pwForm, authHeaders]);
 
   const handleSubmitOrder = async () => {
     if (!cart.length || submitting) return;
@@ -616,8 +696,7 @@ export default function ClientOrderPage() {
     const stepIdx = STEP_INDEX[slipOrder.status] ?? 0;
     const items = slipOrder.items || [];
     const totalQty = items.reduce((s, i) => s + Number(i.quantity || 0), 0);
-    const contact = [portal.portalCompanyAddress, portal.portalCompanyPhone, portal.portalCompanyEmail]
-      .map(x => (x || '').trim()).filter(Boolean);
+    const contact = [companyAddress, companyPhone, companyEmail].filter(Boolean);
 
     return (
       <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/70 backdrop-blur-sm"
@@ -649,6 +728,13 @@ export default function ClientOrderPage() {
                   <div className="text-right shrink-0">
                     <p className="text-[10px] font-black uppercase tracking-[0.18em] text-accent">Order Slip</p>
                     <p className="font-mono font-black text-sm mt-0.5">{slipOrder.orderNumber}</p>
+                    <span className={`inline-block mt-1.5 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                      terminated ? 'bg-red-100 text-red-700'
+                      : stepIdx >= 4 ? 'bg-emerald-100 text-emerald-700'
+                      : slipOrder.status === 'Partially Fulfilled' ? 'bg-blue-100 text-blue-700'
+                      : 'bg-amber-100 text-amber-800'}`}>
+                      {v.label}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -706,6 +792,19 @@ export default function ClientOrderPage() {
                     })}
                   </ol>
                 )}
+                {/* Partial dispatch: the rail sits at Preparing, so spell out that
+                    some units are already out while the rest are still being prepared,
+                    otherwise the timeline looks stuck and contradicts the badge. */}
+                {slipOrder.status === 'Partially Fulfilled' && (() => {
+                  const doneU = (slipOrder.items || []).reduce((s, it) => s + (it.fulfilledQty || 0), 0);
+                  const totU  = (slipOrder.items || []).reduce((s, it) => s + (it.quantity || 0), 0);
+                  return (
+                    <p className="text-[11px] font-bold text-blue-600 mt-2.5 flex items-center gap-1">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500" />
+                      Partial dispatch — {doneU} of {totU} unit{totU === 1 ? '' : 's'} delivered; the rest are being prepared.
+                    </p>
+                  );
+                })()}
               </div>
 
               {/* Item table.
@@ -738,6 +837,16 @@ export default function ClientOrderPage() {
                             <> · <span className="line-through">{peso(gross)}</span> <span className="font-bold">-{pct}%</span></>
                           )}
                         </span>
+                        {slipOrder.status === 'Partially Fulfilled' && (item.fulfilledQty || 0) > 0 && (item.fulfilledQty || 0) < (item.quantity || 0) && (
+                          <span className="text-[10px] font-black block mt-0.5">
+                            <span className="text-emerald-600">Fulfilled: {item.fulfilledQty}</span>
+                            <span className="text-neutral-400"> | </span>
+                            <span className="text-amber-600">Remaining: {Math.max(0, (item.quantity || 0) - (item.fulfilledQty || 0))}</span>
+                          </span>
+                        )}
+                        {slipOrder.status === 'Partially Fulfilled' && (item.fulfilledQty || 0) >= (item.quantity || 0) && (item.quantity || 0) > 0 && (
+                          <span className="text-[10px] font-black block mt-0.5 text-emerald-600">✓ Fulfilled: {item.quantity}</span>
+                        )}
                       </span>
                       <span className="text-right tabular-nums font-semibold">{item.quantity}</span>
                       <span className="text-right tabular-nums font-semibold">{peso(unit * Number(item.quantity || 0))}</span>
@@ -834,6 +943,14 @@ export default function ClientOrderPage() {
             )}
           </button>
           <button
+            onClick={() => setSettingsOpen(true)}
+            className="p-2 rounded-xl text-fg/60 hover:text-fg hover:bg-white/10 transition"
+            aria-label="My settings"
+            title="My settings"
+          >
+            <Settings size={16} />
+          </button>
+          <button
             onClick={handleLogout}
             className="p-2 rounded-xl text-fg/40 hover:text-fg hover:bg-white/10 transition"
             aria-label="Sign out"
@@ -902,6 +1019,12 @@ export default function ClientOrderPage() {
                   <CreditCard size={16} /> {supportLabel}
                 </a>
               )}
+              <button
+                onClick={() => { setMenuOpen(false); setSettingsOpen(true); }}
+                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-fg/70 hover:text-fg hover:bg-white/5 transition"
+              >
+                <Settings size={16} /> My settings
+              </button>
             </div>
             <div className="mt-auto p-3 border-t border-white/5">
               <button
@@ -1001,18 +1124,143 @@ export default function ClientOrderPage() {
       {/* ── PO Slip popup ─────────────────────────────────────────────────────── */}
       {slipOrder && <OrderSlipModal />}
 
+      {/* ── Client account settings ───────────────────────────────────────────── */}
+      {settingsOpen && (
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/70 backdrop-blur-sm"
+          onClick={() => setSettingsOpen(false)} role="dialog" aria-modal="true" aria-label="My settings">
+          <div className="bg-sidebar-bg border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md max-h-[92vh] sm:max-h-[88vh] overflow-hidden flex flex-col"
+            onClick={e => e.stopPropagation()}>
+
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 flex-shrink-0">
+              <h2 className="font-black text-fg text-sm uppercase tracking-widest flex items-center gap-2">
+                <Settings size={15} className="text-brand" /> My settings
+              </h2>
+              <button onClick={() => setSettingsOpen(false)} className="p-2 -mr-2 rounded-xl text-fg/40 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-6">
+              {settingsMsg && (
+                <p className={`text-xs font-bold rounded-xl px-3 py-2.5 ${settingsMsg.tone === 'ok'
+                  ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300'
+                  : 'bg-red-500/10 border border-red-500/30 text-red-300'}`}>
+                  {settingsMsg.text}
+                </p>
+              )}
+
+              {/* Account */}
+              <section>
+                <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-2 flex items-center gap-1.5">
+                  <UserCircle size={12} /> Account
+                </p>
+                <div className="bg-page-bg border border-white/10 rounded-xl p-4 space-y-3">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-fg/40">Business</span>
+                    <span className="text-fg font-bold">{clientInfo?.name}</span>
+                  </div>
+                  {clientInfo?.clientCode && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-fg/40">Client code</span>
+                      <span className="text-fg font-mono">{clientInfo.clientCode}</span>
+                    </div>
+                  )}
+                  <div>
+                    <label htmlFor="cp-username" className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Username</label>
+                    <div className="flex gap-2">
+                      <input id="cp-username" type="text" value={nameForm}
+                        onChange={e => setNameForm(e.target.value)}
+                        autoComplete="username" spellCheck="false"
+                        className="flex-1 min-w-0 bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm" />
+                      <button onClick={saveUsername}
+                        disabled={nameBusy || !nameForm.trim() || nameForm.trim().toLowerCase() === (clientInfo?.username || '')}
+                        className="shrink-0 bg-brand hover:bg-brand-dark disabled:opacity-40 text-white font-black px-4 rounded-xl transition text-xs uppercase tracking-wider">
+                        {nameBusy ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-fg/30 mt-1.5">Letters, digits, dot, dash and underscore. This is what you sign in with.</p>
+                  </div>
+                </div>
+              </section>
+
+              {/* Password */}
+              <section>
+                <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-2 flex items-center gap-1.5">
+                  <KeyRound size={12} /> Password
+                </p>
+                <div className="bg-page-bg border border-white/10 rounded-xl p-4 space-y-2.5">
+                  {[
+                    { key: 'current', label: 'Current password', auto: 'current-password' },
+                    { key: 'next', label: 'New password', auto: 'new-password' },
+                    { key: 'confirm', label: 'Confirm new password', auto: 'new-password' },
+                  ].map(f => (
+                    <div key={f.key}>
+                      <label htmlFor={`cp-pw-${f.key}`} className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">{f.label}</label>
+                      <div className="relative">
+                        <input id={`cp-pw-${f.key}`} type={pwForm.show ? 'text' : 'password'}
+                          value={pwForm[f.key]} autoComplete={f.auto}
+                          onChange={e => setPwForm(p => ({ ...p, [f.key]: e.target.value }))}
+                          className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 pr-10 rounded-xl outline-none transition text-sm" />
+                        {f.key === 'current' && (
+                          <button type="button" onClick={() => setPwForm(p => ({ ...p, show: !p.show }))}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/30 hover:text-fg/70 transition"
+                            aria-label={pwForm.show ? 'Hide passwords' : 'Show passwords'}>
+                            {pwForm.show ? <EyeOff size={15} /> : <Eye size={15} />}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  <button onClick={savePassword}
+                    disabled={pwBusy || !pwForm.current || pwForm.next.length < 8}
+                    className="w-full mt-1 bg-brand hover:bg-brand-dark disabled:opacity-40 text-white font-black py-2.5 rounded-xl transition text-xs uppercase tracking-wider flex items-center justify-center gap-2">
+                    {pwBusy ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={13} />}
+                    Change password
+                  </button>
+                  <p className="text-[10px] text-fg/30">At least 8 characters, and different from your current one.</p>
+                </div>
+              </section>
+
+              {/* Appearance — this client's own, not the shop's */}
+              <section>
+                <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-2 flex items-center gap-1.5">
+                  <Palette size={12} /> Appearance
+                </p>
+                <div className="bg-page-bg border border-white/10 rounded-xl p-4">
+                  <div className="grid grid-cols-2 gap-2">
+                    {CLIENT_THEMES.map(t => (
+                      <button key={t.value} onClick={() => chooseTheme(t.value)}
+                        className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition text-left ${
+                          theme === t.value
+                            ? 'bg-brand text-white border-brand'
+                            : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'}`}>
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-fg/30 mt-2.5">
+                    {CLIENT_THEMES.find(t => t.value === theme)?.hint} · saved to your account, so it follows you to any device.
+                    Changing it here never affects anyone else.
+                  </p>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Welcome + announcement (admin-editable copy) */}
-      {(portal.portalWelcomeTitle || portal.portalWelcomeMessage) && (
+      {(welcomeTitle || welcomeMessage) && (
         <div className="px-3 sm:px-4 pt-3">
           <div className="bg-sidebar-bg border border-white/10 rounded-2xl px-4 py-3">
-            {portal.portalWelcomeTitle && (
+            {welcomeTitle && (
               <p className="text-fg font-black text-sm">
-                {portal.portalWelcomeTitle}
+                {welcomeTitle}
                 {clientInfo && <span className="text-brand">, {clientInfo.name || clientInfo.username}</span>}
               </p>
             )}
-            {portal.portalWelcomeMessage && (
-              <p className="text-fg/50 text-xs mt-1 leading-snug">{portal.portalWelcomeMessage}</p>
+            {welcomeMessage && (
+              <p className="text-fg/50 text-xs mt-1 leading-snug">{welcomeMessage}</p>
             )}
           </div>
         </div>

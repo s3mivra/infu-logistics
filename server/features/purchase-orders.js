@@ -3,6 +3,8 @@
 /* eslint-disable no-unused-vars */
 import { title, lower, freeText, squish } from '../lib/normalize.js';
 
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerPurchaseOrders(ctx) {
   const {
     app,
@@ -61,7 +63,7 @@ export default function registerPurchaseOrders(ctx) {
       const limit = Math.min(500, Math.max(1, parseInt(req.query.limit) || 200));
       const pos = await PurchaseOrder.find(q).sort({ createdAt: -1 }).limit(limit).lean();
       res.json({ success: true, purchaseOrders: pos });
-    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
   // ── SINGLE ──────────────────────────────────────────────────────────────────
@@ -71,7 +73,7 @@ export default function registerPurchaseOrders(ctx) {
       const po = await PurchaseOrder.findOne({ _id: req.params.id, ...tenantScope(req) }).lean();
       if (!po) return res.status(404).json({ success: false, error: 'Not found' });
       res.json({ success: true, purchaseOrder: po });
-    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
   // ── CREATE (draft a planned PO) ───────────────────────────────────────────────
@@ -108,7 +110,7 @@ export default function registerPurchaseOrders(ctx) {
       });
       logAudit?.(req, { action: 'create', entity: 'purchase_order', entityId: poNumber, after: { lines: clean.length, estTotal: po.estTotal } });
       res.status(201).json({ success: true, purchaseOrder: po.toObject() });
-    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
   // ── UPDATE (edit draft header/lines, or move status Ordered↔Processing) ────────
@@ -148,7 +150,7 @@ export default function registerPurchaseOrders(ctx) {
       await po.save();
       logAudit?.(req, { action: 'update', entity: 'purchase_order', entityId: po.poNumber, after: { status: po.status } });
       res.json({ success: true, purchaseOrder: po.toObject() });
-    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
   // ── RECEIPT POSTING ───────────────────────────────────────────────────────────
@@ -270,7 +272,7 @@ export default function registerPurchaseOrders(ctx) {
       logAudit?.(req, { action: 'receive', entity: 'purchase_order', entityId: po.poNumber, after: { status: po.status, actualTotal: po.actualTotal, stockPosted: posted.totalCost } });
       if (posted.totalCost > 0) emitToMgr?.('erpUpdated');
       res.json({ success: true, purchaseOrder: po.toObject() });
-    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
   // ── DELETE (only drafts / cancelled — never a reconciled record) ───────────────
@@ -290,7 +292,7 @@ export default function registerPurchaseOrders(ctx) {
       await po.deleteOne();
       logAudit?.(req, { action: 'delete', entity: 'purchase_order', entityId: po.poNumber });
       res.json({ success: true });
-    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
   // ── SUPPLIERS — managed directory (CRUD) that POs draw from ────────────────────
@@ -349,7 +351,7 @@ export default function registerPurchaseOrders(ctx) {
         };
       });
       res.json({ success: true, suppliers: withProducts });
-    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
   app.post('/api/suppliers', verifyToken, ...canManageProc, async (req, res) => {
@@ -373,7 +375,7 @@ export default function registerPurchaseOrders(ctx) {
       });
       logAudit?.(req, { action: 'create', entity: 'supplier', entityId: supplierCode });
       res.status(201).json({ success: true, supplier: supplier.toObject() });
-    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
   app.patch('/api/suppliers/:id', verifyToken, ...canManageProc, async (req, res) => {
@@ -401,7 +403,7 @@ export default function registerPurchaseOrders(ctx) {
       if (!supplier) return res.status(404).json({ success: false, error: 'Not found' });
       logAudit?.(req, { action: 'update', entity: 'supplier', entityId: supplier.supplierCode });
       res.json({ success: true, supplier: supplier.toObject() });
-    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
   app.delete('/api/suppliers/:id', verifyToken, ...canDeleteProc, async (req, res) => {
@@ -411,7 +413,7 @@ export default function registerPurchaseOrders(ctx) {
       if (!supplier) return res.status(404).json({ success: false, error: 'Not found' });
       logAudit?.(req, { action: 'delete', entity: 'supplier', entityId: supplier.supplierCode });
       res.json({ success: true });
-    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
   // ── SUPPLIER CATALOG — what a supplier says they sell + their quoted price ─────
@@ -441,7 +443,7 @@ export default function registerPurchaseOrders(ctx) {
       if (!supplier) return res.status(404).json({ success: false, error: 'Not found' });
       logAudit?.(req, { action: 'update', entity: 'supplier', entityId: supplier.supplierCode, after: { addedProduct: entry.itemName } });
       res.status(201).json({ success: true, supplier: supplier.toObject() });
-    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
   app.patch('/api/suppliers/:id/products/:productId', verifyToken, ...canManageProc, async (req, res) => {
@@ -474,7 +476,7 @@ export default function registerPurchaseOrders(ctx) {
       await supplier.save();
       logAudit?.(req, { action: 'update', entity: 'supplier', entityId: supplier.supplierCode, after: { editedProduct: entry.itemName } });
       res.json({ success: true, supplier: supplier.toObject() });
-    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
   app.delete('/api/suppliers/:id/products/:productId', verifyToken, ...canManageProc, async (req, res) => {
@@ -490,6 +492,6 @@ export default function registerPurchaseOrders(ctx) {
       if (!supplier) return res.status(404).json({ success: false, error: 'Not found' });
       logAudit?.(req, { action: 'update', entity: 'supplier', entityId: supplier.supplierCode, after: { removedProduct: req.params.productId } });
       res.json({ success: true, supplier: supplier.toObject() });
-    } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 }

@@ -1,27 +1,31 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 // Extracted from AdminDashboard; reads shared state via useDashboard().
 export default function StockHistoryModal() {
-  const { HIST_PAGE_SIZE, historyItem, historyItemName, historyModalOpen, historyPage, packInfo, setHistoryModalOpen, setHistoryPage, stockHistory } = useDashboard();
+  const { HIST_PAGE_SIZE, historyItem, historyItemName, historyModalOpen, historyPage, itemDisplay, packInfo, setHistoryModalOpen, setHistoryPage, stockHistory } = useDashboard();
 
   if (!(historyModalOpen)) return null;
 const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
       const pagedHistory = stockHistory.slice((historyPage - 1) * HIST_PAGE_SIZE, historyPage * HIST_PAGE_SIZE);
-      // For log mode: convert base-unit quantities to pcs using packBase from item name
-      const hPack = BUSINESS_TYPE === 'log' && historyItem ? packInfo(historyItem) : null;
+      // Movements are stored in base units; the card reports them in the same
+      // units as the Inventory Hub table — packs when the item has a pack size,
+      // otherwise its display unit (packInfo falls back to exactly that).
+      const hPack = historyItem ? packInfo(historyItem) : null;
       const hBase = hPack?.packBase || 1;
-      const fmtQty = (n) => BUSINESS_TYPE === 'log' ? +(n / hBase).toFixed(4) : n;
-      const fmtCost = (c) => BUSINESS_TYPE === 'log' ? (c || 0) * hBase : (c || 0);
+      const hUnit = historyItem
+        ? (itemDisplay(historyItem).isPacked ? 'pcs' : itemDisplay(historyItem).unit)
+        : 'units';
+      const fmtQty = (n) => +(n / hBase).toFixed(4);
+      const fmtCost = (c) => (c || 0) * hBase;
       return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-surface p-6 rounded-xl border border-gray-700 shadow-2xl flex flex-col max-w-5xl w-full max-h-[85vh]">
             <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-3 flex-shrink-0">
               <div>
                 <h2 className="text-xl font-bold text-fg">Stock Card: <span className="text-accent">{historyItemName}</span></h2>
-                {stockHistory.length > 0 && <p className="text-[10px] text-gray-500 mt-0.5">{stockHistory.length} entries total{BUSINESS_TYPE === 'log' ? ' · qty in pcs' : ''}</p>}
+                {stockHistory.length > 0 && <p className="text-[10px] text-gray-500 mt-0.5">{stockHistory.length} entries total{hUnit ? ` · qty in ${hUnit}` : ''}</p>}
               </div>
               <button onClick={() => setHistoryModalOpen(false)} className="text-gray-400 hover:text-fg font-bold text-xl">✕</button>
             </div>
@@ -32,9 +36,9 @@ const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
                   <tr className="text-fg border-b border-gray-800 text-xs uppercase tracking-wider">
                     <th className="pb-2">Date</th>
                     <th className="pb-2">Type</th>
-                    <th className="pb-2 text-right">In/Out ({BUSINESS_TYPE === 'log' ? 'pcs' : 'units'})</th>
+                    <th className="pb-2 text-right">In/Out ({hUnit})</th>
                     <th className="pb-2 text-right">Cost/Pack</th>
-                    <th className="pb-2 text-right">Balance ({BUSINESS_TYPE === 'log' ? 'pcs' : 'units'})</th>
+                    <th className="pb-2 text-right">Balance ({hUnit})</th>
                     <th className="pb-2 pl-4">Remarks / Ref</th>
                   </tr>
                 </thead>

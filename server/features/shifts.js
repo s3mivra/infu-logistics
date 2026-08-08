@@ -1,6 +1,8 @@
 // shifts routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerShifts(ctx) {
   const {
     app,
@@ -197,7 +199,7 @@ app.post('/api/shifts/start', verifyToken, requireStaff, async (req, res) => {
     });
     res.json({ success: true, shift });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -246,7 +248,7 @@ app.post('/api/shifts/end', verifyToken, requireStaff, async (req, res) => {
     emitToMgr('erpUpdated'); // auto-refresh the general ledger (variance entry)
     res.json({ success: true, shift });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -256,7 +258,7 @@ app.get('/api/shifts/current', verifyToken, requireStaff, async (req, res) => {
     const shift = await Shift.findOne({ cashierId: String(req.user._id), status: 'Open' });
     res.json({ success: true, shift });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -288,7 +290,7 @@ app.get('/api/shifts', verifyToken, requireSuperAdmin, async (req, res) => {
 
     res.json({ success: true, shifts, total, page: pageNum, pages: Math.ceil(total / pageSize) });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -302,7 +304,7 @@ app.post('/api/clock/in', verifyToken, requireStaff, async (req, res) => {
     if (at) doc.clockIn = at;
     const entry = await ClockEntry.create(doc);
     res.json({ success: true, entry });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.post('/api/clock/out', verifyToken, requireStaff, async (req, res) => {
@@ -323,7 +325,7 @@ app.post('/api/clock/out', verifyToken, requireStaff, async (req, res) => {
     if (notes) entry.notes = notes;
     await entry.save();
     res.json({ success: true, entry });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // Start a break. Blocked if not clocked in, already on break, or the 1-hour cap is used up.
@@ -338,7 +340,7 @@ app.post('/api/clock/break/start', verifyToken, requireStaff, async (req, res) =
     entry.markModified('breaks');
     await entry.save();
     res.json({ success: true, entry, breakRemainingMinutes: BREAK_CAP_MIN - used });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // End the current break (resume work).
@@ -354,7 +356,7 @@ app.post('/api/clock/break/end', verifyToken, requireStaff, async (req, res) => 
     entry.markModified('breaks');
     await entry.save();
     res.json({ success: true, entry, breakUsedMinutes: completedBreakMinutes(entry) });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.get('/api/clock/status', verifyToken, requireStaff, async (req, res) => {
@@ -371,7 +373,7 @@ app.get('/api/clock/status', verifyToken, requireStaff, async (req, res) => {
       breakRemainingMinutes: Math.max(0, BREAK_CAP_MIN - breakUsedMinutes),
       breakCapMinutes: BREAK_CAP_MIN,
     });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.get('/api/clock/entries', verifyToken, requireSuperAdmin, async (req, res) => {
@@ -400,6 +402,6 @@ app.get('/api/clock/entries', verifyToken, requireSuperAdmin, async (req, res) =
     for (const u of users) { roleById[String(u._id)] = u.role; roleByName[u.name] = u.role; }
     const withRole = entries.map(e => ({ ...e, staffRole: roleById[e.staffId] || roleByName[e.staffName] || '' }));
     res.json({ success: true, entries: withRole, total, page: pageNum });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, ChevronDown, Search, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download, Sparkles, Box } from 'lucide-react';
 import * as ui from '../../shared/ui';
+import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 
 // ── ProcurementTab - Purchase Order workflow ──────────────────────────────────
 // Two-stage tracking. LEFT tab ("Purchase Orders") drafts & tracks planned POs
@@ -28,8 +29,58 @@ const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { month: 's
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 export default function ProcurementTab({ ctx }) {
-  const { apiFetch, peso, inventory = [], isSuperAdmin, packInfo, effectiveDisplay } = ctx;
+  const { apiFetch, peso, inventory = [], isSuperAdmin, packInfo, effectiveDisplay, systemSettings = {} } = ctx;
   const money = peso || ((n) => `₱${(Number(n) || 0).toFixed(2)}`);
+
+  // Print a PO on the SAME A4 document template the Orders billing statement /
+  // order slip uses — only the labels differ ("PURCHASE ORDER" vs "BILLING
+  // STATEMENT"). Letterhead/payment/contact and the print size come from the
+  // same system settings.
+  const printPurchaseOrder = (po) => {
+    const items = (po.lines || []).map(l => ({
+      code: l.itemCode || '',
+      desc: l.itemName + (l.unit ? ` (${l.unit})` : ''),
+      qty: l.orderedQty,
+      unitPrice: Number(l.unitCost) || 0,
+      total: (Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0),
+    }));
+    const total = po.estTotal != null
+      ? po.estTotal
+      : items.reduce((s, l) => s + l.total, 0);
+
+    const schedRows = [
+      po.expectedDate ? { label: 'Expected Delivery:', value: fmtDate(po.expectedDate) } : null,
+      po.notes ? { label: 'Notes:', value: po.notes } : null,
+    ].filter(Boolean);
+
+    printBillingDoc(buildBillingDocHTML({
+      docTitle: 'PURCHASE ORDER',
+      dateLabel: 'Date issued',
+      dateStr: fmtDate(po.createdAt),
+      settings: systemSettings,
+      metaFields: [
+        { label: 'Supplier', value: po.supplier || '' },
+        { label: 'Status', value: po.status || '' },
+        { label: 'PO No.', value: po.poNumber || '' },
+      ],
+      schedRows,
+      items,
+      totals: [{ label: 'ESTIMATED TOTAL', value: total, grand: true }],
+      // A PO to a supplier isn't a billed sale — swap the sales T&C for
+      // procurement-appropriate terms and signatory roles.
+      termsTitle: 'Purchase Terms',
+      terms: [
+        '1. Please supply the items listed above at the agreed unit costs.',
+        '2. Deliver on or before the expected delivery date.',
+        '3. Substitutions or backorders must be confirmed before dispatch.',
+      ],
+      signatures: [
+        'PREPARED BY: Signature over Printed Name / Date',
+        'APPROVED BY: Signature over Printed Name / Date',
+        'RECEIVED BY (Supplier): Signature over Printed Name / Date',
+      ],
+    }));
+  };
   // Permission gating (server also enforces). Fall back to role-ish defaults if ctx.can missing.
   const can = ctx.can || (() => true);
   const canManage = can('procurement.manage');
@@ -548,7 +599,7 @@ export default function ProcurementTab({ ctx }) {
           </div>
         </div>
         {subTab === 'orders' && canManage && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button onClick={downloadPoTemplate} title="Download a blank template with the expected headers" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition">
               <FileText size={15} /> Template
             </button>
@@ -572,14 +623,17 @@ export default function ProcurementTab({ ctx }) {
       </div>
 
       {/* Sub-tab switch */}
-      <div className="inline-flex bg-white/5 border border-white/10 rounded-xl p-1 mb-5">
+      {/* max-w-full + overflow-x lets the 3 pills scroll on a narrow phone
+          instead of pushing the whole page wider; shrink-0 keeps each pill
+          its natural size. */}
+      <div className="flex max-w-full overflow-x-auto scrollbar-hide bg-white/5 border border-white/10 rounded-xl p-1 mb-5">
         {[
           { id: 'orders', label: 'Purchase Orders', icon: ClipboardList },
           { id: 'receiving', label: 'Receiving', icon: PackageCheck, badge: activePOs.length },
           { id: 'suppliers', label: 'Suppliers', icon: Building2 },
         ].map(({ id, label, icon: Icon, badge }) => (
           <button key={id} onClick={() => setSubTab(id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition ${subTab === id ? 'bg-brand text-white shadow-sm' : 'text-fg/50 hover:text-fg'}`}>
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition shrink-0 ${subTab === id ? 'bg-brand text-white shadow-sm' : 'text-fg/50 hover:text-fg'}`}>
             <Icon size={15} /> {label}
             {badge > 0 && <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${subTab === id ? 'bg-white/20' : 'bg-brand/20 text-brand'}`}>{badge}</span>}
           </button>
@@ -587,9 +641,9 @@ export default function ProcurementTab({ ctx }) {
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 text-red-300 text-sm font-bold px-4 py-3 rounded-xl mb-4">
+        <div className="flex items-center gap-2 bg-red-500 border border-red-500 text-white text-sm font-bold px-4 py-3 rounded-xl mb-4">
           <AlertTriangle size={16} /> {error}
-          <button onClick={() => setError('')} className="ml-auto text-red-300/60 hover:text-red-300"><X size={15} /></button>
+          <button onClick={() => setError('')} className="ml-auto text-white hover:text-red-300"><X size={15} /></button>
         </div>
       )}
 
@@ -607,6 +661,7 @@ export default function ProcurementTab({ ctx }) {
               // arrive; whatever was already received stays exactly as posted.
               if (po.status === 'Incomplete') return (
                 <div className="flex items-center gap-1.5">
+                  <button onClick={() => printPurchaseOrder(po)} title="Print purchase order" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 hover:text-fg transition">Print</button>
                   <span className="text-[10px] font-bold text-amber-400/70 uppercase tracking-wider">Receive rest in Receiving tab</span>
                   {canManage && (
                     <button onClick={() => setStatus(po, 'Cancelled')} title="Cancel the outstanding balance - already-received stock is unaffected" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/40 hover:bg-red-500/15 hover:text-red-300 transition">Cancel rest</button>
@@ -615,11 +670,12 @@ export default function ProcurementTab({ ctx }) {
               );
               return (
               <div className="flex items-center gap-1.5 flex-wrap">
+                <button onClick={() => printPurchaseOrder(po)} title="Print purchase order" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 hover:text-fg transition">Print</button>
                 {canManage && po.status === 'Ordered' && (
-                  <button onClick={() => setStatus(po, 'Processing')} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 transition">Mark Processing</button>
+                  <button onClick={() => setStatus(po, 'Processing')} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-500/25 transition">Mark Processing</button>
                 )}
                 {canManage && <button onClick={() => openEditForm(po)} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 hover:text-fg transition">Edit</button>}
-                {canManage && <button onClick={() => setStatus(po, 'Cancelled')} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/40 hover:bg-red-500/15 hover:text-red-300 transition">Cancel</button>}
+                {canManage && <button onClick={() => setStatus(po, 'Cancelled')} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-red-500 text-white hover:bg-red-400 hover:text-white/0 transition">Cancel</button>}
                 {canDelete && (
                   <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-fg/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
                 )}
@@ -627,9 +683,14 @@ export default function ProcurementTab({ ctx }) {
               );
             }} />
           <PoSection title="History" empty="No completed or cancelled POs yet." pos={historyPOs} money={money} showReceived
-            renderActions={(po) => canDelete && ['Cancelled'].includes(po.status) ? (
-              <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-fg/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
-            ) : null} />
+            renderActions={(po) => (
+              <div className="flex items-center gap-1.5">
+                <button onClick={() => printPurchaseOrder(po)} title="Print purchase order" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 hover:text-fg transition">Print</button>
+                {canDelete && ['Cancelled'].includes(po.status) && (
+                  <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-fg/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
+                )}
+              </div>
+            )} />
         </div>
       ) : subTab === 'suppliers' ? (
         /* ── SUPPLIERS DIRECTORY ── */
@@ -798,7 +859,7 @@ export default function ProcurementTab({ ctx }) {
         /* ── RECEIVING / RECONCILIATION ── */
         <div className="space-y-3">
           {activePOs.length === 0 ? (
-            <div className="text-center py-16 text-fg/40 font-bold">
+            <div className="text-center py-16 text-fg font-bold">
               <PackageCheck size={32} className="mx-auto mb-3 opacity-40" />
               Nothing awaiting delivery. Create a PO in the Purchase Orders tab first.
             </div>
@@ -822,12 +883,12 @@ export default function ProcurementTab({ ctx }) {
               {receiveId === po._id && (() => {
                 const missingLines = po.lines.map((l, i) => ({ l, i, key: l._id || i, rem: remainingOf(l) })).filter(x => x.rem > 0);
                 return (
-                <div className="border-t border-white/10 p-4 space-y-3 bg-black/20">
-                  <p className="text-[11px] font-black uppercase tracking-wider text-fg/40">
+                <div className="border-t border-white/10 p-4 space-y-3 bg-accent">
+                  <p className="text-[11px] font-black uppercase tracking-wider text-white">
                     {po.status === 'Incomplete' ? 'Outstanding items only - enter what just arrived' : 'Enter actual quantities received'}
                   </p>
                   {missingLines.length === 0 ? (
-                    <p className="text-fg/40 text-sm font-bold py-2">Nothing outstanding on this PO.</p>
+                    <p className="text-white text-sm font-bold py-2">Nothing outstanding on this PO.</p>
                   ) : (
                   <div className="space-y-2">
                     {missingLines.map(({ l, key, rem }) => {
@@ -835,13 +896,13 @@ export default function ProcurementTab({ ctx }) {
                       const short = !isNaN(recv) && recv > 0 && recv < rem;
                       const alreadyIn = Number(l.receivedQty) || 0;
                       return (
-                        <div key={key} className="flex items-center gap-3 bg-white/5 rounded-lg px-3 py-2">
+                        <div key={key} className="flex items-center gap-3 bg-white rounded-lg px-3 py-2">
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold text-fg truncate">{l.itemName}</p>
-                            <p className="text-fg/40 text-xs">
+                            <p className="text-sm font-bold text-accent truncate">{l.itemName}</p>
+                            <p className="text-black text-xs">
                               Ordered: {l.orderedQty} {l.unit} @ {money(l.unitCost)}
                               {alreadyIn > 0 && <span className="text-emerald-400/70"> · Received so far: {alreadyIn}</span>}
-                              <span className="text-amber-400/80"> · Missing: {rem} {l.unit}</span>
+                              <span className="text-amber-500"> · Missing: {rem} {l.unit}</span>
                             </p>
                           </div>
                           <div className="flex items-center gap-1.5">
@@ -856,11 +917,11 @@ export default function ProcurementTab({ ctx }) {
                   </div>
                   )}
                   <textarea value={receiveNotes} onChange={e => setReceiveNotes(e.target.value)} rows={2}
-                    placeholder="Delivery notes (optional): damages, substitutions, backorders…" className={inputCls} />
+                    placeholder="Delivery notes (optional): damages, substitutions, backorders…" className="w-full bg-white border border-white/10 rounded-lg px-3 py-2 text-sm text-fg placeholder-fg/25 focus:outline-none focus:border-brand/60" />
                   <div className="flex items-center justify-end gap-2">
-                    <button onClick={() => setReceiveId(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
+                    <button onClick={() => setReceiveId(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-white hover:text-white/80 transition">Cancel</button>
                     <button onClick={() => submitReceive(po)} disabled={receiving || missingLines.length === 0}
-                      className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-fg font-bold text-sm px-4 py-2 rounded-xl transition">
+                      className="flex items-center gap-2 bg-white hover:bg-white/90 disabled:opacity-50 text-accent font-bold text-sm px-4 py-2 rounded-xl transition">
                       {receiving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Confirm Received
                     </button>
                   </div>
@@ -1092,10 +1153,10 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
                 {renderActions && <div className="shrink-0">{renderActions(po)}</div>}
               </div>
               {isOpen && (
-                <div className="border-t border-white/10 px-4 py-3 bg-black/20">
+                <div className="border-t border-white/10 px-4 py-3 bg-accent">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-fg/30 text-[10px] font-black uppercase tracking-wider text-left">
+                      <tr className="text-white text-[10px] font-black uppercase tracking-wider text-left">
                         <th className="pb-1.5">Item</th>
                         <th className="pb-1.5 text-right">Ordered</th>
                         {showReceived && <th className="pb-1.5 text-right">Received</th>}
@@ -1103,23 +1164,23 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
                         <th className="pb-1.5 text-right">Total</th>
                       </tr>
                     </thead>
-                    <tbody className="text-fg/70">
+                    <tbody className="text-fg">
                       {po.lines.map((l, i) => {
                         const short = showReceived && l.receivedQty != null && l.receivedQty < l.orderedQty;
                         return (
-                          <tr key={l._id || i} className="border-t border-white/5">
-                            <td className="py-1.5 font-bold text-fg/80">{l.itemName}</td>
-                            <td className="py-1.5 text-right">{l.orderedQty} {l.unit}</td>
-                            {showReceived && <td className={`py-1.5 text-right font-bold ${short ? 'text-red-300' : 'text-green-300'}`}>{l.receivedQty ?? '-'} {l.unit}</td>}
-                            <td className="py-1.5 text-right">{money(l.unitCost)}</td>
-                            <td className="py-1.5 text-right">{money((showReceived && l.receivedQty != null ? l.receivedQty : l.orderedQty) * l.unitCost)}</td>
+                          <tr key={l._id || i} className="border-t border-white">
+                            <td className="py-1.5 font-bold text-white">{l.itemName}</td>
+                            <td className="py-1.5 text-white text-right">{l.orderedQty} {l.unit}</td>
+                            {showReceived && <td className={`py-1.5 text-right font-bold ${short ? 'text-red-400' : 'text-green-400'}`}>{l.receivedQty ?? '-'} {l.unit}</td>}
+                            <td className="py-1.5 text-white text-right">{money(l.unitCost)}</td>
+                            <td className="py-1.5 text-white text-right">{money((showReceived && l.receivedQty != null ? l.receivedQty : l.orderedQty) * l.unitCost)}</td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
-                  {po.notes && <p className="text-fg/40 text-xs mt-2 pt-2 border-t border-white/5"><span className="font-black uppercase tracking-wider text-[10px] text-fg/30">Notes: </span>{po.notes}</p>}
-                  {po.receivedBy && <p className="text-fg/30 text-[11px] mt-1.5 font-bold">Received by {po.receivedBy}</p>}
+                  {po.notes && <p className="text-white text-xs mt-2 pt-2 border-t border-white/5"><span className="font-black uppercase tracking-wider text-[10px] text-fg/30">Notes: </span>{po.notes}</p>}
+                  {po.receivedBy && <p className="text-white text-[11px] mt-1.5 font-bold">Received by {po.receivedBy}</p>}
                 </div>
               )}
             </div>

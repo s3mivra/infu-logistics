@@ -345,7 +345,14 @@ export default function LedgerTab({ ctx }) {
                   <h3 className="text-lg font-black text-fg">Sales Summary</h3>
                   <p className="text-fg/60 text-xs">Completed sales broken down by payment channel.</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input type="date" value={sssRange.start} max={sssRange.end || undefined}
+                    onChange={e => setSssRange(r => ({ ...r, start: e.target.value }))}
+                    className="bg-white/5 border border-white/10 rounded-xl px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand" />
+                  <span className="text-fg/40 text-xs font-bold">to</span>
+                  <input type="date" value={sssRange.end} min={sssRange.start || undefined}
+                    onChange={e => setSssRange(r => ({ ...r, end: e.target.value }))}
+                    className="bg-white/5 border border-white/10 rounded-xl px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand" />
                   <button onClick={fetchSalesSummary} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/80 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
                   {salesSummary && <button onClick={exportSalesSummaryPDF} className="flex items-center gap-1.5 bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
                 </div>
@@ -437,15 +444,17 @@ export default function LedgerTab({ ctx }) {
                     </thead>
                     <tbody className="text-fg/75">
                       {sliPage.pageItems.map((row, i) => (
-                        <tr key={i} className="border-b border-white/5">
-                          <td className="py-1.5 text-fg/70 text-xs">{row.date ? new Date(row.date).toLocaleDateString() : ''}</td>
-                          <td className="py-1.5 font-mono text-xs text-fg/70">{row.customerId || '-'}</td>
-                          <td className="py-1.5 text-xs text-fg/70">{row.customerName || 'Guest'}</td>
-                          <td className="py-1.5 font-mono text-xs text-fg/70">{row.orderNumber}</td>
-                          <td className="py-1.5 font-mono text-xs text-fg/70">{row.itemCode || '-'}</td>
-                          <td className="py-1.5 text-xs text-fg/70">{row.itemName}</td>
+                        <tr key={i} className={`border-b border-white/5 ${row.isComponent ? 'bg-white/[0.02]' : ''}`}>
+                          <td className="py-1.5 text-fg/70 text-xs">{row.isComponent ? '' : (row.date ? new Date(row.date).toLocaleDateString() : '')}</td>
+                          <td className="py-1.5 font-mono text-xs text-fg/70">{row.isComponent ? '' : (row.customerId || '-')}</td>
+                          <td className="py-1.5 text-xs text-fg/70">{row.isComponent ? '' : (row.customerName || 'Guest')}</td>
+                          <td className="py-1.5 font-mono text-xs text-fg/70">{row.isComponent ? '' : row.orderNumber}</td>
+                          <td className="py-1.5 font-mono text-xs text-fg/70">{row.itemCode || (row.isComponent ? '' : '-')}</td>
+                          <td className={`py-1.5 text-xs ${row.isComponent ? 'text-fg/45 pl-4' : 'text-fg/70'} ${row.isCombo ? 'font-bold' : ''}`}>
+                            {row.isComponent ? `↳ ${row.itemName}` : row.itemName}{row.isCombo ? ' (promo)' : ''}
+                          </td>
                           <td className="py-1.5 text-right font-mono">{row.quantity}</td>
-                          <td className="py-1.5 text-right font-mono font-bold text-fg/90">{money2(row.lineTotal)}</td>
+                          <td className="py-1.5 text-right font-mono font-bold text-fg/90">{row.isComponent ? <span className="text-fg/30 font-normal not-italic">included</span> : money2(row.lineTotal)}</td>
                         </tr>
                       ))}
                     </tbody>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Bell, AlertTriangle, AlertCircle, Info, RefreshCw } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
 
@@ -19,13 +20,40 @@ const SEVERITY = {
 // signals change second-to-second, and the POS tablet has better things to do.
 const POLL_MS = 120000;
 
-export default function NotificationBell() {
+// `align` controls which way the dropdown opens. The default 'right' suits a
+// top bar (panel hangs left from the button); 'left' is for the desktop
+// sidebar, where a right-anchored panel would run off the left of the screen.
+export default function NotificationBell({ align = 'right', full = false }) {
   const { apiFetch, setActiveTab, setLedgerSubTab } = useDashboard();
   const [open, setOpen] = useState(false);
   const [data, setData] = useState({ items: [], count: 0, criticalCount: 0 });
   const [loading, setLoading] = useState(false);
   const panelRef = useRef(null);
   const btnRef = useRef(null);
+  // Screen position for the panel. It is rendered through a portal (see below),
+  // so it needs real coordinates rather than being laid out next to the button.
+  const [anchor, setAnchor] = useState(null);
+
+  const PANEL_W = () => Math.min(window.innerWidth * 0.92, 416);   // matches w-[min(92vw,26rem)]
+  const measure = useCallback(() => {
+    const b = btnRef.current?.getBoundingClientRect();
+    if (!b) return;
+    const w = PANEL_W();
+    const raw = align === 'left' ? b.left : b.right - w;
+    const left = Math.max(8, Math.min(raw, window.innerWidth - w - 8));
+    const top = b.bottom + 8;
+    setAnchor({ top, left, width: w, maxHeight: Math.max(160, window.innerHeight - top - 12) });
+  }, [align]);
+
+  // Keep it pinned to the button while open.
+  useEffect(() => {
+    if (!open) return;
+    measure();
+    const on = () => measure();
+    window.addEventListener('resize', on);
+    window.addEventListener('scroll', on, true);
+    return () => { window.removeEventListener('resize', on); window.removeEventListener('scroll', on, true); };
+  }, [open, measure]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,10 +110,10 @@ export default function NotificationBell() {
     <div className="relative">
       <button
         ref={btnRef}
-        onClick={() => { setOpen(o => !o); if (!open) load(); }}
+        onClick={() => { if (!open) { measure(); load(); } setOpen(o => !o); }}
         aria-label={count ? `Notifications: ${count} item(s) need attention` : 'Notifications: nothing needs attention'}
         aria-expanded={open}
-        className={`relative flex items-center gap-1.5 px-3 py-2 rounded-xl font-bold text-xs border transition ${
+        className={`relative flex items-center gap-1.5 px-3 py-2 rounded-xl font-bold text-xs border transition ${full ? 'w-full' : ''} ${
           data.criticalCount > 0
             ? 'bg-red-500/15 text-red-400 border-red-500/30 hover:bg-red-500/25'
             : count > 0
@@ -103,12 +131,16 @@ export default function NotificationBell() {
         )}
       </button>
 
-      {open && (
+      {/* Rendered into <body>, NOT next to the button: the desktop sidebar is
+          overflow-hidden, which clipped an absolutely-positioned panel at its
+          edge. A portal escapes every ancestor's overflow and stacking context. */}
+      {open && anchor && createPortal(
         <div
           ref={panelRef}
           role="dialog"
           aria-label="Notifications"
-          className="absolute right-0 mt-2 w-[min(92vw,26rem)] max-h-[70vh] overflow-hidden flex flex-col bg-surface border border-white/10 rounded-2xl shadow-elev-3 z-[9999] animate-scale-in"
+          style={{ position: 'fixed', top: anchor.top, left: anchor.left, width: anchor.width, maxHeight: anchor.maxHeight }}
+          className="overflow-hidden flex flex-col bg-surface border border-white/10 rounded-2xl shadow-elev-3 z-[9999] animate-scale-in"
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
             <div>
@@ -156,7 +188,8 @@ export default function NotificationBell() {
               })
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

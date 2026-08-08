@@ -1,7 +1,6 @@
 import { useDashboard } from '../../dashboard/DashboardContext';
 import * as ui from '../../../shared/ui';
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 // Reasons are a closed list on purpose: spoilage posts a journal entry, and a
 // free-text reason makes the waste report unaggregatable at month-end.
@@ -24,16 +23,16 @@ export default function SpoilageModal() {
   if (!spoilageModal) return null;
 
   const item = spoilageModal.item;
-  const unitLabel = BUSINESS_TYPE === 'log' ? 'pcs' : item.unit;
-  const currentQty = BUSINESS_TYPE === 'log'
-    ? itemDisplay(item).packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })
-    : item.stockQty;
+  const d = itemDisplay(item);
+  const unitLabel = d.isPacked ? 'pcs' : d.unit;
+  const currentQty = d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 });
 
   const submit = async () => {
-    // The form collects packs in log mode but the API always takes base units.
-    const pack = BUSINESS_TYPE === 'log' ? packInfo(item) : null;
+    // The form collects packs (or display units for unpacked items); the API
+    // always takes base units.
+    const pack = packInfo(item);
     const qtyEntered = parseFloat(spoilageForm.qty);
-    const qtyBase = pack ? qtyEntered * (pack.packBase || 1) : qtyEntered;
+    const qtyBase = qtyEntered * (pack.packBase || 1);
     const { reason, note } = spoilageForm;
     const label = `${qtyEntered} ${unitLabel} of ${item.itemName}`;
 

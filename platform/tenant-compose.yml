@@ -1,0 +1,79 @@
+# One tenant's stack: web + api only. Mongo and Caddy are shared (platform layer).
+#
+# Launched by the control plane as:
+#   docker compose -p <slug> --env-file platform/tenants/<slug>/.env \
+#     -f platform/tenant-compose.yml up -d --build
+#
+# Neither service publishes a port — Caddy reaches them by network alias over
+# semivra-net, so a tenant is unreachable except through the proxy.
+services:
+  api:
+    build: ${STACK_ROOT}/server
+    image: semivra-api:${TENANT}
+    restart: unless-stopped
+    # Hard ceiling. Without it one tenant's runaway report query can exhaust the
+    # box and take every other client down with it. The kernel OOM-kills this
+    # container instead, and `restart: unless-stopped` brings it back.
+    # NODE_OPTIONS keeps V8's heap under the cgroup limit so Node garbage-collects
+    # rather than getting killed — set to ~75% of MEM_LIMIT by the control plane.
+    mem_limit: ${MEM_LIMIT:-1g}
+    # Relative weight under contention only; it reserves nothing and does not cap
+    # a tenant when the CPUs are otherwise idle. 1024 is Docker's default.
+    cpu_shares: ${CPU_SHARES:-1024}
+    environment:
+      NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=768}
+      NODE_ENV: production
+      PORT: 5002
+      BUSINESS_TYPE: ${VITE_BUSINESS_TYPE}
+      MONGO_URI: ${MONGO_URI}
+      JWT_SECRET: ${JWT_SECRET}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      ADMIN_PASS: ${ADMIN_PASS}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5002/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    networks:
+      semivra-net:
+        aliases: ["${TENANT}-api"]
+
+  web:
+    build:
+      context: ${STACK_ROOT}/client
+      args:
+        API_HOST: ${TENANT}-api
+        VITE_API_URL: ""
+        VITE_BUSINESS_TYPE: ${VITE_BUSINESS_TYPE}
+        VITE_BUSINESS_NAME: ${VITE_BUSINESS_NAME}
+        VITE_FRONTEND_URL: ${VITE_FRONTEND_URL}
+        VITE_THEME: ${VITE_THEME}
+        VITE_FB_LINK: ${VITE_FB_LINK}
+        VITE_BILLING_NAME: ${VITE_BILLING_NAME}
+        VITE_BILLING_ADDRESS1: ${VITE_BILLING_ADDRESS1}
+        VITE_BILLING_ADDRESS2: ${VITE_BILLING_ADDRESS2}
+        VITE_BILLING_PHONE: ${VITE_BILLING_PHONE}
+        VITE_BILLING_EMAIL: ${VITE_BILLING_EMAIL}
+        VITE_BILLING_BANK: ${VITE_BILLING_BANK}
+        VITE_BILLING_ACCOUNT_NAME: ${VITE_BILLING_ACCOUNT_NAME}
+        VITE_BILLING_ACCOUNT_NO: ${VITE_BILLING_ACCOUNT_NO}
+    image: semivra-web:${TENANT}
+    restart: unless-stopped
+    # nginx serving a static bundle needs very little; this is a guard against a
+    # pathological case, not a tuning knob. MEM_LIMIT is the tenant's real budget
+    # and applies to the API, which is where the memory actually goes.
+    mem_limit: ${WEB_MEM_LIMIT:-128m}
+    cpu_shares: ${CPU_SHARES:-1024}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      semivra-net:
+        aliases: ["${TENANT}-web"]
+
+networks:
+  semivra-net:
+    external: true
+    name: semivra-net

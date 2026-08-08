@@ -1,6 +1,8 @@
 // qr-sessions routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerQrSessions(ctx) {
   const {
     app,
@@ -188,7 +190,7 @@ app.post('/api/sessions/generate', verifyToken, requireStaff, async (req, res) =
     await QRSession.create({ sessionId, table, expiresAt });
     res.json({ success: true, sessionId, table });
   } catch (err) {
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
@@ -211,6 +213,7 @@ app.post('/api/sessions/:id/heartbeat', async (req, res) => {
     
     res.json({ success: true, table: session.table });
   } catch (err) {
+    captureError(req, err);
     res.status(500).json({ success: false });
   }
 });
@@ -221,6 +224,7 @@ app.post('/api/sessions/:id/close', async (req, res) => {
     await QRSession.findOneAndUpdate({ sessionId: req.params.id }, { isActive: false });
     res.json({ success: true });
   } catch (err) {
+    captureError(req, err);
     res.status(500).json({ success: false });
   }
 });

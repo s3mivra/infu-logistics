@@ -1,0 +1,9 @@
+# Generated per-tenant state — contains secrets (JWT_SECRET, ADMIN_PASS).
+# Back these up out-of-band; never commit them.
+tenants/
+tenants-caddy/
+# Per-tenant Caddy access logs, written at runtime and used for the bandwidth
+# meter. They contain client IPs and request paths — operational data, not code.
+caddy-logs/
+backups/
+.env

@@ -1,6 +1,8 @@
 // tenants routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { captureError } from '../lib/errorLog.js';
+
 export default function registerTenants(ctx) {
   const {
     app,
@@ -178,7 +180,7 @@ app.get('/api/tenants', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const tenants = await Tenant.find().sort({ createdAt: 1 }).lean();
     res.json({ success: true, tenants });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.post('/api/tenants', verifyToken, requireSuperAdmin, validate(tenantSchema), async (req, res) => {
@@ -187,7 +189,7 @@ app.post('/api/tenants', verifyToken, requireSuperAdmin, validate(tenantSchema),
     if (await Tenant.findOne({ slug }).lean()) return res.status(409).json({ success: false, error: 'A tenant with that slug already exists.' });
     const tenant = await Tenant.create({ ...req.body, slug });
     res.json({ success: true, tenant });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.patch('/api/tenants/:id', verifyToken, requireSuperAdmin, async (req, res) => {
@@ -198,7 +200,7 @@ app.patch('/api/tenants/:id', verifyToken, requireSuperAdmin, async (req, res) =
     const tenant = await Tenant.findByIdAndUpdate(req.params.id, { $set: allowed }, { returnDocument: 'after' });
     if (!tenant) return res.status(404).json({ success: false, error: 'Tenant not found.' });
     res.json({ success: true, tenant });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.delete('/api/tenants/:id', verifyToken, requireSuperAdmin, async (req, res) => {
@@ -209,6 +211,6 @@ app.delete('/api/tenants/:id', verifyToken, requireSuperAdmin, async (req, res) 
     if (tenant.slug === 'default') return res.status(400).json({ success: false, error: 'The default tenant cannot be deleted.' });
     await Tenant.findByIdAndDelete(req.params.id);
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }); }
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 }

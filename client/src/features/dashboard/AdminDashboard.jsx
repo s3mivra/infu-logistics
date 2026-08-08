@@ -4,6 +4,8 @@ import { io } from 'socket.io-client';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
+import { buildReceiptHTML as buildSharedReceipt, printReceiptHTML, resolveLetterhead } from '../../shared/receiptTemplate';
+import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import { queueOrder, requestNotificationPermission, notify, queueClock, getQueuedClock, flushClockQueue } from '../../shared/pwa';
 import * as auth from '../auth/auth';
 import { DashboardProvider } from './DashboardContext';
@@ -50,6 +52,10 @@ const TabFallback = () => (
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
 const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL || 'http://192.168.100.2:3000';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+// fb categories route to Kitchen; log categories route to Logistics. Every
+// catForm reset/fallback must use this so a new category in log mode isn't
+// silently saved as 'Kitchen' (which no log routing station serves).
+const DEFAULT_DEPARTMENT = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
 
 // Lazy-load the PDF libraries (jspdf + jspdf-autotable, ~600KB) only when a PDF is
 // actually generated — keeps them out of the initial dashboard load. Cached after
@@ -203,7 +209,7 @@ export default function AdminDashboard() {
   });
   const [formData, setFormData] = useState(emptyProductForm);
   const resetProductForm = () => { setEditingProduct(null); setFormData(emptyProductForm()); };
-  const [catForm, setCatForm] = useState({ name: '', department: 'Kitchen' });
+  const [catForm, setCatForm] = useState({ name: '', department: DEFAULT_DEPARTMENT });
   const [editingCategory, setEditingCategory] = useState(null);
 
   const [autoTableId, setAutoTableId] = useState('');
@@ -1337,6 +1343,19 @@ export default function AdminDashboard() {
       else ui.alert(d.error || 'Partial fulfillment failed.');
     } catch { ui.alert('Partial fulfillment failed.'); } finally { setPartialBusy(false); }
   };
+  // Drop the un-fulfilled remainder: the order finalizes as Completed at the
+  // fulfilled quantity (already in the ledger); the dropped units are recorded
+  // but post nothing. This replaces the old "cancel the whole order" behaviour,
+  // which wrongly voided the fulfilled portion that was already booked.
+  const dropRemaining = async (order) => {
+    if (!(await ui.confirm('Drop the remaining un-fulfilled units? The fulfilled units stay Completed and in the ledger; only the undelivered units are dropped.'))) return;
+    try {
+      const res = await apiFetch(`/api/orders/${order._id}/drop-remaining`, { method: 'POST' });
+      const d = await res.json();
+      if (d.success) { fetchOrders(); fetchERPData?.(); ui.alert('Remaining dropped. Order completed at the fulfilled quantity.'); }
+      else ui.alert(d.error || 'Failed to drop remaining.');
+    } catch { ui.alert('Failed to drop remaining.'); }
+  };
   useEffect(() => { if (isAuthenticated) { fetchSettings(); fetchClockStatus(); fetchParked(); } }, [isAuthenticated]);
 
   // --- REAL-TIME AUTO REFRESH ---
@@ -1609,8 +1628,11 @@ const updateStatus = async (orderId, newStatus) => {
         fetchOrders();
       } else if (newStatus === 'Preparing' && BUSINESS_TYPE === 'log') {
         const prepOrder = { ...order, ...payload, ...data.order };
-        // Logistics: only the billing statement is printed (no order slip).
-        printBillingStatement(prepOrder);
+        // Logistics print format is admin-configurable in Settings → Printer
+        // Settings: the A4 billing statement, the 80mm thermal receipt, or both.
+        const fmt = systemSettings.logReceiptFormat || 'billing';
+        if (fmt === 'thermal' || fmt === 'both') printOrderSlip(prepOrder);
+        if (fmt === 'billing' || fmt === 'both') printBillingStatement(prepOrder);
       } else if (newStatus === 'Completed' && BUSINESS_TYPE === 'log') {
         fetchERPData();
       }
@@ -2137,120 +2159,77 @@ const updateStatus = async (orderId, newStatus) => {
   };
   // --- 🖨️ ORDER SLIP PRINTER ---
   const printOrderSlip = async (order) => {
-    // Builds a styled HTML receipt that auto-scales with order size
+    // Order-slip data mapped onto the shared receipt template (same format the
+    // Procurement PO print uses). Letterhead/footer come from system settings.
+    const lh = resolveLetterhead(systemSettings);
+    // Logistics always prints an original + duplicate; fb prints one receipt by
+    // default with the duplicate opt-in via Settings → Printer Settings.
+    const dupe = BUSINESS_TYPE === 'log' || systemSettings.fbDuplicateReceipt === true;
     const buildReceiptHTML = () => {
       const dateStr = new Date(order.createdAt || Date.now()).toLocaleString('en-PH', {
         month: 'short', day: 'numeric', year: 'numeric',
         hour: '2-digit', minute: '2-digit', hour12: true
       });
 
-      const itemRowsHTML = order.items.map(item => {
+      const lineItems = order.items.map(item => {
         const addOnTotal = (item.selectedAddOns || []).reduce((sum, a) => sum + Number(a.price || 0), 0);
-        const lineTotal = (item.price + addOnTotal) * item.quantity;
-        const addOnHTML = (item.selectedAddOns || []).map(a =>
-          `<tr><td></td><td class="aname">+ ${a.name}</td><td class="amt">&#x20B1;${Number(a.price || 0).toFixed(2)}</td></tr>`
-        ).join('');
-        return `<tr>
-          <td class="qty">${item.quantity}x</td>
-          <td class="iname">${item.name}</td>
-          <td class="amt">&#x20B1;${lineTotal.toFixed(2)}</td>
-        </tr>${addOnHTML}`;
-      }).join('');
+        return {
+          qty: `${item.quantity}x`,
+          name: item.name,
+          amount: (item.price + addOnTotal) * item.quantity,
+          subLines: (item.selectedAddOns || []).map(a => ({ name: a.name, amount: Number(a.price || 0) })),
+        };
+      });
 
       const subTotal = order.subtotal || 0;
       const discAmt  = order.discount  || 0;
       const total    = order.total     || 0;
       const tendered = order.amountTendered || 0;
       const change   = order.changeDue || 0;
+      const P = n => '&#x20B1;' + Number(n).toFixed(2);
 
-      const discRow = (discAmt > 0 && !order.isComplimentary)
-        ? `<tr class="disc"><td colspan="2">Discount (${order.discountType || ''})</td><td class="amt">-&#x20B1;${discAmt.toFixed(2)}</td></tr>`
-        : '';
+      const summaryRows = [{ label: 'Subtotal', value: P(subTotal) }];
+      if ((order.deliveryFee || 0) > 0) summaryRows.push({ label: 'Delivery Fee', value: P(order.deliveryFee) });
+      if (discAmt > 0 && !order.isComplimentary) summaryRows.push({ label: `Discount (${order.discountType || ''})`, value: '-' + P(discAmt), cls: 'disc' });
+      if (order.isComplimentary) {
+        summaryRows.push({ label: 'AMOUNT DUE', value: P(0), cls: 'tot' });
+      } else {
+        summaryRows.push({ label: 'TOTAL', value: P(total), cls: 'tot' });
+        if (tendered > 0 && order.paymentMethod === 'Cash') {
+          summaryRows.push({ label: 'Cash Tendered', value: P(tendered) });
+          summaryRows.push({ label: 'Change', value: P(change), cls: 'chg' });
+        }
+      }
+      if (order.isComplimentary) summaryRows.push({ label: 'NO PAYMENT REQUIRED', value: '' });
 
-      const totalBlock = order.isComplimentary
-        ? `<tr class="tot"><td colspan="2">AMOUNT DUE</td><td class="amt">&#x20B1;0.00</td></tr>`
-        : `<tr class="tot"><td colspan="2">TOTAL</td><td class="amt">&#x20B1;${total.toFixed(2)}</td></tr>
-           ${tendered > 0 && order.paymentMethod === 'Cash' ? `
-             <tr><td colspan="2">Cash Tendered</td><td class="amt">&#x20B1;${tendered.toFixed(2)}</td></tr>
-             <tr class="chg"><td colspan="2">Change</td><td class="amt">&#x20B1;${change.toFixed(2)}</td></tr>` : ''}`;
-
-      const compSection = order.isComplimentary ? `
-        <div class="comp-banner">&#9733; COMPLIMENTARY ORDER &#9733;</div>
-        ${order.complimentaryReasonType ? `<div class="comp-sub">${COMP_REASON_LABELS[order.complimentaryReasonType] || ''}${order.complimentaryReasonNote ? ` - ${order.complimentaryReasonNote}` : ''}</div>` : ''}
-        ${order.complimentaryApprovedBy ? `<div class="comp-sub">Approved by: ${order.complimentaryApprovedBy}</div>` : ''}
-        <div class="dash"></div>` : '';
-
-      return `<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8">
-<title>Order ${order.orderNumber}</title>
-<style>
-  @page { size: 80mm auto; margin: 3mm 4mm; }
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Courier New', Courier, monospace; font-size: 11px; color: #000; background: #fff; width: 72mm; }
-  .center { text-align: center; }
-  .store  { font-size: 15px; font-weight: bold; letter-spacing: 1px; margin-bottom: 1px; }
-  .addr   { font-size: 9px; color: #333; }
-  .dash   { border-top: 1px dashed #000; margin: 4px 0; }
-  table   { width: 100%; border-collapse: collapse; }
-  td      { padding: 1px 0; vertical-align: top; font-size: 11px; }
-  td.qty  { width: 22px; font-weight: bold; white-space: nowrap; }
-  td.iname { padding-right: 4px; font-weight: bold; word-break: break-word; }
-  td.amt  { text-align: right; white-space: nowrap; font-weight: bold; }
-  td.aname { padding-left: 10px; color: #555; font-weight: normal; font-size: 10px; word-break: break-word; }
-  .meta td { font-weight: normal; padding: 1px 0; }
-  .meta td:first-child { width: 58px; color: #555; }
-  .disc td { color: #333; }
-  .tot td  { font-size: 13px; font-weight: bold; padding-top: 4px; border-top: 1px solid #000; }
-  .chg td  { font-weight: bold; }
-  .comp-banner { text-align: center; font-weight: bold; font-size: 12px; margin: 3px 0 2px; }
-  .comp-sub    { text-align: center; font-size: 9px; color: #333; }
-  .nopay  { text-align: center; font-weight: bold; font-size: 11px; margin: 3px 0; }
-  .footer { text-align: center; font-size: 9px; margin-top: 8px; }
-  @media print {
-    html, body { width: 72mm; background: #fff; }
-    @page { size: 80mm auto; margin: 3mm 4mm; }
-  }
-</style>
-</head>
-<body>
-  <div class="center">
-    <div class="store">${BIZ_NAME}</div>
-    <div class="addr">Angeles City, Pampanga</div>
-    <div class="addr" style="font-weight:bold;margin-top:2px;">NON-VAT REGISTERED</div>
-  </div>
-  <div class="dash"></div>
-  ${compSection}
-  <table class="meta">
-    <tr><td>Order #</td><td><strong>${order.orderNumber || '-'}</strong></td></tr>
-    <tr><td>Type</td><td>${order.table || '-'}</td></tr>
-    <tr><td>Date</td><td>${dateStr}</td></tr>
-    ${order.cashier && order.cashier !== 'System' ? `<tr><td>Cashier</td><td>${order.cashier}</td></tr>` : ''}
-    ${order.customerName && order.customerName !== 'Guest' ? `<tr><td>Name</td><td>${order.customerName}</td></tr>` : ''}
-    ${order.customerPhone ? `<tr><td>Phone</td><td>${order.customerPhone}</td></tr>` : ''}
-    ${order.deliveryAddress ? `<tr><td>Address</td><td>${order.deliveryAddress}</td></tr>` : ''}
-    ${order.scheduledTime ? `<tr><td>Sched</td><td>${order.scheduledTime}</td></tr>` : ''}
-    ${!order.isComplimentary ? `<tr><td>Payment</td><td>${order.paymentMethod || 'Cash'}</td></tr>` : ''}
-  </table>
-  <div class="dash"></div>
-  <table>
-    ${itemRowsHTML}
-  </table>
-  <div class="dash"></div>
-  <table>
-    <tr><td colspan="2">Subtotal</td><td class="amt">&#x20B1;${subTotal.toFixed(2)}</td></tr>
-    ${(order.deliveryFee || 0) > 0 ? `<tr><td colspan="2">Delivery Fee</td><td class="amt">&#x20B1;${Number(order.deliveryFee).toFixed(2)}</td></tr>` : ''}
-    ${discRow}
-    ${totalBlock}
-  </table>
-  ${order.orderNotes ? `<div class="dash"></div><div style="font-size:10px;font-weight:bold;text-align:center;">📝 SPECIAL INSTRUCTIONS</div><div style="font-size:10px;text-align:center;margin:2px 0 0;">${order.orderNotes}</div>` : ''}
-  ${order.isComplimentary ? '<div class="dash"></div><div class="nopay">NO PAYMENT REQUIRED</div>' : ''}
-  <div class="footer">
-    <div>Thank you for dining with us!</div>
-    <div style="margin-top:2px;font-weight:bold;">This is a Non-VAT Transaction</div>
-    <div style="margin-top:3px">&#8212; ${BIZ_NAME} &#8212;</div>
-  </div>
-</body></html>`;
+      return buildSharedReceipt({
+        docLabel: 'OFFICIAL ORDER SLIP',
+        docNumber: { label: 'Order #', value: order.orderNumber },
+        title: `Order ${order.orderNumber || ''}`,
+        settings: systemSettings,
+        banner: order.isComplimentary ? {
+          text: 'COMPLIMENTARY ORDER',
+          subs: [
+            order.complimentaryReasonType ? `${COMP_REASON_LABELS[order.complimentaryReasonType] || ''}${order.complimentaryReasonNote ? ` - ${order.complimentaryReasonNote}` : ''}` : '',
+            order.complimentaryApprovedBy ? `Approved by: ${order.complimentaryApprovedBy}` : '',
+          ].filter(Boolean),
+        } : null,
+        metaRows: [
+          { label: 'Type', value: order.table || '-' },
+          { label: 'Date', value: dateStr },
+          (order.cashier && order.cashier !== 'System') ? { label: 'Cashier', value: order.cashier } : null,
+          (order.customerName && order.customerName !== 'Guest') ? { label: 'Name', value: order.customerName } : null,
+          order.customerPhone ? { label: 'Phone', value: order.customerPhone } : null,
+          order.deliveryAddress ? { label: 'Address', value: order.deliveryAddress } : null,
+          order.scheduledTime ? { label: 'Sched', value: order.scheduledTime } : null,
+          !order.isComplimentary ? { label: 'Payment', value: order.paymentMethod || 'Cash' } : null,
+        ].filter(Boolean),
+        lineItems,
+        summaryRows,
+        notes: order.orderNotes ? { title: 'SPECIAL INSTRUCTIONS', text: order.orderNotes } : null,
+        footerLines: [BUSINESS_TYPE === 'log' ? 'Thank you for your business!' : 'Thank you for dining with us!'],
+        duplicate: dupe,
+      });
     };
 
     // === 1. TRY BLUETOOTH ESC/POS (Chrome / Android only) ===
@@ -2285,8 +2264,9 @@ const updateStatus = async (orderId, newStatus) => {
         const BOLD0  = [0x1b, 0x45, 0x00];
         const LF     = [0x0a];
 
-        b(INIT); b(CENTER); b(BOLD1); tx(`${BIZ_NAME}\n`); b(BOLD0);
-        tx('Angeles City, Pampanga\n'); tx(SEP);
+        b(INIT); b(CENTER); b(BOLD1); tx(`${lh.companyName}\n`); b(BOLD0);
+        if (lh.address) tx(`${lh.address}\n`);
+        tx('OFFICIAL ORDER SLIP\n'); tx(SEP);
 
         if (order.isComplimentary) {
           b(BOLD1); tx('** COMPLIMENTARY ORDER **\n'); b(BOLD0);
@@ -2338,12 +2318,13 @@ const updateStatus = async (orderId, newStatus) => {
           b(BOLD1); tx(`Change: P${(order.changeDue || 0).toFixed(2)}\n`); b(BOLD0);
         }
         tx(SEP);
-        b(CENTER); tx('Thank you for dining with us!\n');
+        b(CENTER); tx(`${BUSINESS_TYPE === 'log' ? 'Thank you for your business!' : 'Thank you for dining with us!'}\n`);
 
         // Dynamic feed — fewer lines for larger orders (content itself advances the paper)
         const feedLines = Math.max(4, 8 - Math.floor(order.items.length / 2));
         for (let i = 0; i < feedLines; i++) b(LF);
 
+        if (dupe) { const copy = buf.slice(); buf.push(...copy); } // second (duplicate) receipt
         const data  = new Uint8Array(buf);
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
         for (let i = 0; i < data.length; i += 256) {
@@ -2381,8 +2362,9 @@ const updateStatus = async (orderId, newStatus) => {
         const BOLD0 = [0x1b, 0x45, 0x00];
         const LF    = [0x0a];
 
-        b(INIT); b(CENTER); b(BOLD1); tx(`${BIZ_NAME}\n`); b(BOLD0);
-        tx('Angeles City, Pampanga\nNON-VAT REGISTERED\n'); tx(SEP);
+        b(INIT); b(CENTER); b(BOLD1); tx(`${lh.companyName}\n`); b(BOLD0);
+        if (lh.address) tx(`${lh.address}\n`);
+        tx('NON-VAT REGISTERED\nOFFICIAL ORDER SLIP\n'); tx(SEP);
 
         if (order.isComplimentary) {
           b(BOLD1); tx('** COMPLIMENTARY ORDER **\n'); b(BOLD0);
@@ -2421,10 +2403,11 @@ const updateStatus = async (orderId, newStatus) => {
           tx(`Cash:   P${(order.amountTendered || 0).toFixed(2)}\n`);
           b(BOLD1); tx(`Change: P${(order.changeDue || 0).toFixed(2)}\n`); b(BOLD0);
         }
-        tx(SEP); b(CENTER); tx('Thank you for dining with us!\n');
+        tx(SEP); b(CENTER); tx(`${BUSINESS_TYPE === 'log' ? 'Thank you for your business!' : 'Thank you for dining with us!'}\n`);
         const feedLines = Math.max(4, 8 - Math.floor(order.items.length / 2));
         for (let i = 0; i < feedLines; i++) b(LF);
 
+        if (dupe) { const copy = buf.slice(); buf.push(...copy); } // second (duplicate) receipt
         const data   = new Uint8Array(buf);
         const writer = port.writable.getWriter();
         const sleep  = (ms) => new Promise(r => setTimeout(r, ms));
@@ -2438,41 +2421,7 @@ const updateStatus = async (orderId, newStatus) => {
     }
 
     // === 3. HIDDEN IFRAME auto-print (no popup dialog on most configs) ===
-    const html = buildReceiptHTML();
-    try {
-      // Remove any stale iframe from a previous print
-      const old = document.getElementById('__receipt_iframe__');
-      if (old) old.remove();
-
-      const iframe = document.createElement('iframe');
-      iframe.id = '__receipt_iframe__';
-      iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:1px;border:0;';
-      document.body.appendChild(iframe);
-      iframe.contentDocument.open();
-      iframe.contentDocument.write(html);
-      iframe.contentDocument.close();
-
-      // Wait for content to render then auto-print
-      iframe.onload = () => {
-        try {
-          iframe.contentWindow.focus();
-          iframe.contentWindow.print();
-        } catch(e) { /* fall through */ }
-        // Clean up after 30s
-        setTimeout(() => { try { iframe.remove(); } catch(e){} }, 30000);
-      };
-      // Trigger manually in case onload already fired
-      setTimeout(() => {
-        try {
-          if (document.getElementById('__receipt_iframe__')) {
-            iframe.contentWindow.focus();
-            iframe.contentWindow.print();
-          }
-        } catch(e) {}
-      }, 400);
-    } catch (fallbackErr) {
-      console.error('iframe print failed:', fallbackErr);
-    }
+    printReceiptHTML(buildReceiptHTML());
   };
 
   // --- 🚨 SAFE VOID & REFUND SYSTEM ---
@@ -2566,7 +2515,7 @@ const updateStatus = async (orderId, newStatus) => {
       for (const [id, val] of Object.entries(physicalCounts)) {
         if (val === '' || val === undefined || val === null) continue;
         const item = inventory.find(i => i._id === id);
-        const mult = item ? (BUSINESS_TYPE === 'log' ? (itemDisplay(item).packBase || 1) : effectiveDisplay(item).mult) : 1;
+        const mult = item ? (itemDisplay(item).packBase || 1) : 1;
         countsBase[id] = Number(val) * mult;
       }
       const res = await apiFetch(`/api/inventory/count`, {
@@ -2749,6 +2698,11 @@ const updateStatus = async (orderId, newStatus) => {
       packLabel: pack.label,                                // pack size label from the name (e.g. "250g")
       packBase: pack.packBase,                              // base units in one package (e.g. 250)
       packQty: pack.packBase ? (item.stockQty || 0) / pack.packBase : 0, // stock as a count of packages
+      // True only when a REAL pack size is known. packInfo() falls back to the
+      // plain display unit when there isn't one, in which case packQty/packCost
+      // already equal qty/cost — so the pack-first columns stay correct, but the
+      // unit must still read "kg", not "pcs".
+      isPacked: pack.label !== unit,
     };
   };
   // Pretty currency
@@ -3019,7 +2973,7 @@ const updateStatus = async (orderId, newStatus) => {
   const openEditInventory = (item) => {
     const eff = effectiveDisplay(item);
     // LOG: cost & threshold are per package (₱200/250G, N pcs); FB: per display unit.
-    const costBasis = BUSINESS_TYPE === 'log' ? packInfo(item).packBase : eff.mult;
+    const costBasis = packInfo(item).packBase || eff.mult;
     setEditInvForm({
       itemName: item.itemName || '',
       unit: item.unit || '',
@@ -3049,9 +3003,7 @@ const updateStatus = async (orderId, newStatus) => {
       // LOG: the entered cost is per package — divide by the pack size (the
       // explicit field the user just edited, falling back to a name-parse for
       // legacy items). FB: per display unit — divide by display multiplier.
-      const costBasis = BUSINESS_TYPE === 'log'
-        ? packInfo({ itemName: editInvForm.itemName.trim(), unit: resolved.base, displayUnit: editInvForm.displayUnit, unitMultiplier: mult, packSize: editInvForm.packSize === '' ? null : parseFloat(editInvForm.packSize) }).packBase
-        : mult;
+      const costBasis = packInfo({ itemName: editInvForm.itemName.trim(), unit: resolved.base, displayUnit: editInvForm.displayUnit, unitMultiplier: mult, packSize: editInvForm.packSize === '' ? null : parseFloat(editInvForm.packSize) }).packBase || mult;
       const payload = {
         itemName: editInvForm.itemName.trim(),
         unit: resolved.base,                            // base storage unit (g/ml/pcs)
@@ -3447,7 +3399,7 @@ const updateStatus = async (orderId, newStatus) => {
         body: JSON.stringify(catForm) 
       });
     }
-    setCatForm({ name: '', department: 'Kitchen' }); 
+    setCatForm({ name: '', department: DEFAULT_DEPARTMENT });
     fetchData();
   };
 
@@ -3608,8 +3560,8 @@ const updateStatus = async (orderId, newStatus) => {
   // Add a combo to the POS cart as a single line that carries its components.
   const addComboToPosCart = (combo) => {
     setPosCart(prev => [...prev, {
-      productId: combo._id, name: combo.name, price: combo.price, quantity: 1,
-      department: 'Kitchen', selectedAddOns: [], isCombo: true,
+      productId: combo._id, productCode: combo.comboCode || '', name: combo.name, price: combo.price, quantity: 1,
+      department: DEFAULT_DEPARTMENT, selectedAddOns: [], isCombo: true,
       comboItems: (combo.items || []).map(i => ({ productId: i.productId, name: i.name, sizeName: i.sizeName || '', quantity: i.quantity || 1 })),
     }]);
   };
@@ -3890,10 +3842,13 @@ const updateStatus = async (orderId, newStatus) => {
     doc.setFontSize(16); doc.text(`${BIZ_NAME} - Sales Line Items`, 14, 14);
     doc.setFontSize(9); doc.text(`${sliRange.start} to ${sliRange.end}`, 14, 20);
     const head = ['Date', 'Customer ID', 'Customer Name', 'Order ID', 'Item Code', 'Item', 'Qty', 'Payment', 'Line Total'];
-    const body = salesLineItems.rows.map(r => [
-      new Date(r.date).toLocaleDateString(), r.customerId || '', r.customerName || '', r.orderNumber,
-      r.itemCode || '', r.itemName || '', String(r.quantity), r.paymentMethod || '', pdfMoney(r.lineTotal),
-    ]);
+    const body = salesLineItems.rows.map(r => r.isComponent
+      // Promo/combo component: indented, no price (it's included in the combo row).
+      ? ['', '', '', '', r.itemCode || '', `   ↳ ${r.itemName || ''}`, String(r.quantity), '', 'included']
+      : [
+        new Date(r.date).toLocaleDateString(), r.customerId || '', r.customerName || '', r.orderNumber,
+        r.itemCode || '', (r.itemName || '') + (r.isCombo ? ' (promo)' : ''), String(r.quantity), r.paymentMethod || '', pdfMoney(r.lineTotal),
+      ]);
     autoTable(doc, {
       startY: 24, head: [head], body,
       foot: [[ 'TOTAL', '', '', '', '', '', '', '', pdfMoney(salesLineItems.grandTotal) ]],
@@ -4009,213 +3964,58 @@ const updateStatus = async (orderId, newStatus) => {
   };
 
   // ── Billing Statement print (log mode) ──────────────────────────────────────
+  // Uses the shared A4 document template (same one the Procurement purchase-order
+  // print uses). Letterhead/payment/contact come from system settings, falling
+  // back to VITE_BILLING_* env then defaults.
   const printBillingStatement = (order) => {
-    const BILL_NAME    = import.meta.env.VITE_BILLING_NAME    || BIZ_NAME;
-    const BILL_ADDR1   = import.meta.env.VITE_BILLING_ADDRESS1 || '';
-    const BILL_ADDR2   = import.meta.env.VITE_BILLING_ADDRESS2 || '';
-    const BILL_PHONE   = import.meta.env.VITE_BILLING_PHONE    || '';
-    const BILL_EMAIL   = import.meta.env.VITE_BILLING_EMAIL    || '';
-    const BILL_BANK    = import.meta.env.VITE_BILLING_BANK     || '';
-    const BILL_ACCT_NAME = import.meta.env.VITE_BILLING_ACCOUNT_NAME || '';
-    const BILL_ACCT_NO   = import.meta.env.VITE_BILLING_ACCOUNT_NO   || '';
-
     const dateStr = new Date(order.createdAt || Date.now()).toLocaleDateString('en-PH', {
       year: 'numeric', month: 'long', day: 'numeric'
     });
     const transactionNo = order.billingNumber || order.orderNumber || '-';
-
-    const itemRowsHTML = (order.items || []).map(item => {
-      const addOnTotal = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
-      const unitPrice  = item.price + addOnTotal;
-      const lineTotal  = unitPrice * item.quantity;
-      const addOnDesc  = (item.selectedAddOns || []).map(a => a.name).join(', ');
-      const desc       = item.name + (item.size ? ` (${item.size})` : '') + (addOnDesc ? ` + ${addOnDesc}` : '');
-      return `<tr>
-        <td class="code">${item.productCode || ''}</td>
-        <td class="desc">${desc}</td>
-        <td class="qty">${item.quantity}</td>
-        <td class="price">${(unitPrice).toFixed(2)}</td>
-        <td class="total">${lineTotal.toFixed(2)}</td>
-      </tr>`;
-    }).join('');
-
-    const subtotal    = order.subtotal   || order.total || 0;
-    const discount    = order.discount   || 0;
-    const deliveryFee = order.deliveryFee || 0;
-    const total       = order.total      || 0;
-
     const isDelivery = ['Manual Delivery', 'Lalamove'].includes(order.table);
 
-    const html = `<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8">
-<title>Billing Statement - ${transactionNo}</title>
-<style>
-  /* ── Page setup ── */
-  @page {
-    size: A4 portrait;
-    margin: 15mm 16mm 20mm;
-  }
-  /* Running header on continuation pages */
-  @page :first { margin-top: 15mm; }
+    const items = (order.items || []).map(item => {
+      const addOnTotal = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
+      const unitPrice  = item.price + addOnTotal;
+      const addOnDesc  = (item.selectedAddOns || []).map(a => a.name).join(', ');
+      return {
+        code: item.productCode || '',
+        desc: item.name + (item.size ? ` (${item.size})` : '') + (addOnDesc ? ` + ${addOnDesc}` : ''),
+        qty: item.quantity,
+        unitPrice,
+        total: unitPrice * item.quantity,
+      };
+    });
 
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #000; }
+    const schedRows = [
+      order.scheduledTime   ? { label: `Scheduled ${isDelivery ? 'Delivery' : 'Pickup'} Time:`, value: order.scheduledTime } : null,
+      order.deliveryAddress ? { label: 'Delivery Address:', value: order.deliveryAddress } : null,
+      order.customerPhone   ? { label: 'Contact No.:', value: order.customerPhone } : null,
+    ].filter(Boolean);
 
-  /* ── Header ── */
-  .header { text-align: center; margin-bottom: 10px; }
-  .header .biz  { font-size: 14pt; font-weight: bold; letter-spacing: 1px; }
-  .header .addr { font-size: 8.5pt; margin-top: 1px; color: #333; }
-  .title-wrap   { text-align: center; margin-bottom: 10px; }
-  .title        { display: inline-block; font-size: 13pt; font-weight: bold; border: 2px solid #000; padding: 3px 18px; }
-
-  /* ── Meta fields ── */
-  .meta-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 10px; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 6px 0; margin-bottom: 8px; }
-  .sub-grid  { display: grid; grid-template-columns: 1fr 1fr;    gap: 0 10px; margin-bottom: 8px; }
-  .section label { font-size: 7.5pt; text-transform: uppercase; font-weight: bold; color: #555; display: block; margin-bottom: 2px; }
-  .section .val  { font-size: 10pt; font-weight: bold; border-bottom: 1px solid #aaa; min-height: 16px; padding-bottom: 2px; }
-
-  /* ── Sched box ── */
-  .sched-box { background: #f6f6f6; border: 1px solid #ccc; padding: 5px 8px; font-size: 9pt; margin-bottom: 8px; break-inside: avoid; page-break-inside: avoid; }
-  .sched-box table { width: 100%; }
-  .sched-box td.lbl { font-weight: bold; width: 145px; }
-
-  /* ── Items table ── */
-  table.items { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
-  /* thead repeats on every page */
-  table.items thead { display: table-header-group; }
-  table.items tfoot { display: table-footer-group; }
-  table.items thead th {
-    background: #000; color: #fff; font-size: 8.5pt;
-    padding: 4px 5px; text-align: left;
-    border-bottom: 2px solid #000;
-  }
-  table.items thead th.r { text-align: right; }
-  table.items tbody tr {
-    break-inside: avoid;
-    page-break-inside: avoid;
-  }
-  table.items td {
-    padding: 3.5px 5px; border-bottom: 1px solid #e0e0e0;
-    font-size: 9pt; vertical-align: top;
-  }
-  table.items td.code  { width: 68px; font-family: monospace; font-size: 8pt; color: #444; }
-  table.items td.qty   { width: 36px; text-align: center; font-weight: bold; }
-  table.items td.price,
-  table.items td.total { width: 82px; text-align: right; font-family: monospace; }
-
-  /* ── Totals ── */
-  .totals-wrap { break-inside: avoid; page-break-inside: avoid; }
-  .totals-row  { display: flex; justify-content: flex-end; margin-bottom: 1px; }
-  .totals-row .tl { width: 150px; font-size: 9.5pt; padding: 1px 4px; }
-  .totals-row .tr { width: 90px; text-align: right; font-family: monospace; font-size: 9.5pt; padding: 1px 0; }
-  .totals-row.grand .tl,
-  .totals-row.grand .tr { font-size: 11pt; font-weight: bold; border-top: 2px solid #000; padding-top: 4px; margin-top: 2px; }
-
-  /* ── Footer block - keep together, push to new page if needed ── */
-  .footer-block { break-inside: avoid; page-break-inside: avoid; margin-top: 12px; }
-  .tcs { font-size: 8pt; border-top: 1px solid #ccc; padding-top: 7px; }
-  .tcs h4 { font-size: 8.5pt; font-weight: bold; margin-bottom: 4px; }
-  .tcs p  { margin-bottom: 2px; line-height: 1.45; }
-  .sigs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 14px; margin-top: 14px; }
-  .sig-block { text-align: center; }
-  .sig-block .line  { border-bottom: 1px solid #000; height: 34px; margin-bottom: 3px; }
-  .sig-block .label { font-size: 7.5pt; color: #333; }
-  .bank-info { margin-top: 10px; border: 1px solid #ccc; padding: 5px 8px; font-size: 8.5pt; line-height: 1.5; }
-  .bank-info strong { font-size: 9pt; }
-
-  @media print {
-    html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  }
-</style>
-</head>
-<body>
-  <div class="header">
-    <div class="biz">${BILL_NAME}</div>
-    ${BILL_ADDR1 ? `<div class="addr">${BILL_ADDR1}</div>` : ''}
-    ${BILL_ADDR2 ? `<div class="addr">${BILL_ADDR2}</div>` : ''}
-    ${BILL_PHONE ? `<div class="addr">${BILL_PHONE}</div>` : ''}
-  </div>
-
-  <div class="title-wrap"><div class="title">BILLING STATEMENT</div></div>
-
-  <p style="font-size:9pt;margin-bottom:8px;">Submitted date: <strong>${dateStr}</strong></p>
-
-  <div class="meta-grid">
-    <div class="section"><label>Invoice For</label><div class="val">${order.customerName || '&nbsp;'}</div></div>
-    <div class="section"><label>Payable To</label><div class="val">&nbsp;</div></div>
-    <div class="section"><label>Transaction No.</label><div class="val">${transactionNo}</div></div>
-  </div>
-
-  <div class="sub-grid">
-    <div class="section"><label>Terms of Payment</label><div class="val">${order.paymentMethod || '&nbsp;'}</div></div>
-    <div class="section"><label>Order Type</label><div class="val">${order.table || '&nbsp;'}</div></div>
-  </div>
-
-  ${order.scheduledTime || order.deliveryAddress || order.customerPhone ? `
-  <div class="sched-box">
-    <table>
-      ${order.scheduledTime   ? `<tr><td class="lbl">Scheduled ${isDelivery ? 'Delivery' : 'Pickup'} Time:</td><td>${order.scheduledTime}</td></tr>` : ''}
-      ${order.deliveryAddress ? `<tr><td class="lbl">Delivery Address:</td><td>${order.deliveryAddress}</td></tr>` : ''}
-      ${order.customerPhone   ? `<tr><td class="lbl">Contact No.:</td><td>${order.customerPhone}</td></tr>` : ''}
-    </table>
-  </div>` : ''}
-
-  <table class="items">
-    <thead>
-      <tr>
-        <th>Code</th>
-        <th>Description</th>
-        <th class="r" style="text-align:center">Qty</th>
-        <th class="r">Unit Price</th>
-        <th class="r">Total Price</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${itemRowsHTML}
-    </tbody>
-  </table>
-
-  <div class="totals-wrap">
-    <div class="totals-row"><div class="tl">Subtotal</div><div class="tr">${subtotal.toFixed(2)}</div></div>
-    <div class="totals-row"><div class="tl">Discount</div><div class="tr">${discount > 0 ? discount.toFixed(2) : '0.00'}</div></div>
-    <div class="totals-row"><div class="tl">Delivery Fee</div><div class="tr">${deliveryFee > 0 ? deliveryFee.toFixed(2) : '0.00'}</div></div>
-    <div class="totals-row grand"><div class="tl">TOTAL</div><div class="tr">${total.toFixed(2)}</div></div>
-  </div>
-
-  <div class="footer-block">
-    <div class="tcs">
-      <h4>Terms and Conditions</h4>
-      <p>1. Items may be returned or exchanged only under the following conditions:</p>
-      <p>&nbsp;&nbsp;&nbsp;a. Item is defective upon purchase.</p>
-      <p>&nbsp;&nbsp;&nbsp;b. Item has a shelf life of less than one (1) month upon purchase (near expiry).</p>
-      <p>&nbsp;&nbsp;&nbsp;c. Issue is reported within 24–48 hours from receipt of item(s).</p>
-      <p>2. Full payment is required and must be settled prior to delivery of item(s).</p>
-      <p>3. We accept bank deposits, cheques, and other approved payment methods.</p>
-      <p>4. All bank and cheque payments must be made payable to ${BILL_ACCT_NAME || BILL_NAME}.</p>
-      ${BILL_EMAIL ? `<p>For billing inquiries, contact us at ${BILL_PHONE} / ${BILL_EMAIL}.</p>` : ''}
-    </div>
-
-    <div class="sigs">
-      <div class="sig-block"><div class="line"></div><div class="label">PREPARED BY: Signature over Printed Name / Date</div></div>
-      <div class="sig-block"><div class="line"></div><div class="label">CHECKED BY: Signature over Printed Name / Date</div></div>
-      <div class="sig-block"><div class="line"></div><div class="label">RECEIVED BY: Signature over Printed Name / Date</div></div>
-    </div>
-
-    ${BILL_BANK ? `
-    <div class="bank-info">
-      <strong>Please deposit all payments to:</strong><br>
-      Bank: ${BILL_BANK} &nbsp;|&nbsp; Account Name: ${BILL_ACCT_NAME} &nbsp;|&nbsp; Account No.: ${BILL_ACCT_NO}<br>
-      Or pay directly at our office at ${BILL_NAME}.
-    </div>` : ''}
-  </div>
-</body></html>`;
-
-    const win = window.open('', '_blank', 'width=794,height=1123');
-    if (!win) return;
-    win.document.write(html);
-    win.document.close();
-    win.onload = () => { win.focus(); win.print(); };
+    printBillingDoc(buildBillingDocHTML({
+      docTitle: 'BILLING STATEMENT',
+      dateLabel: 'Submitted date',
+      dateStr,
+      settings: systemSettings,
+      metaFields: [
+        { label: 'Invoice For', value: order.customerName || '' },
+        { label: 'Payable To', value: '' },
+        { label: 'Transaction No.', value: transactionNo },
+      ],
+      subFields: [
+        { label: 'Terms of Payment', value: order.paymentMethod || '' },
+        { label: 'Order Type', value: order.table || '' },
+      ],
+      schedRows,
+      items,
+      totals: [
+        { label: 'Subtotal', value: order.subtotal || order.total || 0 },
+        { label: 'Discount', value: order.discount || 0 },
+        { label: 'Delivery Fee', value: order.deliveryFee || 0 },
+        { label: 'TOTAL', value: order.total || 0, grand: true },
+      ],
+    }));
   };
 
   // ── Delivery Receipt print (logistics) ───────────────────────────────────────
@@ -4516,9 +4316,17 @@ const updateStatus = async (orderId, newStatus) => {
     finally { setApPaySubmitting(false); }
   };
 
-  // The "Parked" filter shows held tabs (separate collection); all other filters
-  // work against the active orders board.
-  const filteredOrders = (orderFilter === 'Parked' ? parkedOrders : orders).filter(o => {
+  // The "Parked" filter shows held tabs (separate collection). "All" must show
+  // EVERY order regardless of state — the active board already carries every
+  // non-archived status (Pending → Completed, Cancelled, Voided…), and parked
+  // tabs live in their own collection, so fold them in (deduped by _id). All
+  // other filters work against the active orders board.
+  const allOrdersSource = (() => {
+    const byId = new Map(orders.map(o => [o._id, o]));
+    for (const p of parkedOrders) if (!byId.has(p._id)) byId.set(p._id, p);
+    return [...byId.values()];
+  })();
+  const filteredOrders = (orderFilter === 'Parked' ? parkedOrders : orderFilter === 'All' ? allOrdersSource : orders).filter(o => {
     const statusOk = (orderFilter === 'All' || orderFilter === 'Parked') ? true : o.status === orderFilter;
     if (!statusOk) return false;
     if (!orderSearch.trim()) return true;
@@ -4696,11 +4504,10 @@ const updateStatus = async (orderId, newStatus) => {
     };
   }, [orders, archivedOrders, inventory, products]);
 
-  // ---   KITCHEN & BAR ROUTING LOGIC ---
+  // --- DEPARTMENT ROUTING LOGIC (fb: Kitchen/Bar · log: Logistics/Warehouse) ---
   const displayOrders = filteredOrders.filter(order => {
-    if (departmentFilter === 'Kitchen') return order.items.some(item => (item.department || 'Kitchen') === 'Kitchen');
-    if (departmentFilter === 'Bar')     return order.items.some(item => item.department === 'Bar');
-    return true;
+    if (departmentFilter === 'All') return true;
+    return order.items.some(item => (item.department || DEFAULT_DEPARTMENT) === departmentFilter);
   });
 
   // While the silent refresh is resolving, show a neutral splash instead of
@@ -4953,13 +4760,22 @@ const updateStatus = async (orderId, newStatus) => {
       {/* Brand — display only. Mode switching happens via the nav items below,
           which are always visible; the old hidden logo-click toggle was
           undiscoverable and is intentionally gone. */}
-      <div className="p-5 border-b border-white/5">
-        <p className="text-2xl font-black text-brand tracking-tight leading-none drop-shadow-sm">{BIZ_NAME}</p>
-        <p className="text-[10px] text-fg/80 font-bold uppercase tracking-[0.25em] mt-0.5">
-          SEMIVRA <span className="text-brand/80">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span>
-          <span className="text-fg/40 normal-case tracking-normal font-bold"> · {navMode === 'libellus' ? 'Operations' : 'Management'}</span>
-        </p>
-        <span className="inline-block mt-1.5 text-[8px] font-black bg-brand/15 border border-brand/30 text-brand px-2 py-0.5 rounded-full uppercase tracking-widest">NON-VAT REGISTERED</span>
+      <div className="p-5 border-b border-white/5 flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-2xl font-black text-brand tracking-tight leading-none drop-shadow-sm">{BIZ_NAME}</p>
+          <p className="text-[10px] text-fg/80 font-bold uppercase tracking-[0.25em] mt-0.5">
+            SEMIVRA <span className="text-brand/80">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span>
+            <span className="text-fg/40 normal-case tracking-normal font-bold"> · {navMode === 'libellus' ? 'Operations' : 'Management'}</span>
+          </p>
+          <span className="inline-block mt-1.5 text-[8px] font-black bg-brand/15 border border-brand/30 text-brand px-2 py-0.5 rounded-full uppercase tracking-widest">NON-VAT REGISTERED</span>
+        </div>
+        {/* Notifications live HERE, not in the <nav> below — that list scrolls
+            (lg:overflow-y-auto), so a bell inside it disappears the moment the
+            menu is long enough. This header block is always on screen.
+            Desktop only: the lg:hidden mobile top bar has its own bell. */}
+        <div className="hidden lg:block shrink-0">
+          <NotificationBell align="left" />
+        </div>
       </div>
 
       {/* Nav */}
@@ -5161,7 +4977,7 @@ const updateStatus = async (orderId, newStatus) => {
     // ── Partial fulfillment ──
     partialModal, setPartialModal, partialQtys, setPartialQtys,
     partialMode, setPartialMode, partialPayment, setPartialPayment,
-    partialBusy, openPartial, submitPartialFulfill,
+    partialBusy, openPartial, submitPartialFulfill, dropRemaining,
     pnlData, pnlRange, setPnlRange, fetchPnl, bsData, fetchBalanceSheet, reconcileInventory,
     pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF,
     bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF,
@@ -5377,26 +5193,30 @@ const updateStatus = async (orderId, newStatus) => {
             </div>
             <p className="text-brand text-[10px] font-bold uppercase truncate">{activeAdmin?.name} · {navMode === 'libellus' ? 'Operations' : 'Management'}</p>
           </div>
-          <div className="flex items-center gap-2">
+          {/* min-w-0 + overflow-x lets this action group scroll internally on a
+              very narrow phone (≤320px) rather than pushing the whole page wider;
+              shrink-0 keeps each control its natural size. At 375px+ it all fits,
+              so no scrollbar shows. */}
+          <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-hide">
             {(!isOnline || queuedCount > 0) && (
-              <span className={`flex items-center gap-1 px-2 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider ${isOnline ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30' : 'bg-red-500/15 text-red-400 border border-red-500/30'}`}>
+              <span className={`shrink-0 flex items-center gap-1 px-2 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider ${isOnline ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30' : 'bg-red-500/15 text-red-400 border border-red-500/30'}`}>
                 {isOnline ? <RefreshCw size={12} className={queuedCount > 0 ? 'animate-spin' : ''} /> : <WifiOff size={12} />}
                 {queuedCount > 0 ? queuedCount : 'Off'}
               </span>
             )}
             <button onClick={() => setPaletteOpen(true)}
               title="Quick jump (Ctrl+K)" aria-label="Open quick jump"
-              className="flex items-center gap-1.5 bg-white/5 text-fg/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 hover:text-fg transition">
+              className="shrink-0 flex items-center gap-1.5 bg-white/5 text-fg/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 hover:text-fg transition">
               <Search size={13} /><span className="hidden lg:inline">Jump</span>
             </button>
-            <NotificationBell />
-            <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="flex items-center gap-1.5 bg-brand/20 text-brand border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
+            <div className="shrink-0"><NotificationBell /></div>
+            <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="shrink-0 flex items-center gap-1.5 bg-brand/20 text-brand border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
               <QrCode size={13} /> {BUSINESS_TYPE === 'log' ? 'Portal' : 'QR'}
             </button>
-            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="flex items-center gap-1.5 bg-white/5 text-fg/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
+            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="shrink-0 flex items-center gap-1.5 bg-white/5 text-fg/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
               <Settings size={13} />
             </button>
-            <button onClick={handleLogout} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 border border-red-500/20 px-3 py-2 rounded-xl font-bold text-xs hover:bg-red-500/20 transition">
+            <button onClick={handleLogout} className="shrink-0 flex items-center gap-1.5 bg-red-500/10 text-red-400 border border-red-500/20 px-3 py-2 rounded-xl font-bold text-xs hover:bg-red-500/20 transition">
               {isSuperAdmin ? 'Log Out' : 'End Shift'}
             </button>
           </div>
