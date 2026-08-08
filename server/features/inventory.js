@@ -615,7 +615,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
           return res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : fallbackErr.message });
         }
       }
-      captureError(req, fallbackErr);
+      captureError(req, error);
       return res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : error.message });
     } finally {
       session.endSession();
