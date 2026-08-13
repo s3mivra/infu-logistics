@@ -1171,6 +1171,25 @@ const JournalEntrySchema = new mongoose.Schema({
   supplierId:   { type: String, default: null, index: true },
   supplierName: { type: String, default: '' },
 }, { timestamps: true });
+
+// ── Data-layer double-entry guarantee ────────────────────────────────────────
+// A journal entry can NEVER be persisted unbalanced. This is the floor beneath
+// every app-level assertBalanced() call: no route, migration, script, or future
+// code path can write books that don't balance, because Mongoose runs this on
+// every create()/save()/insertMany() before the document is stored. Debits must
+// equal credits to within one centavo; the denormalized totals are re-derived
+// from the lines here so they can never drift out of sync with them.
+JournalEntrySchema.pre('validate', function () {
+  const lines = this.lines || [];
+  if (!lines.length) return;
+  // Throws on imbalance — Mongoose 9 runs validate hooks promise-style, so a
+  // throw here rejects the create()/save()/insertMany() before anything is
+  // written. This is the single chokepoint every entry must pass through.
+  assertBalanced(lines, `ref ${this.reference || '?'}`);
+  this.totalDebit = Math.round(lines.reduce((s, l) => s + (Number(l.debit) || 0), 0) * 100) / 100;
+  this.totalCredit = Math.round(lines.reduce((s, l) => s + (Number(l.credit) || 0), 0) * 100) / 100;
+});
+
 const JournalEntry = mongoose.model('JournalEntry', JournalEntrySchema);
 
 // --- CUMULATIVE DASHBOARD COUNTERS ---
