@@ -5,6 +5,7 @@ import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, Trending
 import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
 import { buildReceiptHTML as buildSharedReceipt, printReceiptHTML, resolveLetterhead } from '../../shared/receiptTemplate';
+import { buildEscposReceiptBytes, sleep as escposSleep, readPrinterMode, writePrinterMode } from '../../shared/escpos';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import { queueOrder, requestNotificationPermission, notify, queueClock, getQueuedClock, flushClockQueue } from '../../shared/pwa';
 import * as auth from '../auth/auth';
@@ -205,6 +206,7 @@ export default function AdminDashboard() {
   // clientDiscounts, leaving stale values in the next product you added).
   const emptyProductForm = () => ({
     name: '', description: '', category: '', basePrice: '', discountPercent: 0, clientDiscounts: [],
+    segmentDiscounts: [], bulkBreaks: [],
     baseSize: '', sizes: [], image: '', baseRecipe: [], addOns: [], modifierGroups: [], imageUrl: ''
   });
   const [formData, setFormData] = useState(emptyProductForm);
@@ -302,6 +304,7 @@ export default function AdminDashboard() {
   const [menuEngineering, setMenuEngineering] = useState(null);
   const [cashierVariance, setCashierVariance] = useState(null);
   const [purchaseOrder, setPurchaseOrder] = useState(null);
+  const [commissions, setCommissions] = useState(null);
   // --- CHANGE PASSWORD MODAL ---
   const [changePwModal, setChangePwModal] = useState(false);
   const [changePwForm, setChangePwForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
@@ -312,6 +315,9 @@ export default function AdminDashboard() {
   const [auditLogsPage, setAuditLogsPage] = useState(1);
   const [auditLogsTotal, setAuditLogsTotal] = useState(0);
   const AUDIT_LOGS_PAGE_SIZE = 25;
+  // action/actor/start/end — same query params /api/audit-logs and its CSV
+  // export sibling both accept, so "Export" always matches what's on screen.
+  const [auditLogFilters, setAuditLogFilters] = useState({ action: '', actor: '', start: '', end: '' });
   // --- AP OUTSTANDING ---
   const [apData, setApData] = useState(null);
   const [apPayModal, setApPayModal] = useState(false);
@@ -503,6 +509,28 @@ export default function AdminDashboard() {
       if (data.success) setAnalyticsData(data);
     } catch (err) { console.error('fetchAnalytics', err); }
     finally { setAnalyticsLoading(false); }
+  };
+
+  // Inventory turnover ratio (COGS ÷ avg inventory value) — a 2-point estimate,
+  // see the server route's comment for why it isn't an exact historical figure.
+  const [turnoverData, setTurnoverData] = useState(null);
+  const fetchTurnover = async () => {
+    try {
+      const res = await apiFetch('/api/reports/inventory-turnover');
+      const data = await res.json();
+      if (data.success) setTurnoverData(data);
+    } catch (err) { console.error('fetchTurnover', err); }
+  };
+
+  // Revenue trend: daily buckets + week/month-over-prior-period % change + moving average.
+  const [salesTrendData, setSalesTrendData] = useState(null);
+  const [salesTrendPeriod, setSalesTrendPeriod] = useState('week');
+  const fetchSalesTrend = async (period = salesTrendPeriod) => {
+    try {
+      const res = await apiFetch(`/api/reports/sales-trend?period=${period}`);
+      const data = await res.json();
+      if (data.success) setSalesTrendData(data);
+    } catch (err) { console.error('fetchSalesTrend', err); }
   };
 
   // --- REVOLVING FUND STATES ---
@@ -2256,8 +2284,14 @@ const updateStatus = async (orderId, newStatus) => {
       });
     };
 
+    // Per-device opt-out: 'browser' skips straight to the iframe print below,
+    // so a terminal with no paired thermal printer stops getting probed by
+    // navigator.bluetooth/navigator.serial on every receipt. Default 'auto'
+    // preserves the try-thermal-then-fall-back behavior this always had.
+    const skipThermal = readPrinterMode() === 'browser';
+
     // === 1. TRY BLUETOOTH ESC/POS (Chrome / Android only) ===
-    if (navigator.bluetooth) {
+    if (!skipThermal && navigator.bluetooth) {
       try {
         const device = await navigator.bluetooth.requestDevice({
           acceptAllDevices: true,
@@ -2276,84 +2310,10 @@ const updateStatus = async (orderId, newStatus) => {
         }
         if (!printChar) throw new Error('No writable characteristic found');
 
-        const enc  = new TextEncoder();
-        const buf  = [];
-        const b    = (arr) => buf.push(...arr);
-        const tx   = (str) => b(Array.from(enc.encode(str)));
-        const SEP  = '--------------------------------\n';
-        const INIT   = [0x1b, 0x40];
-        const CENTER = [0x1b, 0x61, 0x01];
-        const LEFT   = [0x1b, 0x61, 0x00];
-        const BOLD1  = [0x1b, 0x45, 0x01];
-        const BOLD0  = [0x1b, 0x45, 0x00];
-        const LF     = [0x0a];
-
-        b(INIT); b(CENTER); b(BOLD1); tx(`${lh.companyName}\n`); b(BOLD0);
-        if (lh.address) tx(`${lh.address}\n`);
-        tx('OFFICIAL ORDER SLIP\n'); tx(SEP);
-
-        if (order.isComplimentary) {
-          b(BOLD1); tx('** COMPLIMENTARY ORDER **\n'); b(BOLD0);
-          if (order.complimentaryReasonType) tx(`${COMP_REASON_LABELS[order.complimentaryReasonType] || ''}\n`);
-          if (order.complimentaryApprovedBy) tx(`Approved: ${order.complimentaryApprovedBy}\n`);
-          tx(SEP);
-        }
-
-        b(LEFT);
-        tx(`Order: ${order.orderNumber || '-'}\n`);
-        tx(`Table: ${order.table || '-'}\n`);
-        tx(`Date:  ${new Date(order.createdAt || Date.now()).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}\n`);
-        if (order.cashier && order.cashier !== 'System') tx(`By:    ${order.cashier}\n`);
-        if (!order.isComplimentary) tx(`Pay:   ${order.paymentMethod || 'Cash'}\n`);
-        tx(SEP);
-
-        order.items.forEach(item => {
-          const addOnTotal = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
-          const lineTotal  = (item.price + addOnTotal) * item.quantity;
-          const nameCol    = item.name.substring(0, 16).padEnd(16);
-          b(BOLD1);
-          tx(`${String(item.quantity).padStart(2)}x ${nameCol} P${lineTotal.toFixed(2).padStart(7)}\n`);
-          b(BOLD0);
-          (item.selectedAddOns || []).forEach(a => {
-            tx(`   + ${a.name.substring(0, 14).padEnd(14)} P${Number(a.price || 0).toFixed(2).padStart(7)}\n`);
-          });
-        });
-
-        b(CENTER); tx(SEP);
-        const subTotal = order.subtotal || 0;
-        const discAmt  = order.discount  || 0;
-        const total    = order.total     || 0;
-
-        if (!order.isComplimentary && discAmt > 0) {
-          tx(`Subtotal:              P${subTotal.toFixed(2)}\n`);
-          tx(`Discount (${(order.discountType || '').padEnd(6)}): -P${discAmt.toFixed(2)}\n`);
-        }
-        b(BOLD1);
-        if (order.isComplimentary) {
-          tx(`Subtotal: P${subTotal.toFixed(2)}\n`);
-          tx(`AMOUNT DUE: P0.00\n`);
-          tx('** NO PAYMENT REQUIRED **\n');
-        } else {
-          tx(`TOTAL: P${total.toFixed(2)}\n`);
-        }
-        b(BOLD0);
-        if (!order.isComplimentary && (order.amountTendered || 0) > 0 && order.paymentMethod === 'Cash') {
-          tx(`Cash:   P${(order.amountTendered || 0).toFixed(2)}\n`);
-          b(BOLD1); tx(`Change: P${(order.changeDue || 0).toFixed(2)}\n`); b(BOLD0);
-        }
-        tx(SEP);
-        b(CENTER); tx(`${BUSINESS_TYPE === 'log' ? 'Thank you for your business!' : 'Thank you for dining with us!'}\n`);
-
-        // Dynamic feed — fewer lines for larger orders (content itself advances the paper)
-        const feedLines = Math.max(4, 8 - Math.floor(order.items.length / 2));
-        for (let i = 0; i < feedLines; i++) b(LF);
-
-        if (dupe) { const copy = buf.slice(); buf.push(...copy); } // second (duplicate) receipt
-        const data  = new Uint8Array(buf);
-        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        const data = buildEscposReceiptBytes(order, { lh, dupe, vatRegLabel, businessType: BUSINESS_TYPE, compReasonLabels: COMP_REASON_LABELS });
         for (let i = 0; i < data.length; i += 256) {
           await printChar.writeValue(data.slice(i, i + 256));
-          await sleep(100);
+          await escposSleep(100);
         }
         server.disconnect();
         return; // Success - skip HTML fallback
@@ -2364,7 +2324,7 @@ const updateStatus = async (orderId, newStatus) => {
     }
 
     // === 2. TRY WebSerial (USB thermal printer, Chrome / Edge only) ===
-    if (navigator.serial) {
+    if (!skipThermal && navigator.serial) {
       try {
         // Try to reuse a previously opened port first (stored on window)
         let port = window._thermalPort;
@@ -2374,68 +2334,9 @@ const updateStatus = async (orderId, newStatus) => {
         }
         if (!port.writable) await port.open({ baudRate: 9600 });
 
-        const enc = new TextEncoder();
-        const buf = [];
-        const b   = (arr) => buf.push(...arr);
-        const tx  = (str) => b(Array.from(enc.encode(str)));
-        const SEP   = '--------------------------------\n';
-        const INIT  = [0x1b, 0x40];
-        const CENTER= [0x1b, 0x61, 0x01];
-        const LEFT  = [0x1b, 0x61, 0x00];
-        const BOLD1 = [0x1b, 0x45, 0x01];
-        const BOLD0 = [0x1b, 0x45, 0x00];
-        const LF    = [0x0a];
-
-        b(INIT); b(CENTER); b(BOLD1); tx(`${lh.companyName}\n`); b(BOLD0);
-        if (lh.address) tx(`${lh.address}\n`);
-        tx(vatRegLabel + '\nOFFICIAL ORDER SLIP\n'); tx(SEP);
-
-        if (order.isComplimentary) {
-          b(BOLD1); tx('** COMPLIMENTARY ORDER **\n'); b(BOLD0);
-          if (order.complimentaryReasonType) tx(`${COMP_REASON_LABELS[order.complimentaryReasonType] || ''}\n`);
-          if (order.complimentaryApprovedBy) tx(`Approved: ${order.complimentaryApprovedBy}\n`);
-          tx(SEP);
-        }
-
-        b(LEFT);
-        tx(`Order: ${order.orderNumber || '-'}\n`);
-        tx(`Table: ${order.table || '-'}\n`);
-        tx(`Date:  ${new Date(order.createdAt || Date.now()).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}\n`);
-        if (order.cashier && order.cashier !== 'System') tx(`By:    ${order.cashier}\n`);
-        if (!order.isComplimentary) tx(`Pay:   ${order.paymentMethod || 'Cash'}\n`);
-        tx(SEP);
-
-        order.items.forEach(item => {
-          const addOnTotal = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
-          const lineTotal  = (item.price + addOnTotal) * item.quantity;
-          const nameCol    = item.name.substring(0, 16).padEnd(16);
-          b(BOLD1);
-          tx(`${String(item.quantity).padStart(2)}x ${nameCol} P${lineTotal.toFixed(2).padStart(7)}\n`);
-          b(BOLD0);
-          (item.selectedAddOns || []).forEach(a => {
-            tx(`   + ${a.name.substring(0, 14).padEnd(14)} P${Number(a.price || 0).toFixed(2).padStart(7)}\n`);
-          });
-        });
-
-        b(CENTER); tx(SEP);
-        const sub = order.subtotal || 0, disc = order.discount || 0, tot = order.total || 0;
-        if (!order.isComplimentary && disc > 0) { tx(`Subtotal: P${sub.toFixed(2)}\n`); tx(`Discount: -P${disc.toFixed(2)}\n`); }
-        b(BOLD1);
-        order.isComplimentary ? tx(`AMOUNT DUE: P0.00\n** NO PAYMENT REQUIRED **\n`) : tx(`TOTAL: P${tot.toFixed(2)}\n`);
-        b(BOLD0);
-        if (!order.isComplimentary && (order.amountTendered || 0) > 0 && order.paymentMethod === 'Cash') {
-          tx(`Cash:   P${(order.amountTendered || 0).toFixed(2)}\n`);
-          b(BOLD1); tx(`Change: P${(order.changeDue || 0).toFixed(2)}\n`); b(BOLD0);
-        }
-        tx(SEP); b(CENTER); tx(`${BUSINESS_TYPE === 'log' ? 'Thank you for your business!' : 'Thank you for dining with us!'}\n`);
-        const feedLines = Math.max(4, 8 - Math.floor(order.items.length / 2));
-        for (let i = 0; i < feedLines; i++) b(LF);
-
-        if (dupe) { const copy = buf.slice(); buf.push(...copy); } // second (duplicate) receipt
-        const data   = new Uint8Array(buf);
+        const data   = buildEscposReceiptBytes(order, { lh, dupe, vatRegLabel, businessType: BUSINESS_TYPE, compReasonLabels: COMP_REASON_LABELS });
         const writer = port.writable.getWriter();
-        const sleep  = (ms) => new Promise(r => setTimeout(r, ms));
-        for (let i = 0; i < data.length; i += 256) { await writer.write(data.slice(i, i + 256)); await sleep(60); }
+        for (let i = 0; i < data.length; i += 256) { await writer.write(data.slice(i, i + 256)); await escposSleep(60); }
         writer.releaseLock();
         return; // Success - skip HTML fallback
       } catch (err) {
@@ -3654,6 +3555,10 @@ const updateStatus = async (orderId, newStatus) => {
     try { const res = await apiFetch('/api/reports/cashier-variance'); const d = await res.json(); if (d.success) setCashierVariance(d); }
     catch (err) { console.error('fetchCashierVariance', err); }
   };
+  const fetchCommissions = async () => {
+    try { const res = await apiFetch('/api/reports/commissions'); const d = await res.json(); if (d.success) setCommissions(d); }
+    catch (err) { console.error('fetchCommissions', err); }
+  };
   const fetchPurchaseOrder = async () => {
     try {
       const res = await apiFetch('/api/reports/purchase-order?days=7');
@@ -4327,10 +4232,54 @@ const updateStatus = async (orderId, newStatus) => {
   // ── Fetch Audit Logs ───────────────────────────────────────────────────────
   const fetchAuditLogs = async (page = 1) => {
     try {
-      const res = await apiFetch(`/api/audit-logs?page=${page}&limit=${AUDIT_LOGS_PAGE_SIZE}`);
+      const qs = new URLSearchParams({ page, limit: AUDIT_LOGS_PAGE_SIZE });
+      if (auditLogFilters.action) qs.set('action', auditLogFilters.action);
+      if (auditLogFilters.actor)  qs.set('actor', auditLogFilters.actor);
+      if (auditLogFilters.start)  qs.set('start', auditLogFilters.start);
+      if (auditLogFilters.end)    qs.set('end', auditLogFilters.end);
+      const res = await apiFetch(`/api/audit-logs?${qs.toString()}`);
       const data = await res.json();
       if (data.success) { setAuditLogs(data.logs); setAuditLogsTotal(data.total); setAuditLogsPage(page); }
     } catch (err) { console.error('fetchAuditLogs', err); }
+  };
+
+  // CSV export streams straight from the server (bounded to a 92-day range,
+  // same convention as /api/journal/export) — filters must be set before
+  // exporting since the server has no memory of the on-screen page.
+  const exportAuditLogsCsv = async () => {
+    if (!auditLogFilters.start || !auditLogFilters.end) { return ui.alert('Pick a start and end date to export (max 92 days).'); }
+    const qs = new URLSearchParams({ start: auditLogFilters.start, end: auditLogFilters.end });
+    if (auditLogFilters.action) qs.set('action', auditLogFilters.action);
+    if (auditLogFilters.actor)  qs.set('actor', auditLogFilters.actor);
+    try {
+      const res = await apiFetch(`/api/audit-logs/export?${qs.toString()}`);
+      if (!res.ok) { const d = await res.json().catch(() => ({})); return ui.alert(d.error || 'Failed to export audit log.'); }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `audit_log_${auditLogFilters.start}_to_${auditLogFilters.end}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) { console.error('exportAuditLogsCsv', err); ui.alert('Network error exporting audit log.'); }
+  };
+
+  // PDF export builds from whatever's already loaded in `auditLogs` state — the
+  // current page only, same "client-side from fetched JSON" convention every
+  // other PDF export in this file follows via loadPdfLibs().
+  const exportAuditLogsPdf = async () => {
+    if (!auditLogs.length) return ui.alert('Nothing to export — load some audit log entries first.');
+    const { jsPDF, autoTable } = await loadPdfLibs();
+    const doc = new jsPDF();
+    doc.setFontSize(14); doc.text('Audit Log', 14, 16);
+    doc.setFontSize(9);
+    doc.text(`Page ${auditLogsPage} of ${Math.max(1, Math.ceil(auditLogsTotal / AUDIT_LOGS_PAGE_SIZE))} · ${auditLogsTotal} total entries`, 14, 22);
+    autoTable(doc, {
+      startY: 28,
+      head: [['Timestamp', 'User', 'Action', 'Target', 'Notes']],
+      body: auditLogs.map(l => [new Date(l.timestamp).toLocaleString(), l.userId, l.action, l.targetReference, l.details?.notes || '']),
+      styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] },
+    });
+    doc.save(`audit_log_page${auditLogsPage}.pdf`);
   };
 
   // ── Fetch AP Outstanding ───────────────────────────────────────────────────
@@ -4361,6 +4310,76 @@ const updateStatus = async (orderId, newStatus) => {
     } catch { ui.alert('Network error.'); }
     finally { setApPaySubmitting(false); }
   };
+
+  // ── Bills (AP approval workflow) ────────────────────────────────────────────
+  const [bills, setBills] = useState(null);
+  const [billsFilter, setBillsFilter] = useState('Pending');
+  const [billCreate, setBillCreate] = useState({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000' });
+  const [billPayModal, setBillPayModal] = useState(null); // the bill being paid
+  const [billPayFrom, setBillPayFrom] = useState('111000');
+  const [billBusy, setBillBusy] = useState(false);
+
+  const fetchBills = async (status = billsFilter) => {
+    try {
+      const q = status && status !== 'All' ? `?status=${encodeURIComponent(status)}` : '';
+      const res = await apiFetch(`/api/bills${q}`);
+      const d = await res.json();
+      if (d.success) setBills(d.bills);
+    } catch (err) { console.error('fetchBills', err); }
+  };
+
+  const billAction = async (id, path, body) => {
+    setBillBusy(true);
+    try {
+      const res = await apiFetch(`/api/bills/${id}/${path}`, { method: path === 'schedule' ? 'PATCH' : 'POST', body: JSON.stringify(body || {}) });
+      const d = await res.json();
+      if (d.success) { fetchBills(); return true; }
+      ui.alert(d.error || 'Action failed.');
+      return false;
+    } catch { ui.alert('Network error.'); return false; }
+    finally { setBillBusy(false); }
+  };
+
+  const approveBill = (b) => billAction(b._id, 'approve');
+  const rejectBill = async (b) => {
+    const reason = prompt(`Reject bill ${b.billNumber}? Enter a reason:`);
+    if (!reason || !reason.trim()) return;
+    billAction(b._id, 'reject', { reason: reason.trim() });
+  };
+  const scheduleBill = async (b) => {
+    const date = prompt(`Schedule payment date for ${b.billNumber} (YYYY-MM-DD, blank to clear):`, b.scheduledPaymentDate ? String(b.scheduledPaymentDate).slice(0, 10) : '');
+    if (date === null) return;
+    billAction(b._id, 'schedule', { scheduledPaymentDate: date.trim() || null });
+  };
+  const submitBillPay = async () => {
+    const ok = await billAction(billPayModal._id, 'pay', { payFromAccount: billPayFrom });
+    if (ok) { setBillPayModal(null); ui.alert('Payment recorded.'); }
+  };
+  const submitCreateBill = async () => {
+    const amt = parseFloat(billCreate.amount);
+    if (!billCreate.supplierId) return ui.alert('Pick a supplier.');
+    if (!amt || amt <= 0) return ui.alert('Enter a valid amount.');
+    if (!billCreate.description.trim()) return ui.alert('Enter a description.');
+    setBillBusy(true);
+    try {
+      const res = await apiFetch('/api/bills', { method: 'POST', body: JSON.stringify({
+        supplierId: billCreate.supplierId, description: billCreate.description.trim(),
+        amount: amt, dueDate: billCreate.dueDate || null, expenseAccountCode: billCreate.expenseAccountCode,
+      }) });
+      const d = await res.json();
+      if (d.success) {
+        ui.alert('Bill created (Pending approval).');
+        setBillCreate({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000' });
+        fetchBills();
+      } else ui.alert(d.error || 'Failed to create bill.');
+    } catch { ui.alert('Network error.'); }
+    finally { setBillBusy(false); }
+  };
+
+  // Expense/asset accounts a manual bill can be booked against (DR side).
+  const expenseAccounts = useMemo(() => [
+    ...accountsUnder('510000'), ...accountsUnder('600000'), ...accountsUnder('540000'), ...accountsUnder('130000'),
+  ], [accountsUnder]);
 
   // The "Parked" filter shows held tabs (separate collection). "All" must show
   // EVERY order regardless of state — the active board already carries every
@@ -4875,7 +4894,7 @@ const updateStatus = async (orderId, newStatus) => {
               <p className="text-[9px] text-fg/80 font-bold uppercase tracking-[0.2em] px-4 pt-4 pb-1">Management</p>
               {mgmtItems.map(({ id, label, icon: Icon, sub }) => (
                 <button key={id}
-                  onClick={() => { setActiveTab(id); setNavMode('negotium'); closeFn?.(); if (id === 'analytics') fetchAnalytics(); if (sub) setLedgerSubTab(sub); }}
+                  onClick={() => { setActiveTab(id); setNavMode('negotium'); closeFn?.(); if (id === 'analytics') { fetchAnalytics(); fetchTurnover(); fetchSalesTrend(); } if (sub) setLedgerSubTab(sub); }}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
                     ${activeTab === id && navMode === 'negotium' ? 'bg-brand text-white shadow-sm' : 'text-fg/50 hover:text-fg hover:bg-white/5'}`}
                 >
@@ -4991,6 +5010,8 @@ const updateStatus = async (orderId, newStatus) => {
     peso, BIZ_NAME, COMP_REASON_LABELS, API_URL, FRONTEND_URL,
     // ── Analytics ───────────────────────────────────────────────────────────
     analyticsData, analyticsLoading, fetchAnalytics, exportAnalyticsToPDF,
+    turnoverData, fetchTurnover,
+    salesTrendData, salesTrendPeriod, setSalesTrendPeriod, fetchSalesTrend,
     // ── Navigation ──────────────────────────────────────────────────────────
     activeTab, setActiveTab, navMode, setNavMode,
     // ── Shift end / bank deposit (ShiftEndModal) ────────────────────────────
@@ -5126,6 +5147,7 @@ const updateStatus = async (orderId, newStatus) => {
     parkedOrders, parkedModalOpen, setParkedModalOpen, fetchParked, parkCurrentOrder, resumeParked,
     // ── Reports ──────────────────────────────────────────────────────────────
     menuEngineering, fetchMenuEngineering, cashierVariance, fetchCashierVariance, purchaseOrder, fetchPurchaseOrder,
+    commissions, fetchCommissions,
     exportPnlPDF, exportBalanceSheetPDF, exportPurchaseOrderPDF,
     // ── Multi-Payment ────────────────────────────────────────────────────────
     posPayments, setPosPayments, posGuestCount, setPosGuestCount,
@@ -5152,8 +5174,15 @@ const updateStatus = async (orderId, newStatus) => {
     printKitchenTicket,
     // ── Audit Logs ──────────────────────────────────────────────────────────
     auditLogs, auditLogsPage, auditLogsTotal, AUDIT_LOGS_PAGE_SIZE, fetchAuditLogs,
+    auditLogFilters, setAuditLogFilters, exportAuditLogsCsv, exportAuditLogsPdf,
     // ── AP Outstanding ──────────────────────────────────────────────────────
     apData, fetchApData, apPayModal, setApPayModal, apPayForm, setApPayForm, apPaySubmitting, submitApPayment,
+    // ── Bills (AP approval workflow) ─────────────────────────────────────────
+    bills, billsFilter, setBillsFilter, fetchBills, billBusy,
+    billCreate, setBillCreate, submitCreateBill,
+    approveBill, rejectBill, scheduleBill,
+    billPayModal, setBillPayModal, billPayFrom, setBillPayFrom, submitBillPay,
+    expenseAccounts,
     // ── Order Notes ─────────────────────────────────────────────────────────
     posNotes, setPosNotes,
     deleteProduct, deleteCategory, deleteAddOn,
@@ -5309,9 +5338,15 @@ const updateStatus = async (orderId, newStatus) => {
             
             {/* FIX: Added shrink-0, p-4, and removed overflow-hidden so the QR never gets squished! */}
             <div className="bg-white rounded-xl shadow-inner w-full flex justify-center items-center p-4 shrink-0 min-h-[250px]">
-              <QRCode 
-                value={`${FRONTEND_URL}/menu/${autoTableId}?session=${qrSessionId}`} 
-                size={200} 
+              {/* Point the QR at the SAME origin the app is actually served from,
+                  not a build-time VITE_FRONTEND_URL that can be stale or (in local
+                  rehearsal) a non-resolving *.localtest host. The customer menu
+                  (/menu/:table) is the same app at the same origin as this admin
+                  view, so window.location.origin is always the reachable URL —
+                  mirrors how the logistics portal link is built. */}
+              <QRCode
+                value={`${window.location.origin}/menu/${autoTableId}?session=${qrSessionId}`}
+                size={200}
               />
             </div>
             

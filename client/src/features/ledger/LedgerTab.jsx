@@ -83,11 +83,16 @@ export default function LedgerTab({ ctx }) {
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
     users, varianceNoteMode, varianceReasons,
     apData, fetchApData, apPayModal, setApPayModal, apPayForm, setApPayForm, apPaySubmitting, submitApPayment, suppliers, fetchSuppliers,
+    bills, billsFilter, setBillsFilter, fetchBills, billBusy,
+    billCreate, setBillCreate, submitCreateBill,
+    approveBill, rejectBill, scheduleBill,
+    billPayModal, setBillPayModal, billPayFrom, setBillPayFrom, submitBillPay, expenseAccounts,
     profitByCategory, fetchProfitByCategory,
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
     salesLineItems, sliRange, setSliRange, fetchSalesLineItems, exportSalesLineItemsPDF,
     menuEngineering, fetchMenuEngineering, cashierVariance, fetchCashierVariance, purchaseOrder, fetchPurchaseOrder,
+    commissions, fetchCommissions,
     exportPnlPDF, exportBalanceSheetPDF, exportPurchaseOrderPDF, reconcileInventory,
     coaAccounts, fetchCoa, coaParent, setCoaParent, coaNewName, setCoaNewName,
     coaEditId, setCoaEditId, coaEditName, setCoaEditName, coaBusy,
@@ -220,6 +225,8 @@ export default function LedgerTab({ ctx }) {
   const pbcPage  = usePagination(profitByCategory?.categories, 10);
   const mePage   = usePagination(menuEngineering?.items, 10);
   const cvPage   = usePagination(cashierVariance?.cashiers, 10);
+  const cmPage   = usePagination(commissions?.sellers, 10);
+  const billsPage = usePagination(bills, 12);
   const poPage   = usePagination(purchaseOrder?.lines, 10);
 
   return (
@@ -240,6 +247,7 @@ export default function LedgerTab({ ctx }) {
                   ['percentagetax', 'Percentage Tax',         FileText],
                   ['menueng',       'Menu Engineering',       TrendingUp],
                   ['variance',      'Cashier Variance',       Users],
+                  ['commissions',   'Commissions',            Users],
                 ]
               : [
                   ['journal',    'General Ledger',      FileText],
@@ -247,6 +255,7 @@ export default function LedgerTab({ ctx }) {
                   ['pnl',        'P&L',                 TrendingUp],
                   ['balance',    'Balance Sheet',       BarChart2],
                   ['araap',      'AR & AP',             Truck],
+                  ['bills',      'Bills (AP)',          Receipt],
                   ['accperiods', 'Accounts & Periods',  Settings],
                   ['revolving',  'Revolving Funds',     RefreshCw],
                   ['expenses',   'Expenses',            Receipt],
@@ -260,6 +269,7 @@ export default function LedgerTab({ ctx }) {
                   if (id === 'accperiods') { fetchCoa(); fetchClosedPeriods(); fetchPaymentMap(); }
                   // Merged "AR & AP" page.
                   if (id === 'araap') { fetchArOutstanding(); fetchArAgeing(); fetchApData(); fetchSuppliers(); }
+                  if (id === 'bills') { fetchBills(); fetchSuppliers(); fetchCoa(); }
                   if (id === 'pnl' && !pnlData) fetchPnl();
                   if (id === 'trial') loadTrial();
                   if (id === 'percentagetax') loadPtax();
@@ -272,6 +282,7 @@ export default function LedgerTab({ ctx }) {
                   if (id === 'profitcat') fetchProfitByCategory();
                   if (id === 'menueng') fetchMenuEngineering();
                   if (id === 'variance') fetchCashierVariance();
+                  if (id === 'commissions') fetchCommissions();
                   if (id === 'revolving') { fetchRfFunds(); setRfActiveFund(null); setRfTxs([]); }
                   if (id === 'expenses') { fetchExpenseCategories(); fetchExpenses(); }
                 }}
@@ -1617,6 +1628,179 @@ export default function LedgerTab({ ctx }) {
                     </tbody>
                   </table>
                   <div className="px-3"><Pager {...cvPage} label="cashiers" /></div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ===== COMMISSIONS ===== */}
+          {ledgerSubTab === 'commissions' && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="flex justify-between items-center">
+                <p className="text-xs text-fg/60">Sales attributed by cashier, at each staff member's commission rate (set in User Control). Complimentary and unattributed sales earn no commission.</p>
+                <button onClick={fetchCommissions} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+              </div>
+              {!commissions ? (
+                <p className="text-fg/60 text-sm text-center p-6 font-bold">Click Refresh to compute commissions.</p>
+              ) : (commissions.sellers||[]).length === 0 ? (
+                <p className="text-fg/60 text-sm text-center p-6 font-bold">No attributed sales yet.</p>
+              ) : (
+                <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
+                  <table className="w-full text-left text-xs min-w-[520px]">
+                    <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                      <tr><th className="px-5 py-3">Cashier</th><th className="px-5 py-3 text-right">Orders</th><th className="px-5 py-3 text-right">Sales</th><th className="px-5 py-3 text-right">Rate</th><th className="px-5 py-3 text-right">Commission</th></tr>
+                    </thead>
+                    <tbody>
+                      {cmPage.pageItems.map((c,i) => (
+                        <tr key={c.userCode||i} className={`border-b border-white/5 ${i%2?'bg-white/[0.015]':''}`}>
+                          <td className="px-5 py-2.5 font-bold text-fg">{c.name}</td>
+                          <td className="px-5 py-2.5 text-right text-fg/70 tabular-nums">{c.orderCount}</td>
+                          <td className="px-5 py-2.5 text-right text-fg/80 tabular-nums font-mono">₱{c.salesTotal.toFixed(2)}</td>
+                          <td className="px-5 py-2.5 text-right text-fg/50 tabular-nums">{c.commissionRate}%</td>
+                          <td className="px-5 py-2.5 text-right font-black tabular-nums font-mono text-green-400">₱{c.commissionEarned.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-white/10">
+                        <td colSpan={4} className="px-5 py-3 text-right font-bold text-fg/60 uppercase text-[10px] tracking-wider">Total</td>
+                        <td className="px-5 py-3 text-right font-black tabular-nums font-mono text-green-400">₱{(commissions.totalCommission||0).toFixed(2)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                  <div className="px-3"><Pager {...cmPage} label="sellers" /></div>
+                  <p className="text-[10px] text-fg/60 p-3 text-center">A cashier's rate is set on their user profile in User Control. 0% shows if none is set.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ===== BILLS (AP approval workflow) ===== */}
+          {ledgerSubTab === 'bills' && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="flex justify-between items-center flex-wrap gap-2">
+                <div className="flex gap-1.5 flex-wrap">
+                  {['Pending','Approved','Paid','Rejected','All'].map(s => (
+                    <button key={s}
+                      onClick={() => { setBillsFilter(s); fetchBills(s); }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${billsFilter === s ? 'bg-brand text-white' : 'bg-white/5 text-fg/50 hover:text-fg'}`}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setBillCreate(c => ({ ...c, open: !c.open }))} className="flex items-center gap-2 px-4 py-2 bg-white/5 text-fg/70 rounded-xl font-bold text-sm hover:bg-white/10 transition"><Plus size={14}/> Manual bill</button>
+                  <button onClick={() => fetchBills()} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+                </div>
+              </div>
+
+              {billCreate.open && (
+                <div className="bg-surface border border-white/10 rounded-xl p-4 space-y-3">
+                  <p className="text-xs text-fg/50">A manual bill (rent, utilities, one-off supplier charge) — it books nothing until you Approve it, which posts DR expense / CR Accounts Payable.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Supplier</label>
+                      <select value={billCreate.supplierId} onChange={e => setBillCreate(c => ({ ...c, supplierId: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg">
+                        <option value="">Select supplier…</option>
+                        {(suppliers||[]).map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Expense account (debited on approval)</label>
+                      <select value={billCreate.expenseAccountCode} onChange={e => setBillCreate(c => ({ ...c, expenseAccountCode: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg">
+                        {(expenseAccounts||[]).map(a => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Amount (₱)</label>
+                      <input type="number" min="0" step="0.01" value={billCreate.amount} onChange={e => setBillCreate(c => ({ ...c, amount: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" placeholder="0.00" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Due date (optional)</label>
+                      <input type="date" value={billCreate.dueDate} onChange={e => setBillCreate(c => ({ ...c, dueDate: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Description</label>
+                      <input value={billCreate.description} onChange={e => setBillCreate(c => ({ ...c, description: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" placeholder="e.g. October warehouse rent" />
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <button onClick={submitCreateBill} disabled={billBusy} className="px-5 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">{billBusy ? 'Saving…' : 'Create bill'}</button>
+                  </div>
+                </div>
+              )}
+
+              {!bills ? (
+                <p className="text-fg/60 text-sm text-center p-6 font-bold">Loading bills…</p>
+              ) : bills.length === 0 ? (
+                <p className="text-fg/60 text-sm text-center p-6 font-bold">No {billsFilter !== 'All' ? billsFilter.toLowerCase() : ''} bills.</p>
+              ) : (
+                <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
+                  <table className="w-full text-left text-xs min-w-[720px]">
+                    <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                      <tr>
+                        <th className="px-4 py-3">Bill #</th><th className="px-4 py-3">Supplier</th>
+                        <th className="px-4 py-3">Source</th><th className="px-4 py-3">Description</th>
+                        <th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {billsPage.pageItems.map((b, i) => {
+                        const stCls = { Pending:'bg-yellow-500/20 text-yellow-400', Approved:'bg-blue-500/20 text-blue-400', Paid:'bg-green-500/20 text-green-400', Rejected:'bg-red-500/20 text-red-400' }[b.status] || 'bg-white/10 text-fg/50';
+                        return (
+                          <tr key={b._id} className={`border-b border-white/5 ${i%2?'bg-white/[0.015]':''}`}>
+                            <td className="px-4 py-3 font-mono text-fg/70">{b.billNumber}</td>
+                            <td className="px-4 py-3 font-bold text-fg">{b.supplierName || '—'}</td>
+                            <td className="px-4 py-3"><span className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-fg/50 font-bold">{b.source}</span></td>
+                            <td className="px-4 py-3 text-fg/60 max-w-[200px] truncate" title={b.description || b.poNumber}>{b.description || b.poNumber || '—'}</td>
+                            <td className="px-4 py-3 text-right font-black tabular-nums font-mono text-fg">{peso(b.amount)}</td>
+                            <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${stCls}`}>{b.status}</span>
+                              {b.scheduledPaymentDate && b.status === 'Approved' && <div className="text-[10px] text-fg/40 mt-1">pay {String(b.scheduledPaymentDate).slice(0,10)}</div>}
+                            </td>
+                            <td className="px-4 py-3 text-right whitespace-nowrap">
+                              {b.status === 'Pending' && (
+                                <div className="flex gap-1.5 justify-end">
+                                  <button disabled={billBusy} onClick={() => approveBill(b)} className="px-2.5 py-1 rounded-lg bg-green-500/15 text-green-400 hover:bg-green-500/25 text-[11px] font-bold transition disabled:opacity-50">Approve</button>
+                                  <button disabled={billBusy} onClick={() => rejectBill(b)} className="px-2.5 py-1 rounded-lg bg-red-500/10 text-red-400/80 hover:bg-red-500/20 text-[11px] font-bold transition disabled:opacity-50">Reject</button>
+                                </div>
+                              )}
+                              {b.status === 'Approved' && (
+                                <div className="flex gap-1.5 justify-end">
+                                  <button disabled={billBusy} onClick={() => scheduleBill(b)} className="px-2.5 py-1 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 text-[11px] font-bold transition disabled:opacity-50">Schedule</button>
+                                  <button disabled={billBusy} onClick={() => { setBillPayModal(b); setBillPayFrom('111000'); }} className="px-2.5 py-1 rounded-lg bg-brand/20 text-brand hover:bg-brand/30 text-[11px] font-bold transition disabled:opacity-50">Pay</button>
+                                </div>
+                              )}
+                              {(b.status === 'Paid' || b.status === 'Rejected') && (
+                                <span className="text-[10px] text-fg/30">{b.journalEntryRef || (b.rejectionReason ? 'rejected' : '—')}</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <div className="px-3"><Pager {...billsPage} label="bills" /></div>
+                  <p className="text-[10px] text-fg/60 p-3 text-center">PO-sourced bills already posted their liability at goods receipt — approving one is a sign-off, not a new posting. Manual bills post on approval.</p>
+                </div>
+              )}
+
+              {/* Pay modal */}
+              {billPayModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setBillPayModal(null)}>
+                  <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+                    <h2 className="font-black text-fg mb-1">Pay bill {billPayModal.billNumber}</h2>
+                    <p className="text-fg/50 text-sm mb-4">{billPayModal.supplierName} · {peso(billPayModal.amount)}</p>
+                    <p className="text-[11px] text-fg/40 mb-3">Posts DR Accounts Payable / CR the account you pay from.</p>
+                    <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Pay from</label>
+                    <select value={billPayFrom} onChange={e => setBillPayFrom(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-5">
+                      {(cashAndBankAccounts||[]).map(a => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
+                    </select>
+                    <div className="flex gap-3">
+                      <button onClick={() => setBillPayModal(null)} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">Cancel</button>
+                      <button onClick={submitBillPay} disabled={billBusy} className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">{billBusy ? 'Recording…' : 'Record payment'}</button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

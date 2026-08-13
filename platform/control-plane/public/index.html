@@ -5,13 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Semivra control plane</title>
 <style>
-  :root{--bg:#15171a;--card:#1c1f23;--line:#2a2e34;--fg:#e8eaed;--mut:#8b9098;--brand:#4f9d69;--danger:#c9483f}
+  :root{--bg:#15171a;--card:#1c1f23;--line:#2a2e34;--fg:#e8eaed;--mut:#8b9098;--brand:#4f9d69;--brand-soft:rgba(79,157,105,.16);--danger:#c9483f}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}
-  .wrap{max-width:1000px;margin:0 auto;padding:28px 20px 80px}
-  h1{font-size:19px;margin:0;letter-spacing:.14em;text-transform:uppercase}
+  h1{font-size:17px;margin:0;letter-spacing:.1em;text-transform:uppercase}
   h2{font-size:13px;margin:0 0 12px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}
-  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:24px}
+  h3{font-size:13px;margin:20px 0 8px;color:var(--fg)}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
   label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--mut);margin-bottom:5px}
   input,select{width:100%;background:#0f1113;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:9px 11px;font:inherit;outline:none}
@@ -21,6 +20,7 @@
   button:disabled{opacity:.5;cursor:default}
   button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg);font-weight:500}
   button.danger{background:transparent;border:1px solid var(--danger);color:#e7857c;font-weight:500}
+  button.small{padding:6px 11px;font-size:12px}
   .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
   .row:last-child{border-bottom:0}
   .pill{display:inline-block;font-size:11px;padding:2px 9px;border-radius:99px;border:1px solid var(--line);color:var(--mut)}
@@ -30,95 +30,383 @@
   pre{background:#0f1113;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;max-height:340px;font-size:12px;white-space:pre-wrap;word-break:break-word}
   .muted{color:var(--mut);font-size:12px}
   .err{color:#e7857c;font-size:13px;margin-top:10px}
-  .hide{display:none}
+  /* !important: this is the app-wide "force hidden" utility class — it must
+     win over any element-specific display rule (e.g. .modal-overlay's
+     display:flex) regardless of which is declared later in this stylesheet. */
+  .hide{display:none!important}
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
+  .modal{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px;max-width:520px;width:100%}
+  .modal.wide{max-width:820px}
+  .modal h2{margin:0 0 8px}
+  .phase-list{list-style:none;padding:0;margin:18px 0}
+  .phase-list li{display:flex;align-items:center;gap:10px;padding:8px 0;color:var(--mut)}
+  .phase-list li.active{color:var(--fg)}
+  .phase-list li.done{color:#7fd39b}
+  .phase-dot{width:11px;height:11px;border-radius:99px;border:2px solid var(--line);flex-shrink:0}
+  .phase-list li.active .phase-dot{border-color:var(--brand);background:var(--brand);animation:pulse 1s infinite}
+  .phase-list li.done .phase-dot{border-color:#7fd39b;background:#7fd39b}
+  .phase-list li.failed .phase-dot{border-color:var(--danger);background:var(--danger)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+  /* ── App shell: sidebar + content ─────────────────────────────────────── */
+  .app{display:flex;min-height:100vh}
+  .sidebar{width:216px;flex-shrink:0;background:var(--card);border-right:1px solid var(--line);
+    padding:20px 12px;position:sticky;top:0;align-self:flex-start;height:100vh;overflow-y:auto}
+  .sidebar h1{font-size:14px;padding:0 8px;margin-bottom:2px}
+  .sidebar .domain{padding:0 8px;margin-bottom:20px;display:block}
+  .navitem{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:transparent;
+    color:var(--mut);padding:10px 10px;border-radius:9px;margin-bottom:2px;font-weight:600;font-size:13px;
+    border:0;cursor:pointer;transition:background .12s,color .12s}
+  .navitem:hover{background:rgba(255,255,255,.04);color:var(--fg)}
+  .navitem.active{background:var(--brand-soft);color:#8fd8a8}
+  .navitem .dot{width:6px;height:6px;border-radius:99px;background:currentColor;opacity:.6;flex-shrink:0}
+  .content{flex:1;min-width:0;padding:26px 32px 80px}
+  .content-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+  .content-header h1{font-size:18px}
+  .section{display:none}
+  .section.active{display:block}
+
+  /* ── Billing ──────────────────────────────────────────────────────────── */
+  .paid-badge{font-size:11px;padding:3px 10px;border-radius:99px;font-weight:700;letter-spacing:.04em}
+  .paid-badge.paid{background:rgba(79,157,105,.18);color:#7fd39b}
+  .paid-badge.unpaid{background:rgba(201,72,63,.18);color:#e7857c}
+  .month-pill{font-size:10px;padding:1px 7px;border-radius:99px;background:rgba(255,255,255,.05);color:var(--mut);margin-right:4px}
+
+  /* ── Docs page ────────────────────────────────────────────────────────── */
+  .docs{max-width:760px}
+  .docs h3{border-top:1px solid var(--line);padding-top:18px;margin-top:24px}
+  .docs h3:first-child{border-top:0;padding-top:0;margin-top:0}
+  .docs p{color:#c7cad0;margin:0 0 10px}
+  .docs ul,.docs ol{color:#c7cad0;margin:0 0 10px;padding-left:20px}
+  .docs li{margin-bottom:5px}
+  .docs code{background:#0f1113;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:12.5px}
+  .toc{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:22px}
+  .toc a{font-size:12px;padding:5px 11px;border-radius:99px;border:1px solid var(--line);color:var(--mut);text-decoration:none}
+  .toc a:hover{color:var(--fg);border-color:var(--mut)}
+
+  /* ── Logs modal ───────────────────────────────────────────────────────── */
+  .log-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+  .log-toolbar select{width:auto}
+  #logOut{max-height:56vh;overflow-y:auto;font-size:11.5px}
+  .pager{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:10px}
+  .pager span{font-size:12px;color:var(--mut);min-width:80px;text-align:center}
+
+  @media (max-width:820px){
+    .app{flex-direction:column}
+    .sidebar{position:static;width:100%;height:auto;display:flex;flex-wrap:wrap;gap:4px;padding:14px}
+    .sidebar h1,.sidebar .domain{display:none}
+    .navitem{width:auto}
+    .content{padding:20px}
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
 
   <div id="loginView">
-    <header><h1>Semivra control plane</h1></header>
-    <div class="card" style="max-width:380px">
-      <h2>Sign in</h2>
-      <label for="pw">Control plane password</label>
-      <input id="pw" type="password" autocomplete="current-password" autofocus>
-      <div style="margin-top:14px"><button id="loginBtn">Sign in</button></div>
-      <div id="loginErr" class="err"></div>
-      <p class="muted" style="margin-bottom:0">Reached over an SSH tunnel. This panel controls the Docker daemon &mdash; it is never exposed publicly.</p>
+    <div style="max-width:380px;margin:60px auto;padding:0 20px">
+      <h1 style="margin-bottom:20px">Semivra control plane</h1>
+      <div class="card">
+        <h2>Sign in</h2>
+        <label for="pw">Control plane password</label>
+        <input id="pw" type="password" autocomplete="current-password" autofocus>
+        <div style="margin-top:14px"><button id="loginBtn">Sign in</button></div>
+        <div id="loginErr" class="err"></div>
+        <p class="muted" style="margin-bottom:0">Reached over an SSH tunnel. This panel controls the Docker daemon &mdash; it is never exposed publicly.</p>
+      </div>
     </div>
   </div>
 
-  <div id="mainView" class="hide">
-    <header>
-      <h1>Semivra control plane</h1>
-      <span class="muted" id="domainLabel"></span>
-    </header>
+  <div id="mainView" class="hide app">
+    <nav class="sidebar">
+      <h1>Semivra</h1>
+      <span class="muted domain" id="domainLabel"></span>
+      <button class="navitem active" data-section="clients"><span class="dot"></span> Clients</button>
+      <button class="navitem" data-section="billing"><span class="dot"></span> Billing</button>
+      <button class="navitem" data-section="testlab"><span class="dot"></span> Test Lab</button>
+      <button class="navitem" data-section="errors"><span class="dot"></span> Errors</button>
+      <button class="navitem" data-section="docs"><span class="dot"></span> Help &amp; Docs</button>
+    </nav>
 
-    <div class="card">
-      <h2>Clients</h2>
-      <div id="tenantList"><p class="muted">Loading&hellip;</p></div>
-    </div>
+    <div class="content">
 
-    <div class="card">
-      <h2>Add a client</h2>
-      <div class="grid">
-        <div><label for="f_slug">Subdomain</label><input id="f_slug" placeholder="acme"></div>
-        <div><label for="f_name">Business name</label><input id="f_name" placeholder="Acme Trading Co."></div>
-        <div><label for="f_type">Business type</label>
-          <select id="f_type"><option value="log">log &mdash; logistics</option><option value="fb">fb &mdash; food &amp; beverage</option></select></div>
-        <div><label for="f_theme">Theme</label>
-          <select id="f_theme"><option value="default">default</option><option value="light">light</option><option value="yellow">yellow</option><option value="ocean">ocean</option></select></div>
-        <div><label for="f_pass">Superadmin password</label><input id="f_pass" type="text" placeholder="min 12 characters"></div>
-        <div><label for="f_fb">Support link (optional)</label><input id="f_fb" placeholder="https://m.me/yourpage"></div>
-      </div>
-      <p class="muted" style="margin:14px 0 6px">Resource limits &mdash; memory is enforced; CPU weight only applies under contention</p>
-      <div class="grid">
-        <div><label for="f_mem">Memory (MB)</label>
-          <select id="f_mem">
-            <option value="512">512 MB</option>
-            <option value="1024" selected>1 GB &mdash; default</option>
-            <option value="1536">1.5 GB</option>
-            <option value="2048">2 GB</option>
-          </select></div>
-        <div><label for="f_cpu">CPU weight</label>
-          <select id="f_cpu">
-            <option value="512">512 &mdash; low priority</option>
-            <option value="1024" selected>1024 &mdash; normal</option>
-            <option value="2048">2048 &mdash; high priority</option>
-          </select></div>
-      </div>
-      <p class="muted" style="margin:14px 0 6px">Billing letterhead (optional, printed on statements)</p>
-      <div class="grid">
-        <div><label for="f_baddr1">Address line 1</label><input id="f_baddr1"></div>
-        <div><label for="f_baddr2">Address line 2</label><input id="f_baddr2"></div>
-        <div><label for="f_bphone">Phone</label><input id="f_bphone"></div>
-        <div><label for="f_bemail">Email</label><input id="f_bemail"></div>
-        <div><label for="f_bbank">Bank</label><input id="f_bbank"></div>
-        <div><label for="f_bacctname">Account name</label><input id="f_bacctname"></div>
-        <div><label for="f_bacctno">Account number</label><input id="f_bacctno"></div>
-      </div>
-      <div style="margin-top:16px"><button id="createBtn">Create client</button>
-        <span class="muted" id="createNote" style="margin-left:10px"></span></div>
-      <div id="createErr" class="err"></div>
-    </div>
+      <!-- ============================= CLIENTS ============================= -->
+      <div class="section active" id="sec-clients">
+        <div class="content-header">
+          <h1>Clients</h1>
+          <button id="updateAllBtn">Update all apps</button>
+        </div>
 
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px">
-        <h2 style="margin:0">Errors</h2>
-        <div style="display:flex;gap:8px;align-items:center">
-          <select id="errHours" style="width:auto"><option value="1">last hour</option><option value="24" selected>last 24h</option><option value="168">last 7 days</option></select>
-          <button class="ghost" id="errRefresh">Refresh</button>
+        <div class="card">
+          <h2>All clients</h2>
+          <div id="tenantList"><p class="muted">Loading&hellip;</p></div>
+        </div>
+
+        <div class="card">
+          <h2>Add a client</h2>
+          <div class="grid">
+            <div><label for="f_slug">Subdomain</label><input id="f_slug" placeholder="acme"></div>
+            <div><label for="f_name">Business name</label><input id="f_name" placeholder="Acme Trading Co."></div>
+            <div><label for="f_type">Business type</label>
+              <select id="f_type"><option value="log">log &mdash; logistics</option><option value="fb">fb &mdash; food &amp; beverage</option></select></div>
+            <div><label for="f_theme">Theme</label>
+              <select id="f_theme"><option value="default">default</option><option value="light">light</option><option value="yellow">yellow</option><option value="ocean">ocean</option></select></div>
+            <div><label for="f_pass">Superadmin password</label><input id="f_pass" type="text" placeholder="min 12 characters"></div>
+            <div><label for="f_fb">Support link (optional)</label><input id="f_fb" placeholder="https://m.me/yourpage"></div>
+          </div>
+          <p class="muted" style="margin:14px 0 6px">
+            <label style="display:inline-flex;align-items:center;gap:7px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--fg)">
+              <input type="checkbox" id="f_test" style="width:auto">
+              Test tenant — required before Test Lab (seeding, load testing, security scanning) will run against it. Use this for rehearsal/staging clients only, never a real one.
+            </label>
+          </p>
+          <p class="muted" style="margin:14px 0 6px">Resource limits &mdash; memory is enforced; CPU weight only applies under contention</p>
+          <div class="grid">
+            <div><label for="f_mem">Memory (MB)</label>
+              <select id="f_mem">
+                <option value="512">512 MB</option>
+                <option value="1024" selected>1 GB &mdash; default</option>
+                <option value="1536">1.5 GB</option>
+                <option value="2048">2 GB</option>
+              </select></div>
+            <div><label for="f_cpu">CPU weight</label>
+              <select id="f_cpu">
+                <option value="512">512 &mdash; low priority</option>
+                <option value="1024" selected>1024 &mdash; normal</option>
+                <option value="2048">2048 &mdash; high priority</option>
+              </select></div>
+          </div>
+          <p class="muted" style="margin:14px 0 6px">Monthly fee (optional — shown on the Billing page)</p>
+          <div class="grid">
+            <div><label for="f_fee">Monthly fee (&#8369;)</label><input id="f_fee" type="number" min="0" placeholder="e.g. 1500"></div>
+          </div>
+          <p class="muted" style="margin:14px 0 6px">Billing letterhead (optional, printed on statements)</p>
+          <div class="grid">
+            <div><label for="f_baddr1">Address line 1</label><input id="f_baddr1"></div>
+            <div><label for="f_baddr2">Address line 2</label><input id="f_baddr2"></div>
+            <div><label for="f_bphone">Phone</label><input id="f_bphone"></div>
+            <div><label for="f_bemail">Email</label><input id="f_bemail"></div>
+            <div><label for="f_bbank">Bank</label><input id="f_bbank"></div>
+            <div><label for="f_bacctname">Account name</label><input id="f_bacctname"></div>
+            <div><label for="f_bacctno">Account number</label><input id="f_bacctno"></div>
+          </div>
+          <div style="margin-top:16px"><button id="createBtn">Create client</button>
+            <span class="muted" id="createNote" style="margin-left:10px"></span></div>
+          <div id="createErr" class="err"></div>
         </div>
       </div>
-      <div id="errList"><p class="muted">Not loaded yet.</p></div>
-    </div>
 
-    <div class="card hide" id="logCard">
-      <h2>Output</h2>
-      <pre id="logOut"></pre>
+      <!-- ============================= BILLING ============================= -->
+      <div class="section" id="sec-billing">
+        <div class="content-header">
+          <h1>Billing</h1>
+        </div>
+        <div class="card">
+          <p class="muted" style="margin:0 0 14px">
+            Manual payment tracking — this platform has no payment processor built in. "Paid" just means
+            you've confirmed the client's payment (bank transfer, GCash, cash, whatever channel they use)
+            and are recording it here, for your own reference.
+          </p>
+          <div id="billingList"><p class="muted">Loading&hellip;</p></div>
+        </div>
+      </div>
+
+      <!-- ============================= TEST LAB ============================= -->
+      <div class="section" id="sec-testlab">
+        <div class="content-header"><h1>Test Lab</h1></div>
+        <div class="card">
+          <p class="muted" style="margin:0 0 12px">Stress testing, load testing, and security scanning — built in, and hard-restricted to tenants flagged as test tenants (see the checkbox on Add a Client). Every action here runs for real against the selected tenant's own containers.</p>
+          <div id="testlabNoTenants" class="hide"><p class="muted">No test tenants yet — create one on the Clients page with "Test tenant" checked.</p></div>
+          <div id="testlabBody" class="hide">
+            <div class="grid">
+              <div><label for="tl_slug">Test tenant</label><select id="tl_slug"></select></div>
+            </div>
+
+            <h3>Seed synthetic order history</h3>
+            <p class="muted" style="margin:0 0 10px">Wraps seed-load-test-data.mjs + backfill-stats.mjs.</p>
+            <div class="grid">
+              <div><label for="tl_orders">Orders</label><input id="tl_orders" type="number" value="8000" min="100" max="50000"></div>
+              <div><label for="tl_months">Months of history</label><input id="tl_months" type="number" value="6" min="1" max="12"></div>
+            </div>
+            <div style="margin-top:10px"><button class="ghost" id="tl_seedBtn">Seed data</button></div>
+
+            <h3>Load test</h3>
+            <p class="muted" style="margin:0 0 10px">Runs a k6 scenario against this tenant's api, isolated on its own network — see scripts/k6/.</p>
+            <div class="grid">
+              <div><label for="tl_scenario">Scenario</label>
+                <select id="tl_scenario">
+                  <option value="baseline">baseline — single-tenant ceiling</option>
+                  <option value="reports">reports — P&amp;L/balance-sheet/inventory under volume</option>
+                  <option value="websocket">websocket — concurrent Socket.io connections</option>
+                  <option value="soak">soak — sustained load (short mode: 2m)</option>
+                  <option value="spike">spike — sudden burst, rate-limiter check</option>
+                  <option value="inventory">inventory — stock reads + concurrent restock (fb + log)</option>
+                </select></div>
+            </div>
+            <div style="margin-top:10px"><button class="ghost" id="tl_loadtestBtn">Run load test</button>
+              <span class="muted" style="margin-left:8px">Multi-tenant "concurrent peak" scenario isn't triggerable here — see scripts/k6/README.md.</span></div>
+
+            <h3>Security scan</h3>
+            <p class="muted" style="margin:0 0 10px">Rate-limit check, cross-tenant token check, optional OWASP ZAP baseline.</p>
+            <div style="margin-bottom:10px">
+              <label style="display:inline-flex;align-items:center;gap:7px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--fg)">
+                <input type="checkbox" id="tl_zap" style="width:auto">
+                Include OWASP ZAP baseline scan (slow — pulls a ~1.5GB image on first run, several minutes)
+              </label>
+            </div>
+            <div><button class="ghost" id="tl_scanBtn">Run security scan</button></div>
+
+            <h3>Recent runs</h3>
+            <div id="testlabRuns"><p class="muted">Select a test tenant to see its run history.</p></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================= ERRORS ============================= -->
+      <div class="section" id="sec-errors">
+        <div class="content-header"><h1>Errors</h1></div>
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:12px">
+            <select id="errHours" style="width:auto"><option value="1">last hour</option><option value="24" selected>last 24h</option><option value="168">last 7 days</option></select>
+            <button class="ghost" id="errRefresh">Refresh</button>
+          </div>
+          <div id="errList"><p class="muted">Not loaded yet.</p></div>
+        </div>
+      </div>
+
+      <!-- ============================= DOCS ============================= -->
+      <div class="section" id="sec-docs">
+        <div class="content-header"><h1>Help &amp; Docs</h1></div>
+        <div class="card docs">
+          <p style="margin-bottom:16px">Plain-language notes on how this page works — written for whoever's running the business, not just whoever wrote the code.</p>
+          <div class="toc">
+            <a href="#doc-overview">Overview</a>
+            <a href="#doc-update">Updating the app</a>
+            <a href="#doc-addclient">Adding a client</a>
+            <a href="#doc-manage">Managing a client</a>
+            <a href="#doc-billing">Billing</a>
+            <a href="#doc-testlab">Test Lab</a>
+            <a href="#doc-errors">Errors &amp; logs</a>
+            <a href="#doc-trouble">If something looks broken</a>
+          </div>
+
+          <h3 id="doc-overview">Overview</h3>
+          <p>Each "client" is one business running its own private copy of the app — its own database, its own login, its own web address (like <code>acme.yourdomain.com</code>). They share the same server, but nothing they do can be seen by another client. This page is where you create, update, and manage all of them from one place.</p>
+
+          <h3 id="doc-update">Updating the app (putting new code live)</h3>
+          <p>When the app's code changes — a bug fix, a new feature — you don't touch anything technical. Just go to <strong>Clients</strong> and click <strong>Update all apps</strong> at the top. A window opens and walks through three steps automatically:</p>
+          <ol>
+            <li><strong>Downloading update &amp; building</strong> — the new version is fetched and prepared. Nobody is affected yet; every client keeps working normally.</li>
+            <li><strong>Applying update</strong> — the new version goes live for every client. This is the only moment with any interruption, and it's brief (about a minute).</li>
+            <li><strong>Done</strong> — you'll see a status line for every client confirming it came back up healthy.</li>
+          </ol>
+          <p>If step 1 fails for any reason, nothing changes — every client just keeps running the version it had before. You can safely click it again once the issue is fixed.</p>
+          <p>Each client also has its own <strong>Rebuild web</strong> button (on its row in Clients). That one only refreshes that single client's look-and-feel (name, colors, logo) — it does <em>not</em> push new app code. For an actual code update, always use <strong>Update all apps</strong>.</p>
+
+          <h3 id="doc-addclient">Adding a new client</h3>
+          <p>On the Clients page, fill in the "Add a client" form:</p>
+          <ul>
+            <li><strong>Subdomain</strong> — the short name in their web address, e.g. <code>acme</code> becomes <code>acme.yourdomain.com</code>. Lowercase, no spaces.</li>
+            <li><strong>Business type</strong> — pick the version of the app that matches what they sell (food &amp; beverage vs. logistics/wholesale).</li>
+            <li><strong>Superadmin password</strong> — this is the login you'll hand to that client's owner/manager. Keep a copy somewhere safe; it isn't shown again.</li>
+            <li><strong>Test tenant</strong> — only check this for a rehearsal/demo account, never a real paying client. It unlocks the Test Lab tools, which are too heavy and risky to ever run against a live client by accident.</li>
+          </ul>
+          <p>Creating a client takes a few minutes (it's building their private copy of the app from scratch). Once done, their link appears on the Clients page.</p>
+
+          <h3 id="doc-manage">Managing an existing client</h3>
+          <p>Each row on the Clients page has:</p>
+          <ul>
+            <li><strong>Resources</strong> — raise or lower how much memory/CPU priority that client gets, if they're growing or you're consolidating.</li>
+            <li><strong>Stop / Start</strong> — temporarily take a client offline (e.g. non-paying, or maintenance) without deleting anything.</li>
+            <li><strong>Logs</strong> — a live technical readout of what that client's app has been doing. Mostly useful when troubleshooting with support.</li>
+            <li><strong>Wipe data</strong> (red) — erases that client's orders/inventory/history but keeps their login and settings. Irreversible.</li>
+            <li><strong>Delete</strong> (red) — removes the client entirely: their app, their data, their web address. Irreversible.</li>
+          </ul>
+          <p>Both red actions ask you to type the client's name and a second password to confirm, specifically so they can't happen by accident.</p>
+
+          <h3 id="doc-billing">Billing</h3>
+          <p>The Billing page is a simple paid/unpaid tracker, one row per client, reset every calendar month. It does not charge anyone or move any money — you still collect payment however you normally do (bank transfer, e-wallet, cash), and just click <strong>Mark Paid</strong> here once you've confirmed it landed. Set a monthly fee per client so you have a number to check against; it's just a note for you, not something enforced automatically.</p>
+
+          <h3 id="doc-testlab">Test Lab</h3>
+          <p>A safe place to hammer a <em>test</em> client with fake orders and simulated traffic, to see how the system holds up before something similar happens for real. It only ever runs against clients explicitly flagged "Test tenant" when created — it will refuse to run against a real client, even if you try.</p>
+
+          <h3 id="doc-errors">Errors &amp; logs</h3>
+          <p>The <strong>Errors</strong> page collects anything that went wrong across every client in one place, so you don't have to check each one individually. <strong>Logs</strong> (on a client's row) is the raw technical output from that client's app — useful mostly when working with support to diagnose something specific.</p>
+
+          <h3 id="doc-trouble">If something looks broken</h3>
+          <ul>
+            <li>A client shows "unhealthy" or won't load — try <strong>Stop</strong> then <strong>Start</strong> on that row first.</li>
+            <li>After clicking <strong>Update all apps</strong>, a client shows an error in the results — the others are unaffected; check that client's Logs, or retry the update.</li>
+            <li>You're logged out unexpectedly — sessions last 8 hours; just sign in again.</li>
+            <li>Still stuck — this panel is reached over a private connection (SSH tunnel), so whoever set that up for you is the right person to loop in.</li>
+          </ul>
+        </div>
+      </div>
+
     </div>
   </div>
-</div>
+
+  <div id="updateModal" class="modal-overlay hide">
+    <div class="modal">
+      <h2 id="um_title">Update all apps</h2>
+      <p class="muted" id="um_intro">This rebuilds every client's app to the latest version. The build runs first with no interruption; then each app restarts briefly (about a minute total) while the update is applied.</p>
+      <ol class="phase-list">
+        <li id="um_p1"><span class="phase-dot"></span> Downloading update &amp; building</li>
+        <li id="um_p2"><span class="phase-dot"></span> Applying update <span class="muted">(apps briefly unavailable)</span></li>
+        <li id="um_p3"><span class="phase-dot"></span> Done</li>
+      </ol>
+      <div id="um_status" class="muted" style="min-height:20px"></div>
+      <pre id="um_detail" class="hide" style="max-height:200px"></pre>
+      <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end">
+        <button class="ghost" id="um_close">Close</button>
+        <button id="um_start">Start update</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="logModal" class="modal-overlay hide">
+    <div class="modal wide">
+      <h2 id="log_title">Output</h2>
+      <div class="log-toolbar">
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="margin:0;display:inline;text-transform:none;letter-spacing:0;font-size:12px" for="log_tail">Fetch last</label>
+          <select id="log_tail" style="width:auto">
+            <option value="200">200 lines</option>
+            <option value="500">500 lines</option>
+            <option value="1000">1000 lines</option>
+            <option value="2000">2000 lines</option>
+            <option value="5000">5000 lines</option>
+          </select>
+          <button class="ghost small" id="log_refresh">Refresh</button>
+        </div>
+        <span class="muted" id="log_meta"></span>
+      </div>
+      <pre id="logOut"></pre>
+      <div class="pager">
+        <button class="ghost small" id="log_prev">&larr; Prev</button>
+        <span id="log_pageinfo">page 1 of 1</span>
+        <button class="ghost small" id="log_next">Next &rarr;</button>
+      </div>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end">
+        <button class="ghost" id="log_close">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="pwModal" class="modal-overlay hide">
+    <div class="modal">
+      <h2 id="pw_title">Superadmin password</h2>
+      <p class="muted" id="pw_sub" style="margin:0 0 14px"></p>
+      <div style="display:flex;align-items:center;gap:8px;background:#0f1113;border:1px solid var(--line);border-radius:8px;padding:10px 12px">
+        <span id="pw_value" style="flex:1;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px;letter-spacing:.02em;word-break:break-all">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</span>
+        <button class="ghost small" id="pw_toggle">Show</button>
+        <button class="small" id="pw_copy">Copy</button>
+      </div>
+      <p class="muted" style="margin:12px 0 0">This is the login you gave the client's owner/manager for their app. It's shown here so you can re-share it &mdash; nothing is reset.</p>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end">
+        <button class="ghost" id="pw_close">Close</button>
+      </div>
+    </div>
+  </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -135,7 +423,99 @@ async function api(pathname, opts = {}) {
   return data;
 }
 
-function showLog(text) { $('logCard').classList.remove('hide'); $('logOut').textContent = text || '(no output)'; }
+// ── Sidebar section switching ───────────────────────────────────────────────
+function showSection(name) {
+  document.querySelectorAll('.section').forEach((el) => el.classList.toggle('active', el.id === 'sec-' + name));
+  document.querySelectorAll('.navitem').forEach((el) => el.classList.toggle('active', el.dataset.section === name));
+  if (name === 'billing') loadBilling();
+}
+document.querySelectorAll('.navitem').forEach((btn) => {
+  btn.addEventListener('click', () => showSection(btn.dataset.section));
+});
+
+// ── Logs modal (scroll + client-side pagination over the fetched lines) ────
+const LOG_PAGE_SIZE = 150;
+let logLines = [];
+let logPage = 0;
+let logSlug = '';
+
+function renderLogPage() {
+  const totalPages = Math.max(1, Math.ceil(logLines.length / LOG_PAGE_SIZE));
+  logPage = Math.min(Math.max(0, logPage), totalPages - 1);
+  const start = logPage * LOG_PAGE_SIZE;
+  $('logOut').textContent = logLines.slice(start, start + LOG_PAGE_SIZE).join('\n') || '(no output)';
+  $('log_pageinfo').textContent = `page ${logPage + 1} of ${totalPages}`;
+  $('log_prev').disabled = logPage <= 0;
+  $('log_next').disabled = logPage >= totalPages - 1;
+  $('logOut').scrollTop = 0;
+}
+
+async function fetchLogs() {
+  $('log_meta').textContent = 'Loading…';
+  try {
+    const tail = $('log_tail').value;
+    const d = await api(`/api/tenants/${logSlug}/logs?tail=${tail}`);
+    logLines = (d.log || '').split('\n');
+    logPage = 0;
+    renderLogPage();
+    $('log_meta').textContent = `${logLines.length} lines fetched`;
+  } catch (e) {
+    logLines = [String(e.message)];
+    logPage = 0;
+    renderLogPage();
+    $('log_meta').textContent = '';
+  }
+}
+
+function openLogs(slug, title) {
+  logSlug = slug;
+  $('log_title').textContent = title || 'Output';
+  $('logModal').classList.remove('hide');
+  fetchLogs();
+}
+// showLog: for one-shot text output (create/rebuild/resource results, JSON
+// dumps, stack traces) that isn't a paginated tenant log stream — same modal,
+// just skips the tail-size fetch and shows the given text directly.
+function showLog(text) {
+  logSlug = '';
+  $('log_title').textContent = 'Output';
+  logLines = String(text || '(no output)').split('\n');
+  logPage = 0;
+  renderLogPage();
+  $('log_meta').textContent = '';
+  $('logModal').classList.remove('hide');
+}
+$('log_close').addEventListener('click', () => $('logModal').classList.add('hide'));
+$('log_refresh').addEventListener('click', () => { if (logSlug) fetchLogs(); });
+$('log_tail').addEventListener('change', () => { if (logSlug) fetchLogs(); });
+$('log_prev').addEventListener('click', () => { logPage--; renderLogPage(); });
+$('log_next').addEventListener('click', () => { logPage++; renderLogPage(); });
+
+// ── Reveal / copy a tenant's superadmin password ───────────────────────────
+let pwCurrent = '';
+let pwShown = false;
+function renderPw() {
+  $('pw_value').textContent = pwShown ? (pwCurrent || '(not set)') : '••••••••';
+  $('pw_toggle').textContent = pwShown ? 'Hide' : 'Show';
+}
+function openPasswordModal(name, pass) {
+  pwCurrent = pass;
+  pwShown = false;
+  $('pw_title').textContent = 'Superadmin password';
+  $('pw_sub').textContent = name;
+  renderPw();
+  $('pwModal').classList.remove('hide');
+}
+$('pw_toggle').addEventListener('click', () => { pwShown = !pwShown; renderPw(); });
+$('pw_copy').addEventListener('click', async () => {
+  const btn = $('pw_copy');
+  try {
+    await navigator.clipboard.writeText(pwCurrent);
+    const prev = btn.textContent; btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = prev; }, 1400);
+  } catch { pwShown = true; renderPw(); btn.textContent = 'Copy failed — shown'; }
+});
+$('pw_close').addEventListener('click', () => { $('pwModal').classList.add('hide'); pwCurrent = ''; });
 
 async function login() {
   $('loginErr').textContent = '';
@@ -145,7 +525,7 @@ async function login() {
     sessionStorage.setItem('cp_token', TOKEN);
     $('loginView').classList.add('hide'); $('mainView').classList.remove('hide');
     $('domainLabel').textContent = '*.' + DOMAIN + (LOCAL ? ' · local mode' : '');
-    refresh(); loadErrors();
+    refresh(); loadErrors(); loadTestlabTenants();
   } catch (e) { $('loginErr').textContent = e.message; }
 }
 
@@ -162,6 +542,8 @@ function fmtBytes(n) {
   return (v < 10 && i > 0 ? v.toFixed(1) : Math.round(v)) + ' ' + u[i];
 }
 
+let LAST_TENANTS = [];
+
 async function refresh() {
   try {
     // Usage is best-effort: a failure there must not blank the tenant list,
@@ -170,6 +552,7 @@ async function refresh() {
       api('/api/tenants'),
       api('/api/usage').catch(() => ({ tenants: [] })),
     ]);
+    LAST_TENANTS = tenants;
     const byslug = Object.fromEntries((usage.tenants || []).map((u) => [u.slug, u]));
     if (!tenants.length) { $('tenantList').innerHTML = '<p class="muted">No clients yet.</p>'; return; }
     $('tenantList').innerHTML = tenants.map((t) => {
@@ -178,7 +561,7 @@ async function refresh() {
       return `
       <div class="row">
         <div>
-          <div><strong>${t.businessName || t.slug}</strong> <span class="pill">${t.businessType || '?'}</span></div>
+          <div><strong>${t.businessName || t.slug}</strong> <span class="pill">${t.businessType || '?'}</span>${t.testTenant ? ' <span class="pill ok">TEST</span>' : ''}</div>
           <div class="muted"><a href="${t.url}" target="_blank" rel="noopener">${t.url}</a></div>
           <div class="muted">mem ${mem} of ${u.memLimitMb ?? t.memMb ?? 1024} MB
             · cpu ${u.cpuShares ?? t.cpuShares ?? 1024}
@@ -187,8 +570,9 @@ async function refresh() {
         </div>
         <div>api ${statusPill(t.status.api)} web ${statusPill(t.status.web)}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="ghost" data-act="password" data-slug="${t.slug}" title="Show / copy this client's superadmin login password">Password</button>
           <button class="ghost" data-act="resources" data-slug="${t.slug}">Resources</button>
-          <button class="ghost" data-act="rebuild" data-slug="${t.slug}">Rebuild</button>
+          <button class="ghost" data-act="rebuild" data-slug="${t.slug}" title="Rebuilds this tenant's web (branding/theme) image only. To update the server, use &quot;Update all apps&quot; above.">Rebuild web</button>
           <button class="ghost" data-act="stop" data-slug="${t.slug}">Stop</button>
           <button class="ghost" data-act="start" data-slug="${t.slug}">Start</button>
           <button class="ghost" data-act="logs" data-slug="${t.slug}">Logs</button>
@@ -206,7 +590,15 @@ async function refresh() {
 async function act(slug, action, btn) {
   const label = btn.textContent; btn.disabled = true; btn.textContent = '…';
   try {
-    if (action === 'logs') { showLog((await api(`/api/tenants/${slug}/logs`)).log); }
+    if (action === 'logs') {
+      const t = LAST_TENANTS.find((x) => x.slug === slug);
+      openLogs(slug, 'Logs — ' + (t?.businessName || slug));
+    }
+    else if (action === 'password') {
+      const t = LAST_TENANTS.find((x) => x.slug === slug);
+      const d = await api(`/api/tenants/${slug}/admin-password`);
+      openPasswordModal(t?.businessName || slug, d.adminPass || '');
+    }
     else if (action === 'resources') {
       const memMb = prompt(`Memory limit for "${slug}" in MB (256-4096).\n\nThe container is recreated to apply it — a few seconds of downtime for this client only.`, '1024');
       if (!memMb) return;
@@ -256,6 +648,7 @@ $('createBtn').addEventListener('click', async () => {
       businessType: $('f_type').value,
       theme: $('f_theme').value,
       adminPass: $('f_pass').value,
+      testTenant: $('f_test').checked,
       memMb: Number($('f_mem').value),
       cpuShares: Number($('f_cpu').value),
       fbLink: $('f_fb').value.trim(),
@@ -267,8 +660,13 @@ $('createBtn').addEventListener('click', async () => {
       billingAccountName: $('f_bacctname').value.trim(),
       billingAccountNo: $('f_bacctno').value.trim(),
     }) });
+    // Monthly fee isn't part of tenant creation — set it separately right after.
+    const fee = $('f_fee').value.trim();
+    if (fee) { try { await api(`/api/tenants/${d.slug}/billing`, { method: 'PATCH', body: JSON.stringify({ monthlyFee: Number(fee) }) }); } catch {} }
     showLog(`Created ${d.slug} at ${d.url}\n\n` + d.log);
-    ['f_slug','f_name','f_pass','f_fb'].forEach((i) => { $(i).value = ''; });
+    ['f_slug','f_name','f_pass','f_fb','f_fee'].forEach((i) => { $(i).value = ''; });
+    $('f_test').checked = false;
+    loadTestlabTenants();
   } catch (e) { $('createErr').textContent = e.message; }
   finally { btn.disabled = false; $('createNote').textContent = ''; refresh(); }
 });
@@ -281,6 +679,63 @@ const ago = (d) => {
   if (m < 1440) return Math.round(m / 60) + 'h ago';
   return Math.round(m / 1440) + 'd ago';
 };
+
+// ── Billing ──────────────────────────────────────────────────────────────────
+function currentYearMonth() { return new Date().toISOString().slice(0, 7); }
+function monthLabel(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+}
+
+async function loadBilling() {
+  $('billingList').innerHTML = '<p class="muted">Loading&hellip;</p>';
+  try {
+    const { tenants } = await api('/api/tenants');
+    if (!tenants.length) { $('billingList').innerHTML = '<p class="muted">No clients yet.</p>'; return; }
+    const thisMonth = currentYearMonth();
+    $('billingList').innerHTML = tenants.map((t) => {
+      const billing = t.billing || { monthlyFee: null, paidMonths: [] };
+      const paid = (billing.paidMonths || []).includes(thisMonth);
+      const recent = (billing.paidMonths || []).slice(-4).reverse();
+      return `
+      <div class="row">
+        <div>
+          <div><strong>${esc(t.businessName || t.slug)}</strong>
+            <span class="paid-badge ${paid ? 'paid' : 'unpaid'}">${paid ? 'PAID — ' + monthLabel(thisMonth) : 'UNPAID — ' + monthLabel(thisMonth)}</span>
+          </div>
+          <div class="muted" style="margin-top:4px">
+            fee: ${billing.monthlyFee != null ? '₱' + Number(billing.monthlyFee).toLocaleString() + '/mo' : 'not set'}
+          </div>
+          <div style="margin-top:6px">${recent.length ? recent.map((m) => `<span class="month-pill">${monthLabel(m)}</span>`).join('') : '<span class="muted">no payment history yet</span>'}</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="ghost small" data-billact="fee" data-slug="${t.slug}">Set fee</button>
+          ${paid
+            ? `<button class="ghost small" data-billact="unmark" data-slug="${t.slug}">Unmark paid</button>`
+            : `<button class="small" data-billact="mark" data-slug="${t.slug}">Mark Paid</button>`}
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) { $('billingList').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+}
+
+$('billingList').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-billact]');
+  if (!b) return;
+  const slug = b.dataset.slug;
+  const act = b.dataset.billact;
+  b.disabled = true;
+  try {
+    if (act === 'mark') await api(`/api/tenants/${slug}/billing/mark-paid`, { method: 'POST', body: '{}' });
+    else if (act === 'unmark') await api(`/api/tenants/${slug}/billing/unmark-paid`, { method: 'POST', body: '{}' });
+    else if (act === 'fee') {
+      const fee = prompt('Monthly fee in ₱ (leave blank to clear):');
+      if (fee === null) { b.disabled = false; return; }
+      await api(`/api/tenants/${slug}/billing`, { method: 'PATCH', body: JSON.stringify({ monthlyFee: fee.trim() === '' ? null : Number(fee) }) });
+    }
+    loadBilling();
+  } catch (err) { alert(err.message); b.disabled = false; }
+});
 
 async function loadErrors() {
   const btn = $('errRefresh'); btn.disabled = true;
@@ -311,13 +766,173 @@ $('errList').addEventListener('click', (e) => {
 $('errRefresh').addEventListener('click', loadErrors);
 $('errHours').addEventListener('change', loadErrors);
 
+// ── Test lab ─────────────────────────────────────────────────────────────
+function runBadge(sev) {
+  const cls = sev === 'pass' ? 'ok' : (sev === 'critical' || sev === 'high') ? 'bad' : '';
+  return `<span class="pill ${cls}">${esc(sev)}</span>`;
+}
+
+function renderTestlabRuns(runs) {
+  if (!runs.length) { $('testlabRuns').innerHTML = '<p class="muted">No runs yet.</p>'; return; }
+  $('testlabRuns').innerHTML = runs.map((r) => {
+    let summary = '';
+    if (r.kind === 'seed') {
+      summary = r.error ? `<span class="pill bad">error</span>` : `${r.orders} orders / ${r.months}mo &middot; ${r.verified ? '<span class="pill ok">verified</span>' : '<span class="pill bad">mismatch</span>'}`;
+    } else if (r.kind === 'loadtest') {
+      const m = r.summary?.metrics;
+      const p95 = m?.http_req_duration?.values?.['p(95)'];
+      const failRate = m?.http_req_failed?.values?.rate;
+      const thresh = r.thresholdsPassed === true ? '<span class="pill ok">thresholds OK</span>' : r.thresholdsPassed === false ? '<span class="pill bad">thresholds FAILED</span>' : '';
+      summary = r.error ? `<span class="pill bad">error</span>` : `${esc(r.scenario)} ${thresh} &middot; p95 ${p95 !== undefined ? Math.round(p95) + 'ms' : '—'} &middot; errors ${failRate !== undefined ? (failRate * 100).toFixed(2) + '%' : '—'}`;
+    } else if (r.kind === 'security-scan') {
+      summary = (r.findings || []).map((f) => runBadge(f.severity) + ' ' + esc(f.check)).join(' &middot; ');
+    }
+    return `
+    <div class="row">
+      <div>
+        <div><span class="pill">${esc(r.kind)}</span> ${summary}</div>
+        <div class="muted" style="margin-top:3px">${ago(r.startedAt)}</div>
+      </div>
+      <button class="ghost" data-run="${esc(r.id)}">Details</button>
+    </div>`;
+  }).join('');
+}
+
+async function loadTestlabRuns() {
+  const slug = $('tl_slug').value;
+  if (!slug) return;
+  try {
+    const d = await api(`/api/tenants/${slug}/testlab/runs`);
+    window.__testlabRuns = d.runs;
+    renderTestlabRuns(d.runs);
+  } catch (e) { $('testlabRuns').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+}
+
+async function loadTestlabTenants() {
+  try {
+    const { tenants } = await api('/api/tenants');
+    const testTenants = tenants.filter((t) => t.testTenant);
+    if (!testTenants.length) {
+      $('testlabNoTenants').classList.remove('hide');
+      $('testlabBody').classList.add('hide');
+      return;
+    }
+    $('testlabNoTenants').classList.add('hide');
+    $('testlabBody').classList.remove('hide');
+    const prev = $('tl_slug').value;
+    $('tl_slug').innerHTML = testTenants.map((t) => `<option value="${esc(t.slug)}">${esc(t.businessName || t.slug)} (${esc(t.slug)})</option>`).join('');
+    if (testTenants.some((t) => t.slug === prev)) $('tl_slug').value = prev;
+    loadTestlabRuns();
+  } catch (e) { /* tenant list failure is already surfaced by refresh() */ }
+}
+
+async function runTestlabAction(btn, path, body) {
+  const label = btn.textContent; btn.disabled = true; btn.textContent = 'Running…';
+  try {
+    const d = await api(`/api/tenants/${$('tl_slug').value}/testlab/${path}`, { method: 'POST', body: JSON.stringify(body || {}) });
+    showLog(JSON.stringify(d, null, 2));
+    loadTestlabRuns();
+  } catch (e) { showLog('Error: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = label; }
+}
+
+$('tl_slug').addEventListener('change', loadTestlabRuns);
+$('tl_seedBtn').addEventListener('click', () => runTestlabAction($('tl_seedBtn'), 'seed', {
+  orders: Number($('tl_orders').value), months: Number($('tl_months').value),
+}));
+$('tl_loadtestBtn').addEventListener('click', () => runTestlabAction($('tl_loadtestBtn'), 'loadtest', {
+  scenario: $('tl_scenario').value,
+}));
+$('tl_scanBtn').addEventListener('click', () => runTestlabAction($('tl_scanBtn'), 'security-scan', {
+  runZap: $('tl_zap').checked,
+}));
+$('testlabRuns').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-run]');
+  if (!b) return;
+  const run = (window.__testlabRuns || []).find((r) => r.id === b.dataset.run);
+  showLog(run ? JSON.stringify(run, null, 2) : '(run not found)');
+});
+
+// ── Update all apps ──────────────────────────────────────────────────────────
+function umPhase(n, state) { // state: 'active' | 'done' | 'failed' | ''
+  const el = $('um_p' + n);
+  el.classList.remove('active', 'done', 'failed');
+  if (state) el.classList.add(state);
+}
+function umReset() {
+  ['1','2','3'].forEach((n) => umPhase(n, ''));
+  $('um_status').textContent = '';
+  $('um_detail').classList.add('hide');
+  $('um_detail').textContent = '';
+  $('um_start').disabled = false;
+  $('um_start').textContent = 'Start update';
+  $('um_close').disabled = false;
+}
+function openUpdateModal() { umReset(); $('updateModal').classList.remove('hide'); }
+function closeUpdateModal() { $('updateModal').classList.add('hide'); }
+
+async function runUpdateAll() {
+  $('um_start').disabled = true;
+  $('um_close').disabled = true;
+  $('um_start').textContent = 'Updating…';
+  $('um_detail').classList.add('hide');
+  try {
+    // Phase 1 — download + build (no downtime).
+    umPhase(1, 'active');
+    $('um_status').textContent = 'Downloading the update and building the new version. Apps keep running normally during this step…';
+    const prep = await api('/api/update/prepare', { method: 'POST', body: '{}' });
+    umPhase(1, 'done');
+    const gitNote = prep.git?.pulled ? 'Pulled latest code. ' : (prep.git?.reason === 'not-a-git-repo' ? 'Built from code on disk. ' : '');
+    const webFails = (prep.web || []).filter((w) => !w.built);
+    if (webFails.length) {
+      $('um_detail').classList.remove('hide');
+      $('um_detail').textContent = 'Some apps failed to build:\n' + webFails.map((w) => `  ${w.slug}: ${w.error}`).join('\n');
+    }
+
+    // Phase 2 — apply (brief downtime).
+    umPhase(2, 'active');
+    $('um_status').textContent = gitNote + 'Applying the update — apps are restarting and will be briefly unavailable…';
+    const applied = await api('/api/update/apply', { method: 'POST', body: '{}' });
+    umPhase(2, 'done');
+
+    // Phase 3 — done, show per-app health.
+    umPhase(3, 'done');
+    const lines = (applied.tenants || []).map((t) => {
+      if (t.error) return `  ${t.slug}: ERROR — ${t.error}`;
+      const api_ = t.status?.api || '?', web = t.status?.web || '?';
+      return `  ${t.slug}: api ${api_}, web ${web}`;
+    });
+    $('um_status').textContent = 'Update complete.';
+    $('um_detail').classList.remove('hide');
+    $('um_detail').textContent = (gitNote ? gitNote + '\n' : '') + lines.join('\n');
+    $('um_start').textContent = 'Update again';
+    $('um_start').disabled = false;
+    $('um_close').disabled = false;
+    refresh();
+  } catch (e) {
+    // Which phase failed? If phase 1 never completed, it's the build/download.
+    const failedPhase = $('um_p1').classList.contains('done') ? 2 : 1;
+    umPhase(failedPhase, 'failed');
+    $('um_status').textContent = 'Update failed — no partial update was applied. ' + e.message;
+    $('um_detail').classList.remove('hide');
+    $('um_detail').textContent = e.message;
+    $('um_start').textContent = 'Retry';
+    $('um_start').disabled = false;
+    $('um_close').disabled = false;
+  }
+}
+
+$('updateAllBtn').addEventListener('click', openUpdateModal);
+$('um_close').addEventListener('click', closeUpdateModal);
+$('um_start').addEventListener('click', runUpdateAll);
+
 $('loginBtn').addEventListener('click', login);
 $('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });
 
 if (TOKEN) {
   api('/api/tenants').then(() => {
     $('loginView').classList.add('hide'); $('mainView').classList.remove('hide');
-    refresh(); loadErrors();
+    refresh(); loadErrors(); loadTestlabTenants();
   }).catch(() => sessionStorage.removeItem('cp_token'));
 }
 </script>

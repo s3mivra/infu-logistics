@@ -357,18 +357,25 @@ app.put('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
 
 app.patch('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { name, password, role, permissions } = req.body;
+    const { name, password, role, permissions, commissionRate } = req.body;
     const updates = {};
     if (name) updates.name = name.trim();
     if (role) updates.role = role;
     if (Array.isArray(permissions)) updates.permissions = permissions.filter((k) => PERMISSION_KEYS.has(k));
     if (password && password.trim()) updates.password = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    if (commissionRate !== undefined) {
+      const rate = Number(commissionRate);
+      if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+        return res.status(400).json({ success: false, error: 'commissionRate must be a number between 0 and 100.' });
+      }
+      updates.commissionRate = rate;
+    }
     const user = await User.findByIdAndUpdate(req.params.id, updates, { returnDocument: 'after' }).select('-password');
     if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
     // Any privilege change (password/role/permissions) revokes sessions → re-login
     // so the new permission set is minted into a fresh token.
     if (updates.password || updates.role || updates.permissions) await revokeUserSessions(req.params.id);
-    res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
+    res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user), commissionRate: user.commissionRate } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

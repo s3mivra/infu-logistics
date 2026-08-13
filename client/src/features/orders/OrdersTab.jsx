@@ -569,8 +569,8 @@ export default function OrdersTab({ ctx }) {
                             const showBadge = (filter === 'Parked' && parkedOrders.length > 0) || (filter === 'Reserved' && reservedCount > 0);
                             const badge = filter === 'Parked' ? parkedOrders.length : reservedCount;
                             const badgeCls = filter === 'Parked'
-                              ? 'bg-amber-500/20 text-amber-400'
-                              : 'bg-purple-500/20 text-purple-300';
+                              ? 'bg-amber-500 text-black'
+                              : 'bg-purple-500 text-white';
                             return (
                               <button
                                 key={filter}

@@ -20,7 +20,7 @@
 const UNSUPPORTED = /Transaction numbers are only allowed|Transactions are not supported|replica set member or mongos/i;
 const TRANSIENT = /WriteConflict|TransientTransactionError/i;
 
-export async function withOptionalTransaction(mongoose, work, { retries = 3, log } = {}) {
+export async function withOptionalTransaction(mongoose, work, { retries = 3, retryDelayMs, log } = {}) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     const session = await mongoose.startSession();
     try {
@@ -32,7 +32,12 @@ export async function withOptionalTransaction(mongoose, work, { retries = 3, log
       const isTransient = (err?.errorLabels || []).includes('TransientTransactionError') || TRANSIENT.test(msg);
 
       // A write conflict is worth retrying — another writer touched the same doc.
-      if (isTransient && attempt < retries) continue;
+      // An optional caller-supplied delay (e.g. jittered backoff) gives the
+      // colliding writer a moment to finish before the next attempt.
+      if (isTransient && attempt < retries) {
+        if (retryDelayMs) await new Promise((r) => setTimeout(r, retryDelayMs(attempt)));
+        continue;
+      }
 
       // No transaction support: run the same work without a session, once.
       if (UNSUPPORTED.test(msg)) {

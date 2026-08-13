@@ -300,6 +300,37 @@ async function restampOpenOrdersVat() {
   return updated;
 }
 
+// ── CURRENCY (DISPLAY CONFIG ONLY) ────────────────────────────────────────────
+// IMPORTANT SCOPE NOTE: this configures the currency SYMBOL and ISO code the UI
+// shows — it is NOT multi-currency / FX support. Every amount in the system is
+// still a single flat number with no currency dimension, and no conversion
+// happens anywhere. Changing this to 'USD'/'$' relabels the display; it does
+// NOT convert existing peso figures. True multi-currency (per-transaction
+// currency, exchange rates, revaluation) would touch every money calculation
+// in the app and is deliberately out of scope. Default stays ₱/PHP.
+const DEFAULT_CURRENCY = { symbol: '₱', code: 'PHP' };
+
+app.get('/api/settings/currency', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const row = await Settings.findOne({ key: 'currency' }).lean();
+    const currency = (row?.value && typeof row.value === 'object') ? { ...DEFAULT_CURRENCY, ...row.value } : DEFAULT_CURRENCY;
+    res.json({ success: true, currency });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+app.patch('/api/settings/currency', verifyToken, requireStaff, requirePermission('settings.manage'), async (req, res) => {
+  try {
+    const symbol = String(req.body?.symbol ?? '').trim();
+    const code = String(req.body?.code ?? '').trim().toUpperCase();
+    if (!symbol || symbol.length > 4) return res.status(400).json({ success: false, error: 'symbol is required (max 4 chars).' });
+    if (!/^[A-Z]{3}$/.test(code)) return res.status(400).json({ success: false, error: 'code must be a 3-letter ISO currency code (e.g. PHP, USD).' });
+    const value = { symbol, code };
+    await Settings.findOneAndUpdate({ key: 'currency' }, { value }, { upsert: true });
+    emitToAll('settingsUpdated', { key: 'currency', value });
+    res.json({ success: true, currency: value });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('settings.manage'), async (req, res) => {
   try {
     const { value } = req.body;

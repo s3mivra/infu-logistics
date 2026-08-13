@@ -374,6 +374,28 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
+// ── BARCODE LOOKUP ────────────────────────────────────────────────────────────
+// GET /api/products/by-barcode/:code — resolve a scanned barcode to a product
+// at the POS. Exact match on the stored `barcode` field, scoped to this
+// business. Barcodes aren't schema-unique (see the field comment in
+// server.js), so this returns the first match and flags `ambiguous:true` when
+// more than one product carries the same code, letting the POS prompt instead
+// of silently ringing up the wrong variant.
+app.get('/api/products/by-barcode/:code', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const code = String(req.params.code || '').trim();
+    if (!code) return res.status(400).json({ success: false, error: 'A barcode is required.' });
+    const matches = await Product.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
+      barcode: code, isArchived: { $ne: true },
+    }).limit(5).lean();
+    if (matches.length === 0) return res.status(404).json({ success: false, error: 'No product with that barcode.' });
+    res.json({ success: true, product: matches[0], ambiguous: matches.length > 1, matchCount: matches.length });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 app.post('/api/products', verifyToken, requireStaff, validate(productSchema), async (req, res) => {
   try {
   // Generate base product code (e.g., DRS-A0001)

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt } from 'lucide-react';
+import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
 
 // ── SettingsTab — system preferences & account controls ───────────────────────
 // Houses the toggles that used to live crammed in the sidebar's "Tools" dropdown
@@ -115,6 +116,8 @@ export default function SettingsTab({ ctx }) {
 
   const [theme, setTheme] = useState(readTheme);
   const [lang, setLang] = useState(readLang);
+  const [printerMode, setPrinterMode] = useState(readPrinterMode);
+  const applyPrinterMode = (v) => { setPrinterMode(v); writePrinterMode(v); };
 
   const applyTheme = (v) => {
     setTheme(v);
@@ -579,6 +582,34 @@ export default function SettingsTab({ ctx }) {
                   Your choice is saved, but most screens are still English-only —
                   translations are being added screen by screen.
                 </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-4 py-4">
+            <div className="flex items-start gap-4">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-fg/50 bg-white/5 border-white/10">
+                <Printer size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-fg text-sm">Receipt Printing</p>
+                <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                  {printerMode === 'browser'
+                    ? 'Always uses the browser print dialog — this device never probes for a paired Bluetooth/USB thermal printer.'
+                    : 'Tries a paired Bluetooth or USB thermal printer first, falling back to the browser print dialog. Saved on this device only.'}
+                </p>
+                <div className="grid grid-cols-2 gap-2 mt-3 max-w-xs">
+                  {[['auto', 'Auto (Thermal)'], ['browser', 'Browser Only']].map(([v, label]) => (
+                    <button key={v} onClick={() => applyPrinterMode(v)}
+                      className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
+                        printerMode === v
+                          ? 'bg-brand text-white border-brand'
+                          : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                      }`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </div>

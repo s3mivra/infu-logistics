@@ -188,9 +188,15 @@ app.get('/api/audit-log', verifyToken, ...canViewAudit, async (req, res) => {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = Math.min(100, parseInt(req.query.pageSize, 10) || 25);
     const filter = {};
-    if (req.query.entity)      filter.action = { $regex: `^${req.query.entity}_`, $options: 'i' };
-    if (req.query.action)      filter.action = req.query.action;
-    if (req.query.actor)       filter.userId = req.query.actor;
+    // String() coercion + escapeRegex(): req.query values can arrive as nested
+    // objects (e.g. ?actor[$ne]=x, parsed by express's extended query parser)
+    // or, for `entity`, as an unescaped regex-metacharacter string — either
+    // reaches these String-typed fields unguarded otherwise (Mongoose only
+    // CastErrors operator objects against typed fields like ObjectId/Number,
+    // not against String).
+    if (req.query.entity)      filter.action = { $regex: `^${escapeRegex(String(req.query.entity))}_`, $options: 'i' };
+    if (req.query.action)      filter.action = String(req.query.action);
+    if (req.query.actor)       filter.userId = String(req.query.actor);
     if (req.query.from || req.query.to) {
       filter.timestamp = {};
       if (req.query.from) filter.timestamp.$gte = new Date(req.query.from);
@@ -212,12 +218,13 @@ app.get('/api/audit-log', verifyToken, ...canViewAudit, async (req, res) => {
 // GET /api/audit-logs — superadmin only, paginated, filterable by action + date range
 app.get('/api/audit-logs', verifyToken, ...canViewAudit, async (req, res) => {
   try {
-    const { page = 1, limit: lim = 30, action, start, end } = req.query;
+    const { page = 1, limit: lim = 30, action, actor, start, end } = req.query;
     const pageNum  = Math.max(1, parseInt(page) || 1);
     const pageSize = Math.min(100, parseInt(lim) || 30);
 
     const filter = {};
-    if (action && action !== 'all') filter.action = action;
+    if (action && action !== 'all') filter.action = String(action);
+    if (actor)  filter.userId = String(actor);
     if (start || end) {
       filter.timestamp = {};
       if (start) filter.timestamp.$gte = dayStart(start);
@@ -231,6 +238,46 @@ app.get('/api/audit-logs', verifyToken, ...canViewAudit, async (req, res) => {
     res.json({ success: true, logs, total, page: pageNum, pages: Math.ceil(total / pageSize) });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ── AUDIT LOG CSV EXPORT ─────────────────────────────────────────────────────
+// Bounded + streamed, same convention as /api/journal/export (finance.js): a
+// date range is required and capped at 92 days, rows stream straight from a
+// DB cursor so a wide export never builds the whole result set in memory.
+app.get('/api/audit-logs/export', verifyToken, ...canViewAudit, async (req, res) => {
+  const { start, end, action, actor } = req.query;
+  const range = validateDateRange(start, end);
+  if (!range.ok) return res.status(400).json({ success: false, error: range.error });
+
+  const filter = { timestamp: { $gte: range.startDate, $lte: range.endDate } };
+  if (action && action !== 'all') filter.action = String(action);
+  if (actor) filter.userId = String(actor);
+
+  const esc = (v) => {
+    if (v === null || v === undefined) return '';
+    const s = String(v).replace(/"/g, '""');
+    return /[",\n]/.test(s) ? `"${s}"` : s;
+  };
+
+  const fileName = `audit_log_${start}_to_${end}.csv`.replace(/[^a-zA-Z0-9._-]/g, '_');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+  res.write('Timestamp,User,Action,Target,Notes\n');
+
+  try {
+    const cursor = AuditLog.find(filter).sort({ timestamp: 1 }).lean().cursor();
+    for await (const e of cursor) {
+      res.write([
+        esc(new Date(e.timestamp).toISOString()), esc(e.userId), esc(e.action),
+        esc(e.targetReference), esc(e.details?.notes || ''),
+      ].join(',') + '\n');
+    }
+    res.end();
+  } catch (err) {
+    log.error({ err }, 'Audit log export failed');
+    if (!res.headersSent) (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+    else res.end();
   }
 });
 }

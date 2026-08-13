@@ -113,18 +113,18 @@ export default function NotificationBell({ align = 'right', full = false }) {
         onClick={() => { if (!open) { measure(); load(); } setOpen(o => !o); }}
         aria-label={count ? `Notifications: ${count} item(s) need attention` : 'Notifications: nothing needs attention'}
         aria-expanded={open}
-        className={`relative flex items-center gap-1.5 px-3 py-2 rounded-xl font-bold text-xs border transition ${full ? 'w-full' : ''} ${
+        className={`relative flex items-center gap-1.5 px-2 py-2 rounded-xl font-bold text-xs border transition ${full ? 'w-full' : ''} ${
           data.criticalCount > 0
-            ? 'bg-red-500/15 text-red-400 border-red-500/30 hover:bg-red-500/25'
+            ? 'bg-red-500 text-white border-red-500 hover:bg-red-500/60'
             : count > 0
-              ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/25 hover:bg-yellow-500/20'
-              : 'bg-white/5 text-fg/50 border-white/10 hover:bg-white/10'
+              ? 'bg-yellow-500 text-white border-yellow-500 hover:bg-yellow-500/60'
+              : 'bg-white text-black border-white hover:bg-white/60'
         }`}
       >
-        <Bell size={13} />
+        <Bell size={20} />
         {count > 0 && (
-          <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-black flex items-center justify-center text-fg ${
-            data.criticalCount > 0 ? 'bg-red-500' : 'bg-yellow-500'
+          <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[16px] font-black flex items-center justify-center text-white ${
+            data.criticalCount > 0 ? 'bg-transparent' : 'bg-transparent'
           }`}>
             {badge}
           </span>

@@ -4,7 +4,8 @@ import * as auth from '../auth/auth';
 import {
   Users, Shield, Menu, X, LogOut, Plus, Edit2, Trash2,
   Search, Eye, EyeOff, AlertCircle, Tag, Loader2, Lock,
-  ChevronRight, UserCheck, Monitor, Check, Package, ToggleLeft, ToggleRight
+  ChevronRight, UserCheck, Monitor, Check, Package, ToggleLeft, ToggleRight,
+  KeyRound, Copy
 } from 'lucide-react';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
@@ -178,7 +179,7 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
 // Main component
 // ---------------------------------------------------------------------------
 
-const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false, permissions: [], customPerms: false };
+const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false, permissions: [], customPerms: false, commissionRate: '' };
 
 export default function SuperAdminPanel() {
   const navigate = useNavigate();
@@ -241,6 +242,10 @@ export default function SuperAdminPanel() {
   const [clients, setClients]           = useState([]);
   const [clientsLoading, setClientsLoading] = useState(false);
   const [clientModal, setClientModal]   = useState({ open: false, mode: 'create', client: null });
+  // Reset-password flow: confirm your OWN password first, then a freshly-
+  // generated client password is shown exactly once (it can't be shown again
+  // later — it's bcrypt-hashed the moment the server issues it).
+  const [resetPwModal, setResetPwModal] = useState({ open: false, client: null, confirmPassword: '', loading: false, error: '', result: null });
   const [clientForm, setClientForm]     = useState({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '' });
   const [clientFormLoading, setClientFormLoading] = useState(false);
   const [clientFormError, setClientFormError] = useState('');
@@ -368,7 +373,7 @@ export default function SuperAdminPanel() {
 
   const openEditModal = useCallback((user) => {
     const perms = Array.isArray(user.permissions) ? user.permissions : [];
-    setForm({ name: user.name, password: '', role: user.role, showPassword: false, permissions: perms, customPerms: perms.length > 0 });
+    setForm({ name: user.name, password: '', role: user.role, showPassword: false, permissions: perms, customPerms: perms.length > 0, commissionRate: user.commissionRate ?? '' });
     setFormErrors({});
     setModal({ open: true, mode: 'edit', user });
   }, []);
@@ -424,6 +429,7 @@ export default function SuperAdminPanel() {
       } else {
         const body = { name: form.name.trim(), role: form.role, permissions: permsPayload };
         if (form.password) body.password = form.password;
+        if (form.commissionRate !== '') body.commissionRate = form.commissionRate;
         const res = await apiFetch(`/api/users/${modal.user._id}`, {
           method: 'PATCH',
           body: JSON.stringify(body),
@@ -537,7 +543,7 @@ export default function SuperAdminPanel() {
   }, [isAuthenticated, fetchClients]);
 
   const openClientCreate = () => {
-    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '' });
+    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '', segments: '' });
     setClientFormError('');
     setClientModal({ open: true, mode: 'create', client: null });
   };
@@ -545,7 +551,7 @@ export default function SuperAdminPanel() {
   const openClientEdit = (client) => {
     // null/undefined means "no limit set"; 0 is a real value (cash only), so it
     // must render as "0" rather than collapsing to an empty field.
-    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false, creditLimit: client.creditLimit === null || client.creditLimit === undefined ? '' : String(client.creditLimit) });
+    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false, creditLimit: client.creditLimit === null || client.creditLimit === undefined ? '' : String(client.creditLimit), segments: (client.segments || []).join(', ') });
     setClientFormError('');
     setClientModal({ open: true, mode: 'edit', client });
   };
@@ -562,17 +568,18 @@ export default function SuperAdminPanel() {
       setClientFormError('Password is required.'); return;
     }
     setClientFormLoading(true);
+    const segments = (clientForm.segments || '').split(',').map(s => s.trim()).filter(Boolean);
     try {
       if (clientModal.mode === 'create') {
         const res = await apiFetch('/api/client-accounts', {
           method: 'POST',
-          body: JSON.stringify({ username: clientForm.username.trim(), password: clientForm.password, name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, creditLimit: clientForm.creditLimit }),
+          body: JSON.stringify({ username: clientForm.username.trim(), password: clientForm.password, name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, creditLimit: clientForm.creditLimit, segments }),
         });
         const data = await res.json();
         if (data.success) { showToast('Client account created.'); closeClientModal(); fetchClients(); }
         else setClientFormError(data.error || 'Failed to create client.');
       } else {
-        const body = { name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive, creditLimit: clientForm.creditLimit };
+        const body = { name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive, creditLimit: clientForm.creditLimit, segments };
         if (clientForm.username.trim()) body.username = clientForm.username.trim();
         if (clientForm.password) body.password = clientForm.password;
         const res = await apiFetch(`/api/client-accounts/${clientModal.client._id}`, { method: 'PATCH', body: JSON.stringify(body) });
@@ -597,6 +604,23 @@ export default function SuperAdminPanel() {
       await apiFetch(`/api/client-accounts/${client._id}`, { method: 'PATCH', body: JSON.stringify({ isActive: !client.isActive }) });
       fetchClients();
     } catch { showToast('Failed to update status.', 'error'); }
+  };
+
+  const openResetPassword = (client) => setResetPwModal({ open: true, client, confirmPassword: '', loading: false, error: '', result: null });
+  const closeResetPassword = () => setResetPwModal({ open: false, client: null, confirmPassword: '', loading: false, error: '', result: null });
+
+  const handleResetPasswordConfirm = async (e) => {
+    e.preventDefault();
+    if (!resetPwModal.confirmPassword) { setResetPwModal(m => ({ ...m, error: 'Enter your password to continue.' })); return; }
+    setResetPwModal(m => ({ ...m, loading: true, error: '' }));
+    try {
+      const res = await apiFetch(`/api/client-accounts/${resetPwModal.client._id}/reset-password`, {
+        method: 'POST', body: JSON.stringify({ confirmPassword: resetPwModal.confirmPassword }),
+      });
+      const data = await res.json();
+      if (data.success) setResetPwModal(m => ({ ...m, loading: false, result: data.newPassword }));
+      else setResetPwModal(m => ({ ...m, loading: false, error: data.error || 'Failed to reset password.' }));
+    } catch { setResetPwModal(m => ({ ...m, loading: false, error: 'Network error.' })); }
   };
 
   // -------------------------------------------------------------------------
@@ -917,6 +941,11 @@ export default function SuperAdminPanel() {
                       <button onClick={() => openClientEdit(client)} className="p-2 rounded-lg text-fg/40 hover:text-fg hover:bg-white/10 transition" aria-label="Edit">
                         <Edit2 size={14} />
                       </button>
+                      {client.source !== 'pos' && (
+                        <button onClick={() => openResetPassword(client)} className="p-2 rounded-lg text-fg/40 hover:text-fg hover:bg-white/10 transition" aria-label="Reset password" title="Reset password">
+                          <KeyRound size={14} />
+                        </button>
+                      )}
                       <button onClick={() => handleClientDelete(client)} className="p-2 rounded-lg text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition" aria-label="Delete">
                         <Trash2 size={14} />
                       </button>
@@ -1190,6 +1219,23 @@ export default function SuperAdminPanel() {
                 </select>
               </div>
 
+              {/* Commission rate — edit mode only; a brand-new user has no sales yet */}
+              {modal.mode === 'edit' && (
+                <div>
+                  <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
+                    Commission Rate (%)
+                  </label>
+                  <input
+                    type="number" min="0" max="100" step="0.1"
+                    value={form.commissionRate}
+                    onChange={e => handleFormChange('commissionRate', e.target.value)}
+                    placeholder="0"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                  />
+                  <p className="text-[10px] text-fg/30 mt-1.5">Percent of this cashier's attributed sales, shown on the Commissions report.</p>
+                </div>
+              )}
+
               {/* Granular permissions — override the role defaults per user */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
@@ -1388,6 +1434,21 @@ export default function SuperAdminPanel() {
                 </p>
               </div>
 
+              <div>
+                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Segments</label>
+                <input
+                  type="text"
+                  value={clientForm.segments}
+                  onChange={e => setClientForm(f => ({ ...f, segments: e.target.value }))}
+                  placeholder="e.g. wholesale, vip"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                />
+                <p className="text-[10px] text-fg/30 mt-1.5 leading-relaxed">
+                  Comma-separated tags. A product's Segment Overrides (Products tab) give a
+                  special rate to any client tagged with a matching segment.
+                </p>
+              </div>
+
               {clientModal.mode === 'edit' && (
                 <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
                   <span className="text-sm font-bold text-fg">Account Active</span>
@@ -1415,6 +1476,86 @@ export default function SuperAdminPanel() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* RESET CLIENT PASSWORD MODAL                                          */}
+      {/* =================================================================== */}
+      {resetPwModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-fade-in">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-brand/10 flex items-center justify-center flex-shrink-0">
+                <KeyRound size={17} className="text-brand" />
+              </div>
+              <div>
+                <h2 className="font-black text-fg">Reset Password</h2>
+                <p className="text-fg/40 text-xs mt-0.5">{resetPwModal.client?.name}</p>
+              </div>
+            </div>
+
+            {resetPwModal.result ? (
+              <>
+                <p className="text-fg/50 text-sm mb-3">
+                  New password for <span className="text-fg font-bold">@{resetPwModal.client?.username}</span> — shown once, write it down now:
+                </p>
+                <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-4 py-3 mb-4">
+                  <span className="flex-1 font-mono text-lg tracking-wide text-fg select-all">{resetPwModal.result}</span>
+                  <button
+                    type="button"
+                    onClick={() => { navigator.clipboard?.writeText(resetPwModal.result); showToast('Copied.'); }}
+                    className="p-2 rounded-lg text-fg/40 hover:text-fg hover:bg-white/10 transition"
+                    aria-label="Copy password"
+                  >
+                    <Copy size={15} />
+                  </button>
+                </div>
+                <p className="text-[10px] text-fg/30 mb-4 leading-relaxed">
+                  This password cannot be shown again after you close this — reset again if it's lost.
+                </p>
+                <button onClick={closeResetPassword} className="w-full bg-brand hover:bg-brand-dark text-fg font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm">
+                  Done
+                </button>
+              </>
+            ) : (
+              <form onSubmit={handleResetPasswordConfirm} className="space-y-4">
+                <p className="text-fg/40 text-sm">
+                  Passwords are encrypted and can't be viewed — confirm it's you, and a new password
+                  will be generated for <span className="text-fg font-bold">@{resetPwModal.client?.username}</span>.
+                </p>
+                {resetPwModal.error && (
+                  <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-bold px-3 py-2.5 rounded-xl">
+                    <AlertCircle size={13} className="flex-shrink-0" /> {resetPwModal.error}
+                  </div>
+                )}
+                <div>
+                  <label className="text-xs font-bold text-fg/50 mb-1.5 block">Your Password</label>
+                  <input
+                    type="password"
+                    autoFocus
+                    value={resetPwModal.confirmPassword}
+                    onChange={e => setResetPwModal(m => ({ ...m, confirmPassword: e.target.value }))}
+                    placeholder="Re-enter your password"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                  />
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button type="button" onClick={closeResetPassword} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-3 rounded-xl transition text-sm">
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={resetPwModal.loading}
+                    className="flex-1 bg-brand hover:bg-brand-dark text-fg font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {resetPwModal.loading && <Loader2 size={14} className="animate-spin" />}
+                    {resetPwModal.loading ? 'Resetting…' : 'Reset Password'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

@@ -227,6 +227,8 @@ export default function ProductsTab({ ctx }) {
                           basePrice: Number(p.basePrice || p.price || 0), discountPercent: Number(p.discountPercent || 0),
                           vatExempt: p.vatExempt === true,
                           clientDiscounts: (p.clientDiscounts || []).map(d => ({ clientId: String(d.clientId), percent: Number(d.percent || 0) })),
+                          segmentDiscounts: (p.segmentDiscounts || []).map(d => ({ segment: String(d.segment || ''), percent: Number(d.percent || 0) })),
+                          bulkBreaks: (p.bulkBreaks || []).map(b => ({ minQty: Number(b.minQty || 0), percent: Number(b.percent || 0) })),
                           baseSize: p.baseSize || '',
                           sizes: p.sizes || [], image: p.image || '', baseRecipe: p.baseRecipe || [], addOns: p.addOns || [],
                           modifierGroups: (p.modifierGroups || []).map(mg => (mg && mg._id) ? mg._id : mg),
@@ -508,6 +510,91 @@ export default function ProductsTab({ ctx }) {
                     ))}
                   </div>
                   )}
+
+                  {/* Segment overrides - a rate for any client tagged with a matching
+                      segment (e.g. "wholesale", "vip"), instead of one specific client.
+                      Same log-mode-only gating as Per-Client Overrides, since segments
+                      live on Client Accounts. Beats the flat discount above but loses
+                      to a Per-Client Override for the same product. */}
+                  {BUSINESS_TYPE === 'log' && (
+                  <div className="bg-page-bg/40 border border-white/10 rounded-xl p-3 mt-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs font-black text-fg/70 uppercase tracking-wider">Segment Overrides</label>
+                      <button type="button"
+                        onClick={() => setFormData({ ...formData, segmentDiscounts: [...(formData.segmentDiscounts || []), { segment: '', percent: 0 }] })}
+                        className="text-[11px] font-black text-brand hover:text-fg transition">+ Add segment</button>
+                    </div>
+                    {(!formData.segmentDiscounts || formData.segmentDiscounts.length === 0) && (
+                      <p className="text-[10px] text-fg/30 italic">No segment rates yet - tag client accounts (e.g. "wholesale") in the Client Accounts panel, then add a matching rate here.</p>
+                    )}
+                    {(formData.segmentDiscounts || []).map((sd, idx) => (
+                      <div key={idx} className="flex items-center gap-2 mb-1.5">
+                        <input type="text" value={sd.segment} placeholder="Segment tag (e.g. wholesale)"
+                          onChange={e => {
+                            const list = [...(formData.segmentDiscounts || [])];
+                            list[idx] = { ...list[idx], segment: e.target.value };
+                            setFormData({ ...formData, segmentDiscounts: list });
+                          }}
+                          className="w-1/2 sm:w-3/5 shrink-0 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-fg text-xs outline-none focus:border-brand" />
+                        <div className="relative w-28">
+                          <input type="number" min="0" max="100" step="0.01" value={sd.percent}
+                            onChange={e => {
+                              const list = [...(formData.segmentDiscounts || [])];
+                              list[idx] = { ...list[idx], percent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) };
+                              setFormData({ ...formData, segmentDiscounts: list });
+                            }}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg pl-2 pr-6 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand" />
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/40 text-[10px] font-bold">%</span>
+                        </div>
+                        <button type="button"
+                          onClick={() => setFormData({ ...formData, segmentDiscounts: (formData.segmentDiscounts || []).filter((_, i) => i !== idx) })}
+                          className="text-red-400/70 hover:text-red-500 text-sm">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                  )}
+
+                  {/* Quantity-break bulk pricing — buy N+ of this product, get X% off.
+                      Independent of the fixed-price Combo bundles; combined with the
+                      discounts above by taking whichever percent is higher. */}
+                  <div className="bg-page-bg/40 border border-white/10 rounded-xl p-3 mt-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs font-black text-fg/70 uppercase tracking-wider">Bulk Quantity Breaks</label>
+                      <button type="button"
+                        onClick={() => setFormData({ ...formData, bulkBreaks: [...(formData.bulkBreaks || []), { minQty: 1, percent: 0 }] })}
+                        className="text-[11px] font-black text-brand hover:text-fg transition">+ Add break</button>
+                    </div>
+                    {(!formData.bulkBreaks || formData.bulkBreaks.length === 0) && (
+                      <p className="text-[10px] text-fg/30 italic">No bulk breaks yet - e.g. "buy 10+, get 10% off".</p>
+                    )}
+                    {(formData.bulkBreaks || []).map((b, idx) => (
+                      <div key={idx} className="flex items-center gap-2 mb-1.5">
+                        <div className="flex items-center gap-1 w-1/2 sm:w-3/5 shrink-0">
+                          <span className="text-[10px] text-fg/40 font-bold shrink-0">Qty ≥</span>
+                          <input type="number" min="1" step="1" value={b.minQty}
+                            onChange={e => {
+                              const list = [...(formData.bulkBreaks || [])];
+                              list[idx] = { ...list[idx], minQty: Math.max(1, parseInt(e.target.value, 10) || 1) };
+                              setFormData({ ...formData, bulkBreaks: list });
+                            }}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand" />
+                        </div>
+                        <div className="relative w-28">
+                          <input type="number" min="0" max="100" step="0.01" value={b.percent}
+                            onChange={e => {
+                              const list = [...(formData.bulkBreaks || [])];
+                              list[idx] = { ...list[idx], percent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) };
+                              setFormData({ ...formData, bulkBreaks: list });
+                            }}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg pl-2 pr-6 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand" />
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/40 text-[10px] font-bold">%</span>
+                        </div>
+                        <button type="button"
+                          onClick={() => setFormData({ ...formData, bulkBreaks: (formData.bulkBreaks || []).filter((_, i) => i !== idx) })}
+                          className="text-red-400/70 hover:text-red-500 text-sm">✕</button>
+                      </div>
+                    ))}
+                  </div>
 
                   {(() => {
                     const baseCost = calcRecipeCost(formData.baseRecipe);

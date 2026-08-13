@@ -377,9 +377,21 @@ app.get('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res)
   }
 });
 
+// Light contact-field sanitizers. Email format is validated loosely (there's
+// no server-side deliverability check — nothing here sends mail); an invalid
+// one is rejected rather than silently stored, so the collections/CRM views
+// don't surface garbage. Empty is always allowed — these are optional.
+const cleanEmail = (v) => {
+  const s = String(v ?? '').trim().toLowerCase();
+  if (!s) return '';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return null; // sentinel: invalid
+  return s.slice(0, 254);
+};
+const cleanPhone = (v) => String(v ?? '').trim().slice(0, 40);
+
 app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { username, password, name, paymentMethod, creditLimit } = req.body;
+    const { username, password, name, paymentMethod, creditLimit, segments, phone, email, contactNotes } = req.body;
     // Usernames are stored lowercase so "KasaLokal" and "kasalokal" are the same
     // account — mixed case here is the classic duplicate-login bug.
     const cleanUsername = lower(username);
@@ -390,13 +402,16 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
     const exists = await ClientAccount.findOne({ username: cleanUsername });
     if (exists) return res.status(409).json({ success: false, error: 'Username already taken.' });
     const hashed = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    const cleanSegments = Array.isArray(segments) ? [...new Set(segments.map(s => String(s).trim()).filter(Boolean))] : [];
     // Standard customer ID format: CUS-1000-A0000 ("1000" is a fixed segment;
     // "A0000" is the zero-padded sequence — same "prefix-A + digits" convention
     // used for client/product codes elsewhere, just with the fixed segment folded
     // into the prefix so generateNextSequence's `${prefix}-A${seq}` template fits).
     const clientCode = await generateNextSequence(ClientAccount, 'CUS-1000', 'clientCode');
-    const client = await ClientAccount.create({ clientCode, username: cleanUsername, password: hashed, name: cleanName, paymentMethod: paymentMethod || 'Cash', creditLimit: parseCreditLimit(creditLimit) });
-    res.json({ success: true, client: { _id: client._id, clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, creditLimit: client.creditLimit } });
+    const emailVal = cleanEmail(email);
+    if (emailVal === null) return res.status(400).json({ success: false, error: 'Email is not a valid address.' });
+    const client = await ClientAccount.create({ clientCode, username: cleanUsername, password: hashed, name: cleanName, paymentMethod: paymentMethod || 'Cash', creditLimit: parseCreditLimit(creditLimit), segments: cleanSegments, phone: cleanPhone(phone), email: emailVal, contactNotes: String(contactNotes ?? '').trim().slice(0, 1000) });
+    res.json({ success: true, client: { _id: client._id, clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, creditLimit: client.creditLimit, segments: client.segments, phone: client.phone, email: client.email, contactNotes: client.contactNotes } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -404,7 +419,7 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
 
 app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { username, password, name, paymentMethod, isActive, creditLimit } = req.body;
+    const { username, password, name, paymentMethod, isActive, creditLimit, segments, phone, email, contactNotes } = req.body;
     const update = {};
     if (username) update.username = lower(username);
     if (name) update.name = title(name);
@@ -412,12 +427,61 @@ app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req
     if (typeof isActive === 'boolean') update.isActive = isActive;
     // Sent explicitly (including '' / null to clear it back to "no limit").
     if (creditLimit !== undefined) update.creditLimit = parseCreditLimit(creditLimit);
+    if (Array.isArray(segments)) update.segments = [...new Set(segments.map(s => String(s).trim()).filter(Boolean))];
+    // Contact fields — sent explicitly (including '' to clear). Email validated.
+    if (phone !== undefined) update.phone = cleanPhone(phone);
+    if (email !== undefined) {
+      const emailVal = cleanEmail(email);
+      if (emailVal === null) return res.status(400).json({ success: false, error: 'Email is not a valid address.' });
+      update.email = emailVal;
+    }
+    if (contactNotes !== undefined) update.contactNotes = String(contactNotes ?? '').trim().slice(0, 1000);
     if (password) update.password = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const client = await ClientAccount.findByIdAndUpdate(req.params.id, { $set: update }, { returnDocument: 'after', select: '-password' });
     if (!client) return res.status(404).json({ success: false, error: 'Client account not found.' });
     res.json({ success: true, client });
   } catch (err) {
     if (err.code === 11000) return res.status(409).json({ success: false, error: 'Username already taken.' });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// A client's password is bcrypt-hashed — there is no "reveal the existing
+// password" that doesn't mean storing it in reversible form, which we don't
+// do. This resets it to a new one instead: the caller re-enters THEIR OWN
+// password (proving it's really them, not a hijacked session), and the new
+// client password is generated here and returned exactly once, in this
+// response. It is never retrievable again after this — write it down/share it
+// now, or reset again later.
+const PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'; // no 0/O/1/l/I — avoids misread-on-paper
+function generateClientPassword(length = 12) {
+  const bytes = crypto.randomBytes(length);
+  let out = '';
+  for (let i = 0; i < length; i++) out += PASSWORD_ALPHABET[bytes[i] % PASSWORD_ALPHABET.length];
+  return out;
+}
+
+app.post('/api/client-accounts/:id/reset-password', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const confirmPassword = String(req.body?.confirmPassword || '');
+    if (!confirmPassword) return res.status(400).json({ success: false, error: 'Re-enter your own password to confirm.' });
+
+    const me = await User.findById(req.user._id);
+    if (!me || !(await bcrypt.compare(confirmPassword, me.password))) {
+      return res.status(401).json({ success: false, error: 'Your password is incorrect.' });
+    }
+
+    const client = await ClientAccount.findById(req.params.id);
+    if (!client) return res.status(404).json({ success: false, error: 'Client account not found.' });
+
+    const newPassword = generateClientPassword();
+    client.password = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    await client.save();
+
+    await logAudit(req, { action: 'reset_password', entity: 'ClientAccount', entityId: client._id, after: { username: client.username } });
+    // The only response that ever carries this in plaintext.
+    res.json({ success: true, newPassword, client: { _id: client._id, username: client.username, name: client.name } });
+  } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });

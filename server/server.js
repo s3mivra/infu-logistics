@@ -37,10 +37,14 @@ import registerOrders from './features/orders.js';
 import registerFinance from './features/finance.js';
 import registerReports from './features/reports.js';
 import registerShifts from './features/shifts.js';
+import registerScheduling from './features/scheduling.js';
+import registerDiscountRules from './features/discount-rules.js';
 import registerAdminTools from './features/admin-tools.js';
 import registerAudit from './features/audit.js';
 import registerSettings from './features/settings.js';
 import registerPurchaseOrders from './features/purchase-orders.js';
+import registerBills from './features/bills.js';
+import registerCollections from './features/collections.js';
 import registerNotifications from './features/notifications.js';
 import registerClients from './features/clients.js';
 
@@ -381,11 +385,14 @@ const productSchema = z.object({
   name: zLabel, description: zText(z, 2000).optional(), category: zTitle(z, 80).optional(),
   basePrice: zMoneyLoose(z), discountPercent: z.number().min(0).max(100).optional(),
   clientDiscounts: z.array(z.object({ clientId: z.string(), percent: z.number().min(0).max(100) })).optional(),
+  segmentDiscounts: z.array(z.object({ segment: z.string(), percent: z.number().min(0).max(100) })).optional(),
+  bulkBreaks: z.array(z.object({ minQty: z.number().positive(), percent: z.number().min(0).max(100) })).optional(),
   baseSize: z.string().max(40).optional(), baseRecipe: zRecipe,
   sizes: z.array(z.object({ sizeCode: z.string().optional(), name: z.string().optional(), price: zMoney.optional(), recipe: zRecipe })).optional(),
   addOns: z.array(z.object({ name: z.string(), price: zMoney.optional(), recipe: zRecipe })).optional(),
   image: z.string().optional(), isAvailable: z.boolean().optional(),
   vatExempt: z.boolean().optional(),
+  barcode: z.string().max(120).optional(),
   modifierGroups: z.array(z.string()).optional(),
 });
 const comboSchema = z.object({
@@ -874,6 +881,13 @@ const ProductSchema = new mongoose.Schema({
   // to the default tenant on boot. Query-scoping/auth wiring lands in Phase 2.
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   productCode: String,
+  // Scanned barcode (UPC/EAN/QR payload). Sparse index: most products may not
+  // have one, but the ones that do are looked up by it at the POS
+  // (GET /api/products/by-barcode/:code). NOT unique at the schema level — a
+  // shop can legitimately have the same barcode on two size variants, and a
+  // hard unique constraint would reject the second on import; the lookup route
+  // returns the first match and the response notes when a barcode is ambiguous.
+  barcode: { type: String, default: '', index: true },
   name: { type: String, required: true, index: true },
   description: String,
   category: { type: String, index: true },
@@ -892,6 +906,17 @@ const ProductSchema = new mongoose.Schema({
   // you give a specific client a special rate on a specific product (pre-reg, VIP,
   // bulk-buyer, etc.). Empty array = no overrides → falls back to discountPercent.
   clientDiscounts: [{ clientId: String, percent: { type: Number, default: 0 } }],
+  // Segment-level overrides — same idea as clientDiscounts but keyed by a tag on
+  // the buyer's ClientAccount.segments (e.g. "wholesale", "vip") instead of one
+  // specific client id, so a rate can apply to a whole class of buyer at once.
+  // When a buyer carries more than one matching segment, the highest percent
+  // wins (see productDiscPct in orders.js) — never stacked.
+  segmentDiscounts: [{ segment: String, percent: { type: Number, default: 0 } }],
+  // Quantity-break bulk pricing, independent of the fixed-price Combo model.
+  // Each line item's ordered quantity is checked against minQty (highest
+  // qualifying minQty wins) and combined with the other discount percents via
+  // Math.max, same as clientDiscounts/segmentDiscounts — never stacked.
+  bulkBreaks: [{ minQty: { type: Number, required: true }, percent: { type: Number, default: 0 } }],
   baseSize: String,
   costOverride: Number,
   baseRecipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }],
@@ -949,7 +974,12 @@ const OrderSchema = new mongoose.Schema({
   // Parked / held tabs: saved but not yet sent to the kitchen or completed.
   isParked: { type: Boolean, default: false, index: true },
   // Idempotency key — prevents duplicate orders from retries / offline-queue replays.
-  idempotencyKey: { type: String, index: true, sparse: true },
+  // unique+sparse: makes double-submit protection DB-enforced, not just the
+  // app-level findOne-then-create check in orders.js (which has a TOCTOU
+  // window — two concurrent requests can both pass the findOne before either
+  // create() completes). The unique index turns a lost race into an E11000
+  // the create-order route catches, instead of a duplicate order.
+  idempotencyKey: { type: String, index: true, unique: true, sparse: true },
   customerName: { type: String, default: 'Guest' },
   paymentMethod: { type: String, default: 'Cash' },
   
@@ -1143,6 +1173,44 @@ const JournalEntrySchema = new mongoose.Schema({
 }, { timestamps: true });
 const JournalEntry = mongoose.model('JournalEntry', JournalEntrySchema);
 
+// --- CUMULATIVE DASHBOARD COUNTERS ---
+// Replaces the two unbounded Order.aggregate() scans the dashboard used to run
+// on every load (full order history, every time). Updated with atomic $inc
+// inside the same transaction as whatever flips an order's status to/from
+// 'Completed' (see applyStatsDelta in orders.js).
+//
+// SHARDED, not true singletons: a hot document written by EVERY concurrent
+// order completion/void/refund inside a multi-document transaction collides
+// on WriteConflict far more than any other document in this schema (proven
+// under a 20-way concurrent-completion test during development, all sharing
+// one product — see test/tenant-stats-concurrency.integration.test.js).
+// STATS_SHARDS documents share one businessType (ProductStats: one businessType
+// +productName); applyStatsDelta picks a random shard per write, and reads
+// (reports.js) sum across all shards. Read cost stays ~O(shard count), not
+// O(order history) — TenantStats always has businessType×STATS_SHARDS docs
+// total; ProductStats has at most businessType×productCount×STATS_SHARDS.
+const STATS_SHARDS = 8;
+const TenantStatsSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  shard: { type: Number, default: 0 },
+  cumulativeRevenue: { type: Number, default: 0 },
+  cumulativeComp: { type: Number, default: 0 },
+  cumulativeOrderCount: { type: Number, default: 0 },
+  cumulativeNonCompCount: { type: Number, default: 0 },
+}, { timestamps: true });
+TenantStatsSchema.index({ businessType: 1, shard: 1 }, { unique: true });
+const TenantStats = mongoose.model('TenantStats', TenantStatsSchema);
+
+const ProductStatsSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  productName: { type: String, required: true },
+  shard: { type: Number, default: 0 },
+  cumulativeQty: { type: Number, default: 0 },
+  cumulativeRevenue: { type: Number, default: 0 },
+}, { timestamps: true });
+ProductStatsSchema.index({ businessType: 1, productName: 1, shard: 1 }, { unique: true });
+const ProductStats = mongoose.model('ProductStats', ProductStatsSchema);
+
 const InventoryMovementSchema = new mongoose.Schema({
   date: { type: Date, required: true }, // Normalized to start of the day
   inventoryId: String,
@@ -1204,6 +1272,39 @@ const ClockEntrySchema = new mongoose.Schema({
   notes:           { type: String, default: '' }
 }, { timestamps: true });
 const ClockEntry = mongoose.model('ClockEntry', ClockEntrySchema);
+
+// ── SHIFT SCHEDULING (ROSTER) ────────────────────────────────────────────────
+// A PLANNED future shift — distinct from `Shift` (a cash-drawer reconciliation
+// record created when a cashier actually opens the register) and `ClockEntry`
+// (attendance, created on clock-in). This is the roster: a manager assigns a
+// staff member to a date + time window ahead of time, staff see their upcoming
+// schedule. Deliberately does NOT auto-link to the real Shift/ClockEntry a
+// staffer later opens — comparing planned vs. actual is a reporting concern
+// that can layer on later; the roster stands alone.
+//
+// `date` is the local calendar day (YYYY-MM-DD, Manila) the shift is scheduled
+// for; startTime/endTime are 'HH:MM' strings within that day. Storing wall-
+// clock strings rather than absolute Datetimes keeps a roster stable across DST
+// and matches how a manager thinks ("Ana, Tuesday, 9am-5pm"), the same
+// YYYY-MM-DD convention ClockEntry.date already uses.
+const SCHEDULED_SHIFT_STATUSES = ['Draft', 'Published', 'Cancelled'];
+const ScheduledShiftSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  staffId:      { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  staffName:    { type: String, required: true },              // snapshot for display without a join
+  date:         { type: String, required: true, index: true }, // YYYY-MM-DD (Manila)
+  startTime:    { type: String, required: true },              // 'HH:MM'
+  endTime:      { type: String, required: true },              // 'HH:MM'
+  role:         { type: String, default: '' },                 // station/role for the shift, e.g. 'Cashier', 'Kitchen'
+  notes:        { type: String, default: '' },
+  // Draft rosters are the manager's working copy; staff only see Published ones
+  // (enforced in scheduling.js's my-schedule route).
+  status:       { type: String, default: 'Draft', enum: SCHEDULED_SHIFT_STATUSES, index: true },
+  createdBy:    { type: String, default: '' },
+}, { timestamps: true });
+ScheduledShiftSchema.index({ businessType: 1, date: 1, staffId: 1 });
+const ScheduledShift = mongoose.model('ScheduledShift', ScheduledShiftSchema);
 
 // The owner (superadmin) is excluded from staff-facing reports — hours, shift
 // history, cashier variance — since they're not a tracked employee/cashier.
@@ -1444,6 +1545,11 @@ const UserSchema = new mongoose.Schema({
   name: { type: String, required: true, index: true },
   password: { type: String, required: true },
   role: { type: String, default: 'Staff' },
+  // Seller commission: percent (0-100) applied to this user's own Completed,
+  // non-complimentary sales (matched by Order.cashier === User.name — see
+  // GET /api/reports/commissions in reports.js). 0 = no commission, the
+  // default for every existing account until explicitly set.
+  commissionRate: { type: Number, default: 0, min: 0, max: 100 },
   // Granular RBAC: explicit permission override. Empty ⇒ fall back to the role's
   // defaults (see lib/authz.js resolvePermissions). Ignored for superadmin (full).
   permissions: { type: [String], default: [] },
@@ -1461,6 +1567,13 @@ const ClientAccountSchema = new mongoose.Schema({
   username:      { type: String, required: true, unique: true },
   password:      { type: String, required: true },              // bcrypt-hashed
   name:          { type: String, required: true },
+  // Contact details for collections/notices/general CRM. All optional and
+  // free-form — a POS-promoted walk-in (source:'pos') often has none, and a
+  // portal signup isn't required to provide them either. `phone`/`email` are
+  // deliberately NOT unique: two family members can legitimately share a phone.
+  phone:         { type: String, default: '' },
+  email:         { type: String, default: '' },
+  contactNotes:  { type: String, default: '' },                 // free-form ("prefers SMS", "call after 5pm", etc.)
   paymentMethod: { type: String, default: 'Cash' },             // pre-set; can be overridden per order
   isActive:      { type: Boolean, default: true },
   // 'portal' = real client-portal login (username/password usable). 'pos' = auto-promoted
@@ -1474,6 +1587,10 @@ const ClientAccountSchema = new mongoose.Schema({
   // Whether either limit is enforced at all is decided by the `creditLimitMode`
   // setting; see resolveCreditLimit().
   creditLimit:   { type: Number, default: null },
+  // Free-form tags (e.g. "wholesale", "vip") a product's segmentDiscounts can
+  // target instead of (or in addition to) a one-off clientDiscounts entry for
+  // this specific client. Empty = no segment-level discount applies.
+  segments:      { type: [String], default: [] },
   // The client's OWN portal appearance, stored on the account so it follows them
   // across devices. Deliberately separate from the staff-side `dash.theme`
   // (per-device localStorage): a shop changing its POS theme must not restyle
@@ -1481,6 +1598,33 @@ const ClientAccountSchema = new mongoose.Schema({
   theme:         { type: String, enum: ['default', 'light', 'yellow', 'ocean', null], default: null },
 }, { timestamps: true });
 const ClientAccount = mongoose.model('ClientAccount', ClientAccountSchema);
+
+// --- AR COLLECTION REMINDERS ---
+// A log of contact attempts against an overdue client, not an automated
+// sender — nothing in this app emails/SMSes a client on its own (same reason
+// payment gateway integration is out of scope: no new third-party dependency).
+// Staff log that a call/text/email/letter went out and when to follow up next;
+// `/api/collections/overdue` and `/api/collections/due` (collections.js) turn
+// that into a worklist.
+//
+// Keyed by `clientKey`, NOT clientAccountId — orders here can carry
+// customerName with no linked ClientAccount at all (see ar-ageing's own
+// `keyOf` resolution in finance.js), so reminders use the exact same resolved
+// key the aging views group by, or the two would silently disagree about who
+// owes what.
+const CollectionReminderSchema = new mongoose.Schema({
+  businessType:     { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:         { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  clientKey:        { type: String, required: true, index: true },
+  clientAccountId:  { type: mongoose.Schema.Types.ObjectId, ref: 'ClientAccount', default: null },
+  method:           { type: String, enum: ['Call', 'SMS', 'Email', 'In-person', 'Letter', 'Other'], required: true },
+  note:             { type: String, default: '' },
+  amountOwedAtTime: { type: Number, default: 0 }, // snapshot — the aged balance keeps moving, this is what it was when contact was made
+  loggedBy:         { type: String, default: '' },
+  nextFollowUpDate: { type: Date, default: null },
+}, { timestamps: true });
+CollectionReminderSchema.index({ businessType: 1, clientKey: 1, createdAt: -1 });
+const CollectionReminder = mongoose.model('CollectionReminder', CollectionReminderSchema);
 
 // Refresh-token session store — enables instant server-side revocation.
 // tokenHash = sha256(rawRefreshToken); the raw token lives only in the client's
@@ -1543,6 +1687,39 @@ const DiscountSchema = new mongoose.Schema({
   isSCPWD: { type: Boolean, default: false },
 });
 const Discount = mongoose.model('Discount', DiscountSchema);
+
+// --- CONFIGURABLE DISCOUNT RULE ENGINE ---
+// Order-level CONDITIONAL discount rules — the "spend ₱1000 get 10% off",
+// "15% off on Tuesdays", "wholesale segment gets 5% all December" kind — which
+// none of the existing discount mechanisms cover: Product.discountPercent /
+// clientDiscounts / segmentDiscounts / bulkBreaks are all PER-LINE and
+// unconditional, and the Discount model is just named SC/PWD-style presets.
+//
+// DELIBERATELY NOT auto-applied in the order money path. The POS calls
+// POST /api/discount-rules/evaluate with an order's context, gets back the
+// single best matching rule's percent, and applies it through the EXISTING,
+// fully-tested order-level `discountPercent` field on the order. That keeps the
+// VAT/discount/ledger math — the most safety-critical code in the app —
+// completely untouched; this feature only decides WHICH percent to suggest,
+// never how it's booked.
+const DiscountRuleSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  name:         { type: String, required: true },
+  percent:      { type: Number, required: true, min: 0, max: 100 }, // the discount this rule grants
+  active:       { type: Boolean, default: true, index: true },
+  priority:     { type: Number, default: 0 }, // tie-breaker when two rules grant the same percent (higher wins)
+  // Conditions — ALL present ones must hold for the rule to apply. An omitted
+  // condition is simply not checked (a rule with no conditions always applies).
+  minSubtotal:  { type: Number, default: null },        // order subtotal must be ≥ this
+  daysOfWeek:   { type: [Number], default: [] },         // 0=Sun..6=Sat (Manila); empty = any day
+  startDate:    { type: Date, default: null },           // active-from (inclusive)
+  endDate:      { type: Date, default: null },           // active-until (inclusive)
+  segment:      { type: String, default: '' },           // client must carry this segment tag; '' = any
+  createdBy:    { type: String, default: '' },
+}, { timestamps: true });
+DiscountRuleSchema.index({ businessType: 1, active: 1 });
+const DiscountRule = mongoose.model('DiscountRule', DiscountRuleSchema);
 
 const EODRecordSchema = new mongoose.Schema({
   dateString: String, // e.g., '2026-04-29'
@@ -1618,6 +1795,52 @@ const PurchaseOrderSchema = new mongoose.Schema({
   tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
 }, { timestamps: true });
 const PurchaseOrder = mongoose.model('PurchaseOrder', PurchaseOrderSchema);
+
+// --- AP BILL APPROVAL WORKFLOW ---
+// A Bill is a payable awaiting sign-off, in one of two ways:
+//   - source:'PO'     — created automatically when a PO delivery is received
+//                        (purchase-orders.js's /receive route). The A/P journal
+//                        entry (DR Inventory / CR 220000) posts immediately at
+//                        receipt as before — that's a real liability the moment
+//                        goods arrive, not something to hold open pending review.
+//                        Approving a PO-sourced bill doesn't post anything new;
+//                        it's the "someone checked this invoice against the PO"
+//                        sign-off gate before it can be scheduled/paid.
+//   - source:'Manual'  — entered directly (a utility bill, rent, anything with
+//                        no PO). No JE exists yet when Pending — approval is
+//                        what books the liability (DR expenseAccountCode /
+//                        CR 220000), since a manual entry has no independent
+//                        physical-receipt event to already justify it.
+const BILL_STATUSES = ['Pending', 'Approved', 'Rejected', 'Paid'];
+const BillSchema = new mongoose.Schema({
+  businessType:      { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:          { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  billNumber:        { type: String, index: true },              // BILL-2026-000001
+  supplierId:        { type: mongoose.Schema.Types.ObjectId, ref: 'Supplier', required: true },
+  supplierName:      { type: String, default: '' },               // snapshot at creation time
+  source:            { type: String, enum: ['PO', 'Manual'], required: true },
+  purchaseOrderId:   { type: mongoose.Schema.Types.ObjectId, ref: 'PurchaseOrder', default: null },
+  poNumber:          { type: String, default: '' },
+  description:       { type: String, default: '' },               // required context for Manual bills
+  amount:            { type: Number, required: true },
+  expenseAccountCode:{ type: String, default: '' },               // Manual bills only — which account to debit on approval
+  status:            { type: String, default: 'Pending', enum: BILL_STATUSES, index: true },
+  dueDate:           { type: Date, default: null },                // when the supplier expects payment
+  scheduledPaymentDate: { type: Date, default: null },              // when WE plan to pay it — only settable once Approved
+  createdBy:         { type: String, default: '' },
+  approvedBy:        { type: String, default: '' },
+  approvedAt:        { type: Date, default: null },
+  rejectedBy:        { type: String, default: '' },
+  rejectedAt:        { type: Date, default: null },
+  rejectionReason:   { type: String, default: '' },
+  paidAt:            { type: Date, default: null },
+  // Reference of the JournalEntry this bill is tied to: the PO-receipt entry for
+  // source:'PO' bills, the approval entry for source:'Manual' bills, and
+  // overwritten with the payment entry's reference once Paid.
+  journalEntryRef:   { type: String, default: '' },
+}, { timestamps: true });
+BillSchema.index({ businessType: 1, status: 1 });
+const Bill = mongoose.model('Bill', BillSchema);
 
 // --- API ROUTES ---
 
@@ -2202,6 +2425,11 @@ const ctx = {
   Inventory,
   JournalEntrySchema,
   JournalEntry,
+  TenantStatsSchema,
+  TenantStats,
+  STATS_SHARDS,
+  ProductStatsSchema,
+  ProductStats,
   InventoryMovementSchema,
   InventoryMovement,
   StockCardSchema,
@@ -2210,6 +2438,9 @@ const ctx = {
   Shift,
   ClockEntrySchema,
   ClockEntry,
+  ScheduledShiftSchema,
+  ScheduledShift,
+  SCHEDULED_SHIFT_STATUSES,
   ownerUserIds,
   ownerIdentity,
   logAudit,
@@ -2233,6 +2464,8 @@ const ctx = {
   User,
   ClientAccountSchema,
   ClientAccount,
+  CollectionReminderSchema,
+  CollectionReminder,
   RefreshSessionSchema,
   RefreshSession,
   RoleSchema,
@@ -2241,6 +2474,8 @@ const ctx = {
   AuditLog,
   DiscountSchema,
   Discount,
+  DiscountRuleSchema,
+  DiscountRule,
   EODRecordSchema,
   EODRecord,
   CounterSchema,
@@ -2250,6 +2485,9 @@ const ctx = {
   PurchaseOrderSchema,
   PurchaseOrder,
   PO_STATUSES,
+  BillSchema,
+  Bill,
+  BILL_STATUSES,
   emitToOps,
   emitToAll,
   emitToMgr,
@@ -2295,10 +2533,14 @@ registerOrders(ctx);
 registerFinance(ctx);
 registerReports(ctx);
 registerShifts(ctx);
+registerScheduling(ctx);
+registerDiscountRules(ctx);
 registerAdminTools(ctx);
 registerAudit(ctx);
 registerSettings(ctx);
 registerPurchaseOrders(ctx);
+registerBills(ctx);
+registerCollections(ctx);
 registerNotifications(ctx);
 registerClients(ctx);
 

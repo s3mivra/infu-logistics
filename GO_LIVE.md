@@ -4,6 +4,13 @@ _Use this to take the `security/hardening-p1-p3` branch to production safely. It
 specifically with the **breaking dual-token auth change**, which logs every active
 user out on deploy and depends on correct CORS/cookie configuration._
 
+> **Deploying 4 tenants on one Hostinger KVM2 box via `platform/control-plane`?**
+> This runbook was written for a single-tenant Railway/Vercel + Atlas deploy —
+> every step below still applies, but per-tenant, ×4. See
+> [DEPLOY_4TENANT_KVM2.md](DEPLOY_4TENANT_KVM2.md) for the multi-tenant-specific
+> checklist (provisioning, per-tenant secrets, shared-mongod health, control-plane
+> hardening) this doc doesn't cover.
+
 ---
 
 ## 0. Before you touch production
@@ -47,6 +54,14 @@ Deploy the branch to staging, then walk through every line. **All must pass:**
 - [ ] Run the **E2E suite**: `cd client && npm run e2e:install` (once), then `npm run e2e` → green.
 
 If any step fails, fix it on the branch and re-verify. **Do not proceed to production until all pass.**
+
+- [ ] **`idempotencyKey` unique-index pre-check** (one-time, only needed the
+  first time this branch deploys): `node server/scripts/check-idempotency-dupes.mjs`
+  against the production `MONGO_URI` *before* deploying. `Order.idempotencyKey`
+  moved to a `unique` index — Mongoose builds it automatically on next boot,
+  and it will fail (silently, in the background) if any duplicate non-null
+  values already exist. The script is read-only and tells you if there's
+  anything to clean up first.
 
 ## 3. Production deploy
 
