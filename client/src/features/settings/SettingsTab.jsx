@@ -136,14 +136,14 @@ export default function SettingsTab({ ctx }) {
     try { localStorage.setItem('dash.fontScale', String(v)); } catch { /* private mode: applies for this session only */ }
   };
 
-  // Business logo — stored as a base64 data-URL in the businessLogo setting
-  // (same approach as product images). Resized to 300px webp so the payload
-  // stays small. Shown on the sidebar, login, receipts, menu and portal.
-  const [logoBusy, setLogoBusy] = useState(false);
-  const handleLogoUpload = (e) => {
+  // Image settings (logo, payment QR) stored as base64 data-URLs — same
+  // approach as product images, resized to keep the payload small. `busyKey`
+  // tracks which uploader is mid-encode so only its button shows "Uploading…".
+  const [busyKey, setBusyKey] = useState('');
+  const uploadImageSetting = (settingKey, e, maxW) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setLogoBusy(true);
+    setBusyKey(settingKey);
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = (ev) => {
@@ -151,18 +151,18 @@ export default function SettingsTab({ ctx }) {
       img.src = ev.target.result;
       img.onload = async () => {
         const canvas = document.createElement('canvas');
-        const scale = 300 / img.width;
-        canvas.width = 300; canvas.height = img.height * scale;
+        const scale = Math.min(1, maxW / img.width);
+        canvas.width = img.width * scale; canvas.height = img.height * scale;
         canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-        await saveSetting('businessLogo', canvas.toDataURL('image/webp', 0.85));
-        setLogoBusy(false);
+        await saveSetting(settingKey, canvas.toDataURL('image/webp', 0.85));
+        setBusyKey('');
       };
-      img.onerror = () => setLogoBusy(false);
+      img.onerror = () => setBusyKey('');
     };
-    reader.onerror = () => setLogoBusy(false);
+    reader.onerror = () => setBusyKey('');
   };
-  const removeLogo = () => saveSetting('businessLogo', '');
   const currentLogo = systemSettings.businessLogo || '';
+  const currentQr = systemSettings.paymentQrImage || '';
   const [printerMode, setPrinterMode] = useState(readPrinterMode);
   const applyPrinterMode = (v) => { setPrinterMode(v); writePrinterMode(v); };
 
@@ -256,11 +256,45 @@ export default function SettingsTab({ ctx }) {
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-white hover:bg-brand/90 transition min-h-[40px]">
-                        {logoBusy ? 'Uploading…' : (currentLogo ? 'Replace Logo' : 'Upload Logo')}
-                        <input type="file" accept="image/*" className="hidden" disabled={logoBusy} onChange={handleLogoUpload} />
+                        {busyKey === 'businessLogo' ? 'Uploading…' : (currentLogo ? 'Replace Logo' : 'Upload Logo')}
+                        <input type="file" accept="image/*" className="hidden" disabled={busyKey === 'businessLogo'} onChange={(e) => uploadImageSetting('businessLogo', e, 300)} />
                       </label>
                       {currentLogo && (
-                        <button onClick={removeLogo} className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/5 text-fg/50 border border-white/10 hover:text-red-400 hover:border-red-400/40 transition min-h-[38px]">
+                        <button onClick={() => saveSetting('businessLogo', '')} className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/5 text-fg/50 border border-white/10 hover:text-red-400 hover:border-red-400/40 transition min-h-[38px]">
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Payment QR — when set, staff can show it at checkout for the
+                customer to scan (GCash/Maya/bank QR). */}
+            <div className="px-4 py-4 border-t border-white/5">
+              <div className="flex items-start gap-4">
+                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                  <QrCode size={16} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-fg text-sm">Payment QR</p>
+                  <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                    Your GCash / Maya / bank QR. Once uploaded, staff get a “Show Payment QR” button at checkout for the customer to scan.
+                  </p>
+                  <div className="flex items-center gap-4 mt-3 flex-wrap">
+                    <div className="w-20 h-20 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
+                      {currentQr
+                        ? <img src={currentQr} alt="Payment QR" className="max-w-full max-h-full object-contain" />
+                        : <QrCode size={22} className="text-fg/20" />}
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-white hover:bg-brand/90 transition min-h-[40px]">
+                        {busyKey === 'paymentQrImage' ? 'Uploading…' : (currentQr ? 'Replace QR' : 'Upload QR')}
+                        <input type="file" accept="image/*" className="hidden" disabled={busyKey === 'paymentQrImage'} onChange={(e) => uploadImageSetting('paymentQrImage', e, 500)} />
+                      </label>
+                      {currentQr && (
+                        <button onClick={() => saveSetting('paymentQrImage', '')} className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/5 text-fg/50 border border-white/10 hover:text-red-400 hover:border-red-400/40 transition min-h-[38px]">
                           Remove
                         </button>
                       )}
