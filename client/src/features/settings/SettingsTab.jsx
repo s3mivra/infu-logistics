@@ -135,6 +135,34 @@ export default function SettingsTab({ ctx }) {
     document.documentElement.style.fontSize = (16 * v / 100) + 'px';
     try { localStorage.setItem('dash.fontScale', String(v)); } catch { /* private mode: applies for this session only */ }
   };
+
+  // Business logo — stored as a base64 data-URL in the businessLogo setting
+  // (same approach as product images). Resized to 300px webp so the payload
+  // stays small. Shown on the sidebar, login, receipts, menu and portal.
+  const [logoBusy, setLogoBusy] = useState(false);
+  const handleLogoUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLogoBusy(true);
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.src = ev.target.result;
+      img.onload = async () => {
+        const canvas = document.createElement('canvas');
+        const scale = 300 / img.width;
+        canvas.width = 300; canvas.height = img.height * scale;
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        await saveSetting('businessLogo', canvas.toDataURL('image/webp', 0.85));
+        setLogoBusy(false);
+      };
+      img.onerror = () => setLogoBusy(false);
+    };
+    reader.onerror = () => setLogoBusy(false);
+  };
+  const removeLogo = () => saveSetting('businessLogo', '');
+  const currentLogo = systemSettings.businessLogo || '';
   const [printerMode, setPrinterMode] = useState(readPrinterMode);
   const applyPrinterMode = (v) => { setPrinterMode(v); writePrinterMode(v); };
 
@@ -203,6 +231,43 @@ export default function SettingsTab({ ctx }) {
             <div className="flex items-center gap-3 px-4 py-5 text-fg/60">
               <Lock size={15} />
               <span className="text-sm font-bold">System toggles are superadmin-only.</span>
+            </div>
+          </Card>
+        )}
+
+        {/* Branding — business logo, shown on sidebar, login, receipts, menu & portal. */}
+        {isSuperAdmin && (
+          <Card title="Branding">
+            <div className="px-4 py-4">
+              <div className="flex items-start gap-4">
+                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                  <ImageIcon size={16} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-fg text-sm">Business Logo</p>
+                  <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                    Shown on the sidebar, login screen, printed receipts, the menu and the client portal. PNG or JPG; it's resized automatically.
+                  </p>
+                  <div className="flex items-center gap-4 mt-3 flex-wrap">
+                    <div className="w-20 h-20 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
+                      {currentLogo
+                        ? <img src={currentLogo} alt="Logo" className="max-w-full max-h-full object-contain" />
+                        : <ImageIcon size={22} className="text-fg/20" />}
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-white hover:bg-brand/90 transition min-h-[40px]">
+                        {logoBusy ? 'Uploading…' : (currentLogo ? 'Replace Logo' : 'Upload Logo')}
+                        <input type="file" accept="image/*" className="hidden" disabled={logoBusy} onChange={handleLogoUpload} />
+                      </label>
+                      {currentLogo && (
+                        <button onClick={removeLogo} className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/5 text-fg/50 border border-white/10 hover:text-red-400 hover:border-red-400/40 transition min-h-[38px]">
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </Card>
         )}

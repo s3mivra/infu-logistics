@@ -254,6 +254,14 @@ export default function AdminDashboard() {
   const [profitByCategory, setProfitByCategory] = useState(null);
   // --- SYSTEM SETTINGS (QR toggle, etc.) ---
   const [systemSettings, setSystemSettings] = useState({ isAcceptingQROrders: true, autoCloseEnabled: true, imagesEnabled: true });
+  // Cache the logo so the (pre-auth) login screen can show it too — settings
+  // themselves need a token, so the very first login falls back to the icon.
+  useEffect(() => {
+    try {
+      if (systemSettings.businessLogo) localStorage.setItem('branding.logo', systemSettings.businessLogo);
+      else if (systemSettings.businessLogo === '') localStorage.removeItem('branding.logo');
+    } catch { /* private mode */ }
+  }, [systemSettings.businessLogo]);
   // Registration stamp for every printed document. Derived in one place because
   // it appears on six of them, and a VAT-registered seller printing "NON-VAT
   // REGISTERED" on an official receipt is a compliance problem, not a typo.
@@ -4123,6 +4131,7 @@ const updateStatus = async (orderId, newStatus) => {
       @media print { @page { size:80mm auto; margin:3mm; } }
     </style></head><body>
       <div class="header">
+        ${systemSettings.businessLogo ? `<img src="${systemSettings.businessLogo}" style="max-height:48px;max-width:180px;object-fit:contain;margin:0 auto 4px;display:block" />` : ''}
         <div class="order-num">${esc(order.orderNumber)}</div>
         <div class="tbl">${esc(order.table||'Takeout')} · ${esc(order.customerName||'Guest')}</div>
         <div style="font-size:11px">${new Date(order.createdAt||Date.now()).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'})}</div>
@@ -4603,9 +4612,13 @@ const updateStatus = async (orderId, newStatus) => {
         </div>
         <div className="flex-1 flex flex-col items-center justify-center p-6 lg:p-12">
         <form onSubmit={handleSystemLogin} className="bg-sidebar-bg border border-white/10 p-8 rounded-2xl shadow-2xl w-full max-w-sm text-center">
-          <div className="lg:hidden w-14 h-14 bg-brand/20 border border-brand/30 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-brand/20">
-            <Lock size={24} className="text-brand" />
-          </div>
+          {(systemSettings.businessLogo || (() => { try { return localStorage.getItem('branding.logo') || ''; } catch { return ''; } })())
+            ? <img src={systemSettings.businessLogo || localStorage.getItem('branding.logo')} alt="" className="max-h-16 max-w-[200px] object-contain mx-auto mb-4" />
+            : (
+              <div className="lg:hidden w-14 h-14 bg-brand/20 border border-brand/30 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-brand/20">
+                <Lock size={24} className="text-brand" />
+              </div>
+            )}
           <h2 className="text-2xl font-black text-fg tracking-widest mb-1 uppercase">System Locked</h2>
           <p className="text-fg/40 text-sm mb-6">Enter credentials to begin your shift.</p>
 
@@ -4827,6 +4840,9 @@ const updateStatus = async (orderId, newStatus) => {
           undiscoverable and is intentionally gone. */}
       <div className="p-5 border-b border-white/5 flex items-start gap-3">
         <div className="min-w-0 flex-1">
+          {systemSettings.businessLogo && (
+            <img src={systemSettings.businessLogo} alt="" className="max-h-12 max-w-[160px] object-contain mb-2" />
+          )}
           <p className="text-2xl font-black text-brand tracking-tight leading-none drop-shadow-sm">{BIZ_NAME}</p>
           <p className="text-[10px] text-fg/80 font-bold uppercase tracking-[0.25em] mt-0.5">
             SEMIVRA <span className="text-brand/80">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span>
