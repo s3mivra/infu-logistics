@@ -292,7 +292,8 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
-    const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0 } = req.body;
+    const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, isComplimentary = false } = req.body;
+    const comp = !!isComplimentary;
 
     const dt = new Date(date);
     if (!date || isNaN(dt.getTime())) {
@@ -326,9 +327,11 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
     }
 
     const gross = +orderItems.reduce((s, it) => s + it.price * it.quantity, 0).toFixed(2);
-    const pct = Math.max(0, Math.min(100, Number(discountPercent) || 0));
+    // A complimentary sale is free: no discount line, nothing collected. Its cost
+    // is booked as Complimentary Expense against revenue (keeps gross visible).
+    const pct = comp ? 0 : Math.max(0, Math.min(100, Number(discountPercent) || 0));
     const discount = +(gross * pct / 100).toFixed(2);
-    const total = +(gross - discount).toFixed(2);
+    const total = comp ? 0 : +(gross - discount).toFixed(2);
 
     // Period-lock guard.
     const lock = await periodLockFor(dt);
@@ -384,6 +387,8 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
       vatAmount: 0, vatRate: 0,
       total,
       isVatExempt: true,
+      isComplimentary: comp,
+      discountType: comp ? 'Complimentary' : (pct > 0 ? 'Promo' : 'None'),
       transactionType: 'NORMAL',
       orderNotes: (notes || '').trim().slice(0, 300),
       isBackdated: true,
@@ -392,11 +397,17 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
     // Balanced revenue entry, DATED to the backdate. Same transaction as the
     // order write — a sale must never appear in reports without its ledger entry.
     const reference = await mkSeqRef('BACKDATE');
-    const lines = [
-      { accountCode: acct.code, accountName: acct.name, debit: total, credit: 0 },
-    ];
-    if (discount > 0) lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: discount, credit: 0 });
-    lines.push({ accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: gross });
+    const lines = [];
+    if (comp) {
+      // Complimentary: DR Complimentary Expense / CR Sales Revenue at selling
+      // price (nothing collected, so no cash/A-R line).
+      lines.push({ accountCode: '540000', accountName: 'Complimentary Expense', debit: gross, credit: 0 });
+      lines.push({ accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: gross });
+    } else {
+      lines.push({ accountCode: acct.code, accountName: acct.name, debit: total, credit: 0 });
+      if (discount > 0) lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: discount, credit: 0 });
+      lines.push({ accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: gross });
+    }
     if (totalCogs > 0) {
       lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: totalCogs, credit: 0 });
       lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: totalCogs });

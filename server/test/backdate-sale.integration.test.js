@@ -90,6 +90,36 @@ describe('backdated sale', () => {
     expect(je.totalDebit).toBeCloseTo(je.totalCredit, 6);
   });
 
+  it('complimentary backdated sale books Comp Expense / Revenue, collects nothing', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, isComplimentary: true,
+      items: [{ name: 'Widget', price: 100, quantity: 2, productId: String(prod._id) }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.order.isComplimentary).toBe(true);
+    expect(res.body.order.total).toBe(0); // free — nothing collected
+
+    const JournalEntry = mongoose.model('JournalEntry');
+    const je = await JournalEntry.findOne({ description: new RegExp(res.body.order.orderNumber) }).lean();
+    expect(je.lines.some(l => l.accountCode === '540000')).toBe(true); // Complimentary Expense
+    expect(je.lines.some(l => l.accountCode === '410000')).toBe(true); // Revenue
+    expect(je.lines.some(l => l.accountCode === '111000')).toBe(false); // no cash collected
+    expect(je.totalDebit).toBeCloseTo(je.totalCredit, 6);
+  });
+
+  it('discounted backdated sale posts a Sales Discounts line and stays balanced', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, discountPercent: 10,
+      items: [{ name: 'Widget', price: 100, quantity: 5, productId: String(prod._id) }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.order.total).toBe(450); // 500 gross − 10%
+    const JournalEntry = mongoose.model('JournalEntry');
+    const je = await JournalEntry.findOne({ description: new RegExp(res.body.order.orderNumber) }).lean();
+    expect(je.lines.find(l => l.accountCode === '430000')?.debit).toBeCloseTo(50, 2);
+    expect(je.totalDebit).toBeCloseTo(je.totalCredit, 6);
+  });
+
   it('legacy lump-sum form still works', async () => {
     const res = await auth('post', '/api/admin/backdate-sale', superTok).send({ date: LAST_MONTH, amount: 750, paymentMethod: 'Cash' });
     expect(res.status).toBe(200);
