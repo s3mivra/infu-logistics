@@ -480,7 +480,8 @@ export default function ClientOrderPage() {
 
   const visibleProducts = useMemo(() => {
     let active = products.filter(p => !p.isArchived);
-    if (activeCategory !== 'All') active = active.filter(p => p.category === activeCategory);
+    if (activeCategory === 'Bulk') active = active.filter(p => p.isBulk);
+    else if (activeCategory !== 'All') active = active.filter(p => p.category === activeCategory);
     const q = productSearch.trim().toLowerCase();
     if (q) active = active.filter(p =>
       p.name?.toLowerCase().includes(q) ||
@@ -1310,7 +1311,7 @@ export default function ClientOrderPage() {
 
       {/* Category filter */}
       <div className="flex gap-2 px-3 sm:px-4 py-3 overflow-x-auto scrollbar-hide border-b border-white/5 flex-shrink-0">
-        {['All', ...categories.map(c => c.name)].map(cat => (
+        {['All', ...(products.some(p => p.isBulk) ? ['Bulk'] : []), ...categories.map(c => c.name)].map(cat => (
           <button
             key={cat}
             onClick={() => setActiveCategory(cat)}

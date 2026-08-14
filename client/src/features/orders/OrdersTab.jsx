@@ -179,7 +179,7 @@ export default function OrdersTab({ ctx }) {
                       />
                     </div>
                     <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
-                      {[{ _id: '__all', name: 'All' }, ...categories].map(c => (
+                      {[{ _id: '__all', name: 'All' }, ...(products.some(p => p.isBulk) ? [{ _id: '__bulk', name: 'Bulk' }] : []), ...categories].map(c => (
                         <button
                           key={c._id}
                           onClick={() => { setPosCategory(c.name === 'All' ? 'All' : c.name); setPosPage(1); }}
@@ -194,7 +194,7 @@ export default function OrdersTab({ ctx }) {
                   {/* Product grid */}
                   {(() => {
                     const posFiltered = products.filter(p =>
-                      (posCategory === 'All' || p.category === posCategory) &&
+                      (posCategory === 'All' || (posCategory === 'Bulk' ? p.isBulk : p.category === posCategory)) &&
                       (!posSearch || p.name.toLowerCase().includes(posSearch.toLowerCase()))
                     );
                     const posTotalPages = Math.ceil(posFiltered.length / POS_PER_PAGE);

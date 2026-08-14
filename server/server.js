@@ -393,6 +393,7 @@ const productSchema = z.object({
   image: z.string().optional(), isAvailable: z.boolean().optional(),
   vatExempt: z.boolean().optional(),
   barcode: z.string().max(120).optional(),
+  isBulk: z.boolean().optional(),
   modifierGroups: z.array(z.string()).optional(),
 });
 const comboSchema = z.object({
@@ -888,6 +889,10 @@ const ProductSchema = new mongoose.Schema({
   // hard unique constraint would reject the second on import; the lookup route
   // returns the first match and the response notes when a barcode is ambiguous.
   barcode: { type: String, default: '', index: true },
+  // Bulk-sale flag — surfaces the product under a dedicated "Bulk" filter in the
+  // POS and client portal (e.g. wholesale/sack quantities), separate from the
+  // per-line quantity-break pricing in `bulkBreaks`.
+  isBulk: { type: Boolean, default: false, index: true },
   name: { type: String, required: true, index: true },
   description: String,
   category: { type: String, index: true },
