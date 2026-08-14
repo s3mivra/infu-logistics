@@ -29,7 +29,7 @@ const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { month: 's
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 export default function ProcurementTab({ ctx }) {
-  const { apiFetch, peso, inventory = [], isSuperAdmin, packInfo, effectiveDisplay, systemSettings = {} } = ctx;
+  const { apiFetch, peso, inventory = [], isSuperAdmin, packInfo, effectiveDisplay, systemSettings = {}, loadPdfLibs } = ctx;
   const money = peso || ((n) => `₱${(Number(n) || 0).toFixed(2)}`);
 
   // Print a PO on the SAME A4 document template the Orders billing statement /
@@ -252,10 +252,12 @@ export default function ProcurementTab({ ctx }) {
   const openNewForm = () => {
     setEditId(null);
     setForm({ supplier: '', supplierId: '', expectedDate: '', notes: '', lines: [blankLine()] });
+    setSuggestedQueue([]); setSuggestedQueueTotal(0);
     setShowForm(true);
   };
   const openEditForm = (po) => {
     setEditId(po._id);
+    setSuggestedQueue([]); setSuggestedQueueTotal(0);
     setForm({
       supplier: po.supplier || '',
       supplierId: po.supplierId || '',
@@ -275,44 +277,69 @@ export default function ProcurementTab({ ctx }) {
   // a fresh draft with the items that need restocking. The user reviews/edits before
   // saving, so nothing is ordered automatically. Per-display-unit cost is recovered
   // from the report's estCost so the PO line math (qty × unitCost) matches.
+  //
+  // The report now resolves each item's cheapest supplier from the supplier catalog,
+  // so suggestions are grouped into one draft per supplier (plus an "unassigned"
+  // group for items with no catalog match) instead of one mixed-supplier draft.
+  // suggestedQueue holds the remaining drafts; saveDraft() advances through it so
+  // the reviewer still confirms every PO before anything is created.
   const [suggesting, setSuggesting] = useState(false);
+  const [suggestedQueue, setSuggestedQueue] = useState([]);
+  const [suggestedQueueTotal, setSuggestedQueueTotal] = useState(0);
+
+  const suggestionToLine = (l) => {
+    const inv = inventory.find(i => l.invId && String(i._id) === String(l.invId)) || inventory.find(i => i.itemName === l.itemName);
+    const displayQty = Number(l.suggestedOrder) || 0;
+    // The report's suggestedOrder/estCost are in DISPLAY units (₱/kg-style).
+    // LOG orders by the PACK, so convert to a pack count + price-per-pack
+    // whenever the item's real pack size is known - same convention as
+    // pickInventory() / the Edit Inventory modal. Falls back to the raw
+    // display-unit figures when packSize isn't tracked for this item.
+    const packSize = inv?.packSize && inv.packSize > 0 ? inv.packSize : null;
+    let orderedQty = displayQty;
+    let unitCost = displayQty > 0 ? +((Number(l.estCost) || 0) / displayQty).toFixed(4) : (inv?.unitCost ?? l.unitCost ?? '');
+    if (BUSINESS_TYPE === 'log' && packSize && packInfo && inv) {
+      orderedQty = +(displayQty / packSize).toFixed(2);
+      unitCost = +(packInfo(inv).cost).toFixed(4);
+    }
+    return {
+      invId: inv?._id || l.invId || null,
+      itemName: l.itemName || '',
+      itemCode: inv?.itemCode || l.itemCode || '',
+      unit: l.displayUnit || inv?.displayUnit || inv?.unit || l.unit || '',
+      packSize: packSize || '',
+      orderedQty,
+      unitCost,
+      expiryDate: '',
+    };
+  };
+
   const buildSuggestedPo = async () => {
     setSuggesting(true); setError('');
     try {
       const res = await apiFetch('/api/reports/purchase-order?days=7');
       const d = await res.json();
       if (!d.success) { setError(d.error || 'Failed to build a suggested PO.'); return; }
-      const lines = (d.lines || [])
-        .filter(l => (Number(l.suggestedOrder) || 0) > 0)
-        .map(l => {
-          const inv = inventory.find(i => i.itemName === l.itemName);
-          const displayQty = Number(l.suggestedOrder) || 0;
-          // The report's suggestedOrder/estCost are in DISPLAY units (₱/kg-style).
-          // LOG orders by the PACK, so convert to a pack count + price-per-pack
-          // whenever the item's real pack size is known - same convention as
-          // pickInventory() / the Edit Inventory modal. Falls back to the raw
-          // display-unit figures when packSize isn't tracked for this item.
-          const packSize = inv?.packSize && inv.packSize > 0 ? inv.packSize : null;
-          let orderedQty = displayQty;
-          let unitCost = displayQty > 0 ? +((Number(l.estCost) || 0) / displayQty).toFixed(4) : (inv?.unitCost ?? '');
-          if (BUSINESS_TYPE === 'log' && packSize && packInfo && inv) {
-            orderedQty = +(displayQty / packSize).toFixed(2);
-            unitCost = +(packInfo(inv).cost).toFixed(4);
-          }
-          return {
-            invId: inv?._id || null,
-            itemName: l.itemName || '',
-            itemCode: inv?.itemCode || '',
-            unit: l.displayUnit || inv?.displayUnit || inv?.unit || '',
-            packSize: packSize || '',
-            orderedQty,
-            unitCost,
-            expiryDate: '',
-          };
-        });
-      if (lines.length === 0) { setError('Nothing to reorder - all stock is above its reorder point.'); return; }
+      const suggested = (d.lines || []).filter(l => (Number(l.suggestedOrder) || 0) > 0);
+      if (suggested.length === 0) { setError('Nothing to reorder - all stock is above its reorder point.'); return; }
+
+      const groups = new Map();
+      for (const l of suggested) {
+        const key = l.supplierId || 'unassigned';
+        if (!groups.has(key)) groups.set(key, { supplierId: l.supplierId || '', supplier: l.supplierName || '', lines: [] });
+        groups.get(key).lines.push(suggestionToLine(l));
+      }
+      const noteBase = `Suggested restock (${d.coverDays || 7}-day cover) generated ${new Date().toLocaleDateString()}`;
+      const drafts = [...groups.values()].map(g => ({
+        supplier: g.supplier, supplierId: g.supplierId, expectedDate: '',
+        notes: g.supplierId ? noteBase : `${noteBase} — no matching supplier found, assign one below`,
+        lines: g.lines,
+      }));
+
       setEditId(null);
-      setForm({ supplier: '', supplierId: '', expectedDate: '', notes: `Suggested restock (${d.coverDays || 7}-day cover) generated ${new Date().toLocaleDateString()}`, lines });
+      setForm(drafts[0]);
+      setSuggestedQueue(drafts.slice(1));
+      setSuggestedQueueTotal(drafts.length);
       setShowForm(true);
     } catch { setError('Network error building suggested PO.'); }
     finally { setSuggesting(false); }
@@ -332,6 +359,45 @@ export default function ProcurementTab({ ctx }) {
   const [savingSupplier, setSavingSupplier] = useState(false);
   // Which supplier's "what they supply / how much we buy" rollup is expanded.
   const [expandedSupplierId, setExpandedSupplierId] = useState(null);
+
+  // ── Vendor statement (opening balance → invoices/payments → closing balance) ──
+  const todayStr = () => new Date().toISOString().slice(0, 10);
+  const monthStartStr = () => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); };
+  const [statementSupplier, setStatementSupplier] = useState(null); // supplier object
+  const [statement, setStatement] = useState(null);
+  const [statementRange, setStatementRange] = useState({ start: monthStartStr(), end: todayStr() });
+  const [loadingStatement, setLoadingStatement] = useState(false);
+
+  const openStatement = async (s, range = statementRange) => {
+    setStatementSupplier(s); setStatement(null); setError(''); setLoadingStatement(true);
+    try {
+      const res = await apiFetch(`/api/finance/vendor-statement/${s._id}?start=${range.start}&end=${range.end}`);
+      const d = await res.json();
+      if (d.success) setStatement(d); else setError(d.error || 'Failed to load vendor statement.');
+    } catch { setError('Network error loading vendor statement.'); }
+    finally { setLoadingStatement(false); }
+  };
+  const closeStatement = () => { setStatementSupplier(null); setStatement(null); };
+
+  const exportStatementToPDF = async () => {
+    if (!statement || !statementSupplier) return;
+    const { jsPDF, autoTable } = await loadPdfLibs();
+    const doc = new jsPDF();
+    doc.setFontSize(14); doc.text(`Vendor Statement — ${statementSupplier.name}`, 14, 16);
+    doc.setFontSize(9);
+    doc.text(`${fmtDate(statement.period.start)} to ${fmtDate(statement.period.end)}`, 14, 22);
+    doc.text(`Opening balance: ${money(statement.openingBalance)}`, 14, 28);
+    autoTable(doc, {
+      startY: 34,
+      head: [['Date', 'Reference', 'Description', 'Invoiced', 'Paid', 'Balance']],
+      body: statement.entries.map(e => [fmtDate(e.date), e.reference, e.description, money(e.invoiceAmount), money(e.paymentAmount), money(e.runningBalance)]),
+      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
+    });
+    const endY = (doc.lastAutoTable?.finalY || 34) + 8;
+    doc.setFontSize(10);
+    doc.text(`Closing balance: ${money(statement.closingBalance)}`, 14, endY);
+    doc.save(`vendor-statement-${statementSupplier.name.replace(/[^a-z0-9]+/gi, '_')}.pdf`);
+  };
 
   // fromPoForm: true when "+ Add new supplier…" was picked inside the New PO
   // modal, so the freshly-created supplier gets auto-selected back into the PO
@@ -518,11 +584,26 @@ export default function ProcurementTab({ ctx }) {
         body: JSON.stringify({ supplier: form.supplier, supplierId: form.supplierId || null, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines }),
       });
       const d = await res.json();
-      if (d.success) { setShowForm(false); await fetchPOs(); }
+      if (d.success) {
+        await fetchPOs();
+        if (suggestedQueue.length > 0) {
+          const [next, ...rest] = suggestedQueue;
+          setEditId(null);
+          setForm(next);
+          setSuggestedQueue(rest);
+        } else {
+          setShowForm(false);
+          setSuggestedQueueTotal(0);
+        }
+      }
       else setError(d.error || 'Failed to save purchase order.');
     } catch (e) { setError('Network error saving purchase order.'); }
     finally { setSaving(false); }
   };
+
+  // Abandoning the form also drops any queued supplier-grouped drafts still
+  // waiting for review, rather than silently creating them without confirmation.
+  const closeForm = () => { setShowForm(false); setSuggestedQueue([]); setSuggestedQueueTotal(0); };
 
   const setStatus = async (po, status) => {
     try {
@@ -762,12 +843,11 @@ export default function ProcurementTab({ ctx }) {
                     {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                   </button>
                 </div>
-                {canManage && (
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button onClick={() => openSupplierForm(s)} className="p-1.5 rounded-lg text-fg/40 hover:bg-white/10 hover:text-fg transition"><Pencil size={14} /></button>
-                    {canDelete && <button onClick={() => deleteSupplier(s)} className="p-1.5 rounded-lg text-fg/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>}
-                  </div>
-                )}
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => openStatement(s)} title="Vendor statement" className="p-1.5 rounded-lg text-fg/40 hover:bg-white/10 hover:text-fg transition"><FileText size={14} /></button>
+                  {canManage && <button onClick={() => openSupplierForm(s)} className="p-1.5 rounded-lg text-fg/40 hover:bg-white/10 hover:text-fg transition"><Pencil size={14} /></button>}
+                  {canManage && canDelete && <button onClick={() => deleteSupplier(s)} className="p-1.5 rounded-lg text-fg/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>}
+                </div>
               </div>
               {isOpen && (
                 <div className="border-t border-white/10 bg-white/5 px-4 py-3 space-y-3">
@@ -935,11 +1015,18 @@ export default function ProcurementTab({ ctx }) {
 
       {/* ── DRAFT / EDIT MODAL ── */}
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !saving && setShowForm(false)}>
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !saving && closeForm()}>
           <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-3xl my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
-              <h2 className="font-black text-fg text-lg">{editId ? 'Edit Purchase Order' : 'New Purchase Order'}</h2>
-              <button onClick={() => !saving && setShowForm(false)} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+              <h2 className="font-black text-fg text-lg">
+                {editId ? 'Edit Purchase Order' : 'New Purchase Order'}
+                {suggestedQueueTotal > 0 && (
+                  <span className="ml-2 text-xs font-bold text-brand align-middle">
+                    Draft {suggestedQueueTotal - suggestedQueue.length} of {suggestedQueueTotal} (grouped by supplier)
+                  </span>
+                )}
+              </h2>
+              <button onClick={() => !saving && closeForm()} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
             </div>
             <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
               <div className="grid sm:grid-cols-2 gap-3">
@@ -1006,9 +1093,10 @@ export default function ProcurementTab({ ctx }) {
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-white/10">
               <span className="text-sm font-black text-fg">Estimated total: <span className="text-brand">{money(formEstTotal)}</span></span>
               <div className="flex items-center gap-2">
-                <button onClick={() => !saving && setShowForm(false)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
+                <button onClick={() => !saving && closeForm()} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">{suggestedQueue.length > 0 ? 'Cancel remaining' : 'Cancel'}</button>
                 <button onClick={saveDraft} disabled={saving} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
-                  {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {editId ? 'Save Changes' : 'Create PO'}
+                  {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                  {editId ? 'Save Changes' : (suggestedQueue.length > 0 ? 'Create PO & Continue' : 'Create PO')}
                 </button>
               </div>
             </div>
@@ -1057,6 +1145,74 @@ export default function ProcurementTab({ ctx }) {
               <button onClick={saveSupplier} disabled={savingSupplier} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
                 {savingSupplier ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {supplierEditId ? 'Save Changes' : 'Create Supplier'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── VENDOR STATEMENT MODAL ── */}
+      {statementSupplier && (
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={closeStatement}>
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-2xl my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+              <h2 className="font-black text-fg text-lg">Vendor Statement — {statementSupplier.name}</h2>
+              <button onClick={closeStatement} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="flex flex-wrap items-end gap-2">
+                <div>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/40 mb-1 block">From</label>
+                  <input type="date" value={statementRange.start} onChange={e => setStatementRange(r => ({ ...r, start: e.target.value }))} className={inputCls} />
+                </div>
+                <div>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/40 mb-1 block">To</label>
+                  <input type="date" value={statementRange.end} onChange={e => setStatementRange(r => ({ ...r, end: e.target.value }))} className={inputCls} />
+                </div>
+                <button onClick={() => openStatement(statementSupplier, statementRange)} disabled={loadingStatement} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 text-fg font-bold text-sm px-4 py-2 rounded-xl transition">
+                  {loadingStatement ? <Loader2 size={15} className="animate-spin" /> : 'Refresh'}
+                </button>
+                {statement && (
+                  <button onClick={exportStatementToPDF} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2 rounded-xl transition ml-auto"><Download size={15} /> Export PDF</button>
+                )}
+              </div>
+
+              {loadingStatement && <div className="text-center py-10 text-fg/40 text-sm"><Loader2 size={20} className="animate-spin mx-auto mb-2" />Loading…</div>}
+
+              {!loadingStatement && statement && (
+                <>
+                  <p className="text-sm font-bold text-fg">Opening balance: <span className="text-brand">{money(statement.openingBalance)}</span></p>
+                  <div className="max-h-[45vh] overflow-y-auto border border-white/10 rounded-xl">
+                    <table className="w-full text-xs">
+                      <thead className="bg-white/5 text-fg/50 sticky top-0">
+                        <tr>
+                          <th className="text-left px-3 py-2 font-black uppercase tracking-wider">Date</th>
+                          <th className="text-left px-3 py-2 font-black uppercase tracking-wider">Reference</th>
+                          <th className="text-left px-3 py-2 font-black uppercase tracking-wider">Description</th>
+                          <th className="text-right px-3 py-2 font-black uppercase tracking-wider">Invoiced</th>
+                          <th className="text-right px-3 py-2 font-black uppercase tracking-wider">Paid</th>
+                          <th className="text-right px-3 py-2 font-black uppercase tracking-wider">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {statement.entries.length === 0 && (
+                          <tr><td colSpan={6} className="text-center px-3 py-6 text-fg/40">No activity in this period.</td></tr>
+                        )}
+                        {statement.entries.map((e, i) => (
+                          <tr key={i} className="border-t border-white/5">
+                            <td className="px-3 py-1.5 text-fg/70">{fmtDate(e.date)}</td>
+                            <td className="px-3 py-1.5 text-fg/70">{e.reference}</td>
+                            <td className="px-3 py-1.5 text-fg/70">{e.description}</td>
+                            <td className="px-3 py-1.5 text-right text-fg/70">{e.invoiceAmount ? money(e.invoiceAmount) : ''}</td>
+                            <td className="px-3 py-1.5 text-right text-fg/70">{e.paymentAmount ? money(e.paymentAmount) : ''}</td>
+                            <td className="px-3 py-1.5 text-right font-bold text-fg">{money(e.runningBalance)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="text-right text-sm font-black text-fg">Closing balance: <span className="text-brand">{money(statement.closingBalance)}</span></p>
+                </>
+              )}
             </div>
           </div>
         </div>

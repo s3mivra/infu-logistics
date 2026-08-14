@@ -73,10 +73,12 @@ export default function AnalyticsTab({ ctx }) {
     settleForm, settleModal, settleSubmitting, shiftFilter, shiftHistory,
     shiftHistoryPage, shiftHistoryTotal, spoilageForm, spoilageLoading, spoilageModal,
     standardAccounts, stockHistory, submitManualOrder, submitPhysicalCounts, submitRfDisb,
-    submitRfNew, submitRfRepl, toggleDay, toggleOrderList, toggleVat,
+    submitRfNew, submitRfRepl, toggleDay, toggleOrderList,
     totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
     users, varianceNoteMode, varianceReasons,
+    turnoverData, fetchTurnover,
+    salesTrendData, salesTrendPeriod, setSalesTrendPeriod, fetchSalesTrend,
   } = ctx;
 
   // Layout switch: A = KPI Grid (current), B = Ledger-style (Stage 2).
@@ -226,6 +228,10 @@ export default function AnalyticsTab({ ctx }) {
                 <p className="text-2xl font-black text-fg">₱{totalSkus > 0 ? (totalInvValue / totalSkus).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '0.00'}</p>
                 <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider mt-0.5">Avg / SKU</p>
               </div>
+              <div className="flex flex-col items-center" title="COGS this month ÷ average inventory value — estimated, not an exact historical figure (see tooltip on the label below)">
+                <p className="text-2xl font-black text-fg">{turnoverData?.turnoverRatio != null ? `${turnoverData.turnoverRatio}x` : '—'}</p>
+                <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider mt-0.5">Turnover (est.)</p>
+              </div>
             </div>
           </div>
 
@@ -233,12 +239,31 @@ export default function AnalyticsTab({ ctx }) {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
             <div className="bg-surface border border-white/10 rounded-xl p-6 flex flex-col max-h-96">
-              <div className="flex justify-between items-center mb-4 border-b border-white/10 pb-2">
+              <div className="flex justify-between items-center mb-4 border-b border-white/10 pb-2 flex-wrap gap-2">
                 <h3 className="text-fg font-bold">Daily Revenue Trend</h3>
                 <button onClick={exportAnalyticsToPDF} className="text-[10px] bg-brand/10 border border-brand/30 text-brand px-3 py-1.5 rounded hover:bg-brand hover:text-page-bg transition font-bold uppercase tracking-wider">
                   Export Analytics PDF
                 </button>
               </div>
+              {salesTrendData && (
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-3 -mt-1">
+                  <div className="inline-flex bg-white/5 border border-white/10 rounded-lg p-0.5">
+                    {[['week', 'Week'], ['month', 'Month']].map(([id, label]) => (
+                      <button key={id}
+                        onClick={() => { setSalesTrendPeriod(id); fetchSalesTrend(id); }}
+                        className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider transition ${salesTrendPeriod === id ? 'bg-brand text-white' : 'text-fg/40 hover:text-fg'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-xs font-bold text-fg/60">
+                    ₱{salesTrendData.currentTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <span className={`ml-2 ${salesTrendData.changePct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {salesTrendData.changePct >= 0 ? '▲' : '▼'} {Math.abs(salesTrendData.changePct)}% vs prior {salesTrendPeriod}
+                    </span>
+                  </span>
+                </div>
+              )}
               <div className="flex-1 flex flex-col min-h-0">
                 {dailyRevenue.length === 0 ? (
                   <p className="text-gray-600 text-sm text-center py-4">No daily data available.</p>

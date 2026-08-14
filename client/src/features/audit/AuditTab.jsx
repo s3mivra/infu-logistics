@@ -71,11 +71,12 @@ export default function AuditTab({ ctx }) {
     settleForm, settleModal, settleSubmitting, shiftFilter, shiftHistory,
     shiftHistoryPage, shiftHistoryTotal, spoilageForm, spoilageLoading, spoilageModal,
     standardAccounts, stockHistory, submitManualOrder, submitPhysicalCounts, submitRfDisb,
-    submitRfNew, submitRfRepl, toggleDay, toggleOrderList, toggleVat,
+    submitRfNew, submitRfRepl, toggleDay, toggleOrderList,
     totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
     users, varianceNoteMode, varianceReasons,
     auditLogs, auditLogsPage, auditLogsTotal, AUDIT_LOGS_PAGE_SIZE, fetchAuditLogs,
+    auditLogFilters, setAuditLogFilters, exportAuditLogsCsv, exportAuditLogsPdf,
   } = ctx;
 
   const now    = new Date();
@@ -357,12 +358,34 @@ export default function AuditTab({ ctx }) {
               <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2 flex-wrap">
                 <ShieldCheck size={14} className="text-brand/70" />
                 <h3 className="text-sm font-black text-fg uppercase tracking-wider">System Activity Log</h3>
-                <span className="ml-auto text-[10px] bg-white/10 text-fg/40 px-2 py-0.5 rounded-full font-bold">{auditLogsTotal} total</span>
+                <span className="text-[10px] bg-white/10 text-fg/40 px-2 py-0.5 rounded-full font-bold">{auditLogsTotal} total</span>
+                <input type="text" value={auditLogFilters.actor} onChange={e => setAuditLogFilters(f => ({ ...f, actor: e.target.value }))}
+                  placeholder="Filter by user" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/25 focus:outline-none focus:border-brand/60 w-32" />
+                <input type="text" value={auditLogFilters.action} onChange={e => setAuditLogFilters(f => ({ ...f, action: e.target.value }))}
+                  placeholder="Filter by action" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/25 focus:outline-none focus:border-brand/60 w-36" />
+                <input type="date" value={auditLogFilters.start} onChange={e => setAuditLogFilters(f => ({ ...f, start: e.target.value }))}
+                  className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg focus:outline-none focus:border-brand/60" />
+                <input type="date" value={auditLogFilters.end} onChange={e => setAuditLogFilters(f => ({ ...f, end: e.target.value }))}
+                  className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg focus:outline-none focus:border-brand/60" />
                 <button
                   onClick={() => fetchAuditLogs(1)}
                   className="flex items-center gap-1 px-3 py-1 rounded-lg bg-white/5 text-fg/50 hover:text-fg hover:bg-white/10 text-xs font-bold transition"
                 >
                   <RefreshCw size={11} /> Load
+                </button>
+                <button
+                  onClick={exportAuditLogsCsv}
+                  title="Export CSV for the selected date range (start/end required, max 92 days)"
+                  className="ml-auto flex items-center gap-1 px-3 py-1 rounded-lg bg-white/5 text-fg/50 hover:text-fg hover:bg-white/10 text-xs font-bold transition"
+                >
+                  <Download size={11} /> CSV
+                </button>
+                <button
+                  onClick={exportAuditLogsPdf}
+                  title="Export the currently loaded page as PDF"
+                  className="flex items-center gap-1 px-3 py-1 rounded-lg bg-white/5 text-fg/50 hover:text-fg hover:bg-white/10 text-xs font-bold transition"
+                >
+                  <FileText size={11} /> PDF
                 </button>
               </div>
               {auditLogs.length === 0 ? (

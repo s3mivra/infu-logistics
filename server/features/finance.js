@@ -1,7 +1,7 @@
 // finance routes — moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { ageingBuckets, ageingByClient, resolveCreditLimit, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
+import { ageingBuckets, ageingByClient, resolveCreditLimit, resolveClientKey, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
 
@@ -453,17 +453,9 @@ app.get('/api/finance/ar-ageing', verifyToken, ...canViewAcct, async (req, res) 
     ]);
     const mode = modeRow?.value || DEFAULT_CREDIT_MODE;
     const globalLimit = globalRow?.value ?? null;
-    const byId = new Map(clients.map(c => [String(c._id), c]));
-
-    // Group by client account where we have one, else by the typed name — the
-    // same key the A/R list shows, so the two views never disagree.
-    // Both identity fields are consulted: portal orders carry `clientId`, while
-    // cashier-placed on-behalf orders carry `clientAccountId`. Using one alone
-    // would split a single client's debt across two rows.
-    const keyOf = (r) =>
-      byId.get(String(r.clientAccountId || ''))?.name
-      || byId.get(String(r.clientId || ''))?.name
-      || r.customerName || 'Walk-in';
+    // Shared with collections.js's resolveClientKeys() — the same grouping key
+    // both A/R views must agree on, or they'd disagree about who owes what.
+    const { keyOf } = resolveClientKey(clients);
 
     // Committed exposure — everything on account that isn't cancelled/void, INCLUDING
     // orders still in flight. This is what the credit gate spends, and it differs
@@ -595,6 +587,69 @@ app.get('/api/finance/ap-outstanding', verifyToken, ...canViewAcct, async (req, 
       .sort((a, b) => b.balance - a.balance);
 
     res.json({ success: true, outstandingBalance, recent, bySupplier, totalCredit: bal.totalCredit, totalDebit: bal.totalDebit });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// VENDOR STATEMENT — one supplier's A/P activity over a date range: opening
+// balance carried in from before the range, every invoice/payment inside it,
+// and the resulting closing balance. Same 220000-AP lines ap-outstanding reads,
+// just scoped to one supplierId and split into a running balance instead of a
+// single aggregate total.
+app.get('/api/finance/vendor-statement/:supplierId', verifyToken, ...canViewAcct, async (req, res) => {
+  try {
+    const supplier = await Supplier.findOne({ _id: req.params.supplierId, ...tenantScope(req) }).lean();
+    if (!supplier) return res.status(404).json({ success: false, error: 'Supplier not found.' });
+
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const start = req.query.start || monthStart.toISOString().slice(0, 10);
+    const end = req.query.end || new Date().toISOString().slice(0, 10);
+    const range = validateDateRange(start, end);
+    if (!range.ok) return res.status(400).json({ success: false, error: range.error });
+    const { startDate, endDate } = range;
+
+    const supplierIdStr = String(req.params.supplierId);
+
+    const openingAgg = await JournalEntry.aggregate([
+      { $unwind: '$lines' },
+      { $match: { 'lines.accountCode': '220000', supplierId: supplierIdStr, date: { $lt: startDate } } },
+      { $group: { _id: null, credit: { $sum: '$lines.credit' }, debit: { $sum: '$lines.debit' } } },
+    ]);
+    const openingBalance = +(((openingAgg[0]?.credit || 0) - (openingAgg[0]?.debit || 0)).toFixed(2));
+
+    const entriesAgg = await JournalEntry.aggregate([
+      { $unwind: '$lines' },
+      { $match: { 'lines.accountCode': '220000', supplierId: supplierIdStr, date: { $gte: startDate, $lte: endDate } } },
+      { $group: {
+        _id: '$_id',
+        date:        { $first: '$date' },
+        reference:   { $first: '$reference' },
+        description: { $first: '$description' },
+        credit:      { $sum: { $cond: [{ $gt: ['$lines.credit', 0] }, '$lines.credit', 0] } },
+        debit:       { $sum: { $cond: [{ $gt: ['$lines.debit',  0] }, '$lines.debit',  0] } },
+      }},
+      { $sort: { date: 1 } },
+    ]);
+
+    let running = openingBalance;
+    const entries = entriesAgg.map(e => {
+      running = +((running + (e.credit || 0) - (e.debit || 0)).toFixed(2));
+      return {
+        date: e.date, reference: e.reference || '', description: e.description || '',
+        invoiceAmount: +(e.credit || 0).toFixed(2), paymentAmount: +(e.debit || 0).toFixed(2),
+        runningBalance: running,
+      };
+    });
+    const closingBalance = entries.length ? entries[entries.length - 1].runningBalance : openingBalance;
+
+    res.json({
+      success: true,
+      vendor: { id: String(supplier._id), name: supplier.name },
+      period: { start: startDate.toISOString(), end: endDate.toISOString() },
+      openingBalance, entries, closingBalance,
+    });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -771,7 +826,10 @@ app.post('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
 
 app.get('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
   try {
-    const filter = req.query.shiftId ? { shiftId: req.query.shiftId } : {};
+    // String() coercion: req.query.shiftId can arrive as a nested object
+    // (e.g. ?shiftId[$exists]=true, parsed by express's extended query
+    // parser) — without this, an operator object reaches the filter unscoped.
+    const filter = req.query.shiftId ? { shiftId: String(req.query.shiftId) } : {};
     const deposits = await BankDeposit.find(filter).sort({ createdAt: -1 });
     res.json({ success: true, deposits });
   } catch (err) {

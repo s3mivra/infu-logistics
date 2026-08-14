@@ -15,6 +15,8 @@ export default function registerPurchaseOrders(ctx) {
     logAudit,
     PurchaseOrder,
     PO_STATUSES,
+    Bill,
+    BUSINESS_TYPE,
     Supplier,
     Inventory,
     StockCard,
@@ -269,9 +271,36 @@ export default function registerPurchaseOrders(ctx) {
       // stock ledger never hears about.
       const posted = await postReceiptToStock(req, deltas, po);
 
-      logAudit?.(req, { action: 'receive', entity: 'purchase_order', entityId: po.poNumber, after: { status: po.status, actualTotal: po.actualTotal, stockPosted: posted.totalCost } });
+      // One Bill per delivery (not per line — a supplier sends one invoice for
+      // the whole shipment), awaiting approval before it can be scheduled/paid.
+      // The A/P journal entry already posted above at receipt time — see the
+      // BillSchema comment in server.js for why source:'PO' bills don't wait
+      // for approval to book the liability, only to be paid.
+      let bill = null;
+      // Bill.supplierId is required — a PO placed against a free-text supplier
+      // name with no linked Supplier record (po.supplierId unset) can't get a
+      // bill. The receipt and its journal entry still post either way; this
+      // only affects the approval/scheduling workflow layered on top.
+      if (posted.totalCost > 0 && po.supplierId) {
+        const billNumber = await mkSeqRef('BILL');
+        bill = await Bill.create({
+          businessType: BUSINESS_TYPE,
+          ...tenantScope(req),
+          billNumber,
+          supplierId: po.supplierId,
+          supplierName: po.supplier || '',
+          source: 'PO',
+          purchaseOrderId: po._id,
+          poNumber: po.poNumber,
+          description: `Delivery received on ${po.poNumber}`,
+          amount: posted.totalCost,
+          createdBy: req.user?.name || '',
+        }).catch((err) => { captureError(req, err); return null; }); // a bill-creation failure shouldn't roll back a receipt that already posted
+      }
+
+      logAudit?.(req, { action: 'receive', entity: 'purchase_order', entityId: po.poNumber, after: { status: po.status, actualTotal: po.actualTotal, stockPosted: posted.totalCost, billNumber: bill?.billNumber } });
       if (posted.totalCost > 0) emitToMgr?.('erpUpdated');
-      res.json({ success: true, purchaseOrder: po.toObject() });
+      res.json({ success: true, purchaseOrder: po.toObject(), bill });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 

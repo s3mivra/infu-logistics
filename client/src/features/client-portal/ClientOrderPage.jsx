@@ -814,9 +814,11 @@ export default function ClientOrderPage() {
                   recorded on the order itself, so the slip can state what was
                   charged. The footer still notes the team confirms the final total. */}
               <div className="px-5 py-4">
-                <div className="grid gap-2 pb-2 mb-2 border-b border-neutral-300 text-[9px] font-black uppercase tracking-[0.12em] text-accent grid-cols-[1.25rem_1fr_2rem_5rem]">
+                <div className="grid gap-2 pb-2 mb-2 border-b border-neutral-300 text-[9px] font-black uppercase tracking-[0.12em] text-accent grid-cols-[1rem_1fr_2.75rem_4.25rem_1.75rem_4.5rem]">
                   <span>#</span>
                   <span>Item</span>
+                  <span className="text-right">Unit</span>
+                  <span className="text-right">SRP</span>
                   <span className="text-right">Qty</span>
                   <span className="text-right">Amount</span>
                 </div>
@@ -824,19 +826,26 @@ export default function ClientOrderPage() {
                 {items.map((item, i) => {
                   const gross = Number(item.price || 0);
                   const pct = Number(item.discountPercent || 0);
+                  // The unit selling price IS the SRP for these items; it now has its
+                  // own column, so the old "₱x each" sub-line under the name is gone.
                   const unit = gross * (1 - pct / 100);
+                  // Pack/unit label (e.g. "1kg", "150g") derived server-side from the
+                  // linked INVENTORY item (packSize + display unit) and returned on the
+                  // product. Looked up live, so it also covers older orders. Falls back
+                  // to the product's own base size for anything without a stock link.
+                  const prod = products.find(p => (item.productCode && p.productCode === item.productCode) || (item.productId && String(p._id) === String(item.productId)));
+                  const sizeLabel = (prod?.unitLabel || prod?.baseSize || '').trim();
                   return (
-                    <div key={i} className="grid gap-2 py-2 border-b border-neutral-100 text-[12px] items-start grid-cols-[1.25rem_1fr_2rem_5rem]">
+                    <div key={i} className="grid gap-2 py-2 border-b border-neutral-100 text-[12px] items-start grid-cols-[1rem_1fr_2.75rem_4.25rem_1.75rem_4.5rem]">
                       <span className="text-accent tabular-nums">{i + 1}</span>
                       <span className="min-w-0">
                         <span className="font-semibold block leading-snug break-words">{item.name}</span>
                         {item.productCode && <span className="text-[10px] text-accent font-mono">{item.productCode}</span>}
-                        <span className="text-[10px] text-accent block">
-                          {peso(unit)} each
-                          {pct > 0 && (
-                            <> · <span className="line-through">{peso(gross)}</span> <span className="font-bold">-{pct}%</span></>
-                          )}
-                        </span>
+                        {pct > 0 && (
+                          <span className="text-[10px] text-accent block">
+                            <span className="line-through">{peso(gross)}</span> <span className="font-bold">-{pct}%</span>
+                          </span>
+                        )}
                         {slipOrder.status === 'Partially Fulfilled' && (item.fulfilledQty || 0) > 0 && (item.fulfilledQty || 0) < (item.quantity || 0) && (
                           <span className="text-[10px] font-black block mt-0.5">
                             <span className="text-emerald-600">Fulfilled: {item.fulfilledQty}</span>
@@ -848,6 +857,8 @@ export default function ClientOrderPage() {
                           <span className="text-[10px] font-black block mt-0.5 text-emerald-600">✓ Fulfilled: {item.quantity}</span>
                         )}
                       </span>
+                      <span className="text-right tabular-nums text-accent/80">{sizeLabel || '—'}</span>
+                      <span className="text-right tabular-nums">{peso(unit)}</span>
                       <span className="text-right tabular-nums font-semibold">{item.quantity}</span>
                       <span className="text-right tabular-nums font-semibold">{peso(unit * Number(item.quantity || 0))}</span>
                     </div>

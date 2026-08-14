@@ -78,16 +78,21 @@ export default function LedgerTab({ ctx }) {
     settleForm, settleModal, settleSubmitting, shiftFilter, shiftHistory,
     shiftHistoryPage, shiftHistoryTotal, spoilageForm, spoilageLoading, spoilageModal,
     standardAccounts, stockHistory, submitManualOrder, submitPhysicalCounts, submitRfDisb,
-    submitRfNew, submitRfRepl, toggleDay, toggleOrderList, toggleVat,
+    submitRfNew, submitRfRepl, toggleDay, toggleOrderList,
     totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
     users, varianceNoteMode, varianceReasons,
     apData, fetchApData, apPayModal, setApPayModal, apPayForm, setApPayForm, apPaySubmitting, submitApPayment, suppliers, fetchSuppliers,
+    bills, billsFilter, setBillsFilter, fetchBills, billBusy,
+    billCreate, setBillCreate, submitCreateBill,
+    approveBill, rejectBill, scheduleBill,
+    billPayModal, setBillPayModal, billPayFrom, setBillPayFrom, submitBillPay, expenseAccounts,
     profitByCategory, fetchProfitByCategory,
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
     salesLineItems, sliRange, setSliRange, fetchSalesLineItems, exportSalesLineItemsPDF,
     menuEngineering, fetchMenuEngineering, cashierVariance, fetchCashierVariance, purchaseOrder, fetchPurchaseOrder,
+    commissions, fetchCommissions,
     exportPnlPDF, exportBalanceSheetPDF, exportPurchaseOrderPDF, reconcileInventory,
     coaAccounts, fetchCoa, coaParent, setCoaParent, coaNewName, setCoaNewName,
     coaEditId, setCoaEditId, coaEditName, setCoaEditName, coaBusy,
@@ -117,6 +122,60 @@ export default function LedgerTab({ ctx }) {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [journalSearch]);
+
+  // ── Backdate Sale — a mini-POS: pick products, quantities, discount, comp,
+  //    then record it against a past date (optionally reducing today's stock). ──
+  const [bd, setBd] = useState({
+    date: new Date().toISOString().slice(0, 10),
+    customerName: '', paymentMethod: 'Cash', notes: '',
+    discountPercent: 0, affectInventory: false, isComplimentary: false,
+  });
+  const [bdCart, setBdCart] = useState([]); // [{ productId, productCode, name, price, quantity }]
+  const [bdSearch, setBdSearch] = useState('');
+  const [bdBusy, setBdBusy] = useState(false);
+
+  const bdAddProduct = (p) => setBdCart(prev => {
+    const key = String(p._id);
+    const found = prev.find(x => x.productId === key);
+    if (found) return prev.map(x => x.productId === key ? { ...x, quantity: x.quantity + 1 } : x);
+    return [...prev, { productId: key, productCode: p.productCode || null, name: p.name, price: Number(p.basePrice || p.price || 0), quantity: 1 }];
+  });
+  const bdSetQty = (id, q) => setBdCart(prev => prev.flatMap(x => {
+    if (x.productId !== id) return [x];
+    const n = Math.max(0, q);
+    return n === 0 ? [] : [{ ...x, quantity: n }];
+  }));
+  const bdSetPrice = (id, price) => setBdCart(prev => prev.map(x => x.productId === id ? { ...x, price: Math.max(0, Number(price) || 0) } : x));
+  const bdRemove = (id) => setBdCart(prev => prev.filter(x => x.productId !== id));
+
+  const bdGross = bdCart.reduce((s, x) => s + x.price * x.quantity, 0);
+  const bdPct = bd.isComplimentary ? 0 : Math.max(0, Math.min(100, Number(bd.discountPercent) || 0));
+  const bdDiscount = +(bdGross * bdPct / 100).toFixed(2);
+  const bdTotal = bd.isComplimentary ? 0 : +(bdGross - bdDiscount).toFixed(2);
+
+  const submitBackdateCart = async () => {
+    if (!bd.date) return ui.alert('Pick the sale date.');
+    if (bdCart.length === 0) return ui.alert('Add at least one product to the sale.');
+    const label = bd.isComplimentary ? 'complimentary (₱0)' : `₱${bdTotal.toFixed(2)}`;
+    const stockNote = bd.affectInventory ? '\n\nThis WILL reduce current inventory.' : '';
+    if (!(await ui.confirm(`Record a backdated sale of ${label} on ${bd.date}?${stockNote}`))) return;
+    setBdBusy(true);
+    try {
+      const r = await apiFetch('/api/admin/backdate-sale', { method: 'POST', body: JSON.stringify({
+        date: bd.date, customerName: bd.customerName, paymentMethod: bd.paymentMethod, notes: bd.notes,
+        discountPercent: bdPct, affectInventory: bd.affectInventory, isComplimentary: bd.isComplimentary,
+        items: bdCart.map(x => ({ name: x.name, price: x.price, quantity: x.quantity, productId: x.productId, productCode: x.productCode })),
+      }) });
+      const d = await r.json();
+      if (d.success) {
+        ui.alert(`Backdated sale recorded: ${d.order.orderNumber}\nJournal ref: ${d.journalReference}`);
+        setBdCart([]);
+        setBd(b => ({ ...b, customerName: '', notes: '', discountPercent: 0, isComplimentary: false }));
+        fetchERPData();
+      } else ui.alert(d.error || 'Failed to record backdated sale.');
+    } catch { ui.alert('Network error.'); }
+    finally { setBdBusy(false); }
+  };
 
   const [backfillBusy, setBackfillBusy] = useState(false);
   const runBackfillLedger = async () => {
@@ -220,6 +279,8 @@ export default function LedgerTab({ ctx }) {
   const pbcPage  = usePagination(profitByCategory?.categories, 10);
   const mePage   = usePagination(menuEngineering?.items, 10);
   const cvPage   = usePagination(cashierVariance?.cashiers, 10);
+  const cmPage   = usePagination(commissions?.sellers, 10);
+  const billsPage = usePagination(bills, 12);
   const poPage   = usePagination(purchaseOrder?.lines, 10);
 
   return (
@@ -240,6 +301,7 @@ export default function LedgerTab({ ctx }) {
                   ['percentagetax', 'Percentage Tax',         FileText],
                   ['menueng',       'Menu Engineering',       TrendingUp],
                   ['variance',      'Cashier Variance',       Users],
+                  ['commissions',   'Commissions',            Users],
                 ]
               : [
                   ['journal',    'General Ledger',      FileText],
@@ -247,7 +309,9 @@ export default function LedgerTab({ ctx }) {
                   ['pnl',        'P&L',                 TrendingUp],
                   ['balance',    'Balance Sheet',       BarChart2],
                   ['araap',      'AR & AP',             Truck],
+                  ['bills',      'Bills (AP)',          Receipt],
                   ['accperiods', 'Accounts & Periods',  Settings],
+                  ['backdate',   'Backdate Sale',       Clock],
                   ['revolving',  'Revolving Funds',     RefreshCw],
                   ['expenses',   'Expenses',            Receipt],
                 ]
@@ -260,6 +324,7 @@ export default function LedgerTab({ ctx }) {
                   if (id === 'accperiods') { fetchCoa(); fetchClosedPeriods(); fetchPaymentMap(); }
                   // Merged "AR & AP" page.
                   if (id === 'araap') { fetchArOutstanding(); fetchArAgeing(); fetchApData(); fetchSuppliers(); }
+                  if (id === 'bills') { fetchBills(); fetchSuppliers(); fetchCoa(); }
                   if (id === 'pnl' && !pnlData) fetchPnl();
                   if (id === 'trial') loadTrial();
                   if (id === 'percentagetax') loadPtax();
@@ -272,6 +337,7 @@ export default function LedgerTab({ ctx }) {
                   if (id === 'profitcat') fetchProfitByCategory();
                   if (id === 'menueng') fetchMenuEngineering();
                   if (id === 'variance') fetchCashierVariance();
+                  if (id === 'commissions') fetchCommissions();
                   if (id === 'revolving') { fetchRfFunds(); setRfActiveFund(null); setRfTxs([]); }
                   if (id === 'expenses') { fetchExpenseCategories(); fetchExpenses(); }
                 }}
@@ -1622,6 +1688,179 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
+          {/* ===== COMMISSIONS ===== */}
+          {ledgerSubTab === 'commissions' && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="flex justify-between items-center">
+                <p className="text-xs text-fg/60">Sales attributed by cashier, at each staff member's commission rate (set in User Control). Complimentary and unattributed sales earn no commission.</p>
+                <button onClick={fetchCommissions} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+              </div>
+              {!commissions ? (
+                <p className="text-fg/60 text-sm text-center p-6 font-bold">Click Refresh to compute commissions.</p>
+              ) : (commissions.sellers||[]).length === 0 ? (
+                <p className="text-fg/60 text-sm text-center p-6 font-bold">No attributed sales yet.</p>
+              ) : (
+                <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
+                  <table className="w-full text-left text-xs min-w-[520px]">
+                    <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                      <tr><th className="px-5 py-3">Cashier</th><th className="px-5 py-3 text-right">Orders</th><th className="px-5 py-3 text-right">Sales</th><th className="px-5 py-3 text-right">Rate</th><th className="px-5 py-3 text-right">Commission</th></tr>
+                    </thead>
+                    <tbody>
+                      {cmPage.pageItems.map((c,i) => (
+                        <tr key={c.userCode||i} className={`border-b border-white/5 ${i%2?'bg-white/[0.015]':''}`}>
+                          <td className="px-5 py-2.5 font-bold text-fg">{c.name}</td>
+                          <td className="px-5 py-2.5 text-right text-fg/70 tabular-nums">{c.orderCount}</td>
+                          <td className="px-5 py-2.5 text-right text-fg/80 tabular-nums font-mono">₱{c.salesTotal.toFixed(2)}</td>
+                          <td className="px-5 py-2.5 text-right text-fg/50 tabular-nums">{c.commissionRate}%</td>
+                          <td className="px-5 py-2.5 text-right font-black tabular-nums font-mono text-green-400">₱{c.commissionEarned.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-white/10">
+                        <td colSpan={4} className="px-5 py-3 text-right font-bold text-fg/60 uppercase text-[10px] tracking-wider">Total</td>
+                        <td className="px-5 py-3 text-right font-black tabular-nums font-mono text-green-400">₱{(commissions.totalCommission||0).toFixed(2)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                  <div className="px-3"><Pager {...cmPage} label="sellers" /></div>
+                  <p className="text-[10px] text-fg/60 p-3 text-center">A cashier's rate is set on their user profile in User Control. 0% shows if none is set.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ===== BILLS (AP approval workflow) ===== */}
+          {ledgerSubTab === 'bills' && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="flex justify-between items-center flex-wrap gap-2">
+                <div className="flex gap-1.5 flex-wrap">
+                  {['Pending','Approved','Paid','Rejected','All'].map(s => (
+                    <button key={s}
+                      onClick={() => { setBillsFilter(s); fetchBills(s); }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${billsFilter === s ? 'bg-brand text-white' : 'bg-white/5 text-fg/50 hover:text-fg'}`}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setBillCreate(c => ({ ...c, open: !c.open }))} className="flex items-center gap-2 px-4 py-2 bg-white/5 text-fg/70 rounded-xl font-bold text-sm hover:bg-white/10 transition"><Plus size={14}/> Manual bill</button>
+                  <button onClick={() => fetchBills()} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+                </div>
+              </div>
+
+              {billCreate.open && (
+                <div className="bg-surface border border-white/10 rounded-xl p-4 space-y-3">
+                  <p className="text-xs text-fg/50">A manual bill (rent, utilities, one-off supplier charge) — it books nothing until you Approve it, which posts DR expense / CR Accounts Payable.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Supplier</label>
+                      <select value={billCreate.supplierId} onChange={e => setBillCreate(c => ({ ...c, supplierId: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg">
+                        <option value="">Select supplier…</option>
+                        {(suppliers||[]).map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Expense account (debited on approval)</label>
+                      <select value={billCreate.expenseAccountCode} onChange={e => setBillCreate(c => ({ ...c, expenseAccountCode: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg">
+                        {(expenseAccounts||[]).map(a => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Amount (₱)</label>
+                      <input type="number" min="0" step="0.01" value={billCreate.amount} onChange={e => setBillCreate(c => ({ ...c, amount: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" placeholder="0.00" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Due date (optional)</label>
+                      <input type="date" value={billCreate.dueDate} onChange={e => setBillCreate(c => ({ ...c, dueDate: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Description</label>
+                      <input value={billCreate.description} onChange={e => setBillCreate(c => ({ ...c, description: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" placeholder="e.g. October warehouse rent" />
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <button onClick={submitCreateBill} disabled={billBusy} className="px-5 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">{billBusy ? 'Saving…' : 'Create bill'}</button>
+                  </div>
+                </div>
+              )}
+
+              {!bills ? (
+                <p className="text-fg/60 text-sm text-center p-6 font-bold">Loading bills…</p>
+              ) : bills.length === 0 ? (
+                <p className="text-fg/60 text-sm text-center p-6 font-bold">No {billsFilter !== 'All' ? billsFilter.toLowerCase() : ''} bills.</p>
+              ) : (
+                <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
+                  <table className="w-full text-left text-xs min-w-[720px]">
+                    <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                      <tr>
+                        <th className="px-4 py-3">Bill #</th><th className="px-4 py-3">Supplier</th>
+                        <th className="px-4 py-3">Source</th><th className="px-4 py-3">Description</th>
+                        <th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {billsPage.pageItems.map((b, i) => {
+                        const stCls = { Pending:'bg-yellow-500/20 text-yellow-400', Approved:'bg-blue-500/20 text-blue-400', Paid:'bg-green-500/20 text-green-400', Rejected:'bg-red-500/20 text-red-400' }[b.status] || 'bg-white/10 text-fg/50';
+                        return (
+                          <tr key={b._id} className={`border-b border-white/5 ${i%2?'bg-white/[0.015]':''}`}>
+                            <td className="px-4 py-3 font-mono text-fg/70">{b.billNumber}</td>
+                            <td className="px-4 py-3 font-bold text-fg">{b.supplierName || '—'}</td>
+                            <td className="px-4 py-3"><span className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-fg/50 font-bold">{b.source}</span></td>
+                            <td className="px-4 py-3 text-fg/60 max-w-[200px] truncate" title={b.description || b.poNumber}>{b.description || b.poNumber || '—'}</td>
+                            <td className="px-4 py-3 text-right font-black tabular-nums font-mono text-fg">{peso(b.amount)}</td>
+                            <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${stCls}`}>{b.status}</span>
+                              {b.scheduledPaymentDate && b.status === 'Approved' && <div className="text-[10px] text-fg/40 mt-1">pay {String(b.scheduledPaymentDate).slice(0,10)}</div>}
+                            </td>
+                            <td className="px-4 py-3 text-right whitespace-nowrap">
+                              {b.status === 'Pending' && (
+                                <div className="flex gap-1.5 justify-end">
+                                  <button disabled={billBusy} onClick={() => approveBill(b)} className="px-2.5 py-1 rounded-lg bg-green-500/15 text-green-400 hover:bg-green-500/25 text-[11px] font-bold transition disabled:opacity-50">Approve</button>
+                                  <button disabled={billBusy} onClick={() => rejectBill(b)} className="px-2.5 py-1 rounded-lg bg-red-500/10 text-red-400/80 hover:bg-red-500/20 text-[11px] font-bold transition disabled:opacity-50">Reject</button>
+                                </div>
+                              )}
+                              {b.status === 'Approved' && (
+                                <div className="flex gap-1.5 justify-end">
+                                  <button disabled={billBusy} onClick={() => scheduleBill(b)} className="px-2.5 py-1 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 text-[11px] font-bold transition disabled:opacity-50">Schedule</button>
+                                  <button disabled={billBusy} onClick={() => { setBillPayModal(b); setBillPayFrom('111000'); }} className="px-2.5 py-1 rounded-lg bg-brand/20 text-brand hover:bg-brand/30 text-[11px] font-bold transition disabled:opacity-50">Pay</button>
+                                </div>
+                              )}
+                              {(b.status === 'Paid' || b.status === 'Rejected') && (
+                                <span className="text-[10px] text-fg/30">{b.journalEntryRef || (b.rejectionReason ? 'rejected' : '—')}</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <div className="px-3"><Pager {...billsPage} label="bills" /></div>
+                  <p className="text-[10px] text-fg/60 p-3 text-center">PO-sourced bills already posted their liability at goods receipt — approving one is a sign-off, not a new posting. Manual bills post on approval.</p>
+                </div>
+              )}
+
+              {/* Pay modal */}
+              {billPayModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setBillPayModal(null)}>
+                  <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+                    <h2 className="font-black text-fg mb-1">Pay bill {billPayModal.billNumber}</h2>
+                    <p className="text-fg/50 text-sm mb-4">{billPayModal.supplierName} · {peso(billPayModal.amount)}</p>
+                    <p className="text-[11px] text-fg/40 mb-3">Posts DR Accounts Payable / CR the account you pay from.</p>
+                    <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Pay from</label>
+                    <select value={billPayFrom} onChange={e => setBillPayFrom(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-5">
+                      {(cashAndBankAccounts||[]).map(a => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
+                    </select>
+                    <div className="flex gap-3">
+                      <button onClick={() => setBillPayModal(null)} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">Cancel</button>
+                      <button onClick={submitBillPay} disabled={billBusy} className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">{billBusy ? 'Recording…' : 'Record payment'}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* ===== PURCHASE ORDER SUGGESTION ===== */}
           {ledgerSubTab === 'po' && (
             <div className="space-y-4 animate-fade-in">
@@ -2264,113 +2503,163 @@ export default function LedgerTab({ ctx }) {
 
           {/* ── TENANCY HEALTH + MY PERMISSIONS ───────────────────────────── */}
           {/* ── BACKDATE SALES (superadmin only) ──────────────────────────── */}
-          {(ledgerSubTab === 'backdate' || ledgerSubTab === 'accperiods') && (
-            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4">
+          {ledgerSubTab === 'backdate' && (
+            <div className="space-y-4 animate-fade-in">
               <div>
-                <h3 className="text-xl font-black text-fg flex items-center gap-2"><Clock size={18} className="text-brand"/> Backdate Sales</h3>
-                <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-1">Record historical sales so reports include them. Books a real journal entry. No inventory deduction.</p>
+                <h3 className="text-xl font-black text-fg flex items-center gap-2"><Clock size={18} className="text-brand"/> Backdate Sale</h3>
+                <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-1">Ring up a historical sale like the register, then post it to a past date. Books a real, balanced journal entry.</p>
               </div>
               {!isSuperAdmin ? (
                 <p className="mt-2 text-[10px] uppercase tracking-widest font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5 inline-flex items-center gap-1.5">
                   <Lock size={11}/> Superadmin only
                 </p>
               ) : (
-                <div className="bg-page-bg border border-white/10 rounded-xl p-4 space-y-3 max-w-xl">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Sale Date *</label>
-                      <input type="date" value={backdateForm.date} max={new Date().toISOString().slice(0,10)}
-                        onChange={e => setBackdateForm({ ...backdateForm, date: e.target.value })}
-                        className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+                  {/* LEFT: product picker + cart */}
+                  <div className="bg-page-bg border border-white/10 rounded-xl p-4 flex flex-col min-h-[420px]">
+                    <div className="relative mb-3">
+                      <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30" />
+                      <input type="text" placeholder="Search products to add…" value={bdSearch}
+                        onChange={e => setBdSearch(e.target.value)}
+                        className="w-full bg-surface border border-white/10 rounded-lg pl-9 pr-3 py-2.5 text-fg text-sm outline-none focus:border-brand/60" />
                     </div>
-                    <div>
-                      <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Amount (₱) *</label>
-                      <input type="number" min="0.01" step="0.01" value={backdateForm.amount}
-                        onChange={e => setBackdateForm({ ...backdateForm, amount: e.target.value })}
-                        className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold tabular-nums outline-none focus:border-brand/60" />
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 overflow-y-auto max-h-56 mb-3 custom-scrollbar content-start">
+                      {(products || []).filter(p => !bdSearch || p.name.toLowerCase().includes(bdSearch.toLowerCase())).slice(0, 60).map(p => (
+                        <button key={p._id} onClick={() => bdAddProduct(p)}
+                          className="text-left bg-surface border border-white/10 rounded-lg p-2.5 hover:border-brand/60 hover:bg-brand/5 transition active-press min-h-[56px]">
+                          <p className="text-[11px] font-bold text-fg leading-tight line-clamp-2">{p.name}</p>
+                          <p className="text-brand font-black text-sm mt-1 tabular-nums">{peso(Number(p.basePrice || p.price || 0))}</p>
+                        </button>
+                      ))}
+                      {(products || []).length === 0 && <p className="col-span-full text-fg/30 text-xs text-center py-8">No products yet — add them in Menu Setup.</p>}
+                    </div>
+                    <div className="border-t border-white/10 pt-3 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+                      <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-2">Cart ({bdCart.length})</p>
+                      {bdCart.length === 0 ? (
+                        <p className="text-fg/30 text-xs py-6 text-center">Tap products above to build the sale.</p>
+                      ) : bdCart.map(x => (
+                        <div key={x.productId} className="flex items-center gap-2 py-2 border-b border-white/5">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-fg truncate">{x.name}</p>
+                            <div className="flex items-center gap-1 mt-1">
+                              <span className="text-[10px] text-fg/40">₱</span>
+                              <input type="number" min="0" step="0.01" value={x.price} onChange={e => bdSetPrice(x.productId, e.target.value)}
+                                className="w-16 bg-surface border border-white/10 rounded px-1.5 py-0.5 text-[11px] text-fg tabular-nums outline-none focus:border-brand/60" />
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button onClick={() => bdSetQty(x.productId, x.quantity - 1)} className="w-7 h-7 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 font-black">−</button>
+                            <input type="number" min="1" value={x.quantity} onChange={e => bdSetQty(x.productId, parseInt(e.target.value) || 1)}
+                              className="w-11 bg-surface border border-white/10 rounded px-1 py-1 text-center text-xs text-fg tabular-nums outline-none focus:border-brand/60" />
+                            <button onClick={() => bdSetQty(x.productId, x.quantity + 1)} className="w-7 h-7 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 font-black">+</button>
+                          </div>
+                          <span className="w-20 text-right text-xs font-black text-fg tabular-nums shrink-0">{peso(x.price * x.quantity)}</span>
+                          <button onClick={() => bdRemove(x.productId)} className="text-red-400/60 hover:text-red-400 shrink-0"><Trash2 size={14}/></button>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+
+                  {/* RIGHT: sale details */}
+                  <div className="bg-page-bg border border-white/10 rounded-xl p-4 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Sale Date *</label>
+                        <input type="date" value={bd.date} max={new Date().toISOString().slice(0,10)}
+                          onChange={e => setBd({ ...bd, date: e.target.value })}
+                          className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Payment Method</label>
+                        <select value={bd.paymentMethod} onChange={e => setBd({ ...bd, paymentMethod: e.target.value })}
+                          disabled={bd.isComplimentary}
+                          className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60 disabled:opacity-40">
+                          <optgroup label="In-Store Payments">
+                            <option value="Cash">Cash</option>
+                            <option value="Bank Transfer">Bank Transfer</option>
+                          </optgroup>
+                          <optgroup label="E-Wallets">
+                            <option value="GCash">GCash</option>
+                            <option value="Maya">Maya</option>
+                            <option value="Maribank">Maribank / Seabank</option>
+                            <option value="Other E-Wallet">Other E-Wallet</option>
+                          </optgroup>
+                          <optgroup label="Delivery Partners">
+                            <option value="Grab Delivery">Grab Delivery</option>
+                            {BUSINESS_TYPE === 'log' ? <option value="Lalamove">Lalamove</option> : <option value="Foodpanda">Foodpanda</option>}
+                            <option value="Manual Delivery">Manual/Direct</option>
+                          </optgroup>
+                          <optgroup label="Credit"><option value="On Account">On Account (A/R)</option></optgroup>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Toggles: reduce inventory (default off) + complimentary */}
+                    <div className="space-y-2">
+                      <button onClick={() => setBd({ ...bd, affectInventory: !bd.affectInventory })}
+                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition ${bd.affectInventory ? 'bg-amber-500/10 border-amber-500/40' : 'bg-surface border-white/10'}`}>
+                        <span className="text-left">
+                          <span className="text-xs font-bold text-fg block">Reduce current inventory</span>
+                          <span className="text-[10px] text-fg/40">{bd.affectInventory ? 'Stock WILL be deducted + COGS booked' : 'Off — old sale won’t touch today’s stock (default)'}</span>
+                        </span>
+                        <span className={`w-10 h-5 rounded-full shrink-0 relative transition ${bd.affectInventory ? 'bg-amber-500' : 'bg-white/15'}`}>
+                          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bd.affectInventory ? 'left-[22px]' : 'left-0.5'}`}/>
+                        </span>
+                      </button>
+                      <button onClick={() => setBd({ ...bd, isComplimentary: !bd.isComplimentary })}
+                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition ${bd.isComplimentary ? 'bg-brand/10 border-brand/40' : 'bg-surface border-white/10'}`}>
+                        <span className="text-left">
+                          <span className="text-xs font-bold text-fg block">Complimentary (free)</span>
+                          <span className="text-[10px] text-fg/40">{bd.isComplimentary ? 'Books Comp Expense / Revenue, collects ₱0' : 'Off — a normal paid sale'}</span>
+                        </span>
+                        <span className={`w-10 h-5 rounded-full shrink-0 relative transition ${bd.isComplimentary ? 'bg-brand' : 'bg-white/15'}`}>
+                          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bd.isComplimentary ? 'left-[22px]' : 'left-0.5'}`}/>
+                        </span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Customer (optional)</label>
+                        <input type="text" placeholder="Walk-in" value={bd.customerName}
+                          onChange={e => setBd({ ...bd, customerName: e.target.value })}
+                          className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg outline-none focus:border-brand/60" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Discount %</label>
+                        <input type="number" min="0" max="100" step="0.5" value={bd.discountPercent} disabled={bd.isComplimentary}
+                          onChange={e => setBd({ ...bd, discountPercent: e.target.value })}
+                          className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold tabular-nums outline-none focus:border-brand/60 disabled:opacity-40" />
+                      </div>
+                    </div>
                     <div>
-                      <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Customer Name (optional)</label>
-                      <input type="text" placeholder="Walk-in" value={backdateForm.customerName}
-                        onChange={e => setBackdateForm({ ...backdateForm, customerName: e.target.value })}
+                      <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Notes</label>
+                      <input type="text" placeholder="e.g. Paper receipt #4521, 2024 carry-over" value={bd.notes}
+                        onChange={e => setBd({ ...bd, notes: e.target.value })}
                         className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg outline-none focus:border-brand/60" />
                     </div>
-                    <div>
-                      <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Payment Method</label>
-                      <select value={backdateForm.paymentMethod}
-                        onChange={e => setBackdateForm({ ...backdateForm, paymentMethod: e.target.value })}
-                        className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
-                        {/* Same canonical set + custom sub-accounts as the live checkout
-                            payment selector (OrdersTab) — every method the app actually
-                            supports, not a short hand-picked subset. */}
-                        <optgroup label="In-Store Payments">
-                          <option value="Cash">Cash</option>
-                          <option value="Bank Transfer">Bank Transfer</option>
-                        </optgroup>
-                        <optgroup label="E-Wallets">
-                          <option value="GCash">GCash</option>
-                          <option value="Maya">Maya</option>
-                          <option value="Maribank">Maribank / Seabank</option>
-                          <option value="Other E-Wallet">Other E-Wallet</option>
-                        </optgroup>
-                        <optgroup label="Delivery Partners">
-                          <option value="Grab Delivery">Grab Delivery</option>
-                          {BUSINESS_TYPE === 'log'
-                            ? <option value="Lalamove">Lalamove</option>
-                            : <option value="Foodpanda">Foodpanda</option>
-                          }
-                          <option value="Manual Delivery">Manual/Direct</option>
-                        </optgroup>
-                        <optgroup label="Credit">
-                          <option value="On Account">On Account (A/R)</option>
-                        </optgroup>
-                        {(() => {
-                          const PARENT_LABEL = {
-                            '111000': 'Custom Cash Accounts',
-                            '112000': 'Custom Bank Accounts',
-                            '113000': 'Custom E-Wallets',
-                            '120000': 'Custom Delivery Partners',
-                            '220000': 'Custom On-Account Vendors',
-                          };
-                          const STANDARD_NAMES = new Set(['Cash','Bank Transfer','GCash','Maya','Maribank','Other E-Wallet','Grab Delivery','Lalamove','Foodpanda','Manual Delivery','Pickup','On Account','Cash in Bank','E-Wallet']);
-                          const groups = {};
-                          for (const a of (coaAccounts || [])) {
-                            if (!a.custom || !a.parent) continue;
-                            if (!PARENT_LABEL[a.parent]) continue;
-                            if (STANDARD_NAMES.has(a.name)) continue; // already in the canonical optgroups above
-                            (groups[a.parent] ||= []).push(a);
-                          }
-                          return Object.keys(PARENT_LABEL).filter(p => groups[p]).map(p => (
-                            <optgroup key={p} label={PARENT_LABEL[p]}>
-                              {groups[p].sort((a,b)=>a.code.localeCompare(b.code)).map(a => (
-                                <option key={a.code} value={a.name}>{a.name}</option>
-                              ))}
-                            </optgroup>
-                          ));
-                        })()}
-                      </select>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Notes</label>
-                    <input type="text" placeholder="e.g. Paper receipt #4521, 2024 carry-over" value={backdateForm.notes}
-                      onChange={e => setBackdateForm({ ...backdateForm, notes: e.target.value })}
-                      className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg outline-none focus:border-brand/60" />
-                  </div>
-                  <button onClick={submitBackdateSale} disabled={backdateBusy}
-                    className="w-full bg-brand text-white font-black py-3 rounded-lg uppercase tracking-widest text-sm hover:bg-brand/90 transition disabled:opacity-50">
-                    {backdateBusy ? 'Posting…' : 'Record Backdated Sale'}
-                  </button>
-                  <p className="text-[10px] text-fg/40">Period locks are enforced - if the chosen month is closed, the post is rejected with a 423.</p>
 
-                  <div className="border-t border-white/10 pt-3 mt-1">
-                    <button onClick={runBackfillLedger} disabled={backfillBusy}
-                      className="w-full bg-page-bg border border-white/10 text-fg font-black py-2.5 rounded-lg uppercase tracking-widest text-xs hover:border-brand/60 transition disabled:opacity-50">
-                      {backfillBusy ? 'Scanning…' : 'Repair Missing Ledger Entries'}
+                    {/* Totals */}
+                    <div className="bg-surface border border-white/10 rounded-lg p-3 space-y-1 text-sm">
+                      <div className="flex justify-between text-fg/60"><span>Gross</span><span className="tabular-nums">{peso(bdGross)}</span></div>
+                      {bdDiscount > 0 && <div className="flex justify-between text-fg/60"><span>Discount ({bdPct}%)</span><span className="tabular-nums">−{peso(bdDiscount)}</span></div>}
+                      <div className="flex justify-between text-base font-black text-fg border-t border-white/10 pt-1 mt-1"><span>{bd.isComplimentary ? 'Complimentary' : 'Total'}</span><span className="tabular-nums text-brand">{peso(bdTotal)}</span></div>
+                    </div>
+
+                    <button onClick={submitBackdateCart} disabled={bdBusy || bdCart.length === 0}
+                      className="w-full bg-brand text-white font-black py-3 rounded-lg uppercase tracking-widest text-sm hover:bg-brand/90 transition disabled:opacity-50">
+                      {bdBusy ? 'Posting…' : 'Record Backdated Sale'}
                     </button>
-                    <p className="text-[10px] text-fg/40 mt-1.5">One-time fix for backdated sales that show up in reports but have no journal entry (an old bug). Safe to run more than once - already-linked sales are skipped.</p>
+                    <p className="text-[10px] text-fg/40">Period locks are enforced — a closed month is rejected. Always audited.</p>
+
+                    <div className="border-t border-white/10 pt-3">
+                      <button onClick={runBackfillLedger} disabled={backfillBusy}
+                        className="w-full bg-surface border border-white/10 text-fg/70 font-bold py-2 rounded-lg uppercase tracking-widest text-[11px] hover:border-brand/60 transition disabled:opacity-50">
+                        {backfillBusy ? 'Scanning…' : 'Repair Missing Ledger Entries'}
+                      </button>
+                      <p className="text-[10px] text-fg/40 mt-1.5">One-time fix for older backdated sales missing a journal entry. Safe to run repeatedly.</p>
+                    </div>
                   </div>
                 </div>
               )}

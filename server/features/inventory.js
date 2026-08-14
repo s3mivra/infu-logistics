@@ -632,6 +632,27 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
     const update = {};
     for (const k of allowed) if (k in req.body) update[k] = req.body[k];
 
+    // itemCode is a business key: in log mode the resale Product's productCode
+    // equals it, so a rename must cascade or the two silently desync. Handled
+    // separately from the plain whitelist because of that cascade and the
+    // uniqueness check. StockCards key off inventoryId, so history is unaffected.
+    let codeRename = null;
+    if ('itemCode' in req.body) {
+      const raw = String(req.body.itemCode || '').trim().toUpperCase();
+      if (!raw) return res.status(400).json({ success: false, error: 'Item code cannot be blank.' });
+      const current = await Inventory.findById(req.params.id).lean();
+      if (!current) return res.status(404).json({ success: false, error: 'Item not found.' });
+      if (raw !== current.itemCode) {
+        const clash = await Inventory.findOne({
+          _id: { $ne: req.params.id }, itemCode: raw,
+          businessType: BUSINESS_TYPE, ...tenantScope(req),
+        }).lean();
+        if (clash) return res.status(400).json({ success: false, error: `Another item already uses code "${raw}".` });
+        update.itemCode = raw;
+        codeRename = { from: current.itemCode, to: raw };
+      }
+    }
+
     if ('itemName' in update) {
       if (typeof update.itemName !== 'string' || !update.itemName.trim()) {
         return res.status(400).json({ success: false, error: 'Item name required.' });
@@ -664,6 +685,17 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
 
     const updatedItem = await Inventory.findByIdAndUpdate(req.params.id, update, { returnDocument: 'after' });
     if (!updatedItem) return res.status(404).json({ success: false, error: 'Item not found.' });
+
+    // Cascade the code rename to the linked resale product (log mode). Scoped by
+    // the old code so only the matching product moves; historical order lines keep
+    // the code they were sold under, which is correct — those are booked records.
+    if (codeRename) {
+      await Product.updateMany(
+        { productCode: codeRename.from, businessType: BUSINESS_TYPE, ...tenantScope(req) },
+        { $set: { productCode: codeRename.to } },
+      );
+    }
+
     emitToMgr('erpUpdated');
     res.json({ success: true, item: updatedItem });
   } catch (err) {

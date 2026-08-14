@@ -2,6 +2,13 @@
 
 Actionable checklist for going live. Allow ~30 minutes.
 
+> **Deploying 4 tenants on one Hostinger KVM2 box via `platform/control-plane`?**
+> This runbook assumes a single `docker compose` stack (one `api`/`web` pair,
+> `make logs`/`make backup` acting on it directly) — the multi-tenant control
+> plane replaces the provisioning steps below with `POST /api/tenants`, and
+> `make logs`/`make backup` don't act on 4 stacks by name. See
+> [DEPLOY_4TENANT_KVM2.md](DEPLOY_4TENANT_KVM2.md) for what's different.
+
 ---
 
 ## Pre-Flight (one-time, before first deploy)

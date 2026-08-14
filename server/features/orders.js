@@ -45,6 +45,9 @@ export default function registerOrders(ctx) {
     requireStaff,
     evaluateClientAccess,
     computePercentageTax,
+    computeOrderVat,
+    normaliseVatRate,
+    DEFAULT_VAT_RATE,
     PERCENTAGE_TAX_RATE,
     validateDateRange,
     log,
@@ -112,6 +115,11 @@ export default function registerOrders(ctx) {
     Inventory,
     JournalEntrySchema,
     JournalEntry,
+    TenantStatsSchema,
+    TenantStats,
+    STATS_SHARDS,
+    ProductStatsSchema,
+    ProductStats,
     InventoryMovementSchema,
     InventoryMovement,
     StockCardSchema,
@@ -179,6 +187,116 @@ export default function registerOrders(ctx) {
     requireSuperOrAdmin,
     verifyOrderAuth,
   } = ctx;
+
+// Small randomized backoff between WriteConflict retries on the completion/
+// void/refund/partial-fulfill/drop-remaining transactions. Every one of them
+// now writes the same singleton TenantStats doc (see applyStatsDelta below),
+// so a burst of truly-simultaneous requests retrying with zero delay tends to
+// re-collide with each other on the very next attempt — a short jittered
+// pause spaces the retries out and lets one of them land.
+const STATS_RETRY_ATTEMPTS = 6;
+const statsRetryDelayMs = (attempt) => (15 + Math.floor(Math.random() * 55)) * attempt;
+const statsRetryDelay = (attempt) => new Promise((r) => setTimeout(r, statsRetryDelayMs(attempt)));
+
+// Shared by every route whose handler writes to the hot sharded TenantStats/
+// ProductStats documents (complete/void/partial-fulfill/drop-remaining/refund).
+// `onceFn(req, res, mayRetry)` returns `true` to ask for another attempt (a
+// transient WriteConflict with nothing sent yet) or falsy once it has either
+// succeeded or already written a response — see each *Once function's own
+// catch block for the transient-error check that produces this signal.
+async function runWithStatsRetry(onceFn, req, res) {
+  for (let attempt = 1; attempt <= STATS_RETRY_ATTEMPTS; attempt++) {
+    const retry = await onceFn(req, res, attempt < STATS_RETRY_ATTEMPTS);
+    if (retry !== true) return;
+    await statsRetryDelay(attempt);
+  }
+}
+
+// Is this a MongoDB transaction error worth retrying (another writer collided
+// with us on the same document) rather than a real failure? Shared by every
+// *Once function's catch block above so the classification can't drift
+// between the 5 stats-writing routes.
+function isTransientTxnError(err) {
+  const msg = String(err?.errorLabels || err?.message || '');
+  return (err?.errorLabels || []).includes('TransientTransactionError') || /WriteConflict|Write conflict/i.test(msg);
+}
+
+// Mirrors exactly what the old unbounded Order.aggregate() dashboard queries
+// computed (see reports.js), but as an O(1) running total kept in TenantStats/
+// ProductStats and updated atomically, in the SAME transaction, wherever an
+// order's status flips to/from 'Completed'. sign=+1 when an order newly becomes
+// Completed (main completion, unvoid, partial-fulfill's final round, drop-
+// remaining); sign=-1 when a Completed order stops being Completed (void,
+// refund — both full and partial refunds move status off 'Completed', so both
+// fully reverse the counters, same as the old aggregation would simply stop
+// counting them). Complimentary orders never contribute to ProductStats,
+// mirroring reports.js's `isComplimentary: { $ne: true }` filter on that query.
+async function applyStatsDelta(order, sign, session) {
+  const orderRevenue = order.isComplimentary ? 0 : (order.total || 0);
+  const orderComp = order.isComplimentary ? (order.subtotal || 0) : 0;
+
+  // Random shard: spreads concurrent writers across STATS_SHARDS documents
+  // instead of all colliding on one (see the schema comment in server.js for
+  // why these are sharded rather than true singletons).
+  const tenantShard = Math.floor(Math.random() * STATS_SHARDS);
+  await TenantStats.findOneAndUpdate(
+    { businessType: BUSINESS_TYPE, shard: tenantShard },
+    { $inc: {
+        cumulativeRevenue: sign * orderRevenue,
+        cumulativeComp: sign * orderComp,
+        cumulativeOrderCount: sign * 1,
+        cumulativeNonCompCount: sign * (order.isComplimentary ? 0 : 1),
+      } },
+    { session, upsert: true }
+  );
+
+  if (order.isComplimentary) return;
+
+  const byName = new Map();
+  for (const item of (order.items || [])) {
+    const qty = item.quantity || 0;
+    const rev = (item.price || 0) * qty;
+    const prev = byName.get(item.name) || { qty: 0, rev: 0 };
+    byName.set(item.name, { qty: prev.qty + qty, rev: prev.rev + rev });
+  }
+  // One round trip for every distinct product on the order, instead of one
+  // findOneAndUpdate per product awaited sequentially inside this transaction.
+  const ops = [];
+  for (const [name, { qty, rev }] of byName) {
+    const productShard = Math.floor(Math.random() * STATS_SHARDS);
+    ops.push({
+      updateOne: {
+        filter: { businessType: BUSINESS_TYPE, productName: name, shard: productShard },
+        update: { $inc: { cumulativeQty: sign * qty, cumulativeRevenue: sign * rev } },
+        upsert: true,
+      },
+    });
+  }
+  if (ops.length) await ProductStats.bulkWrite(ops, { session });
+}
+
+// The business's VAT registration, read fresh per order. Deliberately not cached:
+// flipping the toggle must take effect on the very next sale, and one extra
+// indexed lookup is nothing next to the writes an order already performs.
+//
+// Absent settings mean a non-VAT business, which is how every install behaved
+// before VAT existed — so an untouched system keeps its current totals exactly.
+async function loadVatConfig() {
+  const [enabledRow, rateRow, orderRow, inclusiveRow] = await Promise.all([
+    Settings.findOne({ key: 'vatEnabled' }).lean(),
+    Settings.findOne({ key: 'vatRate' }).lean(),
+    Settings.findOne({ key: 'scPwdOrder' }).lean(),
+    Settings.findOne({ key: 'vatInclusive' }).lean(),
+  ]);
+  return {
+    enabled: enabledRow?.value === true || enabledRow?.value === 'true',
+    rate: normaliseVatRate(rateRow?.value, DEFAULT_VAT_RATE),
+    scPwdOrder: orderRow?.value === 'discount-first' ? 'discount-first' : 'vat-first',
+    // Default true: absent setting means the Philippine retail default, which is
+    // also how every order booked before this option existed was priced.
+    inclusive: inclusiveRow ? inclusiveRow.value !== false && inclusiveRow.value !== 'false' : true,
+  };
+}
 
 // Repeat-walk-in auto-promotion: a POS sale with a real (non-"Guest") customerName
 // that isn't already tied to a ClientAccount. Once the same name has 3 Completed
@@ -340,9 +458,14 @@ app.get('/api/orders/:id', async (req, res) => {
 });
 
 app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
+  // Declared outside the try block on purpose: the E11000 handler in catch{}
+  // below needs it, and a try{}-scoped const is NOT visible inside its own
+  // catch{} block (separate lexical scope) — referencing it there throws a
+  // ReferenceError, which as an uncaught rejection in an async handler hangs
+  // the request with no response instead of erroring cleanly.
+  const idempotencyKey = req.headers['idempotency-key'];
   try {
     // 1. IDEMPOTENCY CHECK
-    const idempotencyKey = req.headers['idempotency-key'];
     if (idempotencyKey) {
       const existingOrder = await Order.findOne({ idempotencyKey });
       if (existingOrder) return res.status(200).json({ success: true, order: existingOrder, message: "Duplicate prevented." });
@@ -374,14 +497,18 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // bought it themselves. Ignored when the caller IS already a client (the
     // JWT identity is canonical and can't be overridden client-side).
     let onBehalfClientId = '';
+    let onBehalfSegments = [];
     if (!isClientOrder && req.body.clientAccountId) {
       try {
         const cli = await ClientAccount.findById(req.body.clientAccountId).lean();
-        if (cli && cli.isActive) onBehalfClientId = String(cli._id);
+        if (cli && cli.isActive) { onBehalfClientId = String(cli._id); onBehalfSegments = cli.segments || []; }
       } catch { /* invalid id — ignore, fall back to default discount */ }
     }
 
-    let isVatExempt = true;
+    // SC/PWD is a property of the SALE, not of the business's VAT registration —
+    // the cashier marks it per order and the POS already sends the flag. A non-VAT
+    // business still labels the discount SC/PWD; it simply has no VAT to strip.
+    const isVatExempt = req.body.isVatExempt === true;
     // FIX 1: Safely default to Takeout if the table is null or empty
     if (!table) table = 'Takeout';
 
@@ -453,7 +580,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     const _prodNames = items.map(i => i.name).filter(Boolean);
     const _discProds = await Product.find(
       { $or: [{ _id: { $in: _prodIds } }, { name: { $in: _prodNames } }] },
-      { _id: 1, name: 1, discountPercent: 1, clientDiscounts: 1 }
+      { _id: 1, name: 1, discountPercent: 1, clientDiscounts: 1, segmentDiscounts: 1, bulkBreaks: 1, vatExempt: 1 }
     ).lean();
     const _discById = new Map(_discProds.map(p => [String(p._id), p]));
     const _discByName = new Map(_discProds.map(p => [p.name, p]));
@@ -462,17 +589,58 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     const _buyerClientId = isClientOrder
       ? String(req.user.clientId || req.user._id || '')
       : (onBehalfClientId || '');
+    // Buyer's segment tags, for segmentDiscounts resolution. The on-behalf path
+    // already loaded them above; an authenticated client's JWT only carries
+    // identity fields (see client-portal.js login), not segments, so that path
+    // needs its own lookup.
+    let _buyerSegments = onBehalfSegments;
+    if (isClientOrder && _buyerClientId) {
+      try {
+        const buyerAcct = await ClientAccount.findById(_buyerClientId, { segments: 1 }).lean();
+        _buyerSegments = buyerAcct?.segments || [];
+      } catch { /* ignore — no segment discount applies */ }
+    }
     const productDiscPct = (item) => {
       const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
       if (!p) return 0;
-      // 1) per-client override beats the default when a client is buying
+      // 1) per-client override beats everything else when a client is buying
       if (_buyerClientId) {
         const ov = (p.clientDiscounts || []).find(d => String(d.clientId) === _buyerClientId);
         if (ov) return Math.max(0, Math.min(100, Number(ov.percent || 0)));
       }
+      // 2) segment override — highest percent among any segment the buyer carries
+      if (_buyerSegments.length && (p.segmentDiscounts || []).length) {
+        const matches = p.segmentDiscounts.filter(d => _buyerSegments.includes(d.segment));
+        if (matches.length) return Math.max(0, Math.min(100, Math.max(...matches.map(d => Number(d.percent || 0)))));
+      }
+      // 3) flat per-product default
       return Math.max(0, Math.min(100, Number(p.discountPercent || 0)));
     };
+    // Quantity-break bulk pricing, independent of clientDiscounts/segmentDiscounts
+    // above — combined via Math.max where it's applied, never stacked.
+    const bulkQtyDiscPct = (item) => {
+      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+      const breaks = p?.bulkBreaks || [];
+      if (!breaks.length) return 0;
+      const qty = Number(item.quantity || 0);
+      const qualifying = breaks.filter(b => qty >= Number(b.minQty || 0));
+      if (!qualifying.length) return 0;
+      return Math.max(0, Math.min(100, Math.max(...qualifying.map(b => Number(b.percent || 0)))));
+    };
 
+    // Per-item pass resolves only the PRODUCT-level discounts. Order-level
+    // discount and VAT are settled afterwards in one place, because with
+    // VAT-inclusive pricing the split depends on the final collected amount and
+    // cannot be accumulated line by line without rounding drift.
+    let totalProductDisc = 0;
+    let baseAfterProductDisc = 0;
+    let exemptAfterProductDisc = 0;
+    // Server-authoritative VAT classification, same rule as the discount lookup:
+    // never trust a client-supplied flag, resolve it from the product record.
+    const productIsExempt = (item) => {
+      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+      return p?.vatExempt === true;
+    };
     const validatedItems = items.map(item => {
       item.hasDiscount = true;
       // Calculate Add-Ons Total
@@ -480,30 +648,42 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       const itemBase = ((item.price || 0) + addOnTotal) * (item.quantity || 1);
       totalGross += itemBase;
 
-      // Per-product discount applies to THIS line only.
-      const prodPct = productDiscPct(item);
+      // Per-product discount applies to THIS line only — combine the resolved
+      // client/segment/default rate with any qualifying bulk-quantity break,
+      // taking whichever is higher (never stacked).
+      const prodPct = Math.max(productDiscPct(item), bulkQtyDiscPct(item));
       const prodDisc = +(itemBase * prodPct / 100).toFixed(2);
       item.productDiscountPercent = prodPct;
-      totalDiscount += prodDisc;
-      const lineBase = itemBase - prodDisc;   // base the order-level discount works on
+      totalProductDisc += prodDisc;
+      baseAfterProductDisc += itemBase - prodDisc;   // base the order-level discount works on
 
-      if (isComplimentary) {
-        totalDiscount += lineBase;
-      } else if (discountPercent > 0) {
-        // Order-wide discount (SC/PWD / promo) on top of any product discount.
-        totalDiscount += lineBase * (discountPercent / 100);
-      }
+      item.vatExempt = productIsExempt(item);
+      if (item.vatExempt) exemptAfterProductDisc += itemBase - prodDisc;
       return item;
     });
 
-    // Flat peso discount (POS "₱ off") — applied after the per-item percent pass,
-    // capped at the gross so the total never goes negative.
-    if (!isComplimentary && discountPercent === 0 && flatDiscount > 0) {
-      totalDiscount = Math.min(flatDiscount, totalGross);
-    }
+    const vatCfg = await loadVatConfig();
+    // Prices are VAT-INCLUSIVE, so enabling VAT does not change what the customer
+    // pays — it only splits the collected amount into net sales and output VAT.
+    const vatResult = isComplimentary
+      ? { total: 0, vatAmount: 0, vatableSales: 0, vatExemptSales: 0,
+          discount: +baseAfterProductDisc.toFixed(2), rate: vatCfg.rate }
+      : computeOrderVat({
+          grossInclusive: baseAfterProductDisc,
+          exemptGross: exemptAfterProductDisc,
+          discountPercent,
+          flatDiscount,
+          vatEnabled: vatCfg.enabled,
+          vatRate: vatCfg.rate,
+          isVatExempt,
+          scPwdOrder: vatCfg.scPwdOrder,
+          vatInclusive: vatCfg.inclusive,
+        });
 
-    const vatRate = 0; // VAT DISABLED
-    const finalTotal = totalGross - totalDiscount + totalVat; // Add VAT on top!
+    totalDiscount = +(totalProductDisc + vatResult.discount).toFixed(2);
+    totalVat = vatResult.vatAmount;
+    const vatRate = vatResult.rate;
+    const finalTotal = vatResult.total;
 
     const currentYear = new Date().getFullYear();
     const orderNumber = await generateNextSequence(Order, `ORD-${currentYear}`, 'orderNumber');
@@ -586,6 +766,11 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       subtotal: totalGross,
       vatRate: vatRate,
       vatAmount: totalVat,
+      vatableSales: vatResult.vatableSales,
+      vatExemptSales: vatResult.vatExemptSales,
+      // Stamped so this receipt can always be re-derived, even after the setting changes.
+      scPwdOrder: vatCfg.scPwdOrder,
+      isVatInclusive: vatCfg.inclusive,
       discountPercent: isComplimentary ? 0 : discountPercent,
       discount: totalDiscount,
       total: finalTotal,
@@ -611,6 +796,15 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     emitToOps('newOrder', newOrder);
     res.json({ success: true, order: newOrder });
   } catch (error) {
+    // The findOne check above has a TOCTOU window — two truly concurrent
+    // requests carrying the same Idempotency-Key can both pass it before
+    // either create() finishes. idempotencyKey's unique index (see server.js)
+    // turns the loser into an E11000 here instead of a duplicate order;
+    // resolve it the same way the findOne check would have.
+    if (error?.code === 11000 && error?.keyPattern?.idempotencyKey && idempotencyKey) {
+      const existingOrder = await Order.findOne({ idempotencyKey });
+      if (existingOrder) return res.status(200).json({ success: true, order: existingOrder, message: "Duplicate prevented." });
+    }
     console.error("Order Creation Error:", error);
     captureError(req, error);
     res.status(500).json({ success: false, error: 'Order failed' });
@@ -686,6 +880,18 @@ app.delete('/api/orders/:id/complimentary', verifyToken, requireStaff, async (re
 });
 
 app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
+  await runWithStatsRetry(completeOrderOnce, req, res);
+});
+
+// Retry wrapper (mirrors the void engine's own retry, below): the ERP block in
+// here writes TenantStats/ProductStats — a singleton counter doc every
+// concurrent completion touches — inside the same transaction as the stock
+// decrement + journal entry. Two completions landing at the same instant can
+// collide on that doc with a WriteConflict; retrying the whole transaction is
+// the correct fix, the same trade void/refund already make elsewhere in this
+// file. Validation paths `return res.status(...)`, a truthy Response object —
+// only the explicit `true` retry signal from the catch block counts.
+const completeOrderOnce = async (req, res, mayRetry) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -765,9 +971,11 @@ app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
 
     // --- BULLETPROOF MATH RECALCULATION ---
     let totalGross = 0;
-    let totalDiscount = 0;
-    let totalVat = 0;
-    
+    let lineDiscTotal = 0;
+    let baseAfterLineDisc = 0;
+    let discountableBase = 0;
+    let exemptBase = 0;
+
     order.items.forEach(item => {
       const price = item.price || 0;
       const qty = item.quantity || 1;
@@ -783,34 +991,40 @@ app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
       const prodPct = Number(item.productDiscountPercent || 0);
       const cashierPct = Number(item.discountPercent || 0);
       const linePct = Math.max(prodPct, cashierPct);
+      const lineDisc = +(itemBase * linePct / 100).toFixed(2);
 
-      if (order.isComplimentary) {
-        totalDiscount += itemBase;
-      } else if (linePct > 0) {
-        // Per-line discount (product/client or cashier override) overrides the
-        // order-level discount for this line.
-        const itemDisc = itemBase * (linePct / 100);
-        totalDiscount += itemDisc;
-        if (!order.isVatExempt) totalVat += (itemBase - itemDisc) * 0; // VAT DISABLED
-      } else if (getsDiscount && order.discountPercent > 0) {
-        if (order.isVatExempt || order.discountType === 'SC/PWD') {
-          const scDisc = itemBase * (order.discountPercent / 100);
-          totalDiscount += scDisc;
-        } else {
-          const itemDisc = itemBase * (order.discountPercent / 100);
-          totalDiscount += itemDisc;
-          if (!order.isVatExempt) totalVat += (itemBase - itemDisc) * 0; // VAT DISABLED
-        }
-      } else {
-        if (!order.isVatExempt) totalVat += (itemBase * 0); // VAT DISABLED
-      }
+      lineDiscTotal += lineDisc;
+      baseAfterLineDisc += itemBase - lineDisc;
+      if (item.vatExempt === true) exemptBase += itemBase - lineDisc;
+      // A line already carrying its own discount, or one the cashier excluded,
+      // is not eligible for the order-wide percentage on top.
+      if (linePct === 0 && getsDiscount) discountableBase += itemBase;
     });
 
+    // Rate and SC/PWD basis come from the ORDER, not from current settings —
+    // editing a historical order must not re-price it under a rule that was
+    // adopted afterwards.
+    const editVat = order.isComplimentary
+      ? { total: 0, vatAmount: 0, vatableSales: 0, vatExemptSales: 0,
+          discount: +baseAfterLineDisc.toFixed(2), rate: Number(order.vatRate || 0) }
+      : computeOrderVat({
+          grossInclusive: baseAfterLineDisc,
+          discountableGross: discountableBase,
+          exemptGross: exemptBase,
+          discountPercent: Number(order.discountPercent || 0),
+          vatEnabled: Number(order.vatRate || 0) > 0,
+          vatRate: Number(order.vatRate || 0),
+          isVatExempt: !!order.isVatExempt,
+          scPwdOrder: order.scPwdOrder === 'discount-first' ? 'discount-first' : 'vat-first',
+          vatInclusive: order.isVatInclusive !== false,
+        });
+
     order.subtotal = Number(totalGross.toFixed(2));
-    order.discount = Number(totalDiscount.toFixed(2));
-    order.vatAmount = Number(totalVat.toFixed(2));
-    order.vatRate = 0;
-    order.total = Number((totalGross - totalDiscount + totalVat).toFixed(2));
+    order.discount = Number((lineDiscTotal + editVat.discount).toFixed(2));
+    order.vatAmount = Number(editVat.vatAmount.toFixed(2));
+    order.vatableSales = Number(editVat.vatableSales.toFixed(2));
+    order.vatExemptSales = Number(editVat.vatExemptSales.toFixed(2));
+    order.total = Number(editVat.total.toFixed(2));
 
     // Cash tendered — only for cash orders transitioning to Preparing
     if (status === 'Preparing' && amountTendered !== undefined && (order.paymentMethod === 'Cash' || paymentMethod === 'Cash')) {
@@ -1131,6 +1345,8 @@ app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
 
       log.info(`[ERP LEDGER] Single AUTO Entry ${reference} created.`);
       emitToMgr('erpUpdated');
+
+      await applyStatsDelta(order, 1, session);
     }
 
     // FIX: Removed the array brackets and {session} to prevent Mongoose crash
@@ -1157,11 +1373,13 @@ app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
+    if (isTransientTxnError(error) && mayRetry && !res.headersSent) return true; // ask the caller to retry
     console.error("[ERP CRITICAL ERROR] Failed to process order:", error);
     captureError(req, error);
-    res.status(500).json({ success: false, error: error.message });
+    if (!res.headersSent) res.status(500).json({ success: false, error: error.message });
   }
-});
+  return false;
+};
 
 // --- UNVOID (reverse a void) ---
 // A void is never erased — it is REVERSED, which is also the correct accounting
@@ -1243,9 +1461,17 @@ app.post('/api/orders/:id/unvoid', verifyToken, requireSuperAdmin, async (req, r
       order.voidReason = '';
       order.voidedBy = '';
       order.voidedAt = null;
+      // Mirror image of the void's own -1 delta — the order is back to counting
+      // toward dashboard totals.
+      await applyStatsDelta(order, 1, session);
       await order.save({ session });
       return order;
-    }, { log });
+    // Same retry budget/backoff as the other 5 applyStatsDelta call sites
+    // (complete/void/partial-fulfill/drop-remaining/refund) — unvoid writes to
+    // the same hot sharded TenantStats/ProductStats documents and was seeing
+    // it exhaust withOptionalTransaction's default 3-immediate-retry budget
+    // under the same contention the others were hardened against.
+    }, { log, retries: STATS_RETRY_ATTEMPTS, retryDelayMs: statsRetryDelayMs });
 
     await logAudit(req, { action: 'unvoid', entity: 'Order', entityId: out._id, after: { orderNumber: out.orderNumber, by: adminName } });
     emitToMgr('erpUpdated');
@@ -1264,14 +1490,7 @@ app.post('/api/orders/:id/unvoid', verifyToken, requireSuperAdmin, async (req, r
 // retry the restock route already does. Only retried when nothing has been sent
 // yet, so a validation response is never re-sent.
 app.post('/api/orders/:id/void', verifyToken, requireSuperAdmin, async (req, res) => {
-  const MAX_VOID_ATTEMPTS = 3;
-  for (let attempt = 1; attempt <= MAX_VOID_ATTEMPTS; attempt++) {
-    // Strict `=== true`: the handler's validation paths `return res.status(...)`,
-    // which yields a truthy Response object. Only the explicit retry signal counts,
-    // or a rejected void would be re-executed.
-    const retry = await voidOrderOnce(req, res, attempt < MAX_VOID_ATTEMPTS);
-    if (retry !== true) return;
-  }
+  await runWithStatsRetry(voidOrderOnce, req, res);
 });
 
 const voidOrderOnce = async (req, res, mayRetry) => {
@@ -1450,6 +1669,11 @@ const voidOrderOnce = async (req, res, mayRetry) => {
         }], { session });
     }
 
+    // The order stops counting toward dashboard totals the moment it stops
+    // being 'Completed' — reverse it with the order's pre-void snapshot
+    // (total/subtotal/items are untouched by voiding).
+    await applyStatsDelta(order, -1, session);
+
     order.status = 'Voided';
     order.voidReason = reason;
     // Attribution: stamp who actually voided the order — NOT the original cashier
@@ -1470,9 +1694,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
-    const msg = String(error?.errorLabels || error?.message || '');
-    const isTransient = (error?.errorLabels || []).includes('TransientTransactionError') || /WriteConflict|Write conflict/i.test(msg);
-    if (isTransient && mayRetry && !res.headersSent) return true;   // ask the caller to retry
+    if (isTransientTxnError(error) && mayRetry && !res.headersSent) return true;   // ask the caller to retry
     console.error("Void Error:", error);
     captureError(req, error);
     if (!res.headersSent) res.status(500).json({ success: false, error: error.message });
@@ -1592,6 +1814,14 @@ app.post('/api/orders/:id/partial-delivery', verifyToken, requireStaff, async (r
 //                 portion is held as Customer Deposits and recognized as revenue on
 //                 later rounds (no new charge then).
 app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (req, res) => {
+  await runWithStatsRetry(partialFulfillOnce, req, res);
+});
+
+// Retry wrapper — same reasoning as completeOrderOnce above: the final round
+// that fully completes an order writes the singleton TenantStats/ProductStats
+// counters inside this transaction, which can collide with another concurrent
+// completion on a WriteConflict.
+const partialFulfillOnce = async (req, res, mayRetry) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
@@ -1743,6 +1973,12 @@ app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (re
     const allFulfilled = order.items.every(it => (it.fulfilledQty || 0) >= (it.quantity || 0));
     order.status = allFulfilled ? 'Completed' : 'Partially Fulfilled';
     if (paymentMethod) order.paymentMethod = paymentMethod;
+    // This order never passed through the main completion handler's ERP gate
+    // (partial-fulfilled orders are deliberately skipped there to avoid double-
+    // posting — see the wasPartiallyFulfilled check above). The final round that
+    // completes it is this order's one and only transition into 'Completed', so
+    // count it here.
+    if (allFulfilled) await applyStatsDelta(order, 1, session);
     await order.save({ session });
 
     await session.commitTransaction();
@@ -1754,10 +1990,12 @@ app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (re
   } catch (err) {
     await session.abortTransaction();
     session.endSession();
+    if (isTransientTxnError(err) && mayRetry && !res.headersSent) return true;
     log.error({ err }, 'POST /api/orders/:id/partial-fulfill failed');
-    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+    if (!res.headersSent) (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+  return false;
+};
 
 // --- DROP REMAINING (logistics) — finalize a partially-fulfilled order ---------
 // The units already fulfilled are DONE and posted to the ledger; only the
@@ -1767,6 +2005,12 @@ app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (re
 // The one money movement is refunding any prepaid-but-undelivered deposit
 // (only possible when an earlier batch was paid in 'full' mode).
 app.post('/api/orders/:id/drop-remaining', verifyToken, requireStaff, async (req, res) => {
+  await runWithStatsRetry(dropRemainingOnce, req, res);
+});
+
+// Retry wrapper — same reasoning as completeOrderOnce: this route also writes
+// the singleton TenantStats/ProductStats counters inside its transaction.
+const dropRemainingOnce = async (req, res, mayRetry) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
@@ -1812,6 +2056,10 @@ app.post('/api/orders/:id/drop-remaining', verifyToken, requireStaff, async (req
     order.droppedBy = req.user?.name || 'system';
     order.droppedAt = new Date();
     order.status = 'Completed';
+    // Same reasoning as partial-fulfill's final round: this is this order's one
+    // and only transition into 'Completed', counted against the now-shrunk
+    // (fulfilled-only) items/total computed just above.
+    await applyStatsDelta(order, 1, session);
     await order.save({ session });
 
     await logAudit(req, { action: 'drop-remaining', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, droppedItems, droppedBy: order.droppedBy } });
@@ -1824,13 +2072,21 @@ app.post('/api/orders/:id/drop-remaining', verifyToken, requireStaff, async (req
   } catch (err) {
     await session.abortTransaction();
     session.endSession();
+    if (isTransientTxnError(err) && mayRetry && !res.headersSent) return true;
     log.error({ err }, 'POST /api/orders/:id/drop-remaining failed');
-    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+    if (!res.headersSent) (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+  return false;
+};
 
 // ── REFUND FLOW ───────────────────────────────────────────────────────────────
 app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req, res) => {
+  await runWithStatsRetry(refundOnce, req, res);
+});
+
+// Retry wrapper — same reasoning as completeOrderOnce: this route also writes
+// the singleton TenantStats/ProductStats counters inside its transaction.
+const refundOnce = async (req, res, mayRetry) => {
   const session = await mongoose.startSession();
   try {
     session.startTransaction();
@@ -1946,6 +2202,10 @@ app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req,
     const totalCredit = lines.reduce((s, l) => s + l.credit, 0);
     assertBalanced(lines, reference);
     await JournalEntry.create([{ date: new Date(), reference, description: `Refund for order ${order.orderNumber}: ${reason}`, lines, totalDebit, totalCredit }], { session });
+    // Status moves off 'Completed' on ANY refund (partial or full) — the old
+    // aggregation only ever counted status:'Completed' docs, so reverse the
+    // full order here too, not just the refunded amount.
+    await applyStatsDelta(order, -1, session);
     order.transactionType = 'REFUND';
     order.status = 'Refunded';
     order.voidReason = `REFUND: ${reason}`;
@@ -1956,10 +2216,12 @@ app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req,
     res.json({ success: true, order });
   } catch (err) {
     await session.abortTransaction(); session.endSession();
+    if (isTransientTxnError(err) && mayRetry && !res.headersSent) return true;
     log.error({ err }, 'POST /api/orders/:id/refund failed');
-    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+    if (!res.headersSent) (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+  return false;
+};
 
 // --- DISPATCH STATUS UPDATE ---
 app.patch('/api/orders/:id/dispatch', verifyToken, requireStaff, async (req, res) => {

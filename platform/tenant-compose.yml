@@ -9,7 +9,14 @@
 services:
   api:
     build: ${STACK_ROOT}/server
-    image: semivra-api:${TENANT}
+    # SHARED image, not per-tenant. The API takes no build args — it's
+    # configured entirely by the runtime `environment` block below — so every
+    # tenant's API image was byte-identical, just built N times. One shared tag
+    # means a code update builds it ONCE; every tenant then recreates onto the
+    # same new image. (The `web` image below stays per-tenant because it bakes
+    # each tenant's business name/theme/billing in at build time.) See the
+    # control plane's /api/update/* routes for the build-once update flow.
+    image: semivra-api:shared
     restart: unless-stopped
     # Hard ceiling. Without it one tenant's runaway report query can exhaust the
     # box and take every other client down with it. The kernel OOM-kills this

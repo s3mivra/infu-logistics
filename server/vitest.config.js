@@ -11,7 +11,12 @@ export default defineConfig({
     // the machine, tripping mongod's 10s startup timeout. Cap concurrency so only a couple
     // start at a time — slower, but reliable on any machine.
     pool: 'forks',
-    poolOptions: { forks: { maxForks: 2, minForks: 1 } },
+    // Vitest 4 removed `poolOptions` — the cap below was silently ignored after
+    // the upgrade, every file booted its own mongod at once, and the suite went
+    // intermittently red with misleading 500s. These are the top-level
+    // replacements; keep them here or the flakiness comes straight back.
+    maxWorkers: 2,
+    minWorkers: 1,
     fileParallelism: true,
     coverage: {
       provider: 'v8',

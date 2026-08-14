@@ -50,11 +50,15 @@ export function resolveLetterhead(settings = {}) {
   );
   const supportLink = pick(s.portalSupportLink, FB_LINK_ENV);
   const supportLabel = pick(s.portalSupportLabel, 'Send payment proof');
+  // Registration status drives both the header stamp and the default footer
+  // line. A VAT-registered seller must not print "NON-VAT REGISTERED" on an
+  // official receipt, so this follows the same setting that drives the maths.
+  const vatRegistered = s.vatEnabled === true;
   const slipFooter = pick(
     s.portalSlipFooter,
-    'This is a Non-VAT Transaction.',
+    vatRegistered ? 'This is a VAT Transaction.' : 'This is a Non-VAT Transaction.',
   );
-  return { companyName, address, phone, email, announcement, paymentInstructions, supportLink, supportLabel, slipFooter };
+  return { companyName, address, phone, email, announcement, paymentInstructions, supportLink, supportLabel, slipFooter, vatRegistered };
 }
 
 // Build the 80mm thermal receipt HTML. Callers pass their own doc label, meta
@@ -171,7 +175,7 @@ ${(duplicate ? ['', 'DUPLICATE'] : ['']).map(copyTag => `
     <div class="store">${esc(lh.companyName)}</div>
     ${lh.address ? `<div class="addr">${esc(lh.address)}</div>` : ''}
     ${contactLine ? `<div class="addr">${contactLine}</div>` : ''}
-    <div class="addr" style="font-weight:bold;margin-top:2px;">NON-VAT REGISTERED</div>
+    <div class="addr" style="font-weight:bold;margin-top:2px;">${lh.vatRegistered ? 'VAT REGISTERED' : 'NON-VAT REGISTERED'}</div>
     ${docLabel ? `<div class="doclabel">${esc(docLabel)}</div>` : ''}
   </div>
   <div class="dash"></div>

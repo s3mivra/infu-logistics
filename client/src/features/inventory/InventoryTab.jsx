@@ -76,7 +76,7 @@ export default function InventoryTab({ ctx }) {
     settleForm, settleModal, settleSubmitting, shiftFilter, shiftHistory,
     shiftHistoryPage, shiftHistoryTotal, spoilageForm, spoilageLoading, spoilageModal,
     standardAccounts, stockHistory, submitManualOrder, submitPhysicalCounts, submitRfDisb,
-    submitRfNew, submitRfRepl, toggleDay, toggleOrderList, toggleVat,
+    submitRfNew, submitRfRepl, toggleDay, toggleOrderList,
     totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
     users, varianceNoteMode, varianceReasons,
@@ -502,10 +502,10 @@ export default function InventoryTab({ ctx }) {
                         return (
                           <tr key={item._id} className={`border-b border-white/30 hover:bg-page-bg/30 transition ${hasInput && variance !== 0 ? 'bg-red-900/5' : ''}`}>
 
-                            <td className="py-4">
+                            <td className="py-4 w-[40%]">
                               <p className="font-bold text-white">{item.itemName}</p>
-                              <p className="text-[13px] text-white font-mono mt-1 tabular-nums">
-                                Start: {fmt(calculatedStartDisplay)} {eff.unit} · <span className="text-green-400">In: +{fmt(realInDisplay)}</span> · <span className="text-red-300">Out: −{fmt(realOutDisplay)}</span>
+                              <p className="text-[15px] text-white font-mono mt-1 tabular-nums">
+                                Start: {fmt(calculatedStartDisplay)} {eff.unit}  <span className="p-1 font-bold rounded text-green-600 bg-white">In: +{fmt(realInDisplay)}</span> <span className="p-1 font-bold rounded bg-white font-bold text-red-600">Out: −{fmt(realOutDisplay)}</span>
                               </p>
                               
                               {hasInput && variance !== 0 && !isLocked && (
@@ -565,11 +565,11 @@ export default function InventoryTab({ ctx }) {
                               )}
                             </td>
 
-                            <td className="py-4 text-right text-white font-mono text-sm tabular-nums">
+                            <td className="py-4 text-right text-white font-mono text-sm tabular-nums w-[15%]">
                               {fmt(systemEndDisplay)} <span className="text-[11px] text-white">{eff.unit}</span>
                             </td>
 
-                            <td className="py-4 text-center align-top pt-5">
+                            <td className="py-4 text-center align-top pt-5 w-[20%]">
                               <div className="inline-flex items-center gap-1.5">
                                 <input
                                   type="number"
@@ -590,11 +590,11 @@ export default function InventoryTab({ ctx }) {
                               </div>
                             </td>
 
-                            <td className={`py-4 text-right font-black font-mono text-sm align-top pt-6 tabular-nums ${variance < 0 ? 'text-red-300' : variance > 0 ? 'text-green-500' : 'text-white'}`}>
+                            <td className={`py-4 text-right font-black font-mono text-sm w-[12.5%] align-top pt-6 tabular-nums ${variance < 0 ? 'text-red-300' : variance > 0 ? 'text-green-500' : 'text-white'}`}>
                               {hasInput ? `${varianceDisplay > 0 ? '+' : ''}${fmt(varianceDisplay)} ${eff.unit}` : '-'}
                             </td>
 
-                            <td className={`py-4 text-right font-mono text-xs pr-2 font-bold align-top pt-6 ${financialImpact < 0 ? 'text-red-300' : financialImpact > 0 ? 'text-green-400' : 'text-white'}`}>
+                            <td className={`py-4 text-right font-mono text-xs pr-2 font-bold w-[12.5%] align-top pt-6 ${financialImpact < 0 ? 'text-red-300' : financialImpact > 0 ? 'text-green-400' : 'text-white'}`}>
                               {hasInput ? formattedImpact : '-'}
                             </td>
                           </tr>

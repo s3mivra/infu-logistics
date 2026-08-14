@@ -312,15 +312,45 @@ app.get('/api/products', async (req, res) => {
     //  • LOG / 1:1 products (no recipe): the product IS a stocked good — match the
     //    linked inventory item by itemCode (then itemName) and require at least one
     //    sellable unit (unitMultiplier base units) on hand.
-    const invItems = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }, { _id: 1, itemCode: 1, itemName: 1, stockQty: 1, unitMultiplier: 1 }).lean();
+    const invItems = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }, { _id: 1, itemCode: 1, itemName: 1, stockQty: 1, unitMultiplier: 1, displayUnit: 1, unit: 1, packSize: 1 }).lean();
     const invById = {}, invByCode = {}, invByName = {};
     invItems.forEach(i => {
       invById[i._id.toString()] = i;
       if (i.itemCode) invByCode[i.itemCode] = i;
       if (i.itemName) invByName[i.itemName] = i;
     });
+    // A pack under one whole kg/L reads better in the sub-unit: 0.377kg → 377g,
+    // 0.5L → 500ml. Mirrors the dashboard's fmtPackLabel so the slip and the
+    // inventory screen agree. Math.round strips the ×1000 float noise.
+    const fmtPackLabel = (value, unit) => {
+      const v = Number(value);
+      const u = String(unit || '');
+      if (!Number.isFinite(v) || v <= 0) return `${value}${unit}`;
+      const ul = u.toLowerCase();
+      if (ul === 'kg' && v < 1) return `${Math.round(v * 1000 * 1000) / 1000}g`;
+      if (ul === 'l' && v < 1) return `${Math.round(v * 1000 * 1000) / 1000}ml`;
+      return `${v}${u}`; // ≥1 or already a sub-unit — keep the entered unit casing
+    };
+    // Pack/unit label from an inventory item, mirroring the dashboard's packInfo:
+    // an explicit packSize wins ("1kg"/"377g"), else a size embedded in the name
+    // ("250g"), else the bare display unit ("kg").
+    const unitLabelOf = (inv) => {
+      if (!inv) return '';
+      const u = (inv.displayUnit || inv.unit || '').trim();
+      if (inv.packSize && inv.packSize > 0) return fmtPackLabel(inv.packSize, u);
+      const m = String(inv.itemName || '').match(/(\d+(?:\.\d+)?)\s*(kg|g|l|ml|pcs?)\b/i);
+      if (m) return fmtPackLabel(m[1], m[2]);
+      return u;
+    };
+
     products.forEach(p => {
       const recipe = p.baseRecipe || [];
+      // Resolve the linked stock item: FB recipe products link via invId; log 1:1
+      // goods match by code then name. Used for both stock and the unit label.
+      const linkedInv = recipe.find(r => r.invId) ? invById[recipe.find(r => r.invId).invId]
+        : (invByCode[p.productCode] || invByName[p.name]);
+      p.unitLabel = unitLabelOf(linkedInv);
+
       if (recipe.some(r => r.invId)) {
         p.stockAvailable = recipe.every(ing => {
           if (!ing.invId) return true;                  // unlinked — don't block the product
@@ -340,6 +370,28 @@ app.get('/api/products', async (req, res) => {
     res.json({ success: true, products });
   } catch (err) {
     log.error({ err }, 'GET /api/products failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ── BARCODE LOOKUP ────────────────────────────────────────────────────────────
+// GET /api/products/by-barcode/:code — resolve a scanned barcode to a product
+// at the POS. Exact match on the stored `barcode` field, scoped to this
+// business. Barcodes aren't schema-unique (see the field comment in
+// server.js), so this returns the first match and flags `ambiguous:true` when
+// more than one product carries the same code, letting the POS prompt instead
+// of silently ringing up the wrong variant.
+app.get('/api/products/by-barcode/:code', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const code = String(req.params.code || '').trim();
+    if (!code) return res.status(400).json({ success: false, error: 'A barcode is required.' });
+    const matches = await Product.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
+      barcode: code, isArchived: { $ne: true },
+    }).limit(5).lean();
+    if (matches.length === 0) return res.status(404).json({ success: false, error: 'No product with that barcode.' });
+    res.json({ success: true, product: matches[0], ambiguous: matches.length > 1, matchCount: matches.length });
+  } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });

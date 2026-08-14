@@ -36,6 +36,7 @@ export const PERMISSIONS = [
   { key: 'reports.view',       group: 'Reports',     label: 'View reports' },
   { key: 'analytics.view',     group: 'Reports',     label: 'View analytics dashboard' },
   { key: 'audit.view',         group: 'Reports',     label: 'View audit report' },
+  { key: 'scheduling.manage',  group: 'Admin',       label: 'Build & publish staff rosters' },
   { key: 'users.manage',       group: 'Admin',       label: 'Manage staff & permissions' },
   { key: 'settings.manage',    group: 'Admin',       label: 'Change system settings' },
 ];
@@ -54,13 +55,13 @@ export const ROLE_DEFAULT_PERMISSIONS = {
             'inventory.view', 'inventory.manage', 'inventory.delete',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage', 'procurement.delete',
-            'accounting.view', 'reports.view', 'analytics.view', 'audit.view', 'settings.manage'],
-  // Operations lead: full ops, no books/settings/staff.
+            'accounting.view', 'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'],
+  // Operations lead: full ops (incl. building rosters), no books/settings/staff.
   manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete',
             'inventory.view', 'inventory.manage',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage',
-            'reports.view', 'analytics.view', 'audit.view'],
+            'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage'],
   // The books role: view + post accounting, plus read-only ops context.
   finance: ['orders.view', 'inventory.view', 'procurement.view',
             'accounting.view', 'accounting.manage', 'reports.view', 'analytics.view', 'audit.view'],

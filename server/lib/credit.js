@@ -102,3 +102,21 @@ export function ageingByClient(rows = [], keyOf = (r) => r.customerName || 'Unkn
     .map(([client, list]) => ({ client, ...ageingBuckets(list, asOf), count: list.length }))
     .sort((a, b) => b.total - a.total);
 }
+
+/**
+ * The one client-identity key every A/R view (ar-ageing, collections
+ * worklist) must agree on, or they disagree about who owes what: client
+ * account where we have one, else the order's typed customerName. Portal
+ * orders carry `clientId`; cashier-placed on-behalf orders carry
+ * `clientAccountId` — both are consulted, or a single client's debt would
+ * split across two rows depending on which flow placed the order.
+ */
+export function resolveClientKey(clients = []) {
+  const byId = new Map(clients.map(c => [String(c._id), c]));
+  const byName = new Map(clients.map(c => [c.name, c]));
+  const keyOf = (r) =>
+    byId.get(String(r.clientAccountId || ''))?.name
+    || byId.get(String(r.clientId || ''))?.name
+    || r.customerName || 'Walk-in';
+  return { byId, byName, keyOf };
+}

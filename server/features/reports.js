@@ -110,6 +110,8 @@ export default function registerReports(ctx) {
     Inventory,
     JournalEntrySchema,
     JournalEntry,
+    TenantStats,
+    ProductStats,
     InventoryMovementSchema,
     InventoryMovement,
     StockCardSchema,
@@ -149,6 +151,8 @@ export default function registerReports(ctx) {
     AuditLog,
     DiscountSchema,
     Discount,
+    SupplierSchema,
+    Supplier,
     EODRecordSchema,
     EODRecord,
     CounterSchema,
@@ -252,6 +256,76 @@ app.get('/api/reports/pnl', verifyToken, ...canViewReports, async (req, res) => 
     });
   } catch (err) {
     log.error({ err }, 'P&L report failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ============================================================
+// INVENTORY TURNOVER RATIO — COGS over a period ÷ average inventory value.
+// COGS reuses the same accountCode/meta.cogs aggregation as /api/reports/pnl.
+// Average inventory value is a 2-point (start, end) approximation: END is the
+// current stockQty × unitCost (same math as /api/inventory/revalue's read-only
+// onHand calc); START is reconstructed per item from the latest StockCard
+// entry at or before the period start (balanceAfter × unitCost at that time),
+// falling back to current stock for items with no history that far back.
+// There is no daily inventory-valuation snapshot in this app, so this is an
+// estimate, not an exact historical figure — the response says so explicitly.
+// ============================================================
+app.get('/api/reports/inventory-turnover', verifyToken, ...canViewReports, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    const startDate = start ? dayStart(start) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const endDate = end ? dayEnd(end) : new Date();
+    const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+
+    const [agg, items] = await Promise.all([
+      JournalEntry.aggregate([
+        { $match: { date: { $gte: startDate, $lte: endDate } } },
+        { $unwind: '$lines' },
+        { $group: {
+            _id: '$lines.accountCode',
+            totalDebit:  { $sum: { $ifNull: ['$lines.debit',  0] } },
+            totalCredit: { $sum: { $ifNull: ['$lines.credit', 0] } },
+        }},
+      ]),
+      Inventory.find(bizScope, { stockQty: 1, unitCost: 1 }).lean(),
+    ]);
+
+    let cogs = 0;
+    for (const r of agg) {
+      const meta = acctMeta(r._id);
+      if (meta?.type === 'expense' && meta.cogs) cogs += (r.totalDebit || 0) - (r.totalCredit || 0);
+    }
+
+    const endValue = items.reduce((s, i) => s + (i.stockQty || 0) * (i.unitCost || 0), 0);
+
+    const invIds = items.map(i => String(i._id));
+    const startSnapshots = invIds.length ? await StockCard.aggregate([
+      { $match: { inventoryId: { $in: invIds }, date: { $lte: startDate } } },
+      { $sort: { date: -1 } },
+      { $group: { _id: '$inventoryId', balanceAfter: { $first: '$balanceAfter' }, unitCost: { $first: '$unitCost' } } },
+    ]) : [];
+    const snapMap = new Map(startSnapshots.map(s => [s._id, s]));
+    const startValue = items.reduce((s, i) => {
+      const snap = snapMap.get(String(i._id));
+      const val = snap ? (snap.balanceAfter || 0) * (snap.unitCost || 0) : (i.stockQty || 0) * (i.unitCost || 0);
+      return s + val;
+    }, 0);
+
+    const avgInventoryValue = (startValue + endValue) / 2;
+    const turnoverRatio = avgInventoryValue > 0 ? +((cogs / avgInventoryValue).toFixed(2)) : null;
+
+    res.json({
+      success: true,
+      period: { start: startDate, end: endDate },
+      cogs: +cogs.toFixed(2),
+      startValue: +startValue.toFixed(2),
+      endValue: +endValue.toFixed(2),
+      avgInventoryValue: +avgInventoryValue.toFixed(2),
+      turnoverRatio,
+      estimate: true,
+    });
+  } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
@@ -480,7 +554,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
     const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
 
     // ── Run DB aggregations in parallel (no full table scan into memory) ──────
-    const [todayAgg, allTimeAgg, dailyAgg, topProductsAgg, orders30d, orders7d, inventoryItems] =
+    const [todayAgg, tenantStatsAgg, dailyAgg, productStats, orders30d, orders7d, inventoryItems] =
       await Promise.all([
 
       // 1. Today's KPIs
@@ -497,15 +571,20 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
         }}
       ]),
 
-      // 2. All-time totals
-      Order.aggregate([
-        { $match: { ...bizScope, status: 'Completed' } },
+      // 2. All-time totals — O(shard count) read from the running counters
+      //    (TenantStats in server.js, kept up to date by applyStatsDelta in
+      //    orders.js on every completion/void/refund) instead of scanning every
+      //    completed order this tenant has ever had, on every dashboard load.
+      //    TenantStats is sharded (see server.js), so sum across shards.
+      TenantStats.aggregate([
+        { $match: bizScope },
         { $group: {
           _id: null,
-          revenue: { $sum: { $cond: ['$isComplimentary', 0, '$total'] } },
-          comp:    { $sum: { $cond: ['$isComplimentary', '$subtotal', 0] } },
-          orders:  { $sum: 1 },
-        }}
+          cumulativeRevenue: { $sum: '$cumulativeRevenue' },
+          cumulativeComp: { $sum: '$cumulativeComp' },
+          cumulativeOrderCount: { $sum: '$cumulativeOrderCount' },
+          cumulativeNonCompCount: { $sum: '$cumulativeNonCompCount' },
+        } },
       ]),
 
       // 3. Daily revenue — last 60 days (grouped in Manila time)
@@ -518,17 +597,10 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
         { $sort: { _id: 1 } },
       ]),
 
-      // 4. Product tallies by raw name (size-variant merge happens in JS below,
-      //    since $replaceAll cannot take a $regexFind object as its `find`).
-      Order.aggregate([
-        { $match: { ...bizScope, status: 'Completed', isComplimentary: { $ne: true } } },
-        { $unwind: '$items' },
-        { $group: {
-          _id:     '$items.name',
-          qty:     { $sum: '$items.quantity' },
-          revenue: { $sum: { $multiply: [{ $ifNull: ['$items.price', 0] }, { $ifNull: ['$items.quantity', 0] }] } },
-        }},
-      ]),
+      // 4. Product tallies — O(1)-ish read from ProductStats instead of an
+      //    $unwind across all history. Size-variant merge into base product
+      //    names ("Latte (Large)" → "Latte") still happens in JS below.
+      ProductStats.find(bizScope, { productName: 1, cumulativeQty: 1, cumulativeRevenue: 1 }).lean(),
 
       // 5. Last-30d orders with items (for raw-material velocity)
       Order.find(
@@ -557,10 +629,10 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
     const todayAvg      = (td.nonCompCount || 0) > 0 ? todayRevenue / td.nonCompCount : 0;
 
     // ── All-time totals ─────────────────────────────────────────────────────────
-    const at = allTimeAgg[0] || {};
-    const totalAllTimeRevenue       = at.revenue || 0;
-    const totalAllTimeComplimentary = at.comp    || 0;
-    const totalAllTimeOrders        = at.orders  || 0;
+    const at = tenantStatsAgg[0] || {};
+    const totalAllTimeRevenue       = at.cumulativeRevenue     || 0;
+    const totalAllTimeComplimentary = at.cumulativeComp        || 0;
+    const totalAllTimeOrders        = at.cumulativeOrderCount  || 0;
 
     // ── Daily revenue list ─────────────────────────────────────────────────────
     let bestDay = { date: 'N/A', revenue: 0 };
@@ -572,11 +644,11 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
 
     // ── Top products: merge size variants ("Latte (Large)" → "Latte") then take top 5 ──
     const tpMerged = {};
-    for (const r of topProductsAgg) {
-      const base = (r._id || 'Unknown').replace(/\s*\(.*?\)\s*$/, '').trim() || 'Unknown';
+    for (const r of productStats) {
+      const base = (r.productName || 'Unknown').replace(/\s*\(.*?\)\s*$/, '').trim() || 'Unknown';
       if (!tpMerged[base]) tpMerged[base] = { name: base, qty: 0, revenue: 0 };
-      tpMerged[base].qty += r.qty || 0;
-      tpMerged[base].revenue += r.revenue || 0;
+      tpMerged[base].qty += r.cumulativeQty || 0;
+      tpMerged[base].revenue += r.cumulativeRevenue || 0;
     }
     const topProducts = Object.values(tpMerged).sort((a, b) => b.qty - a.qty).slice(0, 5);
 
@@ -834,12 +906,26 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
     const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
     const days = Math.max(1, parseInt(req.query.days) || 7); // cover N days of supply
     const since = new Date(Date.now() - 30 * 86400000);
-    const [inv, orders, products] = await Promise.all([
+    const [inv, orders, products, suppliers] = await Promise.all([
       Inventory.find(bizScope, { itemCode: 1, itemName: 1, stockQty: 1, unit: 1, unitCost: 1, lowStockThreshold: 1, displayUnit: 1, unitMultiplier: 1 }).lean(),
       Order.find({ ...bizScope, status: 'Completed', createdAt: { $gte: since } }, { items: 1 }).lean(),
       Product.find(bizScope, { _id: 1, name: 1, productCode: 1, baseRecipe: 1, sizes: 1 }).lean(),
+      Supplier.find({ ...tenantScope(req), isActive: true, 'catalog.invId': { $ne: null } }, { name: 1, catalog: 1 }).lean(),
     ]);
     const prodMap = Object.fromEntries(products.map(p => [p._id.toString(), p]));
+    // Cheapest supplier quote per inventory item, so a reorder suggestion can be
+    // grouped into per-supplier draft POs instead of one manually-assigned PO.
+    const bestSupplierByInv = {};
+    for (const s of suppliers) {
+      for (const c of (s.catalog || [])) {
+        if (!c.invId) continue;
+        const key = c.invId.toString();
+        const cur = bestSupplierByInv[key];
+        if (!cur || (c.unitCost || 0) < cur.unitCost) {
+          bestSupplierByInv[key] = { supplierId: s._id.toString(), supplierName: s.name, unitCost: c.unitCost, packSize: c.packSize };
+        }
+      }
+    }
     // LOG 1:1: resolve the inventory doc that backs a recipe-less product (by code/name).
     const invByCode = {}, invByName = {};
     inv.forEach(i => { if (i.itemCode) invByCode[i.itemCode] = i; if (i.itemName) invByName[i.itemName] = i; });
@@ -869,10 +955,13 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
       const { displayUnit, mult } = effectiveDisplay(i);
       const needBase = Math.max(0, target - i.stockQty);
       const lowFlag = i.lowStockThreshold > 0 && i.stockQty <= i.lowStockThreshold;
+      const best = bestSupplierByInv[i._id.toString()] || null;
       return {
+        invId: i._id, itemCode: i.itemCode || '', unit: i.unit || '', unitCost: i.unitCost || 0,
         itemName: i.itemName, currentStock: +(i.stockQty / mult).toFixed(2), displayUnit,
         avgDailyUse: +(adu / mult).toFixed(3), suggestedOrder: +(needBase / mult).toFixed(2),
         estCost: +((needBase) * (i.unitCost || 0)).toFixed(2), lowStock: lowFlag,
+        supplierId: best?.supplierId || null, supplierName: best?.supplierName || null,
       };
     }).filter(l => l.suggestedOrder > 0 || l.lowStock).sort((a, b) => (b.lowStock - a.lowStock) || (b.suggestedOrder - a.suggestedOrder));
     const totalEstCost = lines.reduce((s, l) => s + l.estCost, 0);
@@ -920,6 +1009,50 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
+// ── SELLER COMMISSIONS ────────────────────────────────────────────────────────
+// Per-seller (Order.cashier, matched against User.name) commission over a date
+// range: sales total × that user's commissionRate. Complimentary orders are
+// excluded — same convention as profit-by-category — since no revenue actually
+// came in to take a commission from. Every user with any sales in range is
+// listed, including a 0%-rate one, so an admin can see who still needs a rate
+// set rather than have them silently vanish from the report.
+app.get('/api/reports/commissions', verifyToken, ...canViewReports, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
+    if (start || end) {
+      match.createdAt = {};
+      if (start) match.createdAt.$gte = dayStart(start);
+      if (end) { match.createdAt.$lte = dayEnd(end); }
+    }
+    const [agg, users] = await Promise.all([
+      Order.aggregate([
+        { $match: match },
+        { $group: { _id: '$cashier', salesTotal: { $sum: '$total' }, orderCount: { $sum: 1 } } },
+      ]),
+      User.find({}, { name: 1, userCode: 1, commissionRate: 1 }).lean(),
+    ]);
+    const userByName = new Map(users.map(u => [u.name, u]));
+    const sellers = agg
+      .filter(r => r._id && r._id !== 'System') // unattributed/system-placed sales earn no one a commission
+      .map(r => {
+        const u = userByName.get(r._id);
+        const rate = u?.commissionRate || 0;
+        const salesTotal = +(r.salesTotal || 0).toFixed(2);
+        return {
+          name: r._id,
+          userCode: u?.userCode || null,
+          salesTotal,
+          orderCount: r.orderCount,
+          commissionRate: rate,
+          commissionEarned: +((salesTotal * rate) / 100).toFixed(2),
+        };
+      })
+      .sort((a, b) => b.commissionEarned - a.commissionEarned);
+    res.json({ success: true, sellers, totalCommission: +sellers.reduce((s, x) => s + x.commissionEarned, 0).toFixed(2) });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 // ── SALES BY PAYMENT METHOD ───────────────────────────────────────────────────
 app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, async (req, res) => {
   try {
@@ -938,6 +1071,76 @@ app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, async (
     const grandTotal = result.reduce((s, r) => s + (r.total || 0), 0);
     res.json({ success: true, grandTotal, breakdown: result.map(r => ({ method: r._id, count: r.count, total: r.total, subtotal: r.subtotal, discount: r.discount, pct: grandTotal > 0 ? (r.total / grandTotal * 100) : 0 })) });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// ── SALES TREND — daily revenue buckets over a bounded range, plus a rolling
+// moving average and the % change vs. the immediately-prior period of equal
+// length. `period` only picks the default range length (week=7d, month=30d);
+// an explicit start/end always wins. Same $dateToString/Asia-Manila bucketing
+// as the analytics dashboard's dailyRevenue, and the same validateDateRange
+// bound (92 days) every other export/report in this file uses.
+app.get('/api/reports/sales-trend', verifyToken, ...canViewReports, async (req, res) => {
+  try {
+    const period = req.query.period === 'month' ? 'month' : 'week';
+    const days = period === 'month' ? 30 : 7;
+    const defaultEnd = new Date();
+    const defaultStart = new Date(defaultEnd.getTime() - (days - 1) * 86400000);
+    // Default window must be expressed in the SAME timezone the buckets are
+    // grouped by (Asia/Manila, below), or "today" resolves to a UTC date whose
+    // Manila day-end can fall before the current moment — silently dropping
+    // sales made during Manila's early-morning hours. en-CA gives YYYY-MM-DD.
+    const manilaDateStr = (d) => d.toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    const startStr = req.query.start || manilaDateStr(defaultStart);
+    const endStr = req.query.end || manilaDateStr(defaultEnd);
+    const range = validateDateRange(startStr, endStr);
+    if (!range.ok) return res.status(400).json({ success: false, error: range.error });
+    const { startDate, endDate } = range;
+
+    // Immediately-prior period of equal length, for the vs.-prior % change.
+    const spanMs = endDate.getTime() - startDate.getTime();
+    const priorEnd = new Date(startDate.getTime() - 1);
+    const priorStart = new Date(startDate.getTime() - spanMs - 1);
+
+    const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    const [buckets, priorAgg] = await Promise.all([
+      Order.aggregate([
+        { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: startDate, $lte: endDate } } },
+        { $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Asia/Manila' } },
+            net: { $sum: { $cond: ['$isComplimentary', 0, '$total'] } },
+        }},
+        { $sort: { _id: 1 } },
+      ]),
+      Order.aggregate([
+        { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: priorStart, $lte: priorEnd } } },
+        { $group: { _id: null, net: { $sum: { $cond: ['$isComplimentary', 0, '$total'] } } } },
+      ]),
+    ]);
+
+    const currentTotal = buckets.reduce((s, b) => s + (b.net || 0), 0);
+    const priorTotal = priorAgg[0]?.net || 0;
+    const changePct = priorTotal > 0
+      ? +(((currentTotal - priorTotal) / priorTotal) * 100).toFixed(1)
+      : (currentTotal > 0 ? 100 : 0);
+
+    // 7-day rolling average of daily revenue, regardless of period — the range
+    // length changes with period, the smoothing window doesn't need to.
+    const window = 7;
+    const series = buckets.map(b => ({ date: b._id, revenue: +(b.net || 0).toFixed(2) }));
+    const withMovingAvg = series.map((b, i) => {
+      const slice = series.slice(Math.max(0, i - window + 1), i + 1);
+      const avg = slice.reduce((s, x) => s + x.revenue, 0) / slice.length;
+      return { ...b, movingAvg: +avg.toFixed(2) };
+    });
+
+    res.json({
+      success: true, period, buckets: withMovingAvg,
+      currentTotal: +currentTotal.toFixed(2), priorTotal: +priorTotal.toFixed(2), changePct,
+      range: { start: startDate, end: endDate },
+    });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
 });
 
 app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req, res) => {
@@ -1083,6 +1286,22 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (re
       return res.status(400).json({ success: false, error: 'Invalid date range.' });
     }
     endDate.setHours(23, 59, 59, 999);
+
+    // A VAT-registered business owes 12% VAT and is NOT liable for the 3%
+    // percentage tax (NIRC §116) — the two are mutually exclusive. Returning a
+    // figure here while VAT is on would invite someone to pay a tax they do not
+    // owe, so the report reports its own inapplicability instead.
+    const vatRow = await Settings.findOne({ key: 'vatEnabled' }).lean();
+    if (vatRow?.value === true || vatRow?.value === 'true') {
+      return res.json({
+        success: true,
+        notApplicable: true,
+        reason: 'This business is VAT-registered. VAT-registered taxpayers are not liable for the 3% percentage tax under NIRC §116.',
+        period: { start: startDate, end: endDate },
+        orders: 0, grossSales: 0, discounts: 0, netCollected: 0,
+        rate: PERCENTAGE_TAX_RATE, taxDue: 0, lines: [],
+      });
+    }
 
     const agg = await Order.aggregate([
       { $match: { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: startDate, $lte: endDate } } },

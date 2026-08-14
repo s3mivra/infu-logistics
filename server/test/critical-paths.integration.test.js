@@ -70,6 +70,17 @@ describe('order lifecycle: create → complete → void (balanced + atomic stock
     expect(b.body.order._id).toBe(a.body.order._id);
   });
 
+  it('is idempotent under a TRULY concurrent repeated Idempotency-Key (unique index + E11000 catch, not just the findOne check)', async () => {
+    const Order = mongoose.model('Order');
+    const send = () => auth('post', '/api/orders', tok.staff).set('Idempotency-Key', 'cp-idem-concurrent-1').send(orderBody(1));
+    const [a, b] = await Promise.all([send(), send()]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(a.body.order._id).toBe(b.body.order._id);
+    const count = await Order.countDocuments({ idempotencyKey: 'cp-idem-concurrent-1' });
+    expect(count).toBe(1);
+  });
+
   it('completing the order deducts stock atomically and posts a balanced sale + COGS entry', async () => {
     const Inventory = mongoose.model('Inventory');
     const JournalEntry = mongoose.model('JournalEntry');
