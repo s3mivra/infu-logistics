@@ -4979,6 +4979,14 @@ const updateStatus = async (orderId, newStatus) => {
               <QrCode size={15} />
               {BUSINESS_TYPE === 'log' ? 'Portal' : 'Show QR'}
             </button>
+            {/* Logistics: a guest walk-in QR (below Portal) — a customer with no
+                account scans it to order on the spot, same guest menu flow as fb. */}
+            {BUSINESS_TYPE === 'log' && (
+              <button onClick={e => { e.preventDefault(); handleShowQR(); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand/60 hover:text-brand hover:bg-brand/10 transition font-bold text-sm">
+                <QrCode size={15} />
+                Guest QR
+              </button>
+            )}
             {/* Install as app (only when the browser offers it) */}
             {installable && (
               <button onClick={() => { install(); closeFn?.(); }}
