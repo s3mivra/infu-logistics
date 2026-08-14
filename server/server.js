@@ -1098,6 +1098,13 @@ items: [{
   arSettledAmount:  { type: Number, default: 0 },
   arSettledMethod:  { type: String, default: '' },
   arSettledNote:    { type: String, default: '' },
+  // Payment-terms snapshot for on-account (non-cash) sales, captured when the
+  // order Completes so later changes to the client's default terms don't
+  // retroactively move an existing receivable's due date.
+  //   arTermsDays = the terms in days that applied at completion (null if none)
+  //   arDueDate   = completedAt + arTermsDays; the date this A/R turns overdue.
+  arTermsDays:      { type: Number, default: null },
+  arDueDate:        { type: Date, default: null },
   // ── Logistics fields ──────────────────────────────────────────────────────
   // billingNumber: monthly-reset sequential ref (YYYY-MM-XXXX), log mode only
   billingNumber:   { type: String, default: '' },
@@ -1611,6 +1618,11 @@ const ClientAccountSchema = new mongoose.Schema({
   // Whether either limit is enforced at all is decided by the `creditLimitMode`
   // setting; see resolveCreditLimit().
   creditLimit:   { type: Number, default: null },
+  // Payment terms in days for on-account (non-cash) sales. When a non-cash order
+  // Completes, this is snapshotted onto the order to compute its A/R due date
+  // (dueDate = completedAt + creditTermsDays). 0 = due on receipt (COD-style).
+  // null = no terms configured — the A/R views then age from the order date only.
+  creditTermsDays: { type: Number, default: null },
   // Free-form tags (e.g. "wholesale", "vip") a product's segmentDiscounts can
   // target instead of (or in addition to) a one-off clientDiscounts entry for
   // this specific client. Empty = no segment-level discount applies.

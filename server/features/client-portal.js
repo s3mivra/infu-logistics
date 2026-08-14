@@ -10,6 +10,13 @@ const parseCreditLimit = (v) => {
   const n = Number(String(v).replace(/[,\s₱]/g, ''));
   return Number.isFinite(n) && n >= 0 ? n : null;
 };
+// Payment terms in whole days. '' / null clears back to "no terms". Floored to a
+// non-negative integer (0 = due on receipt).
+const parseTermsDays = (v) => {
+  if (v === undefined || v === null || v === '') return null;
+  const n = Math.floor(Number(String(v).replace(/[,\s]/g, '')));
+  return Number.isFinite(n) && n >= 0 ? n : null;
+};
 
 import { captureError } from '../lib/errorLog.js';
 
@@ -391,7 +398,7 @@ const cleanPhone = (v) => String(v ?? '').trim().slice(0, 40);
 
 app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { username, password, name, paymentMethod, creditLimit, segments, phone, email, contactNotes } = req.body;
+    const { username, password, name, paymentMethod, creditLimit, creditTermsDays, segments, phone, email, contactNotes } = req.body;
     // Usernames are stored lowercase so "KasaLokal" and "kasalokal" are the same
     // account — mixed case here is the classic duplicate-login bug.
     const cleanUsername = lower(username);
@@ -410,8 +417,8 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
     const clientCode = await generateNextSequence(ClientAccount, 'CUS-1000', 'clientCode');
     const emailVal = cleanEmail(email);
     if (emailVal === null) return res.status(400).json({ success: false, error: 'Email is not a valid address.' });
-    const client = await ClientAccount.create({ clientCode, username: cleanUsername, password: hashed, name: cleanName, paymentMethod: paymentMethod || 'Cash', creditLimit: parseCreditLimit(creditLimit), segments: cleanSegments, phone: cleanPhone(phone), email: emailVal, contactNotes: String(contactNotes ?? '').trim().slice(0, 1000) });
-    res.json({ success: true, client: { _id: client._id, clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, creditLimit: client.creditLimit, segments: client.segments, phone: client.phone, email: client.email, contactNotes: client.contactNotes } });
+    const client = await ClientAccount.create({ clientCode, username: cleanUsername, password: hashed, name: cleanName, paymentMethod: paymentMethod || 'Cash', creditLimit: parseCreditLimit(creditLimit), creditTermsDays: parseTermsDays(creditTermsDays), segments: cleanSegments, phone: cleanPhone(phone), email: emailVal, contactNotes: String(contactNotes ?? '').trim().slice(0, 1000) });
+    res.json({ success: true, client: { _id: client._id, clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, creditLimit: client.creditLimit, creditTermsDays: client.creditTermsDays, segments: client.segments, phone: client.phone, email: client.email, contactNotes: client.contactNotes } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -419,7 +426,7 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
 
 app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { username, password, name, paymentMethod, isActive, creditLimit, segments, phone, email, contactNotes } = req.body;
+    const { username, password, name, paymentMethod, isActive, creditLimit, creditTermsDays, segments, phone, email, contactNotes } = req.body;
     const update = {};
     if (username) update.username = lower(username);
     if (name) update.name = title(name);
@@ -427,6 +434,7 @@ app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req
     if (typeof isActive === 'boolean') update.isActive = isActive;
     // Sent explicitly (including '' / null to clear it back to "no limit").
     if (creditLimit !== undefined) update.creditLimit = parseCreditLimit(creditLimit);
+    if (creditTermsDays !== undefined) update.creditTermsDays = parseTermsDays(creditTermsDays);
     if (Array.isArray(segments)) update.segments = [...new Set(segments.map(s => String(s).trim()).filter(Boolean))];
     // Contact fields — sent explicitly (including '' to clear). Email validated.
     if (phone !== undefined) update.phone = cleanPhone(phone);
