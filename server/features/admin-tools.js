@@ -277,26 +277,58 @@ app.post('/api/admin/seed-payment-subaccounts', verifyToken, requireSuperAdmin, 
   }
 });
 
-// ── BACKDATED SALES TALLY (superadmin only) ──────────────────────────────────
-// Adds a Completed order with a chosen historical date so analytics / P&L
-// include sales done before the POS was in place (or paper receipts that need
-// to be tallied). Skips inventory deduction and recipe COGS — this is a tally,
-// not a real transaction. Respects period locks. Always audited.
+// ── BACKDATED SALE (superadmin only) ─────────────────────────────────────────
+// Records a Completed order for a chosen historical date so analytics / P&L
+// include sales made before the POS was in place. Two shapes accepted:
+//   • Itemized (preferred) — `items: [{ name, price, quantity, productId?,
+//     productCode? }]`, like a normal sale. Set `affectInventory: true` to also
+//     deduct current stock + book COGS; DEFAULT false, so old sales don't eat
+//     today's inventory (a pure revenue tally).
+//   • Lump — a single `amount` (legacy). Always revenue-only.
+// The revenue journal entry is DATED TO THE CHOSEN DAY, so that period's books
+// are right. Respects period locks. Always audited. (Non-VAT posting, matching
+// the live completion path for these businesses.)
 app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
-    const { date, customerName, amount, paymentMethod, notes } = req.body;
-    const amt = Number(amount);
-    if (!date || isNaN(amt) || amt <= 0) {
-      await session.abortTransaction(); session.endSession();
-      return res.status(400).json({ success: false, error: 'date and a positive amount are required.' });
-    }
+    const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0 } = req.body;
+
     const dt = new Date(date);
-    if (isNaN(dt.getTime())) {
+    if (!date || isNaN(dt.getTime())) {
       await session.abortTransaction(); session.endSession();
-      return res.status(400).json({ success: false, error: 'Invalid date.' });
+      return res.status(400).json({ success: false, error: 'A valid date is required.' });
     }
+    if (dt.getTime() > Date.now()) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'A backdated sale must be in the past, not the future.' });
+    }
+
+    // Build the line items — itemized when provided, else a single lump line.
+    const itemized = Array.isArray(items) && items.length > 0;
+    let orderItems = [];
+    if (itemized) {
+      for (const it of items) {
+        const price = Number(it.price), qty = Number(it.quantity);
+        if (!it.name || !Number.isFinite(price) || price < 0 || !Number.isFinite(qty) || qty <= 0) {
+          await session.abortTransaction(); session.endSession();
+          return res.status(400).json({ success: false, error: 'Each item needs a name, a non-negative price, and a positive quantity.' });
+        }
+        orderItems.push({ name: String(it.name), price, quantity: qty, productId: it.productId || undefined, productCode: it.productCode || undefined, productDiscountPercent: 0, itemStatus: 'Served' });
+      }
+    } else {
+      const amt = Number(amount);
+      if (isNaN(amt) || amt <= 0) {
+        await session.abortTransaction(); session.endSession();
+        return res.status(400).json({ success: false, error: 'Provide either items[] or a positive amount.' });
+      }
+      orderItems = [{ name: 'Historical Sale', price: amt, quantity: 1, productDiscountPercent: 0 }];
+    }
+
+    const gross = +orderItems.reduce((s, it) => s + it.price * it.quantity, 0).toFixed(2);
+    const pct = Math.max(0, Math.min(100, Number(discountPercent) || 0));
+    const discount = +(gross * pct / 100).toFixed(2);
+    const total = +(gross - discount).toFixed(2);
 
     // Period-lock guard.
     const lock = await periodLockFor(dt);
@@ -310,6 +342,33 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
 
     const year = dt.getFullYear();
     const orderNumber = await generateNextSequence(Order, `ORD-${year}`, 'orderNumber');
+
+    // Optional stock deduction + COGS — only when explicitly asked.
+    let totalCogs = 0;
+    const stockCards = [];
+    if (itemized && affectInventory) {
+      for (const item of orderItems) {
+        const product = item.productId ? await Product.findById(item.productId).session(session) : null;
+        if (!product) continue;
+        const linkInv = await resolveLinkedInventory(product, item.productCode, session);
+        if (!linkInv) continue;
+        const deductQty = item.quantity * baseUnitsPerSale(product, linkInv);
+        const updated = await Inventory.findOneAndUpdate(
+          { _id: linkInv._id, stockQty: { $gte: deductQty } },
+          { $inc: { stockQty: -deductQty } },
+          { session, returnDocument: 'after' }
+        );
+        if (!updated) {
+          await session.abortTransaction(); session.endSession();
+          return res.status(400).json({ success: false, error: `Not enough stock of "${linkInv.itemName}" to reduce for this backdated sale. Turn off "reduce inventory" or receive stock first.` });
+        }
+        stockCards.push({ inventoryId: updated._id, itemName: updated.itemName, type: 'Sale', reference: mkRef('BACK', orderNumber), qtyChange: -deductQty, balanceAfter: updated.stockQty, remarks: `Backdated sale (${item.name})` });
+        totalCogs += linkInv.unitCost * deductQty;
+      }
+      if (stockCards.length) await StockCard.insertMany(stockCards, { session });
+    }
+    totalCogs = +totalCogs.toFixed(2);
+
     const [order] = await Order.create([{
       orderNumber,
       table: 'Backdated',
@@ -318,39 +377,42 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
       cashier: req.user?.name || 'Backdated Entry',
       customerName: customerName || 'Walk-in (backdated)',
       paymentMethod: method,
-      items: [{ name: 'Historical Sale', price: amt, quantity: 1, productDiscountPercent: 0 }],
-      subtotal: amt,
-      discount: 0,
-      vatAmount: 0,
-      vatRate: 0,
-      total: amt,
+      items: orderItems,
+      subtotal: gross,
+      discount,
+      discountPercent: pct,
+      vatAmount: 0, vatRate: 0,
+      total,
       isVatExempt: true,
       transactionType: 'NORMAL',
       orderNotes: (notes || '').trim().slice(0, 300),
       isBackdated: true,
     }], { session });
 
-    // Journal entry: DR <payment account>, CR Sales Revenue (410000)
-    // Same transaction as the Order write above — if this fails, the order
-    // must not survive either, or the sale would show up in reports with no
-    // corresponding ledger entry.
+    // Balanced revenue entry, DATED to the backdate. Same transaction as the
+    // order write — a sale must never appear in reports without its ledger entry.
     const reference = await mkSeqRef('BACKDATE');
+    const lines = [
+      { accountCode: acct.code, accountName: acct.name, debit: total, credit: 0 },
+    ];
+    if (discount > 0) lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: discount, credit: 0 });
+    lines.push({ accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: gross });
+    if (totalCogs > 0) {
+      lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: totalCogs, credit: 0 });
+      lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: totalCogs });
+    }
+    assertBalanced(lines, reference); // redundant with the schema guard, but fails fast + clearer
     await JournalEntry.create([{
       date: dt,
       reference,
       description: `Backdated sale: ${order.orderNumber}${notes ? ` (${notes})` : ''}`,
-      lines: [
-        { accountCode: acct.code, accountName: acct.name, debit: amt, credit: 0 },
-        { accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: amt },
-      ],
-      totalDebit: amt,
-      totalCredit: amt,
+      lines,
     }], { session });
 
     await session.commitTransaction();
     session.endSession();
 
-    await logAudit(req, { action: 'backdate-sale', entity: 'Order', entityId: order._id, after: { orderNumber, date: dt, amount: amt, paymentMethod: method } });
+    await logAudit(req, { action: 'backdate-sale', entity: 'Order', entityId: order._id, after: { orderNumber, date: dt, total, paymentMethod: method, itemized, affectInventory: !!(itemized && affectInventory) } });
     emitToMgr('erpUpdated');
     res.json({ success: true, order, journalReference: reference });
   } catch (err) {
