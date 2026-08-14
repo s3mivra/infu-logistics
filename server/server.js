@@ -1198,6 +1198,35 @@ const StockCategorySchema = new mongoose.Schema({
 StockCategorySchema.index({ businessType: 1, name: 1 }, { unique: true });
 const StockCategory = mongoose.model('StockCategory', StockCategorySchema);
 
+// #8 Stock transfers — a request → approve → release workflow moving base-unit
+// quantity from one inventory item (at a source location) to another (at a
+// destination location). Because inventory is one-doc-per-item, "the same product
+// at two locations" is modelled as two items; a transfer moves qty between them.
+// This is an INTERNAL asset move (Inventory 130000 unchanged) so it posts NO
+// journal entry — only StockCard audit rows on release.
+const STOCK_TRANSFER_STATUSES = ['Requested', 'Approved', 'Released', 'Rejected', 'Cancelled'];
+const StockTransferSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  reference:    { type: String, index: true },
+  fromItemId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', required: true },
+  toItemId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', required: true },
+  itemName:     { type: String, default: '' },       // snapshot of the source item name for display
+  fromLocation: { type: String, default: '' },
+  toLocation:   { type: String, default: '' },
+  qtyBase:      { type: Number, required: true },     // ALWAYS base units (g/ml/pcs)
+  unit:         { type: String, default: '' },        // base unit label, for display
+  status:       { type: String, enum: STOCK_TRANSFER_STATUSES, default: 'Requested', index: true },
+  note:         { type: String, default: '' },
+  requestedBy:  { type: String, default: '' },
+  approvedBy:   { type: String, default: '' },
+  releasedBy:   { type: String, default: '' },
+  approvedAt:   { type: Date },
+  releasedAt:   { type: Date },
+}, { timestamps: true });
+StockTransferSchema.index({ businessType: 1, status: 1, createdAt: -1 });
+const StockTransfer = mongoose.model('StockTransfer', StockTransferSchema);
+
 const JournalEntrySchema = new mongoose.Schema({
   date: { type: Date, default: Date.now, index: true },
   reference: { type: String, index: true },
@@ -2497,6 +2526,9 @@ const ctx = {
   StorageLocation,
   StockCategorySchema,
   StockCategory,
+  StockTransferSchema,
+  StockTransfer,
+  STOCK_TRANSFER_STATUSES,
   JournalEntrySchema,
   JournalEntry,
   TenantStatsSchema,

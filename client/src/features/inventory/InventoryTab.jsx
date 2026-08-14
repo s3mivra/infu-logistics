@@ -2,6 +2,7 @@ import React from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import StockTaxonomyPanel from './StockTaxonomyPanel';
+import StockTransferPanel from './StockTransferPanel';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
@@ -44,6 +45,7 @@ export default function InventoryTab({ ctx }) {
     inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, itemDisplay, packInfo,
     procurementCreditAccounts,
     stockLocations, stockCategories, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory,
+    stockTransfers, locationAnalytics, fetchStockTransfers, requestStockTransfer, actOnStockTransfer,
     itemsPerPage, jeForm, journalEntries, ledgerSubTab, navMode,
     newDiscount, openEditInventory, openProductModal, orderFilter, orders,
     ordersItemsPerPage, ordersPage, parseImportFile, paymentSelections, peso,
@@ -135,6 +137,12 @@ export default function InventoryTab({ ctx }) {
                 >
                   Places &amp; Categories
                 </button>
+                <button
+                  onClick={() => { setInvSubTab('transfers'); fetchStockTransfers(); }}
+                  className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'transfers' ? 'bg-accent text-white shadow-md' : 'text-gray-400 hover:text-accent'}`}
+                >
+                  Transfers
+                </button>
               </div>
               
               <div className="flex items-center gap-1.5">
@@ -161,6 +169,18 @@ export default function InventoryTab({ ctx }) {
                 deleteStockLocation={deleteStockLocation}
                 saveStockCategory={saveStockCategory}
                 deleteStockCategory={deleteStockCategory}
+              />
+            )}
+
+            {invSubTab === 'transfers' && (
+              <StockTransferPanel
+                inventory={inventory}
+                stockTransfers={stockTransfers}
+                locationAnalytics={locationAnalytics}
+                requestStockTransfer={requestStockTransfer}
+                actOnStockTransfer={actOnStockTransfer}
+                isSuperAdmin={isSuperAdmin}
+                peso={peso}
               />
             )}
 

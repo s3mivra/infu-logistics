@@ -334,6 +334,8 @@ export default function AdminDashboard() {
   const [suppliers, setSuppliers] = useState([]);
   const [stockLocations, setStockLocations] = useState([]);
   const [stockCategories, setStockCategories] = useState([]);
+  const [stockTransfers, setStockTransfers] = useState([]);
+  const [locationAnalytics, setLocationAnalytics] = useState([]);
   const [apPaySubmitting, setApPaySubmitting] = useState(false);
   const [activeInventoryItem, setActiveInventoryItem] = useState(null); // For the restock modal
 
@@ -1992,6 +1994,24 @@ const updateStatus = async (orderId, newStatus) => {
     if (!await ui.confirm('Delete this category?')) return;
     const res = await apiFetch(`/api/stock-categories/${id}`, { method: 'DELETE' });
     const d = await res.json(); if (!d.success) ui.alert(d.error); fetchStockTaxonomy();
+  };
+  const fetchStockTransfers = async () => {
+    try {
+      const [tr, ar] = await Promise.all([apiFetch('/api/stock-transfers'), apiFetch('/api/stock-analytics/by-location')]);
+      const [td, ad] = await Promise.all([tr.json(), ar.json()]);
+      if (td.success) setStockTransfers(td.transfers || []);
+      if (ad.success) setLocationAnalytics(ad.locations || []);
+    } catch (err) { console.error('fetchStockTransfers', err); }
+  };
+  const requestStockTransfer = async (body) => {
+    const res = await apiFetch('/api/stock-transfers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await res.json(); if (!d.success) { ui.alert(d.error); return false; } fetchStockTransfers(); return true;
+  };
+  const actOnStockTransfer = async (id, action) => {
+    if (action === 'reject' && !await ui.confirm('Cancel/reject this transfer?')) return;
+    const res = await apiFetch(`/api/stock-transfers/${id}/${action}`, { method: 'POST' });
+    const d = await res.json(); if (!d.success) ui.alert(d.error);
+    fetchStockTransfers(); if (action === 'release') fetchERPData();
   };
   const fetchArAgeing = async () => {
     if (activeAdmin?.role !== 'superadmin') return;
@@ -5105,6 +5125,7 @@ const updateStatus = async (orderId, newStatus) => {
     bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF,
     arOutstanding, fetchArOutstanding, arAgeing, fetchArAgeing, suppliers, fetchSuppliers,
     stockLocations, stockCategories, fetchStockTaxonomy, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory,
+    stockTransfers, locationAnalytics, fetchStockTransfers, requestStockTransfer, actOnStockTransfer,
     expenseModal, setExpenseModal, expenseCategories, fetchExpenseCategories,
     expenseForm, setExpenseForm, expenseSubmitting, submitExpense, expenseList, fetchExpenses,
     settleModal, setSettleModal, settleForm, setSettleForm, settleSubmitting, setSettleSubmitting,

@@ -110,6 +110,7 @@ export default function registerInventory(ctx) {
     Inventory,
     StorageLocation,
     StockCategory,
+    StockTransfer,
     JournalEntrySchema,
     JournalEntry,
     InventoryMovementSchema,
@@ -515,6 +516,138 @@ app.delete('/api/stock-categories/:id', verifyToken, requireSuperAdmin, async (r
     await cat.deleteOne();
     res.json({ success: true });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #8 STOCK TRANSFERS — request → approve → release between two per-location items.
+// Internal asset move: no journal entry; StockCard audit rows written on release.
+// ─────────────────────────────────────────────────────────────────────────────
+app.get('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const filter = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    if (req.query.status) filter.status = String(req.query.status);
+    const rows = await StockTransfer.find(filter).sort({ createdAt: -1 }).limit(500).lean();
+    res.json({ success: true, transfers: rows });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// Cross-location analytics: on-hand qty & value grouped by storage location.
+app.get('/api/stock-analytics/by-location', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const items = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) },
+      { itemName: 1, stockQty: 1, unitCost: 1, stockLocation: 1, unit: 1, lowStockThreshold: 1 }).lean();
+    const byLoc = {};
+    for (const i of items) {
+      const key = i.stockLocation || '(Unassigned)';
+      const b = byLoc[key] || (byLoc[key] = { location: key, itemCount: 0, totalValue: 0, lowStockCount: 0 });
+      b.itemCount += 1;
+      b.totalValue += (i.stockQty || 0) * (i.unitCost || 0);
+      if ((i.lowStockThreshold || 0) > 0 && (i.stockQty || 0) <= i.lowStockThreshold) b.lowStockCount += 1;
+    }
+    const locations = Object.values(byLoc).map(b => ({ ...b, totalValue: +b.totalValue.toFixed(2) })).sort((a, b) => b.totalValue - a.totalValue);
+    res.json({ success: true, locations });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// Request a transfer (staff). Validates both items exist and qty > 0.
+app.post('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const { fromItemId, toItemId, qtyBase, note } = req.body || {};
+    if (!fromItemId || !toItemId) return res.status(400).json({ success: false, error: 'Source and destination items are required.' });
+    if (String(fromItemId) === String(toItemId)) return res.status(400).json({ success: false, error: 'Source and destination must be different items.' });
+    const qty = Number(qtyBase);
+    if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ success: false, error: 'Transfer quantity must be greater than zero.' });
+    const [from, to] = await Promise.all([Inventory.findById(fromItemId), Inventory.findById(toItemId)]);
+    if (!from || !to) return res.status(404).json({ success: false, error: 'Source or destination item not found.' });
+    if (qty > (from.stockQty || 0) + 1e-6) return res.status(400).json({ success: false, error: `Only ${from.stockQty} ${from.unit || ''} on hand at source.` });
+    const reference = await mkSeqRef('XFER');
+    const transfer = await StockTransfer.create({
+      reference, fromItemId, toItemId, itemName: from.itemName,
+      fromLocation: from.stockLocation || '', toLocation: to.stockLocation || '',
+      qtyBase: qty, unit: from.unit || '', status: 'Requested',
+      note: String(note || '').trim().slice(0, 500), requestedBy: req.user?.name || '',
+    });
+    emitToMgr('erpUpdated');
+    res.json({ success: true, transfer });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// Approve (superadmin). Requested → Approved.
+app.post('/api/stock-transfers/:id/approve', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const t = await StockTransfer.findById(req.params.id);
+    if (!t) return res.status(404).json({ success: false, error: 'Transfer not found.' });
+    if (t.status !== 'Requested') return res.status(400).json({ success: false, error: `Only a Requested transfer can be approved (currently ${t.status}).` });
+    t.status = 'Approved'; t.approvedBy = req.user?.name || ''; t.approvedAt = new Date();
+    await t.save();
+    emitToMgr('erpUpdated');
+    res.json({ success: true, transfer: t });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// Reject (superadmin) or cancel (staff, own request while still Requested).
+app.post('/api/stock-transfers/:id/reject', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const t = await StockTransfer.findById(req.params.id);
+    if (!t) return res.status(404).json({ success: false, error: 'Transfer not found.' });
+    if (t.status === 'Released') return res.status(400).json({ success: false, error: 'A released transfer cannot be cancelled — reverse it with a new transfer.' });
+    if (['Rejected', 'Cancelled'].includes(t.status)) return res.status(400).json({ success: false, error: `Transfer already ${t.status}.` });
+    const isSuper = req.user?.role === 'superadmin';
+    t.status = isSuper ? 'Rejected' : 'Cancelled';
+    await t.save();
+    emitToMgr('erpUpdated');
+    res.json({ success: true, transfer: t });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// Release (staff): Approved → Released. Moves the quantity between the two items
+// inside a transaction and writes a StockCard row on each side.
+app.post('/api/stock-transfers/:id/release', verifyToken, requireStaff, async (req, res) => {
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const session = await mongoose.startSession();
+    try {
+      let released = null;
+      await session.withTransaction(async () => {
+        const t = await StockTransfer.findById(req.params.id).session(session);
+        if (!t) throw Object.assign(new Error('Transfer not found.'), { httpStatus: 404 });
+        if (t.status !== 'Approved') throw Object.assign(new Error(`Only an Approved transfer can be released (currently ${t.status}).`), { httpStatus: 400 });
+        const from = await Inventory.findById(t.fromItemId).session(session);
+        const to = await Inventory.findById(t.toItemId).session(session);
+        if (!from || !to) throw Object.assign(new Error('Source or destination item no longer exists.'), { httpStatus: 404 });
+        if (t.qtyBase > (from.stockQty || 0) + 1e-6) throw Object.assign(new Error(`Only ${from.stockQty} ${from.unit || ''} on hand at source now.`), { httpStatus: 400 });
+
+        from.stockQty = +(from.stockQty - t.qtyBase).toFixed(6);
+        to.stockQty = +(to.stockQty + t.qtyBase).toFixed(6);
+        await from.save({ session });
+        await to.save({ session });
+
+        await StockCard.create([{
+          inventoryId: from._id, itemName: from.itemName, type: 'Transfer Out',
+          reference: t.reference, qtyChange: -t.qtyBase, balanceAfter: from.stockQty,
+          unitCost: from.unitCost, remarks: `Transfer to ${t.toLocation || to.itemName} (${t.reference})`,
+        }, {
+          inventoryId: to._id, itemName: to.itemName, type: 'Transfer In',
+          reference: t.reference, qtyChange: t.qtyBase, balanceAfter: to.stockQty,
+          unitCost: to.unitCost, remarks: `Transfer from ${t.fromLocation || from.itemName} (${t.reference})`,
+        }], { session, ordered: true });
+
+        t.status = 'Released'; t.releasedBy = req.user?.name || ''; t.releasedAt = new Date();
+        await t.save({ session });
+        released = t;
+      });
+      await session.endSession();
+      emitToMgr('erpUpdated');
+      return res.json({ success: true, transfer: released });
+    } catch (err) {
+      await session.endSession();
+      if (err?.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.message });
+      const transient = err?.errorLabels?.includes?.('TransientTransactionError') || /WriteConflict/i.test(err?.message || '');
+      if (transient && attempt < MAX_ATTEMPTS) continue;
+      (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+      return;
+    }
+  }
 });
 
 app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
