@@ -293,20 +293,24 @@ export default function InventoryTab({ ctx }) {
                             </div>
                           ) : <span className="text-white text-xs">-</span>}
                         </td>
-                        <td className="py-3 text-center space-x-1">
-                          <button onClick={() => fetchStockHistory(item)} className="text-accent bg-page-bg hover:bg-accent hover:text-white text-xs font-bold px-2 py-1 rounded transition">History</button>
-                          <button onClick={() => openEditInventory(item)} className="text-white hover:text-fg hover:bg-blue-600 text-xs font-bold px-2 py-1 bg-blue-500 rounded transition">Edit</button>
-                          <button onClick={() => {
-                            const isExpired = expBadge && (expBadge.text.startsWith('EXPIRED') || expBadge.text === 'TODAY');
-                            setSpoilageModal({ item });
-                            const autoQty = isExpired ? itemDisplay(item).packQty : '';
-                            setSpoilageForm({
-                              qty: isExpired ? autoQty.toString() : '',
-                              reason: isExpired ? 'Spoilage' : '',
-                              note: isExpired ? `Auto-flagged expired (${new Date(item.expiryDate).toLocaleDateString()})` : ''
-                            });
-                          }} className="text-white hover:text-fg hover:bg-orange-600 text-xs font-bold px-2 py-1 bg-orange-500 rounded transition">Waste</button>
-                          <button onClick={() => deleteInventory(item._id)} className="text-white hover:text-fg text-xs font-bold px-2 py-1 bg-red-600 rounded transition">Del</button>
+                        <td className="py-3">
+                          {/* Tappable on tablets: min 36px targets, wrapping so
+                              they never overflow or shrink below a fingertip. */}
+                          <div className="flex flex-wrap gap-1.5 justify-center">
+                            <button onClick={() => fetchStockHistory(item)} className="text-accent bg-page-bg hover:bg-accent hover:text-white text-xs font-bold px-3 py-2 min-h-[36px] rounded transition">History</button>
+                            <button onClick={() => openEditInventory(item)} className="text-white hover:text-fg hover:bg-blue-600 text-xs font-bold px-3 py-2 min-h-[36px] bg-blue-500 rounded transition">Edit</button>
+                            <button onClick={() => {
+                              const isExpired = expBadge && (expBadge.text.startsWith('EXPIRED') || expBadge.text === 'TODAY');
+                              setSpoilageModal({ item });
+                              const autoQty = isExpired ? itemDisplay(item).packQty : '';
+                              setSpoilageForm({
+                                qty: isExpired ? autoQty.toString() : '',
+                                reason: isExpired ? 'Spoilage' : '',
+                                note: isExpired ? `Auto-flagged expired (${new Date(item.expiryDate).toLocaleDateString()})` : ''
+                              });
+                            }} className="text-white hover:text-fg hover:bg-orange-600 text-xs font-bold px-3 py-2 min-h-[36px] bg-orange-500 rounded transition">Waste</button>
+                            <button onClick={() => deleteInventory(item._id)} className="text-white hover:text-fg text-xs font-bold px-3 py-2 min-h-[36px] bg-red-600 rounded transition">Del</button>
+                          </div>
                         </td>
                       </tr>
                       {/* Expanded batches sub-row */}
