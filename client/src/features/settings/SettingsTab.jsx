@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt } from 'lucide-react';
+import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type } from 'lucide-react';
 import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
 
 // ── SettingsTab — system preferences & account controls ───────────────────────
@@ -103,6 +103,19 @@ const readLang = () => {
   try { return localStorage.getItem('dash.lang') || 'en'; } catch { return 'en'; }
 };
 
+// App-wide text size, per device. Value is a percent of the 16px base; because
+// the whole app is rem-based, scaling the root font-size scales text + spacing
+// together. Kept in sync with the boot-time apply in App.jsx.
+const FONT_SIZES = [
+  { value: 90, label: 'Small' },
+  { value: 100, label: 'Normal' },
+  { value: 110, label: 'Large' },
+  { value: 125, label: 'X-Large' },
+];
+const readFontScale = () => {
+  try { return Number(localStorage.getItem('dash.fontScale')) || 100; } catch { return 100; }
+};
+
 export default function SettingsTab({ ctx }) {
   const {
     systemSettings = {}, toggleQROrders, toggleAutoClose, toggleImages,
@@ -116,6 +129,12 @@ export default function SettingsTab({ ctx }) {
 
   const [theme, setTheme] = useState(readTheme);
   const [lang, setLang] = useState(readLang);
+  const [fontScale, setFontScale] = useState(readFontScale);
+  const applyFontScale = (v) => {
+    setFontScale(v);
+    document.documentElement.style.fontSize = (16 * v / 100) + 'px';
+    try { localStorage.setItem('dash.fontScale', String(v)); } catch { /* private mode: applies for this session only */ }
+  };
   const [printerMode, setPrinterMode] = useState(readPrinterMode);
   const applyPrinterMode = (v) => { setPrinterMode(v); writePrinterMode(v); };
 
@@ -549,6 +568,32 @@ export default function SettingsTab({ ctx }) {
                           : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
                       }`}>
                       {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-4 py-4">
+            <div className="flex items-start gap-4">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-fg/50 bg-white/5 border-white/10">
+                <Type size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-fg text-sm">Text Size</p>
+                <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                  Scales the whole app — bigger is easier to read on a tablet at arm's length. Saved on this device only.
+                </p>
+                <div className="grid grid-cols-4 gap-2 mt-3 max-w-md">
+                  {FONT_SIZES.map(s => (
+                    <button key={s.value} onClick={() => applyFontScale(s.value)}
+                      className={`px-2 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
+                        fontScale === s.value
+                          ? 'bg-brand text-white border-brand'
+                          : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                      }`}>
+                      {s.label}
                     </button>
                   ))}
                 </div>
