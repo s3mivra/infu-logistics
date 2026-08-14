@@ -1,6 +1,7 @@
 import React from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 import * as ui from '../../shared/ui';
+import StockTaxonomyPanel from './StockTaxonomyPanel';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
@@ -42,6 +43,7 @@ export default function InventoryTab({ ctx }) {
     invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter,
     inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, itemDisplay, packInfo,
     procurementCreditAccounts,
+    stockLocations, stockCategories, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory,
     itemsPerPage, jeForm, journalEntries, ledgerSubTab, navMode,
     newDiscount, openEditInventory, openProductModal, orderFilter, orders,
     ordersItemsPerPage, ordersPage, parseImportFile, paymentSelections, peso,
@@ -127,6 +129,12 @@ export default function InventoryTab({ ctx }) {
                   <span className={`w-2 h-2 rounded-full ${invSubTab === 'eod' ? 'bg-white animate-pulse' : 'bg-red-500'}`}></span>
                   EOD Audit
                 </button>
+                <button
+                  onClick={() => setInvSubTab('places')}
+                  className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'places' ? 'bg-accent text-white shadow-md' : 'text-gray-400 hover:text-accent'}`}
+                >
+                  Places &amp; Categories
+                </button>
               </div>
               
               <div className="flex items-center gap-1.5">
@@ -144,6 +152,17 @@ export default function InventoryTab({ ctx }) {
                 </button>
               </div>
             </div>
+
+            {invSubTab === 'places' && (
+              <StockTaxonomyPanel
+                stockLocations={stockLocations}
+                stockCategories={stockCategories}
+                saveStockLocation={saveStockLocation}
+                deleteStockLocation={deleteStockLocation}
+                saveStockCategory={saveStockCategory}
+                deleteStockCategory={deleteStockCategory}
+              />
+            )}
 
             {/* --- SEARCH / FILTER / SORT BAR --- */}
             {invSubTab === 'live' && (() => {
@@ -902,6 +921,25 @@ export default function InventoryTab({ ctx }) {
                 </div>
               </div>
               <p className="text-[9px] text-gray-600 -mt-2">For perishables. When restocking, soonest expiry across batches is kept (FEFO).</p>
+
+              {/* #7 storage place + stock category tags */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Storage Location</label>
+                  <select value={invForm.stockLocation || ''} onChange={e => setInvForm({ ...invForm, stockLocation: e.target.value })} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent text-sm">
+                    <option value="">— None —</option>
+                    {(stockLocations || []).filter(l => l.isActive !== false).map(l => <option key={l._id} value={l.name}>{l.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Stock Category</label>
+                  <select value={invForm.stockCategory || ''} onChange={e => setInvForm({ ...invForm, stockCategory: e.target.value })} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent text-sm">
+                    <option value="">— None —</option>
+                    {(stockCategories || []).filter(c => c.isActive !== false).map(c => <option key={c._id} value={c.name}>{c.name}{c.prefix ? ` (${c.prefix})` : ''}</option>)}
+                  </select>
+                </div>
+              </div>
+              <p className="text-[9px] text-gray-600 -mt-2">Manage places &amp; categories in the <span className="font-bold text-fg/70">Places &amp; Categories</span> sub-tab. A category with a prefix auto-numbers the item code (e.g. P1 → P10001).</p>
 
               {/* --- CREDIT ACCOUNT SELECTOR (dynamic from COA) --- */}
               <div>

@@ -1134,6 +1134,12 @@ const InventorySchema = new mongoose.Schema({
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   itemCode: String,
   itemName: String,
+  // Organisational tags (both optional, free-form strings matching a StorageLocation
+  // / StockCategory `name`). stockLocation = where the physical stock sits (a branch,
+  // warehouse, or store room); stockCategory = the grouping used for the auto item-code
+  // prefix (#9) and inventory filtering. Empty = untagged.
+  stockLocation: { type: String, default: '', index: true },
+  stockCategory: { type: String, default: '', index: true },
   stockQty: { type: Number, default: 0 },           // ALWAYS stored in base unit (g/ml/pcs) for recipe precision
   unit: String,                                       // base unit: 'g', 'ml', 'pcs'
   unitCost: { type: Number, default: 0 },             // ALWAYS per base unit (e.g. P0.07/ml when 1L costs P70)
@@ -1163,6 +1169,34 @@ const InventorySchema = new mongoose.Schema({
 InventorySchema.index({ expiryDate: 1 });
 InventorySchema.index({ itemName: 1 });
 const Inventory = mongoose.model('Inventory', InventorySchema);
+
+// Storage places — the physical locations stock can sit in (branch, warehouse,
+// cold room). Referenced by name from Inventory.stockLocation and by the
+// stock-transfer workflow (#8). Kept as its own small collection so places can be
+// managed (renamed, deactivated) without touching every inventory row.
+const StorageLocationSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  name:      { type: String, required: true },
+  note:      { type: String, default: '' },
+  isActive:  { type: Boolean, default: true },
+}, { timestamps: true });
+StorageLocationSchema.index({ businessType: 1, name: 1 }, { unique: true });
+const StorageLocation = mongoose.model('StorageLocation', StorageLocationSchema);
+
+// Stock categories — the grouping for raw-material/inventory items (distinct from
+// product menu Categories). Each carries a short manual `prefix` (2 chars) that
+// drives the auto item-code sequence (#9), e.g. prefix "P" → P10001, P10002.
+const StockCategorySchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  name:      { type: String, required: true },
+  prefix:    { type: String, default: '' },   // uppercased, ≤4 chars; blank = fall back to global RML codes
+  note:      { type: String, default: '' },
+  isActive:  { type: Boolean, default: true },
+}, { timestamps: true });
+StockCategorySchema.index({ businessType: 1, name: 1 }, { unique: true });
+const StockCategory = mongoose.model('StockCategory', StockCategorySchema);
 
 const JournalEntrySchema = new mongoose.Schema({
   date: { type: Date, default: Date.now, index: true },
@@ -2459,6 +2493,10 @@ const ctx = {
   QRSession,
   InventorySchema,
   Inventory,
+  StorageLocationSchema,
+  StorageLocation,
+  StockCategorySchema,
+  StockCategory,
   JournalEntrySchema,
   JournalEntry,
   TenantStatsSchema,

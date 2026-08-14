@@ -218,7 +218,7 @@ export default function AdminDashboard() {
 
   const [inventory, setInventory] = useState([]);
   const [journalEntries, setJournalEntries] = useState([]);
-  const [invForm, setInvForm] = useState({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000' });
+  const [invForm, setInvForm] = useState({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000', stockLocation: '', stockCategory: '' });
   // --- INVENTORY EDIT MODAL ---
   const [editInvModal, setEditInvModal] = useState(null);   // { item } | null
   const [editInvForm, setEditInvForm] = useState({ itemCode: '', itemName: '', unit: '', unitCost: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, displayUnit: '', packSize: '' });
@@ -332,6 +332,8 @@ export default function AdminDashboard() {
   const [apPayForm, setApPayForm] = useState({ amount: '', payFromAccount: '111000', description: '', vendorName: '', supplierId: '' });
   // Supplier list for the A/P payment picker (the Procurement tab keeps its own).
   const [suppliers, setSuppliers] = useState([]);
+  const [stockLocations, setStockLocations] = useState([]);
+  const [stockCategories, setStockCategories] = useState([]);
   const [apPaySubmitting, setApPaySubmitting] = useState(false);
   const [activeInventoryItem, setActiveInventoryItem] = useState(null); // For the restock modal
 
@@ -1421,6 +1423,7 @@ export default function AdminDashboard() {
     fetchOrders();
     fetchData();
     fetchERPData();
+    fetchStockTaxonomy();
     fetchUsers();
     requestNotificationPermission(); // ask once so new-order alerts can show in the installed app
 
@@ -1963,6 +1966,32 @@ const updateStatus = async (orderId, newStatus) => {
       const d = await res.json();
       if (d.success) setSuppliers(d.suppliers || []);
     } catch (err) { console.error('fetchSuppliers', err); }
+  };
+  const fetchStockTaxonomy = async () => {
+    try {
+      const [lr, cr] = await Promise.all([apiFetch('/api/stock-locations'), apiFetch('/api/stock-categories')]);
+      const [ld, cd] = await Promise.all([lr.json(), cr.json()]);
+      if (ld.success) setStockLocations(ld.locations || []);
+      if (cd.success) setStockCategories(cd.categories || []);
+    } catch (err) { console.error('fetchStockTaxonomy', err); }
+  };
+  const saveStockLocation = async (body, id) => {
+    const res = await apiFetch(id ? `/api/stock-locations/${id}` : '/api/stock-locations', { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await res.json(); if (!d.success) { ui.alert(d.error); return false; } fetchStockTaxonomy(); return true;
+  };
+  const deleteStockLocation = async (id) => {
+    if (!await ui.confirm('Delete this location?')) return;
+    const res = await apiFetch(`/api/stock-locations/${id}`, { method: 'DELETE' });
+    const d = await res.json(); if (!d.success) ui.alert(d.error); fetchStockTaxonomy();
+  };
+  const saveStockCategory = async (body, id) => {
+    const res = await apiFetch(id ? `/api/stock-categories/${id}` : '/api/stock-categories', { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await res.json(); if (!d.success) { ui.alert(d.error); return false; } fetchStockTaxonomy(); return true;
+  };
+  const deleteStockCategory = async (id) => {
+    if (!await ui.confirm('Delete this category?')) return;
+    const res = await apiFetch(`/api/stock-categories/${id}`, { method: 'DELETE' });
+    const d = await res.json(); if (!d.success) ui.alert(d.error); fetchStockTaxonomy();
   };
   const fetchArAgeing = async () => {
     if (activeAdmin?.role !== 'superadmin') return;
@@ -2541,6 +2570,8 @@ const updateStatus = async (orderId, newStatus) => {
         displayUnit: invForm.unit,
         unitMultiplier: mult,
         packSize: invFormEff.unitPerPack ? parseFloat(invFormEff.unitPerPack) : null,
+        stockLocation: invForm.stockLocation || '',
+        stockCategory: invForm.stockCategory || '',
       };
 
       payload.creditAccount = invForm.creditAccount || '111000';
@@ -2549,7 +2580,7 @@ const updateStatus = async (orderId, newStatus) => {
       if (!data.success) return ui.alert(data.error);
     }
 
-    setInvForm({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000' });
+    setInvForm({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000', stockLocation: '', stockCategory: '' });
     fetchERPData();
   };
   const deleteInventory = async (id) => { if(await ui.confirm('Delete inventory item?')) { await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' }); fetchERPData(); } };
@@ -5073,6 +5104,7 @@ const updateStatus = async (orderId, newStatus) => {
     pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF,
     bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF,
     arOutstanding, fetchArOutstanding, arAgeing, fetchArAgeing, suppliers, fetchSuppliers,
+    stockLocations, stockCategories, fetchStockTaxonomy, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory,
     expenseModal, setExpenseModal, expenseCategories, fetchExpenseCategories,
     expenseForm, setExpenseForm, expenseSubmitting, submitExpense, expenseList, fetchExpenses,
     settleModal, setSettleModal, settleForm, setSettleForm, settleSubmitting, setSettleSubmitting,

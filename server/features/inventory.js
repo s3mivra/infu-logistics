@@ -108,6 +108,8 @@ export default function registerInventory(ctx) {
     QRSession,
     InventorySchema,
     Inventory,
+    StorageLocation,
+    StockCategory,
     JournalEntrySchema,
     JournalEntry,
     InventoryMovementSchema,
@@ -383,6 +385,138 @@ function enrichThresholds(items, usage) {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// #7 STORAGE PLACES & STOCK CATEGORIES — small managed reference collections.
+// Places = where stock physically sits (used by the transfer workflow #8);
+// Categories carry the item-code prefix that drives auto-numbering (#9).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Next item code under a category prefix: PREFIX + zero-padded running number,
+// e.g. prefix "P1" → P10001, P10002. Scans existing codes with that exact prefix
+// so gaps from deletes don't reuse a number.
+async function nextCategoryCode(prefix) {
+  const p = String(prefix || '').toUpperCase().trim();
+  if (!p) return null;
+  const rx = new RegExp(`^${escapeRegex(p)}(\\d+)$`);
+  const rows = await Inventory.find(
+    { itemCode: { $regex: `^${escapeRegex(p)}\\d+$` }, businessType: BUSINESS_TYPE },
+    { itemCode: 1 }
+  ).lean();
+  let max = 0;
+  for (const r of rows) { const m = rx.exec(r.itemCode || ''); if (m) max = Math.max(max, parseInt(m[1], 10)); }
+  return `${p}${String(max + 1).padStart(4, '0')}`;
+}
+
+// --- Storage locations ---
+app.get('/api/stock-locations', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const rows = await StorageLocation.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).sort({ name: 1 }).lean();
+    res.json({ success: true, locations: rows });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+app.post('/api/stock-locations', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const name = title(String(req.body.name || '').trim());
+    if (!name) return res.status(400).json({ success: false, error: 'Location name required.' });
+    const dup = await StorageLocation.findOne({ businessType: BUSINESS_TYPE, name: { $regex: `^${escapeRegex(name)}$`, $options: 'i' } });
+    if (dup) return res.status(400).json({ success: false, error: 'Location already exists.' });
+    const loc = await StorageLocation.create({ name, note: String(req.body.note || '').trim().slice(0, 500) });
+    res.json({ success: true, location: loc });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+app.put('/api/stock-locations/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const loc = await StorageLocation.findById(req.params.id);
+    if (!loc) return res.status(404).json({ success: false, error: 'Location not found.' });
+    const oldName = loc.name;
+    if (req.body.name !== undefined) {
+      const name = title(String(req.body.name || '').trim());
+      if (!name) return res.status(400).json({ success: false, error: 'Location name required.' });
+      loc.name = name;
+    }
+    if (req.body.note !== undefined) loc.note = String(req.body.note || '').trim().slice(0, 500);
+    if (typeof req.body.isActive === 'boolean') loc.isActive = req.body.isActive;
+    await loc.save();
+    // Rename cascades to inventory rows so the tag stays valid.
+    if (loc.name !== oldName) await Inventory.updateMany({ businessType: BUSINESS_TYPE, stockLocation: oldName }, { $set: { stockLocation: loc.name } });
+    res.json({ success: true, location: loc });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+app.delete('/api/stock-locations/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const loc = await StorageLocation.findById(req.params.id);
+    if (!loc) return res.status(404).json({ success: false, error: 'Location not found.' });
+    const inUse = await Inventory.countDocuments({ businessType: BUSINESS_TYPE, stockLocation: loc.name });
+    if (inUse > 0) return res.status(400).json({ success: false, error: `Cannot delete — ${inUse} item(s) still assigned to this location. Reassign them first, or deactivate instead.` });
+    await loc.deleteOne();
+    res.json({ success: true });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// --- Stock categories ---
+app.get('/api/stock-categories', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const rows = await StockCategory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).sort({ name: 1 }).lean();
+    res.json({ success: true, categories: rows });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+app.post('/api/stock-categories', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const name = title(String(req.body.name || '').trim());
+    if (!name) return res.status(400).json({ success: false, error: 'Category name required.' });
+    const prefix = String(req.body.prefix || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+    const dup = await StockCategory.findOne({ businessType: BUSINESS_TYPE, name: { $regex: `^${escapeRegex(name)}$`, $options: 'i' } });
+    if (dup) return res.status(400).json({ success: false, error: 'Category already exists.' });
+    if (prefix) {
+      const pdup = await StockCategory.findOne({ businessType: BUSINESS_TYPE, prefix });
+      if (pdup) return res.status(400).json({ success: false, error: `Prefix "${prefix}" already used by "${pdup.name}". Pick a unique prefix.` });
+    }
+    const cat = await StockCategory.create({ name, prefix, note: String(req.body.note || '').trim().slice(0, 500) });
+    res.json({ success: true, category: cat });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+app.put('/api/stock-categories/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const cat = await StockCategory.findById(req.params.id);
+    if (!cat) return res.status(404).json({ success: false, error: 'Category not found.' });
+    const oldName = cat.name;
+    if (req.body.name !== undefined) {
+      const name = title(String(req.body.name || '').trim());
+      if (!name) return res.status(400).json({ success: false, error: 'Category name required.' });
+      cat.name = name;
+    }
+    if (req.body.prefix !== undefined) {
+      const prefix = String(req.body.prefix || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+      if (prefix && prefix !== cat.prefix) {
+        const pdup = await StockCategory.findOne({ businessType: BUSINESS_TYPE, prefix, _id: { $ne: cat._id } });
+        if (pdup) return res.status(400).json({ success: false, error: `Prefix "${prefix}" already used by "${pdup.name}".` });
+      }
+      cat.prefix = prefix;
+    }
+    if (req.body.note !== undefined) cat.note = String(req.body.note || '').trim().slice(0, 500);
+    if (typeof req.body.isActive === 'boolean') cat.isActive = req.body.isActive;
+    await cat.save();
+    if (cat.name !== oldName) await Inventory.updateMany({ businessType: BUSINESS_TYPE, stockCategory: oldName }, { $set: { stockCategory: cat.name } });
+    res.json({ success: true, category: cat });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+app.delete('/api/stock-categories/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const cat = await StockCategory.findById(req.params.id);
+    if (!cat) return res.status(404).json({ success: false, error: 'Category not found.' });
+    const inUse = await Inventory.countDocuments({ businessType: BUSINESS_TYPE, stockCategory: cat.name });
+    if (inUse > 0) return res.status(400).json({ success: false, error: `Cannot delete — ${inUse} item(s) still in this category. Reassign them first, or deactivate instead.` });
+    await cat.deleteOne();
+    res.json({ success: true });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   try {
   const { page, limit: lim, search } = req.query;
@@ -417,8 +551,17 @@ app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
     const existing = await Inventory.findOne({ itemName: { $regex: new RegExp(`^${escapeRegex(req.body.itemName)}$`, 'i') } });
     if (existing) return res.status(400).json({ success: false, error: 'Item already exists.' });
 
-    // Inject RML code
-    req.body.itemCode = await generateNextSequence(Inventory, 'RML', 'itemCode');
+    // Item code (#9): if the chosen stock category carries a prefix, auto-number
+    // under it (Beans "P1" → P10001, P10002); otherwise fall back to global RML codes.
+    // A manually supplied itemCode always wins.
+    if (!String(req.body.itemCode || '').trim()) {
+      let code = null;
+      if (String(req.body.stockCategory || '').trim()) {
+        const cat = await StockCategory.findOne({ businessType: BUSINESS_TYPE, name: req.body.stockCategory });
+        if (cat?.prefix) code = await nextCategoryCode(cat.prefix);
+      }
+      req.body.itemCode = code || await generateNextSequence(Inventory, 'RML', 'itemCode');
+    }
     // Seed expiryBatches with the initial batch if expiry is provided
     const purchRef = await mkSeqRef('INV-PURCH');
     if (req.body.expiryDate && req.body.stockQty > 0) {
@@ -628,7 +771,7 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
     // Whitelist editable fields — stockQty must NEVER be edited here
     // (would bypass StockCard audit trail and double-entry accounting).
     // Stock changes go through restock / spoilage / order-completion flows.
-    const allowed = ['itemName', 'unit', 'unitCost', 'lowStockThreshold', 'expiryDate', 'expiryWarnDays', 'displayUnit', 'unitMultiplier', 'srp', 'packSize'];
+    const allowed = ['itemName', 'unit', 'unitCost', 'lowStockThreshold', 'expiryDate', 'expiryWarnDays', 'displayUnit', 'unitMultiplier', 'srp', 'packSize', 'stockLocation', 'stockCategory'];
     const update = {};
     for (const k of allowed) if (k in req.body) update[k] = req.body[k];
 
