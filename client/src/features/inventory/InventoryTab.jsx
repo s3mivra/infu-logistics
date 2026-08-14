@@ -345,6 +345,7 @@ export default function InventoryTab({ ctx }) {
                                     <th className="text-right pb-1.5">Qty</th>
                                     <th className="text-left pb-1.5 pl-3">Expiry</th>
                                     <th className="text-left pb-1.5 pl-3">Received</th>
+                                    <th className="text-right pb-1.5 pl-3">Unit Cost</th>
                                     <th className="text-left pb-1.5 pl-3">Ref</th>
                                     <th className="text-right pb-1.5">Action</th>
                                   </tr>
@@ -379,6 +380,7 @@ export default function InventoryTab({ ctx }) {
                                             {diffDays !== null && <span className="ml-1.5 text-[10px] opacity-70">({diffDays < 0 ? `${Math.abs(diffDays)}d ago` : diffDays === 0 ? 'today' : `in ${diffDays}d`})</span>}
                                           </td>
                                           <td className="py-1.5 pl-3 text-fg/40 text-[10px] tabular-nums">{b.receivedAt ? new Date(b.receivedAt).toLocaleDateString() : '-'}</td>
+                                          <td className="py-1.5 pl-3 text-right text-fg/60 text-[10px] tabular-nums">{b.unitCost ? peso(b.unitCost * bPackBase) : '-'}<span className="text-fg/30">/{bUnit}</span></td>
                                           <td className="py-1.5 pl-3 text-fg/40 text-[10px]">{b.reference || '-'}</td>
                                           <td className="py-1.5 text-right">
                                             <button onClick={async () => {
@@ -396,6 +398,9 @@ export default function InventoryTab({ ctx }) {
                                 </tbody>
                               </table>
                             </div>
+                            <p className="text-[10px] text-fg/40 mt-2">
+                              Item unit cost <span className="text-fg/70 font-bold tabular-nums">{peso((item.unitCost || 0) * (packInfo(item).packBase || 1))}/{itemDisplay(item).isPacked ? 'pcs' : itemDisplay(item).unit}</span> is the weighted average across all batches (updated on each restock).
+                            </p>
                           </td>
                         </tr>
                       )}
