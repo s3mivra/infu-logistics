@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Receipt } from 'lucide-react';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
@@ -7,15 +7,15 @@ import * as ui from '../../shared/ui';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
-// ── LedgerTab — extracted from AdminDashboard.jsx ──
+// ── LedgerTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function LedgerTab({ ctx }) {
   // Destructure everything from ctx
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
   const {
     API_URL, AUDIT_PAGE_SIZE, BIZ_NAME, COMP_REASON_LABELS, FRONTEND_URL,
@@ -110,7 +110,7 @@ export default function LedgerTab({ ctx }) {
   const money2 = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   // journalEntries only ever holds the 500 most recent-by-date entries, so an
-  // old-dated entry (e.g. a backdated sale) may not be in memory at all — no
+  // old-dated entry (e.g. a backdated sale) may not be in memory at all - no
   // amount of client-side filtering can find it. Re-fetch from the server's
   // own search whenever the ledger search box has a term, so the lookup isn't
   // bounded by that recent-500 window. Debounced so it doesn't fire per keystroke.
@@ -123,7 +123,7 @@ export default function LedgerTab({ ctx }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [journalSearch]);
 
-  // ── Backdate Sale — a mini-POS: pick products, quantities, discount, comp,
+  // ── Backdate Sale - a mini-POS: pick products, quantities, discount, comp,
   //    then record it against a past date (optionally reducing today's stock). ──
   const [bd, setBd] = useState({
     date: new Date().toISOString().slice(0, 10),
@@ -714,7 +714,7 @@ export default function LedgerTab({ ctx }) {
                 Export Ledger
               </button>
             </div>
-            {/* Sorted by transaction date, not entry order — a backdated entry
+            {/* Sorted by transaction date, not entry order - a backdated entry
                 sorts below everything more recent and can be hard to spot by
                 scrolling. Search by reference or description finds it directly. */}
             <div className="relative mb-4">
@@ -972,7 +972,7 @@ export default function LedgerTab({ ctx }) {
               {!bsData ? (
                 <div className="py-16 text-center text-fg/60 font-bold uppercase tracking-widest text-sm">Click "Refresh" to load</div>
               ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {/* Assets */}
                   <div>
                     <h4 className="text-brand font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mb-3">Assets</h4>
@@ -1135,7 +1135,7 @@ export default function LedgerTab({ ctx }) {
                 );
               })()}
 
-              {/* Per-client ageing — answers "who owes me, how old is it, and are
+              {/* Per-client ageing - answers "who owes me, how old is it, and are
                   they over their limit?" without leaving the tab. Server-computed
                   so these buckets and the order-time credit gate share one rule set. */}
               {arAgeing?.clients?.length > 0 && (
@@ -1157,7 +1157,7 @@ export default function LedgerTab({ ctx }) {
                         <th className="text-right py-2.5">61–90</th>
                         <th className="text-right py-2.5">91+</th>
                         <th className="text-right py-2.5">Total</th>
-                        <th className="text-right py-2.5" title="Everything on account including orders still in flight — this is what the credit limit spends">Committed</th>
+                        <th className="text-right py-2.5" title="Everything on account including orders still in flight - this is what the credit limit spends">Committed</th>
                         <th className="text-right py-2.5 px-4">Limit / Left</th>
                       </tr>
                     </thead>
@@ -1168,13 +1168,13 @@ export default function LedgerTab({ ctx }) {
                             {row.client}
                             {row.overLimit && <span className="ml-2 text-[8px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">Over</span>}
                           </td>
-                          <td className="py-2.5 text-right tabular-nums text-fg/70">{row.current ? `₱${row.current.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '—'}</td>
-                          <td className="py-2.5 text-right tabular-nums text-yellow-500/80">{row.d31_60 ? `₱${row.d31_60.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '—'}</td>
-                          <td className="py-2.5 text-right tabular-nums text-orange-500/80">{row.d61_90 ? `₱${row.d61_90.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '—'}</td>
-                          <td className="py-2.5 text-right tabular-nums text-red-500/80">{row.d90_plus ? `₱${row.d90_plus.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '—'}</td>
+                          <td className="py-2.5 text-right tabular-nums text-fg/70">{row.current ? `₱${row.current.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                          <td className="py-2.5 text-right tabular-nums text-yellow-500/80">{row.d31_60 ? `₱${row.d31_60.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                          <td className="py-2.5 text-right tabular-nums text-orange-500/80">{row.d61_90 ? `₱${row.d61_90.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                          <td className="py-2.5 text-right tabular-nums text-red-500/80">{row.d90_plus ? `₱${row.d90_plus.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
                           <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{row.total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                           <td className="py-2.5 text-right tabular-nums text-brand/80">
-                            {row.exposure ? `₱${row.exposure.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '—'}
+                            {row.exposure ? `₱${row.exposure.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}
                           </td>
                           <td className="py-2.5 px-4 text-right tabular-nums text-xs">
                             {row.creditLimit === null || row.creditLimit === undefined ? (
@@ -1229,7 +1229,7 @@ export default function LedgerTab({ ctx }) {
                                 o.overdue
                                   ? <span className="text-[10px] font-black px-2 py-1 rounded bg-red-500/15 text-red-400">OVERDUE · {new Date(o.arDueDate).toLocaleDateString()}</span>
                                   : <span className="text-fg/60">{new Date(o.arDueDate).toLocaleDateString()}</span>
-                              ) : <span className="text-fg/25">—</span>}
+                              ) : <span className="text-fg/25">-</span>}
                             </td>
                             <td className="py-3 text-right text-fg tabular-nums font-bold">₱{o.total.toFixed(2)}</td>
                             <td className="py-3 text-right">
@@ -1321,7 +1321,7 @@ export default function LedgerTab({ ctx }) {
                           onChange={e => {
                             const id = e.target.value;
                             const owed = (apData?.bySupplier || []).find(s => s.supplierId === id);
-                            // Prefill the amount with what this supplier is owed —
+                            // Prefill the amount with what this supplier is owed -
                             // paying a balance in full is the common case.
                             setApPayForm(p => ({
                               ...p, supplierId: id,
@@ -1329,12 +1329,12 @@ export default function LedgerTab({ ctx }) {
                             }));
                           }}
                           className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg font-bold outline-none focus:border-brand/60">
-                          <option value="">— Other / one-off payee —</option>
+                          <option value="">- Other / one-off payee -</option>
                           {(suppliers || []).map(s => {
                             const owed = (apData?.bySupplier || []).find(b => b.supplierId === String(s._id));
                             return (
                               <option key={s._id} value={s._id}>
-                                {s.name}{owed ? ` — ₱${owed.balance.toLocaleString('en-PH', { minimumFractionDigits: 2 })} owed` : ''}
+                                {s.name}{owed ? ` - ₱${owed.balance.toLocaleString('en-PH', { minimumFractionDigits: 2 })} owed` : ''}
                               </option>
                             );
                           })}
@@ -1427,7 +1427,7 @@ export default function LedgerTab({ ctx }) {
                 );
               })()}
 
-              {/* Who we owe — per-supplier payable balances. Answers "how much do
+              {/* Who we owe - per-supplier payable balances. Answers "how much do
                   we owe Best Beans?" without reading journal descriptions. */}
               {(apData?.bySupplier || []).length > 0 && (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
@@ -1505,7 +1505,7 @@ export default function LedgerTab({ ctx }) {
                           <tr key={e._id || i} className={`border-b border-white/5 hover:bg-white/3 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'}`}>
                             <td className="px-5 py-2.5 text-fg/40 whitespace-nowrap">{new Date(e.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: '2-digit' })}</td>
                             <td className="px-5 py-2.5 font-mono text-fg/60 whitespace-nowrap">{e.reference}</td>
-                            <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap">{e.supplierName || <span className="text-fg/20">—</span>}</td>
+                            <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap">{e.supplierName || <span className="text-fg/20">-</span>}</td>
                             <td className="px-5 py-2.5 text-fg/70 truncate max-w-[200px]">{e.description}</td>
                             <td className="px-5 py-2.5 text-right text-red-400 font-mono tabular-nums font-bold">{e.credit > 0 ? `₱${e.credit.toFixed(2)}` : '-'}</td>
                             <td className="px-5 py-2.5 text-right text-green-400 font-mono tabular-nums font-bold">{e.debit > 0 ? `₱${e.debit.toFixed(2)}` : '-'}</td>
@@ -1759,7 +1759,7 @@ export default function LedgerTab({ ctx }) {
 
               {billCreate.open && (
                 <div className="bg-surface border border-white/10 rounded-xl p-4 space-y-3">
-                  <p className="text-xs text-fg/50">A manual bill (rent, utilities, one-off supplier charge) — it books nothing until you Approve it, which posts DR expense / CR Accounts Payable.</p>
+                  <p className="text-xs text-fg/50">A manual bill (rent, utilities, one-off supplier charge) - it books nothing until you Approve it, which posts DR expense / CR Accounts Payable.</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Supplier</label>
@@ -1771,7 +1771,7 @@ export default function LedgerTab({ ctx }) {
                     <div>
                       <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Expense account (debited on approval)</label>
                       <select value={billCreate.expenseAccountCode} onChange={e => setBillCreate(c => ({ ...c, expenseAccountCode: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg">
-                        {(expenseAccounts||[]).map(a => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
+                        {(expenseAccounts||[]).map(a => <option key={a.code} value={a.code}>{a.code} - {a.name}</option>)}
                       </select>
                     </div>
                     <div>
@@ -1814,9 +1814,9 @@ export default function LedgerTab({ ctx }) {
                         return (
                           <tr key={b._id} className={`border-b border-white/5 ${i%2?'bg-white/[0.015]':''}`}>
                             <td className="px-4 py-3 font-mono text-fg/70">{b.billNumber}</td>
-                            <td className="px-4 py-3 font-bold text-fg">{b.supplierName || '—'}</td>
+                            <td className="px-4 py-3 font-bold text-fg">{b.supplierName || '-'}</td>
                             <td className="px-4 py-3"><span className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-fg/50 font-bold">{b.source}</span></td>
-                            <td className="px-4 py-3 text-fg/60 max-w-[200px] truncate" title={b.description || b.poNumber}>{b.description || b.poNumber || '—'}</td>
+                            <td className="px-4 py-3 text-fg/60 max-w-[200px] truncate" title={b.description || b.poNumber}>{b.description || b.poNumber || '-'}</td>
                             <td className="px-4 py-3 text-right font-black tabular-nums font-mono text-fg">{peso(b.amount)}</td>
                             <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${stCls}`}>{b.status}</span>
                               {b.scheduledPaymentDate && b.status === 'Approved' && <div className="text-[10px] text-fg/40 mt-1">pay {String(b.scheduledPaymentDate).slice(0,10)}</div>}
@@ -1835,7 +1835,7 @@ export default function LedgerTab({ ctx }) {
                                 </div>
                               )}
                               {(b.status === 'Paid' || b.status === 'Rejected') && (
-                                <span className="text-[10px] text-fg/30">{b.journalEntryRef || (b.rejectionReason ? 'rejected' : '—')}</span>
+                                <span className="text-[10px] text-fg/30">{b.journalEntryRef || (b.rejectionReason ? 'rejected' : '-')}</span>
                               )}
                             </td>
                           </tr>
@@ -1844,7 +1844,7 @@ export default function LedgerTab({ ctx }) {
                     </tbody>
                   </table>
                   <div className="px-3"><Pager {...billsPage} label="bills" /></div>
-                  <p className="text-[10px] text-fg/60 p-3 text-center">PO-sourced bills already posted their liability at goods receipt — approving one is a sign-off, not a new posting. Manual bills post on approval.</p>
+                  <p className="text-[10px] text-fg/60 p-3 text-center">PO-sourced bills already posted their liability at goods receipt - approving one is a sign-off, not a new posting. Manual bills post on approval.</p>
                 </div>
               )}
 
@@ -1857,7 +1857,7 @@ export default function LedgerTab({ ctx }) {
                     <p className="text-[11px] text-fg/40 mb-3">Posts DR Accounts Payable / CR the account you pay from.</p>
                     <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Pay from</label>
                     <select value={billPayFrom} onChange={e => setBillPayFrom(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-5">
-                      {(cashAndBankAccounts||[]).map(a => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
+                      {(cashAndBankAccounts||[]).map(a => <option key={a.code} value={a.code}>{a.code} - {a.name}</option>)}
                     </select>
                     <div className="flex gap-3">
                       <button onClick={() => setBillPayModal(null)} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">Cancel</button>
@@ -2196,7 +2196,7 @@ export default function LedgerTab({ ctx }) {
               ...(apAccounts || []),
             ];
             // Superadmin-only edit gate. Server enforces this on PUT/DELETE
-            // (returns 403 to non-superadmins) — mirror it in the UI so the
+            // (returns 403 to non-superadmins) - mirror it in the UI so the
             // controls don't tease the user. Everyone else gets a read-only view.
             const canEdit = !!isSuperAdmin;
             const customSubsAvailable = allEligible.filter(a => a.code && /\d{3,}\d{3}/.test(a.code) && !['111000','112000','113000','120000','220000'].includes(a.code)).length;
@@ -2243,7 +2243,7 @@ export default function LedgerTab({ ctx }) {
                   for (const pc of PARENT_ORDER) {
                     groups[pc] = { parentMethods: [], childMethods: [], subAccounts: [] };
                   }
-                  // All custom sub-accounts under each parent — drives the [N SUB]
+                  // All custom sub-accounts under each parent - drives the [N SUB]
                   // count and the "available sub-accounts" list inside the group.
                   for (const a of (coaAccounts || [])) {
                     if (!a.custom || !a.parent) continue;
@@ -2348,7 +2348,7 @@ export default function LedgerTab({ ctx }) {
                                     </div>
                                   </td>
                                 </tr>
-                                {/* Parent-account row is intentionally omitted — the header
+                                {/* Parent-account row is intentionally omitted - the header
                                     already displays the same info, and parent-account routing
                                     is locked (parents cannot be remapped from a child UI). */}
                                 {/* Expanded: list every sub-account under this parent (custom
@@ -2381,7 +2381,7 @@ export default function LedgerTab({ ctx }) {
                                           ))}
                                           {/* Inline picker: route a POS payment method to THIS sub-account.
                                               Filter to methods whose canonical default lives under the
-                                              SAME parent — keeps classification clean (no GCash under
+                                              SAME parent - keeps classification clean (no GCash under
                                               Cash on Hand, no Lalamove under E-Wallet). */}
                                           {canEdit && (() => {
                                             const eligibleMethods = methods.filter(m => {
@@ -2540,7 +2540,7 @@ export default function LedgerTab({ ctx }) {
                           <p className="text-brand font-black text-sm mt-1 tabular-nums">{peso(Number(p.basePrice || p.price || 0))}</p>
                         </button>
                       ))}
-                      {(products || []).length === 0 && <p className="col-span-full text-fg/30 text-xs text-center py-8">No products yet — add them in Menu Setup.</p>}
+                      {(products || []).length === 0 && <p className="col-span-full text-fg/30 text-xs text-center py-8">No products yet - add them in Menu Setup.</p>}
                     </div>
                     <div className="border-t border-white/10 pt-3 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
                       <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-2">Cart ({bdCart.length})</p>
@@ -2609,7 +2609,7 @@ export default function LedgerTab({ ctx }) {
                         className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition ${bd.affectInventory ? 'bg-amber-500/10 border-amber-500/40' : 'bg-surface border-white/10'}`}>
                         <span className="text-left">
                           <span className="text-xs font-bold text-fg block">Reduce current inventory</span>
-                          <span className="text-[10px] text-fg/40">{bd.affectInventory ? 'Stock WILL be deducted + COGS booked' : 'Off — old sale won’t touch today’s stock (default)'}</span>
+                          <span className="text-[10px] text-fg/40">{bd.affectInventory ? 'Stock WILL be deducted + COGS booked' : 'Off - old sale won’t touch today’s stock (default)'}</span>
                         </span>
                         <span className={`w-10 h-5 rounded-full shrink-0 relative transition ${bd.affectInventory ? 'bg-amber-500' : 'bg-white/15'}`}>
                           <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bd.affectInventory ? 'left-[22px]' : 'left-0.5'}`}/>
@@ -2619,7 +2619,7 @@ export default function LedgerTab({ ctx }) {
                         className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition ${bd.isComplimentary ? 'bg-brand/10 border-brand/40' : 'bg-surface border-white/10'}`}>
                         <span className="text-left">
                           <span className="text-xs font-bold text-fg block">Complimentary (free)</span>
-                          <span className="text-[10px] text-fg/40">{bd.isComplimentary ? 'Books Comp Expense / Revenue, collects ₱0' : 'Off — a normal paid sale'}</span>
+                          <span className="text-[10px] text-fg/40">{bd.isComplimentary ? 'Books Comp Expense / Revenue, collects ₱0' : 'Off - a normal paid sale'}</span>
                         </span>
                         <span className={`w-10 h-5 rounded-full shrink-0 relative transition ${bd.isComplimentary ? 'bg-brand' : 'bg-white/15'}`}>
                           <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bd.isComplimentary ? 'left-[22px]' : 'left-0.5'}`}/>
@@ -2659,7 +2659,7 @@ export default function LedgerTab({ ctx }) {
                       className="w-full bg-brand text-white font-black py-3 rounded-lg uppercase tracking-widest text-sm hover:bg-brand/90 transition disabled:opacity-50">
                       {bdBusy ? 'Posting…' : 'Record Backdated Sale'}
                     </button>
-                    <p className="text-[10px] text-fg/40">Period locks are enforced — a closed month is rejected. Always audited.</p>
+                    <p className="text-[10px] text-fg/40">Period locks are enforced - a closed month is rejected. Always audited.</p>
 
                     <div className="border-t border-white/10 pt-3">
                       <button onClick={runBackfillLedger} disabled={backfillBusy}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Bell, AlertTriangle, AlertCircle, Info, RefreshCw } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
@@ -7,7 +7,7 @@ import { useDashboard } from '../dashboard/DashboardContext';
 // attention, with every row clickable straight through to the offending record.
 //
 // The whole point is that an alert nobody navigates to is an alert nobody acts
-// on — so each item carries `tab`/`sub`/`focusId` from the server and this
+// on - so each item carries `tab`/`sub`/`focusId` from the server and this
 // component turns that into a real jump.
 
 const SEVERITY = {
@@ -16,7 +16,7 @@ const SEVERITY = {
   info:     { Icon: Info,           dot: 'bg-brand',      text: 'text-brand',      ring: 'border-brand/30' },
 };
 
-// How often to refresh while the tab is open. Deliberately slow — none of these
+// How often to refresh while the tab is open. Deliberately slow - none of these
 // signals change second-to-second, and the POS tablet has better things to do.
 const POLL_MS = 120000;
 
@@ -62,7 +62,7 @@ export default function NotificationBell({ align = 'right', full = false }) {
       const d = await res.json();
       if (d?.success) setData({ items: d.items || [], count: d.count || 0, criticalCount: d.criticalCount || 0 });
     } catch {
-      // A failed poll is not worth a toast — the bell simply keeps its last
+      // A failed poll is not worth a toast - the bell simply keeps its last
       // known state and tries again on the next tick.
     } finally { setLoading(false); }
   }, [apiFetch]);

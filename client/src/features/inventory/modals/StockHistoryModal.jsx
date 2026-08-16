@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+﻿import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
 
 
@@ -10,7 +10,7 @@ export default function StockHistoryModal() {
 const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
       const pagedHistory = stockHistory.slice((historyPage - 1) * HIST_PAGE_SIZE, historyPage * HIST_PAGE_SIZE);
       // Movements are stored in base units; the card reports them in the same
-      // units as the Inventory Hub table — packs when the item has a pack size,
+      // units as the Inventory Hub table - packs when the item has a pack size,
       // otherwise its display unit (packInfo falls back to exactly that).
       const hPack = historyItem ? packInfo(historyItem) : null;
       const hBase = hPack?.packBase || 1;

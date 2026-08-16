@@ -1,6 +1,6 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 
-// #8 — multi-location stock transfers. Request a move between two inventory items
+// #8 - multi-location stock transfers. Request a move between two inventory items
 // (each tagged to a location), route it through approve → release, and see on-hand
 // value grouped by location. Quantity is entered in the source item's base unit.
 export default function StockTransferPanel({
@@ -56,14 +56,14 @@ export default function StockTransferPanel({
           <div>
             <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">From (source)</label>
             <select value={fromItemId} onChange={e => setFromItemId(e.target.value)} className={input}>
-              <option value="">— Select item —</option>
+              <option value="">- Select item -</option>
               {inventory.map(i => <option key={i._id} value={i._id}>{label(i)} ({i.stockQty} {i.unit})</option>)}
             </select>
           </div>
           <div>
             <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">To (destination)</label>
             <select value={toItemId} onChange={e => setToItemId(e.target.value)} className={input}>
-              <option value="">— Select item —</option>
+              <option value="">- Select item -</option>
               {inventory.filter(i => i._id !== fromItemId).map(i => <option key={i._id} value={i._id}>{label(i)}</option>)}
             </select>
           </div>

@@ -60,15 +60,21 @@ services:
       PORT: 9000
       DOMAIN: ${DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}
-      # STACK_ROOT must be the SAME absolute path inside and outside this
-      # container, so `docker compose` can resolve build contexts correctly.
-      STACK_ROOT: ${STACK_ROOT}
+      # STACK_ROOT is the path where the control-plane reads/writes tenant files
+      # and where docker compose finds build contexts. On the VPS this is the
+      # same path inside and outside. On Windows Docker Desktop, we mount the
+      # repo root at /opt/semivra so there are no host-path or spaces issues;
+      # docker compose build sends context as a tarball, so the daemon never
+      # needs the host path directly.
+      STACK_ROOT: /opt/semivra
       CP_PASSWORD: ${CP_PASSWORD}
       CP_DANGER_PASSWORD: ${CP_DANGER_PASSWORD}
       LOCAL_MODE: ${LOCAL_MODE:-0}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${STACK_ROOT}:${STACK_ROOT}
+      # Mount the repo root (parent of platform/) at /opt/semivra inside the
+      # container. Docker Desktop translates the Windows path automatically.
+      - ..:/opt/semivra
     depends_on:
       mongo:
         condition: service_healthy

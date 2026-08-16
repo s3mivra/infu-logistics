@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import StockTaxonomyPanel from './StockTaxonomyPanel';
@@ -6,15 +6,15 @@ import StockTransferPanel from './StockTransferPanel';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
-// ── InventoryTab — extracted from AdminDashboard.jsx ──
+// ── InventoryTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function InventoryTab({ ctx }) {
   // Destructure everything from ctx
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
   const {
     API_URL, AUDIT_PAGE_SIZE, BIZ_NAME, COMP_REASON_LABELS, FRONTEND_URL,
@@ -146,7 +146,7 @@ export default function InventoryTab({ ctx }) {
               </div>
               
               <div className="flex items-center gap-1.5">
-                {/* Direct stock import — posts straight to inventory (distinct from the
+                {/* Direct stock import - posts straight to inventory (distinct from the
                     Procurement "Import Excel", which creates a PO record instead). */}
                 <label className="text-[10px] bg-white border hover:bg-accent hover:border-white hover:text-white text-black px-3 py-1.5 rounded font-bold uppercase tracking-wider transition cursor-pointer min-h-[32px] flex items-center gap-1">
                   <Download size={11} className="rotate-180" /> Import
@@ -302,7 +302,7 @@ export default function InventoryTab({ ctx }) {
                       return (
                       <React.Fragment key={item._id}>
                       {/* data-notif-id is the jump target for the notification
-                          bell — clicking a low-stock/expiry alert scrolls here. */}
+                          bell - clicking a low-stock/expiry alert scrolls here. */}
                       <tr data-notif-id={item._id} className={`border-b border-white/30 hover:bg-page-bg/30 transition ${rowExpiredTint || (isLow ? 'bg-red-900/10' : '')}`}>
                         <td className="py-3 font-bold text-fg">
                           {item.itemName}
@@ -952,14 +952,14 @@ export default function InventoryTab({ ctx }) {
                 <div>
                   <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Storage Location</label>
                   <select value={invForm.stockLocation || ''} onChange={e => setInvForm({ ...invForm, stockLocation: e.target.value })} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent text-sm">
-                    <option value="">— None —</option>
+                    <option value="">- None -</option>
                     {(stockLocations || []).filter(l => l.isActive !== false).map(l => <option key={l._id} value={l.name}>{l.name}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Stock Category</label>
                   <select value={invForm.stockCategory || ''} onChange={e => setInvForm({ ...invForm, stockCategory: e.target.value })} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent text-sm">
-                    <option value="">— None —</option>
+                    <option value="">- None -</option>
                     {(stockCategories || []).filter(c => c.isActive !== false).map(c => <option key={c._id} value={c.name}>{c.name}{c.prefix ? ` (${c.prefix})` : ''}</option>)}
                   </select>
                 </div>

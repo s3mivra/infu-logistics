@@ -1,4 +1,4 @@
-// users routes — moved verbatim from server.js (feature-driven restructure).
+﻿// users routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
@@ -180,12 +180,12 @@ export default function registerUsers(ctx) {
     refreshCustomRolePerms,
   } = ctx;
 
-// Catalogue of assignable permissions + role defaults — drives the UI editor.
+// Catalogue of assignable permissions + role defaults - drives the UI editor.
 app.get('/api/permissions', verifyToken, requireStaff, async (req, res) => {
   res.json({ success: true, permissions: PERMISSIONS });
 });
 
-// Effective permissions for the caller — the client gates its UI on this.
+// Effective permissions for the caller - the client gates its UI on this.
 app.get('/api/users/me', verifyToken, requireStaff, async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select('-password').lean();
@@ -258,7 +258,7 @@ app.post('/api/users/login', loginLimiter, validate(loginSchema), async (req, re
   }
 });
 
-// Silent refresh — exchange a valid refresh cookie for a new access token.
+// Silent refresh - exchange a valid refresh cookie for a new access token.
 // Rotates the refresh token (single-use): the old session is revoked and a new
 // cookie is issued. A revoked/expired/unknown token clears the cookie and 401s.
 app.post('/api/auth/refresh', requireTrustedOrigin, async (req, res) => {
@@ -280,7 +280,7 @@ app.post('/api/auth/refresh', requireTrustedOrigin, async (req, res) => {
 
     // NON-ROTATING refresh: validate the existing session and mint a fresh access
     // token, keeping the SAME refresh cookie. (We deliberately don't rotate on every
-    // refresh — rapid reloads fire concurrent refreshes and rotation would treat the
+    // refresh - rapid reloads fire concurrent refreshes and rotation would treat the
     // in-flight duplicate as token reuse and log the user out.) Slide the expiry so
     // active sessions stay alive; logout/password/role changes still revoke server-side.
     session.expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
@@ -294,7 +294,7 @@ app.post('/api/auth/refresh', requireTrustedOrigin, async (req, res) => {
   }
 });
 
-// Logout — revoke the current refresh session and clear the cookie.
+// Logout - revoke the current refresh session and clear the cookie.
 // This is the real teardown the old localStorage-only logout never provided.
 app.post('/api/auth/logout', requireTrustedOrigin, async (req, res) => {
   try {
@@ -392,7 +392,7 @@ app.delete('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) =>
 });
 
 // Staff self-service password change (any authenticated user, no superadmin required)
-// Requires current password for verification — prevents session hijacking.
+// Requires current password for verification - prevents session hijacking.
 app.patch('/api/users/me/password', verifyToken, requireStaff, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;

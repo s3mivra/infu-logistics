@@ -1,12 +1,12 @@
-// Non-VAT percentage tax — pure computation, no DB. Unit-testable in isolation.
+﻿// Non-VAT percentage tax - pure computation, no DB. Unit-testable in isolation.
 //
 // Philippine non-VAT taxpayers owe percentage tax on GROSS RECEIPTS ACTUALLY
 // RECEIVED. Our revenue account (410000) is booked gross-of-discount, so the report
-// must subtract sales discounts to land on what the customer actually paid — which is
+// must subtract sales discounts to land on what the customer actually paid - which is
 // exactly order.total (net of discounts). The base for the 3% is therefore the net
 // collected amount; the gross and the discount line are shown so the figure reconciles.
 
-export const PERCENTAGE_TAX_RATE = 0.03; // 3% — non-VAT percentage tax (NIRC §116)
+export const PERCENTAGE_TAX_RATE = 0.03; // 3% - non-VAT percentage tax (NIRC §116)
 
 // Inputs come straight from order aggregates:
 //   netCollected = Σ order.total     (what was actually received, net of discounts)

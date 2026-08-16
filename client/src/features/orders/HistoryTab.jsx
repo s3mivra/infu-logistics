@@ -1,19 +1,19 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
-// ── HistoryTab — extracted from AdminDashboard.jsx ──
+// ── HistoryTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function HistoryTab({ ctx }) {
   // Destructure everything from ctx
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
   const {
     API_URL, AUDIT_PAGE_SIZE, BIZ_NAME, COMP_REASON_LABELS, FRONTEND_URL,

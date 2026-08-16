@@ -1,16 +1,16 @@
-// Client credit limits and A/R ageing — pure functions, no DB access.
+﻿// Client credit limits and A/R ageing - pure functions, no DB access.
 //
 // Two independent concerns live here on purpose:
-//   • resolveCreditLimit  — which limit applies to a given client, if any
-//   • ageingBuckets       — how outstanding receivables split by age
+//   • resolveCreditLimit  - which limit applies to a given client, if any
+//   • ageingBuckets       - how outstanding receivables split by age
 // Keeping them pure means the money rules are unit-testable without booting a
 // server, which is how the off-by-one on bucket edges got caught.
 
 // How limits are applied across the business. Chosen by the owner in Settings.
-//   'off'        — nobody has a limit; on-account selling is unrestricted
-//   'per_client' — only clients with their own creditLimit are restricted
-//   'global'     — one limit applies to every client; per-client values ignored
-//   'both'       — global default, overridden by a client's own value when set
+//   'off'        - nobody has a limit; on-account selling is unrestricted
+//   'per_client' - only clients with their own creditLimit are restricted
+//   'global'     - one limit applies to every client; per-client values ignored
+//   'both'       - global default, overridden by a client's own value when set
 export const CREDIT_MODES = ['off', 'per_client', 'global', 'both'];
 export const DEFAULT_CREDIT_MODE = 'off';
 
@@ -19,7 +19,7 @@ export const DEFAULT_CREDIT_MODE = 'off';
  * Returns null when the client is unrestricted.
  *
  * A client's own limit of 0 is meaningful ("cash only") and must not be
- * confused with null ("no limit set") — hence the explicit null checks rather
+ * confused with null ("no limit set") - hence the explicit null checks rather
  * than truthiness anywhere in here.
  */
 export function resolveCreditLimit({ mode, globalLimit, clientLimit }) {
@@ -85,7 +85,7 @@ export function ageingBuckets(rows = [], asOf = new Date()) {
     out[bucketFor(age)] += amt;
     out.total += amt;
   }
-  // Round once at the end — summing rounded values drifts.
+  // Round once at the end - summing rounded values drifts.
   for (const k of Object.keys(out)) out[k] = Math.round(out[k] * 100) / 100;
   return out;
 }
@@ -108,7 +108,7 @@ export function ageingByClient(rows = [], keyOf = (r) => r.customerName || 'Unkn
  * worklist) must agree on, or they disagree about who owes what: client
  * account where we have one, else the order's typed customerName. Portal
  * orders carry `clientId`; cashier-placed on-behalf orders carry
- * `clientAccountId` — both are consulted, or a single client's debt would
+ * `clientAccountId` - both are consulted, or a single client's debt would
  * split across two rows depending on which flow placed the order.
  */
 export function resolveClientKey(clients = []) {

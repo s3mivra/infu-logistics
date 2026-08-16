@@ -1,4 +1,4 @@
-// Display-unit → base-unit conversion table.
+﻿// Display-unit → base-unit conversion table.
 // Base units (g/ml/pcs) are what gets stored in stockQty and recipes.
 // Display units (kg/L) are what humans read and buy in.
 
@@ -12,7 +12,7 @@ export const UNIT_TABLE = {
 };
 
 // Canonical flat conversion table: any (case-insensitive) unit token → how many
-// base units it equals. THE single source of truth — server.js imports this
+// base units it equals. THE single source of truth - server.js imports this
 // instead of keeping its own copy. Base units are g / mL / pcs. Values here must
 // stay identical to what baseUnitsPerSale historically used (COGS depends on it).
 export const UNIT_TO_BASE = {
@@ -61,7 +61,7 @@ export function baseToDisplayCost(unitCostPerBase, displayUnit) {
 }
 
 // Resolve the unit an operator should SEE for an inventory item, enforcing the
-// app-wide rule that g/ml are never shown — they auto-promote to kg/L.
+// app-wide rule that g/ml are never shown - they auto-promote to kg/L.
 // Returns { displayUnit, mult } where mult = base units per 1 display unit, so
 // a base-unit quantity divided by mult gives the display quantity.
 //   { unit: 'g' }                 => { displayUnit: 'kg',  mult: 1000 }

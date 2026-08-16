@@ -1,4 +1,4 @@
-// Currency display config — GET/PATCH /api/settings/currency. Display-level
+﻿// Currency display config - GET/PATCH /api/settings/currency. Display-level
 // only (symbol + ISO code); NOT FX/multi-currency, so these tests only assert
 // the config round-trips and validates, not any conversion behavior.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

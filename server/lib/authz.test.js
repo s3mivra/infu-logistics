@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+﻿import { describe, it, expect, vi } from 'vitest';
 import { STAFF_ROLES, evaluateStaffAccess, evaluateClientAccess, requireStaff } from './authz.js';
 
 describe('authz.evaluateStaffAccess', () => {
@@ -54,7 +54,7 @@ describe('authz.evaluateClientAccess', () => {
     expect(evaluateClientAccess({ role: 'client', aud: 'client' }).ok).toBe(true);
   });
 
-  it('rejects a missing aud (strict — no legacy fallback)', () => {
+  it('rejects a missing aud (strict - no legacy fallback)', () => {
     expect(evaluateClientAccess({ role: 'client' }).ok).toBe(false);
   });
 

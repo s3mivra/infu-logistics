@@ -1,4 +1,4 @@
-// audit routes — moved verbatim from server.js (feature-driven restructure).
+﻿// audit routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { dayStart, dayEnd } from '../lib/reportRange.js';
@@ -190,7 +190,7 @@ app.get('/api/audit-log', verifyToken, ...canViewAudit, async (req, res) => {
     const filter = {};
     // String() coercion + escapeRegex(): req.query values can arrive as nested
     // objects (e.g. ?actor[$ne]=x, parsed by express's extended query parser)
-    // or, for `entity`, as an unescaped regex-metacharacter string — either
+    // or, for `entity`, as an unescaped regex-metacharacter string - either
     // reaches these String-typed fields unguarded otherwise (Mongoose only
     // CastErrors operator objects against typed fields like ObjectId/Number,
     // not against String).
@@ -215,7 +215,7 @@ app.get('/api/audit-log', verifyToken, ...canViewAudit, async (req, res) => {
 // ── ANALYTICS DASHBOARD ENDPOINT ─────────────────────────────────────────────
 // Moves heavy computations off the browser so the dashboard stays fast
 // even with 12+ months of order history.
-// GET /api/audit-logs — superadmin only, paginated, filterable by action + date range
+// GET /api/audit-logs - superadmin only, paginated, filterable by action + date range
 app.get('/api/audit-logs', verifyToken, ...canViewAudit, async (req, res) => {
   try {
     const { page = 1, limit: lim = 30, action, actor, start, end } = req.query;

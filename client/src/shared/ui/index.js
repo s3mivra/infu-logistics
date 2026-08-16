@@ -1,4 +1,4 @@
-// Imperative UI dialog API — the app's replacement for window.alert/confirm.
+﻿// Imperative UI dialog API - the app's replacement for window.alert/confirm.
 //
 // WHY imperative rather than a hook: these are called from ~200 places, most of
 // them deep inside async handlers that aren't components. A hook would force
@@ -11,7 +11,7 @@
 //   if (!(await ui.confirm('Void order?'))) return;
 //   ui.toast('Stock updated', { tone: 'success' });
 //
-// The `ui.` prefix is deliberate — it keeps these visually distinct from the
+// The `ui.` prefix is deliberate - it keeps these visually distinct from the
 // native globals they replaced, and avoids colliding with the PWA `notify`.
 
 let handlers = null;
@@ -20,13 +20,13 @@ let handlers = null;
 export function __register(h) { handlers = h; }
 export function __unregister() { handlers = null; }
 
-// Toast — transient, non-blocking. tone: 'info' | 'success' | 'warn' | 'error'.
+// Toast - transient, non-blocking. tone: 'info' | 'success' | 'warn' | 'error'.
 export function toast(message, { tone = 'info', duration } = {}) {
   const text = String(message ?? '');
   if (!text) return;
   // If the provider isn't mounted yet (very early boot, or a non-React caller),
   // fall back to the console rather than silently swallowing a user-facing
-  // message. Never falls back to window.alert — that's what we're removing.
+  // message. Never falls back to window.alert - that's what we're removing.
   if (!handlers) { console.warn('[ui.toast]', text); return; }
   handlers.toast({ message: text, tone, duration });
 }
@@ -35,12 +35,12 @@ export function toast(message, { tone = 'info', duration } = {}) {
 // Two shapes, because "undo" means different things depending on whether the
 // action can be reversed after the fact.
 //
-// 1. deferred(run, opts)  — HOLD the action for a few seconds and only send it
+// 1. deferred(run, opts)  - HOLD the action for a few seconds and only send it
 //    if the user doesn't cancel. True undo with no reversal endpoint needed,
 //    and nothing hits the books unless the window elapses. Use when a short
 //    delay is harmless.
 //
-// 2. undoable(undo, opts) — the action ALREADY happened; "undo" calls a real
+// 2. undoable(undo, opts) - the action ALREADY happened; "undo" calls a real
 //    reversal (e.g. reopening a closed period). Use when the effect must be
 //    immediate and a genuine reversal exists.
 //
@@ -99,7 +99,7 @@ export function undoable(undo, { message, seconds = DEFAULT_WINDOW, undoMessage 
 function inferTone(text) {
   const t = text.toLowerCase();
   if (/^\s*(✅|✔)/.test(text) || /\b(success|successful|saved|updated|created|posted|recorded|completed|done)\b/.test(t)) {
-    // "failed to update" also contains "update" — let failure words win below.
+    // "failed to update" also contains "update" - let failure words win below.
     if (!/\b(fail|failed|error|cannot|could not|unable|invalid|denied|rejected)\b/.test(t)) return 'success';
   }
   if (/\b(fail|failed|error|cannot|could not|unable|invalid|denied|rejected|not found|no permission)\b/.test(t)) return 'error';
@@ -121,7 +121,7 @@ export function alert(message, opts = {}) {
 export function confirm(input) {
   const opts = typeof input === 'string' ? { message: input } : (input || {});
   if (!handlers) {
-    // Without a provider we cannot ask the user. Refuse rather than proceed —
+    // Without a provider we cannot ask the user. Refuse rather than proceed -
     // every confirm() in this app guards a destructive or financial action, so
     // "assume yes" would be the dangerous default.
     console.warn('[ui.confirm] no provider mounted; treating as cancelled:', opts.message);

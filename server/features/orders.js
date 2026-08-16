@@ -1,4 +1,4 @@
-// orders routes — moved verbatim from server.js (feature-driven restructure).
+﻿// orders routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { resolveCreditLimit, checkCreditAvailable } from '../lib/credit.js';
@@ -192,7 +192,7 @@ export default function registerOrders(ctx) {
 // void/refund/partial-fulfill/drop-remaining transactions. Every one of them
 // now writes the same singleton TenantStats doc (see applyStatsDelta below),
 // so a burst of truly-simultaneous requests retrying with zero delay tends to
-// re-collide with each other on the very next attempt — a short jittered
+// re-collide with each other on the very next attempt - a short jittered
 // pause spaces the retries out and lets one of them land.
 const STATS_RETRY_ATTEMPTS = 6;
 const statsRetryDelayMs = (attempt) => (15 + Math.floor(Math.random() * 55)) * attempt;
@@ -202,7 +202,7 @@ const statsRetryDelay = (attempt) => new Promise((r) => setTimeout(r, statsRetry
 // ProductStats documents (complete/void/partial-fulfill/drop-remaining/refund).
 // `onceFn(req, res, mayRetry)` returns `true` to ask for another attempt (a
 // transient WriteConflict with nothing sent yet) or falsy once it has either
-// succeeded or already written a response — see each *Once function's own
+// succeeded or already written a response - see each *Once function's own
 // catch block for the transient-error check that produces this signal.
 async function runWithStatsRetry(onceFn, req, res) {
   for (let attempt = 1; attempt <= STATS_RETRY_ATTEMPTS; attempt++) {
@@ -227,7 +227,7 @@ function isTransientTxnError(err) {
 // order's status flips to/from 'Completed'. sign=+1 when an order newly becomes
 // Completed (main completion, unvoid, partial-fulfill's final round, drop-
 // remaining); sign=-1 when a Completed order stops being Completed (void,
-// refund — both full and partial refunds move status off 'Completed', so both
+// refund - both full and partial refunds move status off 'Completed', so both
 // fully reverse the counters, same as the old aggregation would simply stop
 // counting them). Complimentary orders never contribute to ProductStats,
 // mirroring reports.js's `isComplimentary: { $ne: true }` filter on that query.
@@ -280,7 +280,7 @@ async function applyStatsDelta(order, sign, session) {
 // indexed lookup is nothing next to the writes an order already performs.
 //
 // Absent settings mean a non-VAT business, which is how every install behaved
-// before VAT existed — so an untouched system keeps its current totals exactly.
+// before VAT existed - so an untouched system keeps its current totals exactly.
 async function loadVatConfig() {
   const [enabledRow, rateRow, orderRow, inclusiveRow] = await Promise.all([
     Settings.findOne({ key: 'vatEnabled' }).lean(),
@@ -300,10 +300,10 @@ async function loadVatConfig() {
 
 // Repeat-walk-in auto-promotion: a POS sale with a real (non-"Guest") customerName
 // that isn't already tied to a ClientAccount. Once the same name has 3 Completed
-// orders, they're "our client" — get their own CUS-1000-Axxxx code instead of
+// orders, they're "our client" - get their own CUS-1000-Axxxx code instead of
 // sharing WALK_IN_CUSTOMER_CODE. The promoted account has no usable login (staff
 // can add one later via /api/client-accounts if the client wants portal access).
-// Fire-and-forget after the triggering request has already responded — never let
+// Fire-and-forget after the triggering request has already responded - never let
 // this delay or fail an order completion.
 async function maybePromoteWalkInClient(order) {
   try {
@@ -349,7 +349,7 @@ async function maybePromoteWalkInClient(order) {
 app.get('/api/orders', verifyToken, requireStaff, async (req, res) => {
   try {
     const { page, limit, search } = req.query;
-    // Tenancy filter — businessType: undefined still matches via $in so that any
+    // Tenancy filter - businessType: undefined still matches via $in so that any
     // unbackfilled docs (shouldn't exist after startup migration) still show up.
     const baseFilter = { isArchived: false, isParked: { $ne: true }, businessType: BUSINESS_TYPE, ...tenantScope(req) };
     if (search && search.trim()) {
@@ -460,7 +460,7 @@ app.get('/api/orders/:id', async (req, res) => {
 app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
   // Declared outside the try block on purpose: the E11000 handler in catch{}
   // below needs it, and a try{}-scoped const is NOT visible inside its own
-  // catch{} block (separate lexical scope) — referencing it there throws a
+  // catch{} block (separate lexical scope) - referencing it there throws a
   // ReferenceError, which as an uncaught rejection in an async handler hangs
   // the request with no response instead of erroring cleanly.
   const idempotencyKey = req.headers['idempotency-key'];
@@ -475,7 +475,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
 
     // Canonicalize the buyer's name. It is printed on receipts, billing
     // statements and delivery receipts, and it is the key that repeat walk-ins
-    // are matched on — so "acme trading corp" and "ACME Trading Corp" must not
+    // are matched on - so "acme trading corp" and "ACME Trading Corp" must not
     // become two different customers, nor go onto a printed DR in lower case.
     if (typeof customerName === 'string' && customerName.trim()) customerName = title(customerName);
 
@@ -502,17 +502,17 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       try {
         const cli = await ClientAccount.findById(req.body.clientAccountId).lean();
         if (cli && cli.isActive) { onBehalfClientId = String(cli._id); onBehalfSegments = cli.segments || []; }
-      } catch { /* invalid id — ignore, fall back to default discount */ }
+      } catch { /* invalid id - ignore, fall back to default discount */ }
     }
 
-    // SC/PWD is a property of the SALE, not of the business's VAT registration —
+    // SC/PWD is a property of the SALE, not of the business's VAT registration -
     // the cashier marks it per order and the POS already sends the flag. A non-VAT
     // business still labels the discount SC/PWD; it simply has no VAT to strip.
     const isVatExempt = req.body.isVatExempt === true;
     // FIX 1: Safely default to Takeout if the table is null or empty
     if (!table) table = 'Takeout';
 
-    // Kill QR session — already validated by verifyOrderAuth; burn it before processing to prevent replay
+    // Kill QR session - already validated by verifyOrderAuth; burn it before processing to prevent replay
     if (req.qrSession) {
       req.qrSession.isActive = false;
       await req.qrSession.save();
@@ -531,7 +531,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       }
     }
 
-    // Authoritative department stamping — look up each product's category and resolve to Kitchen/Bar.
+    // Authoritative department stamping - look up each product's category and resolve to Kitchen/Bar.
     // Combos resolve from their component products: all-Bar → Bar, otherwise Kitchen.
     {
       const directIds = items.map(i => i.productId).filter(Boolean);
@@ -573,7 +573,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     else if (discountPercent > 0) discountType = 'Promo';
     else if (flatDiscount > 0) discountType = 'Promo';
 
-    // Per-product (and optional per-client) discount lookup. Server-authoritative —
+    // Per-product (and optional per-client) discount lookup. Server-authoritative -
     // never trust a client-side discount field. If the buyer is a logged-in client
     // and the product has a matching clientDiscounts entry, that override wins.
     const _prodIds = items.map(i => i.productId).filter(Boolean);
@@ -598,7 +598,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       try {
         const buyerAcct = await ClientAccount.findById(_buyerClientId, { segments: 1 }).lean();
         _buyerSegments = buyerAcct?.segments || [];
-      } catch { /* ignore — no segment discount applies */ }
+      } catch { /* ignore - no segment discount applies */ }
     }
     const productDiscPct = (item) => {
       const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
@@ -608,7 +608,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
         const ov = (p.clientDiscounts || []).find(d => String(d.clientId) === _buyerClientId);
         if (ov) return Math.max(0, Math.min(100, Number(ov.percent || 0)));
       }
-      // 2) segment override — highest percent among any segment the buyer carries
+      // 2) segment override - highest percent among any segment the buyer carries
       if (_buyerSegments.length && (p.segmentDiscounts || []).length) {
         const matches = p.segmentDiscounts.filter(d => _buyerSegments.includes(d.segment));
         if (matches.length) return Math.max(0, Math.min(100, Math.max(...matches.map(d => Number(d.percent || 0)))));
@@ -617,7 +617,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       return Math.max(0, Math.min(100, Number(p.discountPercent || 0)));
     };
     // Quantity-break bulk pricing, independent of clientDiscounts/segmentDiscounts
-    // above — combined via Math.max where it's applied, never stacked.
+    // above - combined via Math.max where it's applied, never stacked.
     const bulkQtyDiscPct = (item) => {
       const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
       const breaks = p?.bulkBreaks || [];
@@ -648,7 +648,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       const itemBase = ((item.price || 0) + addOnTotal) * (item.quantity || 1);
       totalGross += itemBase;
 
-      // Per-product discount applies to THIS line only — combine the resolved
+      // Per-product discount applies to THIS line only - combine the resolved
       // client/segment/default rate with any qualifying bulk-quantity break,
       // taking whichever is higher (never stacked).
       const prodPct = Math.max(productDiscPct(item), bulkQtyDiscPct(item));
@@ -664,7 +664,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
 
     const vatCfg = await loadVatConfig();
     // Prices are VAT-INCLUSIVE, so enabling VAT does not change what the customer
-    // pays — it only splits the collected amount into net sales and output VAT.
+    // pays - it only splits the collected amount into net sales and output VAT.
     const vatResult = isComplimentary
       ? { total: 0, vatAmount: 0, vatableSales: 0, vatExemptSales: 0,
           discount: +baseAfterProductDisc.toFixed(2), rate: vatCfg.rate }
@@ -708,7 +708,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       : (bodyPaymentMethod || clientPresetPayment || 'Cash');
 
     // ── CREDIT LIMIT GATE ──────────────────────────────────────────────────
-    // Only on-account (non-cash) buying consumes credit — a cash sale settles
+    // Only on-account (non-cash) buying consumes credit - a cash sale settles
     // immediately and can never grow the receivable. Checked here, after the
     // total is server-authoritative and before anything is written, so a
     // rejected order leaves no partial state behind.
@@ -734,7 +734,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
         // Statuses: exposure is everything COMMITTED, not just what has already
         // become a book receivable. Orders sit at Pending/Preparing for a while,
         // and counting only 'Completed' would let a client place ten orders in a
-        // row before any of them lands — trivially defeating the limit. Only
+        // row before any of them lands - trivially defeating the limit. Only
         // terminal non-debts (Cancelled/Voided/Refunded) and parked drafts are
         // excluded.
         const openRows = await Order.find({
@@ -796,7 +796,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     emitToOps('newOrder', newOrder);
     res.json({ success: true, order: newOrder });
   } catch (error) {
-    // The findOne check above has a TOCTOU window — two truly concurrent
+    // The findOne check above has a TOCTOU window - two truly concurrent
     // requests carrying the same Idempotency-Key can both pass it before
     // either create() finishes. idempotencyKey's unique index (see server.js)
     // turns the loser into an E11000 here instead of a duplicate order;
@@ -884,12 +884,12 @@ app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
 });
 
 // Retry wrapper (mirrors the void engine's own retry, below): the ERP block in
-// here writes TenantStats/ProductStats — a singleton counter doc every
-// concurrent completion touches — inside the same transaction as the stock
+// here writes TenantStats/ProductStats - a singleton counter doc every
+// concurrent completion touches - inside the same transaction as the stock
 // decrement + journal entry. Two completions landing at the same instant can
 // collide on that doc with a WriteConflict; retrying the whole transaction is
 // the correct fix, the same trade void/refund already make elsewhere in this
-// file. Validation paths `return res.status(...)`, a truthy Response object —
+// file. Validation paths `return res.status(...)`, a truthy Response object -
 // only the explicit `true` retry signal from the catch block counts.
 const completeOrderOnce = async (req, res, mayRetry) => {
   const session = await mongoose.startSession();
@@ -1001,7 +1001,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       if (linePct === 0 && getsDiscount) discountableBase += itemBase;
     });
 
-    // Rate and SC/PWD basis come from the ORDER, not from current settings —
+    // Rate and SC/PWD basis come from the ORDER, not from current settings -
     // editing a historical order must not re-price it under a rule that was
     // adopted afterwards.
     const editVat = order.isComplimentary
@@ -1026,7 +1026,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
     order.vatExemptSales = Number(editVat.vatExemptSales.toFixed(2));
     order.total = Number(editVat.total.toFixed(2));
 
-    // Cash tendered — only for cash orders transitioning to Preparing
+    // Cash tendered - only for cash orders transitioning to Preparing
     if (status === 'Preparing' && amountTendered !== undefined && (order.paymentMethod === 'Cash' || paymentMethod === 'Cash')) {
       const tendered = Number(amountTendered);
       if (tendered < order.total) {
@@ -1165,7 +1165,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
           if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
         }
 
-        // LOGISTICS 1:1 FALLBACK — product has no recipe: treat it as a stocked
+        // LOGISTICS 1:1 FALLBACK - product has no recipe: treat it as a stocked
         // good linked by code/name. Deduct (qty × unitMultiplier) base units and
         // book COGS at unitCost. Skips cleanly if no matching inventory exists.
         if (!recipeToUse.some(r => r.invId)) {
@@ -1380,7 +1380,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
 
     emitToOps('orderUpdated', order);
     // Push menuUpdated so CustomerMenu instantly re-fetches products and recomputes
-    // stockAvailable — catches the moment an ingredient hits zero during service.
+    // stockAvailable - catches the moment an ingredient hits zero during service.
     if (status === 'Completed') emitToAll('menuUpdated');
     res.json({ success: true, order });
     if (status === 'Completed' && wasNotCompleted) maybePromoteWalkInClient(order);
@@ -1397,7 +1397,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
 };
 
 // --- UNVOID (reverse a void) ---
-// A void is never erased — it is REVERSED, which is also the correct accounting
+// A void is never erased - it is REVERSED, which is also the correct accounting
 // treatment: the original void entry stays in the ledger and a mirrored entry
 // cancels it, so the audit trail shows both events.
 //
@@ -1476,13 +1476,13 @@ app.post('/api/orders/:id/unvoid', verifyToken, requireSuperAdmin, async (req, r
       order.voidReason = '';
       order.voidedBy = '';
       order.voidedAt = null;
-      // Mirror image of the void's own -1 delta — the order is back to counting
+      // Mirror image of the void's own -1 delta - the order is back to counting
       // toward dashboard totals.
       await applyStatsDelta(order, 1, session);
       await order.save({ session });
       return order;
     // Same retry budget/backoff as the other 5 applyStatsDelta call sites
-    // (complete/void/partial-fulfill/drop-remaining/refund) — unvoid writes to
+    // (complete/void/partial-fulfill/drop-remaining/refund) - unvoid writes to
     // the same hot sharded TenantStats/ProductStats documents and was seeing
     // it exhaust withOptionalTransaction's default 3-immediate-retry budget
     // under the same contention the others were hardened against.
@@ -1501,7 +1501,7 @@ app.post('/api/orders/:id/unvoid', verifyToken, requireSuperAdmin, async (req, r
 // --- 🚨 SAFE VOID & REFUND ENGINE 🚨 ---
 // Retry wrapper: two transactions touching the same order/inventory documents can
 // collide with a WriteConflict, which previously surfaced to the operator as a
-// bare 500 on a VOID — a money action they then had to guess about. Mirrors the
+// bare 500 on a VOID - a money action they then had to guess about. Mirrors the
 // retry the restock route already does. Only retried when nothing has been sent
 // yet, so a validation response is never re-sent.
 app.post('/api/orders/:id/void', verifyToken, requireSuperAdmin, async (req, res) => {
@@ -1535,7 +1535,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
       return res.status(403).json({ success: false, error: `EOD locked for ${orderDateStr}. Cannot void after day is closed.` });
     }
 
-    // Reject voids on already-settled A/R orders — would orphan a paired entry.
+    // Reject voids on already-settled A/R orders - would orphan a paired entry.
     // Operator must reverse the settlement manually first (or use full refund flow).
     if (order.arSettled) {
       await session.abortTransaction();
@@ -1577,7 +1577,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
         if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
       }
 
-      // LOGISTICS 1:1 FALLBACK — mirror the sale: reverse the linked stocked good.
+      // LOGISTICS 1:1 FALLBACK - mirror the sale: reverse the linked stocked good.
       if (!recipeToUse.some(r => r.invId)) {
         const linkInv = await resolveLinkedInventory(product, item.productCode, session);
         if (linkInv) {
@@ -1685,13 +1685,13 @@ const voidOrderOnce = async (req, res, mayRetry) => {
     }
 
     // The order stops counting toward dashboard totals the moment it stops
-    // being 'Completed' — reverse it with the order's pre-void snapshot
+    // being 'Completed' - reverse it with the order's pre-void snapshot
     // (total/subtotal/items are untouched by voiding).
     await applyStatsDelta(order, -1, session);
 
     order.status = 'Voided';
     order.voidReason = reason;
-    // Attribution: stamp who actually voided the order — NOT the original cashier
+    // Attribution: stamp who actually voided the order - NOT the original cashier
     // (which for a client-portal order is the client's username, misleading on
     // audit reports). Captured from the verified JWT, not request body.
     order.voidedBy = adminName;
@@ -1719,7 +1719,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
 
 app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
   try {
-    // 1. Force any hanging order to Cancelled — includes Ready (made but never
+    // 1. Force any hanging order to Cancelled - includes Ready (made but never
     //    handed over) and Parked (held unpaid tabs). Parked orders also lose the
     //    isParked flag so they don't linger in the parked list.
     await Order.updateMany(
@@ -1728,7 +1728,7 @@ app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
     );
 
     // 2. Sweep completed/cancelled/voided orders into the archive.
-    //    Reserved and Partially Fulfilled stay open — they carry over to the next day.
+    //    Reserved and Partially Fulfilled stay open - they carry over to the next day.
     await Order.updateMany(
       { isArchived: false, status: { $nin: ['Reserved', 'Partially Fulfilled'] } },
       { $set: { isArchived: true, isParked: false } }
@@ -1744,7 +1744,7 @@ app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
 });
 
 // ============================================================
-// A/R SETTLEMENT — record delivery-partner payout received
+// A/R SETTLEMENT - record delivery-partner payout received
 // Used when Grab / Foodpanda / Manual Delivery payouts arrive
 // ============================================================
 app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req, res) => {
@@ -1765,7 +1765,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     // Debit-side account from configurable payment-method map.
     const debitAcct = accountForPaymentMethod(paymentMethod);
     if (debitAcct.fallback) {
-      // Tender has no COA route — parked in Unassigned Receipts. Alert managers
+      // Tender has no COA route - parked in Unassigned Receipts. Alert managers
       // to configure a route in Payment Routing so it lands in the right account.
       emitToMgr('mgrAlert', { kind: 'unmappedTender', method: paymentMethod || '(none)', account: debitAcct.code, ref: order.orderNumber, message: `Payment method "${paymentMethod || '(none)'}" has no account route - settled into Unassigned Receipts. Configure it in Payment Routing.` });
       try { await logAudit(req, { action: 'unmappedTender', entity: 'PaymentMethodMap', entityId: paymentMethod || '(none)', after: { account: debitAcct.code, order: order.orderNumber } }); } catch { /* non-fatal */ }
@@ -1819,20 +1819,20 @@ app.post('/api/orders/:id/partial-delivery', verifyToken, requireStaff, async (r
   }
 });
 
-// --- PARTIAL FULFILLMENT (logistics) — ONE order, fulfilled in batches --------
+// --- PARTIAL FULFILLMENT (logistics) - ONE order, fulfilled in batches --------
 // Fulfill some units now; the order stays a single sale and moves to
 // 'Partially Fulfilled' until every unit is delivered, then 'Completed'.
 // `fulfill` = [{ index, qty }] where qty is the units to fulfill THIS round.
 // Payment modes (chosen per round):
-//   • 'partial' — collect only for the units fulfilled now.
-//   • 'full'    — collect the whole remaining goods value now; the not-yet-fulfilled
+//   • 'partial' - collect only for the units fulfilled now.
+//   • 'full'    - collect the whole remaining goods value now; the not-yet-fulfilled
 //                 portion is held as Customer Deposits and recognized as revenue on
 //                 later rounds (no new charge then).
 app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (req, res) => {
   await runWithStatsRetry(partialFulfillOnce, req, res);
 });
 
-// Retry wrapper — same reasoning as completeOrderOnce above: the final round
+// Retry wrapper - same reasoning as completeOrderOnce above: the final round
 // that fully completes an order writes the singleton TenantStats/ProductStats
 // counters inside this transaction, which can collide with another concurrent
 // completion on a WriteConflict.
@@ -1847,7 +1847,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     if (order.isComplimentary) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Complimentary orders cannot be partially fulfilled.' }); }
     if (!['Pending', 'Preparing', 'Ready', 'Partially Fulfilled'].includes(order.status)) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Only open orders can be partially fulfilled.' }); }
 
-    // Per-unit gross / discount / net — mirrors the full-completion per-line rules
+    // Per-unit gross / discount / net - mirrors the full-completion per-line rules
     // so a partial batch books exactly like the same slice of a normal sale:
     // a per-item promo/client rate or cashier override wins for that line,
     // otherwise the order-level SC/PWD or Promo applies. Net drives cash, gross
@@ -1963,7 +1963,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
       lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: +totalCogs.toFixed(2) });
     }
 
-    // 4) Discount (promo / SC-PWD / per-item) for the units fulfilled now — gross
+    // 4) Discount (promo / SC-PWD / per-item) for the units fulfilled now - gross
     //    up revenue so it reflects list price and post the reduction to Sales
     //    Discounts, exactly like a normal completed sale. Cash already reflects net.
     if (discountValue > 0.005) {
@@ -1990,7 +1990,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     if (paymentMethod) order.paymentMethod = paymentMethod;
     // This order never passed through the main completion handler's ERP gate
     // (partial-fulfilled orders are deliberately skipped there to avoid double-
-    // posting — see the wasPartiallyFulfilled check above). The final round that
+    // posting - see the wasPartiallyFulfilled check above). The final round that
     // completes it is this order's one and only transition into 'Completed', so
     // count it here.
     if (allFulfilled) await applyStatsDelta(order, 1, session);
@@ -2012,10 +2012,10 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
   return false;
 };
 
-// --- DROP REMAINING (logistics) — finalize a partially-fulfilled order ---------
+// --- DROP REMAINING (logistics) - finalize a partially-fulfilled order ---------
 // The units already fulfilled are DONE and posted to the ledger; only the
 // not-yet-fulfilled units are dropped. The order finalizes as Completed at the
-// fulfilled quantity — the fulfilled revenue/COGS stay exactly as posted, and
+// fulfilled quantity - the fulfilled revenue/COGS stay exactly as posted, and
 // the dropped units carry NO ledger entries because they were never fulfilled.
 // The one money movement is refunding any prepaid-but-undelivered deposit
 // (only possible when an earlier batch was paid in 'full' mode).
@@ -2023,7 +2023,7 @@ app.post('/api/orders/:id/drop-remaining', verifyToken, requireStaff, async (req
   await runWithStatsRetry(dropRemainingOnce, req, res);
 });
 
-// Retry wrapper — same reasoning as completeOrderOnce: this route also writes
+// Retry wrapper - same reasoning as completeOrderOnce: this route also writes
 // the singleton TenantStats/ProductStats counters inside its transaction.
 const dropRemainingOnce = async (req, res, mayRetry) => {
   const session = await mongoose.startSession();
@@ -2099,7 +2099,7 @@ app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req,
   await runWithStatsRetry(refundOnce, req, res);
 });
 
-// Retry wrapper — same reasoning as completeOrderOnce: this route also writes
+// Retry wrapper - same reasoning as completeOrderOnce: this route also writes
 // the singleton TenantStats/ProductStats counters inside its transaction.
 const refundOnce = async (req, res, mayRetry) => {
   const session = await mongoose.startSession();
@@ -2140,7 +2140,7 @@ const refundOnce = async (req, res, mayRetry) => {
           if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
         }
 
-        // LOGISTICS 1:1 FALLBACK — product has no recipe: reverse the linked stocked good.
+        // LOGISTICS 1:1 FALLBACK - product has no recipe: reverse the linked stocked good.
         if (!recipeToUse.some(r => r.invId)) {
           const linkInv = await resolveLinkedInventory(product, item.productCode, session);
           if (linkInv) {
@@ -2217,7 +2217,7 @@ const refundOnce = async (req, res, mayRetry) => {
     const totalCredit = lines.reduce((s, l) => s + l.credit, 0);
     assertBalanced(lines, reference);
     await JournalEntry.create([{ date: new Date(), reference, description: `Refund for order ${order.orderNumber}: ${reason}`, lines, totalDebit, totalCredit }], { session });
-    // Status moves off 'Completed' on ANY refund (partial or full) — the old
+    // Status moves off 'Completed' on ANY refund (partial or full) - the old
     // aggregation only ever counted status:'Completed' docs, so reverse the
     // full order here too, not just the refunded amount.
     await applyStatsDelta(order, -1, session);

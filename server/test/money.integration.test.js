@@ -1,7 +1,7 @@
-// Batch 2 money/correctness integration tests (supertest + in-memory REPLICA SET).
+﻿// Batch 2 money/correctness integration tests (supertest + in-memory REPLICA SET).
 //
-// A replica set (not a standalone) is required because the spoilage handler — like the
-// void/refund engines — now commits its stock write + journal inside a Mongo
+// A replica set (not a standalone) is required because the spoilage handler - like the
+// void/refund engines - now commits its stock write + journal inside a Mongo
 // transaction, and transactions need a replica set.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
@@ -53,7 +53,7 @@ afterAll(async () => {
   if (repl) await repl.stop();
 });
 
-describe('Batch 2 — voids are superadmin-only', () => {
+describe('Batch 2 - voids are superadmin-only', () => {
   it('admin token → 403 on void (no longer admin-allowed)', async () => {
     const res = await request(app)
       .post('/api/orders/000000000000000000000000/void')
@@ -67,11 +67,11 @@ describe('Batch 2 — voids are superadmin-only', () => {
       .post('/api/orders/000000000000000000000000/void')
       .set('Authorization', `Bearer ${ownerToken}`)
       .send({ reason: 'Restock' });
-    expect(res.status).not.toBe(403); // 404 — order not found — but the gate let it through
+    expect(res.status).not.toBe(403); // 404 - order not found - but the gate let it through
   });
 });
 
-describe('Batch 2 — spoilage commits a balanced journal entry inside a transaction', () => {
+describe('Batch 2 - spoilage commits a balanced journal entry inside a transaction', () => {
   it('decrements stock and posts a balanced DR 535000 / CR 130000 entry', async () => {
     const Inventory = mongoose.model('Inventory');
     const JournalEntry = mongoose.model('JournalEntry');
@@ -112,7 +112,7 @@ describe('Batch 2 — spoilage commits a balanced journal entry inside a transac
   });
 });
 
-describe('Batch 2 — percentage-tax report', () => {
+describe('Batch 2 - percentage-tax report', () => {
   it('requires a date range', async () => {
     const res = await request(app)
       .get('/api/reports/percentage-tax')
@@ -161,7 +161,7 @@ describe('Batch 2 — percentage-tax report', () => {
   });
 });
 
-describe('Batch 3 — journal CSV export is bounded + streamed', () => {
+describe('Batch 3 - journal CSV export is bounded + streamed', () => {
   it('rejects a request with no date range', async () => {
     const res = await request(app)
       .get('/api/journal/export')
@@ -189,7 +189,7 @@ describe('Batch 3 — journal CSV export is bounded + streamed', () => {
   });
 });
 
-describe('Batch 3 — shift start enforces a valid starting cash', () => {
+describe('Batch 3 - shift start enforces a valid starting cash', () => {
   it('rejects a missing starting cash (no silent default-to-0)', async () => {
     const res = await request(app)
       .post('/api/shifts/start')

@@ -1,4 +1,4 @@
-// VAT — pure computation, no DB. Unit-testable in isolation.
+﻿// VAT - pure computation, no DB. Unit-testable in isolation.
 //
 // Prices can be treated two ways, chosen per business by the `vatInclusive` flag:
 //
@@ -9,13 +9,13 @@
 //     on top of the listed net price, so the total rises when VAT is on.
 //
 // A VAT-registered business owes 12% VAT and is NOT liable for the 3% percentage
-// tax under NIRC §116 — the two are mutually exclusive. `vatEnabled` drives both:
+// tax under NIRC §116 - the two are mutually exclusive. `vatEnabled` drives both:
 // see computePercentageTax in ./tax.js, whose report is gated on the same flag.
 
-export const DEFAULT_VAT_RATE = 0.12; // 12% — Philippine VAT (NIRC §106)
+export const DEFAULT_VAT_RATE = 0.12; // 12% - Philippine VAT (NIRC §106)
 
 // SC/PWD ordering. For a PERCENTAGE discount the two are arithmetically identical
-// — gross/(1+r)*(1-p) === gross*(1-p)/(1+r), multiplication commutes — and differ
+// - gross/(1+r)*(1-p) === gross*(1-p)/(1+r), multiplication commutes - and differ
 // only in the discount figure printed on the receipt. For a FLAT peso discount
 // they produce genuinely different totals, which is why this is a real setting
 // and not cosmetic.
@@ -25,7 +25,7 @@ const round2 = (n) => +(+n || 0).toFixed(2);
 
 // Normalises whatever is sitting in the settings collection. Operators type the
 // rate as a percentage ("12"), but a value already stored as a fraction (0.12)
-// must not silently become 1200% — so anything < 1 is treated as a fraction.
+// must not silently become 1200% - so anything < 1 is treated as a fraction.
 export function normaliseVatRate(raw, fallback = DEFAULT_VAT_RATE) {
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) return fallback;
@@ -47,14 +47,14 @@ export function extractVat(grossInclusive, rate = DEFAULT_VAT_RATE) {
   const r = Number(rate) || 0;
   if (r <= 0) return { net: gross, vat: 0, gross };
   const net = round2(gross / (1 + r));
-  // Derive VAT by subtraction, never by gross*r/(1+r) computed independently —
+  // Derive VAT by subtraction, never by gross*r/(1+r) computed independently -
   // rounding the two halves separately is how a receipt ends up a centavo off
   // its own total.
   return { net, vat: round2(gross - net), gross };
 }
 
 /**
- * Add VAT on top of a VAT-exclusive (net) amount — the mirror of extractVat, for
+ * Add VAT on top of a VAT-exclusive (net) amount - the mirror of extractVat, for
  * the exclusive pricing mode where the tag price is net and VAT is added.
  *
  * @param {number} net   listed net amount, VAT not yet added
@@ -77,7 +77,7 @@ export function addVat(net, rate = DEFAULT_VAT_RATE) {
  * @param {number}  [o.discountableGross]  portion of the above eligible for the
  *   order-level discount. Lines carrying their own product discount, and lines
  *   the cashier excluded via `hasDiscount: false`, are in `grossInclusive` but
- *   NOT here — the order-wide percentage must not touch them. Defaults to the
+ *   NOT here - the order-wide percentage must not touch them. Defaults to the
  *   full gross.
  * @param {number}  [o.exemptGross]   portion of `grossInclusive` made up of lines
  *   whose PRODUCT is classified VAT-exempt. Independent of `isVatExempt`, which
@@ -112,7 +112,7 @@ export function computeOrderVat({
   const flat = Math.max(0, Number(flatDiscount) || 0);
   const rate = vatEnabled ? (Number(vatRate) || 0) : 0;
 
-  // Non-VAT business: behaves exactly as the system did before VAT existed —
+  // Non-VAT business: behaves exactly as the system did before VAT existed -
   // discounts come off the gross and nothing is split out.
   if (!vatEnabled) {
     const discount = Math.min(pct > 0 ? round2(discBase * pct / 100) : flat, gross);
@@ -128,7 +128,7 @@ export function computeOrderVat({
 
   // VAT-EXCLUSIVE pricing: the listed price is net and VAT is added on top, so
   // the total rises when VAT is on. Kept separate from the inclusive path below
-  // because the direction of the arithmetic — and the total the customer pays —
+  // because the direction of the arithmetic - and the total the customer pays -
   // genuinely differs. SC/PWD ordering (vat-first/discount-first) is moot here:
   // there is no embedded VAT to sequence the discount against.
   if (!vatInclusive) {
@@ -198,7 +198,7 @@ export function computeOrderVat({
 
   // Mixed basket: some lines are VAT-exempt goods (raw agricultural produce and
   // the like) sitting alongside VATable ones. BIR wants the two reported
-  // separately, so the order-level discount is allocated pro rata by value —
+  // separately, so the order-level discount is allocated pro rata by value -
   // charging it all to one side would misstate both figures.
   const exempt = Math.max(0, Math.min(round2(exemptGross), gross));
   if (exempt > 0) {

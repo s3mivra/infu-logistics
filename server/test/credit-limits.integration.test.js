@@ -1,4 +1,4 @@
-// Credit limit enforcement + A/R ageing, end to end.
+﻿// Credit limit enforcement + A/R ageing, end to end.
 // The unit tests in lib/credit.test.js cover the rules; these cover the wiring:
 // that the gate actually blocks an order, that it only counts on-account sales,
 // and that a blocked order leaves nothing behind.
@@ -62,7 +62,7 @@ afterAll(async () => { await stop(); });
 
 beforeEach(async () => {
   // Each test starts from a clean receivable ledger and no limits.
-  // Both identity fields must be cleared — portal orders carry clientId, not
+  // Both identity fields must be cleared - portal orders carry clientId, not
   // clientAccountId, and leaving those behind leaks debt into later tests.
   await mongoose.model('Order').deleteMany({
     $or: [{ clientAccountId: String(clientId) }, { clientId: String(clientId) }],
@@ -150,7 +150,7 @@ describe('mode: both', () => {
 });
 
 describe('what consumes credit', () => {
-  it('does NOT gate cash orders — they settle immediately', async () => {
+  it('does NOT gate cash orders - they settle immediately', async () => {
     await setMode('per_client', null);
     await setClientLimit(100);
     await owe(100);                             // already at the limit
@@ -180,7 +180,7 @@ describe('debt is counted however the order was placed', () => {
     const Order = mongoose.model('Order');
     await Order.create({
       orderNumber: 88001, customerName: 'Credit Client',
-      clientId: String(clientId), placedByClient: true,     // portal shape — no clientAccountId
+      clientId: String(clientId), placedByClient: true,     // portal shape - no clientAccountId
       status: 'Completed', paymentMethod: 'GCash', total: 900,
       arSettled: false, createdAt: daysAgo(2), businessType: 'log',
     });
@@ -273,7 +273,7 @@ describe('A/R ageing report', () => {
     // Otherwise an owner sees "₱0 owing" for the very client being turned away.
     await setMode('per_client', null);
     await setClientLimit(1000);
-    await placeOrder(600);                       // Pending — not yet a book receivable
+    await placeOrder(600);                       // Pending - not yet a book receivable
     const res = await request(app).get('/api/finance/ar-ageing').set(auth(superToken));
     const row = res.body.clients.find(c => c.client === 'Credit Client');
     expect(row).toBeTruthy();

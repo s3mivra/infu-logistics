@@ -1,16 +1,16 @@
-@tailwind base;
+﻿@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /*
  * =====================================================================
- * SEMIVRA POS — DESIGN TOKEN SYSTEM (WHITE-LABEL READY)
+ * SEMIVRA POS - DESIGN TOKEN SYSTEM (WHITE-LABEL READY)
  * To re-brand for a client, edit ONLY the values in :root below.
  * All Tailwind classes (bg-brand, text-brand, etc.) inherit from these.
  * =====================================================================
  */
 /* =====================================================================
- * THEME 1 — FOREST (default): deep charcoal + olive green
+ * THEME 1 - FOREST (default): deep charcoal + olive green
  * ===================================================================== */
 :root,
 [data-theme="default"] {
@@ -38,7 +38,7 @@
 }
 
 /* =====================================================================
- * THEME 2 — YELLOW: same black base, yellow accent
+ * THEME 2 - YELLOW: same black base, yellow accent
  * ===================================================================== */
 [data-theme="yellow"] {
   --brand:        234 179 8;    /* yellow-500 - #eab308                    */
@@ -53,7 +53,7 @@
 }
 
 /* =====================================================================
- * THEME 3 — OCEAN: same black base, blue accent
+ * THEME 3 - OCEAN: same black base, blue accent
  * ===================================================================== */
 [data-theme="ocean"] {
   --brand:        56 189 248;   /* sky-400 - electric blue                 */
@@ -68,7 +68,7 @@
 }
 
 /* =====================================================================
- * THEME 4 — LIGHT: warm off-white canvas + the same olive accent.
+ * THEME 4 - LIGHT: warm off-white canvas + the same olive accent.
  * For bright rooms / daytime warehouse use.
  *
  * The whole UI reads colour through these tokens, so flipping --fg and the
@@ -92,7 +92,7 @@
 
 /* The UI leans on white/N for borders, dividers and hover washes. On a light
    canvas those vanish, so invert them to a dark wash of the same weight.
-   Scoped to the light theme only — dark themes keep the originals. */
+   Scoped to the light theme only - dark themes keep the originals. */
 [data-theme="light"] .bg-white\/5   { background-color: rgb(0 0 0 / 0.04); }
 [data-theme="light"] .bg-white\/8   { background-color: rgb(0 0 0 / 0.06); }
 [data-theme="light"] .bg-white\/10  { background-color: rgb(0 0 0 / 0.08); }
@@ -105,7 +105,7 @@
 [data-theme="light"] .divide-white\/5 > * + * { border-color: rgb(0 0 0 / 0.06); }
 [data-theme="light"] .placeholder-white\/20::placeholder,
 [data-theme="light"] .placeholder-white\/25::placeholder { color: rgb(0 0 0 / 0.35); }
-/* Modal scrims stay dark — a light scrim wouldn't separate the dialog. */
+/* Modal scrims stay dark - a light scrim wouldn't separate the dialog. */
 
 /* ============================================================
  * BASE RESETS + GLOBAL UX RULES
@@ -118,7 +118,7 @@ html {
   text-rendering: optimizeLegibility;
   /* The canvas (the area painted beyond the document, e.g. when overscrolling)
      comes from the ROOT element when it has a background, and only falls back to
-     <body> otherwise. Setting it here keeps the rubber-band area on-theme —
+     <body> otherwise. Setting it here keeps the rubber-band area on-theme -
      without it the page flashed the dark default behind a light theme. */
   background-color: rgb(var(--page-bg));
 }
@@ -132,7 +132,7 @@ body {
   /* Background lives on <html> (see above), not here. Declaring it on both left
      body holding a stale dark value in some engines while the root was light. */
   background: transparent;
-  /* Was rgb(var(--bg)) — the BACKGROUND token, i.e. body text the same colour as
+  /* Was rgb(var(--bg)) - the BACKGROUND token, i.e. body text the same colour as
      the page. It never showed because every element overrides with text-fg, but
      any unstyled text was invisible. */
   color: rgb(var(--fg));
@@ -140,7 +140,7 @@ body {
   overscroll-behavior-y: none;            /* kill rubber-band on iPads */
 }
 
-/* Tabular numerals — applies to ALL price/total/qty figures
+/* Tabular numerals - applies to ALL price/total/qty figures
    so digits stop jittering when the cart updates. */
 .tabular-nums, .font-mono, [class*="text-"]:where(.tabular-nums) {
   font-variant-numeric: tabular-nums;
@@ -161,7 +161,7 @@ button.btn-icon-sm { min-height: 28px; }  /* exception for tight icon rows */
  * stretched them into a distorted bar. Let their utility height stand. */
 button[role="switch"] { min-height: 0; }
 
-/* Checkboxes/radios must stay square — a min-height stretched them into an
+/* Checkboxes/radios must stay square - a min-height stretched them into an
  * invisible sliver. Give them an explicit box size and keep tap delay off; the
  * 44px touch target comes from the surrounding clickable label, not the control. */
 input[type="checkbox"], input[type="radio"] {
@@ -173,7 +173,7 @@ input[type="checkbox"], input[type="radio"] {
 }
 
 /* ============================================================
- * ACCESSIBILITY — VISIBLE FOCUS RINGS (P1 CRITICAL)
+ * ACCESSIBILITY - VISIBLE FOCUS RINGS (P1 CRITICAL)
  * Browser defaults are inconsistent and Tailwind sometimes strips them.
  * This restores a high-contrast ring on every keyboard-focused element.
  * ============================================================ */
@@ -245,7 +245,7 @@ input:-webkit-autofill:active {
 .pulse-ring { animation: pulseRing 1.8s ease-out infinite; }
 
 /* Press feedback for cards & tappable surfaces (P2 CRITICAL)
-   Uses transform-only animation — does not trigger reflow.
+   Uses transform-only animation - does not trigger reflow.
    Pair with `active-press` class. */
 .active-press {
   transition: transform 120ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -266,7 +266,7 @@ input:-webkit-autofill:active {
 }
 
 /* ============================================================
- * REDUCED MOTION — P1 CRITICAL ACCESSIBILITY
+ * REDUCED MOTION - P1 CRITICAL ACCESSIBILITY
  * Respect the OS-level "reduce motion" preference everywhere.
  * ============================================================ */
 @media (prefers-reduced-motion: reduce) {
@@ -279,7 +279,7 @@ input:-webkit-autofill:active {
 }
 
 /* ============================================================
- * PRINT STYLES — receipts come out clean
+ * PRINT STYLES - receipts come out clean
  * ============================================================ */
 @media print {
   body { background: white; color: black; }

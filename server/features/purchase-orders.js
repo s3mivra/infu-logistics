@@ -1,4 +1,4 @@
-// purchase-orders routes — procurement workflow (draft PO → reconcile delivery).
+﻿// purchase-orders routes - procurement workflow (draft PO → reconcile delivery).
 // Models/helpers/middleware live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { title, lower, freeText, squish } from '../lib/normalize.js';
@@ -29,7 +29,7 @@ export default function registerPurchaseOrders(ctx) {
   } = ctx;
 
   // Procurement domain gates (superadmin bypasses inside requirePermission).
-  // requireStaff is the floor; view/manage/delete are the granular layer on top —
+  // requireStaff is the floor; view/manage/delete are the granular layer on top -
   // "manage" covers both POs and the supplier directory (viewing them is cheap,
   // creating/editing/deleting a supplier or PO is not).
   const canViewProc   = [requireStaff, requirePermission('procurement.view')];
@@ -124,7 +124,7 @@ export default function registerPurchaseOrders(ctx) {
       const po = await PurchaseOrder.findOne({ _id: req.params.id, ...tenantScope(req) });
       if (!po) return res.status(404).json({ success: false, error: 'Not found' });
       // Complete is fully terminal. Incomplete (a short delivery) is still
-      // receivable — the ONE edit allowed on it is cancelling the remainder;
+      // receivable - the ONE edit allowed on it is cancelling the remainder;
       // everything else (supplier, lines, re-opening to Ordered/Processing) stays locked.
       const bodyKeys = Object.keys(req.body || {});
       const isCancelOnly = po.status === 'Incomplete' && bodyKeys.length === 1 && req.body.status === 'Cancelled';
@@ -158,7 +158,7 @@ export default function registerPurchaseOrders(ctx) {
   // ── RECEIPT POSTING ───────────────────────────────────────────────────────────
   // Moves a delivery's quantities into Inventory (weighted-average cost) and
   // books the matching journal entry. Only lines linked to a real Inventory item
-  // (invId set) post — unlinked lines stay PO-only tracking, by design.
+  // (invId set) post - unlinked lines stay PO-only tracking, by design.
   //
   // Unit model: a PO line is priced and counted in PACKS, while Inventory holds
   // BASE units (ml/g/pcs). basePerPack = line.packSize × item.unitMultiplier, so
@@ -220,14 +220,14 @@ export default function registerPurchaseOrders(ctx) {
   // ── RECEIVE (reconcile actual delivery) ───────────────────────────────────────
   // POST /api/purchase-orders/:id/receive  { received: [{ lineId?, index?, receivedQty }], notes? }
   // Sets receivedQty per line, computes actualTotal, and flips status to Complete
-  // (every line received ≥ ordered) or Incomplete (any short). Terminal — the PO
+  // (every line received ≥ ordered) or Incomplete (any short). Terminal - the PO
   // becomes read-only afterward.
   app.post('/api/purchase-orders/:id/receive', verifyToken, ...canManageProc, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const po = await PurchaseOrder.findOne({ _id: req.params.id, ...tenantScope(req) });
       if (!po) return res.status(404).json({ success: false, error: 'Not found' });
-      // Complete is terminal. Incomplete (a short delivery) is NOT — it stays
+      // Complete is terminal. Incomplete (a short delivery) is NOT - it stays
       // receivable so a follow-up delivery can top up just the outstanding qty.
       if (po.status === 'Complete') {
         return res.status(409).json({ success: false, error: 'This PO has already been received.' });
@@ -237,7 +237,7 @@ export default function registerPurchaseOrders(ctx) {
       }
 
       const received = Array.isArray(req.body?.received) ? req.body.received : [];
-      // Map incoming actuals onto lines — accept a line _id or a positional index.
+      // Map incoming actuals onto lines - accept a line _id or a positional index.
       // Each entry is what arrived in THIS delivery (a delta), not a replacement total.
       const byId = new Map();
       received.forEach((r, i) => {
@@ -245,14 +245,14 @@ export default function registerPurchaseOrders(ctx) {
         byId.set(key, Math.max(0, Number(r.receivedQty) || 0));
       });
       // Collect this delivery's deltas per line BEFORE mutating, so stock posting
-      // moves only what arrived now — a top-up delivery must not re-post the
+      // moves only what arrived now - a top-up delivery must not re-post the
       // quantities an earlier delivery already put into inventory.
       const deltas = [];
       po.lines.forEach((line, idx) => {
         let delta;
         if (byId.has(String(line._id))) delta = byId.get(String(line._id));
         else if (byId.has(`#${idx}`)) delta = byId.get(`#${idx}`);
-        // Lines omitted from this delivery's payload are left untouched — NOT reset to 0.
+        // Lines omitted from this delivery's payload are left untouched - NOT reset to 0.
         if (delta == null) return;
         line.receivedQty = (Number(line.receivedQty) || 0) + delta;
         if (delta > 0) deltas.push({ line, delta });
@@ -267,17 +267,17 @@ export default function registerPurchaseOrders(ctx) {
       await po.save();
 
       // Post the delivery into stock and the books. Without this the PO flips to
-      // Complete while inventory never moves — goods marked received that the
+      // Complete while inventory never moves - goods marked received that the
       // stock ledger never hears about.
       const posted = await postReceiptToStock(req, deltas, po);
 
-      // One Bill per delivery (not per line — a supplier sends one invoice for
+      // One Bill per delivery (not per line - a supplier sends one invoice for
       // the whole shipment), awaiting approval before it can be scheduled/paid.
-      // The A/P journal entry already posted above at receipt time — see the
+      // The A/P journal entry already posted above at receipt time - see the
       // BillSchema comment in server.js for why source:'PO' bills don't wait
       // for approval to book the liability, only to be paid.
       let bill = null;
-      // Bill.supplierId is required — a PO placed against a free-text supplier
+      // Bill.supplierId is required - a PO placed against a free-text supplier
       // name with no linked Supplier record (po.supplierId unset) can't get a
       // bill. The receipt and its journal entry still post either way; this
       // only affects the approval/scheduling workflow layered on top.
@@ -304,13 +304,13 @@ export default function registerPurchaseOrders(ctx) {
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
-  // ── DELETE (only drafts / cancelled — never a reconciled record) ───────────────
+  // ── DELETE (only drafts / cancelled - never a reconciled record) ───────────────
   app.delete('/api/purchase-orders/:id', verifyToken, requireSuperAdmin, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const po = await PurchaseOrder.findOne({ _id: req.params.id, ...tenantScope(req) });
       if (!po) return res.status(404).json({ success: false, error: 'Not found' });
-      // A cancelled PO with no receiving activity is a plain discarded draft — safe
+      // A cancelled PO with no receiving activity is a plain discarded draft - safe
       // to delete. One with activity (some lines already partially received before
       // the remainder was cancelled) is a real record and stays permanent, same as
       // Complete/Incomplete.
@@ -324,11 +324,11 @@ export default function registerPurchaseOrders(ctx) {
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
-  // ── SUPPLIERS — managed directory (CRUD) that POs draw from ────────────────────
+  // ── SUPPLIERS - managed directory (CRUD) that POs draw from ────────────────────
   // A PO stores both a supplierId link AND a supplier name snapshot (see
   // PurchaseOrderSchema), so renaming/deleting a supplier never rewrites history.
 
-  // Per supplier, what they supply and how much we've bought from them — rolled
+  // Per supplier, what they supply and how much we've bought from them - rolled
   // up from every non-cancelled PO's lines, grouped by item. estSpend uses the
   // ordered qty (what we committed to); actualSpend uses receivedQty (what
   // actually arrived) so a still-outstanding order doesn't inflate "bought".
@@ -361,8 +361,8 @@ export default function registerPurchaseOrders(ctx) {
     return bySupplier;
   };
 
-  // GET /api/suppliers — directory + catalog (what they say they sell, at what
-  // price — set by staff) + purchaseHistory (what we've actually bought, derived
+  // GET /api/suppliers - directory + catalog (what they say they sell, at what
+  // price - set by staff) + purchaseHistory (what we've actually bought, derived
   // from PO lines). Catalog answers "who's cheaper" even before a PO exists;
   // purchaseHistory is the read-only after-the-fact record.
   app.get('/api/suppliers', verifyToken, ...canViewProc, async (req, res) => {
@@ -445,7 +445,7 @@ export default function registerPurchaseOrders(ctx) {
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
-  // ── SUPPLIER CATALOG — what a supplier says they sell + their quoted price ─────
+  // ── SUPPLIER CATALOG - what a supplier says they sell + their quoted price ─────
   // Manually maintained (not derived from POs), so "who's cheaper for X" can be
   // answered before ever placing an order with them.
   const cleanCatalogEntry = (l) => ({

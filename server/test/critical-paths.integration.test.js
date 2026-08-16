@@ -1,4 +1,4 @@
-// Critical-path integration tests — the money/stock/auth flows where a bug means lost
+﻿// Critical-path integration tests - the money/stock/auth flows where a bug means lost
 // money or a breach. Drives the REAL Express app over HTTP against an in-memory replica
 // set: full order lifecycle (create → complete → void), every balanced-journal money
 // endpoint, shift variance, report aggregates, and an RBAC sweep. Two ledger-wide
@@ -251,7 +251,7 @@ describe('RBAC: accounting/reports/audit permission gating', () => {
       expect((await auth(m, p, tok.super).send({})).status).not.toBe(403);
     });
   }
-  // POSTING to the books needs accounting.manage — only finance/superadmin by
+  // POSTING to the books needs accounting.manage - only finance/superadmin by
   // default. Even a shop admin is denied unless explicitly granted.
   const MANAGE_ROUTES = [
     ['post', '/api/expenses'],

@@ -1,4 +1,4 @@
-// Client-account password reset — passwords are bcrypt-hashed and can never
+﻿// Client-account password reset - passwords are bcrypt-hashed and can never
 // be "revealed"; this resets to a fresh one instead, gated behind the caller
 // re-entering their OWN password, and returns the new plaintext exactly once.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

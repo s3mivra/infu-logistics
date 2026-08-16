@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+﻿import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, ChevronDown, Search, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download, Sparkles, Box } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
@@ -33,7 +33,7 @@ export default function ProcurementTab({ ctx }) {
   const money = peso || ((n) => `₱${(Number(n) || 0).toFixed(2)}`);
 
   // Print a PO on the SAME A4 document template the Orders billing statement /
-  // order slip uses — only the labels differ ("PURCHASE ORDER" vs "BILLING
+  // order slip uses - only the labels differ ("PURCHASE ORDER" vs "BILLING
   // STATEMENT"). Letterhead/payment/contact and the print size come from the
   // same system settings.
   const printPurchaseOrder = (po) => {
@@ -66,7 +66,7 @@ export default function ProcurementTab({ ctx }) {
       schedRows,
       items,
       totals: [{ label: 'ESTIMATED TOTAL', value: total, grand: true }],
-      // A PO to a supplier isn't a billed sale — swap the sales T&C for
+      // A PO to a supplier isn't a billed sale - swap the sales T&C for
       // procurement-appropriate terms and signatory roles.
       termsTitle: 'Purchase Terms',
       terms: [
@@ -332,7 +332,7 @@ export default function ProcurementTab({ ctx }) {
       const noteBase = `Suggested restock (${d.coverDays || 7}-day cover) generated ${new Date().toLocaleDateString()}`;
       const drafts = [...groups.values()].map(g => ({
         supplier: g.supplier, supplierId: g.supplierId, expectedDate: '',
-        notes: g.supplierId ? noteBase : `${noteBase} — no matching supplier found, assign one below`,
+        notes: g.supplierId ? noteBase : `${noteBase} - no matching supplier found, assign one below`,
         lines: g.lines,
       }));
 
@@ -383,7 +383,7 @@ export default function ProcurementTab({ ctx }) {
     if (!statement || !statementSupplier) return;
     const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF();
-    doc.setFontSize(14); doc.text(`Vendor Statement — ${statementSupplier.name}`, 14, 16);
+    doc.setFontSize(14); doc.text(`Vendor Statement - ${statementSupplier.name}`, 14, 16);
     doc.setFontSize(9);
     doc.text(`${fmtDate(statement.period.start)} to ${fmtDate(statement.period.end)}`, 14, 22);
     doc.text(`Opening balance: ${money(statement.openingBalance)}`, 14, 28);
@@ -1155,7 +1155,7 @@ export default function ProcurementTab({ ctx }) {
         <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={closeStatement}>
           <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-2xl my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
-              <h2 className="font-black text-fg text-lg">Vendor Statement — {statementSupplier.name}</h2>
+              <h2 className="font-black text-fg text-lg">Vendor Statement - {statementSupplier.name}</h2>
               <button onClick={closeStatement} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
             </div>
             <div className="p-5 space-y-3">

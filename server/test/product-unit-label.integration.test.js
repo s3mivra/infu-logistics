@@ -1,4 +1,4 @@
-// /api/products must return a `unitLabel` derived from each product's linked
+﻿// /api/products must return a `unitLabel` derived from each product's linked
 // INVENTORY item (packSize + display unit), normalised the same way the inventory
 // screen shows it: a sub-1 kg pack reads in grams. This is what the order slip's
 // Unit column renders, so the portal (anonymous) path must carry it too.
@@ -37,7 +37,7 @@ const products = async (tok) => {
   return byCode;
 };
 
-describe('GET /api/products — unitLabel from inventory', () => {
+describe('GET /api/products - unitLabel from inventory', () => {
   it('normalises a sub-1 kg pack to grams (anonymous / portal caller)', async () => {
     const p = await products();
     expect(p['RML-0100'].unitLabel).toBe('377g');

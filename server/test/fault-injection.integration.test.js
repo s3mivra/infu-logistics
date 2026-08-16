@@ -1,8 +1,8 @@
-// Fault injection — drives the `catch (err) { 500 }` branch of read handlers by making
+﻿// Fault injection - drives the `catch (err) { 500 }` branch of read handlers by making
 // their PRIMARY query throw. We mock one specific model method per route (e.g. Order.find)
 // with a chainable stub that rejects on await. This is deterministic and leak-free: only
 // that single query rejects, so every other/background DB op (audit logs, etc.) still runs
-// — no stray unhandled rejection. (A global exec mock would also reject fire-and-forget
+// - no stray unhandled rejection. (A global exec mock would also reject fire-and-forget
 // ops in other handlers, surfacing as an intermittent unhandled rejection.)
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import mongoose from 'mongoose';
@@ -12,7 +12,7 @@ import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 let ctx, app, tok;
 
 // A query/aggregate stub that rejects when awaited but supports the full chain
-// (.sort().lean().session().limit()....exec()) — every property returns the same proxy.
+// (.sort().lean().session().limit()....exec()) - every property returns the same proxy.
 const rejectingQuery = (e) => {
   const proxy = new Proxy(function () {}, {
     get(_t, prop) {
@@ -39,7 +39,7 @@ beforeAll(async () => {
 afterAll(async () => { await ctx.stop(); });
 afterEach(() => vi.restoreAllMocks());
 
-// [method, path, modelName, modelMethod] — the handler's primary DB op.
+// [method, path, modelName, modelMethod] - the handler's primary DB op.
 const R = '?start=2000-01-01&end=2100-01-01';
 const ROUTES = [
   ['get', '/api/orders', 'Order', 'find'],
@@ -86,7 +86,7 @@ describe('fault injection: read handlers degrade to 500 when their query throws'
 });
 
 // Newly hardened write handlers. We reject the one static they call (create /
-// findByIdAndDelete) — a single, awaited, no-chain op → deterministic and leak-free.
+// findByIdAndDelete) - a single, awaited, no-chain op → deterministic and leak-free.
 const WRITES = [
   ['post', '/api/roles', 'Role', 'create', { name: 'FiRole' }],
   ['delete', '/api/roles/000000000000000000000000', 'Role', 'findByIdAndDelete', {}],

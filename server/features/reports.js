@@ -1,4 +1,4 @@
-// reports routes — moved verbatim from server.js (feature-driven restructure).
+﻿// reports routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { dayStart, dayEnd } from '../lib/reportRange.js';
@@ -261,7 +261,7 @@ app.get('/api/reports/pnl', verifyToken, ...canViewReports, async (req, res) => 
 });
 
 // ============================================================
-// INVENTORY TURNOVER RATIO — COGS over a period ÷ average inventory value.
+// INVENTORY TURNOVER RATIO - COGS over a period ÷ average inventory value.
 // COGS reuses the same accountCode/meta.cogs aggregation as /api/reports/pnl.
 // Average inventory value is a 2-point (start, end) approximation: END is the
 // current stockQty × unitCost (same math as /api/inventory/revalue's read-only
@@ -269,7 +269,7 @@ app.get('/api/reports/pnl', verifyToken, ...canViewReports, async (req, res) => 
 // entry at or before the period start (balanceAfter × unitCost at that time),
 // falling back to current stock for items with no history that far back.
 // There is no daily inventory-valuation snapshot in this app, so this is an
-// estimate, not an exact historical figure — the response says so explicitly.
+// estimate, not an exact historical figure - the response says so explicitly.
 // ============================================================
 app.get('/api/reports/inventory-turnover', verifyToken, ...canViewReports, async (req, res) => {
   try {
@@ -331,7 +331,7 @@ app.get('/api/reports/inventory-turnover', verifyToken, ...canViewReports, async
 });
 
 // ============================================================
-// MONTHLY P&L — per-account amounts bucketed by month (parent/child + ratios computed client-side)
+// MONTHLY P&L - per-account amounts bucketed by month (parent/child + ratios computed client-side)
 // ============================================================
 app.get('/api/reports/pnl-monthly', verifyToken, ...canViewReports, async (req, res) => {
   try {
@@ -485,7 +485,7 @@ app.get('/api/reports/balance-sheet', verifyToken, ...canViewReports, async (req
 });
 
 // ============================================================
-// MONTHLY BALANCE SHEET — cumulative balance as-of each month-end across a range
+// MONTHLY BALANCE SHEET - cumulative balance as-of each month-end across a range
 // ============================================================
 app.get('/api/reports/balance-sheet-monthly', verifyToken, ...canViewReports, async (req, res) => {
   try {
@@ -548,7 +548,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const day30ago   = new Date(now.getTime() - 30 * 86400000);
     const day60ago   = new Date(now.getTime() - 60 * 86400000);
-    // Every query below MUST be scoped — this dashboard previously had zero
+    // Every query below MUST be scoped - this dashboard previously had zero
     // businessType/tenant scoping, so an fb deployment sharing a DB with a log
     // deployment (or any leftover cross-type docs) leaked into every number here.
     const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
@@ -571,7 +571,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
         }}
       ]),
 
-      // 2. All-time totals — O(shard count) read from the running counters
+      // 2. All-time totals - O(shard count) read from the running counters
       //    (TenantStats in server.js, kept up to date by applyStatsDelta in
       //    orders.js on every completion/void/refund) instead of scanning every
       //    completed order this tenant has ever had, on every dashboard load.
@@ -587,7 +587,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
         } },
       ]),
 
-      // 3. Daily revenue — last 60 days (grouped in Manila time)
+      // 3. Daily revenue - last 60 days (grouped in Manila time)
       Order.aggregate([
         { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: day60ago } } },
         { $group: {
@@ -597,7 +597,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
         { $sort: { _id: 1 } },
       ]),
 
-      // 4. Product tallies — O(1)-ish read from ProductStats instead of an
+      // 4. Product tallies - O(1)-ish read from ProductStats instead of an
       //    $unwind across all history. Size-variant merge into base product
       //    names ("Latte (Large)" → "Latte") still happens in JS below.
       ProductStats.find(bizScope, { productName: 1, cumulativeQty: 1, cumulativeRevenue: 1 }).lean(),
@@ -614,7 +614,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
         { items: 1, createdAt: 1 }
       ).lean(),
 
-      // 7. Inventory (needed for velocity + stock KPIs) — include unit fields so the
+      // 7. Inventory (needed for velocity + stock KPIs) - include unit fields so the
       //    UI can display kg/L/pcs correctly (effectiveDisplay needs unit/displayUnit/unitMultiplier).
       Inventory.find(bizScope, { itemCode: 1, itemName: 1, stockQty: 1, unitCost: 1, unit: 1, displayUnit: 1, unitMultiplier: 1, lowStockThreshold: 1, createdAt: 1 }).lean(),
     ]);
@@ -653,13 +653,13 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
     const topProducts = Object.values(tpMerged).sort((a, b) => b.qty - a.qty).slice(0, 5);
 
     // ── Raw-material velocity (weighted ADU: 70% last-7d, 30% last-30d) ────────
-    // These use small time-scoped order sets — not the full history
+    // These use small time-scoped order sets - not the full history
     const [products] = await Promise.all([
       Product.find(bizScope, { name: 1, productCode: 1, baseRecipe: 1, sizes: 1, addOns: 1, isAvailable: 1, isArchived: 1 }).lean(),
     ]);
 
     // Low-stock filter: an inventory item is hidden from the low-stock list when it is
-    // linked ONLY to removed products — either 86'd (isAvailable=false) or actually
+    // linked ONLY to removed products - either 86'd (isAvailable=false) or actually
     // deleted (isArchived=true, set by DELETE /api/products/:id, which soft-archives
     // rather than hard-deleting). Both signals must be checked: a "Delete" in the
     // Products UI only flips isArchived, leaving isAvailable untouched, so checking
@@ -748,7 +748,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
 
     // ── Professional velocity / risk tuning ─────────────────────────────────────
     // Lead time = days from reorder to arrival; safety = buffer days of demand.
-    // Grace windows suppress false alarms on freshly-onboarded stock — a Day-1 SKU
+    // Grace windows suppress false alarms on freshly-onboarded stock - a Day-1 SKU
     // has no sales history to judge, so overstock/dead-stock alarms would be wrong.
     const LEAD_TIME_DAYS = 7;
     const SAFETY_DAYS = 3;
@@ -799,7 +799,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
       .filter(i => i.daysActive > OVERSTOCK_GRACE_DAYS && i.daysOfSupply > 30 && i.stockQty > 0)
       .sort((a, b) => b.tiedUpCapital - a.tiedUpCapital).slice(0, 5);
 
-    // Slow movers: sells, but slowly — needs a real operating window before judging.
+    // Slow movers: sells, but slowly - needs a real operating window before judging.
     const slowMovers = inventoryItems
       .filter(item => !isRemovedProductStock(item))
       .map(item => { const adu = uOf(item)?.weightedAdu || 0; return { ...item, adu, daysOfSupply: adu > 0 ? item.stockQty / adu : Infinity, tiedUpCapital: item.stockQty * (item.unitCost || 0), daysActive: ageDays(item) }; })
@@ -807,7 +807,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
       .sort((a, b) => a.adu - b.adu)
       .slice(0, 8);
 
-    // Dead stock: in stock, ZERO movement — age guard keeps Day-1 launch stock out.
+    // Dead stock: in stock, ZERO movement - age guard keeps Day-1 launch stock out.
     const deadStock = inventoryItems
       .filter(item => !isRemovedProductStock(item))
       .map(item => { const adu = uOf(item)?.weightedAdu || 0; return { ...item, adu, tiedUpCapital: item.stockQty * (item.unitCost || 0), daysActive: ageDays(item) }; })
@@ -951,7 +951,7 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
     const lines = inv.map(i => {
       const adu = (usage[i._id.toString()] || 0) / 30; // avg daily usage (base units)
       const target = adu * days;
-      // Display in kg/L/pcs — auto-promote g/ml so the PO never shows base units.
+      // Display in kg/L/pcs - auto-promote g/ml so the PO never shows base units.
       const { displayUnit, mult } = effectiveDisplay(i);
       const needBase = Math.max(0, target - i.stockQty);
       const lowFlag = i.lowStockThreshold > 0 && i.stockQty <= i.lowStockThreshold;
@@ -1012,7 +1012,7 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async
 // ── SELLER COMMISSIONS ────────────────────────────────────────────────────────
 // Per-seller (Order.cashier, matched against User.name) commission over a date
 // range: sales total × that user's commissionRate. Complimentary orders are
-// excluded — same convention as profit-by-category — since no revenue actually
+// excluded - same convention as profit-by-category - since no revenue actually
 // came in to take a commission from. Every user with any sales in range is
 // listed, including a 0%-rate one, so an admin can see who still needs a rate
 // set rather than have them silently vanish from the report.
@@ -1073,7 +1073,7 @@ app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, async (
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-// ── SALES TREND — daily revenue buckets over a bounded range, plus a rolling
+// ── SALES TREND - daily revenue buckets over a bounded range, plus a rolling
 // moving average and the % change vs. the immediately-prior period of equal
 // length. `period` only picks the default range length (week=7d, month=30d);
 // an explicit start/end always wins. Same $dateToString/Asia-Manila bucketing
@@ -1087,7 +1087,7 @@ app.get('/api/reports/sales-trend', verifyToken, ...canViewReports, async (req, 
     const defaultStart = new Date(defaultEnd.getTime() - (days - 1) * 86400000);
     // Default window must be expressed in the SAME timezone the buckets are
     // grouped by (Asia/Manila, below), or "today" resolves to a UTC date whose
-    // Manila day-end can fall before the current moment — silently dropping
+    // Manila day-end can fall before the current moment - silently dropping
     // sales made during Manila's early-morning hours. en-CA gives YYYY-MM-DD.
     const manilaDateStr = (d) => d.toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
     const startStr = req.query.start || manilaDateStr(defaultStart);
@@ -1123,7 +1123,7 @@ app.get('/api/reports/sales-trend', verifyToken, ...canViewReports, async (req, 
       ? +(((currentTotal - priorTotal) / priorTotal) * 100).toFixed(1)
       : (currentTotal > 0 ? 100 : 0);
 
-    // 7-day rolling average of daily revenue, regardless of period — the range
+    // 7-day rolling average of daily revenue, regardless of period - the range
     // length changes with period, the smoothing window doesn't need to.
     const window = 7;
     const series = buckets.map(b => ({ date: b._id, revenue: +(b.net || 0).toFixed(2) }));
@@ -1159,7 +1159,7 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req
 
     // Resolve to the client's standard CUS-1000-A0000 code, not the raw ObjectId
     // stored on the order (clientId / clientAccountId are internal references).
-    // No linked ClientAccount = a genuine walk-in — gets the reserved walk-in code,
+    // No linked ClientAccount = a genuine walk-in - gets the reserved walk-in code,
     // never a blank ID.
     const clientRefIds = [...new Set(orders.map(o => o.clientId || o.clientAccountId).filter(Boolean))];
     const clientCodeById = clientRefIds.length
@@ -1199,7 +1199,7 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req
 });
 
 // ── SALES LINE ITEMS ─────────────────────────────────────────────────────────
-// One row per order LINE (not per order) — the item-level detail Summary Sales
+// One row per order LINE (not per order) - the item-level detail Summary Sales
 // deliberately leaves out. Same Completed/non-comp filter and date range as
 // sales-summary, so the two reports reconcile against each other.
 app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (req, res) => {
@@ -1246,7 +1246,7 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (
           isCombo,
         });
         // For a promo/combo, list the products it includes as indented sub-rows.
-        // They carry the component quantity but ₱0 — the combo row holds the price,
+        // They carry the component quantity but ₱0 - the combo row holds the price,
         // so components are informational and don't double-count the grand total.
         if (isCombo) {
           for (const comp of it.comboItems) {
@@ -1273,7 +1273,7 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (
 // the sales reports' "Completed, non-complimentary" filter (so voids & comps are
 // excluded). 410000 is booked gross-of-discount, so an explicit "less: sales
 // discounts" line is returned and the figure reconciles to cash received.
-// Aggregate-based — no in-memory full scan. No schema/journal changes (report only).
+// Aggregate-based - no in-memory full scan. No schema/journal changes (report only).
 app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
@@ -1288,7 +1288,7 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (re
     endDate.setHours(23, 59, 59, 999);
 
     // A VAT-registered business owes 12% VAT and is NOT liable for the 3%
-    // percentage tax (NIRC §116) — the two are mutually exclusive. Returning a
+    // percentage tax (NIRC §116) - the two are mutually exclusive. Returning a
     // figure here while VAT is on would invite someone to pay a tax they do not
     // owe, so the report reports its own inapplicability instead.
     const vatRow = await Settings.findOne({ key: 'vatEnabled' }).lean();
@@ -1320,7 +1320,7 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (re
       period: { start: startDate, end: endDate },
       orders: a.orders,
       ...tax,
-      // Explicit, auditable breakdown — the discount subtraction is a visible line.
+      // Explicit, auditable breakdown - the discount subtraction is a visible line.
       lines: [
         { label: 'Gross sales (before discounts)', amount: tax.grossSales },
         { label: 'Less: sales discounts',          amount: -tax.discounts },

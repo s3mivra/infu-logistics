@@ -1,7 +1,7 @@
-import { useDashboard } from '../../dashboard/DashboardContext';
+﻿import { useDashboard } from '../../dashboard/DashboardContext';
 
 // Extracted from AdminDashboard. Reads shared dashboard state via
-// useDashboard() rather than props — see DashboardContext.
+// useDashboard() rather than props - see DashboardContext.
 export default function ChangePasswordModal() {
   const { changePwError, changePwForm, changePwLoading, changePwModal, handleChangePassword, setChangePwError, setChangePwForm, setChangePwModal } = useDashboard();
 

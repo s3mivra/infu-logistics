@@ -1,4 +1,4 @@
-// products routes — moved verbatim from server.js (feature-driven restructure).
+﻿// products routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
@@ -190,7 +190,7 @@ app.get('/api/categories', async (req, res) => {
 // Routing departments are mutually exclusive per business type: fb routes to
 // Kitchen/Bar, log to Logistics/Warehouse. A department from the other type
 // (e.g. 'Kitchen' on a log deployment) is coerced to this type's default rather
-// than rejected — keeping the invariant without failing the request. Returns the
+// than rejected - keeping the invariant without failing the request. Returns the
 // department to store, or null when omitted (so the schema's per-type default applies).
 const DEPTS_BY_TYPE = { log: ['Logistics', 'Warehouse'], fb: ['Kitchen', 'Bar'] };
 function validDepartment(dept) {
@@ -203,7 +203,7 @@ function validDepartment(dept) {
 app.post('/api/categories', verifyToken, requireStaff, async (req, res) => {
   try {
     const department = validDepartment(req.body.department);
-    // Stamp businessType/tenant so the row survives the scoped GET filter above —
+    // Stamp businessType/tenant so the row survives the scoped GET filter above -
     // without this a new category is saved untagged and vanishes from the list.
     // Let the schema default set the department (Logistics for log, Kitchen for fb)
     // when none is supplied, instead of forcing 'Kitchen' onto log deployments.
@@ -266,7 +266,7 @@ app.get('/api/products', async (req, res) => {
         if (dec?.role === 'client') buyerClientId = String(dec.clientId || dec._id || '');
         else if (dec?.role) isAdminCaller = true; // any non-client authenticated user is staff/admin
       }
-    } catch { /* anonymous / invalid token — fall back to the default discount */ }
+    } catch { /* anonymous / invalid token - fall back to the default discount */ }
 
     // Exclude soft-deleted products; tenancy-scoped to this server's businessType.
     // Removed products (isAvailable=false): visible to admin/staff for management,
@@ -309,7 +309,7 @@ app.get('/api/products', async (req, res) => {
 
     // Compute stockAvailable from live inventory.
     //  • FB / recipe products: every linked ingredient must have enough stock.
-    //  • LOG / 1:1 products (no recipe): the product IS a stocked good — match the
+    //  • LOG / 1:1 products (no recipe): the product IS a stocked good - match the
     //    linked inventory item by itemCode (then itemName) and require at least one
     //    sellable unit (unitMultiplier base units) on hand.
     const invItems = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }, { _id: 1, itemCode: 1, itemName: 1, stockQty: 1, unitMultiplier: 1, displayUnit: 1, unit: 1, packSize: 1 }).lean();
@@ -329,7 +329,7 @@ app.get('/api/products', async (req, res) => {
       const ul = u.toLowerCase();
       if (ul === 'kg' && v < 1) return `${Math.round(v * 1000 * 1000) / 1000}g`;
       if (ul === 'l' && v < 1) return `${Math.round(v * 1000 * 1000) / 1000}ml`;
-      return `${v}${u}`; // ≥1 or already a sub-unit — keep the entered unit casing
+      return `${v}${u}`; // ≥1 or already a sub-unit - keep the entered unit casing
     };
     // Pack/unit label from an inventory item, mirroring the dashboard's packInfo:
     // an explicit packSize wins ("1kg"/"377g"), else a size embedded in the name
@@ -353,7 +353,7 @@ app.get('/api/products', async (req, res) => {
 
       if (recipe.some(r => r.invId)) {
         p.stockAvailable = recipe.every(ing => {
-          if (!ing.invId) return true;                  // unlinked — don't block the product
+          if (!ing.invId) return true;                  // unlinked - don't block the product
           const inv = invById[ing.invId];
           const need = Number(ing.qty) || 0;
           return inv && inv.stockQty > 0 && inv.stockQty >= need;
@@ -361,7 +361,7 @@ app.get('/api/products', async (req, res) => {
       } else {
         // 1:1 logistics good: the product IS the stocked good, so with no recipe
         // to fall back on, a missing OR zero/insufficient linked item must block
-        // the product — never default to "available" just because nothing matched.
+        // the product - never default to "available" just because nothing matched.
         const inv = invByCode[p.productCode] || invByName[p.name];
         p.stockAvailable = !!inv && inv.stockQty >= baseUnitsPerSale(p, inv);
       }
@@ -375,7 +375,7 @@ app.get('/api/products', async (req, res) => {
 });
 
 // ── BARCODE LOOKUP ────────────────────────────────────────────────────────────
-// GET /api/products/by-barcode/:code — resolve a scanned barcode to a product
+// GET /api/products/by-barcode/:code - resolve a scanned barcode to a product
 // at the POS. Exact match on the stored `barcode` field, scoped to this
 // business. Barcodes aren't schema-unique (see the field comment in
 // server.js), so this returns the first match and flags `ambiguous:true` when
@@ -437,7 +437,7 @@ app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
         targetReference: updatedProduct.productCode || req.params.id,
         details: { name: updatedProduct.name, oldPrice: existing.basePrice, newPrice: updatedProduct.basePrice, reason: changeReason },
       });
-      // Memo journal entry — zero-money, balanced row pair on Inventory Asset
+      // Memo journal entry - zero-money, balanced row pair on Inventory Asset
       // so it threads onto the ledger filter without affecting balances.
       // Lets finance trace every catalogue price change in the same place as
       // real movements. Uses a unique reference per change.
@@ -476,7 +476,7 @@ app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
         });
       } catch (e) { log?.error?.({ err: e }, 'recipe-cost memo JE failed'); }
     }
-    // General edit audit — records every PUT for forensic trail.
+    // General edit audit - records every PUT for forensic trail.
     await logAudit(req, {
       action: 'update', entity: 'Product', entityId: req.params.id,
       before: existing ? { name: existing.name, basePrice: existing.basePrice, category: existing.category, costOverride: existing.costOverride } : null,
@@ -489,7 +489,7 @@ app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
-// PATCH /api/products/:id/availability — superadmin toggle. Permanently REMOVES
+// PATCH /api/products/:id/availability - superadmin toggle. Permanently REMOVES
 // the product from menu + POS. Reporting still surfaces it while stock remains.
 app.patch('/api/products/:id/availability', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
@@ -512,7 +512,7 @@ app.patch('/api/products/:id/availability', verifyToken, requireSuperAdmin, asyn
   }
 });
 
-// PATCH /api/products/:id/oos — toggle "Out of Stock". Distinct from Removed —
+// PATCH /api/products/:id/oos - toggle "Out of Stock". Distinct from Removed -
 // OOS products still appear in menu (with a badge) and in all reports. Use this
 // for a temporary stockout; use /availability for permanent removal.
 app.patch('/api/products/:id/oos', verifyToken, requireSuperAdmin, async (req, res) => {
@@ -596,7 +596,7 @@ app.post('/api/combos', verifyToken, requireSuperAdmin, validate(comboSchema), a
   try {
     if (!req.body.name || !(req.body.price > 0)) return res.status(400).json({ success: false, error: 'Name and a positive price are required.' });
     if (!Array.isArray(req.body.items) || req.body.items.length === 0) return res.status(400).json({ success: false, error: 'A combo needs at least one component product.' });
-    // Promo/combo codes read "C10001", "C10002"… — a distinct C-series so they
+    // Promo/combo codes read "C10001", "C10002"… - a distinct C-series so they
     // stand apart from product/stock codes on slips and in the ledger. Reuse the
     // lowest freed number: if C10001 was deleted, the next new combo takes it back
     // (no ever-growing gaps), which is what an operator expects from a short code.

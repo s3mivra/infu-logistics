@@ -1,4 +1,4 @@
-// Clients overview — accounts joined to their orders and receivables.
+﻿// Clients overview - accounts joined to their orders and receivables.
 // Risks covered: attributing orders through EITHER identity field, keeping the
 // A/R vs exposure distinction straight, and not leaking money columns to roles
 // without accounting.view.

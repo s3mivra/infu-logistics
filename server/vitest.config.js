@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+﻿import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
@@ -9,9 +9,9 @@ export default defineConfig({
     // Each integration FILE spins up its own in-memory MongoDB (a real mongod process).
     // Running all files at full parallelism launches many mongods at once and overwhelms
     // the machine, tripping mongod's 10s startup timeout. Cap concurrency so only a couple
-    // start at a time — slower, but reliable on any machine.
+    // start at a time - slower, but reliable on any machine.
     pool: 'forks',
-    // Vitest 4 removed `poolOptions` — the cap below was silently ignored after
+    // Vitest 4 removed `poolOptions` - the cap below was silently ignored after
     // the upgrade, every file booted its own mongod at once, and the suite went
     // intermittently red with misleading 500s. These are the top-level
     // replacements; keep them here or the flakiness comes straight back.

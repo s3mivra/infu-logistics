@@ -1,4 +1,4 @@
-// Global "Enter moves to next field" behavior — installed once for the whole
+﻿// Global "Enter moves to next field" behavior - installed once for the whole
 // app (both fb and log; this file has no business-type branching) instead of
 // wiring it into every individual form component.
 //
@@ -11,7 +11,7 @@
 //
 // Deliberately excludes <textarea> (Enter must still insert a newline there)
 // and any field whose own Enter handler already called preventDefault (e.g. a
-// search box that submits on Enter) — that existing behavior is left alone.
+// search box that submits on Enter) - that existing behavior is left alone.
 
 const FOCUSABLE_SELECTOR = 'input, select';
 
@@ -23,7 +23,7 @@ function findScope(el) {
   let node = el.closest('form, [role="dialog"]');
   if (node) return node;
   // Walk up looking for the smallest ancestor with more than one focusable
-  // field in it — a reasonable proxy for "this section's field group".
+  // field in it - a reasonable proxy for "this section's field group".
   node = el.parentElement;
   let depth = 0;
   while (node && depth < 10) {
@@ -45,7 +45,7 @@ function handleKeydown(e) {
   const scope = findScope(el);
   const fields = Array.from(scope.querySelectorAll(FOCUSABLE_SELECTOR)).filter(isVisible);
   const idx = fields.indexOf(el);
-  if (idx === -1 || idx === fields.length - 1) return; // last field — leave Enter's default behavior alone
+  if (idx === -1 || idx === fields.length - 1) return; // last field - leave Enter's default behavior alone
 
   e.preventDefault();
   fields[idx + 1].focus();

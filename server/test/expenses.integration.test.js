@@ -1,4 +1,4 @@
-// Expense listing — the read side that backs the Expenses page.
+﻿// Expense listing - the read side that backs the Expenses page.
 // Expenses are journal entries whose debit is an expense account, so the risks
 // are (a) catching non-expense entries and (b) totals that disagree with the
 // rows once the list is truncated.
@@ -54,7 +54,7 @@ describe('expense listing', () => {
   });
 
   it('does NOT pick up non-expense journal entries', async () => {
-    // A sale posts to revenue/cash — it must never appear as an expense.
+    // A sale posts to revenue/cash - it must never appear as an expense.
     await mongoose.model('JournalEntry').create({
       date: new Date(), reference: 'NOT-AN-EXPENSE', description: 'a sale',
       lines: [

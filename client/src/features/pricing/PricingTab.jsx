@@ -1,18 +1,18 @@
-import React, { useState, useMemo } from 'react';
+﻿import React, { useState, useMemo } from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
-// ── PricingTab — extracted from AdminDashboard.jsx ──
+// ── PricingTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function PricingTab({ ctx }) {
   // Destructure everything from ctx
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
   const {
     API_URL, AUDIT_PAGE_SIZE, BIZ_NAME, COMP_REASON_LABELS, FRONTEND_URL,
@@ -162,11 +162,11 @@ export default function PricingTab({ ctx }) {
                   {filteredSortedProducts.length === 0 ? (
                     <tr><td colSpan={isSuperAdmin ? 8 : 6} className="py-4 text-center text-gray-500">No products found.</td></tr>
                   ) : localProducts.flatMap(p => {
-                    // 1:1 logistics cost — no recipes in 'log' mode, so cost is
+                    // 1:1 logistics cost - no recipes in 'log' mode, so cost is
                     // always the linked inventory item's cost per named pack.
                     // Uses the SAME itemDisplay() helper the Inventory tab uses
                     // (parses the pack size off the INVENTORY item's own name,
-                    // e.g. "DV Roasted Almond 250G" → packCost for 250g) — matching
+                    // e.g. "DV Roasted Almond 250G" → packCost for 250g) - matching
                     // it against the product's own name here instead was wrong
                     // whenever the product name lacked a size token, since it fell
                     // back to unitMultiplier (a unit-conversion factor, not a pack cost).
@@ -176,7 +176,7 @@ export default function PricingTab({ ctx }) {
                       return itemDisplay(inv).packCost;
                     };
                     // Recipe cost only applies in F&B mode (BOM-based products).
-                    // Logistics products have no recipe — go straight to inventory.
+                    // Logistics products have no recipe - go straight to inventory.
                     const baseCostCalc = BUSINESS_TYPE === 'log' ? linkedCost(p) : (calcRecipeCost(p.baseRecipe) || linkedCost(p));
                     const baseCost = p.costOverride != null ? p.costOverride : baseCostCalc;
                     // We now track the exact productId and sizeIndex so the backend knows what to update
@@ -190,7 +190,7 @@ export default function PricingTab({ ctx }) {
                     }
                     return rows;
                   }).map((row) => {
-                    // Margin shows even when there's no recipe — cost falls back to 0,
+                    // Margin shows even when there's no recipe - cost falls back to 0,
                     // so margin = 100% for items priced without a cost layer (e.g. logistics
                     // 1:1 SKUs whose cost lives on the inventory item, not a recipe).
                     const margin = row.price > 0 ? ((row.price - (row.cost || 0)) / row.price) * 100 : null;

@@ -1,4 +1,4 @@
-// Seller commission tracking — GET /api/reports/commissions and the
+﻿// Seller commission tracking - GET /api/reports/commissions and the
 // commissionRate field on User. Drives the real Express app over HTTP against
 // an in-memory replica set, same harness as critical-paths.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -43,7 +43,7 @@ describe('commission report', () => {
     expect(res.body.user.commissionRate).toBe(10);
   });
 
-  it('is gated behind reports.view — the cashier role default permissions don\'t include it, matching every other report endpoint', async () => {
+  it('is gated behind reports.view - the cashier role default permissions don\'t include it, matching every other report endpoint', async () => {
     const res = await auth('get', '/api/reports/commissions', cashierTok);
     expect(res.status).toBe(403);
   });
@@ -58,7 +58,7 @@ describe('commission report', () => {
     expect(created.status).toBe(200);
     await auth('put', `/api/orders/${created.body.order._id}`, cashierTok).send({ status: 'Completed' });
 
-    // A complimentary order — must NOT count toward sales/commission.
+    // A complimentary order - must NOT count toward sales/commission.
     const compCreated = await auth('post', '/api/orders', cashierTok).send({ ...orderBody, isComplimentary: true });
     expect(compCreated.status).toBe(200);
 

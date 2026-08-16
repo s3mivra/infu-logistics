@@ -1,6 +1,6 @@
-// ── CLIENT AUTH (in-memory access token + silent refresh) ────────────────────
+﻿// ── CLIENT AUTH (in-memory access token + silent refresh) ────────────────────
 //
-// The access token is held ONLY in module memory — never localStorage — so an XSS
+// The access token is held ONLY in module memory - never localStorage - so an XSS
 // payload can't exfiltrate a long-lived credential. It's short-lived (15m). The
 // long-lived refresh token lives in an httpOnly cookie the JS can't read; on page
 // load (memory is empty) we call /api/auth/refresh to silently mint a new access
@@ -22,7 +22,7 @@ export const getToken = () => accessToken;
 export const setToken = (t) => { accessToken = t || null; };
 export const clearToken = () => { accessToken = null; };
 
-// Lightweight offline identity (NO token) — lets the installed app know who is
+// Lightweight offline identity (NO token) - lets the installed app know who is
 // signed in when reloaded offline, so the POS and clock can run in a degraded,
 // queue-everything mode until the connection returns. Cleared on logout.
 const USER_KEY = 'semivra_user';

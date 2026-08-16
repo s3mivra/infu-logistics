@@ -1,10 +1,10 @@
-// Run a unit of work inside a MongoDB transaction when the deployment supports
+﻿// Run a unit of work inside a MongoDB transaction when the deployment supports
 // one, and fall back to running it WITHOUT a session when it doesn't.
 //
 // WHY: every money/stock route wraps its writes in a multi-document transaction,
 // which MongoDB only allows on a replica set. Production (Atlas) is a replica
-// set, but a plain standalone mongod — which is what a simple dev box or a
-// non-replica test harness runs — rejects them outright with
+// set, but a plain standalone mongod - which is what a simple dev box or a
+// non-replica test harness runs - rejects them outright with
 // "Transaction numbers are only allowed on a replica set member or mongos",
 // making those routes impossible to exercise locally.
 //
@@ -14,7 +14,7 @@
 //
 // The caller's `work` receives a session that is `undefined` on the fallback
 // path; Mongoose ignores `{ session: undefined }`, so the same code runs
-// unchanged — it simply loses atomicity, which is the honest trade on a
+// unchanged - it simply loses atomicity, which is the honest trade on a
 // database that cannot offer it.
 
 const UNSUPPORTED = /Transaction numbers are only allowed|Transactions are not supported|replica set member or mongos/i;
@@ -31,7 +31,7 @@ export async function withOptionalTransaction(mongoose, work, { retries = 3, ret
       const msg = String(err?.errorLabels || err?.message || '');
       const isTransient = (err?.errorLabels || []).includes('TransientTransactionError') || TRANSIENT.test(msg);
 
-      // A write conflict is worth retrying — another writer touched the same doc.
+      // A write conflict is worth retrying - another writer touched the same doc.
       // An optional caller-supplied delay (e.g. jittered backoff) gives the
       // colliding writer a moment to finish before the next attempt.
       if (isTransient && attempt < retries) {
@@ -41,7 +41,7 @@ export async function withOptionalTransaction(mongoose, work, { retries = 3, ret
 
       // No transaction support: run the same work without a session, once.
       if (UNSUPPORTED.test(msg)) {
-        log?.warn?.('Transactions unsupported on this MongoDB (not a replica set) — running without a session. Atomicity is NOT guaranteed for this write.');
+        log?.warn?.('Transactions unsupported on this MongoDB (not a replica set) - running without a session. Atomicity is NOT guaranteed for this write.');
         return work(undefined);
       }
       throw err;
@@ -50,5 +50,5 @@ export async function withOptionalTransaction(mongoose, work, { retries = 3, ret
     }
   }
   // Retries exhausted on a transient error.
-  throw Object.assign(new Error('Write conflict — please retry.'), { httpStatus: 409 });
+  throw Object.assign(new Error('Write conflict - please retry.'), { httpStatus: 409 });
 }

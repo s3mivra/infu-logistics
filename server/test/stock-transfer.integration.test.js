@@ -1,4 +1,4 @@
-// #8 stock transfer workflow: request -> approve -> release moves base-unit qty
+﻿// #8 stock transfer workflow: request -> approve -> release moves base-unit qty
 // between two per-location items, writes StockCard audit rows, posts NO journal
 // entry (internal asset move), and blocks invalid transitions.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -54,7 +54,7 @@ describe('#8 stock transfer workflow', () => {
     expect(a.stockQty).toBe(700);
     expect(b.stockQty).toBe(300);
 
-    // Internal move — the ledger did not change.
+    // Internal move - the ledger did not change.
     const { debits: dr1, credits: cr1 } = await trialBalance();
     expect(dr1).toBeCloseTo(dr0, 2);
     expect(cr1).toBeCloseTo(cr0, 2);

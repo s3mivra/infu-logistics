@@ -1,4 +1,4 @@
-// Canonical text normalization for user-entered fields.
+﻿// Canonical text normalization for user-entered fields.
 //
 // WHY: without this, "Kasa Lokal", "KASA LOKAL" and "kasa lokal" are three
 // different suppliers. Normalizing at the Zod boundary means the DB only ever
@@ -6,7 +6,7 @@
 // indexes meaningful instead of decorative.
 //
 // Applied server-side on purpose. A CSS `text-transform: uppercase` lies to the
-// user — it shows OSK-001 while storing osk-001.
+// user - it shows OSK-001 while storing osk-001.
 
 // Collapse runs of whitespace (including tabs/newlines pasted from Excel) into
 // single spaces, and trim the ends. Every other helper builds on this.
@@ -18,7 +18,7 @@ export const squish = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 export const upper = (s) => squish(s).toUpperCase();
 export const code  = (s) => squish(s).toUpperCase().replace(/\s+/g, '');
 
-// Emails and usernames — case is never meaningful and mixed case causes
+// Emails and usernames - case is never meaningful and mixed case causes
 // duplicate-account bugs at login.
 export const lower = (s) => squish(s).toLowerCase();
 
@@ -26,7 +26,7 @@ export const lower = (s) => squish(s).toLowerCase();
 // Deliberately small: over-eager lists mangle real business names.
 const MINOR = new Set(['a', 'an', 'and', 'at', 'by', 'de', 'for', 'in', 'ng', 'o', 'of', 'on', 'or', 'sa', 'the', 'to', 'vs']);
 // True acronyms only. Company suffixes (Inc, Co, Corp) and generational
-// suffixes (Jr, Sr) are deliberately NOT here — "Kasa Lokal Inc" is the normal
+// suffixes (Jr, Sr) are deliberately NOT here - "Kasa Lokal Inc" is the normal
 // written form; "Kasa Lokal INC" reads like shouting.
 const ACRONYM = new Set(['BIR', 'PH', 'LLC', 'OPC', 'DTI', 'SEC', 'BPI', 'VAT', 'AR', 'AP', 'PO', 'DR', 'SKU', 'II', 'III', 'IV']);
 
@@ -41,7 +41,7 @@ const titleWord = (w, isFirst, isLast) => {
   if (!isFirst && !isLast && MINOR.has(lc)) return lc;
   // Capitalize the first letter of each punctuation-separated segment, so
   // "coca-cola" → "Coca-Cola" and "o'brien" → "O'Brien". Segments of a single
-  // letter after an apostrophe are left alone — that's a contraction or a
+  // letter after an apostrophe are left alone - that's a contraction or a
   // possessive ("don't", "kanto's"), not a name part.
   return lc.replace(/[A-Za-z]+/g, (seg, at) => {
     const prev = lc[at - 1];
@@ -56,7 +56,7 @@ export const title = (s) => {
   return words.map((w, i) => titleWord(w, i === 0, i === words.length - 1)).join(' ');
 };
 
-// Free text (notes, reasons, addresses) — whitespace-tidied only. Never
+// Free text (notes, reasons, addresses) - whitespace-tidied only. Never
 // re-cased: "DO NOT STACK" and a typed paragraph both mean what they say.
 export const freeText = (s) => String(s ?? '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 

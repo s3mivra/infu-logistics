@@ -1,4 +1,4 @@
-// Integration tests for the granular RBAC enforcement on accounting / reports /
+﻿// Integration tests for the granular RBAC enforcement on accounting / reports /
 // analytics / audit / settings routes. Verifies BOTH directions: privileged roles
 // & explicit grants get through; unprivileged roles are denied; superadmin bypasses.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -39,7 +39,7 @@ afterAll(async () => { await stop(); });
 const auth = (t) => ({ Authorization: `Bearer ${t}` });
 const notForbidden = (s) => expect(s).not.toBe(403);
 
-describe('accounting.view — reading the books', () => {
+describe('accounting.view - reading the books', () => {
   it('superadmin, finance, admin, and an explicitly-granted cashier can GET /api/journal', async () => {
     notForbidden((await request(app).get('/api/journal').set(auth(superT))).status);
     notForbidden((await request(app).get('/api/journal').set(auth(financeT))).status);
@@ -51,7 +51,7 @@ describe('accounting.view — reading the books', () => {
   });
 });
 
-describe('accounting.manage — posting to the books', () => {
+describe('accounting.manage - posting to the books', () => {
   const entry = { date: new Date().toISOString(), memo: 't', lines: [] };
   it('finance & superadmin may POST /api/expenses; admin & granted-viewer may not', async () => {
     notForbidden((await request(app).post('/api/expenses').set(auth(superT)).send({})).status);

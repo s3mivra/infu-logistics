@@ -1,12 +1,12 @@
-// One-time backfill for the TenantStats/ProductStats dashboard counters
+﻿// One-time backfill for the TenantStats/ProductStats dashboard counters
 // (server.js: TenantStatsSchema/ProductStatsSchema). Runs the OLD unbounded
-// aggregations reports.js used to run on every dashboard load — exactly once —
+// aggregations reports.js used to run on every dashboard load - exactly once -
 // and seeds the new counters from the result. After this runs and reports.js
 // is switched to read from the counters, that aggregation never needs to run
 // full-collection again.
 //
 // Includes isBackdated orders on purpose: they're real historical completed
-// orders and belong in true all-time totals the same as any other order —
+// orders and belong in true all-time totals the same as any other order -
 // nothing in the match filter below excludes them.
 //
 // Usage (from server/):
@@ -60,7 +60,7 @@ async function computeProductTotals() {
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 if (verifyOnly) {
-  console.log(`[verify] businessType=${BUSINESS_TYPE} — recomputing from Order history and diffing against stored counters...`);
+  console.log(`[verify] businessType=${BUSINESS_TYPE} - recomputing from Order history and diffing against stored counters...`);
 
   const [freshTenant, freshProducts, storedTenantShards, storedProducts] = await Promise.all([
     computeTenantTotals(),
@@ -69,7 +69,7 @@ if (verifyOnly) {
     db.collection('productstats').find({ businessType: BUSINESS_TYPE }).toArray(),
   ]);
 
-  // TenantStats is sharded (server.js: TENANT_STATS_SHARDS) — sum across every
+  // TenantStats is sharded (server.js: TENANT_STATS_SHARDS) - sum across every
   // shard doc for this businessType before comparing.
   const tenantFields = ['cumulativeRevenue', 'cumulativeComp', 'cumulativeOrderCount', 'cumulativeNonCompCount'];
   const storedTenant = tenantFields.reduce((o, f) => {
@@ -87,7 +87,7 @@ if (verifyOnly) {
     }
   }
 
-  // ProductStats is sharded too — sum every shard doc per productName before comparing.
+  // ProductStats is sharded too - sum every shard doc per productName before comparing.
   const storedByName = new Map();
   for (const p of storedProducts) {
     const prev = storedByName.get(p.productName) || { cumulativeQty: 0, cumulativeRevenue: 0 };
@@ -117,13 +117,13 @@ if (verifyOnly) {
   }
 
   if (mismatches === 0) {
-    console.log('[verify] OK — counters match the aggregation exactly.');
+    console.log('[verify] OK - counters match the aggregation exactly.');
   } else {
-    console.log(`[verify] FAILED — ${mismatches} mismatch(es).`);
+    console.log(`[verify] FAILED - ${mismatches} mismatch(es).`);
     process.exitCode = 1;
   }
 } else {
-  console.log(`[backfill] businessType=${BUSINESS_TYPE} — aggregating full Order history (this is the LAST time this runs unbounded)...`);
+  console.log(`[backfill] businessType=${BUSINESS_TYPE} - aggregating full Order history (this is the LAST time this runs unbounded)...`);
 
   const [tenantTotals, productTotals] = await Promise.all([
     computeTenantTotals(),
@@ -133,7 +133,7 @@ if (verifyOnly) {
   // TenantStats/ProductStats are sharded (server.js: STATS_SHARDS) so
   // concurrent app writes spread across multiple documents instead of
   // colliding on one. This one-time backfill isn't concurrent with anything,
-  // so it collapses each full total into a single shard (0) — wipe any
+  // so it collapses each full total into a single shard (0) - wipe any
   // pre-existing shards for this businessType first so a re-run doesn't
   // double-count.
   await db.collection('tenantstats').deleteMany({ businessType: BUSINESS_TYPE });

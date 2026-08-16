@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
+﻿import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as auth from '../auth/auth';
 import {
@@ -11,7 +11,7 @@ import {
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
-// — an UNSET var still falls back to the dev LAN box.
+// - an UNSET var still falls back to the dev LAN box.
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
 
 const ROLE_META = {
@@ -24,7 +24,7 @@ const getRoleMeta = (role) =>
 
 // Built-in roles shown (read-only) in the Access Roles list. Mirrors the server's
 // ROLE_DEFAULT_PERMISSIONS (lib/authz.js) for admin & staff. Superadmin is
-// intentionally omitted — it bypasses the permission system and must not be
+// intentionally omitted - it bypasses the permission system and must not be
 // assignable or presented as an editable role.
 const BUILTIN_ROLES = [
   { name: 'Admin', permissions: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete',
@@ -184,7 +184,7 @@ const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false,
 export default function SuperAdminPanel() {
   const navigate = useNavigate();
 
-  // Auth — access token lives in memory; restored via silent refresh on mount.
+  // Auth - access token lives in memory; restored via silent refresh on mount.
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authBootstrapping, setAuthBootstrapping] = useState(true);
 
@@ -192,7 +192,7 @@ export default function SuperAdminPanel() {
     let cancelled = false;
     auth.refreshSession(API_URL).then((data) => {
       if (cancelled) return;
-      // This panel is superadmin-only — only authenticate if the role matches.
+      // This panel is superadmin-only - only authenticate if the role matches.
       if (data?.user?.role === 'superadmin') setIsAuthenticated(true);
       setAuthBootstrapping(false);
     });
@@ -234,7 +234,7 @@ export default function SuperAdminPanel() {
   // Toast
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
-  // Roles form — name + the granular permissions this role grants by default.
+  // Roles form - name + the granular permissions this role grants by default.
   const [roleForm, setRoleForm]       = useState({ id: null, name: '', permissions: [] });
   const [roleLoading, setRoleLoading] = useState(false);
 
@@ -244,7 +244,7 @@ export default function SuperAdminPanel() {
   const [clientModal, setClientModal]   = useState({ open: false, mode: 'create', client: null });
   // Reset-password flow: confirm your OWN password first, then a freshly-
   // generated client password is shown exactly once (it can't be shown again
-  // later — it's bcrypt-hashed the moment the server issues it).
+  // later - it's bcrypt-hashed the moment the server issues it).
   const [resetPwModal, setResetPwModal] = useState({ open: false, client: null, confirmPassword: '', loading: false, error: '', result: null });
   const [clientForm, setClientForm]     = useState({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '' });
   const [clientFormLoading, setClientFormLoading] = useState(false);
@@ -326,7 +326,7 @@ export default function SuperAdminPanel() {
         setIsAuthenticated(true);
       } else {
         // Surface the server's reason (e.g. rate-limit lockout) rather than
-        // always blaming the credentials — see AdminDashboard.handleSystemLogin.
+        // always blaming the credentials - see AdminDashboard.handleSystemLogin.
         setLoginError(res.status === 429
           ? (data.error || 'Too many failed attempts. Please wait and try again.')
           : (data.error || 'Invalid name or password.'));
@@ -961,7 +961,7 @@ export default function SuperAdminPanel() {
         {/* ----------------------------------------------------------------- */}
         {activeSection === 'roles' && (
           <div className="flex-1 p-6 max-w-2xl">
-            {/* Role maker — name + the permissions this role grants by default */}
+            {/* Role maker - name + the permissions this role grants by default */}
             <form onSubmit={handleSaveRole} className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-black text-fg text-sm">{roleForm.id ? 'Edit Role' : 'New Role'}</h3>
@@ -1219,7 +1219,7 @@ export default function SuperAdminPanel() {
                 </select>
               </div>
 
-              {/* Commission rate — edit mode only; a brand-new user has no sales yet */}
+              {/* Commission rate - edit mode only; a brand-new user has no sales yet */}
               {modal.mode === 'edit' && (
                 <div>
                   <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
@@ -1236,7 +1236,7 @@ export default function SuperAdminPanel() {
                 </div>
               )}
 
-              {/* Granular permissions — override the role defaults per user */}
+              {/* Granular permissions - override the role defaults per user */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest">Permissions</label>
@@ -1515,7 +1515,7 @@ export default function SuperAdminPanel() {
             {resetPwModal.result ? (
               <>
                 <p className="text-fg/50 text-sm mb-3">
-                  New password for <span className="text-fg font-bold">@{resetPwModal.client?.username}</span> — shown once, write it down now:
+                  New password for <span className="text-fg font-bold">@{resetPwModal.client?.username}</span> - shown once, write it down now:
                 </p>
                 <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-4 py-3 mb-4">
                   <span className="flex-1 font-mono text-lg tracking-wide text-fg select-all">{resetPwModal.result}</span>
@@ -1529,7 +1529,7 @@ export default function SuperAdminPanel() {
                   </button>
                 </div>
                 <p className="text-[10px] text-fg/30 mb-4 leading-relaxed">
-                  This password cannot be shown again after you close this — reset again if it's lost.
+                  This password cannot be shown again after you close this - reset again if it's lost.
                 </p>
                 <button onClick={closeResetPassword} className="w-full bg-brand hover:bg-brand-dark text-fg font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm">
                   Done
@@ -1538,7 +1538,7 @@ export default function SuperAdminPanel() {
             ) : (
               <form onSubmit={handleResetPasswordConfirm} className="space-y-4">
                 <p className="text-fg/40 text-sm">
-                  Passwords are encrypted and can't be viewed — confirm it's you, and a new password
+                  Passwords are encrypted and can't be viewed - confirm it's you, and a new password
                   will be generated for <span className="text-fg font-bold">@{resetPwModal.client?.username}</span>.
                 </p>
                 {resetPwModal.error && (

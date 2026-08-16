@@ -1,8 +1,8 @@
-import React from 'react';
+﻿import React from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Footprints, Utensils, ShoppingBag, Bike, Car, UserX, UserCheck } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
-// Icon-based replacement for a native <select> — browsers can't render custom
+// Icon-based replacement for a native <select> - browsers can't render custom
 // icons inside native <option> popups, so this is a real dropdown (button +
 // floating panel) instead.
 function IconSelect({ value, onChange, options, className = '' }) {
@@ -39,15 +39,15 @@ const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase()
 // Logistics dispatches to the storage/logistics team; food & bev sends to the kitchen.
 const SEND_TARGET = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
 
-// ── OrdersTab — extracted from AdminDashboard.jsx ──
+// ── OrdersTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function OrdersTab({ ctx }) {
   // Destructure everything from ctx
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
   const {
     API_URL, AUDIT_PAGE_SIZE, BIZ_NAME, COMP_REASON_LABELS, FRONTEND_URL,
@@ -125,11 +125,11 @@ export default function OrdersTab({ ctx }) {
   } = ctx;
 
   // The POS VAT row follows the business's registration in Settings. A non-VAT
-  // business has no VAT line to show at all — printing "VAT (0%)" on screen just
+  // business has no VAT line to show at all - printing "VAT (0%)" on screen just
   // invites someone to try switching it on here, which is not where that lives.
   const vatOn = systemSettings.vatEnabled === true;
 
-  // UI-only hint for the walk-in picker below — not persisted; the real
+  // UI-only hint for the walk-in picker below - not persisted; the real
   // guest-vs-regular classification comes from whether a customer name is entered.
   const [walkInMode, setWalkInMode] = React.useState('guest');
   // Payment-QR display (set in Settings > Branding). Shown full-screen for the
@@ -283,7 +283,7 @@ export default function OrdersTab({ ctx }) {
                   {/* Customer info */}
                   <div className="px-4 pt-4 pb-3 border-b border-white/10 bg-page-bg/60 shrink-0 space-y-2">
                     {/* Client account picker - when set, server applies that client's per-product discount overrides.
-                       "Guest"/"Regular" walk-in are UI hints only, not stored state — the actual
+                       "Guest"/"Regular" walk-in are UI hints only, not stored state - the actual
                        guest-vs-regular classification is driven by whether a customer name is
                        entered (see the name field below); a regular walk-in who racks up 3
                        Completed orders gets auto-promoted to their own CUS-1000-Axxxx client code. */}
@@ -608,7 +608,7 @@ export default function OrdersTab({ ctx }) {
 
                 {/* ── Active Table Occupancy Strip ── */}
                 {(() => {
-                  // Reserved orders live alongside Pending in the active list — they're held
+                  // Reserved orders live alongside Pending in the active list - they're held
                   // commitments waiting on payment / promotion to Preparing.
                   const activeOrders = orders.filter(o => ['Reserved','Pending','Preparing','Ready','Partially Delivered'].includes(o.status));
                   if (activeOrders.length === 0) return null;
@@ -758,7 +758,7 @@ export default function OrdersTab({ ctx }) {
                           </div>
                         </div>
 
-                        {/* DELIVERY/PICKUP INFO STRIP — only when there's actually
+                        {/* DELIVERY/PICKUP INFO STRIP - only when there's actually
                             something to show, else it renders as an empty gray bar. */}
                         {['Manual Delivery','Pickup','Grab Delivery','Foodpanda'].includes(order.table)
                           && (order.customerPhone || order.deliveryAddress || order.deliveryFee > 0 || order.scheduledTime || order.dispatchStatus) && (
@@ -1007,11 +1007,11 @@ export default function OrdersTab({ ctx }) {
                               {vatOn && (
                                 <div className="flex justify-between items-center text-[11px] text-black">
                                   <div className="flex items-center gap-2">
-                                    {/* Rate comes from the ORDER, not from settings — an order rung
+                                    {/* Rate comes from the ORDER, not from settings - an order rung
                                         up before VAT was switched on genuinely carries 0%. */}
                                     <span>VAT ({order.vatRate > 0 ? (order.vatRate * 100).toFixed(0) : 0}%)</span>
                                     {/* Read-only. VAT is configured in Settings and exemption comes
-                                        from the SC/PWD control below — there is no per-order VAT
+                                        from the SC/PWD control below - there is no per-order VAT
                                         switch, because a cashier silently zeroing output VAT on one
                                         sale is exactly what a tax audit looks for. */}
                                     {order.isVatExempt && (
@@ -1160,12 +1160,13 @@ export default function OrdersTab({ ctx }) {
                                         onChange={(e) => setPaymentSelections(prev => ({ ...prev, [order._id]: e.target.value }))}
                                         className="w-full border rounded-lg p-2 text-sm font-bold outline-none transition bg-page-bg text-fg border-white/10 focus:border-accent/50"
                                       >
-                                        {/* Canonical payment methods — these stay even when no
+                                        {/* Canonical payment methods - these stay even when no
                                             sub-accounts have been added so the cashier always has
                                             the standard options. */}
                                         <optgroup label="In-Store Payments">
                                           <option value="Cash">Cash</option>
                                           <option value="Bank Transfer">Bank Transfer</option>
+                                          <option value="Credit">Credit</option>
                                         </optgroup>
                                         <optgroup label="E-Wallets">
                                           <option value="GCash">GCash</option>
@@ -1383,7 +1384,7 @@ export default function OrdersTab({ ctx }) {
               </>
             )}
 
-            {/* Payment QR — full-screen for the customer to scan; dismissed once paid. */}
+            {/* Payment QR - full-screen for the customer to scan; dismissed once paid. */}
             {payQrOpen && payQrImage && (
               <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-6" onClick={() => setPayQrOpen(false)}>
                 <div className="bg-white rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -1391,7 +1392,7 @@ export default function OrdersTab({ ctx }) {
                   <p className="text-gray-500 text-xs mb-4">Open your e-wallet or bank app and scan</p>
                   <img src={payQrImage} alt="Payment QR" className="w-full max-w-[300px] mx-auto rounded-xl" />
                   <button onClick={() => setPayQrOpen(false)} className="mt-5 w-full bg-brand text-white font-black py-3.5 rounded-2xl uppercase tracking-widest text-sm hover:bg-brand-dark transition">
-                    Done — Paid
+                    Done - Paid
                   </button>
                   <p className="text-gray-400 text-[11px] mt-2">Tap when payment is confirmed</p>
                 </div>

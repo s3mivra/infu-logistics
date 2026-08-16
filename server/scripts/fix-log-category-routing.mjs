@@ -1,4 +1,4 @@
-// Corrective, non-destructive: reassign any `log` category whose department is
+﻿// Corrective, non-destructive: reassign any `log` category whose department is
 // an fb station (Kitchen/Bar) to 'Logistics' so the logistics order queue serves
 // it. Only the department label changes.
 //
@@ -15,7 +15,7 @@ const before = await db.collection('categories')
         { projection: { name: 1, department: 1 } }).toArray();
 
 if (before.length === 0) {
-  console.log('Nothing to fix — no log categories carry an fb department.');
+  console.log('Nothing to fix - no log categories carry an fb department.');
 } else {
   console.log('Fixing log categories with an fb department:');
   before.forEach(c => console.log(`  ${c.name}: ${c.department} -> Logistics`));

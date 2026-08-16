@@ -1,4 +1,4 @@
-// collections routes — AR collection reminders (contact log + follow-up
+﻿// collections routes - AR collection reminders (contact log + follow-up
 // worklist over the existing aging data). See the CollectionReminderSchema
 // comment in server.js: this logs manual contact, it never sends anything.
 import { ageingByClient, resolveClientKey } from '../lib/credit.js';
@@ -21,14 +21,14 @@ export default function registerCollections(ctx) {
 
   // Reading aggregate AR exposure matches ar-ageing's own gate (finance.js).
   const canViewAcct = [requireStaff, requirePermission('accounting.view')];
-  // Logging that a call/text/email went out is not a books-posting action —
+  // Logging that a call/text/email went out is not a books-posting action -
   // any staff who can see a client's orders (orders.view, the same bar
   // clients.js uses) can log a follow-up. The amount snapshot is always
   // computed server-side, never trusted from the caller, so this doesn't leak
   // more financial detail than that.
   const canLogContact = [requireStaff, requirePermission('orders.view')];
 
-  // Shared with finance.js's ar-ageing route (server/lib/credit.js) — the same
+  // Shared with finance.js's ar-ageing route (server/lib/credit.js) - the same
   // grouping key both A/R views must agree on, or they'd disagree about who
   // owes what.
   async function resolveClientKeys() {
@@ -47,7 +47,7 @@ export default function registerCollections(ctx) {
 
   // ── OVERDUE WORKLIST ─────────────────────────────────────────────────────────
   // Every client with a >30-day-aged balance, each annotated with their most
-  // recent logged reminder (if any) — "who's overdue and have we already
+  // recent logged reminder (if any) - "who's overdue and have we already
   // reached out" in one call, same shape ar-ageing already returns plus the
   // reminder layer on top.
   app.get('/api/collections/overdue', verifyToken, ...canViewAcct, async (req, res) => {
@@ -134,7 +134,7 @@ export default function registerCollections(ctx) {
       const METHODS = ['Call', 'SMS', 'Email', 'In-person', 'Letter', 'Other'];
       if (!METHODS.includes(method)) return res.status(400).json({ success: false, error: `method must be one of: ${METHODS.join(', ')}.` });
 
-      // Snapshot what's actually owed right now — never trust a client-sent amount.
+      // Snapshot what's actually owed right now - never trust a client-sent amount.
       const rows = await overdueRows(req);
       const { byName, keyOf } = await resolveClientKeys();
       const matchRow = ageingByClient(rows, keyOf).find(r => r.client === clientKey);

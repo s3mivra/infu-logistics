@@ -1,4 +1,4 @@
-// Edge cases & error branches — pushes coverage into the variant flows and guard paths
+﻿// Edge cases & error branches - pushes coverage into the variant flows and guard paths
 // the happy-path suites don't reach: split-payment & complimentary completion, insufficient
 // stock/tender, void variants (spoilage/comp/AR-settled block), settle-AR error branches,
 // custom account + client-account CRUD, the cookie refresh/logout flow, and a 401/404/400 sweep.
@@ -9,7 +9,7 @@ import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 
 // Reports bucket by the SERVER'S LOCAL day (a shop's day is its own wall clock),
 // so "today" must be built locally. toISOString() is UTC and, between local
-// midnight and the UTC offset, names yesterday — which silently excluded orders
+// midnight and the UTC offset, names yesterday - which silently excluded orders
 // that had just been created.
 const localToday = () => {
   const d = new Date();

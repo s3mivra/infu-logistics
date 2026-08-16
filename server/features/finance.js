@@ -1,4 +1,4 @@
-// finance routes — moved verbatim from server.js (feature-driven restructure).
+﻿// finance routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { ageingBuckets, ageingByClient, resolveCreditLimit, resolveClientKey, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
@@ -186,12 +186,12 @@ export default function registerFinance(ctx) {
   const canViewAcct = [requireStaff, requirePermission('accounting.view')];
   const canPostAcct = [requireStaff, requirePermission('accounting.manage')];
 
-// Accounting Ledger / Journal Entries — requires accounting.view (superadmin/finance/admin)
-// Sorted by transaction `date` (chronological ledger, not entry-order) — so a
+// Accounting Ledger / Journal Entries - requires accounting.view (superadmin/finance/admin)
+// Sorted by transaction `date` (chronological ledger, not entry-order) - so a
 // BACKDATED entry sorts below every more-recent one and can fall off the
 // default page entirely once there are more entries than the page size. The
 // UI's initial load has no way to reach it without either raising the limit
-// or searching — `search` (reference/description, case-insensitive) lets any
+// or searching - `search` (reference/description, case-insensitive) lets any
 // entry be found regardless of how far back its date sorts it.
 app.get('/api/journal', verifyToken, ...canViewAcct, async (req, res) => {
   try {
@@ -244,7 +244,7 @@ app.post('/api/journal', verifyToken, ...canPostAcct, async (req, res) => {
 
 app.get('/api/finance/balances', verifyToken, ...canViewAcct, async (req, res) => {
   try {
-    // Aggregate at MongoDB level — no full collection load, OOM-safe at scale
+    // Aggregate at MongoDB level - no full collection load, OOM-safe at scale
     const agg = await JournalEntry.aggregate([
       { $unwind: '$lines' },
       { $match: { 'lines.accountCode': '111000' } },
@@ -304,7 +304,7 @@ app.get('/api/reports/trial-balance', verifyToken, ...canViewAcct, async (req, r
 });
 
 // ============================================================
-// EXPENSE ENTRY — operator-facing expense bookkeeping
+// EXPENSE ENTRY - operator-facing expense bookkeeping
 // Categories defined in lib/chartOfAccounts.js
 // ============================================================
 app.get('/api/expenses/categories', verifyToken, ...canViewAcct, async (req, res) => {
@@ -312,7 +312,7 @@ app.get('/api/expenses/categories', verifyToken, ...canViewAcct, async (req, res
 });
 
 // Recent expenses + a per-category summary for the range.
-// Expenses aren't their own collection — they're journal entries whose debit
+// Expenses aren't their own collection - they're journal entries whose debit
 // side is an expense account. Reading them back that way keeps one source of
 // truth (the ledger) rather than a parallel list that could drift from it.
 app.get('/api/expenses', verifyToken, ...canViewAcct, async (req, res) => {
@@ -344,7 +344,7 @@ app.get('/api/expenses', verifyToken, ...canViewAcct, async (req, res) => {
       { $limit: limit },
     ]);
 
-    // Category totals span the whole range, not just the page of rows above —
+    // Category totals span the whole range, not just the page of rows above -
     // a truncated list must not silently understate the totals.
     const byCategoryAgg = await JournalEntry.aggregate([
       { $match: { date: { $gte: start, $lte: end } } },
@@ -421,7 +421,7 @@ app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, 
       businessType: BUSINESS_TYPE,
       status: 'Completed',
       paymentMethod: { $ne: 'Cash' },
-      isComplimentary: { $ne: true }, // comps collect no money — never an A/R
+      isComplimentary: { $ne: true }, // comps collect no money - never an A/R
       arSettled: { $ne: true }
     }, { orderNumber: 1, customerName: 1, table: 1, total: 1, paymentMethod: 1, createdAt: 1, arTermsDays: 1, arDueDate: 1 })
       .sort({ createdAt: -1 }).limit(500).lean();
@@ -441,7 +441,7 @@ app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, 
   }
 });
 
-// A/R AGEING — the same receivables as ar-outstanding, split into 30/60/90 buckets
+// A/R AGEING - the same receivables as ar-outstanding, split into 30/60/90 buckets
 // and grouped per client, plus each client's credit limit and headroom.
 // "How much does this client owe me, and how old is it?" is a three-tab question
 // today; this answers it in one call.
@@ -462,11 +462,11 @@ app.get('/api/finance/ar-ageing', verifyToken, ...canViewAcct, async (req, res) 
     ]);
     const mode = modeRow?.value || DEFAULT_CREDIT_MODE;
     const globalLimit = globalRow?.value ?? null;
-    // Shared with collections.js's resolveClientKeys() — the same grouping key
+    // Shared with collections.js's resolveClientKeys() - the same grouping key
     // both A/R views must agree on, or they'd disagree about who owes what.
     const { keyOf } = resolveClientKey(clients);
 
-    // Committed exposure — everything on account that isn't cancelled/void, INCLUDING
+    // Committed exposure - everything on account that isn't cancelled/void, INCLUDING
     // orders still in flight. This is what the credit gate spends, and it differs
     // from the aged A/R above (which counts only Completed = a real book
     // receivable). Reporting only the accounting figure would leave an owner
@@ -503,7 +503,7 @@ app.get('/api/finance/ar-ageing', verifyToken, ...canViewAcct, async (req, res) 
     });
 
     // Clients with committed orders but no aged receivable yet would otherwise be
-    // invisible here — exactly the ones consuming credit right now.
+    // invisible here - exactly the ones consuming credit right now.
     for (const [client, exposure] of exposureByClient) {
       if (seen.has(client)) continue;
       const match = clients.find(c => c.name === client);
@@ -525,7 +525,7 @@ app.get('/api/finance/ar-ageing', verifyToken, ...canViewAcct, async (req, res) 
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// ACCOUNTS PAYABLE — outstanding balance + recent entries + payment
+// ACCOUNTS PAYABLE - outstanding balance + recent entries + payment
 // Payables are journal lines with accountCode '220000':
 //   DR 1500 Inventory / CR 2000 AP  → when goods received on credit
 //   DR 2000 AP / CR 1000 Cash       → when supplier is paid
@@ -565,7 +565,7 @@ app.get('/api/finance/ap-outstanding', verifyToken, ...canViewAcct, async (req, 
 
     // Per-supplier balance: credits (goods received on account) minus debits
     // (payments made). Entries written before supplier attribution existed have
-    // no supplierId and group under "Unattributed" rather than being dropped —
+    // no supplierId and group under "Unattributed" rather than being dropped -
     // silently hiding real debt would be worse than showing it unlabelled.
     const bySupplierAgg = await JournalEntry.aggregate([
       { $unwind: '$lines' },
@@ -581,7 +581,7 @@ app.get('/api/finance/ap-outstanding', verifyToken, ...canViewAcct, async (req, 
     const bySupplier = bySupplierAgg
       .map(s => ({
         supplierId: s._id ? String(s._id) : null,
-        // The null group must NEVER borrow a name — $first there returns whichever
+        // The null group must NEVER borrow a name - $first there returns whichever
         // unattributed entry happened to sort first, which would print another
         // supplier's name over debt that isn't theirs.
         supplier: s._id ? (s.name || 'Unknown supplier') : 'Unattributed',
@@ -601,7 +601,7 @@ app.get('/api/finance/ap-outstanding', verifyToken, ...canViewAcct, async (req, 
   }
 });
 
-// VENDOR STATEMENT — one supplier's A/P activity over a date range: opening
+// VENDOR STATEMENT - one supplier's A/P activity over a date range: opening
 // balance carried in from before the range, every invoice/payment inside it,
 // and the resulting closing balance. Same 220000-AP lines ap-outstanding reads,
 // just scoped to one supplierId and split into a running balance instead of a
@@ -664,7 +664,7 @@ app.get('/api/finance/vendor-statement/:supplierId', verifyToken, ...canViewAcct
   }
 });
 
-// POST /api/finance/ap-payment — record a supplier payment (DR 2000 AP / CR cash account)
+// POST /api/finance/ap-payment - record a supplier payment (DR 2000 AP / CR cash account)
 app.post('/api/finance/ap-payment', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const { amount, payFromAccount, description, vendorName, supplierId } = req.body;
@@ -760,7 +760,7 @@ app.get('/api/journal/export', verifyToken, ...canViewAcct, async (req, res) => 
     res.end();
   } catch (err) {
     log.error({ err }, 'Journal export failed');
-    // Headers/body already streaming — can't switch to a JSON error; just end the stream.
+    // Headers/body already streaming - can't switch to a JSON error; just end the stream.
     if (!res.headersSent) (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     else res.end();
   }
@@ -837,7 +837,7 @@ app.get('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
   try {
     // String() coercion: req.query.shiftId can arrive as a nested object
     // (e.g. ?shiftId[$exists]=true, parsed by express's extended query
-    // parser) — without this, an operator object reaches the filter unscoped.
+    // parser) - without this, an operator object reaches the filter unscoped.
     const filter = req.query.shiftId ? { shiftId: String(req.query.shiftId) } : {};
     const deposits = await BankDeposit.find(filter).sort({ createdAt: -1 });
     res.json({ success: true, deposits });
@@ -922,7 +922,7 @@ app.put('/api/accounts/:id', verifyToken, ...canPostAcct, async (req, res) => {
   }
 });
 
-// Delete a custom child account — blocked if any journal entry already posted to it.
+// Delete a custom child account - blocked if any journal entry already posted to it.
 app.delete('/api/accounts/:id', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const acct = await Account.findById(req.params.id);
@@ -939,7 +939,7 @@ app.delete('/api/accounts/:id', verifyToken, ...canPostAcct, async (req, res) =>
   }
 });
 
-// ── CLOSED PERIODS — list, close, reopen ──────────────────────────────────────
+// ── CLOSED PERIODS - list, close, reopen ──────────────────────────────────────
 app.get('/api/periods', verifyToken, requireStaff, async (req, res) => {
   try {
     const periods = await ClosedPeriod.find().sort({ year: -1, month: -1 }).lean();
@@ -1055,7 +1055,7 @@ app.post('/api/revolving-funds', verifyToken, ...canPostAcct, async (req, res) =
     if (!name || !initialAmount || Number(initialAmount) <= 0)
       return res.status(400).json({ success: false, error: 'Fund name and a positive initial amount are required.' });
 
-    // "Paid from" — any cash/bank/e-wallet account (canonical or custom sub-account).
+    // "Paid from" - any cash/bank/e-wallet account (canonical or custom sub-account).
     const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
     const srcMeta = acctMeta(sourceAccount);
     const srcCode = (srcMeta && isCashLike(sourceAccount)) ? sourceAccount : '111000';
@@ -1096,7 +1096,7 @@ app.post('/api/revolving-funds', verifyToken, ...canPostAcct, async (req, res) =
   }
 });
 
-// POST disburse from a fund (any staff — they need to log what they spend)
+// POST disburse from a fund (any staff - they need to log what they spend)
 app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, async (req, res) => {
   try {
     const fund = await RevolvingFund.findById(req.params.id);

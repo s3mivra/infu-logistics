@@ -1,4 +1,4 @@
-// VAT end-to-end: the settings toggle, the per-product exemption, and the
+﻿// VAT end-to-end: the settings toggle, the per-product exemption, and the
 // restamping of orders that are already on the counter when VAT is switched on.
 //
 // That last one is the case that actually bit us: enabling VAT left the pending
@@ -56,7 +56,7 @@ describe('VAT on', () => {
   it('splits a VATable sale without changing what the customer pays', async () => {
     const res = await placeOrder([line(vatProd, 1120)]);
     const o = res.body.order || res.body;
-    expect(o.total).toBe(1120);          // inclusive pricing — unchanged
+    expect(o.total).toBe(1120);          // inclusive pricing - unchanged
     expect(o.vatAmount).toBe(120);
     expect(o.vatableSales).toBe(1000);
     expect(o.vatRate).toBe(0.12);
@@ -141,11 +141,11 @@ describe('switching VAT on restamps orders already open', () => {
     expect(after.vatRate).toBe(0.12);
     expect(after.vatAmount).toBe(120);
     expect(after.vatableSales).toBe(1000);
-    // The customer's total must NOT move — only the split does.
+    // The customer's total must NOT move - only the split does.
     expect(after.total).toBe(created.total);
   });
 
-  it('leaves completed orders alone — booked history is not re-priced', async () => {
+  it('leaves completed orders alone - booked history is not re-priced', async () => {
     await setSetting('vatEnabled', false);
     const res = await placeOrder([line(vatProd, 1120)]);
     const created = res.body.order || res.body;

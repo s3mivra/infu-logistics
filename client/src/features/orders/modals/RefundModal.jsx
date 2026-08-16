@@ -1,7 +1,7 @@
-import { useDashboard } from '../../dashboard/DashboardContext';
+﻿import { useDashboard } from '../../dashboard/DashboardContext';
 
 // Extracted from AdminDashboard. Reads shared dashboard state via
-// useDashboard() rather than props — see DashboardContext.
+// useDashboard() rather than props - see DashboardContext.
 export default function RefundModal() {
   const { handleRefund, inventory, refundForm, refundModal, refundSubmitting, setRefundForm, setRefundModal } = useDashboard();
 

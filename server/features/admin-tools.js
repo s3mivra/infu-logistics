@@ -1,4 +1,4 @@
-// admin-tools routes — moved verbatim from server.js (feature-driven restructure).
+﻿// admin-tools routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
@@ -202,7 +202,7 @@ app.get('/api/admin/tenancy-report', verifyToken, requireSuperAdmin, async (req,
   }
 });
 
-// Manual re-run of the stamping migration. Idempotent — only touches docs missing the field.
+// Manual re-run of the stamping migration. Idempotent - only touches docs missing the field.
 app.post('/api/admin/tenancy-rebackfill', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const flt = { $or: [{ businessType: { $exists: false } }, { businessType: null }, { businessType: '' }] };
@@ -264,7 +264,7 @@ app.post('/api/admin/seed-payment-subaccounts', verifyToken, requireSuperAdmin, 
       'Lalamove': '111001', 'Manual Delivery': '111002', 'Pickup': '111003',
     };
     for (const [m, c] of Object.entries(PM_DEFAULTS)) {
-      // Only update the default if the target code now exists in COA — keeps the
+      // Only update the default if the target code now exists in COA - keeps the
       // routing table honest when a code was skipped (e.g. Metrobank holding 112001).
       if (acctMeta(c)) DEFAULT_PAYMENT_ACCOUNT_MAP[m] = c;
     }
@@ -280,11 +280,11 @@ app.post('/api/admin/seed-payment-subaccounts', verifyToken, requireSuperAdmin, 
 // ── BACKDATED SALE (superadmin only) ─────────────────────────────────────────
 // Records a Completed order for a chosen historical date so analytics / P&L
 // include sales made before the POS was in place. Two shapes accepted:
-//   • Itemized (preferred) — `items: [{ name, price, quantity, productId?,
+//   • Itemized (preferred) - `items: [{ name, price, quantity, productId?,
 //     productCode? }]`, like a normal sale. Set `affectInventory: true` to also
 //     deduct current stock + book COGS; DEFAULT false, so old sales don't eat
 //     today's inventory (a pure revenue tally).
-//   • Lump — a single `amount` (legacy). Always revenue-only.
+//   • Lump - a single `amount` (legacy). Always revenue-only.
 // The revenue journal entry is DATED TO THE CHOSEN DAY, so that period's books
 // are right. Respects period locks. Always audited. (Non-VAT posting, matching
 // the live completion path for these businesses.)
@@ -305,7 +305,7 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
       return res.status(400).json({ success: false, error: 'A backdated sale must be in the past, not the future.' });
     }
 
-    // Build the line items — itemized when provided, else a single lump line.
+    // Build the line items - itemized when provided, else a single lump line.
     const itemized = Array.isArray(items) && items.length > 0;
     let orderItems = [];
     if (itemized) {
@@ -346,7 +346,7 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
     const year = dt.getFullYear();
     const orderNumber = await generateNextSequence(Order, `ORD-${year}`, 'orderNumber');
 
-    // Optional stock deduction + COGS — only when explicitly asked.
+    // Optional stock deduction + COGS - only when explicitly asked.
     let totalCogs = 0;
     const stockCards = [];
     if (itemized && affectInventory) {
@@ -395,7 +395,7 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
     }], { session });
 
     // Balanced revenue entry, DATED to the backdate. Same transaction as the
-    // order write — a sale must never appear in reports without its ledger entry.
+    // order write - a sale must never appear in reports without its ledger entry.
     const reference = await mkSeqRef('BACKDATE');
     const lines = [];
     if (comp) {
@@ -439,7 +439,7 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
 // entry. Finds every isBackdated order lacking its "Backdated sale: <orderNumber>"
 // journal entry and posts the missing one, using the order's own snapshot
 // (paymentMethod/total/createdAt) so the entry matches what would have been
-// posted at the time. Safe to re-run — already-linked orders are skipped.
+// posted at the time. Safe to re-run - already-linked orders are skipped.
 app.post('/api/admin/backdate-sale/backfill-ledger', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const orphans = await Order.find({ isBackdated: true }).lean();

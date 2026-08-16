@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+﻿import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
 import { buildReceiptHTML as buildSharedReceipt, printReceiptHTML, resolveLetterhead } from '../../shared/receiptTemplate';
@@ -11,7 +11,7 @@ import { queueOrder, requestNotificationPermission, notify, queueClock, getQueue
 import * as auth from '../auth/auth';
 import { DashboardProvider } from './DashboardContext';
 // Modals extracted out of this file. They read shared state via useDashboard()
-// rather than props — see DashboardContext for why.
+// rather than props - see DashboardContext for why.
 import EditInventoryModal from '../inventory/modals/EditInventoryModal';
 import SpoilageModal from '../inventory/modals/SpoilageModal';
 import SettleArModal from '../ledger/modals/SettleArModal';
@@ -41,6 +41,7 @@ const ProductsTab   = lazy(() => import('../products/ProductsTab'));
 const ProcurementTab = lazy(() => import('../procurement/ProcurementTab'));
 const SettingsTab   = lazy(() => import('../settings/SettingsTab'));
 const ClientsTab    = lazy(() => import('../clients/ClientsTab'));
+const HubTab        = lazy(() => import('../hub/HubTab'));
 
 // Small fallback shown while a tab chunk loads.
 const TabFallback = () => (
@@ -49,7 +50,7 @@ const TabFallback = () => (
   </div>
 );
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
-// — an UNSET var still falls back to the dev LAN box.
+// - an UNSET var still falls back to the dev LAN box.
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
 const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL || 'http://192.168.100.2:3000';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
@@ -59,7 +60,7 @@ const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase()
 const DEFAULT_DEPARTMENT = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
 
 // Lazy-load the PDF libraries (jspdf + jspdf-autotable, ~600KB) only when a PDF is
-// actually generated — keeps them out of the initial dashboard load. Cached after
+// actually generated - keeps them out of the initial dashboard load. Cached after
 // first use. Every export/print fn does: const { jsPDF, autoTable } = await loadPdfLibs();
 let _pdfLibsPromise = null;
 const loadPdfLibs = () => {
@@ -87,7 +88,7 @@ const COMP_REASON_LABELS = {
 
 // Pass the in-memory access token on the socket handshake so the server can
 // verify the user's role and auto-place them in the right room (server-decided,
-// not client-declared — see io.use in server.js). The token is re-read on every
+// not client-declared - see io.use in server.js). The token is re-read on every
 // (re)connect, so a fresh token after a refresh is picked up automatically.
 const socket = io(API_URL, {
   transports: ['websocket'],
@@ -98,7 +99,7 @@ const socket = io(API_URL, {
   },
 });
 
-// New order arrives at kitchen — single sharp ding
+// New order arrives at kitchen - single sharp ding
 const playKitchenDing = () => {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -117,7 +118,7 @@ const playKitchenDing = () => {
   }
 };
 
-// Order marked Ready — two-tone ascending chime (customer call)
+// Order marked Ready - two-tone ascending chime (customer call)
 const playReadyChime = () => {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -174,7 +175,7 @@ const pdfMoney = (n) => {
 export default function AdminDashboard() {
   // PWA runtime: connectivity, install prompt, offline order queue
   const { isOnline, installable, install, queuedCount, refreshQueue, syncQueue } = usePwa();
-  const navigate = useNavigate(); // in-app (SPA) navigation — no full page reload
+  const navigate = useNavigate(); // in-app (SPA) navigation - no full page reload
 
   const [paymentSelections, setPaymentSelections] = useState({});
 
@@ -201,7 +202,7 @@ export default function AdminDashboard() {
   const [discountInputs, setDiscountInputs] = useState({});
   
   const [editingProduct, setEditingProduct] = useState(null);
-  // Single source of truth for the empty product form — it used to be spelled out
+  // Single source of truth for the empty product form - it used to be spelled out
   // at every reset site, and the copies drifted (some omitted discountPercent /
   // clientDiscounts, leaving stale values in the next product you added).
   const emptyProductForm = () => ({
@@ -254,7 +255,7 @@ export default function AdminDashboard() {
   const [profitByCategory, setProfitByCategory] = useState(null);
   // --- SYSTEM SETTINGS (QR toggle, etc.) ---
   const [systemSettings, setSystemSettings] = useState({ isAcceptingQROrders: true, autoCloseEnabled: true, imagesEnabled: true });
-  // Cache the logo so the (pre-auth) login screen can show it too — settings
+  // Cache the logo so the (pre-auth) login screen can show it too - settings
   // themselves need a token, so the very first login falls back to the icon.
   useEffect(() => {
     try {
@@ -281,7 +282,7 @@ export default function AdminDashboard() {
     end: new Date().toISOString().slice(0,10)
   });
   const [sssGroup, setSssGroup] = useState('order'); // 'order' | 'day'
-  // --- SALES LINE ITEMS (one row per order item — item code + item detail) ---
+  // --- SALES LINE ITEMS (one row per order item - item code + item detail) ---
   const [salesLineItems, setSalesLineItems] = useState(null);
   const [sliRange, setSliRange] = useState({
     start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10),
@@ -323,7 +324,7 @@ export default function AdminDashboard() {
   const [auditLogsPage, setAuditLogsPage] = useState(1);
   const [auditLogsTotal, setAuditLogsTotal] = useState(0);
   const AUDIT_LOGS_PAGE_SIZE = 25;
-  // action/actor/start/end — same query params /api/audit-logs and its CSV
+  // action/actor/start/end - same query params /api/audit-logs and its CSV
   // export sibling both accept, so "Export" always matches what's on screen.
   const [auditLogFilters, setAuditLogFilters] = useState({ action: '', actor: '', start: '', end: '' });
   // --- AP OUTSTANDING ---
@@ -442,7 +443,7 @@ export default function AdminDashboard() {
   const [posSearch, setPosSearch] = useState('');
   const POS_PER_PAGE = 9;
   const [posCustomerName, setPosCustomerName] = useState('');
-  // Optional client account link — when set, the order qualifies for that
+  // Optional client account link - when set, the order qualifies for that
   // client's per-product discount overrides on the server side.
   const [posClientId, setPosClientId] = useState('');
   // Reserve-only mode: place order with status 'Reserved' (no payment yet).
@@ -523,7 +524,7 @@ export default function AdminDashboard() {
     finally { setAnalyticsLoading(false); }
   };
 
-  // Inventory turnover ratio (COGS ÷ avg inventory value) — a 2-point estimate,
+  // Inventory turnover ratio (COGS ÷ avg inventory value) - a 2-point estimate,
   // see the server route's comment for why it isn't an exact historical figure.
   const [turnoverData, setTurnoverData] = useState(null);
   const fetchTurnover = async () => {
@@ -572,7 +573,7 @@ export default function AdminDashboard() {
   };
 
   // Manager alerts (e.g. an unmapped payment tender parked in Unassigned Receipts).
-  // Persist until dismissed — these are accounting exceptions the manager must act on.
+  // Persist until dismissed - these are accounting exceptions the manager must act on.
   const [mgrAlerts, setMgrAlerts] = useState([]); // [{ id, message }]
   const dismissMgrAlert = (id) => setMgrAlerts(prev => prev.filter(a => a.id !== id));
 
@@ -645,7 +646,7 @@ export default function AdminDashboard() {
   const [accountingPage, setAccountingPage] = useState(1);
   const accountingItemsPerPage = 8; // Journal entries are tall, 10 is good
   // Journal is sorted by transaction date (chronological ledger) and only the
-  // most recent ~500 are fetched — a backdated entry needs to be findable by
+  // most recent ~500 are fetched - a backdated entry needs to be findable by
   // reference/description regardless of how far back its date sorts it.
   const [journalSearch, setJournalSearch] = useState('');
 
@@ -751,7 +752,7 @@ export default function AdminDashboard() {
 
   // Opens the End-of-Shift modal (does NOT clear session yet)
   const handleLogout = () => {
-    // Owner/superadmin isn't a tracked cashier — no register count required; log out directly.
+    // Owner/superadmin isn't a tracked cashier - no register count required; log out directly.
     if (activeAdmin?.role === 'superadmin') { performLogout(); return; }
     setShiftReconcile({ actualCash: '', result: null });
     setShiftEndModal(true);
@@ -773,7 +774,7 @@ export default function AdminDashboard() {
         setShiftReconcile(prev => ({ ...prev, result: data.shift }));
         localStorage.setItem('semivra_last_actual_cash', data.shift.actualCash.toString());
       } else {
-        // Shift may not exist (e.g., session expired) — still allow logout
+        // Shift may not exist (e.g., session expired) - still allow logout
         setShiftReconcile(prev => ({ ...prev, result: null }));
         performLogout();
       }
@@ -806,7 +807,7 @@ export default function AdminDashboard() {
     finally { setDepositLoading(false); }
   };
 
-  // Final logout — clears all session data
+  // Final logout - clears all session data
   const performLogout = async () => {
     // Auto clock-out so staff aren't left "clocked in" after ending their shift.
     // Must run BEFORE the session is revoked (apiFetch still has a valid token here).
@@ -973,11 +974,11 @@ export default function AdminDashboard() {
 
       const isSuperAdmin = activeAdmin?.role === 'superadmin';
       if (isSuperAdmin) {
-        // limit=500 (server max) — the default 50 sorts by transaction date, so
+        // limit=500 (server max) - the default 50 sorts by transaction date, so
         // an old-dated entry (e.g. a backdated sale) can fall off the page once
         // there are 500+ more-recent entries. When the caller passes a search
         // term, hit the server's own search (unbounded by date sort) instead of
-        // relying on whatever happens to be in this recent-500 window — the
+        // relying on whatever happens to be in this recent-500 window - the
         // client-side filter over journalEntries can only ever find entries
         // that were already fetched.
         const q = (journalSearchTerm || '').trim();
@@ -1031,7 +1032,7 @@ export default function AdminDashboard() {
       const res = await apiFetch(`/api/orders?t=${cacheBuster}`, { cache: 'no-store' });
       if (res.ok) setOrders((await res.json()).orders || []);
 
-      // Archives endpoint requires superadmin — skip for staff to avoid forced logout via 403
+      // Archives endpoint requires superadmin - skip for staff to avoid forced logout via 403
       if (activeAdmin?.role === 'superadmin') {
         const archParams = new URLSearchParams({ t: cacheBuster });
         if (archiveSearch) archParams.set('search', archiveSearch);
@@ -1182,7 +1183,7 @@ export default function AdminDashboard() {
   };
 
   // Re-run the boot-time seed for payment-method sub-accounts. Safe to invoke
-  // repeatedly — idempotent server-side. Surfaces what got created vs skipped.
+  // repeatedly - idempotent server-side. Surfaces what got created vs skipped.
   const seedPaymentSubaccounts = async () => {
     if (!(await ui.confirm('Create the standard payment-method sub-accounts (GCash, Maya, Foodpanda, etc.)? Existing accounts are skipped.'))) return;
     try {
@@ -1217,7 +1218,7 @@ export default function AdminDashboard() {
       if (d.success) {
         fetchClosedPeriods();
         setPeriodCloseForm({ ...periodCloseForm, notes: '' });
-        // Closing takes effect immediately (it must — it's a lock), so this is a
+        // Closing takes effect immediately (it must - it's a lock), so this is a
         // real reversal via the existing reopen route, not a deferred write.
         const periodId = d.period?._id;
         if (periodId) {
@@ -1405,7 +1406,7 @@ export default function AdminDashboard() {
   useEffect(() => { if (isAuthenticated) { fetchSettings(); fetchClockStatus(); fetchParked(); } }, [isAuthenticated]);
 
   // --- REAL-TIME AUTO REFRESH ---
-  // Effect 1: ERP/EOD sub-tab listeners — uses named callbacks so .off() is scoped
+  // Effect 1: ERP/EOD sub-tab listeners - uses named callbacks so .off() is scoped
   useEffect(() => {
     const handleERPForEOD = () => {
       fetchERPData();
@@ -1419,7 +1420,7 @@ export default function AdminDashboard() {
     };
   }, [invSubTab]);
 
-  // Effect 2: Order list + menu listeners — named callbacks so cleanup doesn't nuke Effect 1's handlers
+  // Effect 2: Order list + menu listeners - named callbacks so cleanup doesn't nuke Effect 1's handlers
   useEffect(() => {
     if (!isAuthenticated) return;
     fetchOrders();
@@ -1430,7 +1431,7 @@ export default function AdminDashboard() {
     requestNotificationPermission(); // ask once so new-order alerts can show in the installed app
 
     // Force a reconnect so the handshake picks up the fresh token from auth.getToken().
-    // Room placement is server-decided based on the verified JWT — no more
+    // Room placement is server-decided based on the verified JWT - no more
     // client-declared role (which an attacker could spoof to elevate to manager).
     try { socket.disconnect(); socket.connect(); } catch { /* ignore */ }
     // Back-compat: the server now ignores this payload but we keep emitting it
@@ -1532,7 +1533,7 @@ export default function AdminDashboard() {
   const posCashChange = Math.max(0, (parseFloat(posCashTendered) || 0) - posGrandTotal);
 
   const submitManualOrder = async () => {
-    // Synchronous double-tap guard — blocks a second submit before React re-renders.
+    // Synchronous double-tap guard - blocks a second submit before React re-renders.
     if (posSubmittingRef.current) return;
     if (posCart.length === 0) return ui.alert("Cart is empty!");
     if (!posCustomerName) return ui.alert("Please enter Customer / Driver Name.");
@@ -1547,14 +1548,14 @@ export default function AdminDashboard() {
     // server returns the same order instead of creating a duplicate.
     const idemKey = (crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
-    // Manual orders are PLACED as Pending — payment/checkout happens later from
+    // Manual orders are PLACED as Pending - payment/checkout happens later from
     // the Orders "All view" when the order is completed (same as dine-in/QR).
     const payload = {
       items: posCart,
       table: posTable,
       customerName: posCustomerName,
       // Linking to a client account lets the server resolve per-client product
-      // discount overrides for this order. Optional — falls back to the
+      // discount overrides for this order. Optional - falls back to the
       // product's default discountPercent when blank.
       clientAccountId: posClientId || undefined,
       reserveOnly: posReserveOnly || undefined,
@@ -1618,7 +1619,7 @@ export default function AdminDashboard() {
         ui.alert(data.error);
       }
     } catch (e) {
-      // Network died mid-request — queue it under the SAME idempotency key so the
+      // Network died mid-request - queue it under the SAME idempotency key so the
       // replay can't duplicate an order the server may have already received.
       console.error(e);
       queueOrder(payload, idemKey);
@@ -2146,7 +2147,7 @@ const updateStatus = async (orderId, newStatus) => {
       if (data.success) {
         setExpenseModal(false);
         setExpenseForm({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', date: new Date().toISOString().slice(0,10) });
-        // Refresh the Expenses page list so the new entry appears immediately —
+        // Refresh the Expenses page list so the new entry appears immediately -
         // on a page (unlike the old popup) the result is visible right there.
         fetchExpenses();
         if (ledgerSubTab === 'pnl') fetchPnl();
@@ -2284,13 +2285,13 @@ const updateStatus = async (orderId, newStatus) => {
       const summaryRows = [{ label: 'Subtotal', value: P(subTotal) }];
       if ((order.deliveryFee || 0) > 0) summaryRows.push({ label: 'Delivery Fee', value: P(order.deliveryFee) });
       if (discAmt > 0 && !order.isComplimentary) summaryRows.push({ label: `Discount (${order.discountType || ''})`, value: '-' + P(discAmt), cls: 'disc' });
-      // VAT breakdown — only for orders actually rung up under VAT. Read from
+      // VAT breakdown - only for orders actually rung up under VAT. Read from
       // the order's own stamped fields so a receipt reprinted after the setting
       // changed still shows what was charged at the time.
       if ((order.vatRate || 0) > 0) {
         const vatPct = (order.vatRate * 100).toFixed(0);
         // BIR wants VATable and VAT-Exempt shown as separate lines, and a basket
-        // can contain both — an SC/PWD sale, or exempt goods alongside VATable
+        // can contain both - an SC/PWD sale, or exempt goods alongside VATable
         // ones. Print whichever are non-zero rather than assuming one or other.
         if ((order.vatableSales || 0) > 0) {
           summaryRows.push({ label: 'VATable Sales', value: P(order.vatableSales) });
@@ -2607,7 +2608,7 @@ const updateStatus = async (orderId, newStatus) => {
 
   // --- OPEN EDIT INVENTORY MODAL: pre-fill from item ---
   // ============================================================
-  // UNITS DISPLAY HELPER — base ↔ display conversion (mirrors server/lib/units.js)
+  // UNITS DISPLAY HELPER - base ↔ display conversion (mirrors server/lib/units.js)
   // ============================================================
   const UNIT_TABLE = {
     g:   { base: 'g',   mult: 1 },
@@ -2629,8 +2630,8 @@ const updateStatus = async (orderId, newStatus) => {
     return { base: k, mult: 1 };
   };
   // Effective display unit + multiplier for any inventory item.
-  // FORCED RULE: never display g or ml — auto-promote to kg / L.
-  // Returns { unit, mult } — use everywhere that needs to convert base ↔ display.
+  // FORCED RULE: never display g or ml - auto-promote to kg / L.
+  // Returns { unit, mult } - use everywhere that needs to convert base ↔ display.
   const effectiveDisplay = (item) => {
     const baseUnit = item.unit || '';
     let displayUnit = item.displayUnit;
@@ -2642,9 +2643,9 @@ const updateStatus = async (orderId, newStatus) => {
     }
     return { unit: displayUnit, mult: mult || 1 };
   };
-  // LOG 1:1 — the pack size (how much ONE purchased unit holds) drives cost-per-pack
+  // LOG 1:1 - the pack size (how much ONE purchased unit holds) drives cost-per-pack
   // and the "count of packages" stock display. Prefer the persisted item.packSize
-  // field (set on import/edit — see server InventorySchema.packSize) since imports
+  // field (set on import/edit - see server InventorySchema.packSize) since imports
   // now STRIP the size hint out of the item name (e.g. "Milk 1L" → name "Milk",
   // packSize 1). Only fall back to parsing the name for legacy items that still
   // carry their size embedded in it (pre-packSize-field imports).
@@ -2662,7 +2663,7 @@ const updateStatus = async (orderId, newStatus) => {
     const ul = u.toLowerCase();
     if (ul === 'kg' && v < 1) return `${Math.round(v * 1000 * 1000) / 1000}g`;
     if (ul === 'l' && v < 1) return `${Math.round(v * 1000 * 1000) / 1000}ml`;
-    return `${v}${u}`; // ≥1 or already a sub-unit — keep the entered unit casing
+    return `${v}${u}`; // ≥1 or already a sub-unit - keep the entered unit casing
   };
   const packInfo = (item) => {
     if (item.packSize && item.packSize > 0) {
@@ -2697,7 +2698,7 @@ const updateStatus = async (orderId, newStatus) => {
       packQty: pack.packBase ? (item.stockQty || 0) / pack.packBase : 0, // stock as a count of packages
       // True only when a REAL pack size is known. packInfo() falls back to the
       // plain display unit when there isn't one, in which case packQty/packCost
-      // already equal qty/cost — so the pack-first columns stay correct, but the
+      // already equal qty/cost - so the pack-first columns stay correct, but the
       // unit must still read "kg", not "pcs".
       isPacked: pack.label !== unit,
     };
@@ -2706,7 +2707,7 @@ const updateStatus = async (orderId, newStatus) => {
   const peso = (n) => `₱${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   // ============================================================
-  // BULK EXCEL/CSV IMPORT — Stock-take semantics
+  // BULK EXCEL/CSV IMPORT - Stock-take semantics
   // ============================================================
   const downloadImportTemplate = () => {
     // LOG: each row is a packaged SKU. Put the pack size in the Product name
@@ -2746,9 +2747,9 @@ const updateStatus = async (orderId, newStatus) => {
       // Normalise column names (case-insensitive). Standard header:
       //   Code, Product, Qty Unit, Unit Cost, Expiry date
       // Backwards-compat also accepts: itemName, displayUnit, qty, unitCost.
-      // Product may contain trailing size hint like "Milk 1kg" or "Coke 1.5L" — we parse it.
+      // Product may contain trailing size hint like "Milk 1kg" or "Coke 1.5L" - we parse it.
       // Matches trailing pack size in product name: "250G", "1KG", "750ML", "1.3KG", "2.5L".
-      // Also tolerates a trailing parenthetical note after the size, e.g. "1KG (NW)" —
+      // Also tolerates a trailing parenthetical note after the size, e.g. "1KG (NW)" -
       // that note is preserved in the cleaned name, only the size token is stripped.
       // Anchoring strictly to end-of-string without this meant "MATCHA POWDER 1KG (NW)"
       // never matched at all (the "(NW)" broke the `$` anchor), silently dropping the
@@ -2815,7 +2816,7 @@ const updateStatus = async (orderId, newStatus) => {
           unit = hintedUnit;
         }
 
-        // Nothing to go on — no Unit column, no parseable size in the name. Don't
+        // Nothing to go on - no Unit column, no parseable size in the name. Don't
         // drop the row: default to pcs (no per-pack conversion needed) so the item
         // still gets created/updated, and flag it so it's clearly marked "SET SIZE"
         // for the user to fix later, same badge already used in the inventory list.
@@ -2825,7 +2826,7 @@ const updateStatus = async (orderId, newStatus) => {
         const exp = lower['expiry date'] || lower['expiry'] || lower['expirydate'] || '';
         const expStr = exp === '' || exp == null ? '' : String(exp).trim();
 
-        // SRP — strip ₱ symbol and commas
+        // SRP - strip ₱ symbol and commas
         const rawSrp = String(lower.srp || lower['selling price'] || lower['retail price'] || '').replace(/[₱,\s]/g, '');
         const srp = rawSrp ? parseFloat(rawSrp) : '';
 
@@ -2849,7 +2850,7 @@ const updateStatus = async (orderId, newStatus) => {
           // Per-qty (pack) size parsed from the name, e.g. "Milk 1L" → packSize 1.
           // null when the name carried no size hint (nothing to persist).
           packSize: sizeMatch ? packSizeInDisplay : null,
-          // No unit/size could be determined anywhere — imported as pcs, but flagged
+          // No unit/size could be determined anywhere - imported as pcs, but flagged
           // so the preview (and later the inventory list's SET SIZE badge) tells the
           // user this item still needs its real size added.
           _needsSize: needsSize,
@@ -2985,7 +2986,7 @@ const updateStatus = async (orderId, newStatus) => {
     setEditInvModal({ item });
   };
 
-  // --- SUBMIT EDIT: PUT /api/inventory/:id (metadata only — stock changes via Restock / Spoilage) ---
+  // --- SUBMIT EDIT: PUT /api/inventory/:id (metadata only - stock changes via Restock / Spoilage) ---
   const submitEditInventory = async () => {
     if (editInvSubmitting || !editInvModal?.item) return;
     if (!editInvForm.itemName?.trim()) return ui.alert('Item name is required.');
@@ -2998,12 +2999,12 @@ const updateStatus = async (orderId, newStatus) => {
       // Convert display-unit values (₱/L, threshold in L) → base storage (₱/ml, threshold in ml)
       const resolved = resolveUnitFE(editInvForm.displayUnit || editInvForm.unit);
       const mult = resolved.mult;
-      // LOG: the entered cost is per package — divide by the pack size (the
+      // LOG: the entered cost is per package - divide by the pack size (the
       // explicit field the user just edited, falling back to a name-parse for
-      // legacy items). FB: per display unit — divide by display multiplier.
+      // legacy items). FB: per display unit - divide by display multiplier.
       const costBasis = packInfo({ itemName: editInvForm.itemName.trim(), unit: resolved.base, displayUnit: editInvForm.displayUnit, unitMultiplier: mult, packSize: editInvForm.packSize === '' ? null : parseFloat(editInvForm.packSize) }).packBase || mult;
       const payload = {
-        // Only send itemCode when the operator actually changed it — the server
+        // Only send itemCode when the operator actually changed it - the server
         // treats a code change as a rename that cascades to the linked product,
         // so we don't want to trigger that on every unrelated edit.
         ...(editInvForm.itemCode?.trim() && editInvForm.itemCode.trim() !== editInvModal.item.itemCode
@@ -3071,7 +3072,7 @@ const updateStatus = async (orderId, newStatus) => {
         const ending = item.stockQty;
         const beginning = ending - purchases + sales - adjustments;
         // Show quantities in the item's DISPLAY unit (e.g. 1 L, not 1000 ml). LOG counts
-        // in packages (pcs); FB in kg/L/pcs — same conversion the inventory table uses.
+        // in packages (pcs); FB in kg/L/pcs - same conversion the inventory table uses.
         const eff = BUSINESS_TYPE === 'log'
           ? { mult: itemDisplay(item).packBase || 1, unit: 'pcs' }
           : effectiveDisplay(item);
@@ -3307,7 +3308,7 @@ const updateStatus = async (orderId, newStatus) => {
       grouped[date].ordersCount++;
       grouped[date].gross += o.subtotal;
       // Prefer the figures the server stamped on the order. The /1.12 fallback
-      // is for legacy rows written before VAT was configurable — it assumes the
+      // is for legacy rows written before VAT was configurable - it assumes the
       // 12% standard rate, which is all those rows can tell us.
       if (o.isVatExempt) { grouped[date].vatExempt += (o.vatExemptSales ?? (o.subtotal / 1.12)); }
       else { grouped[date].vatable += (o.vatableSales ?? (o.total / 1.12)); }
@@ -3674,7 +3675,7 @@ const updateStatus = async (orderId, newStatus) => {
     y = section('Revenue', pnlData.revenue || [], y);
     y = section('Cost of Goods Sold', pnlData.cogs || [], y);
     y = section('Operating Expenses', pnlData.opex || pnlData.expenses || [], y);
-    // Summary totals — negatives shown in parentheses, no ± / ₱ glyph issues.
+    // Summary totals - negatives shown in parentheses, no ± / ₱ glyph issues.
     const t = pnlData.totals || {};
     autoTable(doc, {
       startY: y,
@@ -3756,7 +3757,7 @@ const updateStatus = async (orderId, newStatus) => {
 
   // Toggle whether product images are shown across the app (menu, portal, product list).
   // Generic setting writer for non-boolean settings (credit limit mode, global
-  // limit). The toggle* helpers above stay as they are — they encode their own
+  // limit). The toggle* helpers above stay as they are - they encode their own
   // confirm/labelling rules.
   const saveSetting = async (key, value) => {
     try {
@@ -4034,7 +4035,7 @@ const updateStatus = async (orderId, newStatus) => {
   // duplicate is proof of delivery.
   //
   // Item lines are pre-filled from the order, but the delivery details (driver,
-  // plate, received-by, date, signature) are printed as blank ruled fields — the
+  // plate, received-by, date, signature) are printed as blank ruled fields - the
   // crew fills those in by hand at the drop-off, which is how the paper DR is
   // actually used.
   const printDeliveryReceipt = (order) => {
@@ -4159,7 +4160,7 @@ const updateStatus = async (orderId, newStatus) => {
   const printKitchenTicket = (order) => {
     const win = window.open('', '_blank', 'width=320,height=600');
     if (!win) return ui.alert('Pop-up blocked - allow pop-ups for this site.');
-    // Escape all dynamic values — customerName / orderNotes / item names can be
+    // Escape all dynamic values - customerName / orderNotes / item names can be
     // customer-supplied (QR menu) and are written into raw HTML below.
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const items = (order.items||[]).map(item => `
@@ -4304,7 +4305,7 @@ const updateStatus = async (orderId, newStatus) => {
   };
 
   // CSV export streams straight from the server (bounded to a 92-day range,
-  // same convention as /api/journal/export) — filters must be set before
+  // same convention as /api/journal/export) - filters must be set before
   // exporting since the server has no memory of the on-screen page.
   const exportAuditLogsCsv = async () => {
     if (!auditLogFilters.start || !auditLogFilters.end) { return ui.alert('Pick a start and end date to export (max 92 days).'); }
@@ -4323,11 +4324,11 @@ const updateStatus = async (orderId, newStatus) => {
     } catch (err) { console.error('exportAuditLogsCsv', err); ui.alert('Network error exporting audit log.'); }
   };
 
-  // PDF export builds from whatever's already loaded in `auditLogs` state — the
+  // PDF export builds from whatever's already loaded in `auditLogs` state - the
   // current page only, same "client-side from fetched JSON" convention every
   // other PDF export in this file follows via loadPdfLibs().
   const exportAuditLogsPdf = async () => {
-    if (!auditLogs.length) return ui.alert('Nothing to export — load some audit log entries first.');
+    if (!auditLogs.length) return ui.alert('Nothing to export - load some audit log entries first.');
     const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF();
     doc.setFontSize(14); doc.text('Audit Log', 14, 16);
@@ -4442,7 +4443,7 @@ const updateStatus = async (orderId, newStatus) => {
   ], [accountsUnder]);
 
   // The "Parked" filter shows held tabs (separate collection). "All" must show
-  // EVERY order regardless of state — the active board already carries every
+  // EVERY order regardless of state - the active board already carries every
   // non-archived status (Pending → Completed, Cancelled, Voided…), and parked
   // tabs live in their own collection, so fold them in (deduped by _id). All
   // other filters work against the active orders board.
@@ -4508,7 +4509,7 @@ const updateStatus = async (orderId, newStatus) => {
   const toggleOrderList = (date) => setExpandedOrderLists(prev => ({ ...prev, [date]: !prev[date] })); 
 
   // ==========================================
-  // 🔥 ANALYTICS ENGINE 🔥 — memoized so the 1-second countdown doesn't re-run this
+  // 🔥 ANALYTICS ENGINE 🔥 - memoized so the 1-second countdown doesn't re-run this
   // ==========================================
   const {
     allCompletedOrders, totalAllTimeRevenue, totalAllTimeComplimentary,
@@ -4886,36 +4887,45 @@ const updateStatus = async (orderId, newStatus) => {
   // Sidebar nav content (inlined twice: desktop + mobile)
   const renderSidebarNav = (closeFn) => (
     <>
-      {/* Brand — display only. Mode switching happens via the nav items below,
-          which are always visible; the old hidden logo-click toggle was
-          undiscoverable and is intentionally gone. */}
-      <div className="p-5 border-b border-white/5 flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          {systemSettings.businessLogo && (
-            <img src={systemSettings.businessLogo} alt="" className="max-h-12 max-w-[160px] object-contain mb-2" />
-          )}
-          <p className="text-2xl font-black text-brand tracking-tight leading-none drop-shadow-sm">{BIZ_NAME}</p>
-          <p className="text-[10px] text-fg/80 font-bold uppercase tracking-[0.25em] mt-0.5">
-            SEMIVRA <span className="text-brand/80">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span>
-            <span className="text-fg/40 normal-case tracking-normal font-bold"> · {navMode === 'libellus' ? 'Operations' : 'Management'}</span>
-          </p>
-          <span className="inline-block mt-1.5 text-[8px] font-black bg-brand/15 border border-brand/30 text-brand px-2 py-0.5 rounded-full uppercase tracking-widest">{vatRegLabel}</span>
+      {/* Brand header */}
+      <div className="px-4 pt-4 pb-3 border-b border-white/5">
+        {/* Row 1: logo + business name */}
+        <div className="flex items-start gap-2.5 mb-1.5">
+          <div className="shrink-0 mt-0.5">
+            {systemSettings.businessLogo
+              ? <img src={systemSettings.businessLogo} alt="" className="w-8 h-8 rounded-lg object-cover" />
+              : <div className="w-8 h-8 rounded-lg bg-brand/20 flex items-center justify-center text-brand font-black text-xs select-none">{BIZ_NAME.charAt(0)}</div>
+            }
+          </div>
+          <p className="text-[22px] font-black text-brand tracking-tight leading-[1.1] break-words drop-shadow-sm min-w-0 flex-1">{BIZ_NAME}</p>
         </div>
-        {/* Notifications live HERE, not in the <nav> below — that list scrolls
-            (lg:overflow-y-auto), so a bell inside it disappears the moment the
-            menu is long enough. This header block is always on screen.
-            Desktop only: the lg:hidden mobile top bar has its own bell. */}
-        <div className="hidden lg:block shrink-0">
-          <NotificationBell align="left" />
+
+        {/* Row 2: SEMIVRA NEGOTIUM · */}
+        <p className="text-[9px] text-fg/50 font-bold uppercase tracking-[0.2em]">
+          SEMIVRA <span className="text-brand/70">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span> ·
+        </p>
+
+        {/* Row 3: Operations / Management */}
+        <p className="text-[9px] text-fg/35 font-semibold mt-0.5">
+          {navMode === 'libellus' ? 'Operations' : 'Management'}
+        </p>
+
+        {/* Row 4: VAT pill + bell */}
+        <div className="flex items-center justify-between mt-2">
+          <span className="text-[8px] font-black bg-brand/10 border border-brand/30 text-brand px-2 py-0.5 rounded-full uppercase tracking-widest">{vatRegLabel}</span>
+          <div className="hidden md:block">
+            <NotificationBell align="left" />
+          </div>
         </div>
       </div>
 
       {/* Nav */}
-      <nav className="p-3 space-y-0.5 lg:flex-1 lg:min-h-0 lg:overflow-y-auto custom-scrollbar">
+      <nav className="p-3 space-y-0.5 md:flex-1 md:min-h-0 md:overflow-y-auto custom-scrollbar">
         <p className="text-[9px] text-fg/80 font-bold uppercase tracking-[0.2em] px-4 pt-2 pb-1">Operations</p>
         {[
           { id: 'orders', label: 'Orders & POS', icon: ShoppingCart, perm: 'orders.view' },
           { id: 'inventory', label: 'Inventory & Stock', icon: Package, perm: 'inventory.view' },
+          { id: 'hub', label: 'Hub', icon: Network, perm: 'inventory.view' },
           { id: 'procurement', label: 'Procurement', icon: Truck, perm: 'procurement.view' },
           { id: 'clients', label: 'Clients', icon: Users, perm: 'orders.view' },
           { id: 'products', label: 'Menu Setup', icon: ChefHat, perm: 'products.view' },
@@ -4940,9 +4950,9 @@ const updateStatus = async (orderId, newStatus) => {
         {(() => {
           // Management tabs gated by granular permission. History still depends on
           // superadmin-only server routes, so it stays superadmin-only; Pricing
-          // Control's only server calls (/api/discounts — promos, PWD/Senior
+          // Control's only server calls (/api/discounts - promos, PWD/Senior
           // discounts) are requireStaff, not superadmin-only, so it's gated on
-          // products.manage like Menu Setup — a hardcoded isSuperAdmin here made
+          // products.manage like Menu Setup - a hardcoded isSuperAdmin here made
           // any non-superadmin staff (managers, custom roles with products.manage)
           // unable to find or CRUD promos/discounts at all.
           // Default sub-tab for each grouped tab, set on click so switching between
@@ -4971,7 +4981,7 @@ const updateStatus = async (orderId, newStatus) => {
                 </button>
               ))}
               {isSuperAdmin && (
-                // Superadmin-only deep link — the Admin Panel page (user, client-
+                // Superadmin-only deep link - the Admin Panel page (user, client-
                 // account, role & tenant management), outside the tabbed dashboard.
                 <button key="admin-panel"
                   onClick={() => { closeFn?.(); navigate('/admin/admin-panel'); }}
@@ -5004,7 +5014,7 @@ const updateStatus = async (orderId, newStatus) => {
               : 'Clock In'}
         </button>
 
-        {/* Settings — system preferences & account. The QR-Orders / Auto-Close /
+        {/* Settings - system preferences & account. The QR-Orders / Auto-Close /
             Product-Images toggles and Change Password now live on this page
             instead of being crammed into the sidebar dropdown. */}
         <button onClick={() => { setActiveTab('settings'); setNavMode('negotium'); closeFn?.(); }}
@@ -5022,6 +5032,14 @@ const updateStatus = async (orderId, newStatus) => {
         </button>
         {opsToolsOpen && (
           <div className="space-y-0.5">
+            {/* Quick jump lives here too - the top bar that used to host it is
+                hidden once the persistent sidebar appears (md+), and a touch-only
+                tablet has no Ctrl+K. */}
+            <button onClick={() => { setPaletteOpen(true); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/40 hover:text-fg hover:bg-white/5 transition font-bold text-sm">
+              <Search size={15} />
+              Quick Jump
+              <span className="ml-auto text-[9px] font-black text-fg/25 tracking-widest">CTRL K</span>
+            </button>
             <button onClick={toggleFullScreen} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/40 hover:text-fg hover:bg-white/5 transition font-bold text-sm">
               {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
               {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
@@ -5030,7 +5048,7 @@ const updateStatus = async (orderId, newStatus) => {
               <QrCode size={15} />
               {BUSINESS_TYPE === 'log' ? 'Portal' : 'Show QR'}
             </button>
-            {/* Logistics: a guest walk-in QR (below Portal) — a customer with no
+            {/* Logistics: a guest walk-in QR (below Portal) - a customer with no
                 account scans it to order on the spot, same guest menu flow as fb. */}
             {BUSINESS_TYPE === 'log' && (
               <button onClick={e => { e.preventDefault(); handleShowQR(); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand/60 hover:text-brand hover:bg-brand/10 transition font-bold text-sm">
@@ -5310,26 +5328,28 @@ const updateStatus = async (orderId, newStatus) => {
         </div>
       )}
 
-      {/* Mobile overlay */}
+      {/* Mobile overlay - phones only; md+ has the persistent sidebar */}
       {dashDrawerOpen && (
-        <div className="lg:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" onClick={() => setDashDrawerOpen(false)} />
+        <div className="md:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" onClick={() => setDashDrawerOpen(false)} />
       )}
 
       {/* Mobile drawer - capped width on small phones, scrollable on short screens */}
-      <aside className={`lg:hidden fixed top-0 left-0 h-full w-72 max-w-[85vw] bg-sidebar-bg z-50 flex flex-col border-r border-white/5 overflow-y-auto overscroll-contain transition-transform duration-300 ${dashDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`md:hidden fixed top-0 left-0 h-full w-72 max-w-[85vw] bg-sidebar-bg z-50 flex flex-col border-r border-white/5 overflow-y-auto overscroll-contain transition-transform duration-300 ${dashDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {renderSidebarNav(() => setDashDrawerOpen(false))}
       </aside>
 
-      {/* Desktop sidebar */}
-      <aside className="hidden lg:flex flex-col w-64 flex-shrink-0 bg-sidebar-bg border-r border-white/5 h-screen sticky top-0 overflow-hidden">
+      {/* Persistent sidebar - from tablet (768px) up. Narrower on iPad portrait
+          so the content pane keeps a usable width, full 16rem from lg. */}
+      <aside className="hidden md:flex flex-col w-56 lg:w-64 flex-shrink-0 bg-sidebar-bg border-r border-white/5 h-screen sticky top-0 overflow-hidden">
         {renderSidebarNav()}
       </aside>
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
 
-        {/* Mobile top bar - sticky so the menu button is always reachable */}
-        <header className="lg:hidden sticky top-0 z-30 flex items-center gap-3 px-4 h-16 bg-sidebar-bg border-b border-white/5 flex-shrink-0">
+        {/* Mobile top bar - phones only. From md the persistent sidebar carries
+            the brand, bell, QR, Jump and logout, so this would only duplicate it. */}
+        <header className="md:hidden sticky top-0 z-30 flex items-center gap-3 px-4 h-16 bg-sidebar-bg border-b border-white/5 flex-shrink-0">
           <button
             onClick={() => setDashDrawerOpen(true)}
             className="p-2 rounded-xl text-fg/50 hover:text-fg hover:bg-white/10 transition"
@@ -5359,7 +5379,7 @@ const updateStatus = async (orderId, newStatus) => {
             <button onClick={() => setPaletteOpen(true)}
               title="Quick jump (Ctrl+K)" aria-label="Open quick jump"
               className="shrink-0 flex items-center gap-1.5 bg-white/5 text-fg/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 hover:text-fg transition">
-              <Search size={13} /><span className="hidden lg:inline">Jump</span>
+              <Search size={13} /><span className="hidden sm:inline">Jump</span>
             </button>
             <div className="shrink-0"><NotificationBell /></div>
             <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="shrink-0 flex items-center gap-1.5 bg-brand/20 text-brand border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
@@ -5375,7 +5395,7 @@ const updateStatus = async (orderId, newStatus) => {
         </header>
 
         {/* Content */}
-        <div className="flex-1 p-4 lg:p-6">
+        <div className="flex-1 p-4 md:p-5 lg:p-6">
 
       {/* ── OFFLINE / SYNC BANNER ─────────────────────────────────────────── */}
       {(!isOnline || queuedCount > 0) && (
@@ -5419,7 +5439,7 @@ const updateStatus = async (orderId, newStatus) => {
                   not a build-time VITE_FRONTEND_URL that can be stale or (in local
                   rehearsal) a non-resolving *.localtest host. The customer menu
                   (/menu/:table) is the same app at the same origin as this admin
-                  view, so window.location.origin is always the reachable URL —
+                  view, so window.location.origin is always the reachable URL -
                   mirrors how the logistics portal link is built. */}
               <QRCode
                 value={`${window.location.origin}/menu/${autoTableId}?session=${qrSessionId}`}
@@ -5461,6 +5481,7 @@ const updateStatus = async (orderId, newStatus) => {
 
       {/* --- INVENTORY TAB --- */}
       {activeTab === 'inventory' && <Suspense fallback={<TabFallback />}><InventoryTab ctx={ctx} /></Suspense>}
+      {activeTab === 'hub' && <Suspense fallback={<TabFallback />}><HubTab ctx={ctx} /></Suspense>}
 
       {/* --- ACCOUNTING & LEDGER TAB --- */}
       {(activeTab === 'ledger' || activeTab === 'reports') && <Suspense fallback={<TabFallback />}><LedgerTab ctx={ctx} /></Suspense>}

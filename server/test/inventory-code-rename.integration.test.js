@@ -1,6 +1,6 @@
-// Editing an inventory item's code must (a) enforce uniqueness, (b) cascade to
-// the linked resale product's productCode, and (c) leave stock-card history —
-// which keys off inventoryId, not the code — untouched.
+﻿// Editing an inventory item's code must (a) enforce uniqueness, (b) cascade to
+// the linked resale product's productCode, and (c) leave stock-card history -
+// which keys off inventoryId, not the code - untouched.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
@@ -29,7 +29,7 @@ beforeAll(async () => {
 
 afterAll(async () => { await ctx?.stop?.(); });
 
-describe('PUT /api/inventory/:id — itemCode rename', () => {
+describe('PUT /api/inventory/:id - itemCode rename', () => {
   it('renames the code and cascades to the linked product', async () => {
     const res = await putCode(item._id, 'RML-9001');
     expect(res.status).toBe(200);
@@ -59,7 +59,7 @@ describe('PUT /api/inventory/:id — itemCode rename', () => {
     expect(res.status).toBe(400);
   });
 
-  it('leaves stock-card history intact — it keys off inventoryId, not the code', async () => {
+  it('leaves stock-card history intact - it keys off inventoryId, not the code', async () => {
     const StockCard = mongoose.model('StockCard');
     await StockCard.create({ inventoryId: item._id, itemName: 'Widget', type: 'Adjustment', qtyChange: 1, balanceAfter: 11 });
     await putCode(item._id, 'RML-9003');

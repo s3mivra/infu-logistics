@@ -1,4 +1,4 @@
-// Clients manage their own login and portal appearance. These routes are the
+﻿// Clients manage their own login and portal appearance. These routes are the
 // only ones a client token may use to WRITE to its own account, so the tests pin
 // both the happy path and the boundary: a client must never be able to reach
 // another account, escalate a session into a takeover, or set a bogus theme.
@@ -39,7 +39,7 @@ describe('GET /api/client/profile', () => {
   });
 });
 
-describe('PATCH /api/client/profile — theme', () => {
+describe('PATCH /api/client/profile - theme', () => {
   it('stores a valid theme on the account', async () => {
     const res = await request(app).patch('/api/client/profile').set(auth(clientTok)).send({ theme: 'ocean' });
     expect(res.status).toBe(200);
@@ -68,7 +68,7 @@ describe('PATCH /api/client/profile — theme', () => {
   });
 });
 
-describe('PATCH /api/client/profile — username', () => {
+describe('PATCH /api/client/profile - username', () => {
   it('renames the account and the new name can sign in', async () => {
     const res = await request(app).patch('/api/client/profile').set(auth(clientTok)).send({ username: 'renamed' });
     expect(res.status).toBe(200);
@@ -92,7 +92,7 @@ describe('PATCH /api/client/profile — username', () => {
     }
   });
 
-  it('ignores an _id in the body — scope comes from the token', async () => {
+  it('ignores an _id in the body - scope comes from the token', async () => {
     const otherId = String((await mongoose.model('ClientAccount').findOne({ username: 'otherclient' }).lean())._id);
     // Sends the CALLER's current username so the only thing under test is
     // whether the _id redirects the write. A different name here would rename

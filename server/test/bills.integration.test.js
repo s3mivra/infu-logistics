@@ -1,4 +1,4 @@
-// AP bill approval workflow — manual bills, PO-triggered bills, approve/reject,
+﻿// AP bill approval workflow - manual bills, PO-triggered bills, approve/reject,
 // payment scheduling, and paying a bill. Drives the real Express app over HTTP
 // against an in-memory replica set, same harness as critical-paths.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -49,7 +49,7 @@ describe('manual bill: create -> approve posts JE -> pay', () => {
     expect(res.body.bill.source).toBe('Manual');
     billId = res.body.bill._id;
     const after = await JournalEntry.countDocuments({});
-    expect(after).toBe(before); // approval hasn't happened yet — no posting
+    expect(after).toBe(before); // approval hasn't happened yet - no posting
   });
 
   it('cannot be scheduled or paid while Pending', async () => {
@@ -89,7 +89,7 @@ describe('manual bill: create -> approve posts JE -> pay', () => {
     expect(res.body.bill.status).toBe('Paid');
     expect(res.body.bill.paidAt).toBeTruthy();
 
-    // A second payment attempt must be rejected — already Paid, not Approved.
+    // A second payment attempt must be rejected - already Paid, not Approved.
     const again = await auth('post', `/api/bills/${billId}/pay`, tok).send({ payFromAccount: '111000' });
     expect(again.status).toBe(409);
   });
@@ -113,7 +113,7 @@ describe('manual bill rejection', () => {
     const after = await JournalEntry.countDocuments({});
     expect(after).toBe(before);
 
-    // A rejected bill is terminal — approving it afterward must fail.
+    // A rejected bill is terminal - approving it afterward must fail.
     const approveAfter = await auth('post', `/api/bills/${id}/approve`, tok);
     expect(approveAfter.status).toBe(409);
   });
@@ -141,7 +141,7 @@ describe('PO receipt auto-creates a Bill', () => {
     expect(recvRes.body.bill.status).toBe('Pending');
     expect(recvRes.body.bill.amount).toBeCloseTo(50, 2); // 10 * 5
 
-    // The A/P journal entry posts immediately at receipt — NOT gated by bill approval.
+    // The A/P journal entry posts immediately at receipt - NOT gated by bill approval.
     const afterJe = await JournalEntry.countDocuments({});
     expect(afterJe).toBe(beforeJe + 1);
 

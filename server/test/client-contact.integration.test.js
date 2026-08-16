@@ -1,4 +1,4 @@
-// Customer contact tracking — phone/email/contactNotes on ClientAccount,
+﻿// Customer contact tracking - phone/email/contactNotes on ClientAccount,
 // through the create + update routes, incl. email validation.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';

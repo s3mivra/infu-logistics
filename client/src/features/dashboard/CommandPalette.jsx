@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, CornerDownLeft, Command } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 
-// Command palette — jump anywhere without hunting through the sidebar.
+// Command palette - jump anywhere without hunting through the sidebar.
 //
 // Opened by Ctrl/Cmd+K OR by the button in the header: staff work on
 // touchscreens, so a keyboard-only affordance would be invisible to most of
 // the people using this. Both routes open the same panel, and the list is
-// tappable — arrow keys are an accelerator, not a requirement.
+// tappable - arrow keys are an accelerator, not a requirement.
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 

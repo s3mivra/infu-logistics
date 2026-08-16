@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type } from 'lucide-react';
 import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
 
-// ── SettingsTab — system preferences & account controls ───────────────────────
+// ── SettingsTab - system preferences & account controls ───────────────────────
 // Houses the toggles that used to live crammed in the sidebar's "Tools" dropdown
 // (QR Orders, Auto-Close, Product Images) as proper labelled setting rows, plus
 // account actions (change password) and read-only business info.
@@ -47,7 +47,7 @@ function Card({ title, children }) {
 }
 
 // How credit limits are applied across the business. Mirrors CREDIT_MODES on
-// the server — the server is authoritative and rejects anything else.
+// the server - the server is authoritative and rejects anything else.
 const CREDIT_MODES = [
   { value: 'off',        label: 'No limits',        desc: 'Clients can buy on account without restriction.' },
   { value: 'per_client', label: 'Per client',       desc: 'Only clients with their own limit are restricted.' },
@@ -55,7 +55,7 @@ const CREDIT_MODES = [
   { value: 'both',       label: 'Both',             desc: 'A shared default, overridden by a client’s own limit.' },
 ];
 
-// Appearance is a per-device preference (localStorage), not a business setting —
+// Appearance is a per-device preference (localStorage), not a business setting -
 // one shop can run a dark register and a light warehouse tablet.
 const THEMES = [
   { value: 'default', label: 'Forest',  hint: 'Dark charcoal + olive' },
@@ -136,7 +136,7 @@ export default function SettingsTab({ ctx }) {
     try { localStorage.setItem('dash.fontScale', String(v)); } catch { /* private mode: applies for this session only */ }
   };
 
-  // Image settings (logo, payment QR) stored as base64 data-URLs — same
+  // Image settings (logo, payment QR) stored as base64 data-URLs - same
   // approach as product images, resized to keep the payload small. `busyKey`
   // tracks which uploader is mid-encode so only its button shows "Uploading…".
   const [busyKey, setBusyKey] = useState('');
@@ -190,7 +190,7 @@ export default function SettingsTab({ ctx }) {
   const vatOn = systemSettings.vatEnabled === true;
   const vatRate = systemSettings.vatRate ?? 12;
   const scPwdOrder = systemSettings.scPwdOrder === 'discount-first' ? 'discount-first' : 'vat-first';
-  // Default inclusive — Philippine retail convention, and how every order booked
+  // Default inclusive - Philippine retail convention, and how every order booked
   // before this option existed was priced.
   const vatInclusive = systemSettings.vatInclusive !== false;
 
@@ -208,7 +208,7 @@ export default function SettingsTab({ ctx }) {
       </div>
 
       <div className="space-y-6">
-        {/* System toggles — superadmin only */}
+        {/* System toggles - superadmin only */}
         {isSuperAdmin ? (
           <Card title="System">
             {BUSINESS_TYPE !== 'log' && (
@@ -235,7 +235,7 @@ export default function SettingsTab({ ctx }) {
           </Card>
         )}
 
-        {/* Branding — business logo, shown on sidebar, login, receipts, menu & portal. */}
+        {/* Branding - business logo, shown on sidebar, login, receipts, menu & portal. */}
         {isSuperAdmin && (
           <Card title="Branding">
             <div className="px-4 py-4">
@@ -270,7 +270,7 @@ export default function SettingsTab({ ctx }) {
               </div>
             </div>
 
-            {/* Payment QR — when set, staff can show it at checkout for the
+            {/* Payment QR - when set, staff can show it at checkout for the
                 customer to scan (GCash/Maya/bank QR). */}
             <div className="px-4 py-4 border-t border-white/5">
               <div className="flex items-start gap-4">
@@ -306,7 +306,7 @@ export default function SettingsTab({ ctx }) {
           </Card>
         )}
 
-        {/* Credit limits — superadmin only, and only meaningful where clients
+        {/* Credit limits - superadmin only, and only meaningful where clients
             buy on account. */}
         {isSuperAdmin && (
           <Card title="VAT">
@@ -321,7 +321,7 @@ export default function SettingsTab({ ctx }) {
                       <p className="font-bold text-fg text-sm">VAT-registered</p>
                       <p className="text-fg/60 text-xs mt-0.5 leading-snug">
                         {vatOn
-                          ? 'Receipts break out output VAT. The 3% percentage-tax report is switched off — a VAT-registered business does not owe it.'
+                          ? 'Receipts break out output VAT. The 3% percentage-tax report is switched off - a VAT-registered business does not owe it.'
                           : 'Non-VAT. Sales are reported under the 3% percentage tax.'}
                       </p>
                     </div>
@@ -340,7 +340,7 @@ export default function SettingsTab({ ctx }) {
                           defaultValue={vatRate}
                           onBlur={e => {
                             const n = Number(String(e.target.value).replace(/[\s%]/g, ''));
-                            // Reject garbage rather than writing it — the server
+                            // Reject garbage rather than writing it - the server
                             // would fall back to 12% anyway, and a field showing
                             // an impossible rate is worse than one that resets.
                             if (!Number.isFinite(n) || n < 0 || n >= 100) { e.target.value = vatRate; return; }
@@ -376,13 +376,13 @@ export default function SettingsTab({ ctx }) {
                         </div>
                         <p className="text-[10px] text-fg/60 mt-1.5 leading-relaxed">
                           {vatInclusive
-                            ? 'Listed prices already contain VAT. A ₱112 item stays ₱112 — the receipt just breaks out the ₱12 VAT inside it. Standard for Philippine retail.'
+                            ? 'Listed prices already contain VAT. A ₱112 item stays ₱112 - the receipt just breaks out the ₱12 VAT inside it. Standard for Philippine retail.'
                             : 'Listed prices are net; VAT is added on top. A ₱100 item rings up at ₱112. Common in B2B quoting.'}
                           {' '}Switching this re-prices open orders.
                         </p>
                       </div>
 
-                      {/* SC/PWD ordering only bites under inclusive pricing — with
+                      {/* SC/PWD ordering only bites under inclusive pricing - with
                           exclusive prices there is no embedded VAT to sequence the
                           discount against, so the choice would do nothing. */}
                       {vatInclusive && (
@@ -482,7 +482,7 @@ export default function SettingsTab({ ctx }) {
           </Card>
         )}
 
-        {/* Client Portal — copy & branding shown to logged-in clients and on the
+        {/* Client Portal - copy & branding shown to logged-in clients and on the
             order slip. Superadmin-only, and only meaningful in logistics mode
             (the portal is a log-only surface). Read publicly by the portal via
             /api/public/portal-settings, so keep operational settings out. */}
@@ -516,7 +516,7 @@ export default function SettingsTab({ ctx }) {
                   placeholder="e.g. Welcome back" maxLength={60}
                   onSave={v => saveSetting?.('portalWelcomeTitle', v)} />
                 <TextSetting label="Welcome message" value={systemSettings.portalWelcomeMessage} multiline
-                  placeholder="e.g. Browse the catalogue and send us your order — we’ll confirm pricing on Messenger."
+                  placeholder="e.g. Browse the catalogue and send us your order - we’ll confirm pricing on Messenger."
                   onSave={v => saveSetting?.('portalWelcomeMessage', v)} />
                 <TextSetting label="Announcement banner" value={systemSettings.portalAnnouncement} multiline
                   hint="Highlighted notice, e.g. holiday cut-off dates. Leave blank to hide."
@@ -559,6 +559,7 @@ export default function SettingsTab({ ctx }) {
                   <p className="text-fg/40 text-xs mt-0.5 leading-snug">Printed at the top of the client’s order slip and its PDF.</p>
                 </div>
                 <TextSetting label="Company name" value={systemSettings.portalCompanyName}
+                  hint={`Leave blank to print “${BIZ_NAME}” (your deployment name). Type here only to print a different legal/trade name.`}
                   placeholder={BIZ_NAME} maxLength={80}
                   onSave={v => saveSetting?.('portalCompanyName', v)} />
                 <TextSetting label="Address" value={systemSettings.portalCompanyAddress} multiline
@@ -581,7 +582,7 @@ export default function SettingsTab({ ctx }) {
           </Card>
         )}
 
-        {/* Printer Settings — superadmin only. Log prints an ORIGINAL + DUPLICATE
+        {/* Printer Settings - superadmin only. Log prints an ORIGINAL + DUPLICATE
             A4 document on order payment (format & paper size below). fb prints a
             single thermal receipt by default (fast food / bar / restaurant);
             the duplicate copy is optional and off unless toggled on. */}
@@ -638,7 +639,7 @@ export default function SettingsTab({ ctx }) {
             ) : (
               <SettingRow icon={Printer} title="Duplicate Copy"
                 desc={systemSettings.fbDuplicateReceipt === true
-                  ? 'Each receipt prints twice — an original and a duplicate.'
+                  ? 'Each receipt prints twice - an original and a duplicate.'
                   : 'A single receipt prints per order (typical for fast food, bars & restaurants).'}>
                 <Toggle on={systemSettings.fbDuplicateReceipt === true} onChange={() => saveSetting?.('fbDuplicateReceipt', !(systemSettings.fbDuplicateReceipt === true))} />
               </SettingRow>
@@ -646,7 +647,7 @@ export default function SettingsTab({ ctx }) {
           </Card>
         )}
 
-        {/* Appearance & language — per device, so every role can set their own. */}
+        {/* Appearance & language - per device, so every role can set their own. */}
         <Card title="This Device">
           <div className="px-4 py-4">
             <div className="flex items-start gap-4">
@@ -682,7 +683,7 @@ export default function SettingsTab({ ctx }) {
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-fg text-sm">Text Size</p>
                 <p className="text-fg/40 text-xs mt-0.5 leading-snug">
-                  Scales the whole app — bigger is easier to read on a tablet at arm's length. Saved on this device only.
+                  Scales the whole app - bigger is easier to read on a tablet at arm's length. Saved on this device only.
                 </p>
                 <div className="grid grid-cols-4 gap-2 mt-3 max-w-md">
                   {FONT_SIZES.map(s => (
@@ -723,7 +724,7 @@ export default function SettingsTab({ ctx }) {
                   ))}
                 </div>
                 <p className="text-[10px] text-fg/60 mt-2 leading-relaxed">
-                  Your choice is saved, but most screens are still English-only —
+                  Your choice is saved, but most screens are still English-only -
                   translations are being added screen by screen.
                 </p>
               </div>
@@ -739,7 +740,7 @@ export default function SettingsTab({ ctx }) {
                 <p className="font-bold text-fg text-sm">Receipt Printing</p>
                 <p className="text-fg/40 text-xs mt-0.5 leading-snug">
                   {printerMode === 'browser'
-                    ? 'Always uses the browser print dialog — this device never probes for a paired Bluetooth/USB thermal printer.'
+                    ? 'Always uses the browser print dialog - this device never probes for a paired Bluetooth/USB thermal printer.'
                     : 'Tries a paired Bluetooth or USB thermal printer first, falling back to the browser print dialog. Saved on this device only.'}
                 </p>
                 <div className="grid grid-cols-2 gap-2 mt-3 max-w-xs">

@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import { UNIT_TABLE, resolveUnit, displayToBase, baseToDisplayCost, effectiveDisplay } from './units.js';
 
-describe('effectiveDisplay — never surface g/ml', () => {
+describe('effectiveDisplay - never surface g/ml', () => {
   it('promotes base g to kg (×1000)', () => {
     expect(effectiveDisplay({ unit: 'g' })).toEqual({ displayUnit: 'kg', mult: 1000 });
   });
@@ -115,7 +115,7 @@ describe('round-trip integrity (no data loss)', () => {
   });
 });
 
-describe('units — resolve/effectiveDisplay edge branches (coverage)', () => {
+describe('units - resolve/effectiveDisplay edge branches (coverage)', () => {
   it('resolveUnit handles word forms case-insensitively', () => {
     expect(resolveUnit('GRAM')).toMatchObject({ base: 'g', mult: 1 });
     expect(resolveUnit('Milliliter')).toMatchObject({ base: 'ml', mult: 1 });

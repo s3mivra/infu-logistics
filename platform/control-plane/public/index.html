@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -30,7 +30,7 @@
   pre{background:#0f1113;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;max-height:340px;font-size:12px;white-space:pre-wrap;word-break:break-word}
   .muted{color:var(--mut);font-size:12px}
   .err{color:#e7857c;font-size:13px;margin-top:10px}
-  /* !important: this is the app-wide "force hidden" utility class — it must
+  /* !important: this is the app-wide "force hidden" utility class - it must
      win over any element-specific display rule (e.g. .modal-overlay's
      display:flex) regardless of which is declared later in this stylesheet. */
   .hide{display:none!important}
@@ -71,6 +71,26 @@
   .paid-badge.paid{background:rgba(79,157,105,.18);color:#7fd39b}
   .paid-badge.unpaid{background:rgba(201,72,63,.18);color:#e7857c}
   .month-pill{font-size:10px;padding:1px 7px;border-radius:99px;background:rgba(255,255,255,.05);color:var(--mut);margin-right:4px}
+
+  /* ── Create progress modal ───────────────────────────────────────────── */
+  .create-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:60;padding:20px}
+  .create-modal{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:28px;max-width:480px;width:100%}
+  .create-modal h2{margin:0 0 6px;font-size:15px}
+  .progress-bar-track{height:6px;background:rgba(255,255,255,.07);border-radius:99px;overflow:hidden;margin:18px 0 6px}
+  .progress-bar-fill{height:100%;background:var(--brand);border-radius:99px;transition:width .6s ease}
+  .progress-bar-fill.indeterminate{width:40%!important;animation:slide 1.4s ease-in-out infinite}
+  @keyframes slide{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}
+  .step-list{list-style:none;padding:0;margin:14px 0 0}
+  .step-list li{display:flex;align-items:center;gap:9px;padding:5px 0;font-size:13px;color:var(--mut)}
+  .step-list li.active{color:var(--fg)}
+  .step-list li.done{color:#7fd39b}
+  .step-list li.failed{color:#e7857c}
+  .step-icon{width:16px;height:16px;border-radius:99px;border:2px solid var(--line);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px}
+  .step-list li.active .step-icon{border-color:var(--brand);background:var(--brand);animation:pulse 1s infinite}
+  .step-list li.done .step-icon{border-color:#7fd39b;background:#7fd39b}
+  .step-list li.done .step-icon::after{content:'✓';color:#0f1113;font-weight:900}
+  .step-list li.failed .step-icon{border-color:#e7857c;background:#e7857c}
+  .step-list li.failed .step-icon::after{content:'✕';color:#0f1113;font-weight:900}
 
   /* ── Docs page ────────────────────────────────────────────────────────── */
   .docs{max-width:760px}
@@ -156,7 +176,7 @@
           <p class="muted" style="margin:14px 0 6px">
             <label style="display:inline-flex;align-items:center;gap:7px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--fg)">
               <input type="checkbox" id="f_test" style="width:auto">
-              Test tenant — required before Test Lab (seeding, load testing, security scanning) will run against it. Use this for rehearsal/staging clients only, never a real one.
+              Test tenant - required before Test Lab (seeding, load testing, security scanning) will run against it. Use this for rehearsal/staging clients only, never a real one.
             </label>
           </p>
           <p class="muted" style="margin:14px 0 6px">Resource limits &mdash; memory is enforced; CPU weight only applies under contention</p>
@@ -175,7 +195,7 @@
                 <option value="2048">2048 &mdash; high priority</option>
               </select></div>
           </div>
-          <p class="muted" style="margin:14px 0 6px">Monthly fee (optional — shown on the Billing page)</p>
+          <p class="muted" style="margin:14px 0 6px">Monthly fee (optional - shown on the Billing page)</p>
           <div class="grid">
             <div><label for="f_fee">Monthly fee (&#8369;)</label><input id="f_fee" type="number" min="0" placeholder="e.g. 1500"></div>
           </div>
@@ -202,7 +222,7 @@
         </div>
         <div class="card">
           <p class="muted" style="margin:0 0 14px">
-            Manual payment tracking — this platform has no payment processor built in. "Paid" just means
+            Manual payment tracking - this platform has no payment processor built in. "Paid" just means
             you've confirmed the client's payment (bank transfer, GCash, cash, whatever channel they use)
             and are recording it here, for your own reference.
           </p>
@@ -214,8 +234,8 @@
       <div class="section" id="sec-testlab">
         <div class="content-header"><h1>Test Lab</h1></div>
         <div class="card">
-          <p class="muted" style="margin:0 0 12px">Stress testing, load testing, and security scanning — built in, and hard-restricted to tenants flagged as test tenants (see the checkbox on Add a Client). Every action here runs for real against the selected tenant's own containers.</p>
-          <div id="testlabNoTenants" class="hide"><p class="muted">No test tenants yet — create one on the Clients page with "Test tenant" checked.</p></div>
+          <p class="muted" style="margin:0 0 12px">Stress testing, load testing, and security scanning - built in, and hard-restricted to tenants flagged as test tenants (see the checkbox on Add a Client). Every action here runs for real against the selected tenant's own containers.</p>
+          <div id="testlabNoTenants" class="hide"><p class="muted">No test tenants yet - create one on the Clients page with "Test tenant" checked.</p></div>
           <div id="testlabBody" class="hide">
             <div class="grid">
               <div><label for="tl_slug">Test tenant</label><select id="tl_slug"></select></div>
@@ -230,27 +250,27 @@
             <div style="margin-top:10px"><button class="ghost" id="tl_seedBtn">Seed data</button></div>
 
             <h3>Load test</h3>
-            <p class="muted" style="margin:0 0 10px">Runs a k6 scenario against this tenant's api, isolated on its own network — see scripts/k6/.</p>
+            <p class="muted" style="margin:0 0 10px">Runs a k6 scenario against this tenant's api, isolated on its own network - see scripts/k6/.</p>
             <div class="grid">
               <div><label for="tl_scenario">Scenario</label>
                 <select id="tl_scenario">
-                  <option value="baseline">baseline — single-tenant ceiling</option>
-                  <option value="reports">reports — P&amp;L/balance-sheet/inventory under volume</option>
-                  <option value="websocket">websocket — concurrent Socket.io connections</option>
-                  <option value="soak">soak — sustained load (short mode: 2m)</option>
-                  <option value="spike">spike — sudden burst, rate-limiter check</option>
-                  <option value="inventory">inventory — stock reads + concurrent restock (fb + log)</option>
+                  <option value="baseline">baseline - single-tenant ceiling</option>
+                  <option value="reports">reports - P&amp;L/balance-sheet/inventory under volume</option>
+                  <option value="websocket">websocket - concurrent Socket.io connections</option>
+                  <option value="soak">soak - sustained load (short mode: 2m)</option>
+                  <option value="spike">spike - sudden burst, rate-limiter check</option>
+                  <option value="inventory">inventory - stock reads + concurrent restock (fb + log)</option>
                 </select></div>
             </div>
             <div style="margin-top:10px"><button class="ghost" id="tl_loadtestBtn">Run load test</button>
-              <span class="muted" style="margin-left:8px">Multi-tenant "concurrent peak" scenario isn't triggerable here — see scripts/k6/README.md.</span></div>
+              <span class="muted" style="margin-left:8px">Multi-tenant "concurrent peak" scenario isn't triggerable here - see scripts/k6/README.md.</span></div>
 
             <h3>Security scan</h3>
             <p class="muted" style="margin:0 0 10px">Rate-limit check, cross-tenant token check, optional OWASP ZAP baseline.</p>
             <div style="margin-bottom:10px">
               <label style="display:inline-flex;align-items:center;gap:7px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--fg)">
                 <input type="checkbox" id="tl_zap" style="width:auto">
-                Include OWASP ZAP baseline scan (slow — pulls a ~1.5GB image on first run, several minutes)
+                Include OWASP ZAP baseline scan (slow - pulls a ~1.5GB image on first run, several minutes)
               </label>
             </div>
             <div><button class="ghost" id="tl_scanBtn">Run security scan</button></div>
@@ -277,7 +297,7 @@
       <div class="section" id="sec-docs">
         <div class="content-header"><h1>Help &amp; Docs</h1></div>
         <div class="card docs">
-          <p style="margin-bottom:16px">Plain-language notes on how this page works — written for whoever's running the business, not just whoever wrote the code.</p>
+          <p style="margin-bottom:16px">Plain-language notes on how this page works - written for whoever's running the business, not just whoever wrote the code.</p>
           <div class="toc">
             <a href="#doc-overview">Overview</a>
             <a href="#doc-update">Updating the app</a>
@@ -290,58 +310,77 @@
           </div>
 
           <h3 id="doc-overview">Overview</h3>
-          <p>Each "client" is one business running its own private copy of the app — its own database, its own login, its own web address (like <code>acme.yourdomain.com</code>). They share the same server, but nothing they do can be seen by another client. This page is where you create, update, and manage all of them from one place.</p>
+          <p>Each "client" is one business running its own private copy of the app - its own database, its own login, its own web address (like <code>acme.yourdomain.com</code>). They share the same server, but nothing they do can be seen by another client. This page is where you create, update, and manage all of them from one place.</p>
 
           <h3 id="doc-update">Updating the app (putting new code live)</h3>
-          <p>When the app's code changes — a bug fix, a new feature — you don't touch anything technical. Just go to <strong>Clients</strong> and click <strong>Update all apps</strong> at the top. A window opens and walks through three steps automatically:</p>
+          <p>When the app's code changes - a bug fix, a new feature - you don't touch anything technical. Just go to <strong>Clients</strong> and click <strong>Update all apps</strong> at the top. A window opens and walks through three steps automatically:</p>
           <ol>
-            <li><strong>Downloading update &amp; building</strong> — the new version is fetched and prepared. Nobody is affected yet; every client keeps working normally.</li>
-            <li><strong>Applying update</strong> — the new version goes live for every client. This is the only moment with any interruption, and it's brief (about a minute).</li>
-            <li><strong>Done</strong> — you'll see a status line for every client confirming it came back up healthy.</li>
+            <li><strong>Downloading update &amp; building</strong> - the new version is fetched and prepared. Nobody is affected yet; every client keeps working normally.</li>
+            <li><strong>Applying update</strong> - the new version goes live for every client. This is the only moment with any interruption, and it's brief (about a minute).</li>
+            <li><strong>Done</strong> - you'll see a status line for every client confirming it came back up healthy.</li>
           </ol>
-          <p>If step 1 fails for any reason, nothing changes — every client just keeps running the version it had before. You can safely click it again once the issue is fixed.</p>
-          <p>Each client also has its own <strong>Rebuild web</strong> button (on its row in Clients). That one only refreshes that single client's look-and-feel (name, colors, logo) — it does <em>not</em> push new app code. For an actual code update, always use <strong>Update all apps</strong>.</p>
+          <p>If step 1 fails for any reason, nothing changes - every client just keeps running the version it had before. You can safely click it again once the issue is fixed.</p>
+          <p>Each client also has its own <strong>Rebuild web</strong> button (on its row in Clients). That one only refreshes that single client's look-and-feel (name, colors, logo) - it does <em>not</em> push new app code. For an actual code update, always use <strong>Update all apps</strong>.</p>
 
           <h3 id="doc-addclient">Adding a new client</h3>
           <p>On the Clients page, fill in the "Add a client" form:</p>
           <ul>
-            <li><strong>Subdomain</strong> — the short name in their web address, e.g. <code>acme</code> becomes <code>acme.yourdomain.com</code>. Lowercase, no spaces.</li>
-            <li><strong>Business type</strong> — pick the version of the app that matches what they sell (food &amp; beverage vs. logistics/wholesale).</li>
-            <li><strong>Superadmin password</strong> — this is the login you'll hand to that client's owner/manager. Keep a copy somewhere safe; it isn't shown again.</li>
-            <li><strong>Test tenant</strong> — only check this for a rehearsal/demo account, never a real paying client. It unlocks the Test Lab tools, which are too heavy and risky to ever run against a live client by accident.</li>
+            <li><strong>Subdomain</strong> - the short name in their web address, e.g. <code>acme</code> becomes <code>acme.yourdomain.com</code>. Lowercase, no spaces.</li>
+            <li><strong>Business type</strong> - pick the version of the app that matches what they sell (food &amp; beverage vs. logistics/wholesale).</li>
+            <li><strong>Superadmin password</strong> - this is the login you'll hand to that client's owner/manager. Keep a copy somewhere safe; it isn't shown again.</li>
+            <li><strong>Test tenant</strong> - only check this for a rehearsal/demo account, never a real paying client. It unlocks the Test Lab tools, which are too heavy and risky to ever run against a live client by accident.</li>
           </ul>
           <p>Creating a client takes a few minutes (it's building their private copy of the app from scratch). Once done, their link appears on the Clients page.</p>
 
           <h3 id="doc-manage">Managing an existing client</h3>
           <p>Each row on the Clients page has:</p>
           <ul>
-            <li><strong>Resources</strong> — raise or lower how much memory/CPU priority that client gets, if they're growing or you're consolidating.</li>
-            <li><strong>Stop / Start</strong> — temporarily take a client offline (e.g. non-paying, or maintenance) without deleting anything.</li>
-            <li><strong>Logs</strong> — a live technical readout of what that client's app has been doing. Mostly useful when troubleshooting with support.</li>
-            <li><strong>Wipe data</strong> (red) — erases that client's orders/inventory/history but keeps their login and settings. Irreversible.</li>
-            <li><strong>Delete</strong> (red) — removes the client entirely: their app, their data, their web address. Irreversible.</li>
+            <li><strong>Resources</strong> - raise or lower how much memory/CPU priority that client gets, if they're growing or you're consolidating.</li>
+            <li><strong>Stop / Start</strong> - temporarily take a client offline (e.g. non-paying, or maintenance) without deleting anything.</li>
+            <li><strong>Logs</strong> - a live technical readout of what that client's app has been doing. Mostly useful when troubleshooting with support.</li>
+            <li><strong>Wipe data</strong> (red) - erases that client's orders/inventory/history but keeps their login and settings. Irreversible.</li>
+            <li><strong>Delete</strong> (red) - removes the client entirely: their app, their data, their web address. Irreversible.</li>
           </ul>
           <p>Both red actions ask you to type the client's name and a second password to confirm, specifically so they can't happen by accident.</p>
 
           <h3 id="doc-billing">Billing</h3>
-          <p>The Billing page is a simple paid/unpaid tracker, one row per client, reset every calendar month. It does not charge anyone or move any money — you still collect payment however you normally do (bank transfer, e-wallet, cash), and just click <strong>Mark Paid</strong> here once you've confirmed it landed. Set a monthly fee per client so you have a number to check against; it's just a note for you, not something enforced automatically.</p>
+          <p>The Billing page is a simple paid/unpaid tracker, one row per client, reset every calendar month. It does not charge anyone or move any money - you still collect payment however you normally do (bank transfer, e-wallet, cash), and just click <strong>Mark Paid</strong> here once you've confirmed it landed. Set a monthly fee per client so you have a number to check against; it's just a note for you, not something enforced automatically.</p>
 
           <h3 id="doc-testlab">Test Lab</h3>
-          <p>A safe place to hammer a <em>test</em> client with fake orders and simulated traffic, to see how the system holds up before something similar happens for real. It only ever runs against clients explicitly flagged "Test tenant" when created — it will refuse to run against a real client, even if you try.</p>
+          <p>A safe place to hammer a <em>test</em> client with fake orders and simulated traffic, to see how the system holds up before something similar happens for real. It only ever runs against clients explicitly flagged "Test tenant" when created - it will refuse to run against a real client, even if you try.</p>
 
           <h3 id="doc-errors">Errors &amp; logs</h3>
-          <p>The <strong>Errors</strong> page collects anything that went wrong across every client in one place, so you don't have to check each one individually. <strong>Logs</strong> (on a client's row) is the raw technical output from that client's app — useful mostly when working with support to diagnose something specific.</p>
+          <p>The <strong>Errors</strong> page collects anything that went wrong across every client in one place, so you don't have to check each one individually. <strong>Logs</strong> (on a client's row) is the raw technical output from that client's app - useful mostly when working with support to diagnose something specific.</p>
 
           <h3 id="doc-trouble">If something looks broken</h3>
           <ul>
-            <li>A client shows "unhealthy" or won't load — try <strong>Stop</strong> then <strong>Start</strong> on that row first.</li>
-            <li>After clicking <strong>Update all apps</strong>, a client shows an error in the results — the others are unaffected; check that client's Logs, or retry the update.</li>
-            <li>You're logged out unexpectedly — sessions last 8 hours; just sign in again.</li>
-            <li>Still stuck — this panel is reached over a private connection (SSH tunnel), so whoever set that up for you is the right person to loop in.</li>
+            <li>A client shows "unhealthy" or won't load - try <strong>Stop</strong> then <strong>Start</strong> on that row first.</li>
+            <li>After clicking <strong>Update all apps</strong>, a client shows an error in the results - the others are unaffected; check that client's Logs, or retry the update.</li>
+            <li>You're logged out unexpectedly - sessions last 8 hours; just sign in again.</li>
+            <li>Still stuck - this panel is reached over a private connection (SSH tunnel), so whoever set that up for you is the right person to loop in.</li>
           </ul>
         </div>
       </div>
 
+    </div>
+  </div>
+
+  <!-- ── Create client progress modal ── -->
+  <div id="createModal" class="create-modal-overlay hide">
+    <div class="create-modal">
+      <h2 id="cm_title">Creating client…</h2>
+      <p class="muted" id="cm_sub" style="margin:0;font-size:12px">This builds a private Docker image for this client - usually 2–5 minutes.</p>
+      <div class="progress-bar-track"><div class="progress-bar-fill indeterminate" id="cm_bar"></div></div>
+      <ul class="step-list">
+        <li id="cm_s1"><span class="step-icon"></span> Writing configuration files</li>
+        <li id="cm_s2"><span class="step-icon"></span> Building Docker images</li>
+        <li id="cm_s3"><span class="step-icon"></span> Starting containers &amp; reloading Caddy</li>
+        <li id="cm_s4"><span class="step-icon"></span> Done</li>
+      </ul>
+      <div id="cm_err" style="margin-top:14px;font-size:13px;color:#e7857c;display:none;background:rgba(201,72,63,.1);border:1px solid rgba(201,72,63,.3);border-radius:8px;padding:10px 12px;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow-y:auto"></div>
+      <div style="margin-top:18px;display:flex;justify-content:flex-end">
+        <button class="ghost" id="cm_close" style="display:none">Close</button>
+      </div>
     </div>
   </div>
 
@@ -474,7 +513,7 @@ function openLogs(slug, title) {
   fetchLogs();
 }
 // showLog: for one-shot text output (create/rebuild/resource results, JSON
-// dumps, stack traces) that isn't a paginated tenant log stream — same modal,
+// dumps, stack traces) that isn't a paginated tenant log stream - same modal,
 // just skips the tail-size fetch and shows the given text directly.
 function showLog(text) {
   logSlug = '';
@@ -513,7 +552,7 @@ $('pw_copy').addEventListener('click', async () => {
     await navigator.clipboard.writeText(pwCurrent);
     const prev = btn.textContent; btn.textContent = 'Copied';
     setTimeout(() => { btn.textContent = prev; }, 1400);
-  } catch { pwShown = true; renderPw(); btn.textContent = 'Copy failed — shown'; }
+  } catch { pwShown = true; renderPw(); btn.textContent = 'Copy failed - shown'; }
 });
 $('pw_close').addEventListener('click', () => { $('pwModal').classList.add('hide'); pwCurrent = ''; });
 
@@ -535,7 +574,7 @@ function statusPill(s) {
 }
 
 function fmtBytes(n) {
-  if (n === null || n === undefined) return '—';
+  if (n === null || n === undefined) return '-';
   const u = ['B', 'KB', 'MB', 'GB', 'TB'];
   let i = 0; let v = Number(n);
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i += 1; }
@@ -557,7 +596,7 @@ async function refresh() {
     if (!tenants.length) { $('tenantList').innerHTML = '<p class="muted">No clients yet.</p>'; return; }
     $('tenantList').innerHTML = tenants.map((t) => {
       const u = byslug[t.slug] || {};
-      const mem = u.memApi ? `${u.memApi.usage} (${u.memApi.perc})` : '—';
+      const mem = u.memApi ? `${u.memApi.usage} (${u.memApi.perc})` : '-';
       return `
       <div class="row">
         <div>
@@ -592,7 +631,7 @@ async function act(slug, action, btn) {
   try {
     if (action === 'logs') {
       const t = LAST_TENANTS.find((x) => x.slug === slug);
-      openLogs(slug, 'Logs — ' + (t?.businessName || slug));
+      openLogs(slug, 'Logs - ' + (t?.businessName || slug));
     }
     else if (action === 'password') {
       const t = LAST_TENANTS.find((x) => x.slug === slug);
@@ -600,7 +639,7 @@ async function act(slug, action, btn) {
       openPasswordModal(t?.businessName || slug, d.adminPass || '');
     }
     else if (action === 'resources') {
-      const memMb = prompt(`Memory limit for "${slug}" in MB (256-4096).\n\nThe container is recreated to apply it — a few seconds of downtime for this client only.`, '1024');
+      const memMb = prompt(`Memory limit for "${slug}" in MB (256-4096).\n\nThe container is recreated to apply it - a few seconds of downtime for this client only.`, '1024');
       if (!memMb) return;
       const cpuShares = prompt('CPU weight (256-4096, 1024 is normal):', '1024');
       if (!cpuShares) return;
@@ -636,15 +675,66 @@ $('tenantList').addEventListener('click', (e) => {
   if (b) act(b.dataset.slug, b.dataset.act, b);
 });
 
+// ── Create client progress modal ─────────────────────────────────────────────
+function cmStep(n, state) {
+  const el = $('cm_s' + n);
+  el.classList.remove('active', 'done', 'failed');
+  if (state) el.classList.add(state);
+}
+function cmReset(title) {
+  $('cm_title').textContent = title || 'Creating client…';
+  $('cm_sub').textContent = 'This builds a private Docker image - usually 2–5 minutes.';
+  $('cm_bar').className = 'progress-bar-fill indeterminate';
+  $('cm_bar').style.width = '';
+  $('cm_err').style.display = 'none';
+  $('cm_err').textContent = '';
+  $('cm_close').style.display = 'none';
+  ['1','2','3','4'].forEach((n) => cmStep(n, ''));
+}
+function cmDone(url) {
+  $('cm_title').textContent = 'Client created!';
+  $('cm_sub').textContent = url ? `Ready at ${url}` : 'All done.';
+  $('cm_bar').className = 'progress-bar-fill';
+  $('cm_bar').style.width = '100%';
+  cmStep(4, 'done');
+  $('cm_close').style.display = '';
+}
+function cmError(msg) {
+  $('cm_title').textContent = 'Creation failed';
+  $('cm_sub').textContent = 'See the error below. You can close and try again.';
+  $('cm_bar').className = 'progress-bar-fill';
+  $('cm_bar').style.width = '100%';
+  $('cm_bar').style.background = 'var(--danger)';
+  $('cm_err').textContent = msg;
+  $('cm_err').style.display = 'block';
+  $('cm_close').style.display = '';
+}
+$('cm_close').addEventListener('click', () => {
+  $('createModal').classList.add('hide');
+  $('cm_bar').style.background = '';
+});
+
 $('createBtn').addEventListener('click', async () => {
-  const btn = $('createBtn');
+  const slug = $('f_slug').value.trim().toLowerCase();
+  const name = $('f_name').value.trim();
+  if (!slug || !name) { $('createErr').textContent = 'Subdomain and Business name are required.'; return; }
   $('createErr').textContent = '';
-  btn.disabled = true;
-  $('createNote').textContent = 'Building the client bundle — this takes a few minutes.';
+
+  cmReset('Creating ' + (name || slug) + '…');
+  $('createModal').classList.remove('hide');
+  cmStep(1, 'active');
+
+  const btn = $('createBtn'); btn.disabled = true;
+
   try {
+    // Small delay so the user sees step 1 flash before the request fires.
+    await new Promise((r) => setTimeout(r, 400));
+    cmStep(1, 'done'); cmStep(2, 'active');
+    $('cm_sub').textContent = 'Building Docker images - this takes the longest (2–5 min)…';
+
     const d = await api('/api/tenants', { method: 'POST', body: JSON.stringify({
-      slug: $('f_slug').value.trim().toLowerCase(),
-      businessName: $('f_name').value.trim(),
+      slug,
+      businessName: name,
       businessType: $('f_type').value,
       theme: $('f_theme').value,
       adminPass: $('f_pass').value,
@@ -660,15 +750,30 @@ $('createBtn').addEventListener('click', async () => {
       billingAccountName: $('f_bacctname').value.trim(),
       billingAccountNo: $('f_bacctno').value.trim(),
     }) });
-    // Monthly fee isn't part of tenant creation — set it separately right after.
+
+    cmStep(2, 'done'); cmStep(3, 'active');
+    $('cm_sub').textContent = 'Containers starting and Caddy reloading…';
+    await new Promise((r) => setTimeout(r, 600));
+    cmStep(3, 'done');
+
+    // Monthly fee set separately.
     const fee = $('f_fee').value.trim();
     if (fee) { try { await api(`/api/tenants/${d.slug}/billing`, { method: 'PATCH', body: JSON.stringify({ monthlyFee: Number(fee) }) }); } catch {} }
-    showLog(`Created ${d.slug} at ${d.url}\n\n` + d.log);
+
+    cmDone(d.url);
     ['f_slug','f_name','f_pass','f_fb','f_fee'].forEach((i) => { $(i).value = ''; });
     $('f_test').checked = false;
     loadTestlabTenants();
-  } catch (e) { $('createErr').textContent = e.message; }
-  finally { btn.disabled = false; $('createNote').textContent = ''; refresh(); }
+    refresh();
+  } catch (e) {
+    // Mark whichever step was active as failed.
+    for (const n of ['1','2','3','4']) {
+      if ($('cm_s' + n).classList.contains('active')) { cmStep(n, 'failed'); break; }
+    }
+    cmError(e.message);
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -701,7 +806,7 @@ async function loadBilling() {
       <div class="row">
         <div>
           <div><strong>${esc(t.businessName || t.slug)}</strong>
-            <span class="paid-badge ${paid ? 'paid' : 'unpaid'}">${paid ? 'PAID — ' + monthLabel(thisMonth) : 'UNPAID — ' + monthLabel(thisMonth)}</span>
+            <span class="paid-badge ${paid ? 'paid' : 'unpaid'}">${paid ? 'PAID - ' + monthLabel(thisMonth) : 'UNPAID - ' + monthLabel(thisMonth)}</span>
           </div>
           <div class="muted" style="margin-top:4px">
             fee: ${billing.monthlyFee != null ? '₱' + Number(billing.monthlyFee).toLocaleString() + '/mo' : 'not set'}
@@ -783,7 +888,7 @@ function renderTestlabRuns(runs) {
       const p95 = m?.http_req_duration?.values?.['p(95)'];
       const failRate = m?.http_req_failed?.values?.rate;
       const thresh = r.thresholdsPassed === true ? '<span class="pill ok">thresholds OK</span>' : r.thresholdsPassed === false ? '<span class="pill bad">thresholds FAILED</span>' : '';
-      summary = r.error ? `<span class="pill bad">error</span>` : `${esc(r.scenario)} ${thresh} &middot; p95 ${p95 !== undefined ? Math.round(p95) + 'ms' : '—'} &middot; errors ${failRate !== undefined ? (failRate * 100).toFixed(2) + '%' : '—'}`;
+      summary = r.error ? `<span class="pill bad">error</span>` : `${esc(r.scenario)} ${thresh} &middot; p95 ${p95 !== undefined ? Math.round(p95) + 'ms' : '-'} &middot; errors ${failRate !== undefined ? (failRate * 100).toFixed(2) + '%' : '-'}`;
     } else if (r.kind === 'security-scan') {
       summary = (r.findings || []).map((f) => runBadge(f.severity) + ' ' + esc(f.check)).join(' &middot; ');
     }
@@ -877,7 +982,7 @@ async function runUpdateAll() {
   $('um_start').textContent = 'Updating…';
   $('um_detail').classList.add('hide');
   try {
-    // Phase 1 — download + build (no downtime).
+    // Phase 1 - download + build (no downtime).
     umPhase(1, 'active');
     $('um_status').textContent = 'Downloading the update and building the new version. Apps keep running normally during this step…';
     const prep = await api('/api/update/prepare', { method: 'POST', body: '{}' });
@@ -889,16 +994,16 @@ async function runUpdateAll() {
       $('um_detail').textContent = 'Some apps failed to build:\n' + webFails.map((w) => `  ${w.slug}: ${w.error}`).join('\n');
     }
 
-    // Phase 2 — apply (brief downtime).
+    // Phase 2 - apply (brief downtime).
     umPhase(2, 'active');
-    $('um_status').textContent = gitNote + 'Applying the update — apps are restarting and will be briefly unavailable…';
+    $('um_status').textContent = gitNote + 'Applying the update - apps are restarting and will be briefly unavailable…';
     const applied = await api('/api/update/apply', { method: 'POST', body: '{}' });
     umPhase(2, 'done');
 
-    // Phase 3 — done, show per-app health.
+    // Phase 3 - done, show per-app health.
     umPhase(3, 'done');
     const lines = (applied.tenants || []).map((t) => {
-      if (t.error) return `  ${t.slug}: ERROR — ${t.error}`;
+      if (t.error) return `  ${t.slug}: ERROR - ${t.error}`;
       const api_ = t.status?.api || '?', web = t.status?.web || '?';
       return `  ${t.slug}: api ${api_}, web ${web}`;
     });
@@ -913,7 +1018,7 @@ async function runUpdateAll() {
     // Which phase failed? If phase 1 never completed, it's the build/download.
     const failedPhase = $('um_p1').classList.contains('done') ? 2 : 1;
     umPhase(failedPhase, 'failed');
-    $('um_status').textContent = 'Update failed — no partial update was applied. ' + e.message;
+    $('um_status').textContent = 'Update failed - no partial update was applied. ' + e.message;
     $('um_detail').classList.remove('hide');
     $('um_detail').textContent = e.message;
     $('um_start').textContent = 'Retry';

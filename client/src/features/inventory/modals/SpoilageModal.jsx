@@ -1,4 +1,4 @@
-import { useDashboard } from '../../dashboard/DashboardContext';
+﻿import { useDashboard } from '../../dashboard/DashboardContext';
 import * as ui from '../../../shared/ui';
 
 
@@ -54,7 +54,7 @@ export default function SpoilageModal() {
       } finally { setSpoilageLoading(false); }
     }, {
       message: `Writing off ${label}…`,
-      undoMessage: 'Waste entry cancelled — nothing was written off.',
+      undoMessage: 'Waste entry cancelled - nothing was written off.',
     });
     return ran;
   };

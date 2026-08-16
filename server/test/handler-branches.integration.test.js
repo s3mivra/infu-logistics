@@ -1,4 +1,4 @@
-// Deep handler branches the happy-path suites don't reach: size-specific recipe
+﻿// Deep handler branches the happy-path suites don't reach: size-specific recipe
 // deduction, add-on recipe deduction, and the import "update existing item" path.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
@@ -58,7 +58,7 @@ describe('recipe variant deduction on completion', () => {
   });
 });
 
-describe('inventory import — update existing item path', () => {
+describe('inventory import - update existing item path', () => {
   it('re-importing an existing item updates it (diff), not creates a duplicate', async () => {
     await mongoose.model('Inventory').create({ itemName: 'HB Imported', stockQty: 1000, unit: 'g', unitCost: 0.2, displayUnit: 'kg', unitMultiplier: 1000 });
     const r = await post('/api/inventory/import', superTok, { items: [{ itemName: 'HB Imported', qty: 5, unit: 'kg', unitCost: 0.25 }] });
@@ -96,7 +96,7 @@ describe('inventory import — update existing item path', () => {
 
   // Regression: gain/loss must be valued at the EXISTING book cost of the units
   // being adjusted, not a new cost typed into the same import row. Previously a
-  // row that updated both qty and unitCost together (a common real-world case —
+  // row that updated both qty and unitCost together (a common real-world case -
   // "here's the new count AND the new price") valued the variance at the new
   // cost, which either overstates or understates the loss/gain depending on
   // whether the price went up or down.
@@ -105,7 +105,7 @@ describe('inventory import — update existing item path', () => {
     await Inventory.create({ itemCode: 'HB-GL-1', itemName: 'GL Item', stockQty: 100, unit: 'pcs', unitCost: 10, displayUnit: 'pcs', unitMultiplier: 1 });
 
     // Shortfall (100 → 50) with a simultaneous cost bump (10 → 20): the 50-unit
-    // loss must be valued at the OLD cost (10), i.e. 500 — not the new cost (1000).
+    // loss must be valued at the OLD cost (10), i.e. 500 - not the new cost (1000).
     const lossRes = await post('/api/inventory/import', superTok, {
       items: [{ itemCode: 'HB-GL-1', itemName: 'GL Item', qty: 50, unit: 'pcs', unitCost: 20 }],
     });
@@ -125,10 +125,10 @@ describe('inventory import — update existing item path', () => {
   });
 });
 
-// Regression: a log/1:1 product (no recipe — the product IS the stocked good)
+// Regression: a log/1:1 product (no recipe - the product IS the stocked good)
 // must be UNAVAILABLE when its linked inventory is missing entirely or has
 // zero/insufficient stock, never default to "available" for a missing link.
-describe('stockAvailable — log 1:1 product with no linked inventory', () => {
+describe('stockAvailable - log 1:1 product with no linked inventory', () => {
   it('a product whose linked inventory item does not exist is unavailable, not available', async () => {
     const Category = mongoose.model('Category');
     const Product = mongoose.model('Product');
@@ -172,7 +172,7 @@ describe('stockAvailable — log 1:1 product with no linked inventory', () => {
 });
 
 // In log mode, products ARE the stocked goods, so importing inventory must also
-// create/update the linked Product — even when the sheet carries no category.
+// create/update the linked Product - even when the sheet carries no category.
 describe('log inventory import creates the linked product', () => {
   it('a new item with NO category still creates both the inventory item and a Product', async () => {
     const res = await post('/api/inventory/import', superTok, {
@@ -245,7 +245,7 @@ describe('import never merges two different-itemCode SKUs by cleaned name', () =
   it('creates two distinct items when both provide an itemCode, even if their (post-size-strip) names match', async () => {
     const Inventory = mongoose.model('Inventory');
     // Simulates "DK Blueberry 3kg" (code DKB-3) and "DK Blueberry 2.5kg" (code
-    // DKB-25) — the client strips the size suffix from both, so both rows carry
+    // DKB-25) - the client strips the size suffix from both, so both rows carry
     // the same cleaned itemName "DK Blueberry". An itemCode miss must NEVER fall
     // back to a name match, or the second row silently overwrites the first.
     const r1 = await post('/api/inventory/import', superTok, {
@@ -258,7 +258,7 @@ describe('import never merges two different-itemCode SKUs by cleaned name', () =
       items: [{ itemCode: 'DKB-25', itemName: 'DK Blueberry', qty: 0, unit: 'kg', unitCost: 100, packSize: 2.5 }],
     });
     expect(r2.status).toBe(200);
-    expect(r2.body.summary.created).toBe(1); // NOT "updated" — a genuinely new SKU
+    expect(r2.body.summary.created).toBe(1); // NOT "updated" - a genuinely new SKU
 
     const item3kg = await Inventory.findOne({ itemCode: 'DKB-3' }).lean();
     const item25kg = await Inventory.findOne({ itemCode: 'DKB-25' }).lean();
@@ -281,7 +281,7 @@ describe('import never merges two different-itemCode SKUs by cleaned name', () =
     expect(r2.body.summary.updated).toBe(1); // matched by name, as before
     const items = await Inventory.find({ itemName: 'No Code Good' }).lean();
     expect(items.length).toBe(1);
-    expect(items[0].stockQty).toBe(15000); // 15kg in grams — the update won
+    expect(items[0].stockQty).toBe(15000); // 15kg in grams - the update won
   });
 });
 
