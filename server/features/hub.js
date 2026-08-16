@@ -15,6 +15,7 @@ export default function registerHub(ctx) {
     app, BUSINESS_TYPE,
     LinkedBusiness, HubInvite, CrossTransfer,
     Inventory, StockCard, JournalEntry,
+    verifyToken,
     requireStaff: requireAuth, requireSuperAdmin,
   } = ctx;
 
@@ -57,13 +58,13 @@ export default function registerHub(ctx) {
   }
 
   // Hub info
-  app.get('/api/hub/info', requireAuth, async (req, res) => {
+  app.get('/api/hub/info', verifyToken, requireAuth, async (req, res) => {
     const links = await LinkedBusiness.find({ businessType: BUSINESS_TYPE }).sort({ createdAt: -1 }).lean();
     res.json({ tenant: TENANT, selfUrl: SELF_URL, links });
   });
 
   // Generate invite code (superadmin only)
-  app.post('/api/hub/invite', requireAuth, requireSuperAdmin, async (req, res) => {
+  app.post('/api/hub/invite', verifyToken, requireAuth, requireSuperAdmin, async (req, res) => {
     const code = `${TENANT}-${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await HubInvite.create({ businessType: BUSINESS_TYPE, code, expiresAt });
@@ -71,7 +72,7 @@ export default function registerHub(ctx) {
   });
 
   // Redeem partner's invite code (this business becomes the client)
-  app.post('/api/hub/redeem', requireAuth, requireSuperAdmin, async (req, res) => {
+  app.post('/api/hub/redeem', verifyToken, requireAuth, requireSuperAdmin, async (req, res) => {
     const { code } = req.body || {};
     if (!String(code || '').trim()) return res.status(400).json({ error: 'code is required.' });
 
@@ -130,13 +131,13 @@ export default function registerHub(ctx) {
   });
 
   // Disconnect a partner
-  app.delete('/api/hub/links/:partnerSlug', requireAuth, requireSuperAdmin, async (req, res) => {
+  app.delete('/api/hub/links/:partnerSlug', verifyToken, requireAuth, requireSuperAdmin, async (req, res) => {
     await LinkedBusiness.deleteOne({ businessType: BUSINESS_TYPE, partnerSlug: req.params.partnerSlug });
     res.json({ ok: true });
   });
 
   // Cross-transfer list
-  app.get('/api/hub/transfers', requireAuth, async (req, res) => {
+  app.get('/api/hub/transfers', verifyToken, requireAuth, async (req, res) => {
     const transfers = await CrossTransfer.find({ businessType: BUSINESS_TYPE })
       .sort({ createdAt: -1 }).limit(200).lean();
     res.json({ transfers });
@@ -144,7 +145,7 @@ export default function registerHub(ctx) {
 
   // Send transfer - multi-item shipment.
   // Body: { partnerSlug, items: [{itemId, qty, batchIdx?, note?}] }
-  app.post('/api/hub/transfers/send', requireAuth, async (req, res) => {
+  app.post('/api/hub/transfers/send', verifyToken, requireAuth, async (req, res) => {
     const { partnerSlug, items } = req.body || {};
     if (!partnerSlug || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'partnerSlug and items[] are required.' });
@@ -239,7 +240,7 @@ export default function registerHub(ctx) {
   });
 
   // Accept inbound transfer - receive stock + post ledger JE
-  app.post('/api/hub/transfers/:id/accept', requireAuth, async (req, res) => {
+  app.post('/api/hub/transfers/:id/accept', verifyToken, requireAuth, async (req, res) => {
     const transfer = await CrossTransfer.findOne({
       _id: req.params.id, businessType: BUSINESS_TYPE, direction: 'inbound', status: 'Pending',
     });
@@ -342,7 +343,7 @@ export default function registerHub(ctx) {
   });
 
   // Reject inbound transfer
-  app.post('/api/hub/transfers/:id/reject', requireAuth, async (req, res) => {
+  app.post('/api/hub/transfers/:id/reject', verifyToken, requireAuth, async (req, res) => {
     const transfer = await CrossTransfer.findOne({
       _id: req.params.id, businessType: BUSINESS_TYPE, direction: 'inbound', status: 'Pending',
     });
@@ -360,7 +361,7 @@ export default function registerHub(ctx) {
   });
 
   // Cancel outbound transfer (before partner accepts)
-  app.post('/api/hub/transfers/:id/cancel', requireAuth, async (req, res) => {
+  app.post('/api/hub/transfers/:id/cancel', verifyToken, requireAuth, async (req, res) => {
     const transfer = await CrossTransfer.findOne({
       _id: req.params.id, businessType: BUSINESS_TYPE, direction: 'outbound', status: 'Pending',
     });

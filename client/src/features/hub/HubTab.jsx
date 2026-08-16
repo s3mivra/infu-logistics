@@ -10,7 +10,7 @@ const statusColor = {
 };
 
 export default function HubTab({ ctx }) {
-  const { authFetch, isSuperAdmin, inventory = [], peso } = ctx;
+  const { apiFetch: authFetch, isSuperAdmin, inventory = [], peso } = ctx;
 
   const [info, setInfo]           = useState(null);
   const [transfers, setTransfers] = useState([]);
