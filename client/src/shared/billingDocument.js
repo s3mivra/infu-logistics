@@ -28,6 +28,7 @@ const money = (n) => Number(n || 0).toFixed(2);
 export function resolveBillingLetterhead(settings = {}) {
   const s = settings || {};
   const logo = s.businessLogo || '';
+  const logoColor = s.logoColor || '';
   const companyName = pick(s.portalCompanyName, ENV_BILLING.name, BIZ_NAME);
   // Settings hold a single address field; env holds up to two lines. Prefer the
   // admin-entered value, else stitch the env lines.
@@ -48,7 +49,7 @@ export function resolveBillingLetterhead(settings = {}) {
       : '',
   );
   const slipFooter = pick(s.portalSlipFooter);
-  return { logo, companyName, addressLines, phone, email, announcement, supportLink, accountName, paymentInstructions, slipFooter };
+  return { logo, logoColor, companyName, addressLines, phone, email, announcement, supportLink, accountName, paymentInstructions, slipFooter };
 }
 
 const DEFAULT_TERMS = [
@@ -138,13 +139,13 @@ export function buildBillingDocHTML({
 <meta charset="utf-8">
 <title>${esc(docTitle)} - ${esc(metaFields.find(f => /transaction|po|order/i.test(f.label))?.value || dateStr)}</title>
 <style>
-  @page { size: ${pageSize} portrait; margin: 15mm 16mm 20mm; }
-  @page :first { margin-top: 15mm; }
+  @page { size: ${pageSize} portrait; margin: 4mm 16mm 20mm; }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #000; }
   .header { text-align: center; margin-bottom: 10px; }
   .header .biz-row { display: flex; align-items: center; justify-content: center; gap: 10px; }
-  .header .biz-logo { max-height: 44px; max-width: 72px; object-fit: contain; }
+  .header .biz-logo { max-height: 44px; max-width: 72px; object-fit: contain; border-radius: 8px; }
+  .header .logo-wrap { display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; }
   .header .biz  { font-size: 14pt; font-weight: bold; letter-spacing: 1px; }
   .header .addr { font-size: 8.5pt; margin-top: 1px; color: #333; }
   .title-wrap   { text-align: center; margin-bottom: 6px; }
@@ -188,23 +189,30 @@ export function buildBillingDocHTML({
   .copy { page-break-after: always; }
   .copy:last-child { page-break-after: auto; }
   .copy-tag { text-align: right; font-size: 8pt; font-weight: bold; letter-spacing: 1px; color: #444; border: 1px solid #999; display: inline-block; padding: 1px 6px; float: right; }
+  .page-header { text-align: center; font-size: 8pt; color: #666; letter-spacing: 0.3px; padding: 4px 0 6px; clear: both; }
   @media print { html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
 </style>
 </head>
 <body>
 ${copies.map(copyLabel => `
   <div class="copy">
-  ${copyLabel ? `<div class="copy-tag">${esc(copyLabel)}</div>` : ''}
+  <div class="page-header">
+    ${esc(docTitle)}${(() => { const num = metaFields.find(f => /order|billing|po|transaction/i.test(f.label))?.value || ''; return num ? ` &middot; ${esc(num)}` : ''; })()}
+    ${copyLabel ? ` &nbsp;&nbsp;<span style="border:1px solid #999;padding:1px 6px;font-weight:bold;color:#444;">${esc(copyLabel)}</span>` : ''}
+  </div>
   <div class="header">
     <div class="biz-row">
-      ${lh.logo ? `<img class="biz-logo" src="${lh.logo}" alt="" />` : ''}
+      ${lh.logo ? `<span class="logo-wrap" style="${lh.logoColor ? `background:${lh.logoColor};padding:5px;` : ''}"><img class="biz-logo" src="${lh.logo}" alt="" /></span>` : ''}
       <div class="biz">${esc(lh.companyName)}</div>
     </div>
     ${lh.addressLines.map(a => `<div class="addr">${esc(a)}</div>`).join('')}
     ${lh.phone ? `<div class="addr">${esc(lh.phone)}</div>` : ''}
   </div>
 
-  <div class="title-wrap"><div class="title">${esc(docTitle)}</div></div>
+  <div class="title-wrap">
+    <div class="title">${esc(docTitle)}</div>
+    ${(() => { const num = metaFields.find(f => /order|billing|po|transaction/i.test(f.label))?.value || ''; return num ? `<div class="docnum-wrap">${esc(num)}</div>` : ''; })()}
+  </div>
   ${lh.announcement ? `<div class="announce">${esc(lh.announcement)}</div>` : ''}
 
   <p style="font-size:9pt;margin-bottom:8px;text-align:center;">${esc(dateLabel)}: <strong>${esc(dateStr)}</strong></p>

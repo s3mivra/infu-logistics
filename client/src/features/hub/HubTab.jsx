@@ -25,10 +25,12 @@ export default function HubTab({ ctx }) {
   const [redeemErr, setRedeemErr]     = useState('');
 
   // send transfer form
+  const [sendFrom, setSendFrom]       = useState('__self__');
   const [sendPartner, setSendPartner] = useState('');
   const [sendItem, setSendItem]       = useState('');
   const [sendQty, setSendQty]         = useState('');
   const [sendNote, setSendNote]       = useState('');
+  const [sendCart, setSendCart]       = useState([]); // [{itemId,itemName,unit,qty,note}]
   const [sendBusy, setSendBusy]       = useState(false);
   const [sendErr, setSendErr]         = useState('');
 
@@ -87,18 +89,33 @@ export default function HubTab({ ctx }) {
     load();
   };
 
+  const addToCart = () => {
+    const qty = parseFloat(sendQty);
+    if (!sendItem || !(qty > 0)) return;
+    const inv = inventory.find(i => i._id === sendItem);
+    if (!inv) return;
+    setSendCart(c => [...c, { itemId: sendItem, itemName: inv.itemName, unit: inv.unit, qty, note: sendNote.trim() }]);
+    setSendItem(''); setSendQty(''); setSendNote('');
+  };
+
+  const removeFromCart = (idx) => setSendCart(c => c.filter((_, i) => i !== idx));
+
   const sendTransfer = async () => {
-    if (!sendPartner || !sendItem || !(parseFloat(sendQty) > 0)) return;
+    if (!sendPartner || sendCart.length === 0) return;
     setSendBusy(true); setSendErr('');
+    const warnings = [];
     try {
-      const r = await authFetch('/api/hub/transfers/send', {
-        method: 'POST',
-        body: JSON.stringify({ partnerSlug: sendPartner, itemId: sendItem, qtyBase: parseFloat(sendQty), note: sendNote.trim() }),
-      });
-      const d = await r.json();
-      if (!r.ok) { setSendErr(d.error); return; }
-      setSendItem(''); setSendQty(''); setSendNote('');
-      if (d.warning) setSendErr(`⚠ ${d.warning}`);
+      for (const line of sendCart) {
+        const r = await authFetch('/api/hub/transfers/send', {
+          method: 'POST',
+          body: JSON.stringify({ partnerSlug: sendPartner, itemId: line.itemId, qtyBase: line.qty, note: line.note }),
+        });
+        const d = await r.json();
+        if (!r.ok) { setSendErr(d.error); return; }
+        if (d.warning) warnings.push(d.warning);
+      }
+      setSendCart([]);
+      if (warnings.length) setSendErr(`⚠ ${warnings.join('; ')}`);
       load();
     } catch (e) { setSendErr(e.message); }
     finally { setSendBusy(false); }
@@ -246,49 +263,96 @@ export default function HubTab({ ctx }) {
         </div>
       )}
 
-      {/* ── Send Transfer ── */}
+      {/* ── New Transfer ── */}
       {partners.length > 0 && (
         <div className={card}>
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2 mb-4">
             <Send size={15} className="text-accent" />
-            <h3 className="text-fg font-black uppercase tracking-wider text-sm">Send Items to Partner</h3>
+            <h3 className="text-fg font-black uppercase tracking-wider text-sm">New Transfer</h3>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+
+          {/* FROM / TO */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
             <div>
-              <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">Partner</label>
-              <select value={sendPartner} onChange={e => setSendPartner(e.target.value)} className={input}>
-                <option value="">- Select partner -</option>
+              <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">From (Source)</label>
+              <select value={sendFrom} onChange={e => setSendFrom(e.target.value)} className={input}>
+                <option value="__self__">This Business ({info?.tenant ?? '…'})</option>
                 {partners.filter(p => p.status === 'active').map(p => (
                   <option key={p._id} value={p.partnerSlug}>{p.partnerName || p.partnerSlug}</option>
                 ))}
               </select>
             </div>
             <div>
-              <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">Item (from your inventory)</label>
+              <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">To (Destination)</label>
+              <select value={sendPartner} onChange={e => setSendPartner(e.target.value)} className={input}>
+                <option value="">- Select business -</option>
+                {partners.filter(p => p.status === 'active' && (sendFrom === '__self__' || p.partnerSlug !== sendFrom)).map(p => (
+                  <option key={p._id} value={p.partnerSlug}>{p.partnerName || p.partnerSlug}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Add item row */}
+          <div className="bg-page-bg border border-white/8 rounded-xl p-3 mb-3">
+            <p className="text-[10px] text-fg/40 uppercase font-bold mb-2">Add Item</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
               <select value={sendItem} onChange={e => setSendItem(e.target.value)} className={input}>
-                <option value="">- Select item -</option>
+                <option value="">- Select product -</option>
                 {inventory.map(i => (
                   <option key={i._id} value={i._id}>{i.itemName} · {i.stockQty} {i.unit}</option>
                 ))}
               </select>
+              <input
+                type="number" min="0.001" step="any" value={sendQty}
+                onChange={e => setSendQty(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addToCart()}
+                className={input}
+                placeholder={sendItem && inventory.find(i => i._id === sendItem) ? `Qty (${inventory.find(i => i._id === sendItem).unit})` : 'Quantity'}
+              />
+              <input value={sendNote} onChange={e => setSendNote(e.target.value)} onKeyDown={e => e.key === 'Enter' && addToCart()} className={input} placeholder="Note (optional)" />
             </div>
-            <div>
-              <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">
-                Quantity {sendItem && inventory.find(i => i._id === sendItem) ? `(${inventory.find(i => i._id === sendItem).unit})` : ''}
-              </label>
-              <input type="number" min="0.001" step="any" value={sendQty} onChange={e => setSendQty(e.target.value)} className={input} placeholder="0" />
-            </div>
-            <div>
-              <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">Note (optional)</label>
-              <input value={sendNote} onChange={e => setSendNote(e.target.value)} className={input} placeholder="Reason / reference" />
-            </div>
+            <button
+              onClick={addToCart}
+              disabled={!sendItem || !(parseFloat(sendQty) > 0)}
+              className={`mt-2 ${btn('ghost')} text-xs`}
+            >+ Add to Transfer</button>
           </div>
+
+          {/* Cart */}
+          {sendCart.length > 0 && (
+            <div className="border border-white/8 rounded-xl overflow-hidden mb-3">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-fg/40 text-[9px] uppercase tracking-widest border-b border-white/8 bg-white/3">
+                    <th className="text-left py-2 px-3">Product</th>
+                    <th className="text-right py-2 px-3">Qty</th>
+                    <th className="text-left py-2 px-3">Note</th>
+                    <th className="py-2 px-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {sendCart.map((line, i) => (
+                    <tr key={i} className="border-b border-white/5 last:border-0">
+                      <td className="py-2 px-3 font-bold text-fg">{line.itemName}</td>
+                      <td className="py-2 px-3 text-right tabular-nums text-fg">{line.qty} {line.unit}</td>
+                      <td className="py-2 px-3 text-fg/50 italic">{line.note || '-'}</td>
+                      <td className="py-2 px-3 text-right">
+                        <button onClick={() => removeFromCart(i)} className="text-red-400/60 hover:text-red-400 text-[10px] font-bold uppercase">Remove</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           <button
             onClick={sendTransfer}
-            disabled={sendBusy || !sendPartner || !sendItem || !(parseFloat(sendQty) > 0)}
+            disabled={sendBusy || !sendPartner || sendCart.length === 0}
             className={btn()}
           >
-            {sendBusy ? 'Sending…' : 'Send Transfer Request'}
+            {sendBusy ? 'Sending…' : `Send ${sendCart.length > 0 ? `${sendCart.length} item${sendCart.length > 1 ? 's' : ''}` : 'Transfer'}`}
           </button>
           {sendErr && <p className={`text-xs mt-2 ${sendErr.startsWith('⚠') ? 'text-yellow-400' : 'text-red-400'}`}>{sendErr}</p>}
         </div>

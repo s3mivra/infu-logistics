@@ -731,7 +731,7 @@ export default function OrdersTab({ ctx }) {
                                 <ShoppingCart size={12} /> Resume
                               </button>
                             )}
-                            <button onClick={() => printKitchenTicket(order)} className="p-1.5 bg-white/5 text-orange-400/60 rounded-lg hover:bg-orange-500/10 hover:text-orange-400 transition" title="Kitchen Ticket (no prices)">
+                            <button onClick={() => printKitchenTicket(order)} className="p-1.5 bg-white/5 text-orange-400/60 rounded-lg hover:bg-orange-500/10 hover:text-orange-400 transition" title={`${SEND_TARGET} Ticket (no prices)`}>
                               <ChefHat size={13} />
                             </button>
                             {BUSINESS_TYPE !== 'log' && (

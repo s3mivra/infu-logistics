@@ -249,10 +249,13 @@ export default function SettingsTab({ ctx }) {
                     Shown on the sidebar, login screen, printed receipts, the menu and the client portal. PNG or JPG; it's resized automatically.
                   </p>
                   <div className="flex items-center gap-4 mt-3 flex-wrap">
-                    <div className="w-20 h-20 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
+                    <div
+                      className="w-20 h-20 rounded-xl border border-white/10 flex items-center justify-center overflow-hidden shrink-0"
+                      style={systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor } : {}}
+                    >
                       {currentLogo
                         ? <img src={currentLogo} alt="Logo" className="max-w-full max-h-full object-contain" />
-                        : <ImageIcon size={22} className="text-fg/20" />}
+                        : <ImageIcon size={22} className={systemSettings.logoColor ? 'text-white/60' : 'text-fg/20'} />}
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-white hover:bg-brand/90 transition min-h-[40px]">
@@ -266,6 +269,21 @@ export default function SettingsTab({ ctx }) {
                       )}
                     </div>
                   </div>
+                  <div className="mt-3">
+                      <p className="text-[10px] text-fg/40 uppercase font-bold tracking-widest mb-2">Logo Background Color</p>
+                      <div className="flex flex-wrap gap-2">
+                        {['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#8b5cf6','#ec4899','#6b7280','#1e293b'].map(color => (
+                          <button
+                            key={color}
+                            onClick={() => saveSetting('logoColor', systemSettings.logoColor === color ? '' : color)}
+                            className="w-8 h-8 rounded-lg transition hover:scale-110"
+                            style={{ backgroundColor: color, outline: systemSettings.logoColor === color ? '2px solid white' : 'none', outlineOffset: '2px' }}
+                            title={color}
+                          />
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-fg/30 mt-1.5">Used as background color behind the logo — on screen and in print.</p>
+                    </div>
                 </div>
               </div>
             </div>

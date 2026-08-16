@@ -4893,8 +4893,11 @@ const updateStatus = async (orderId, newStatus) => {
         <div className="flex items-start gap-2.5 mb-1.5">
           <div className="shrink-0 mt-0.5">
             {systemSettings.businessLogo
-              ? <img src={systemSettings.businessLogo} alt="" className="w-8 h-8 rounded-lg object-cover" />
-              : <div className="w-8 h-8 rounded-lg bg-brand/20 flex items-center justify-center text-brand font-black text-xs select-none">{BIZ_NAME.charAt(0)}</div>
+              ? <img src={systemSettings.businessLogo} alt="" className="w-8 h-8 rounded-lg object-cover" style={systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor } : {}} />
+              : <div
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs select-none ${systemSettings.logoColor ? '' : 'bg-brand/20 text-brand'}`}
+                  style={systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor, color: '#fff' } : {}}
+                >{BIZ_NAME.charAt(0)}</div>
             }
           </div>
           <p className="text-[22px] font-black text-brand tracking-tight leading-[1.1] break-words drop-shadow-sm min-w-0 flex-1">{BIZ_NAME}</p>
