@@ -1,5 +1,5 @@
-﻿import React from 'react';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
+﻿import React, { useState, useEffect } from 'react';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, MoreVertical } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import StockTaxonomyPanel from './StockTaxonomyPanel';
 import StockTransferPanel from './StockTransferPanel';
@@ -85,6 +85,15 @@ export default function InventoryTab({ ctx }) {
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
     users, varianceNoteMode, varianceReasons,
   } = ctx;
+
+  // Which row's action menu is open (by item._id), null = all closed
+  const [openActionMenu, setOpenActionMenu] = useState(null);
+  useEffect(() => {
+    if (!openActionMenu) return;
+    const close = () => setOpenActionMenu(null);
+    document.addEventListener('click', close, { capture: true });
+    return () => document.removeEventListener('click', close, { capture: true });
+  }, [openActionMenu]);
 
   // Physical count: default each item's count input to the current SYSTEM ending value
   // (in display units), so EOD starts from "matches system" and the counter only edits
@@ -333,22 +342,40 @@ export default function InventoryTab({ ctx }) {
                           ) : <span className="text-white text-xs">-</span>}
                         </td>
                         <td className="py-3">
-                          {/* Tappable on tablets: min 36px targets, wrapping so
-                              they never overflow or shrink below a fingertip. */}
-                          <div className="flex flex-wrap gap-1.5 justify-center">
+                          {/* Desktop: inline buttons */}
+                          <div className="hidden xl:flex flex-wrap gap-1.5 justify-center">
                             <button onClick={() => fetchStockHistory(item)} className="text-accent bg-page-bg hover:bg-accent hover:text-white text-xs font-bold px-3 py-2 min-h-[36px] rounded transition">History</button>
                             <button onClick={() => openEditInventory(item)} className="text-white hover:text-fg hover:bg-blue-600 text-xs font-bold px-3 py-2 min-h-[36px] bg-blue-500 rounded transition">Edit</button>
                             <button onClick={() => {
                               const isExpired = expBadge && (expBadge.text.startsWith('EXPIRED') || expBadge.text === 'TODAY');
                               setSpoilageModal({ item });
-                              const autoQty = isExpired ? itemDisplay(item).packQty : '';
-                              setSpoilageForm({
-                                qty: isExpired ? autoQty.toString() : '',
-                                reason: isExpired ? 'Spoilage' : '',
-                                note: isExpired ? `Auto-flagged expired (${new Date(item.expiryDate).toLocaleDateString()})` : ''
-                              });
+                              setSpoilageForm({ qty: isExpired ? itemDisplay(item).packQty.toString() : '', reason: isExpired ? 'Spoilage' : '', note: isExpired ? `Auto-flagged expired (${new Date(item.expiryDate).toLocaleDateString()})` : '' });
                             }} className="text-white hover:text-fg hover:bg-orange-600 text-xs font-bold px-3 py-2 min-h-[36px] bg-orange-500 rounded transition">Waste</button>
                             <button onClick={() => deleteInventory(item._id)} className="text-white hover:text-fg text-xs font-bold px-3 py-2 min-h-[36px] bg-red-600 rounded transition">Del</button>
+                          </div>
+                          {/* Tablet / mobile: single ⋮ button → dropdown */}
+                          <div className="xl:hidden flex justify-center">
+                            <div className="relative">
+                              <button
+                                onClick={() => setOpenActionMenu(openActionMenu === item._id ? null : item._id)}
+                                className="p-2 rounded-lg bg-white/5 hover:bg-white/15 text-fg/60 hover:text-fg transition min-h-[36px] min-w-[36px] flex items-center justify-center"
+                              >
+                                <MoreVertical size={16} />
+                              </button>
+                              {openActionMenu === item._id && (
+                                <div className="absolute right-0 top-full mt-1 z-50 bg-sidebar-bg border border-white/15 rounded-xl shadow-xl min-w-[130px] overflow-hidden">
+                                  <button onClick={() => { fetchStockHistory(item); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-accent transition">History</button>
+                                  <button onClick={() => { openEditInventory(item); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-blue-400 transition">Edit</button>
+                                  <button onClick={() => {
+                                    const isExpired = expBadge && (expBadge.text.startsWith('EXPIRED') || expBadge.text === 'TODAY');
+                                    setSpoilageModal({ item });
+                                    setSpoilageForm({ qty: isExpired ? itemDisplay(item).packQty.toString() : '', reason: isExpired ? 'Spoilage' : '', note: isExpired ? `Auto-flagged expired (${new Date(item.expiryDate).toLocaleDateString()})` : '' });
+                                    setOpenActionMenu(null);
+                                  }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-orange-400 transition">Waste</button>
+                                  <button onClick={() => { deleteInventory(item._id); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-red-400 hover:bg-red-500/10 transition">Delete</button>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </td>
                       </tr>
