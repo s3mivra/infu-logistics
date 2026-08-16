@@ -42,9 +42,12 @@ const MenuItemCard = memo(({ product, onAdd }) => {
   >
     <div className="aspect-[4/3] relative overflow-hidden bg-black/30 flex items-center justify-center p-2">
       {product.image
-        ? <img src={product.image} alt={product.name} loading="lazy" className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500 drop-shadow-md" />
-        : <div className="w-full h-full flex items-center justify-center"><Coffee size={32} className="text-fg/10" /></div>
+        ? <img src={product.image} alt={product.name} loading="lazy" className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" style={{ filter: 'drop-shadow(0 6px 14px rgba(0,0,0,0.5))' }} />
+        : <div className="w-full h-full flex items-center justify-center"><Package size={32} className="text-fg/10" /></div>
       }
+      {!outOfStock && product.activeSalePrice != null && (
+        <span className="absolute top-2 left-2 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-lg bg-orange-500 text-white">SALE</span>
+      )}
       {outOfStock ? (
         <span className="absolute top-2 left-2 text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg bg-red-900/80 text-red-300 border border-red-700/40">
           Not available
@@ -62,10 +65,17 @@ const MenuItemCard = memo(({ product, onAdd }) => {
     <div className="p-3">
       <h3 className="font-bold text-fg text-sm leading-tight truncate">{product.name}</h3>
       {product.description && <p className="text-fg/40 text-xs mt-0.5 line-clamp-1">{product.description}</p>}
-      <p className="text-brand font-black text-sm mt-2">
-        ₱{(product.basePrice || 0).toFixed(2)}
-        {product.sizes?.length > 0 && <span className="text-fg/30 font-normal text-xs ml-1">& up</span>}
-      </p>
+      {product.activeSalePrice != null ? (
+        <div className="flex items-baseline gap-1.5 mt-2">
+          <p className="text-orange-400 font-black text-sm">₱{Number(product.activeSalePrice).toFixed(2)}</p>
+          <p className="text-fg/30 font-bold text-[10px] line-through">₱{(product.basePrice || 0).toFixed(2)}</p>
+        </div>
+      ) : (
+        <p className="text-brand font-black text-sm mt-2">
+          ₱{(product.basePrice || 0).toFixed(2)}
+          {product.sizes?.length > 0 && <span className="text-fg/30 font-normal text-xs ml-1">& up</span>}
+        </p>
+      )}
     </div>
   </div>
   );

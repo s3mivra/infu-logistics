@@ -1,9 +1,226 @@
-﻿import React from 'react';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
+﻿import React, { useState, useEffect, useCallback } from 'react';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Flame, Calendar, ToggleLeft, ToggleRight } from 'lucide-react';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 // Category routing default per business type - log routes to Logistics, fb to Kitchen.
 const DEFAULT_DEPARTMENT = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
+
+const RULE_TYPE_LABELS = { fixed_price: 'Fixed Sale Price', percent_off: 'Percent Off', threshold: 'Order Threshold' };
+const fmt = (n) => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+const toInputDate = (d) => d ? new Date(d).toISOString().slice(0, 16) : '';
+
+function SaleStatusBadge({ sale }) {
+  const now = new Date();
+  const start = new Date(sale.startsAt);
+  const end = new Date(sale.endsAt);
+  if (!sale.isActive) return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/5 text-fg/30">Inactive</span>;
+  if (now < start) return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/15 text-blue-400">Upcoming</span>;
+  if (now > end) return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/5 text-fg/30">Expired</span>;
+  return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-500/15 text-green-400 flex items-center gap-1"><Flame size={9} />Live</span>;
+}
+
+function RuleRow({ rule, products, onRemove }) {
+  const prod = products.find(p => p._id === rule.productId);
+  const discProd = rule.ruleType === 'threshold' ? products.find(p => p._id === rule.productId) : null;
+  return (
+    <div className="flex items-start gap-2 bg-surface border border-white/8 rounded-lg px-3 py-2 text-xs">
+      <div className="flex-1 min-w-0">
+        <span className="font-bold text-brand">{RULE_TYPE_LABELS[rule.ruleType]}</span>
+        {rule.ruleType === 'fixed_price' && prod && <span className="text-fg/60 ml-2">{prod.name} → {fmt(rule.salePrice)}</span>}
+        {rule.ruleType === 'percent_off' && prod && <span className="text-fg/60 ml-2">{prod.name} → {rule.discountPercent}% off</span>}
+        {rule.ruleType === 'threshold' && <span className="text-fg/60 ml-2">Order ≥ {fmt(rule.thresholdAmount)} → {prod?.name || 'product'} gets {rule.discountPercent}% off</span>}
+      </div>
+      {onRemove && <button onClick={onRemove} className="text-red-400 hover:text-red-300 shrink-0"><X size={12} /></button>}
+    </div>
+  );
+}
+
+function SalesSection({ apiFetch, products, isSuperAdmin }) {
+  const [sales, setSales] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ name: '', description: '', startsAt: '', endsAt: '', rules: [] });
+  const [ruleForm, setRuleForm] = useState({ ruleType: 'fixed_price', productId: '', salePrice: '', discountPercent: '', thresholdAmount: '' });
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await apiFetch('/api/sales');
+      if (r.success) setSales(r.sales);
+    } finally { setLoading(false); }
+  }, [apiFetch]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const resetForm = () => { setForm({ name: '', description: '', startsAt: '', endsAt: '', rules: [] }); setEditing(null); };
+  const resetRuleForm = () => setRuleForm({ ruleType: 'fixed_price', productId: '', salePrice: '', discountPercent: '', thresholdAmount: '' });
+
+  const addRule = () => {
+    if (!ruleForm.productId) return;
+    if (ruleForm.ruleType === 'fixed_price' && !(ruleForm.salePrice > 0)) return;
+    if (ruleForm.ruleType === 'percent_off' && !(ruleForm.discountPercent > 0)) return;
+    if (ruleForm.ruleType === 'threshold' && !(ruleForm.thresholdAmount > 0 && ruleForm.discountPercent > 0)) return;
+    const prod = products.find(p => p._id === ruleForm.productId);
+    setForm(f => ({ ...f, rules: [...f.rules, { ...ruleForm, productName: prod?.name || '' }] }));
+    resetRuleForm();
+  };
+
+  const saveSale = async () => {
+    if (!form.name.trim() || !form.startsAt || !form.endsAt) return;
+    setSaving(true);
+    try {
+      const method = editing ? 'PUT' : 'POST';
+      const url = editing ? `/api/sales/${editing}` : '/api/sales';
+      const r = await apiFetch(url, { method, body: JSON.stringify(form) });
+      if (r.success) { load(); resetForm(); }
+    } finally { setSaving(false); }
+  };
+
+  const deleteSale = async (id) => {
+    if (!confirm('Delete this sale?')) return;
+    await apiFetch(`/api/sales/${id}`, { method: 'DELETE' });
+    load();
+  };
+
+  const toggleActive = async (sale) => {
+    await apiFetch(`/api/sales/${sale._id}`, { method: 'PUT', body: JSON.stringify({ ...sale, isActive: !sale.isActive }) });
+    load();
+  };
+
+  const startEdit = (sale) => {
+    setEditing(sale._id);
+    setForm({ name: sale.name, description: sale.description || '', startsAt: toInputDate(sale.startsAt), endsAt: toInputDate(sale.endsAt), rules: sale.rules || [] });
+    setExpanded(sale._id);
+  };
+
+  const inputCls = 'bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand placeholder-white/20';
+
+  return (
+    <div className="bg-surface border border-white/10 shadow-md rounded-xl p-4 sm:p-6">
+      <div className="flex items-center gap-3 mb-1">
+        <Flame size={18} className="text-orange-400" />
+        <h3 className="text-xl font-bold text-fg">Sales &amp; Promotions</h3>
+      </div>
+      <p className="text-xs text-fg/40 mb-4">Time-boxed discounts applied automatically during the sale window. Fixed price, percent off, or order-threshold deals.</p>
+
+      <div className="flex flex-col lg:flex-row gap-6">
+        {/* List */}
+        <div className="flex-1 space-y-2">
+          {loading && <p className="text-sm text-fg/30 italic py-4">Loading…</p>}
+          {!loading && sales.length === 0 && <p className="text-sm text-fg/30 italic py-4">No sales yet.</p>}
+          {sales.map(sale => (
+            <div key={sale._id} className="bg-page-bg border border-white/10 rounded-xl overflow-hidden">
+              <div className="flex items-center gap-3 px-4 py-3">
+                <button onClick={() => setExpanded(expanded === sale._id ? null : sale._id)} className="flex-1 min-w-0 text-left flex items-center gap-2">
+                  <ChevronRight size={14} className={`text-fg/40 shrink-0 transition-transform ${expanded === sale._id ? 'rotate-90' : ''}`} />
+                  <div className="min-w-0">
+                    <p className="font-bold text-fg text-sm truncate">{sale.name}</p>
+                    <p className="text-[10px] text-fg/40 flex items-center gap-1 mt-0.5">
+                      <Calendar size={9} />{fmtDate(sale.startsAt)} – {fmtDate(sale.endsAt)}
+                      <span className="mx-1">·</span>{sale.rules?.length || 0} rule{sale.rules?.length !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                </button>
+                <SaleStatusBadge sale={sale} />
+                {isSuperAdmin && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => toggleActive(sale)} title={sale.isActive ? 'Disable' : 'Enable'} className="p-1 text-fg/40 hover:text-fg/80 transition">
+                      {sale.isActive ? <ToggleRight size={16} className="text-green-400" /> : <ToggleLeft size={16} />}
+                    </button>
+                    <button onClick={() => startEdit(sale)} className="p-1 text-fg/40 hover:text-blue-400 transition"><Edit size={13} /></button>
+                    <button onClick={() => deleteSale(sale._id)} className="p-1 text-fg/40 hover:text-red-400 transition"><Trash2 size={13} /></button>
+                  </div>
+                )}
+              </div>
+              {expanded === sale._id && (
+                <div className="border-t border-white/8 px-4 py-3 space-y-1.5">
+                  {(sale.rules || []).length === 0 && <p className="text-xs text-fg/30 italic">No rules yet.</p>}
+                  {(sale.rules || []).map((r, i) => <RuleRow key={i} rule={r} products={products} />)}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Form */}
+        {isSuperAdmin && (
+          <div className="w-full lg:w-96 bg-page-bg border border-white/10 rounded-xl p-4 space-y-3">
+            <p className="text-sm font-black text-fg uppercase tracking-wider">{editing ? 'Edit Sale' : 'New Sale'}</p>
+
+            <input className={`w-full ${inputCls}`} placeholder="Sale name (e.g. Weekend Flash Sale)" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+            <input className={`w-full ${inputCls}`} placeholder="Description (optional)" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <p className="text-[10px] text-fg/40 uppercase font-bold mb-1">Starts</p>
+                <input type="datetime-local" className={`w-full ${inputCls} text-xs`} value={form.startsAt} onChange={e => setForm(f => ({ ...f, startsAt: e.target.value }))} />
+              </div>
+              <div>
+                <p className="text-[10px] text-fg/40 uppercase font-bold mb-1">Ends</p>
+                <input type="datetime-local" className={`w-full ${inputCls} text-xs`} value={form.endsAt} onChange={e => setForm(f => ({ ...f, endsAt: e.target.value }))} />
+              </div>
+            </div>
+
+            {/* Rules builder */}
+            <div className="space-y-1.5">
+              <p className="text-[10px] text-fg/40 uppercase font-bold">Discount Rules</p>
+              {form.rules.map((r, i) => (
+                <RuleRow key={i} rule={r} products={products} onRemove={() => setForm(f => ({ ...f, rules: f.rules.filter((_, j) => j !== i) }))} />
+              ))}
+
+              {/* Add rule inline */}
+              <div className="bg-surface border border-dashed border-white/10 rounded-lg p-3 space-y-2">
+                <select className={`w-full ${inputCls} text-xs`} value={ruleForm.ruleType} onChange={e => setRuleForm(r => ({ ...r, ruleType: e.target.value }))}>
+                  <option value="fixed_price">Fixed Sale Price</option>
+                  <option value="percent_off">Percent Off</option>
+                  <option value="threshold">Order Threshold Deal</option>
+                </select>
+
+                <select className={`w-full ${inputCls} text-xs`} value={ruleForm.productId} onChange={e => setRuleForm(r => ({ ...r, productId: e.target.value }))}>
+                  <option value="">
+                    {ruleForm.ruleType === 'threshold' ? '— Select discounted product —' : '— Select product —'}
+                  </option>
+                  {products.filter(p => !p.isArchived).map(p => (
+                    <option key={p._id} value={p._id}>{p.name}{p.basePrice ? ` (${fmt(p.basePrice)})` : ''}</option>
+                  ))}
+                </select>
+
+                {ruleForm.ruleType === 'fixed_price' && (
+                  <input type="number" min="0" step="0.01" className={`w-full ${inputCls} text-xs`} placeholder="Sale price ₱" value={ruleForm.salePrice} onChange={e => setRuleForm(r => ({ ...r, salePrice: e.target.value }))} />
+                )}
+                {ruleForm.ruleType === 'percent_off' && (
+                  <input type="number" min="1" max="100" className={`w-full ${inputCls} text-xs`} placeholder="Discount % (e.g. 20)" value={ruleForm.discountPercent} onChange={e => setRuleForm(r => ({ ...r, discountPercent: e.target.value }))} />
+                )}
+                {ruleForm.ruleType === 'threshold' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="number" min="0" step="0.01" className={`${inputCls} text-xs`} placeholder="Min order ₱" value={ruleForm.thresholdAmount} onChange={e => setRuleForm(r => ({ ...r, thresholdAmount: e.target.value }))} />
+                    <input type="number" min="1" max="100" className={`${inputCls} text-xs`} placeholder="Discount %" value={ruleForm.discountPercent} onChange={e => setRuleForm(r => ({ ...r, discountPercent: e.target.value }))} />
+                  </div>
+                )}
+
+                <button onClick={addRule} className="w-full py-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5">
+                  <Plus size={12} /> Add Rule
+                </button>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              {editing && (
+                <button onClick={resetForm} className="px-3 py-2 bg-white/5 text-fg/50 rounded-lg text-xs font-bold hover:bg-white/10 transition">Cancel</button>
+              )}
+              <button onClick={saveSale} disabled={saving || !form.name.trim() || !form.startsAt || !form.endsAt} className="flex-1 py-2 bg-orange-500 text-white rounded-lg text-xs font-black uppercase tracking-wider hover:bg-orange-400 transition disabled:opacity-40">
+                {saving ? 'Saving…' : editing ? 'Update Sale' : 'Create Sale'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ── ProductsTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
@@ -929,5 +1146,8 @@ export default function ProductsTab({ ctx }) {
             </div>
           </div>
         </div>
+
+        {/* ════════════ SALES & PROMOTIONS ════════════ */}
+        <SalesSection apiFetch={apiFetch} products={products} isSuperAdmin={isSuperAdmin} />
   );
 }

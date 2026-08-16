@@ -58,9 +58,12 @@ export function resolveLetterhead(settings = {}) {
     s.portalSlipFooter,
     vatRegistered ? 'This is a VAT Transaction.' : 'This is a Non-VAT Transaction.',
   );
-  const logo = s.businessLogo || '';
+  // Print logo: dedicated print logo takes priority unless "use business logo" toggle is on
+  // Default: use business logo unless user explicitly set printLogoUseBusiness=false AND uploaded a print logo
+  const logo = (s.printLogoEnabled && s.printLogo) ? s.printLogo : (s.businessLogo || '');
   const logoColor = s.logoColor || '';
-  return { logo, logoColor, companyName, address, phone, email, announcement, paymentInstructions, supportLink, supportLabel, slipFooter, vatRegistered };
+  const logoRadius = s.logoRadius || '8px';
+  return { logo, logoColor, logoRadius, companyName, address, phone, email, announcement, paymentInstructions, supportLink, supportLabel, slipFooter, vatRegistered };
 }
 
 // Build the 80mm thermal receipt HTML. Callers pass their own doc label, meta
@@ -139,8 +142,8 @@ export function buildReceiptHTML({
   body { font-family: 'Courier New', Courier, monospace; font-size: 11px; color: #000; background: #fff; width: 72mm; padding-top: 3mm; }
   .center { text-align: center; }
   .logo-row { display: flex; align-items: center; justify-content: center; gap: 6px; }
-  .logo-img { max-height: 36px; max-width: 36px; object-fit: contain; border-radius: 6px; }
-  .logo-wrap { display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; }
+  .logo-img { max-height: 36px; max-width: 36px; object-fit: contain; border-radius: ${lh.logoRadius}; }
+  .logo-wrap { display: inline-flex; align-items: center; justify-content: center; border-radius: ${lh.logoRadius}; }
   .store  { font-size: 15px; font-weight: bold; letter-spacing: 1px; margin-bottom: 1px; }
   .addr   { font-size: 9px; color: #333; }
   .doclabel { font-size: 12px; font-weight: bold; letter-spacing: 1px; margin-top: 3px; }

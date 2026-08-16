@@ -1,5 +1,5 @@
 ﻿import React from 'react';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Footprints, Utensils, ShoppingBag, Bike, Car, UserX, UserCheck } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Footprints, Utensils, ShoppingBag, Bike, Car, UserX, UserCheck, Flame } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
 // Icon-based replacement for a native <select> - browsers can't render custom
@@ -84,7 +84,7 @@ export default function OrdersTab({ ctx }) {
     posReserveOnly, setPosReserveOnly,
     posCustomerPhone, posDeliveryAddress, posDeliveryFee, posDeliveryFeeNum, posDiscountAmt,
     posDiscountType, posDiscountValue, posItemDiscountAmt, posGrandTotal, posSubmitting, posPage, posPayment,
-    posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable,
+    posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable, saleThresholds,
     pricingItemsPerPage, pricingPage, printOrderSlip, printBillingStatement, printDeliveryReceipt, printXReading, products,
     removeAddOnFromOrder, removeComplimentary, removeMaterial, removeSize, restockData,
     rfActiveFund, rfDisbForm, rfDisbModal, rfDisbSubmitting, rfFunds,
@@ -246,15 +246,25 @@ export default function OrdersTab({ ctx }) {
                                   {is86 ? '86' : 'Out'}
                                 </span>
                               )}
-                              {p.image ? (
-                                <img src={p.image} alt="" loading="lazy" decoding="async" className="w-14 h-14 object-cover rounded-xl mb-2 group-hover:scale-105 transition-transform duration-240" />
+                              {!unavailable && p.activeSalePrice != null && (
+                                <span className="absolute top-1.5 left-1.5 z-10 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-lg bg-orange-500 text-white">SALE</span>
+                              )}
+                              {p.image && systemSettings.imagesEnabled !== false ? (
+                                <img src={p.image} alt="" loading="lazy" decoding="async" className="w-14 h-14 object-contain rounded-xl mb-2 group-hover:scale-105 transition-transform duration-240" style={{ filter: 'drop-shadow(0 4px 10px rgba(0,0,0,0.45))' }} />
                               ) : (
-                                <div className="w-14 h-14 bg-white/5 rounded-xl mb-2 flex items-center justify-center" aria-hidden="true">
-                                  <Package size={20} className="text-fg/20" />
+                                <div className="w-14 h-14 bg-white/5 border border-white/8 rounded-xl mb-2 flex items-center justify-center" aria-hidden="true">
+                                  <Package size={20} className="text-fg/15" />
                                 </div>
                               )}
                               <span className="font-bold text-xs text-fg/80 line-clamp-2 leading-tight w-full">{p.name}</span>
-                              <span className="text-brand font-black mt-auto pt-1 text-sm tabular-nums">₱{Number(p.basePrice || p.price || 0).toFixed(2)}</span>
+                              {p.activeSalePrice != null ? (
+                                <div className="mt-auto pt-1 flex flex-col items-center gap-0.5">
+                                  <span className="text-orange-400 font-black text-sm tabular-nums">₱{Number(p.activeSalePrice).toFixed(2)}</span>
+                                  <span className="text-fg/30 font-bold text-[10px] tabular-nums line-through">₱{Number(p.basePrice || 0).toFixed(2)}</span>
+                                </div>
+                              ) : (
+                                <span className="text-brand font-black mt-auto pt-1 text-sm tabular-nums">₱{Number(p.basePrice || p.price || 0).toFixed(2)}</span>
+                              )}
                             </button>
                             );
                           })}
@@ -345,6 +355,21 @@ export default function OrdersTab({ ctx }) {
                       </div>
                     )}
                   </div>
+
+                  {/* Threshold sale banners */}
+                  {(saleThresholds || []).map((rule, i) => {
+                    const met = posSubtotal >= rule.thresholdAmount;
+                    const remain = rule.thresholdAmount - posSubtotal;
+                    return (
+                      <div key={i} className={`mx-3 mt-2 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 ${met ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30' : 'bg-white/5 text-fg/40 border border-white/8'}`}>
+                        <Flame size={12} className={met ? 'text-orange-400' : 'text-fg/20'} />
+                        {met
+                          ? <span>🎉 Deal unlocked! <span className="font-black">{rule.productName}</span> gets <span className="font-black">{rule.discountPercent}%</span> off</span>
+                          : <span>Spend <span className="font-black">₱{remain.toFixed(2)}</span> more → <span className="font-black">{rule.productName}</span> gets {rule.discountPercent}% off</span>
+                        }
+                      </div>
+                    );
+                  })}
 
                   {/* Cart items */}
                   <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar min-h-0">

@@ -968,6 +968,29 @@ const ComboSchema = new mongoose.Schema({
 }, { timestamps: true });
 const Combo = mongoose.model('Combo', ComboSchema);
 
+// ── SALES / PROMOTIONS ────────────────────────────────────────────────────────
+// Time-boxed promotional pricing overlaid on top of normal product prices.
+// Rules:
+//   fixed_price  – product sells at salePrice during the window
+//   percent_off  – product gets discountPercent% off
+//   threshold    – if order subtotal >= thresholdAmount, a product gets discountPercent% off
+const SaleSchema = new mongoose.Schema({
+  name:        { type: String, required: true },
+  description: String,
+  startsAt:    { type: Date, required: true },
+  endsAt:      { type: Date, required: true },
+  isActive:    { type: Boolean, default: true },
+  rules: [{
+    ruleType:          { type: String, enum: ['fixed_price', 'percent_off', 'threshold'], required: true },
+    productId:         String,
+    productName:       String,
+    salePrice:         Number,   // for fixed_price
+    discountPercent:   Number,   // for percent_off and threshold
+    thresholdAmount:   Number,   // for threshold: minimum order subtotal
+  }],
+}, { timestamps: true });
+const Sale = mongoose.model('Sale', SaleSchema);
+
 const OrderSchema = new mongoose.Schema({
   businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
   // Multi-tenancy (Phase 1): every tenant-scoped doc carries a tenantId. Backfilled
@@ -2560,6 +2583,8 @@ const ctx = {
   Product,
   ComboSchema,
   Combo,
+  SaleSchema,
+  Sale,
   OrderSchema,
   Order,
   QRSessionSchema,

@@ -304,6 +304,7 @@ export default function AdminDashboard() {
   const [modForm, setModForm] = useState({ name: '', isRequired: true, minSelect: 1, maxSelect: 1, options: [] });
   // --- COMBOS / BUNDLES (PRODUCT PROMOS) ---
   const [combos, setCombos] = useState([]);
+  const [saleThresholds, setSaleThresholds] = useState([]);
   const [editingCombo, setEditingCombo] = useState(null);
   const [comboForm, setComboForm] = useState({ name: '', description: '', price: '', image: '', items: [] });
   // --- PARKED ORDERS / OPEN TABS ---
@@ -926,14 +927,21 @@ export default function AdminDashboard() {
     }
     try {
       const get = async (url, key) => { const r = await apiFetch(url); return r.ok ? ((await r.json())[key] || []) : null; };
-      const products       = await get('/api/products', 'products');
+      let saleThresholdsRaw = [];
+      const products = await (async () => {
+        const r = await apiFetch('/api/products');
+        if (!r.ok) return null;
+        const d = await r.json();
+        saleThresholdsRaw = d.saleThresholds || [];
+        return d.products || [];
+      })();
       const categories     = await get('/api/categories', 'categories');
       const discounts      = await get('/api/discounts', 'discounts');
       const addons         = await get('/api/addons', 'addons');
       const modifierGroups = await get('/api/modifier-groups', 'groups');
       const combos         = await get('/api/combos?all=1', 'combos');
 
-      if (products)       setProducts(products);
+      if (products)       { setProducts(products); setSaleThresholds(saleThresholdsRaw); }
       if (categories)     setCategories(categories);
       if (discounts)      setDiscounts(discounts);
       if (addons)         setGlobalAddOns(addons);
@@ -1495,9 +1503,10 @@ export default function AdminDashboard() {
       return ui.alert(`Please make a selection for: ${names}`);
     }
 
-    let finalPrice = posSelectedProduct.basePrice || posSelectedProduct.price || 0;
+    // Use active sale price when no size is selected (size pricing overrides base)
+    let finalPrice = (posSelectedProduct.activeSalePrice != null ? posSelectedProduct.activeSalePrice : null) ?? posSelectedProduct.basePrice ?? posSelectedProduct.price ?? 0;
     let finalName = posSelectedProduct.name;
-    
+
     if (posActiveSize !== null) {
       const sizeObj = posSelectedProduct.sizes[posActiveSize];
       finalPrice = sizeObj.price;
@@ -4893,10 +4902,10 @@ const updateStatus = async (orderId, newStatus) => {
         <div className="flex items-start gap-2.5 mb-1.5">
           <div className="shrink-0 mt-0.5">
             {systemSettings.businessLogo
-              ? <img src={systemSettings.businessLogo} alt="" className="w-8 h-8 rounded-lg object-cover" style={systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor } : {}} />
+              ? <img src={systemSettings.businessLogo} alt="" className="w-12 h-12 object-cover" style={{ borderRadius: systemSettings.logoRadius || '10px', ...(systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor } : {}) }} />
               : <div
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs select-none ${systemSettings.logoColor ? '' : 'bg-brand/20 text-brand'}`}
-                  style={systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor, color: '#fff' } : {}}
+                  className={`w-12 h-12 flex items-center justify-center font-black text-sm select-none ${systemSettings.logoColor ? '' : 'bg-brand/20 text-brand'}`}
+                  style={{ borderRadius: systemSettings.logoRadius || '10px', ...(systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor, color: '#fff' } : {}) }}
                 >{BIZ_NAME.charAt(0)}</div>
             }
           </div>
@@ -5241,6 +5250,7 @@ const updateStatus = async (orderId, newStatus) => {
     // ── Combos / Bundles ─────────────────────────────────────────────────────
     combos, editingCombo, setEditingCombo, comboForm, setComboForm,
     saveCombo, editCombo, deleteCombo, addComboToPosCart,
+    saleThresholds,
     // ── Parked Orders ────────────────────────────────────────────────────────
     parkedOrders, parkedModalOpen, setParkedModalOpen, fetchParked, parkCurrentOrder, resumeParked,
     // ── Reports ──────────────────────────────────────────────────────────────

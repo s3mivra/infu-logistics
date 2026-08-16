@@ -27,8 +27,9 @@ const money = (n) => Number(n || 0).toFixed(2);
 // Resolve the shared letterhead + payment/contact strings from settings → env → default.
 export function resolveBillingLetterhead(settings = {}) {
   const s = settings || {};
-  const logo = s.businessLogo || '';
+  const logo = (s.printLogoEnabled && s.printLogo) ? s.printLogo : (s.businessLogo || '');
   const logoColor = s.logoColor || '';
+  const logoRadius = s.logoRadius || '10px';
   const companyName = pick(s.portalCompanyName, ENV_BILLING.name, BIZ_NAME);
   // Settings hold a single address field; env holds up to two lines. Prefer the
   // admin-entered value, else stitch the env lines.
@@ -49,7 +50,7 @@ export function resolveBillingLetterhead(settings = {}) {
       : '',
   );
   const slipFooter = pick(s.portalSlipFooter);
-  return { logo, logoColor, companyName, addressLines, phone, email, announcement, supportLink, accountName, paymentInstructions, slipFooter };
+  return { logo, logoColor, logoRadius, companyName, addressLines, phone, email, announcement, supportLink, accountName, paymentInstructions, slipFooter };
 }
 
 const DEFAULT_TERMS = [
@@ -144,8 +145,8 @@ export function buildBillingDocHTML({
   body { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #000; }
   .header { text-align: center; margin-bottom: 10px; }
   .header .biz-row { display: flex; align-items: center; justify-content: center; gap: 10px; }
-  .header .biz-logo { max-height: 44px; max-width: 72px; object-fit: contain; border-radius: 8px; }
-  .header .logo-wrap { display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; }
+  .header .biz-logo { max-height: 44px; max-width: 72px; object-fit: contain; border-radius: ${lh.logoRadius}; }
+  .header .logo-wrap { display: inline-flex; align-items: center; justify-content: center; border-radius: ${lh.logoRadius}; }
   .header .biz  { font-size: 14pt; font-weight: bold; letter-spacing: 1px; }
   .header .addr { font-size: 8.5pt; margin-top: 1px; color: #333; }
   .title-wrap   { text-align: center; margin-bottom: 6px; }
