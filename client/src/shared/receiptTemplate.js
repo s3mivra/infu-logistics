@@ -58,8 +58,12 @@ export function resolveLetterhead(settings = {}) {
     s.portalSlipFooter,
     vatRegistered ? 'This is a VAT Transaction.' : 'This is a Non-VAT Transaction.',
   );
-  const logo = s.businessLogo || '';
-  return { logo, companyName, address, phone, email, announcement, paymentInstructions, supportLink, supportLabel, slipFooter, vatRegistered };
+  // Print logo: dedicated print logo takes priority unless "use business logo" toggle is on
+  // Default: use business logo unless user explicitly set printLogoUseBusiness=false AND uploaded a print logo
+  const logo = (s.printLogoEnabled && s.printLogo) ? s.printLogo : (s.businessLogo || '');
+  const logoColor = s.logoColor || '';
+  const logoRadius = s.logoRadius || '8px';
+  return { logo, logoColor, logoRadius, companyName, address, phone, email, announcement, paymentInstructions, supportLink, supportLabel, slipFooter, vatRegistered };
 }
 
 // Build the 80mm thermal receipt HTML. Callers pass their own doc label, meta
@@ -133,12 +137,13 @@ export function buildReceiptHTML({
 <meta charset="utf-8">
 <title>${esc(title)}</title>
 <style>
-  @page { size: 80mm auto; margin: 3mm 4mm; }
+  @page { size: 80mm auto; margin: 0 4mm; }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Courier New', Courier, monospace; font-size: 11px; color: #000; background: #fff; width: 72mm; }
+  body { font-family: 'Courier New', Courier, monospace; font-size: 11px; color: #000; background: #fff; width: 72mm; padding-top: 3mm; }
   .center { text-align: center; }
   .logo-row { display: flex; align-items: center; justify-content: center; gap: 6px; }
-  .logo-img { max-height: 36px; max-width: 36px; object-fit: contain; }
+  .logo-img { max-height: 36px; max-width: 36px; object-fit: contain; border-radius: ${lh.logoRadius}; }
+  .logo-wrap { display: inline-flex; align-items: center; justify-content: center; border-radius: ${lh.logoRadius}; }
   .store  { font-size: 15px; font-weight: bold; letter-spacing: 1px; margin-bottom: 1px; }
   .addr   { font-size: 9px; color: #333; }
   .doclabel { font-size: 12px; font-weight: bold; letter-spacing: 1px; margin-top: 3px; }
@@ -166,7 +171,7 @@ export function buildReceiptHTML({
   .copy-tag { text-align: center; font-size: 10px; font-weight: bold; letter-spacing: 1px; margin-bottom: 2px; }
   @media print {
     html, body { width: 72mm; background: #fff; }
-    @page { size: 80mm auto; margin: 3mm 4mm; }
+    @page { size: 80mm auto; margin: 0 4mm; }
   }
 </style>
 </head>
@@ -176,7 +181,7 @@ ${(duplicate ? ['', 'DUPLICATE'] : ['']).map(copyTag => `
   ${copyTag ? `<div class="copy-tag">-- ${esc(copyTag)} --</div>` : ''}
   <div class="center">
     <div class="logo-row">
-      ${lh.logo ? `<img class="logo-img" src="${lh.logo}" alt="" />` : ''}
+      ${lh.logo ? `<span class="logo-wrap" style="${lh.logoColor ? `background:${lh.logoColor};padding:3px;` : ''}"><img class="logo-img" src="${lh.logo}" alt="" /></span>` : ''}
       <div class="store">${esc(lh.companyName)}</div>
     </div>
     ${lh.address ? `<div class="addr">${esc(lh.address)}</div>` : ''}

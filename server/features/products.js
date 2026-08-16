@@ -100,6 +100,8 @@ export default function registerProducts(ctx) {
     Product,
     ComboSchema,
     Combo,
+    SaleSchema,
+    Sale,
     OrderSchema,
     Order,
     QRSessionSchema,
@@ -307,6 +309,42 @@ app.get('/api/products', async (req, res) => {
       }
     });
 
+    // Overlay active sale pricing (fixed_price / percent_off rules).
+    // Threshold rules are returned as activeSaleThresholds alongside products
+    // so the POS can apply them when the order subtotal is known client-side.
+    const now = new Date();
+    const activeSales = await Sale.find({ isActive: true, startsAt: { $lte: now }, endsAt: { $gte: now } }).lean();
+    const thresholdRules = [];
+    const salePriceMap = {};   // productId → { salePrice, saleName, salePercent }
+    for (const sale of activeSales) {
+      for (const rule of (sale.rules || [])) {
+        if (rule.ruleType === 'threshold') {
+          thresholdRules.push({ saleName: sale.name, productId: rule.productId, productName: rule.productName, thresholdAmount: rule.thresholdAmount, discountPercent: rule.discountPercent });
+        } else if (rule.productId) {
+          const pid = String(rule.productId);
+          const existing = salePriceMap[pid];
+          // Last sale wins if multiple overlap; could extend to "lowest price" if needed
+          if (rule.ruleType === 'fixed_price') {
+            salePriceMap[pid] = { salePrice: rule.salePrice, saleName: sale.name, salePercent: null };
+          } else if (rule.ruleType === 'percent_off' && !existing?.salePrice) {
+            salePriceMap[pid] = { salePercent: rule.discountPercent, saleName: sale.name, salePrice: null };
+          }
+        }
+      }
+    }
+    products.forEach(p => {
+      const overlay = salePriceMap[String(p._id)];
+      if (overlay) {
+        p.saleName = overlay.saleName;
+        if (overlay.salePrice != null) {
+          p.activeSalePrice = overlay.salePrice;
+        } else if (overlay.salePercent != null) {
+          p.activeSalePrice = +(p.basePrice * (1 - overlay.salePercent / 100)).toFixed(2);
+          p.activeSalePercent = overlay.salePercent;
+        }
+      }
+    });
+
     // Compute stockAvailable from live inventory.
     //  • FB / recipe products: every linked ingredient must have enough stock.
     //  • LOG / 1:1 products (no recipe): the product IS a stocked good - match the
@@ -367,7 +405,7 @@ app.get('/api/products', async (req, res) => {
       }
     });
 
-    res.json({ success: true, products });
+    res.json({ success: true, products, saleThresholds: thresholdRules });
   } catch (err) {
     log.error({ err }, 'GET /api/products failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -619,5 +657,48 @@ app.put('/api/combos/:id', verifyToken, requireSuperAdmin, async (req, res) => {
 app.delete('/api/combos/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try { await Combo.findByIdAndDelete(req.params.id); emitToAll('menuUpdated'); res.json({ success: true }); }
   catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// ── SALES / PROMOTIONS CRUD ───────────────────────────────────────────────────
+app.get('/api/sales', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const sales = await Sale.find().sort({ startsAt: -1 }).lean();
+    res.json({ success: true, sales });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+app.post('/api/sales', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { name, description, startsAt, endsAt, rules } = req.body;
+    if (!name?.trim()) return res.status(400).json({ success: false, error: 'Sale name is required.' });
+    if (!startsAt || !endsAt) return res.status(400).json({ success: false, error: 'Start and end dates are required.' });
+    if (new Date(startsAt) >= new Date(endsAt)) return res.status(400).json({ success: false, error: 'End date must be after start date.' });
+    const sale = await Sale.create({ name: name.trim(), description, startsAt: new Date(startsAt), endsAt: new Date(endsAt), rules: rules || [] });
+    emitToAll('menuUpdated');
+    res.json({ success: true, sale });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+app.put('/api/sales/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { name, description, startsAt, endsAt, isActive, rules } = req.body;
+    if (startsAt && endsAt && new Date(startsAt) >= new Date(endsAt))
+      return res.status(400).json({ success: false, error: 'End date must be after start date.' });
+    const sale = await Sale.findByIdAndUpdate(req.params.id,
+      { name, description, startsAt: startsAt ? new Date(startsAt) : undefined, endsAt: endsAt ? new Date(endsAt) : undefined, isActive, rules },
+      { returnDocument: 'after', runValidators: true }
+    );
+    if (!sale) return res.status(404).json({ success: false, error: 'Sale not found.' });
+    emitToAll('menuUpdated');
+    res.json({ success: true, sale });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+app.delete('/api/sales/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    await Sale.findByIdAndDelete(req.params.id);
+    emitToAll('menuUpdated');
+    res.json({ success: true });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 }

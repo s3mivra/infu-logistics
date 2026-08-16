@@ -199,6 +199,11 @@ const PUBLIC_PORTAL_KEYS = [
   'portalCompanyEmail',
   'portalSlipFooter',
   'businessLogo',
+  'paymentQrImage',
+  'printLogo',
+  'printLogoEnabled',
+  'logoColor',
+  'logoRadius',
 ];
 
 // ── SETTINGS ROUTES ──────────────────────────────────────────────────────────

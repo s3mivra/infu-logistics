@@ -8,7 +8,7 @@ import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocume
 import {
   Package, ShoppingCart, Plus, Minus, X, LogOut, CheckCircle,
   CreditCard, Loader2, ChevronLeft, Search, Download, FileText, Menu, Megaphone,
-  Settings, KeyRound, Palette, UserCircle, Eye, EyeOff,
+  Settings, KeyRound, Palette, UserCircle, Eye, EyeOff, QrCode,
 } from 'lucide-react';
 
 let _pdfLibPromise = null;
@@ -123,7 +123,9 @@ const ProductCard = memo(({ product, onAdd, showPrices }) => {
   const unavailable = product.isAvailable === false || product.stockAvailable === false;
   const discount = (product.effectiveDiscountPercent ?? product.discountPercent) || 0;
   const base = Number(product.basePrice || 0);
-  const net = base * (1 - discount / 100);
+  // Sale price from active sales takes priority over client discount percent
+  const hasSale = product.activeSalePrice != null;
+  const net = hasSale ? Number(product.activeSalePrice) : base * (1 - discount / 100);
   return (
   <div
     onClick={() => !unavailable && onAdd(product)}
@@ -134,23 +136,26 @@ const ProductCard = memo(({ product, onAdd, showPrices }) => {
   >
     {/* Product image - only present when the "Product Images" setting is on
         (the server strips product.image for customers when disabled). */}
-    {product.image && (
-      <div className="w-full h-24 sm:h-28 mb-2.5 rounded-xl overflow-hidden bg-page-bg/40 flex items-center justify-center">
-        <img src={product.image} alt={product.name} loading="lazy" className="w-full h-full object-contain" />
-      </div>
-    )}
+    <div className="w-full h-24 sm:h-28 mb-2.5 rounded-xl flex items-center justify-center overflow-hidden" style={{ background: 'color-mix(in srgb, currentColor 6%, transparent)' }}>
+      {product.image
+        ? <img src={product.image} alt={product.name} loading="lazy" className="w-full h-full object-contain p-2" style={{ filter: 'drop-shadow(0 6px 16px rgba(0,0,0,0.55))' }} />
+        : <Package size={32} className="opacity-20" />}
+    </div>
     <div className="flex items-start justify-between gap-2">
       <h3 className="font-bold text-fg text-[13px] sm:text-sm leading-snug">{product.name}</h3>
-      <span className={`shrink-0 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${unavailable ? 'bg-white border-white text-fg' : 'bg-emerald-400 border-emerald-400 text-white'}`}>
-        {unavailable ? 'Out of Stock' : 'In Stock'}
-      </span>
+      <div className="flex flex-col items-end gap-1 shrink-0">
+        {hasSale && <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-orange-500 text-white">Sale</span>}
+        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${unavailable ? 'bg-white border-white text-fg' : 'bg-emerald-400 border-emerald-400 text-white'}`}>
+          {unavailable ? 'Out of Stock' : 'In Stock'}
+        </span>
+      </div>
     </div>
     {product.description && <p className="text-fg/40 text-xs mt-1 line-clamp-2">{product.description}</p>}
     <div className="flex items-center justify-between gap-2 mt-3">
       {showPrices ? (
         <div className="min-w-0">
-          <p className="text-fg font-black text-sm leading-none">{peso(net)}</p>
-          {discount > 0 && (
+          <p className={`font-black text-sm leading-none ${hasSale ? 'text-orange-400' : 'text-fg'}`}>{peso(net)}</p>
+          {(hasSale || discount > 0) && (
             <p className="text-fg/30 text-[10px] line-through mt-0.5">{peso(base)}</p>
           )}
         </div>
@@ -203,6 +208,7 @@ export default function ClientOrderPage() {
   const [orderNotes, setOrderNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [successOrder, setSuccessOrder] = useState(null);
+  const [showQr, setShowQr] = useState(false);
 
   // Order status queue (portal sidebar)
   const [myOrders, setMyOrders] = useState([]);
@@ -301,8 +307,9 @@ export default function ClientOrderPage() {
 
   // Keep the copy live when an admin edits it while a client is on the page.
   useEffect(() => {
+    const LIVE_KEYS = new Set(['paymentQrImage', 'businessLogo', 'logoColor', 'logoRadius']);
     const onSettings = ({ key, value }) => {
-      if (key && key.startsWith('portal')) setPortal(p => ({ ...p, [key]: value }));
+      if (key && (key.startsWith('portal') || LIVE_KEYS.has(key))) setPortal(p => ({ ...p, [key]: value }));
     };
     socket.on('settingsUpdated', onSettings);
     return () => socket.off('settingsUpdated', onSettings);
@@ -927,6 +934,34 @@ export default function ClientOrderPage() {
   return (
     <div className="min-h-screen bg-page-bg flex flex-col text-fg">
 
+      {/* QR Payment modal */}
+      {showQr && portal.paymentQrImage && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setShowQr(false)}
+        >
+          <div
+            className="bg-sidebar-bg border border-white/10 rounded-2xl p-5 flex flex-col items-center gap-4 max-w-xs w-full"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between w-full">
+              <p className="font-bold text-fg text-sm">Scan to Pay</p>
+              <button onClick={() => setShowQr(false)} className="text-fg/40 hover:text-fg transition">
+                <X size={18} />
+              </button>
+            </div>
+            <img
+              src={portal.paymentQrImage}
+              alt="Payment QR"
+              className="w-full max-w-[220px] rounded-xl object-contain"
+            />
+            <p className="text-xs text-fg/40 text-center">
+              Scan the QR code with GCash, Maya, or your banking app to pay.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header - below `sm` the client name and actions collapse into a
           hamburger so the brand and the cart badge still fit on a 320px screen. */}
       <header className="sticky top-0 z-30 bg-sidebar-bg border-b border-white/5 px-3 sm:px-4 h-14 flex items-center justify-between gap-2 flex-shrink-0">
@@ -1429,35 +1464,45 @@ export default function ClientOrderPage() {
                 <CreditCard size={13} />
                 Payment Method
               </div>
-              <select
-                value={paymentMethod}
-                onChange={e => setPaymentMethod(e.target.value)}
-                aria-label="Payment method"
-                className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none text-sm font-medium"
-              >
-                {/* Mirrors the POS order-tab methods, minus delivery partners. */}
-                <optgroup className="bg-surface" label="In-Store Payments">
-                  <option className="bg-surface" value="Cash">Cash</option>
-                  <option className="bg-surface" value="Bank Transfer">Bank Transfer</option>
-                  <option className="bg-surface" value="Credit">Credit</option>
-                </optgroup>
-                <optgroup className="bg-surface" label="E-Wallets">
-                  <option className="bg-surface" value="GCash">GCash</option>
-                  <option className="bg-surface" value="Maya">Maya</option>
-                  <option className="bg-surface" value="Maribank">Maribank / Seabank</option>
-                  <option className="bg-surface" value="Other E-Wallet">Other E-Wallet</option>
-                </optgroup>
-              </select>
+              {/* Styled pill grid — groups: In-Store, E-Wallets */}
+              {[
+                { label: 'In-Store', methods: [['Cash','Cash'],['Bank Transfer','Bank Transfer'],['Credit','Credit']] },
+                { label: 'E-Wallets', methods: [['GCash','GCash'],['Maya','Maya'],['Maribank','Maribank / Seabank'],['Other E-Wallet','Other E-Wallet']] },
+              ].map(group => (
+                <div key={group.label}>
+                  <p className="text-[10px] font-bold text-fg/30 uppercase tracking-widest mb-1.5">{group.label}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {group.methods.map(([val, lbl]) => (
+                      <button
+                        key={val}
+                        onClick={() => setPaymentMethod(val)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                          paymentMethod === val
+                            ? 'bg-brand text-white border-brand'
+                            : 'bg-white/5 text-fg/60 border-white/10 hover:border-white/30 hover:text-fg'
+                        }`}
+                      >
+                        {lbl}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {/* Pay Now button — only shown when a QR image is uploaded */}
+              {portal.paymentQrImage && (
+                <button
+                  onClick={() => setShowQr(true)}
+                  className="w-full mt-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-brand text-white text-xs font-bold uppercase tracking-wider hover:bg-brand/90 transition"
+                >
+                  <QrCode size={14} />
+                  Pay Now — Scan QR
+                </button>
+              )}
               {clientInfo?.paymentMethod && clientInfo.paymentMethod !== paymentMethod && (
                 <p className="text-xs text-fg/30">
                   Default: {PAYMENT_LABELS[clientInfo.paymentMethod] || clientInfo.paymentMethod}
                   {' '}
-                  <button
-                    onClick={() => setPaymentMethod(clientInfo.paymentMethod)}
-                    className="text-brand underline"
-                  >
-                    Reset
-                  </button>
+                  <button onClick={() => setPaymentMethod(clientInfo.paymentMethod)} className="text-brand underline">Reset</button>
                 </p>
               )}
             </div>

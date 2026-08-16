@@ -1,5 +1,5 @@
 ﻿import React, { useState } from 'react';
-import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type } from 'lucide-react';
+import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type, X } from 'lucide-react';
 import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
 
 // ── SettingsTab - system preferences & account controls ───────────────────────
@@ -162,6 +162,7 @@ export default function SettingsTab({ ctx }) {
     reader.onerror = () => setBusyKey('');
   };
   const currentLogo = systemSettings.businessLogo || '';
+  const currentPrintLogo = systemSettings.printLogo || '';
   const currentQr = systemSettings.paymentQrImage || '';
   const [printerMode, setPrinterMode] = useState(readPrinterMode);
   const applyPrinterMode = (v) => { setPrinterMode(v); writePrinterMode(v); };
@@ -249,10 +250,13 @@ export default function SettingsTab({ ctx }) {
                     Shown on the sidebar, login screen, printed receipts, the menu and the client portal. PNG or JPG; it's resized automatically.
                   </p>
                   <div className="flex items-center gap-4 mt-3 flex-wrap">
-                    <div className="w-20 h-20 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
+                    <div
+                      className="w-20 h-20 border border-white/10 flex items-center justify-center overflow-hidden shrink-0"
+                      style={{ borderRadius: systemSettings.logoRadius || '12px', ...(systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor } : {}) }}
+                    >
                       {currentLogo
                         ? <img src={currentLogo} alt="Logo" className="max-w-full max-h-full object-contain" />
-                        : <ImageIcon size={22} className="text-fg/20" />}
+                        : <ImageIcon size={22} className={systemSettings.logoColor ? 'text-white/60' : 'text-fg/20'} />}
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-white hover:bg-brand/90 transition min-h-[40px]">
@@ -266,6 +270,45 @@ export default function SettingsTab({ ctx }) {
                       )}
                     </div>
                   </div>
+                  <div className="mt-3 space-y-3">
+                      <div>
+                        <p className="text-[10px] text-fg/40 uppercase font-bold tracking-widest mb-2">Logo Background Color</p>
+                        <div className="flex flex-wrap gap-2">
+                          {/* Clear / no color */}
+                          <button
+                            onClick={() => { saveSetting('logoColor', ''); saveSetting('logoRadius', '12px'); }}
+                            className={`w-8 h-8 rounded-lg border-2 transition hover:scale-110 flex items-center justify-center ${!systemSettings.logoColor ? 'border-brand bg-brand/10' : 'border-white/20 bg-white/5'}`}
+                            title="No background color"
+                          >
+                            <X size={14} className={!systemSettings.logoColor ? 'text-brand' : 'text-fg/30'} />
+                          </button>
+                          {['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#8b5cf6','#ec4899','#6b7280','#1e293b'].map(color => (
+                            <button
+                              key={color}
+                              onClick={() => saveSetting('logoColor', systemSettings.logoColor === color ? '' : color)}
+                              className="w-8 h-8 rounded-lg transition hover:scale-110"
+                              style={{ backgroundColor: color, outline: systemSettings.logoColor === color ? '2px solid white' : 'none', outlineOffset: '2px' }}
+                              title={color}
+                            />
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-fg/30 mt-1.5">Used as background behind the logo on screen and in print.</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-fg/40 uppercase font-bold tracking-widest mb-2">Corner Radius</p>
+                        <div className="flex gap-2 flex-wrap">
+                          {[{label:'None',v:'0px'},{label:'Small',v:'6px'},{label:'Medium',v:'12px'},{label:'Large',v:'20px'},{label:'Circle',v:'9999px'}].map(({label,v}) => (
+                            <button
+                              key={v}
+                              onClick={() => saveSetting('logoRadius', v)}
+                              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition border ${(systemSettings.logoRadius || '12px') === v ? 'bg-brand text-white border-brand' : 'border-white/10 text-fg/50 hover:border-white/30'}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                 </div>
               </div>
             </div>
@@ -644,6 +687,61 @@ export default function SettingsTab({ ctx }) {
                 <Toggle on={systemSettings.fbDuplicateReceipt === true} onChange={() => saveSetting?.('fbDuplicateReceipt', !(systemSettings.fbDuplicateReceipt === true))} />
               </SettingRow>
             )}
+            {/* Print Logo — separate logo used on receipts/billing docs. Toggle ON = use uploaded print logo; OFF = use business logo. */}
+            <div className="px-4 py-4 border-t border-white/5">
+              <div className="flex items-start gap-4">
+                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                  <ImageIcon size={16} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-fg text-sm">Print Logo</p>
+                  <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                    Upload a separate logo for printed receipts and documents, or use the business logo.
+                  </p>
+                  {(() => {
+                    const usePrintLogo = !!systemSettings.printLogoEnabled;
+                    return (
+                      <>
+                        <div className="flex items-center gap-3 mt-3">
+                          <button
+                            onClick={() => saveSetting('printLogoEnabled', !usePrintLogo)}
+                            className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${usePrintLogo ? 'bg-brand' : 'bg-white/15'}`}
+                          >
+                            <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${usePrintLogo ? 'left-5' : 'left-0.5'}`} />
+                          </button>
+                          <span className="text-xs text-fg/60 font-bold">
+                            {usePrintLogo ? 'Using uploaded print logo' : 'Using business logo for print'}
+                          </span>
+                        </div>
+                        {usePrintLogo && (
+                          <div className="flex items-center gap-4 mt-3 flex-wrap">
+                            <div className="w-20 h-20 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
+                              {currentPrintLogo
+                                ? <img src={currentPrintLogo} alt="Print logo" className="max-w-full max-h-full object-contain" />
+                                : <Printer size={22} className="text-fg/20" />}
+                            </div>
+                            <div className="flex flex-col gap-2">
+                              <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-white hover:bg-brand/90 transition min-h-[40px]">
+                                {busyKey === 'printLogo' ? 'Uploading…' : (currentPrintLogo ? 'Replace Print Logo' : 'Upload Print Logo')}
+                                <input type="file" accept="image/*" className="hidden" disabled={busyKey === 'printLogo'} onChange={(e) => uploadImageSetting('printLogo', e, 400)} />
+                              </label>
+                              {currentPrintLogo && (
+                                <button onClick={() => saveSetting('printLogo', '')} className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/5 text-fg/50 border border-white/10 hover:text-red-400 hover:border-red-400/40 transition min-h-[38px]">
+                                  Remove
+                                </button>
+                              )}
+                              {!currentPrintLogo && (
+                                <p className="text-[10px] text-fg/30 leading-snug">No print logo uploaded yet.</p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
           </Card>
         )}
 
