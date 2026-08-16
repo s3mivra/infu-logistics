@@ -1,8 +1,8 @@
-// Targeted check for the Part-1 dashboard-counter fix (TenantStats/ProductStats,
+﻿// Targeted check for the Part-1 dashboard-counter fix (TenantStats/ProductStats,
 // applyStatsDelta in orders.js): concurrent order completions all hit the SAME
 // singleton TenantStats document via atomic $inc. This test fires a batch of
 // completions in parallel and asserts every one succeeds and the counters land
-// exactly on the sum — no lost updates, no silent under/over count.
+// exactly on the sum - no lost updates, no silent under/over count.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
@@ -20,7 +20,7 @@ beforeAll(async () => {
   const Product = mongoose.model('Product');
   const Category = mongoose.model('Category');
   await Category.create({ name: 'TSCat', department: 'Kitchen' });
-  // No baseRecipe / no linked inventory — completion has nothing to deduct,
+  // No baseRecipe / no linked inventory - completion has nothing to deduct,
   // isolating this test to journal + stats-counter concurrency.
   prod = await Product.create({ name: 'Stat Widget', category: 'TSCat', basePrice: 50, baseRecipe: [] });
 }, 120000);
@@ -44,7 +44,7 @@ it('concurrent completions all land in TenantStats/ProductStats with no lost upd
   );
   for (const r of results) expect(r.status).toBe(200);
 
-  // Both counters are sharded (server.js: STATS_SHARDS) — sum across shards,
+  // Both counters are sharded (server.js: STATS_SHARDS) - sum across shards,
   // same as reports.js and backfill-stats.mjs do.
   const TenantStats = mongoose.model('TenantStats');
   const ProductStats = mongoose.model('ProductStats');

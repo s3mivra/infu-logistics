@@ -1,4 +1,4 @@
-// Multi-tenancy Phase 1 integration tests — Tenant model, default-tenant seed +
+﻿// Multi-tenancy Phase 1 integration tests - Tenant model, default-tenant seed +
 // tenantId backfill, and superadmin /api/tenants CRUD. Phase 1 is additive and
 // non-breaking, so these assert the foundation exists without changing query behavior.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -78,7 +78,7 @@ describe('/api/tenants CRUD (superadmin only)', () => {
   });
 });
 
-describe('Phase 2a — tenant identity in the access token', () => {
+describe('Phase 2a - tenant identity in the access token', () => {
   it('staff access token carries the user tenantId after backfill', async () => {
     const Tenant = mongoose.model('Tenant');
     const def = await Tenant.findOne({ slug: 'default' });
@@ -107,16 +107,16 @@ describe('Phase 2a — tenant identity in the access token', () => {
   });
 });
 
-describe('Phase 2b — per-tenant read scoping: DISABLED (tenantScope is now a no-op)', () => {
+describe('Phase 2b - per-tenant read scoping: DISABLED (tenantScope is now a no-op)', () => {
   // Phase 2b's premise ("all current data lives on the default tenant, so this
   // is a no-op until >1 tenant exists") didn't hold in practice: the boot
   // migration backfills tenantId onto EXISTING users, but nothing stamps
-  // tenantId onto newly-created Orders/Inventory/etc. going forward — those
+  // tenantId onto newly-created Orders/Inventory/etc. going forward - those
   // default to null. Once the backfill has run, every staff token carries a
   // tenantId while every fresh order does not, so filtering reads by tenantId
   // silently hid all new data (this was the real-world root cause of "orders
   // not showing up"). Per this project's single-tenant-per-deployment
-  // direction, tenantScope now always returns {} — this test asserts that,
+  // direction, tenantScope now always returns {} - this test asserts that,
   // instead of asserting isolation that no longer applies.
   it('tenant-scoped orders are visible to every staff token regardless of tenantId', async () => {
     const Tenant = mongoose.model('Tenant');
@@ -136,7 +136,7 @@ describe('Phase 2b — per-tenant read scoping: DISABLED (tenantScope is now a n
     await User.updateOne({ name: 'ScopeB' }, { $set: { tenantId: tB._id } });
     const tokB = (await request(app).post('/api/users/login').send({ name: 'ScopeB', password: 'pw' })).body.token;
 
-    // Both tokens see BOTH orders now — no tenant filtering.
+    // Both tokens see BOTH orders now - no tenant filtering.
     const aNums = (await request(app).get('/api/orders').set(auth(tokA))).body.orders.map(o => o.orderNumber);
     const bNums = (await request(app).get('/api/orders').set(auth(tokB))).body.orders.map(o => o.orderNumber);
     expect(aNums).toContain('ORD-SA-1');  expect(aNums).toContain('ORD-SB-1');

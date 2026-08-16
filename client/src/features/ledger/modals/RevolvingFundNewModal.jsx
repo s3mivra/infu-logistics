@@ -1,8 +1,8 @@
-import { X } from 'lucide-react';
+﻿import { X } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
 
 // Extracted from AdminDashboard. Reads shared dashboard state via
-// useDashboard() rather than props — see DashboardContext.
+// useDashboard() rather than props - see DashboardContext.
 export default function RevolvingFundNewModal() {
   const { cashAndBankAccounts, rfNewForm, rfNewModal, rfNewSubmitting, setRfNewForm, setRfNewModal, submitRfNew } = useDashboard();
 
@@ -21,7 +21,7 @@ export default function RevolvingFundNewModal() {
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 custom-scrollbar">
             <div>
               <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Fund Name *</label>
-              <input type="text" placeholder="e.g. Kasa Lokal Petty Cash" value={rfNewForm.name}
+              <input type="text" placeholder="e.g. test business Petty Cash" value={rfNewForm.name}
                 onChange={e => setRfNewForm({...rfNewForm, name: e.target.value})}
                 className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 placeholder-white/20"/>
             </div>

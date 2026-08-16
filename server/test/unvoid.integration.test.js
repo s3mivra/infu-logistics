@@ -1,5 +1,5 @@
-// Un-void: reversing a void must leave stock and the ledger exactly as they were
-// before the void — no erasure, an equal-and-opposite entry.
+﻿// Un-void: reversing a void must leave stock and the ledger exactly as they were
+// before the void - no erasure, an equal-and-opposite entry.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
@@ -66,7 +66,7 @@ describe('reversing a void', () => {
     expect(afterUnvoid).toBeLessThan(before);
   });
 
-  it('does NOT delete the void entry — it posts an equal and opposite one', async () => {
+  it('does NOT delete the void entry - it posts an equal and opposite one', async () => {
     const order = await makeSale();
     await request(app).post(`/api/orders/${order._id}/void`).set(auth(superToken)).send({ reason: 'Restock' });
     await request(app).post(`/api/orders/${order._id}/unvoid`).set(auth(superToken));
@@ -112,7 +112,7 @@ describe('guards', () => {
     const u1 = await request(app).post(`/api/orders/${order._id}/unvoid`).set(auth(superToken));
     expect(u1.status, `first unvoid failed: ${JSON.stringify(u1.body)}`).toBe(200);
 
-    // Re-void, then attempt to reverse again — the existing UNVOID reference must block it.
+    // Re-void, then attempt to reverse again - the existing UNVOID reference must block it.
     const v2 = await request(app).post(`/api/orders/${order._id}/void`).set(auth(superToken)).send({ reason: 'Restock' });
     expect(v2.status, `second void failed: ${JSON.stringify(v2.body)}`).toBe(200);
     const second = await request(app).post(`/api/orders/${order._id}/unvoid`).set(auth(superToken));

@@ -1,4 +1,4 @@
-// shifts routes — moved verbatim from server.js (feature-driven restructure).
+﻿// shifts routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
@@ -180,7 +180,7 @@ export default function registerShifts(ctx) {
 app.post('/api/shifts/start', verifyToken, requireStaff, async (req, res) => {
   try {
     const { startingCash } = req.body;
-    // Mandatory starting cash — reject missing/invalid/negative. No silent default-to-0:
+    // Mandatory starting cash - reject missing/invalid/negative. No silent default-to-0:
     // a zero opening float must be entered explicitly so EOS variance is meaningful.
     const opening = Number(startingCash);
     if (startingCash === undefined || startingCash === null || startingCash === '' ||
@@ -203,7 +203,7 @@ app.post('/api/shifts/start', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
-// Close shift — records actual cash count and calculates variance
+// Close shift - records actual cash count and calculates variance
 app.post('/api/shifts/end', verifyToken, requireStaff, async (req, res) => {
   try {
     const { actualCash } = req.body;
@@ -267,7 +267,7 @@ app.get('/api/shifts', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const { page = 1, limit: lim = 20, cashier } = req.query;
     const owner = await ownerIdentity();
-    // Hide the owner's shifts — by _id and by name (catches orphaned superadmin ids).
+    // Hide the owner's shifts - by _id and by name (catches orphaned superadmin ids).
     const filter = { cashierId: { $nin: owner.ids }, cashierName: { $nin: owner.names } };
     if (cashier) filter.cashierName = { $regex: cashier, $options: 'i', $nin: owner.names };
     const pageNum = Math.max(1, parseInt(page) || 1);
@@ -380,7 +380,7 @@ app.get('/api/clock/entries', verifyToken, requireSuperAdmin, async (req, res) =
   try {
     const { page = 1, limit: lim = 30, date, staff } = req.query;
     const owner = await ownerIdentity();
-    // Hide the owner — by _id and by name (catches orphaned superadmin ids).
+    // Hide the owner - by _id and by name (catches orphaned superadmin ids).
     const filter = { staffId: { $nin: owner.ids }, staffName: { $nin: owner.names } };
     if (date) filter.date = date;
     if (staff) filter.staffName = { $regex: staff, $options: 'i', $nin: owner.names };

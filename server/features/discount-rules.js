@@ -1,4 +1,4 @@
-// discount-rules routes — configurable order-level conditional discount rules
+﻿// discount-rules routes - configurable order-level conditional discount rules
 // + an evaluation endpoint. See the DiscountRuleSchema comment in server.js:
 // this decides WHICH percent to suggest; it never touches how a discount is
 // booked (the POS applies the result through the existing order-level
@@ -93,7 +93,7 @@ export default function registerDiscountRules(ctx) {
   // ── EVALUATE ─────────────────────────────────────────────────────────────────
   // POST /api/discount-rules/evaluate { subtotal, clientId?, segment?, at? }
   // Returns the single best applicable rule (highest percent, priority breaks
-  // ties) plus every match for transparency. "Best single rule wins" — rules
+  // ties) plus every match for transparency. "Best single rule wins" - rules
   // do NOT stack, the clearest and safest default for a promo engine; the POS
   // then applies bestPercent through the order's existing discountPercent field.
   app.post('/api/discount-rules/evaluate', verifyToken, ...canUse, async (req, res) => {

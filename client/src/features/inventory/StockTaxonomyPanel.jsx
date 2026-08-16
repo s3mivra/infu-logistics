@@ -1,6 +1,6 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 
-// #7 — manage Storage Locations and Stock Categories. Pure CRUD over the
+// #7 - manage Storage Locations and Stock Categories. Pure CRUD over the
 // context-provided save/delete handlers; kept in its own component so the small
 // add/edit form state doesn't bloat InventoryTab.
 export default function StockTaxonomyPanel({

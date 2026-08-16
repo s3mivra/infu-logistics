@@ -1,9 +1,9 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+﻿import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { lazy, Suspense, Component, useEffect, useState } from 'react';
 
 // Guards against the #1 mis-deployment: a client built for one BUSINESS_TYPE
 // pointed at a server running the other (fb ↔ log). Fetches the server's mode
-// from /health once and shows a loud fixed banner on mismatch. Fails OPEN — any
+// from /health once and shows a loud fixed banner on mismatch. Fails OPEN - any
 // fetch error is ignored so a flaky/unreachable health check never blocks the app.
 function ModeMismatchBanner() {
   const [serverType, setServerType] = useState(null);
@@ -62,7 +62,7 @@ function App() {
     // Theme is a per-DEVICE preference, not a business setting: the same shop can
     // have a dark tablet at the register and a light one in a sunlit warehouse.
     // A saved choice wins; VITE_THEME remains the shipped default.
-    // The client portal owns its own appearance (see clientTheme.js) — a shop
+    // The client portal owns its own appearance (see clientTheme.js) - a shop
     // restyling its POS must not restyle its customers' portals, so skip the
     // staff theme entirely on portal routes.
     if (window.location.pathname.startsWith('/client')) return;
@@ -70,7 +70,7 @@ function App() {
     try { saved = localStorage.getItem('dash.theme'); } catch { /* private mode */ }
     document.documentElement.setAttribute('data-theme', saved || import.meta.env.VITE_THEME || 'default');
     // App-wide font size. Everything is rem-based, so scaling the root font-size
-    // scales all text AND spacing proportionally — one knob for the whole app.
+    // scales all text AND spacing proportionally - one knob for the whole app.
     // Per-device (localStorage) so each tablet/station picks what's comfortable.
     let scale = null;
     try { scale = localStorage.getItem('dash.fontScale'); } catch { /* private mode */ }

@@ -1,4 +1,4 @@
-// bills routes — AP bill approval workflow + payment scheduling.
+﻿// bills routes - AP bill approval workflow + payment scheduling.
 // Models/helpers/middleware live in server.js and arrive via ctx.
 // See the BillSchema comment in server.js for the source:'PO' vs 'Manual'
 // distinction that drives when the A/P journal entry actually posts.
@@ -27,7 +27,7 @@ export default function registerBills(ctx) {
     requirePermission,
   } = ctx;
 
-  // Same accounting gate ap-payment/journal posting already use — approving,
+  // Same accounting gate ap-payment/journal posting already use - approving,
   // rejecting, scheduling, or paying a bill is a posting-adjacent action.
   const canViewAcct = [requireStaff, requirePermission('accounting.view')];
   const canPostAcct = [requireStaff, requirePermission('accounting.manage')];
@@ -48,7 +48,7 @@ export default function registerBills(ctx) {
   });
 
   // ── PAYMENT SCHEDULE ─────────────────────────────────────────────────────────
-  // Approved bills with a scheduled payment date, soonest first — the "what do
+  // Approved bills with a scheduled payment date, soonest first - the "what do
   // we owe and when are we paying it" view. Bills scheduled but overdue (date
   // already passed) sort first since they're the most urgent.
   app.get('/api/bills/upcoming', verifyToken, ...canViewAcct, async (req, res) => {
@@ -74,7 +74,7 @@ export default function registerBills(ctx) {
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
-  // ── CREATE (manual bill — no PO backing it) ─────────────────────────────────
+  // ── CREATE (manual bill - no PO backing it) ─────────────────────────────────
   // POST /api/bills { supplierId, description, amount, dueDate, expenseAccountCode }
   app.post('/api/bills', verifyToken, ...canPostAcct, async (req, res) => {
     try {
@@ -116,7 +116,7 @@ export default function registerBills(ctx) {
 
   // ── APPROVE ──────────────────────────────────────────────────────────────────
   // For source:'Manual' bills this is what actually books the liability
-  // (DR expenseAccountCode / CR 220000 Accounts Payable) — see the BillSchema
+  // (DR expenseAccountCode / CR 220000 Accounts Payable) - see the BillSchema
   // comment in server.js. For source:'PO' bills the JE already posted at
   // receipt; this is a pure sign-off with no new posting.
   app.post('/api/bills/:id/approve', verifyToken, ...canPostAcct, async (req, res) => {
@@ -128,7 +128,7 @@ export default function registerBills(ctx) {
 
       if (bill.source === 'Manual') {
         const expMeta = acctMeta(bill.expenseAccountCode);
-        if (!expMeta) return res.status(400).json({ success: false, error: 'This bill\'s expense account no longer exists — cannot post.' });
+        if (!expMeta) return res.status(400).json({ success: false, error: 'This bill\'s expense account no longer exists - cannot post.' });
         const reference = await mkSeqRef('BILL-APR');
         const lines = [
           { accountCode: bill.expenseAccountCode, accountName: expMeta.name, debit: bill.amount, credit: 0 },
@@ -157,7 +157,7 @@ export default function registerBills(ctx) {
 
   // ── REJECT ───────────────────────────────────────────────────────────────────
   // Note: for source:'PO' bills, rejecting does NOT reverse the receipt's
-  // journal entry — goods were physically received, so that liability is real.
+  // journal entry - goods were physically received, so that liability is real.
   // A rejected PO bill records a dispute for follow-up, not an automatic
   // reversal; correcting the books (e.g. a damaged/short delivery) still goes
   // through a normal journal entry or the PO void path.
@@ -199,7 +199,7 @@ export default function registerBills(ctx) {
 
   // ── PAY ──────────────────────────────────────────────────────────────────────
   // Records the actual payment for THIS bill specifically (DR 220000 AP / CR the
-  // cash/bank/e-wallet account paid from) — same shape as the existing
+  // cash/bank/e-wallet account paid from) - same shape as the existing
   // /api/finance/ap-payment, just scoped and attributed to one bill instead of a
   // supplier's running balance. Both post to the same 220000 ledger, so
   // ap-outstanding/vendor-statement see this payment either way.

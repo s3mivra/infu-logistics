@@ -1,4 +1,4 @@
-// Guard / error-path integration tests — exercise the validation, authorization,
+﻿// Guard / error-path integration tests - exercise the validation, authorization,
 // and edge branches in server.js that the happy-path suites don't reach, and
 // lock in the two data-exposure fixes (order-PII projection + product COGS strip).
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -20,7 +20,7 @@ afterAll(async () => { await stop(); });
 
 const auth = (t) => ({ Authorization: `Bearer ${t}` });
 
-describe('order creation — validation guards', () => {
+describe('order creation - validation guards', () => {
   it('rejects an empty cart', async () => {
     const res = await request(app).post('/api/orders').set(auth(superToken)).send({ items: [], table: 'T1' });
     expect(res.status).toBeGreaterThanOrEqual(400);
@@ -42,15 +42,15 @@ describe('order creation — validation guards', () => {
 });
 
 describe('authorization guards', () => {
-  it('void is superadmin-only — cashier gets 403', async () => {
+  it('void is superadmin-only - cashier gets 403', async () => {
     const res = await request(app).post('/api/orders/000000000000000000000000/void').set(auth(cashierToken)).send({});
     expect(res.status).toBe(403);
   });
-  it('finance routes are superadmin-only — cashier gets 403', async () => {
+  it('finance routes are superadmin-only - cashier gets 403', async () => {
     const res = await request(app).get('/api/journal').set(auth(cashierToken));
     expect(res.status).toBe(403);
   });
-  it('user creation is superadmin-only — cashier gets 403', async () => {
+  it('user creation is superadmin-only - cashier gets 403', async () => {
     const res = await request(app).post('/api/users').set(auth(cashierToken)).send({ name: 'Nope', password: 'secret1' });
     expect(res.status).toBe(403);
   });
@@ -83,7 +83,7 @@ describe('refresh/logout guards', () => {
   });
 });
 
-describe('GET /api/orders/:id — IDOR/PII projection (fix verification)', () => {
+describe('GET /api/orders/:id - IDOR/PII projection (fix verification)', () => {
   let orderId;
   beforeAll(async () => {
     const Order = mongoose.model('Order');
@@ -112,7 +112,7 @@ describe('GET /api/orders/:id — IDOR/PII projection (fix verification)', () =>
   });
 });
 
-describe('GET /api/products — COGS/recipe strip (fix verification)', () => {
+describe('GET /api/products - COGS/recipe strip (fix verification)', () => {
   beforeAll(async () => {
     const Product = mongoose.model('Product');
     await Product.create({

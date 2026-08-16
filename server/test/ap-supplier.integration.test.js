@@ -1,4 +1,4 @@
-// Supplier-attributed A/P: receiving on credit builds a per-supplier balance,
+﻿// Supplier-attributed A/P: receiving on credit builds a per-supplier balance,
 // paying that supplier draws it down, and both show in the A/P journal history.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
@@ -31,7 +31,7 @@ beforeAll(async () => {
 
 afterAll(async () => { await stop(); });
 
-// Receive goods on credit from a supplier — the standard way A/P is incurred.
+// Receive goods on credit from a supplier - the standard way A/P is incurred.
 const receiveFrom = async (supplierId, supplierName, qty, unitCost) => {
   const created = await request(app).post('/api/purchase-orders').set(auth(superToken)).send({
     supplier: supplierName, supplierId,
@@ -144,7 +144,7 @@ describe('legacy entries', () => {
 
   it('never labels unattributed debt with a real supplier\'s name', async () => {
     // $first on the null group would otherwise print whichever entry sorted
-    // first — putting someone else's name on debt that isn't theirs.
+    // first - putting someone else's name on debt that isn't theirs.
     const body = await ap();
     const row = rowFor(body, 'Unattributed');
     expect(row.supplierId).toBe(null);

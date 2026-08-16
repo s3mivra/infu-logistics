@@ -1,14 +1,11 @@
 FROM node:20-alpine AS build
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
 
-# Vite inlines import.meta.env.VITE_* at BUILD time, so these must be present
-# before `npm run build` — setting them at runtime on the nginx container does
-# nothing. Compose passes them in as build args from the repo-root .env.
-# Anything missing here silently falls back to the hardcoded dev defaults
-# (VITE_API_URL -> a LAN IP, VITE_BUSINESS_TYPE -> "fb").
+# Declare build args BEFORE COPY so Docker's layer cache sees them as a
+# distinct layer. Changes to args (new tenant name/theme) only invalidate
+# the vite build step, NOT the npm ci step.
+# Vite inlines import.meta.env.VITE_* at BUILD time - setting them at
+# runtime on the nginx container does nothing.
 ARG VITE_API_URL
 ARG VITE_BUSINESS_TYPE
 ARG VITE_BUSINESS_NAME
@@ -37,6 +34,12 @@ ENV VITE_API_URL=$VITE_API_URL \
     VITE_BILLING_BANK=$VITE_BILLING_BANK \
     VITE_BILLING_ACCOUNT_NAME=$VITE_BILLING_ACCOUNT_NAME \
     VITE_BILLING_ACCOUNT_NO=$VITE_BILLING_ACCOUNT_NO
+
+# npm ci is cached as long as package*.json doesn't change - runs in seconds
+# on cache hit. node_modules is excluded by .dockerignore so context is small.
+COPY package*.json ./
+RUN npm ci
+COPY . .
 
 # Fail loudly rather than shipping a bundle built for the wrong business type.
 RUN test -n "$VITE_BUSINESS_TYPE" || (echo "ERROR: VITE_BUSINESS_TYPE build arg is required" && exit 1)

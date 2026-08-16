@@ -1,4 +1,4 @@
-// client-portal routes — moved verbatim from server.js (feature-driven restructure).
+﻿// client-portal routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { title, lower } from '../lib/normalize.js';
@@ -193,7 +193,7 @@ export default function registerClientPortal(ctx) {
     verifyOrderAuth,
   } = ctx;
 
-// Client login — returns a short-lived JWT with role='client' and pre-set paymentMethod
+// Client login - returns a short-lived JWT with role='client' and pre-set paymentMethod
 app.post('/api/client-auth/login', loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -208,7 +208,7 @@ app.post('/api/client-auth/login', loginLimiter, async (req, res) => {
     const match = await bcrypt.compare(password, client.password);
     if (!match) return res.status(401).json({ success: false, error: 'Invalid credentials.' });
     const token = jwt.sign(
-      // aud:'client' — verified strictly by verifyClientToken on the two client-portal
+      // aud:'client' - verified strictly by verifyClientToken on the two client-portal
       // routes, and rejected by verifyToken/requireStaff on every staff route.
       { _id: client._id, clientId: String(client._id), username: client.username, name: client.name, role: 'client', paymentMethod: client.paymentMethod, aud: 'client' },
       process.env.JWT_SECRET,
@@ -220,7 +220,7 @@ app.post('/api/client-auth/login', loginLimiter, async (req, res) => {
   }
 });
 
-// Logged-in client's own orders — drives the portal status sidebar.
+// Logged-in client's own orders - drives the portal status sidebar.
 app.get('/api/client/orders', verifyClientToken, async (req, res) => {
   try {
     const clientId = req.user?.clientId || req.user?._id;
@@ -229,7 +229,7 @@ app.get('/api/client/orders', verifyClientToken, async (req, res) => {
     }
     const orders = await Order.find(
       { clientId: String(clientId) },
-      // orderNotes is the client's own text — it belongs on their order slip.
+      // orderNotes is the client's own text - it belongs on their order slip.
       { orderNumber: 1, billingNumber: 1, status: 1, total: 1, items: 1, paymentMethod: 1, createdAt: 1, transactionType: 1, clientReceived: 1, orderNotes: 1 }
     ).sort({ createdAt: -1 }).limit(30).lean();
     res.json({ success: true, orders });
@@ -259,7 +259,7 @@ app.post('/api/client/orders/:id/received', verifyClientToken, async (req, res) 
 
 // Client cancels their OWN order while it is still Pending (placed, unpaid, not
 // yet accepted into Preparing). No inventory/ledger has moved at this stage, so
-// this is a pure status flip — nothing to reverse. Once staff move it to
+// this is a pure status flip - nothing to reverse. Once staff move it to
 // Preparing (payment confirmed) the client can no longer cancel from the portal.
 app.post('/api/client/orders/:id/cancel', verifyClientToken, async (req, res) => {
   try {
@@ -282,7 +282,7 @@ app.post('/api/client/orders/:id/cancel', verifyClientToken, async (req, res) =>
 
 // ── Client self-service ──────────────────────────────────────────────────────
 // A client manages their own login and appearance. Scoped strictly to the
-// account in their own token — never accepts an id from the request body.
+// account in their own token - never accepts an id from the request body.
 
 const THEMES = ['default', 'light', 'yellow', 'ocean'];
 
@@ -374,7 +374,7 @@ app.post('/api/client/password', verifyClientToken, async (req, res) => {
   }
 });
 
-// CRUD for client accounts — superadmin only
+// CRUD for client accounts - superadmin only
 app.get('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const clients = await ClientAccount.find({}, { password: 0 }).sort({ createdAt: -1 });
@@ -385,9 +385,9 @@ app.get('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res)
 });
 
 // Light contact-field sanitizers. Email format is validated loosely (there's
-// no server-side deliverability check — nothing here sends mail); an invalid
+// no server-side deliverability check - nothing here sends mail); an invalid
 // one is rejected rather than silently stored, so the collections/CRM views
-// don't surface garbage. Empty is always allowed — these are optional.
+// don't surface garbage. Empty is always allowed - these are optional.
 const cleanEmail = (v) => {
   const s = String(v ?? '').trim().toLowerCase();
   if (!s) return '';
@@ -400,7 +400,7 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
   try {
     const { username, password, name, paymentMethod, creditLimit, creditTermsDays, segments, phone, email, contactNotes } = req.body;
     // Usernames are stored lowercase so "KasaLokal" and "kasalokal" are the same
-    // account — mixed case here is the classic duplicate-login bug.
+    // account - mixed case here is the classic duplicate-login bug.
     const cleanUsername = lower(username);
     const cleanName = title(name);
     if (!cleanUsername || !password || !cleanName) {
@@ -411,7 +411,7 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
     const hashed = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const cleanSegments = Array.isArray(segments) ? [...new Set(segments.map(s => String(s).trim()).filter(Boolean))] : [];
     // Standard customer ID format: CUS-1000-A0000 ("1000" is a fixed segment;
-    // "A0000" is the zero-padded sequence — same "prefix-A + digits" convention
+    // "A0000" is the zero-padded sequence - same "prefix-A + digits" convention
     // used for client/product codes elsewhere, just with the fixed segment folded
     // into the prefix so generateNextSequence's `${prefix}-A${seq}` template fits).
     const clientCode = await generateNextSequence(ClientAccount, 'CUS-1000', 'clientCode');
@@ -436,7 +436,7 @@ app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req
     if (creditLimit !== undefined) update.creditLimit = parseCreditLimit(creditLimit);
     if (creditTermsDays !== undefined) update.creditTermsDays = parseTermsDays(creditTermsDays);
     if (Array.isArray(segments)) update.segments = [...new Set(segments.map(s => String(s).trim()).filter(Boolean))];
-    // Contact fields — sent explicitly (including '' to clear). Email validated.
+    // Contact fields - sent explicitly (including '' to clear). Email validated.
     if (phone !== undefined) update.phone = cleanPhone(phone);
     if (email !== undefined) {
       const emailVal = cleanEmail(email);
@@ -454,14 +454,14 @@ app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req
   }
 });
 
-// A client's password is bcrypt-hashed — there is no "reveal the existing
+// A client's password is bcrypt-hashed - there is no "reveal the existing
 // password" that doesn't mean storing it in reversible form, which we don't
 // do. This resets it to a new one instead: the caller re-enters THEIR OWN
 // password (proving it's really them, not a hijacked session), and the new
 // client password is generated here and returned exactly once, in this
-// response. It is never retrievable again after this — write it down/share it
+// response. It is never retrievable again after this - write it down/share it
 // now, or reset again later.
-const PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'; // no 0/O/1/l/I — avoids misread-on-paper
+const PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'; // no 0/O/1/l/I - avoids misread-on-paper
 function generateClientPassword(length = 12) {
   const bytes = crypto.randomBytes(length);
   let out = '';

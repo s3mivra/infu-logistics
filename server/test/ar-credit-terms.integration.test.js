@@ -1,4 +1,4 @@
-// Credit terms (utang / on-account payment terms):
+﻿// Credit terms (utang / on-account payment terms):
 //   - A client can carry a default payment-terms-in-days.
 //   - When a NON-CASH order Completes, those terms are snapshotted onto the order
 //     as arTermsDays + arDueDate (= completion time + terms days). Cash orders
@@ -69,7 +69,7 @@ describe('A/R credit terms', () => {
     expect(o.arDueDate == null).toBe(true);
   });
 
-  it('freezes the due date — later changes to client terms do not move it', async () => {
+  it('freezes the due date - later changes to client terms do not move it', async () => {
     const id = await completeOrder('On Account', client._id);
     const before = (await Order().findById(id).lean()).arDueDate;
     await auth('patch', `/api/client-accounts/${client._id}`, superTok).send({ creditTermsDays: 90 });

@@ -1,8 +1,12 @@
-import { Fragment, useCallback, useEffect, useState } from 'react';
+﻿import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Users, Search, ChevronDown, ChevronRight, RefreshCw, AlertCircle } from 'lucide-react';
+import { io } from 'socket.io-client';
 import { useDashboard } from '../dashboard/DashboardContext';
 
-// Clients — who we sell to, what they owe, and how close they are to their limit.
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
+const socket = io(API_URL, { transports: ['websocket'], upgrade: false });
+
+// Clients - who we sell to, what they owe, and how close they are to their limit.
 //
 // Previously this lived only inside the SuperAdmin panel as a registration form,
 // so answering "how much does this client owe me?" meant visiting three tabs.
@@ -29,6 +33,31 @@ export default function ClientsTab() {
   }, [apiFetch]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Keep payment method (and status) live when staff change it in Orders/POS.
+  // orderUpdated carries the full updated order object; patch it in-place so
+  // the client row reflects the change without a full reload.
+  useEffect(() => {
+    const onOrderUpdated = (updated) => {
+      if (!updated?._id) return;
+      setOrders(prev => {
+        const next = { ...prev };
+        for (const [clientId, list] of Object.entries(next)) {
+          const idx = list.findIndex(o => String(o._id) === String(updated._id));
+          if (idx !== -1) {
+            const newList = [...list];
+            newList[idx] = { ...newList[idx], ...updated };
+            next[clientId] = newList;
+          }
+        }
+        return next;
+      });
+      // Also refresh the summary totals (owing/committed may have changed).
+      load();
+    };
+    socket.on('orderUpdated', onOrderUpdated);
+    return () => socket.off('orderUpdated', onOrderUpdated);
+  }, [load]);
 
   // Orders are fetched only when a row is opened, so the summary stays one call.
   const toggle = async (id) => {
@@ -85,7 +114,7 @@ export default function ClientsTab() {
       {!data.showMoney && (
         <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-fg/40 text-xs font-bold">
           <AlertCircle size={14} />
-          Balances and credit limits are hidden — they need the accounting permission.
+          Balances and credit limits are hidden - they need the accounting permission.
         </div>
       )}
 
@@ -108,7 +137,7 @@ export default function ClientsTab() {
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={data.showMoney ? 7 : 4} className="py-14 text-center text-fg/30 font-bold">
-                  {loading ? 'Loading…' : q ? 'No clients match that search.' : 'No client accounts yet — add one in the Admin Panel.'}
+                  {loading ? 'Loading…' : q ? 'No clients match that search.' : 'No client accounts yet - add one in the Admin Panel.'}
                 </td>
               </tr>
             ) : rows.map(c => (
@@ -128,11 +157,11 @@ export default function ClientsTab() {
                   <td className="py-3 font-mono text-fg/100 text-xs">{c.clientCode}</td>
                   <td className="py-3 text-right tabular-nums text-fg/100">{c.orderCount}</td>
                   <td className="py-3 text-right text-fg/100 text-xs whitespace-nowrap">
-                    {c.lastOrderAt ? new Date(c.lastOrderAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: '2-digit' }) : '—'}
+                    {c.lastOrderAt ? new Date(c.lastOrderAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: '2-digit' }) : '-'}
                   </td>
                   {data.showMoney && <>
-                    <td className="py-3 text-right tabular-nums font-black text-fg/100">{c.aged?.total ? peso(c.aged.total) : '—'}</td>
-                    <td className="py-3 text-right tabular-nums text-brand/80">{c.exposure ? peso(c.exposure) : '—'}</td>
+                    <td className="py-3 text-right tabular-nums font-black text-fg/100">{c.aged?.total ? peso(c.aged.total) : '-'}</td>
+                    <td className="py-3 text-right tabular-nums text-brand/80">{c.exposure ? peso(c.exposure) : '-'}</td>
                     <td className="py-3 px-4 text-right tabular-nums text-xs">
                       {c.creditLimit === null || c.creditLimit === undefined
                         ? <span className="text-fg/100">No limit</span>

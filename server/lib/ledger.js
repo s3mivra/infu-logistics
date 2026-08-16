@@ -1,4 +1,4 @@
-// Pure ledger helpers — no DB, fully unit-testable.
+﻿// Pure ledger helpers - no DB, fully unit-testable.
 
 export const LEDGER_TOLERANCE = 0.01;
 

@@ -1,4 +1,4 @@
-// Recent-feature coverage (log mode): low-stock analytics must exclude inventory tied only
+﻿// Recent-feature coverage (log mode): low-stock analytics must exclude inventory tied only
 // to removed products, and billing numbers must still generate in log after the "make same"
 // change.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -34,7 +34,7 @@ beforeAll(async () => {
     baseRecipe: [{ invId: String(activeStock._id), name: 'Active Stock', qty: 1, unit: 'pcs' }] });
 
   // DELETE /api/products/:id soft-archives (isArchived: true) and never touches
-  // isAvailable — a real "Delete this product" click leaves isAvailable as
+  // isAvailable - a real "Delete this product" click leaves isAvailable as
   // whatever it already was (default true), not false.
   const deletedStock = await Inventory.create({ itemName: 'Deleted Stock', stockQty: 0, unit: 'pcs', unitCost: 1 });
   await Product.create({ name: 'Deleted Prod', category: 'FT', basePrice: 10, isArchived: true,

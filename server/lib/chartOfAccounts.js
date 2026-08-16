@@ -1,4 +1,4 @@
-// Canonical Chart of Accounts — 6-digit SAP-style structure (Non-VAT SME).
+﻿// Canonical Chart of Accounts - 6-digit SAP-style structure (Non-VAT SME).
 // Parents are header accounts (isParent: true, not posted to directly); leaves are
 // the posting accounts the POS books to. Used for P&L / Balance Sheet grouping.
 

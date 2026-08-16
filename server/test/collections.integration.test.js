@@ -1,4 +1,4 @@
-// AR collection reminders — overdue worklist, follow-up-due list, and the
+﻿// AR collection reminders - overdue worklist, follow-up-due list, and the
 // contact log itself. Drives the real Express app over HTTP against an
 // in-memory replica set, same harness as critical-paths.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

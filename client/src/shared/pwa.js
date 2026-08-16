@@ -1,4 +1,4 @@
-/* PWA runtime helpers — service worker registration, install prompt,
+﻿/* PWA runtime helpers - service worker registration, install prompt,
  * online/offline status, and an offline order queue.
  * Pure browser logic, no React; consumed by a hook in usePwa.js. */
 

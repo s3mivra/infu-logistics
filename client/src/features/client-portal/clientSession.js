@@ -1,7 +1,7 @@
-// Client-portal session storage.
+﻿// Client-portal session storage.
 //
 // WHY localStorage and not sessionStorage: sessionStorage is scoped to a single
-// tab and is dropped when the tab is closed or evicted — on mobile that happens
+// tab and is dropped when the tab is closed or evicted - on mobile that happens
 // routinely when the user switches apps, so clients kept getting bounced back to
 // the login screen mid-order. localStorage survives a refresh, a new tab, and an
 // app switch; the JWT's own `exp` is still what actually ends the session.
@@ -32,7 +32,7 @@ function isExpired(token) {
     const payload = JSON.parse(atob(token.split('.')[1]));
     return !!payload.exp && payload.exp * 1000 < Date.now();
   } catch {
-    return true; // malformed — treat as no session
+    return true; // malformed - treat as no session
   }
 }
 

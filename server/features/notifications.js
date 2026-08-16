@@ -1,4 +1,4 @@
-// notifications routes — one aggregated "what needs attention" feed.
+﻿// notifications routes - one aggregated "what needs attention" feed.
 //
 // WHY a single endpoint: the bell needs seven unrelated signals at once. Seven
 // round-trips on every dashboard poll would be wasteful, and the client would
@@ -34,7 +34,7 @@ export default function registerNotifications(ctx) {
 
   // Inventory is stored in BASE units (g/ml/pcs) but every screen shows display
   // units. Reporting the raw base number here would read as a different figure
-  // entirely — "200 left" for 200 g of an item the user thinks of in kg. So the
+  // entirely - "200 left" for 200 g of an item the user thinks of in kg. So the
   // feed converts exactly the way the tables do.
   // Pack-first in BOTH modes, matching the Inventory Hub table: an item with a
   // known pack size is counted in whole packs, anything else in its display
@@ -63,7 +63,7 @@ export default function registerNotifications(ctx) {
       // Permission-aware: a cashier shouldn't be told about A/R or supplier POs.
       // hasPermission is the same check the routes themselves use, so the bell
       // can never surface a record its owner isn't allowed to open. Fails CLOSED
-      // — an unknown permission hides the signal rather than leaking it.
+      // - an unknown permission hides the signal rather than leaking it.
       const may = (perm) => {
         try { return hasPermission(req.user, perm); }
         catch { return false; }
@@ -116,7 +116,7 @@ export default function registerNotifications(ctx) {
           items.push({
             id: `exp:${i._id}`, kind: 'expired', severity: CRIT,
             title: `${i.itemName} has expired`,
-            detail: `Expired ${Math.abs(left)} day(s) ago — still ${fmt(d.qty)} ${d.unit} in stock`,
+            detail: `Expired ${Math.abs(left)} day(s) ago - still ${fmt(d.qty)} ${d.unit} in stock`,
             tab: 'inventory', focusId: String(i._id),
           });
         } else if (left <= warnDays) {

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import { soonestExpiry, sortBatchesFEFO, consumeBatches, addBatch, batchesTotal } from './expiry.js';
 
 const D = (s) => new Date(s);
@@ -153,7 +153,7 @@ describe('integration: real-world milk batch scenario', () => {
     expect(after800.batches).toHaveLength(2);
     expect(after800.batches.find(b => b.expiryDate.toISOString() === D('2026-06-15').toISOString()).qty).toBe(200);
 
-    // Use another 500ml — exhausts batch 1, starts batch 2
+    // Use another 500ml - exhausts batch 1, starts batch 2
     const after1300 = consumeBatches(after800.batches, 500);
     expect(after1300.batches).toHaveLength(1);
     expect(after1300.batches[0].expiryDate.toISOString()).toBe(D('2026-06-22').toISOString());
@@ -163,7 +163,7 @@ describe('integration: real-world milk batch scenario', () => {
   });
 });
 
-describe('expiry — FEFO edge branches (coverage)', () => {
+describe('expiry - FEFO edge branches (coverage)', () => {
   it('sorts batches with no expiryDate last', () => {
     const r = sortBatchesFEFO([{ expiryDate: null, qty: 1 }, { expiryDate: '2026-01-01', qty: 1 }]);
     expect(r[0].expiryDate).toBe('2026-01-01');

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+﻿import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as ui from './index.js';
 
 // Captures what the provider would have rendered.
@@ -57,7 +57,7 @@ describe('ui.alert tone inference', () => {
   });
 });
 
-describe('ui.deferred — hold the action, cancel means it never runs', () => {
+describe('ui.deferred - hold the action, cancel means it never runs', () => {
   let captured;
   beforeEach(() => {
     captured = null;
@@ -71,7 +71,7 @@ describe('ui.deferred — hold the action, cancel means it never runs', () => {
   it('runs the action when the window expires', async () => {
     let ran = false;
     const p = ui.deferred(() => { ran = true; }, { message: 'Writing off…' });
-    expect(ran).toBe(false);          // nothing yet — that's the whole point
+    expect(ran).toBe(false);          // nothing yet - that's the whole point
     await captured.onExpire();
     await expect(p).resolves.toBe(true);
     expect(ran).toBe(true);
@@ -95,7 +95,7 @@ describe('ui.deferred — hold the action, cancel means it never runs', () => {
   });
 });
 
-describe('ui.undoable — action already applied, undo must really reverse it', () => {
+describe('ui.undoable - action already applied, undo must really reverse it', () => {
   let captured;
   beforeEach(() => {
     captured = null;

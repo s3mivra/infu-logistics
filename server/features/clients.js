@@ -1,4 +1,4 @@
-// clients routes — the customer-facing side of the business in one place.
+﻿// clients routes - the customer-facing side of the business in one place.
 //
 // WHY a dedicated endpoint rather than joining on the client: answering "who is
 // this client, what do they owe, and how close are they to their limit?" needs
@@ -26,7 +26,7 @@ export default function registerClients(ctx) {
   } = ctx;
 
   // Viewing clients is an orders-domain concern (who we sell to); the money
-  // columns additionally require accounting.view — see below.
+  // columns additionally require accounting.view - see below.
   const canViewClients = [requireStaff, requirePermission('orders.view')];
 
   // An order belongs to a client through EITHER field: portal orders carry
@@ -54,7 +54,7 @@ export default function registerClients(ctx) {
       const globalLimit = globalRow?.value ?? null;
 
       const ids = clients.map(c => String(c._id));
-      // One pass over every relevant order, then bucket in memory — far cheaper
+      // One pass over every relevant order, then bucket in memory - far cheaper
       // than a query per client once there are more than a handful.
       const orders = await Order.find({
         businessType: BUSINESS_TYPE,
@@ -83,7 +83,7 @@ export default function registerClients(ctx) {
         const limit = resolveCreditLimit({ mode, globalLimit, clientLimit: c.creditLimit });
 
         // Aged A/R uses COMPLETED sales only (a real book receivable), while
-        // exposure counts everything committed — the same distinction the
+        // exposure counts everything committed - the same distinction the
         // credit gate and the ageing report already make.
         const aged = ageingBuckets(list.filter(o => o.status === 'Completed' && isReceivable(o)));
         const exposure = +list
@@ -127,7 +127,7 @@ export default function registerClients(ctx) {
     }
   });
 
-  // A single client's recent orders — loaded on demand when a row is expanded,
+  // A single client's recent orders - loaded on demand when a row is expanded,
   // so the summary above stays one cheap call.
   app.get('/api/clients/:id/orders', verifyToken, ...canViewClients, async (req, res) => {
     try {

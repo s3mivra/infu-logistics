@@ -1,11 +1,11 @@
-import { useEffect } from 'react';
+﻿import { useEffect } from 'react';
 import { Check, Plus, Receipt } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
 
 // Expenses as a full page rather than a popup.
 //
 // The form is the same one that used to live in a modal, but a page can also
-// SHOW what's been spent — recent entries and a per-category breakdown — which
+// SHOW what's been spent - recent entries and a per-category breakdown - which
 // is what an operator actually wants when they open "Expenses". A popup could
 // only ever take input.
 
@@ -25,7 +25,7 @@ export default function ExpensesPage() {
 
   return (
     <div className="space-y-4">
-      {/* Summary — the range total plus where the money went. */}
+      {/* Summary - the range total plus where the money went. */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="bg-surface border border-white/10 rounded-xl px-5 py-4">
           <p className="text-fg/80 text-[10px] font-bold uppercase tracking-widest">Spent This Month</p>
@@ -49,7 +49,7 @@ export default function ExpensesPage() {
         </div>
       </div>
 
-      {/* Entry form — same fields as the old modal, laid out for a page. */}
+      {/* Entry form - same fields as the old modal, laid out for a page. */}
       <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
         <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
           <Plus size={14} className="text-brand" />

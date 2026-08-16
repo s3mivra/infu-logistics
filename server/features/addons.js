@@ -1,4 +1,4 @@
-// addons routes — moved verbatim from server.js (feature-driven restructure).
+﻿// addons routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';

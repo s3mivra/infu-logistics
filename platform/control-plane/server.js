@@ -274,8 +274,16 @@ function composeArgs(slug) {
   return ['compose', '-p', slug, '--env-file', tenantEnvPath(slug), '-f', TENANT_COMPOSE];
 }
 
-async function docker(args, { timeout = 15 * 60_000 } = {}) {
-  const { stdout, stderr } = await run('docker', args, { timeout, maxBuffer: 32 * 1024 * 1024 });
+// DOCKER_BUILDKIT=1 enables BuildKit for all build commands: parallel layer
+// resolution, better caching, and significantly faster image builds.
+const BUILD_ENV = { ...process.env, DOCKER_BUILDKIT: '1', COMPOSE_DOCKER_CLI_BUILD: '1' };
+
+async function docker(args, { timeout = 15 * 60_000, build = false } = {}) {
+  const { stdout, stderr } = await run('docker', args, {
+    timeout,
+    maxBuffer: 32 * 1024 * 1024,
+    ...(build ? { env: BUILD_ENV } : {}),
+  });
   return (stdout || '') + (stderr || '');
 }
 
@@ -525,20 +533,23 @@ app.post('/api/update/prepare', requireAuth, async (req, res) => {
 
     // Build the shared API image ONCE (any tenant's compose produces the same
     // `semivra-api:shared` tag, since it's no longer templated by TENANT).
-    const apiLog = await docker([...composeArgs(slugs[0]), 'build', 'api'], { timeout: 20 * 60_000 });
+    // BuildKit is enabled via BUILD_ENV for faster layer resolution.
+    const apiLog = await docker([...composeArgs(slugs[0]), 'build', 'api'], { timeout: 20 * 60_000, build: true });
 
-    // Build each tenant's own web image (per-tenant by nature — bakes in
-    // business name/theme/billing). Docker layer cache makes the shared npm/
-    // build layers cheap after the first.
-    const webResults = [];
-    for (const slug of slugs) {
-      try {
-        await docker([...composeArgs(slug), 'build', 'web'], { timeout: 15 * 60_000 });
-        webResults.push({ slug, built: true });
-      } catch (err) {
-        webResults.push({ slug, built: false, error: String(err.stderr || err.message).slice(-1000) });
-      }
-    }
+    // Build all tenant web images IN PARALLEL. Each bakes in its own
+    // VITE_BUSINESS_NAME/theme, but all share the same npm-install and
+    // vite-build Docker layers (already cached after the first build),
+    // so running them concurrently cuts total time to ~1 build instead of N.
+    const webResults = await Promise.all(
+      slugs.map(async (slug) => {
+        try {
+          await docker([...composeArgs(slug), 'build', 'web'], { timeout: 15 * 60_000, build: true });
+          return { slug, built: true };
+        } catch (err) {
+          return { slug, built: false, error: String(err.stderr || err.message).slice(-1000) };
+        }
+      }),
+    );
     res.json({ ok: true, git, apiBuilt: true, web: webResults, apiLog: apiLog.slice(-1500) });
   } catch (err) {
     res.status(500).json({ phase: err.phase || 'build', error: String(err.stderr || err.message).slice(-4000) });
@@ -548,17 +559,19 @@ app.post('/api/update/prepare', requireAuth, async (req, res) => {
 app.post('/api/update/apply', requireAuth, async (req, res) => {
   const slugs = await listSlugs();
   if (slugs.length === 0) return res.status(400).json({ error: 'No tenants to update.' });
-  const results = [];
-  for (const slug of slugs) {
-    try {
-      // `up -d` (no --build): images were built in /prepare. Compose recreates
-      // only the containers whose image actually changed.
-      await docker([...composeArgs(slug), 'up', '-d'], { timeout: 5 * 60_000 });
-      results.push({ slug, status: await tenantStatus(slug) });
-    } catch (err) {
-      results.push({ slug, error: String(err.stderr || err.message).slice(-1500) });
-    }
-  }
+  // Recreate all tenants IN PARALLEL. `up -d` (no --build) just swaps
+  // containers onto the images built in /prepare — it's fast, so running
+  // them concurrently is safe and cuts the restart window significantly.
+  const results = await Promise.all(
+    slugs.map(async (slug) => {
+      try {
+        await docker([...composeArgs(slug), 'up', '-d'], { timeout: 5 * 60_000 });
+        return { slug, status: await tenantStatus(slug) };
+      } catch (err) {
+        return { slug, error: String(err.stderr || err.message).slice(-1500) };
+      }
+    }),
+  );
   res.json({ ok: true, tenants: results });
 });
 

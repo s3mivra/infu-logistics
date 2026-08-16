@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, memo, useMemo, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, memo, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { io } from 'socket.io-client';
 import { Coffee, ShoppingCart, Plus, Minus, X, Clock, CheckCircle, Package, AlertCircle, Users, Lock, RefreshCw, ChevronLeft } from 'lucide-react';
@@ -6,7 +6,7 @@ import * as ui from '../../shared/ui';
 import { loadDraft, saveDraft, clearDraft } from '../../shared/draft';
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
-// — an UNSET var still falls back to the dev LAN box.
+// - an UNSET var still falls back to the dev LAN box.
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
 const socket = io(API_URL, { transports: ['websocket'], upgrade: false });
 
@@ -29,7 +29,7 @@ const playCustomerDing = () => {
 };
 
 const MenuItemCard = memo(({ product, onAdd }) => {
-  // Out of stock (missing/zero recipe ingredient) — shown, not hidden, but
+  // Out of stock (missing/zero recipe ingredient) - shown, not hidden, but
   // disabled with a "Not available" badge instead of being clickable.
   const outOfStock = product.stockAvailable === false;
   return (
@@ -74,7 +74,7 @@ MenuItemCard.displayName = 'MenuItemCard';
 
 // A product is only HIDDEN when staff manually removed it from the menu
 // (isAvailable === false). A stock-driven unavailability (stockAvailable ===
-// false — missing/zero recipe ingredient) still shows the card, just disabled
+// false - missing/zero recipe ingredient) still shows the card, just disabled
 // with a "Not available" badge (see MenuItemCard), so customers see it exists
 // but can't order it right now.
 const isProductVisible = (p) => p.isAvailable !== false;
@@ -91,6 +91,7 @@ export default function CustomerMenu() {
   const draftReady = useRef(false);
   const [selectedAddOns, setSelectedAddOns] = useState([]);
 
+  const [businessLogo, setBusinessLogo] = useState('');
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]); // <-- THE FIX: Add this state
   const [combos, setCombos] = useState([]); // active combos / promos
@@ -155,6 +156,10 @@ export default function CustomerMenu() {
 
     // PRELOAD MENU DATA SILENTLY SO THERE IS NO LOADING SCREEN
     fetchProducts();
+    fetch(`${API_URL}/api/public/portal-settings`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.success && d.settings?.businessLogo) setBusinessLogo(d.settings.businessLogo); })
+      .catch(() => {});
 
     const validateSessionAndCheckMemory = async () => {
       try {
@@ -214,7 +219,7 @@ export default function CustomerMenu() {
 
   // Persist the in-progress basket on every change. Cheap (one small JSON write)
   // and it means a refresh mid-order costs the customer nothing. Not saved once
-  // the order is placed — from then on `semivra_active_order` owns the state.
+  // the order is placed - from then on `semivra_active_order` owns the state.
   useEffect(() => {
     if (!draftReady.current || !sessionToken || flowState === 'status') return;
     saveDraft(`qr:${sessionToken}`, { cart, customerName, orderNotes, activeCategory, flowState });
@@ -404,7 +409,7 @@ export default function CustomerMenu() {
   };
 
   const handleProductClick = (product) => {
-    if (product.stockAvailable === false) return; // out of stock — defense in depth alongside the card's own guard
+    if (product.stockAvailable === false) return; // out of stock - defense in depth alongside the card's own guard
     setSelectedAddOns([]); // Reset add-ons on new product click
     if ((product.sizes && product.sizes.length > 0) || (product.addOns && product.addOns.length > 0)) {
       setSelectedProduct(product);
@@ -515,7 +520,7 @@ export default function CustomerMenu() {
 
         requestNotificationPermission();
       } else {
-        // Kitchen closed (403) or validation error — tell the customer and let them retry.
+        // Kitchen closed (403) or validation error - tell the customer and let them retry.
         ui.alert(data.error || 'Sorry, we could not place your order right now. Please ask our staff at the counter.');
         setIsSubmitting(false);
       }
@@ -680,9 +685,10 @@ export default function CustomerMenu() {
         <div className="absolute inset-0 bg-gradient-to-b from-brand/25 via-transparent to-transparent pointer-events-none" />
 
         <div className="relative z-10 flex flex-col flex-1 items-center justify-end px-6 pb-20 text-center">
-          <div className="w-28 h-28 rounded-3xl bg-brand flex items-center justify-center mb-8 shadow-2xl shadow-brand/40">
-            <Coffee size={48} className="text-white" />
-          </div>
+          {businessLogo
+            ? <img src={businessLogo} alt={BIZ_NAME} className="w-28 h-28 rounded-3xl object-cover mb-8 shadow-2xl" />
+            : <div className="w-28 h-28 rounded-3xl bg-brand flex items-center justify-center mb-8 shadow-2xl shadow-brand/40"><Coffee size={48} className="text-white" /></div>
+          }
           <h1 className="text-5xl font-black text-fg tracking-tight leading-none mb-2">{BIZ_NAME}</h1>
           <div className="flex items-center gap-3 text-fg/30 text-sm font-bold uppercase tracking-widest mb-16">
             <div className="h-px w-8 bg-white/20" />
@@ -756,9 +762,12 @@ export default function CustomerMenu() {
       {/* STICKY HEADER */}
       <header className="sticky top-0 z-30 bg-page-bg/90 backdrop-blur-xl border-b border-white/5">
         <div className="flex items-center justify-between px-5 pt-4 pb-2">
-          <div>
+          <div className="flex items-center gap-2.5 min-w-0">
+            {businessLogo && <img src={businessLogo} alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" />}
+            <div>
             <h1 className="text-xl font-black text-fg tracking-tight leading-none">{BIZ_NAME}</h1>
             <p className="text-fg/30 text-xs font-bold uppercase tracking-widest mt-0.5">Table {tableNum} · {customerName}</p>
+            </div>
           </div>
           {cart.length > 0 && (
             <button

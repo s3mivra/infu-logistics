@@ -1,4 +1,4 @@
-// Coverage for the reorder/vendor-statement/audit-export/turnover/trend endpoints
+﻿// Coverage for the reorder/vendor-statement/audit-export/turnover/trend endpoints
 // and the segment + bulk-quantity discount pricing rules added alongside them.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
@@ -75,7 +75,7 @@ describe('vendor statement: opening balance -> entries -> closing balance', () =
         .send({ received: [{ lineId: po.body.purchaseOrder.lines[0]._id, receivedQty: qty }] });
       if (date) {
         // The receipt posts its own JournalEntry with a fresh sequence reference
-        // (not the PO number) — back-date the one this call just created rather
+        // (not the PO number) - back-date the one this call just created rather
         // than trying to guess its reference.
         const je = await mongoose.model('JournalEntry').findOne({ supplierId }).sort({ createdAt: -1 });
         je.date = date;
@@ -83,7 +83,7 @@ describe('vendor statement: opening balance -> entries -> closing balance', () =
       }
     };
 
-    // An invoice booked well before the statement window — should land in openingBalance.
+    // An invoice booked well before the statement window - should land in openingBalance.
     await receiveFor(new Date('2024-01-15'), 10, 50); // ₱500
 
     const statement1 = await auth('get', `/api/finance/vendor-statement/${supplierId}?start=2024-05-01&end=2024-07-30`, superTok);
@@ -92,7 +92,7 @@ describe('vendor statement: opening balance -> entries -> closing balance', () =
     expect(statement1.body.entries).toHaveLength(0);
     expect(statement1.body.closingBalance).toBeCloseTo(500, 2);
 
-    // An invoice inside a later window — should show as an entry, not fold into opening.
+    // An invoice inside a later window - should show as an entry, not fold into opening.
     await receiveFor(new Date('2024-06-01'), 4, 25); // ₱100
     const statement2 = await auth('get', `/api/finance/vendor-statement/${supplierId}?start=2024-05-01&end=2024-07-30`, superTok);
     expect(statement2.body.openingBalance).toBeCloseTo(500, 2);

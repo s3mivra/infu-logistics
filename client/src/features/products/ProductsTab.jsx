@@ -1,19 +1,19 @@
-import React from 'react';
+﻿import React from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
-// Category routing default per business type — log routes to Logistics, fb to Kitchen.
+// Category routing default per business type - log routes to Logistics, fb to Kitchen.
 const DEFAULT_DEPARTMENT = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
 
-// ── ProductsTab — extracted from AdminDashboard.jsx ──
+// ── ProductsTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function ProductsTab({ ctx }) {
   // Destructure everything from ctx
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
   const {
     API_URL, AUDIT_PAGE_SIZE, BIZ_NAME, COMP_REASON_LABELS, FRONTEND_URL,
@@ -106,7 +106,7 @@ export default function ProductsTab({ ctx }) {
               </span>
             </div>
 
-            {/* Search + filters — a shop with a few hundred SKUs can't page 8-at-a-time
+            {/* Search + filters - a shop with a few hundred SKUs can't page 8-at-a-time
                 to find one item, so this narrows the list before pagination. */}
             <div className="mb-5 space-y-2">
               <div className="relative">
@@ -323,7 +323,7 @@ export default function ProductsTab({ ctx }) {
               </div>
             </div>
 
-            {/* 3. MANAGE GLOBAL ADD-ONS — attaching an add-on to a product needs one to exist first */}
+            {/* 3. MANAGE GLOBAL ADD-ONS - attaching an add-on to a product needs one to exist first */}
             <div className="mt-8 border-t border-white/10 pt-6">
               <h3 className="text-xl font-bold mb-4 text-fg border-b border-white/10 pb-2">Manage Add-Ons</h3>
               <form onSubmit={handleSaveAddOn} className="flex flex-wrap gap-3 mb-6">
@@ -446,7 +446,7 @@ export default function ProductsTab({ ctx }) {
                   </div>
                   <p className="text-[10px] text-fg/60 mb-3">Discount applies to this product only, on every order line - not the whole order. Overrides below apply when a specific client buys this product.</p>
 
-                  {/* VAT classification. Products are VATable unless flagged here —
+                  {/* VAT classification. Products are VATable unless flagged here -
                       the exception list, not the opt-in list. Only meaningful once
                       the business is VAT-registered in Settings. */}
                   <label className="flex items-start gap-2.5 mb-1 cursor-pointer">
@@ -459,12 +459,12 @@ export default function ProductsTab({ ctx }) {
                     <span className="text-xs font-bold text-fg">VAT-exempt item</span>
                   </label>
                   <p className="text-[10px] text-fg/60 mb-3">
-                    Leave unticked for normal goods. Tick only for items exempt by law — raw
+                    Leave unticked for normal goods. Tick only for items exempt by law - raw
                     agricultural produce, prescription medicines. Ignored while the business is
                     set to Non-VAT in Settings.
                   </p>
 
-                  {/* Bulk-sale flag — groups the item under a "Bulk" filter in the POS & portal. */}
+                  {/* Bulk-sale flag - groups the item under a "Bulk" filter in the POS & portal. */}
                   <label className="flex items-start gap-2.5 mb-1 cursor-pointer">
                     <input
                       type="checkbox"
@@ -475,7 +475,7 @@ export default function ProductsTab({ ctx }) {
                     <span className="text-xs font-bold text-fg">Bulk / wholesale item</span>
                   </label>
                   <p className="text-[10px] text-fg/60 mb-3">
-                    Shows this product under a dedicated <span className="font-bold">Bulk</span> tab in the register and client portal — for sack/wholesale quantities sold apart from the regular menu.
+                    Shows this product under a dedicated <span className="font-bold">Bulk</span> tab in the register and client portal - for sack/wholesale quantities sold apart from the regular menu.
                   </p>
 
                   {/* Per-client overrides - a specific client's special rate on THIS product.
@@ -568,7 +568,7 @@ export default function ProductsTab({ ctx }) {
                   </div>
                   )}
 
-                  {/* Quantity-break bulk pricing — buy N+ of this product, get X% off.
+                  {/* Quantity-break bulk pricing - buy N+ of this product, get X% off.
                       Independent of the fixed-price Combo bundles; combined with the
                       discounts above by taking whichever percent is higher. */}
                   <div className="bg-page-bg/40 border border-white/10 rounded-xl p-3 mt-2">
@@ -778,7 +778,7 @@ export default function ProductsTab({ ctx }) {
                     {editingProduct ? 'Update Product' : 'Save Product'}
                   </button>
                 </div>
-                {/* Cancel — leaves edit mode and clears the form back to "Add Product".
+                {/* Cancel - leaves edit mode and clears the form back to "Add Product".
                     Without it the only ways out of an edit were saving or deleting. */}
                 {editingProduct && (
                   <button type="button" onClick={resetProductForm}

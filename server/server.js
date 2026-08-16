@@ -1,4 +1,4 @@
-import 'dotenv/config';
+﻿import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
@@ -47,6 +47,7 @@ import registerBills from './features/bills.js';
 import registerCollections from './features/collections.js';
 import registerNotifications from './features/notifications.js';
 import registerClients from './features/clients.js';
+import registerHub from './features/hub.js';
 
 const log = pino({
   level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
@@ -54,7 +55,7 @@ const log = pino({
   ...(process.env.NODE_ENV !== 'production' && { transport: { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss.l' } } })
 });
 
-// Optional error monitoring — completely inert unless SENTRY_DSN is set.
+// Optional error monitoring - completely inert unless SENTRY_DSN is set.
 const SENTRY_ON = !!process.env.SENTRY_DSN;
 if (SENTRY_ON) {
   Sentry.init({
@@ -67,11 +68,11 @@ if (SENTRY_ON) {
 
 // Fail fast on missing required env vars
 if (!process.env.MONGO_URI || !process.env.JWT_SECRET) {
-  console.error('❌ MONGO_URI and JWT_SECRET must be set in .env — server will not start.');
+  console.error('❌ MONGO_URI and JWT_SECRET must be set in .env - server will not start.');
   process.exit(1);
 }
 
-// Production config hardening — refuse to boot with weak/default secrets so a
+// Production config hardening - refuse to boot with weak/default secrets so a
 // deployment can never silently ship a guessable signing key or admin password.
 if (process.env.NODE_ENV === 'production') {
   const weakReasons = [];
@@ -85,7 +86,7 @@ if (process.env.NODE_ENV === 'production') {
     weakReasons.push('ALLOWED_ORIGINS (or FRONTEND_URL) must list your frontend origin(s)');
   }
   if (weakReasons.length) {
-    console.error('❌ Insecure production config — server will not start:\n  - ' + weakReasons.join('\n  - '));
+    console.error('❌ Insecure production config - server will not start:\n  - ' + weakReasons.join('\n  - '));
     process.exit(1);
   }
 }
@@ -116,7 +117,7 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 // 'fb' = food & beverage (QR ordering), 'log' = logistics (client-login ordering)
 const BUSINESS_TYPE = (process.env.BUSINESS_TYPE || 'fb').toLowerCase();
 // Reserved standard customer ID for walk-in/guest sales (no linked ClientAccount).
-// Never issued by the CUS-1000 sequence — real signups start at CUS-1000-A0002
+// Never issued by the CUS-1000 sequence - real signups start at CUS-1000-A0002
 // (the counter is pre-seeded to 1 at boot so the first real signup increments past it).
 const WALK_IN_CUSTOMER_CODE = 'CUS-1000-A0001';
 const ENV_ORIGINS = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '')
@@ -175,12 +176,12 @@ app.use(cookieParser());
 //
 //  Format:  PREFIX-YYYY-NNNNNN
 //
-//  • PREFIX   — document type code  (ORD, VOID, EXP, …)
-//  • YYYY     — calendar year        (sequences reset annually — standard BIR practice)
-//  • NNNNNN   — 6-digit zero-padded sequential number, atomic & collision-free
+//  • PREFIX   - document type code  (ORD, VOID, EXP, …)
+//  • YYYY     - calendar year        (sequences reset annually - standard BIR practice)
+//  • NNNNNN   - 6-digit zero-padded sequential number, atomic & collision-free
 //
 //  For order-linked entries (ORD, VOID, ARS) the caller passes the order number
-//  as `suffix` and we use  PREFIX-{orderNumber}  instead (no counter needed —
+//  as `suffix` and we use  PREFIX-{orderNumber}  instead (no counter needed -
 //  the order number is already the unique id).
 //
 //  Examples:
@@ -192,10 +193,10 @@ app.use(cookieParser());
 //    JRN-2025-000001           ← 1st manual journal entry of 2025
 //
 //  Counter keys are stored in the Counter collection as  "{PREFIX}-{YYYY}".
-//  They are shared with nothing else — safe to increment even inside transactions
+//  They are shared with nothing else - safe to increment even inside transactions
 //  because Counter documents are upserted outside the session.
 //
-// mkRef — SYNCHRONOUS. Use when the source document already provides a unique ID.
+// mkRef - SYNCHRONOUS. Use when the source document already provides a unique ID.
 //   Completion JE  →  order.orderNumber as-is   e.g. "ORD-2025-A0001"
 //   Void JE        →  "VOID-ORD-2025-A0001"
 //   ARS JE         →  "ARS-ORD-2025-A0001"
@@ -234,25 +235,25 @@ function baseUnitsPerSale(product, invItem) {
   return invItem?.unitMultiplier || 1;
 }
 
-// Escape user input before interpolating into a RegExp — prevents regex injection
+// Escape user input before interpolating into a RegExp - prevents regex injection
 // and ReDoS (catastrophic backtracking) when matching names case-insensitively.
 const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// Multi-tenancy (Phase 2b) — DISABLED. This was meant to be a no-op for
+// Multi-tenancy (Phase 2b) - DISABLED. This was meant to be a no-op for
 // single-tenant deployments ("all current data + staff live on the default
 // tenant"), but that assumption was false in practice: the boot migration
 // backfills tenantId onto EXISTING Users, but nothing stamps tenantId onto
-// NEWLY CREATED docs (Orders, Inventory, etc.) going forward — those default
+// NEWLY CREATED docs (Orders, Inventory, etc.) going forward - those default
 // to null. Once a deployment has been running long enough for the backfill to
 // have run, every staff token carries a tenantId while every fresh order/item
 // does not, so filtering reads by tenantId silently hid all new data (this was
 // the root cause of "orders/inventory not showing up"). Per this project's
 // direction (one deployment per business, not shared multi-tenant), tenant
-// scoping is paused rather than finished — always return {} so it's a true
+// scoping is paused rather than finished - always return {} so it's a true
 // no-op everywhere it's used, until/unless multi-tenancy is revisited.
 const tenantScope = (req) => ({});
 
-// bcrypt work factor — 12 rounds (OWASP-recommended minimum for 2025+).
+// bcrypt work factor - 12 rounds (OWASP-recommended minimum for 2025+).
 const BCRYPT_ROUNDS = 12;
 
 // Mongo filter for cash that has physically entered the drawer during a shift.
@@ -328,7 +329,7 @@ const issueSession = async (res, user, meta = {}) => {
   return signAccessToken(user);
 };
 
-// Revoke every active refresh session for a user — call on password/role change
+// Revoke every active refresh session for a user - call on password/role change
 // or account deletion so existing logins can no longer silently refresh.
 const revokeUserSessions = (userId) =>
   RefreshSession.updateMany({ userId, revoked: false }, { revoked: true });
@@ -352,7 +353,7 @@ const validate = (schema) => (req, res, next) => {
 };
 
 // Reusable field primitives
-// zName stays RAW (trim only) — it backs loginSchema and userCreateSchema, and
+// zName stays RAW (trim only) - it backs loginSchema and userCreateSchema, and
 // canonicalizing a staff login name would break existing accounts whose stored
 // name doesn't survive a round-trip (e.g. "JM" → "Jm"). Use zLabel for anything
 // that is a display label rather than an identity.
@@ -413,7 +414,7 @@ const modifierGroupSchema = z.object({
   options: z.array(z.object({ name: z.string(), price: zMoney.optional(), recipe: zRecipe })).optional(),
 });
 
-// mkSeqRef — ASYNC. Use for entries that have no natural document ID.
+// mkSeqRef - ASYNC. Use for entries that have no natural document ID.
 //   Atomically increments a per-prefix-per-year counter, zero-collision.
 //   e.g.  await mkSeqRef('EXP')       →  "EXP-2025-000042"
 //          await mkSeqRef('INV-SPOIL') →  "INV-SPOIL-2025-000007"
@@ -509,14 +510,14 @@ const runStartupTasks = async () => {
         Category.updateMany(bfFilter, { $set: { businessType: BUSINESS_TYPE } }),
       ]);
       const stampedTotal = (bO.modifiedCount || 0) + (bP.modifiedCount || 0) + (bI.modifiedCount || 0) + (bC.modifiedCount || 0);
-      if (stampedTotal > 0) log.info(`✅ Stamped businessType=${BUSINESS_TYPE} on ${stampedTotal} legacy doc(s) — Orders:${bO.modifiedCount} Products:${bP.modifiedCount} Inventory:${bI.modifiedCount} Categories:${bC.modifiedCount}`);
+      if (stampedTotal > 0) log.info(`✅ Stamped businessType=${BUSINESS_TYPE} on ${stampedTotal} legacy doc(s) - Orders:${bO.modifiedCount} Products:${bP.modifiedCount} Inventory:${bI.modifiedCount} Categories:${bC.modifiedCount}`);
     } catch (err) {
       log.error({ err }, 'Seeding error');
     }
 
     // ── DEFAULT TENANT SEED + tenantId BACKFILL (multi-tenancy Phase 1) ────
     // Idempotent: ensure a "default" tenant exists, then stamp every tenant-scoped
-    // doc that lacks a tenantId with it. Additive only — no query behavior changes.
+    // doc that lacks a tenantId with it. Additive only - no query behavior changes.
     try {
       let defaultTenant = await Tenant.findOne({ slug: 'default' });
       if (!defaultTenant) {
@@ -536,7 +537,7 @@ const runStartupTasks = async () => {
         User.updateMany(tFilter, { $set: { tenantId: defaultTenant._id } }),
       ]);
       const tStamped = (tO.modifiedCount || 0) + (tP.modifiedCount || 0) + (tI.modifiedCount || 0) + (tC.modifiedCount || 0) + (tU.modifiedCount || 0);
-      if (tStamped > 0) log.info(`✅ Backfilled tenantId on ${tStamped} doc(s) — Orders:${tO.modifiedCount} Products:${tP.modifiedCount} Inventory:${tI.modifiedCount} Categories:${tC.modifiedCount} Users:${tU.modifiedCount}`);
+      if (tStamped > 0) log.info(`✅ Backfilled tenantId on ${tStamped} doc(s) - Orders:${tO.modifiedCount} Products:${tP.modifiedCount} Inventory:${tI.modifiedCount} Categories:${tC.modifiedCount} Users:${tU.modifiedCount}`);
     } catch (err) {
       log.error({ err }, 'Tenant seed/backfill error');
     }
@@ -594,7 +595,7 @@ const runStartupTasks = async () => {
         PM_DEFAULTS[s.name] = codeToUse;
         seededAccts++;
       }
-      log.info(`✅ Payment-method sub-account seed complete — created ${seededAccts}, reused ${SEED_SUB_ACCOUNTS.length - seededAccts}.`);
+      log.info(`✅ Payment-method sub-account seed complete - created ${seededAccts}, reused ${SEED_SUB_ACCOUNTS.length - seededAccts}.`);
       // Refresh COA cache so the new codes are immediately resolvable.
       await refreshCustomMeta();
       // Update the in-memory defaults so routing falls back to the granular
@@ -663,14 +664,14 @@ const runStartupTasks = async () => {
       }
 
       // ── ONE-TIME MIGRATION: legacy CLT-AXXXX → CUS-1000-AXXXX ──────────────
-      // Every ClientAccount is a real client (walk-ins never get one — see
+      // Every ClientAccount is a real client (walk-ins never get one - see
       // WALK_IN_CUSTOMER_CODE). Renumber any surviving CLT- codes into the standard
       // sequence, oldest account first, continuing after whatever CUS-1000 codes
       // already exist. Idempotent: once no CLT- codes remain, this is a no-op.
       const legacyClients = await ClientAccount.find({ clientCode: /^CLT-A\d+$/ }, { clientCode: 1 }).sort({ createdAt: 1 }).lean();
       if (legacyClients.length) {
         const existingCus = await ClientAccount.find({ clientCode: /^CUS-1000-A\d+$/ }, { clientCode: 1 }).lean();
-        let seq = 1; // A0001 stays reserved for walk-in — never reissue it
+        let seq = 1; // A0001 stays reserved for walk-in - never reissue it
         for (const c of existingCus) {
           const m = c.clientCode.match(/^CUS-1000-A(\d+)$/);
           if (m) seq = Math.max(seq, parseInt(m[1], 10));
@@ -691,7 +692,7 @@ const runStartupTasks = async () => {
         if (m) maxClientSeq = Math.max(maxClientSeq, parseInt(m[1], 10));
       }
       if (maxClientSeq > 0) await Counter.collection.updateOne({ _id: 'CUS-1000' }, { $max: { seq: maxClientSeq } }, { upsert: true });
-      // A0001 is reserved for walk-in/guest sales (WALK_IN_CUSTOMER_CODE) — never
+      // A0001 is reserved for walk-in/guest sales (WALK_IN_CUSTOMER_CODE) - never
       // issued to a real signup. Floor the counter at 1 so the next real
       // generateNextSequence() call always lands on A0002 or higher.
       await Counter.collection.updateOne({ _id: 'CUS-1000' }, { $max: { seq: 1 } }, { upsert: true });
@@ -726,10 +727,10 @@ mongoose.connect(process.env.MONGO_URI, {
 
     const token = authHeader.split(' ')[1];
     try {
-      // Stage 1 — signature/expiry. A malformed/expired token throws here and never
+      // Stage 1 - signature/expiry. A malformed/expired token throws here and never
       // reaches the audience/role logic below.
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      // Stage 2 — audience. A client-audience token must never satisfy the staff gate,
+      // Stage 2 - audience. A client-audience token must never satisfy the staff gate,
       // even before role checks. This makes every verifyToken route client-hostile by
       // default (defense-in-depth alongside requireStaff). aud beats role.
       if (decoded.aud === 'client') {
@@ -739,7 +740,7 @@ mongoose.connect(process.env.MONGO_URI, {
       next();
     } catch (error) {
       // 401 (not 403) for an expired/invalid token so the client silently refreshes
-      // and retries — otherwise an idle session shows "Forbidden" until manual reload.
+      // and retries - otherwise an idle session shows "Forbidden" until manual reload.
       return res.status(401).json({ success: false, message: 'Unauthorized: Invalid or expired token' });
     }
   };
@@ -747,7 +748,7 @@ mongoose.connect(process.env.MONGO_URI, {
   // --- 🔒 CLIENT-PORTAL TOKEN GUARD 🔒 ---
   // Strict gate for the two client-scoped routes (/api/client/orders[...]). Requires a
   // valid signature AND aud:'client' AND role:'client' (see evaluateClientAccess). A
-  // staff token, or a client token missing the aud claim, is rejected — clients
+  // staff token, or a client token missing the aud claim, is rejected - clients
   // re-authenticate after deploy. Staff routes use verifyToken + requireStaff instead.
   const verifyClientToken = (req, res, next) => {
     const authHeader = req.headers.authorization;
@@ -766,7 +767,7 @@ mongoose.connect(process.env.MONGO_URI, {
     }
   };
 
-  // Hard-gate: role === 'superadmin' ONLY — never trust name strings.
+  // Hard-gate: role === 'superadmin' ONLY - never trust name strings.
   const requireSuperAdmin = (req, res, next) => {
     if (req.user?.role !== 'superadmin') {
       return res.status(403).json({ success: false, error: 'Forbidden: Superadmin role required.' });
@@ -775,7 +776,7 @@ mongoose.connect(process.env.MONGO_URI, {
   };
 
   // Allows superadmin OR admin (e.g. for refund). Role match is case-insensitive.
-  // NOTE: voids are superadmin-only (requireSuperAdmin) — do not add void here.
+  // NOTE: voids are superadmin-only (requireSuperAdmin) - do not add void here.
   const requireSuperOrAdmin = (req, res, next) => {
     const role = String(req.user?.role || '').toLowerCase();
     if (role === 'superadmin' || role === 'admin') return next();
@@ -845,7 +846,7 @@ const Settings = mongoose.model('Settings', SettingsSchema);
 
 // ── TENANT (multi-tenancy, Phase 1) ──────────────────────────────────────────
 // A Tenant is an isolated business in a shared deployment. Phase 1 introduces the
-// model + a default tenant + tenantId backfill (additive, non-breaking — existing
+// model + a default tenant + tenantId backfill (additive, non-breaking - existing
 // queries are unchanged). Phase 2 wires tenantId into the access token, per-tenant
 // query scoping, and Socket.io room partitioning.
 const TenantSchema = new mongoose.Schema({
@@ -856,7 +857,7 @@ const TenantSchema = new mongoose.Schema({
 }, { timestamps: true });
 const Tenant = mongoose.model('Tenant', TenantSchema);
 
-// Tenant management — superadmin only (Phase 1 CRUD over the tenant registry).
+// Tenant management - superadmin only (Phase 1 CRUD over the tenant registry).
 const tenantSchema = z.object({
   name: z.string().trim().min(1).max(120),
   slug: z.string().trim().min(1).max(60).regex(/^[a-z0-9-]+$/i, 'slug must be alphanumeric/hyphen'),
@@ -884,12 +885,12 @@ const ProductSchema = new mongoose.Schema({
   productCode: String,
   // Scanned barcode (UPC/EAN/QR payload). Sparse index: most products may not
   // have one, but the ones that do are looked up by it at the POS
-  // (GET /api/products/by-barcode/:code). NOT unique at the schema level — a
+  // (GET /api/products/by-barcode/:code). NOT unique at the schema level - a
   // shop can legitimately have the same barcode on two size variants, and a
   // hard unique constraint would reject the second on import; the lookup route
   // returns the first match and the response notes when a barcode is ambiguous.
   barcode: { type: String, default: '', index: true },
-  // Bulk-sale flag — surfaces the product under a dedicated "Bulk" filter in the
+  // Bulk-sale flag - surfaces the product under a dedicated "Bulk" filter in the
   // POS and client portal (e.g. wholesale/sack quantities), separate from the
   // per-line quantity-break pricing in `bulkBreaks`.
   isBulk: { type: Boolean, default: false, index: true },
@@ -901,7 +902,7 @@ const ProductSchema = new mongoose.Schema({
   // whole order. 0 = no discount. Applies to ALL buyers by default.
   discountPercent: { type: Number, default: 0 },
   // VAT classification. Defaults to VATable (false), the ERP convention: the
-  // company-level VAT setting governs, and you flag the EXCEPTIONS here — raw
+  // company-level VAT setting governs, and you flag the EXCEPTIONS here - raw
   // agricultural produce, prescription medicines, and the like. Defaulting the
   // other way would silently under-remit VAT on any product left unconfigured,
   // which surfaces at audit rather than at the counter.
@@ -911,16 +912,16 @@ const ProductSchema = new mongoose.Schema({
   // you give a specific client a special rate on a specific product (pre-reg, VIP,
   // bulk-buyer, etc.). Empty array = no overrides → falls back to discountPercent.
   clientDiscounts: [{ clientId: String, percent: { type: Number, default: 0 } }],
-  // Segment-level overrides — same idea as clientDiscounts but keyed by a tag on
+  // Segment-level overrides - same idea as clientDiscounts but keyed by a tag on
   // the buyer's ClientAccount.segments (e.g. "wholesale", "vip") instead of one
   // specific client id, so a rate can apply to a whole class of buyer at once.
   // When a buyer carries more than one matching segment, the highest percent
-  // wins (see productDiscPct in orders.js) — never stacked.
+  // wins (see productDiscPct in orders.js) - never stacked.
   segmentDiscounts: [{ segment: String, percent: { type: Number, default: 0 } }],
   // Quantity-break bulk pricing, independent of the fixed-price Combo model.
   // Each line item's ordered quantity is checked against minQty (highest
   // qualifying minQty wins) and combined with the other discount percents via
-  // Math.max, same as clientDiscounts/segmentDiscounts — never stacked.
+  // Math.max, same as clientDiscounts/segmentDiscounts - never stacked.
   bulkBreaks: [{ minQty: { type: Number, required: true }, percent: { type: Number, default: 0 } }],
   baseSize: String,
   costOverride: Number,
@@ -935,7 +936,7 @@ const ProductSchema = new mongoose.Schema({
   addOns: [{ name: String, price: Number, recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }] }],
   image: String,
   // Renamed from "86'd". `isAvailable === false` means REMOVED from the menu
-  // (and from reporting too — unless the product still has stock, in which
+  // (and from reporting too - unless the product still has stock, in which
   // case it shows in reporting so historical inventory is visible).
   isAvailable:    { type: Boolean, default: true },
   // Manual out-of-stock toggle. OOS products STILL show in menu (with an OOS
@@ -978,10 +979,10 @@ const OrderSchema = new mongoose.Schema({
   status: { type: String, default: 'Pending' },
   // Parked / held tabs: saved but not yet sent to the kitchen or completed.
   isParked: { type: Boolean, default: false, index: true },
-  // Idempotency key — prevents duplicate orders from retries / offline-queue replays.
+  // Idempotency key - prevents duplicate orders from retries / offline-queue replays.
   // unique+sparse: makes double-submit protection DB-enforced, not just the
   // app-level findOne-then-create check in orders.js (which has a TOCTOU
-  // window — two concurrent requests can both pass the findOne before either
+  // window - two concurrent requests can both pass the findOne before either
   // create() completes). The unique index turns a lost race into an E11000
   // the create-order route catches, instead of a duplicate order.
   idempotencyKey: { type: String, index: true, unique: true, sparse: true },
@@ -1024,7 +1025,7 @@ items: [{
   discountPercent: { type: Number, default: 0 },
   discount: { type: Number, default: 0 },
   total: { type: Number, default: 0 },
-  // SC/PWD exemption for this sale. Defaults FALSE — an ordinary sale is VATable.
+  // SC/PWD exemption for this sale. Defaults FALSE - an ordinary sale is VATable.
   // This used to default true, which was harmless only while VAT was disabled
   // system-wide; with VAT live it would have exempted every legacy order and
   // quietly zeroed the output VAT on all of them.
@@ -1036,12 +1037,12 @@ items: [{
   scPwdOrder: { type: String, default: 'vat-first' },
   // --- ENTERPRISE FIELDS ---
   cashier: { type: String, default: 'System', index: true },
-  // --- PARTIAL FULFILLMENT (logistics — single order, fulfilled in batches) ---
+  // --- PARTIAL FULFILLMENT (logistics - single order, fulfilled in batches) ---
   amountPaid:       { type: Number, default: 0 },        // cash/AR collected so far
   depositRemaining: { type: Number, default: 0 },        // prepaid-but-unfulfilled value held as Customer Deposits
   // When the remaining units of a partially-fulfilled order are dropped, the
   // order finalizes as Completed at the fulfilled quantity and the dropped units
-  // are recorded here (they carry no ledger entries — they were never fulfilled).
+  // are recorded here (they carry no ledger entries - they were never fulfilled).
   droppedItems: [{ name: String, productCode: String, droppedQty: Number, price: Number }],
   droppedBy:   { type: String, default: '' },
   droppedAt:   { type: Date },
@@ -1063,20 +1064,20 @@ items: [{
   complimentaryCost:   { type: Number, default: 0 },
   complimentaryReferenceNumber: { type: String, default: '' },
   voidReason: { type: String, default: '' },
-  // Attribution — who actually voided / cancelled the order. Captured from the
+  // Attribution - who actually voided / cancelled the order. Captured from the
   // verified JWT, never the request body. Distinct from `cashier` (which is the
-  // original placer — could be the client themselves on a client-portal order).
+  // original placer - could be the client themselves on a client-portal order).
   voidedBy: { type: String, default: '' },
   voidedAt: { type: Date },
   cancelledBy: { type: String, default: '' },
   cancelledAt: { type: Date },
   // True when a logged-in client placed the order directly from the client portal.
-  // Used to exclude these orders from "staff activity" panels — their `cashier`
+  // Used to exclude these orders from "staff activity" panels - their `cashier`
   // is the client's own username, not real staff.
   placedByClient: { type: Boolean, default: false, index: true },
   clientAccountId: { type: String, index: true },
   // Marks orders added via the superadmin Backdate Sales tool. Skips inventory
-  // deduction and recipe COGS — purely a revenue/finance tally.
+  // deduction and recipe COGS - purely a revenue/finance tally.
   isBackdated:    { type: Boolean, default: false, index: true },
   amountTendered: { type: Number, default: 0 },
   changeDue: { type: Number, default: 0 },
@@ -1088,7 +1089,7 @@ items: [{
   dispatchStatus:  { type: String, enum: ['', 'Preparing', 'Out for Delivery', 'Awaiting Pickup', 'Delivered', 'Picked Up'], default: '' },
   // Customer / cashier special instructions (e.g. "no sugar", "extra shot")
   orderNotes: { type: String, default: '' },
-  // Guest/cover count (for analytics — how many people at the table)
+  // Guest/cover count (for analytics - how many people at the table)
   guestCount: { type: Number, default: 1 },
   // Split-payment breakdown: [{ method, amount }]
   payments: [{ method: String, amount: Number }],
@@ -1144,17 +1145,17 @@ const InventorySchema = new mongoose.Schema({
   unit: String,                                       // base unit: 'g', 'ml', 'pcs'
   unitCost: { type: Number, default: 0 },             // ALWAYS per base unit (e.g. P0.07/ml when 1L costs P70)
   lowStockThreshold: { type: Number, default: 0 },
-  // Display layer — what operators see (kg / L / pcs). storage stays in base units for recipe precision.
-  displayUnit:     { type: String, default: '' },     // 'L', 'kg', 'pcs', 'g', 'ml' — falls back to `unit` when empty
+  // Display layer - what operators see (kg / L / pcs). storage stays in base units for recipe precision.
+  displayUnit:     { type: String, default: '' },     // 'L', 'kg', 'pcs', 'g', 'ml' - falls back to `unit` when empty
   unitMultiplier:  { type: Number, default: 1 },      // base units per displayUnit (1 for g/ml/pcs; 1000 for L/kg)
-  // Per-qty (pack) size, in displayUnit — how much ONE purchased unit/pack holds,
+  // Per-qty (pack) size, in displayUnit - how much ONE purchased unit/pack holds,
   // e.g. 1 for "Milk 1L", 0.25 for "Filter 250G". Distinct from unitMultiplier
   // (the fixed kg/L↔g/ml conversion factor): this is the SKU's own package size,
   // parsed from the item name on import or entered manually. null = not tracked.
   packSize:        { type: Number, default: null },
-  // Suggested Retail Price (per displayUnit) — optional reference for items intended for resale.
+  // Suggested Retail Price (per displayUnit) - optional reference for items intended for resale.
   srp:             { type: Number, default: 0 },
-  // Expiry monitoring — multi-batch (FEFO)
+  // Expiry monitoring - multi-batch (FEFO)
   // expiryDate is the SOONEST expiry across all batches (main view shows this).
   expiryDate: { type: Date },
   expiryWarnDays: { type: Number, default: 7 },
@@ -1170,7 +1171,7 @@ InventorySchema.index({ expiryDate: 1 });
 InventorySchema.index({ itemName: 1 });
 const Inventory = mongoose.model('Inventory', InventorySchema);
 
-// Storage places — the physical locations stock can sit in (branch, warehouse,
+// Storage places - the physical locations stock can sit in (branch, warehouse,
 // cold room). Referenced by name from Inventory.stockLocation and by the
 // stock-transfer workflow (#8). Kept as its own small collection so places can be
 // managed (renamed, deactivated) without touching every inventory row.
@@ -1184,7 +1185,7 @@ const StorageLocationSchema = new mongoose.Schema({
 StorageLocationSchema.index({ businessType: 1, name: 1 }, { unique: true });
 const StorageLocation = mongoose.model('StorageLocation', StorageLocationSchema);
 
-// Stock categories — the grouping for raw-material/inventory items (distinct from
+// Stock categories - the grouping for raw-material/inventory items (distinct from
 // product menu Categories). Each carries a short manual `prefix` (2 chars) that
 // drives the auto item-code sequence (#9), e.g. prefix "P" → P10001, P10002.
 const StockCategorySchema = new mongoose.Schema({
@@ -1198,12 +1199,12 @@ const StockCategorySchema = new mongoose.Schema({
 StockCategorySchema.index({ businessType: 1, name: 1 }, { unique: true });
 const StockCategory = mongoose.model('StockCategory', StockCategorySchema);
 
-// #8 Stock transfers — a request → approve → release workflow moving base-unit
+// #8 Stock transfers - a request → approve → release workflow moving base-unit
 // quantity from one inventory item (at a source location) to another (at a
 // destination location). Because inventory is one-doc-per-item, "the same product
 // at two locations" is modelled as two items; a transfer moves qty between them.
 // This is an INTERNAL asset move (Inventory 130000 unchanged) so it posts NO
-// journal entry — only StockCard audit rows on release.
+// journal entry - only StockCard audit rows on release.
 const STOCK_TRANSFER_STATUSES = ['Requested', 'Approved', 'Released', 'Rejected', 'Cancelled'];
 const StockTransferSchema = new mongoose.Schema({
   businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
@@ -1227,6 +1228,49 @@ const StockTransferSchema = new mongoose.Schema({
 StockTransferSchema.index({ businessType: 1, status: 1, createdAt: -1 });
 const StockTransfer = mongoose.model('StockTransfer', StockTransferSchema);
 
+// ── Hub: inter-business connections & cross-tenant transfers ─────────────────
+const LinkedBusinessSchema = new mongoose.Schema({
+  businessType: { type: String, required: true, index: true },
+  role:         { type: String, enum: ['hub', 'client'], required: true },
+  partnerSlug:  { type: String, required: true },
+  partnerName:  String,
+  partnerUrl:   String,
+  linkToken:    { type: String, required: true },
+  status:       { type: String, enum: ['active', 'suspended'], default: 'active' },
+  linkedAt:     Date,
+}, { timestamps: true });
+LinkedBusinessSchema.index({ businessType: 1, partnerSlug: 1 }, { unique: true });
+const LinkedBusiness = mongoose.model('LinkedBusiness', LinkedBusinessSchema);
+
+const HubInviteSchema = new mongoose.Schema({
+  businessType: { type: String, required: true },
+  code:         { type: String, required: true, unique: true },
+  expiresAt:    { type: Date, required: true },
+  usedAt:       Date,
+}, { timestamps: true });
+const HubInvite = mongoose.model('HubInvite', HubInviteSchema);
+
+const CrossTransferSchema = new mongoose.Schema({
+  businessType: { type: String, required: true, index: true },
+  direction:    { type: String, enum: ['outbound', 'inbound'], required: true },
+  partnerSlug:  String,
+  partnerName:  String,
+  itemId:       mongoose.Schema.Types.ObjectId,
+  targetItemId: mongoose.Schema.Types.ObjectId,
+  itemName:     String,
+  unit:         String,
+  qtyBase:      Number,
+  note:         String,
+  reference:    { type: String, index: true },
+  // Groups all line-items sent in the same "send" action.
+  shipmentRef:  { type: String, index: true },
+  // Which expiry batch was picked when sending (internal use only, not shown to customers).
+  batchInfo:    { expiryDate: Date, batchIdx: Number },
+  status:       { type: String, enum: ['Pending', 'Accepted', 'Rejected', 'Released', 'Received'], default: 'Pending' },
+  receivedAt:   Date,
+}, { timestamps: true });
+const CrossTransfer = mongoose.model('CrossTransfer', CrossTransferSchema);
+
 const JournalEntrySchema = new mongoose.Schema({
   date: { type: Date, default: Date.now, index: true },
   reference: { type: String, index: true },
@@ -1239,7 +1283,7 @@ const JournalEntrySchema = new mongoose.Schema({
   }],
   totalDebit: Number,
   totalCredit: Number,
-  // Supplier attribution for A/P entries — set when goods are received on credit
+  // Supplier attribution for A/P entries - set when goods are received on credit
   // and when the supplier is paid. Without this, "how much do we owe Best Beans?"
   // can only be answered by reading descriptions. Optional and additive: entries
   // that predate it simply group under "Unattributed".
@@ -1257,7 +1301,7 @@ const JournalEntrySchema = new mongoose.Schema({
 JournalEntrySchema.pre('validate', function () {
   const lines = this.lines || [];
   if (!lines.length) return;
-  // Throws on imbalance — Mongoose 9 runs validate hooks promise-style, so a
+  // Throws on imbalance - Mongoose 9 runs validate hooks promise-style, so a
   // throw here rejects the create()/save()/insertMany() before anything is
   // written. This is the single chokepoint every entry must pass through.
   assertBalanced(lines, `ref ${this.reference || '?'}`);
@@ -1277,11 +1321,11 @@ const JournalEntry = mongoose.model('JournalEntry', JournalEntrySchema);
 // order completion/void/refund inside a multi-document transaction collides
 // on WriteConflict far more than any other document in this schema (proven
 // under a 20-way concurrent-completion test during development, all sharing
-// one product — see test/tenant-stats-concurrency.integration.test.js).
+// one product - see test/tenant-stats-concurrency.integration.test.js).
 // STATS_SHARDS documents share one businessType (ProductStats: one businessType
 // +productName); applyStatsDelta picks a random shard per write, and reads
 // (reports.js) sum across all shards. Read cost stays ~O(shard count), not
-// O(order history) — TenantStats always has businessType×STATS_SHARDS docs
+// O(order history) - TenantStats always has businessType×STATS_SHARDS docs
 // total; ProductStats has at most businessType×productCount×STATS_SHARDS.
 const STATS_SHARDS = 8;
 const TenantStatsSchema = new mongoose.Schema({
@@ -1368,12 +1412,12 @@ const ClockEntrySchema = new mongoose.Schema({
 const ClockEntry = mongoose.model('ClockEntry', ClockEntrySchema);
 
 // ── SHIFT SCHEDULING (ROSTER) ────────────────────────────────────────────────
-// A PLANNED future shift — distinct from `Shift` (a cash-drawer reconciliation
+// A PLANNED future shift - distinct from `Shift` (a cash-drawer reconciliation
 // record created when a cashier actually opens the register) and `ClockEntry`
 // (attendance, created on clock-in). This is the roster: a manager assigns a
 // staff member to a date + time window ahead of time, staff see their upcoming
 // schedule. Deliberately does NOT auto-link to the real Shift/ClockEntry a
-// staffer later opens — comparing planned vs. actual is a reporting concern
+// staffer later opens - comparing planned vs. actual is a reporting concern
 // that can layer on later; the roster stands alone.
 //
 // `date` is the local calendar day (YYYY-MM-DD, Manila) the shift is scheduled
@@ -1400,8 +1444,8 @@ const ScheduledShiftSchema = new mongoose.Schema({
 ScheduledShiftSchema.index({ businessType: 1, date: 1, staffId: 1 });
 const ScheduledShift = mongoose.model('ScheduledShift', ScheduledShiftSchema);
 
-// The owner (superadmin) is excluded from staff-facing reports — hours, shift
-// history, cashier variance — since they're not a tracked employee/cashier.
+// The owner (superadmin) is excluded from staff-facing reports - hours, shift
+// history, cashier variance - since they're not a tracked employee/cashier.
 // Returns their user _id strings for use in a $nin filter.
 const ownerUserIds = async () => {
   const owners = await User.find({ role: 'superadmin' }, { _id: 1 }).lean();
@@ -1420,7 +1464,7 @@ const ownerIdentity = async () => {
 };
 
 // Helper: append a structured audit log entry. Uses the existing AuditLog
-// schema (userId/action/targetReference/details) — see model defined further
+// schema (userId/action/targetReference/details) - see model defined further
 // below. Wrapped in try/catch so accounting calls never fail because logging did,
 // but failures are surfaced to the application logger so silent loss is visible.
 async function logAudit(req, { action, entity, entityId, before, after, notes }) {
@@ -1491,11 +1535,11 @@ refreshPaymentMap();
 
 // Resolve a payment method to { code, name }.
 //   1) Explicit override in PaymentMethodMap (user picked a specific account in
-//      the Routing UI) — wins unconditionally.
+//      the Routing UI) - wins unconditionally.
 //   2) Otherwise: look under the canonical parent (e.g. GCash → 113xxx parent)
 //      for a CUSTOM CHILD whose name matches the payment method (case-insensitive).
 //      So if the user adds "GCash" as 113001 under E-Wallet, the GCash payment
-//      method routes to it automatically — no manual mapping needed.
+//      method routes to it automatically - no manual mapping needed.
 //   3) Otherwise: the canonical parent code.
 //   4) Otherwise: Cash on Hand.
 function accountForPaymentMethod(method) {
@@ -1511,7 +1555,7 @@ function accountForPaymentMethod(method) {
     }
   }
   // (2a) Custom sub-account whose NAME equals the payment method, regardless
-  //      of which parent — lets the cashier pick "Metrobank" or "Gotyme" at
+  //      of which parent - lets the cashier pick "Metrobank" or "Gotyme" at
   //      checkout even though those names aren't in the canonical default map.
   //      Only matches under payment-relevant parents (cash/bank/ewallet/AR/AP)
   //      so a random expense sub-account can't be accidentally targeted.
@@ -1537,7 +1581,7 @@ function accountForPaymentMethod(method) {
     return { code: overrideCode, name: acctMeta(overrideCode)?.name || method };
   }
   // (4) Unassigned fallback. The tender has no explicit mapping, no matching
-  //     custom sub-account, and isn't a seeded default — so we can't safely
+  //     custom sub-account, and isn't a seeded default - so we can't safely
   //     guess its account. Park it in a dedicated clearing account (118000)
   //     and flag `fallback` so callers can alert a manager to route it. Never
   //     silently absorb an unmapped tender into Cash on Hand.
@@ -1640,7 +1684,7 @@ const UserSchema = new mongoose.Schema({
   password: { type: String, required: true },
   role: { type: String, default: 'Staff' },
   // Seller commission: percent (0-100) applied to this user's own Completed,
-  // non-complimentary sales (matched by Order.cashier === User.name — see
+  // non-complimentary sales (matched by Order.cashier === User.name - see
   // GET /api/reports/commissions in reports.js). 0 = no commission, the
   // default for every existing account until explicitly set.
   commissionRate: { type: Number, default: 0, min: 0, max: 100 },
@@ -1662,7 +1706,7 @@ const ClientAccountSchema = new mongoose.Schema({
   password:      { type: String, required: true },              // bcrypt-hashed
   name:          { type: String, required: true },
   // Contact details for collections/notices/general CRM. All optional and
-  // free-form — a POS-promoted walk-in (source:'pos') often has none, and a
+  // free-form - a POS-promoted walk-in (source:'pos') often has none, and a
   // portal signup isn't required to provide them either. `phone`/`email` are
   // deliberately NOT unique: two family members can legitimately share a phone.
   phone:         { type: String, default: '' },
@@ -1671,11 +1715,11 @@ const ClientAccountSchema = new mongoose.Schema({
   paymentMethod: { type: String, default: 'Cash' },             // pre-set; can be overridden per order
   isActive:      { type: Boolean, default: true },
   // 'portal' = real client-portal login (username/password usable). 'pos' = auto-promoted
-  // from a repeat POS walk-in (3+ Completed orders under the same name) — carries a
+  // from a repeat POS walk-in (3+ Completed orders under the same name) - carries a
   // placeholder username/unusable password since it has no login of its own.
   source:        { type: String, enum: ['portal', 'pos'], default: 'portal' },
   // Credit limit in pesos for on-account (non-cash) buying.
-  //   null  = no per-client limit set — falls back to the global limit if the
+  //   null  = no per-client limit set - falls back to the global limit if the
   //           active mode uses one.
   //   0     = an explicit "no credit at all" (different from null on purpose).
   // Whether either limit is enforced at all is decided by the `creditLimitMode`
@@ -1684,7 +1728,7 @@ const ClientAccountSchema = new mongoose.Schema({
   // Payment terms in days for on-account (non-cash) sales. When a non-cash order
   // Completes, this is snapshotted onto the order to compute its A/R due date
   // (dueDate = completedAt + creditTermsDays). 0 = due on receipt (COD-style).
-  // null = no terms configured — the A/R views then age from the order date only.
+  // null = no terms configured - the A/R views then age from the order date only.
   creditTermsDays: { type: Number, default: null },
   // Free-form tags (e.g. "wholesale", "vip") a product's segmentDiscounts can
   // target instead of (or in addition to) a one-off clientDiscounts entry for
@@ -1700,13 +1744,13 @@ const ClientAccount = mongoose.model('ClientAccount', ClientAccountSchema);
 
 // --- AR COLLECTION REMINDERS ---
 // A log of contact attempts against an overdue client, not an automated
-// sender — nothing in this app emails/SMSes a client on its own (same reason
+// sender - nothing in this app emails/SMSes a client on its own (same reason
 // payment gateway integration is out of scope: no new third-party dependency).
 // Staff log that a call/text/email/letter went out and when to follow up next;
 // `/api/collections/overdue` and `/api/collections/due` (collections.js) turn
 // that into a worklist.
 //
-// Keyed by `clientKey`, NOT clientAccountId — orders here can carry
+// Keyed by `clientKey`, NOT clientAccountId - orders here can carry
 // customerName with no linked ClientAccount at all (see ar-ageing's own
 // `keyOf` resolution in finance.js), so reminders use the exact same resolved
 // key the aging views group by, or the two would silently disagree about who
@@ -1718,14 +1762,14 @@ const CollectionReminderSchema = new mongoose.Schema({
   clientAccountId:  { type: mongoose.Schema.Types.ObjectId, ref: 'ClientAccount', default: null },
   method:           { type: String, enum: ['Call', 'SMS', 'Email', 'In-person', 'Letter', 'Other'], required: true },
   note:             { type: String, default: '' },
-  amountOwedAtTime: { type: Number, default: 0 }, // snapshot — the aged balance keeps moving, this is what it was when contact was made
+  amountOwedAtTime: { type: Number, default: 0 }, // snapshot - the aged balance keeps moving, this is what it was when contact was made
   loggedBy:         { type: String, default: '' },
   nextFollowUpDate: { type: Date, default: null },
 }, { timestamps: true });
 CollectionReminderSchema.index({ businessType: 1, clientKey: 1, createdAt: -1 });
 const CollectionReminder = mongoose.model('CollectionReminder', CollectionReminderSchema);
 
-// Refresh-token session store — enables instant server-side revocation.
+// Refresh-token session store - enables instant server-side revocation.
 // tokenHash = sha256(rawRefreshToken); the raw token lives only in the client's
 // httpOnly cookie. `revoked` is set on logout/rotation; expired docs auto-purge
 // via the TTL index on expiresAt.
@@ -1776,8 +1820,8 @@ const AuditLogSchema = new mongoose.Schema({
 });
 const AuditLog = mongoose.model('AuditLog', AuditLogSchema);
 
-// (Auth middleware — verifyToken, requireStaff, verifyClientToken, requireSuperAdmin,
-//  requireSuperOrAdmin, verifyOrderAuth — are defined earlier, before the first route
+// (Auth middleware - verifyToken, requireStaff, verifyClientToken, requireSuperAdmin,
+//  requireSuperOrAdmin, verifyOrderAuth - are defined earlier, before the first route
 //  that uses them, to avoid TDZ errors.)
 
 const DiscountSchema = new mongoose.Schema({
@@ -1788,8 +1832,8 @@ const DiscountSchema = new mongoose.Schema({
 const Discount = mongoose.model('Discount', DiscountSchema);
 
 // --- CONFIGURABLE DISCOUNT RULE ENGINE ---
-// Order-level CONDITIONAL discount rules — the "spend ₱1000 get 10% off",
-// "15% off on Tuesdays", "wholesale segment gets 5% all December" kind — which
+// Order-level CONDITIONAL discount rules - the "spend ₱1000 get 10% off",
+// "15% off on Tuesdays", "wholesale segment gets 5% all December" kind - which
 // none of the existing discount mechanisms cover: Product.discountPercent /
 // clientDiscounts / segmentDiscounts / bulkBreaks are all PER-LINE and
 // unconditional, and the Discount model is just named SC/PWD-style presets.
@@ -1798,7 +1842,7 @@ const Discount = mongoose.model('Discount', DiscountSchema);
 // POST /api/discount-rules/evaluate with an order's context, gets back the
 // single best matching rule's percent, and applies it through the EXISTING,
 // fully-tested order-level `discountPercent` field on the order. That keeps the
-// VAT/discount/ledger math — the most safety-critical code in the app —
+// VAT/discount/ledger math - the most safety-critical code in the app -
 // completely untouched; this feature only decides WHICH percent to suggest,
 // never how it's booked.
 const DiscountRuleSchema = new mongoose.Schema({
@@ -1808,7 +1852,7 @@ const DiscountRuleSchema = new mongoose.Schema({
   percent:      { type: Number, required: true, min: 0, max: 100 }, // the discount this rule grants
   active:       { type: Boolean, default: true, index: true },
   priority:     { type: Number, default: 0 }, // tie-breaker when two rules grant the same percent (higher wins)
-  // Conditions — ALL present ones must hold for the rule to apply. An omitted
+  // Conditions - ALL present ones must hold for the rule to apply. An omitted
   // condition is simply not checked (a rule with no conditions always applies).
   minSubtotal:  { type: Number, default: null },        // order subtotal must be ≥ this
   daysOfWeek:   { type: [Number], default: [] },         // 0=Sun..6=Sat (Manila); empty = any day
@@ -1828,7 +1872,7 @@ const EODRecordSchema = new mongoose.Schema({
 });
 const EODRecord = mongoose.model('EODRecord', EODRecordSchema);
 
-// Atomic sequence counter — one document per prefix, incremented with $inc to prevent race conditions
+// Atomic sequence counter - one document per prefix, incremented with $inc to prevent race conditions
 const CounterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, default: 0 } });
 const Counter = mongoose.model('Counter', CounterSchema);
 
@@ -1836,10 +1880,10 @@ const Counter = mongoose.model('Counter', CounterSchema);
 // Two-stage tracking tool. A PO is drafted with line items pulled from inventory,
 // tracked through Ordered → Processing, then reconciled against the actual
 // delivery (per-line receivedQty typed in by hand) which flips it to Complete
-// (everything arrived) or Incomplete (short/over). Purely a tracking record — it
+// (everything arrived) or Incomplete (short/over). Purely a tracking record - it
 // does NOT post to inventory or the ledger; restock + journal entries stay on the
 // existing /api/inventory/restock flow so there's no double counting.
-// Suppliers — a managed directory (CRUD) that POs can be drawn from. A PO stores
+// Suppliers - a managed directory (CRUD) that POs can be drawn from. A PO stores
 // both a supplierId link AND a supplier name snapshot, so renaming/deleting a
 // supplier never rewrites the history of past POs.
 const SupplierSchema = new mongoose.Schema({
@@ -1852,7 +1896,7 @@ const SupplierSchema = new mongoose.Schema({
   notes:         { type: String, default: '' },
   isActive:      { type: Boolean, default: true },
   tenantId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  // Catalog: what this supplier says they sell + their quoted price — set by staff,
+  // Catalog: what this supplier says they sell + their quoted price - set by staff,
   // independent of whether a PO has ever been placed. This is what lets "who's
   // cheaper for X" be answered before ever buying, not just from purchase history.
   catalog: [{
@@ -1897,16 +1941,16 @@ const PurchaseOrder = mongoose.model('PurchaseOrder', PurchaseOrderSchema);
 
 // --- AP BILL APPROVAL WORKFLOW ---
 // A Bill is a payable awaiting sign-off, in one of two ways:
-//   - source:'PO'     — created automatically when a PO delivery is received
+//   - source:'PO'     - created automatically when a PO delivery is received
 //                        (purchase-orders.js's /receive route). The A/P journal
 //                        entry (DR Inventory / CR 220000) posts immediately at
-//                        receipt as before — that's a real liability the moment
+//                        receipt as before - that's a real liability the moment
 //                        goods arrive, not something to hold open pending review.
 //                        Approving a PO-sourced bill doesn't post anything new;
 //                        it's the "someone checked this invoice against the PO"
 //                        sign-off gate before it can be scheduled/paid.
-//   - source:'Manual'  — entered directly (a utility bill, rent, anything with
-//                        no PO). No JE exists yet when Pending — approval is
+//   - source:'Manual'  - entered directly (a utility bill, rent, anything with
+//                        no PO). No JE exists yet when Pending - approval is
 //                        what books the liability (DR expenseAccountCode /
 //                        CR 220000), since a manual entry has no independent
 //                        physical-receipt event to already justify it.
@@ -1922,10 +1966,10 @@ const BillSchema = new mongoose.Schema({
   poNumber:          { type: String, default: '' },
   description:       { type: String, default: '' },               // required context for Manual bills
   amount:            { type: Number, required: true },
-  expenseAccountCode:{ type: String, default: '' },               // Manual bills only — which account to debit on approval
+  expenseAccountCode:{ type: String, default: '' },               // Manual bills only - which account to debit on approval
   status:            { type: String, default: 'Pending', enum: BILL_STATUSES, index: true },
   dueDate:           { type: Date, default: null },                // when the supplier expects payment
-  scheduledPaymentDate: { type: Date, default: null },              // when WE plan to pay it — only settable once Approved
+  scheduledPaymentDate: { type: Date, default: null },              // when WE plan to pay it - only settable once Approved
   createdBy:         { type: String, default: '' },
   approvedBy:        { type: String, default: '' },
   approvedAt:        { type: Date, default: null },
@@ -2006,8 +2050,8 @@ const Bill = mongoose.model('Bill', BillSchema);
 // Rooms: 'cashier' (staff + all roles), 'manager' (superadmin only), 'kitchen' (kitchen display)
 // Helpers so server code stays clean:
 const emitToOps  = (evt, data) => io.to('cashier').to('kitchen').emit(evt, data);   // operational events
-const emitToAll  = (evt, data) => io.emit(evt, data);                               // menu / archive — everyone
-const emitToMgr  = (evt, data) => io.to('manager').emit(evt, data);                 // ledger/ERP — superadmin only
+const emitToAll  = (evt, data) => io.emit(evt, data);                               // menu / archive - everyone
+const emitToMgr  = (evt, data) => io.to('manager').emit(evt, data);                 // ledger/ERP - superadmin only
 
 // Verify JWT on the socket handshake. The client passes the access token via
 // auth.token (preferred) or the Authorization header. Unauthenticated
@@ -2024,7 +2068,7 @@ io.use((socket, next) => {
     socket.data.user = decoded;        // { _id, name, role, ... }
     return next();
   } catch (err) {
-    // Invalid / expired token — treat as anonymous rather than refusing the
+    // Invalid / expired token - treat as anonymous rather than refusing the
     // connection, so public surfaces keep working without auth.
     socket.data.user = null;
     return next();
@@ -2037,7 +2081,7 @@ io.on('connection', (socket) => {
   log.info({ sid: socket.id, role: role || 'anonymous' }, 'Device connected');
 
   // Auto-room placement based on the verified JWT. The client no longer
-  // controls which rooms it joins — the server decides from the token's role.
+  // controls which rooms it joins - the server decides from the token's role.
   if (user) {
     socket.join('cashier'); // every authenticated user gets order updates
     if (role === 'superadmin' || role === 'admin') socket.join('manager');
@@ -2049,7 +2093,7 @@ io.on('connection', (socket) => {
   // handshake already placed them correctly above.
   socket.on('joinRoom', () => { /* intentionally no-op; rooms are server-decided */ });
 
-  socket.on('updateOrderStatus', async () => { /* stub — HTTP PUT handles all mutations */ });
+  socket.on('updateOrderStatus', async () => { /* stub - HTTP PUT handles all mutations */ });
 
   socket.on('disconnect', () => {
     log.info({ sid: socket.id }, 'Device disconnected');
@@ -2091,14 +2135,14 @@ function scheduleMidnightArchive() {
     // close. The timer still reschedules for the next midnight.
     const acSetting = await Settings.findOne({ key: 'autoCloseEnabled' }).lean();
     if (acSetting && acSetting.value === false) {
-      log.info('  Midnight reached (PH Time): auto-close is DISABLED — leaving the day open for manual close.');
+      log.info('  Midnight reached (PH Time): auto-close is DISABLED - leaving the day open for manual close.');
       scheduleMidnightArchive();
       return;
     }
     log.info('  Midnight reached (PH Time): Auto-closing the day...');
 
     try {
-      // Step A: Force any hanging order to Cancelled — Pending/Preparing/Ready
+      // Step A: Force any hanging order to Cancelled - Pending/Preparing/Ready
       //         plus Parked (held unpaid tabs); clear isParked so none linger.
       await Order.updateMany(
         { status: { $in: ['Pending', 'Preparing', 'Ready', 'Parked'] }, isArchived: false },
@@ -2194,7 +2238,7 @@ const validateOrderMath = (order) => {
     const itemBase = (item.price + addOnTotal) * item.quantity;
     expectedGross += itemBase;
 
-    // Same MAX rule as the totals recalc — server-resolved per-product/per-client
+    // Same MAX rule as the totals recalc - server-resolved per-product/per-client
     // discount and the cashier per-item override coexist; take the higher.
     const prodPct = Number(item.productDiscountPercent || 0);
     const cashierPct = Number(item.discountPercent || 0);
@@ -2283,7 +2327,7 @@ const normalBalanceForCode = (code) => (/^[15679]/.test(String(code)) ? 'Debit' 
 
 // Expand an order line into per-product report lines.
 //  • Non-combo: one line for the matched product (size-aware recipe + add-on revenue).
-//  • Combo: one line per component — the bundle price is allocated across components
+//  • Combo: one line per component - the bundle price is allocated across components
 //    by their standalone selling price, and COGS comes from each component's recipe.
 // Keeps combo sales visible in product/category analytics.
 function reportLinesForItem(item, prods, prodMap, invMap) {
@@ -2291,7 +2335,7 @@ function reportLinesForItem(item, prods, prodMap, invMap) {
     const iv = invMap[ing.invId]; return s + (iv ? (ing.qty || 0) * (iv.unitCost || 0) : 0);
   }, 0);
   // COGS for one unit: recipe cost if the product has a BOM, else the LOG 1:1
-  // fallback — the product IS a stocked good (matched by code/name), so one unit
+  // fallback - the product IS a stocked good (matched by code/name), so one unit
   // costs unitCost × unitMultiplier. invMap is keyed by _id AND itemCode/itemName.
   const lineCost = (recipe, product) => {
     if ((recipe || []).some(r => r.invId)) return recipeCost(recipe);
@@ -2529,6 +2573,9 @@ const ctx = {
   StockTransferSchema,
   StockTransfer,
   STOCK_TRANSFER_STATUSES,
+  LinkedBusinessSchema, LinkedBusiness,
+  HubInviteSchema, HubInvite,
+  CrossTransferSchema, CrossTransfer,
   JournalEntrySchema,
   JournalEntry,
   TenantStatsSchema,
@@ -2649,6 +2696,7 @@ registerBills(ctx);
 registerCollections(ctx);
 registerNotifications(ctx);
 registerClients(ctx);
+registerHub(ctx);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Not found.' });
@@ -2669,7 +2717,7 @@ app.use((err, req, res, next) => {
 });
 
 // --- SERVER START ---
-// Under test (supertest) the app is imported and driven in-process — we must NOT bind
+// Under test (supertest) the app is imported and driven in-process - we must NOT bind
 // a port or register process-killing signal handlers that would interfere with vitest.
 const IS_TEST = process.env.NODE_ENV === 'test';
 const PORT = process.env.PORT || 5002;
@@ -2696,7 +2744,7 @@ if (!IS_TEST) {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
-// A process that has hit an uncaught exception is in an undefined state — log,
+// A process that has hit an uncaught exception is in an undefined state - log,
 // drain in-flight traffic via the normal shutdown path, then let the supervisor
 // (Railway / pm2 / Docker restart policy) start a fresh, clean process.
 const fatalExit = (kind) => (err) => {

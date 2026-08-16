@@ -1,17 +1,17 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
 
-// ── AnalyticsTab — extracted from AdminDashboard.jsx ──
+// ── AnalyticsTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function AnalyticsTab({ ctx }) {
   // Destructure everything from ctx
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx — do NOT edit manually.
+  // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
   const {
     API_URL, AUDIT_PAGE_SIZE, BIZ_NAME, COMP_REASON_LABELS, FRONTEND_URL,
@@ -91,12 +91,12 @@ export default function AnalyticsTab({ ctx }) {
   const zeroStock     = inventory.filter(i => i.stockQty <= 0).length;
 
   // Hooks must run unconditionally on every render (the loading-state early
-  // return below can't come before these) — destructure with safe fallbacks
+  // return below can't come before these) - destructure with safe fallbacks
   // so pagination has arrays to work with even before `ad` has loaded.
   const { mostUsedStock: mus = [], lowestStock: ls = [], highestStock: hs = [], slowMovers: sm = [], deadStock: dead = [] } = ad || {};
 
   // These stock-movement lists grow with SKU count and have no server-side cap,
-  // unlike topProducts (already "Top 5") — paginate them so the page doesn't
+  // unlike topProducts (already "Top 5") - paginate them so the page doesn't
   // just keep growing as inventory does.
   const musPage  = usePagination(mus, 5);
   const lsPage   = usePagination(ls, 5);
@@ -228,8 +228,8 @@ export default function AnalyticsTab({ ctx }) {
                 <p className="text-2xl font-black text-fg">₱{totalSkus > 0 ? (totalInvValue / totalSkus).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '0.00'}</p>
                 <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider mt-0.5">Avg / SKU</p>
               </div>
-              <div className="flex flex-col items-center" title="COGS this month ÷ average inventory value — estimated, not an exact historical figure (see tooltip on the label below)">
-                <p className="text-2xl font-black text-fg">{turnoverData?.turnoverRatio != null ? `${turnoverData.turnoverRatio}x` : '—'}</p>
+              <div className="flex flex-col items-center" title="COGS this month ÷ average inventory value - estimated, not an exact historical figure (see tooltip on the label below)">
+                <p className="text-2xl font-black text-fg">{turnoverData?.turnoverRatio != null ? `${turnoverData.turnoverRatio}x` : '-'}</p>
                 <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider mt-0.5">Turnover (est.)</p>
               </div>
             </div>
@@ -269,7 +269,7 @@ export default function AnalyticsTab({ ctx }) {
                   <p className="text-gray-600 text-sm text-center py-4">No daily data available.</p>
                 ) : (
                   <>
-                    {/* Vertical bar graph — last 30 days, tallest bar = best day */}
+                    {/* Vertical bar graph - last 30 days, tallest bar = best day */}
                     <div className="flex items-end gap-[3px] flex-1 min-h-[180px] overflow-x-auto pb-2">
                       {dailyRevenue.slice(-30).map((day, i) => {
                         const pct = bestDay.revenue > 0 ? (day.revenue / bestDay.revenue) * 100 : 0;

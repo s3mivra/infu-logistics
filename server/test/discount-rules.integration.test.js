@@ -1,7 +1,7 @@
-// Discount rule engine — configurable conditional rules + evaluation. Tests
+﻿// Discount rule engine - configurable conditional rules + evaluation. Tests
 // the conditions (min-subtotal, day-of-week, date window, segment) and the
 // "best single rule wins" selection. Does NOT test order money-path
-// application — this feature deliberately only recommends a percent.
+// application - this feature deliberately only recommends a percent.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';

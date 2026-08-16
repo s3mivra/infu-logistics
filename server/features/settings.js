@@ -1,4 +1,4 @@
-// settings routes — moved verbatim from server.js (feature-driven restructure).
+﻿// settings routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
@@ -181,7 +181,7 @@ export default function registerSettings(ctx) {
   } = ctx;
 
 // Client-portal branding/copy. These are the ONLY settings readable without a
-// staff token — the portal is served to logged-out clients, so anything listed
+// staff token - the portal is served to logged-out clients, so anything listed
 // here is effectively public. Never add operational settings (credit limits,
 // auto-close, ...) to this list.
 const PUBLIC_PORTAL_KEYS = [
@@ -198,6 +198,7 @@ const PUBLIC_PORTAL_KEYS = [
   'portalCompanyPhone',
   'portalCompanyEmail',
   'portalSlipFooter',
+  'businessLogo',
 ];
 
 // ── SETTINGS ROUTES ──────────────────────────────────────────────────────────
@@ -227,7 +228,7 @@ const VAT_KEYS = new Set(['vatEnabled', 'vatRate', 'scPwdOrder', 'vatInclusive']
 // total is unchanged and only the net/VAT split moves; under EXCLUSIVE pricing the
 // total genuinely rises (VAT added on top), which is why the total is rewritten
 // here too. Completed, voided, cancelled and refunded orders are deliberately
-// untouched — those are booked history, and re-pricing them would rewrite the ledger.
+// untouched - those are booked history, and re-pricing them would rewrite the ledger.
 async function restampOpenOrdersVat() {
   const [enabledRow, rateRow, orderRow, inclusiveRow] = await Promise.all([
     Settings.findOne({ key: 'vatEnabled' }).lean(),
@@ -290,7 +291,7 @@ async function restampOpenOrdersVat() {
     order.vatableSales = Number(r.vatableSales.toFixed(2));
     order.vatExemptSales = Number(r.vatExemptSales.toFixed(2));
     order.discount = Number((lineDiscTotal + (r.discount || 0)).toFixed(2));
-    // Under INCLUSIVE pricing this is a no-op — the total never moves when VAT
+    // Under INCLUSIVE pricing this is a no-op - the total never moves when VAT
     // toggles. Under EXCLUSIVE pricing the total genuinely rises, so it must be
     // written or the order and its printed VAT would disagree.
     order.total = Number(r.total.toFixed(2));
@@ -302,7 +303,7 @@ async function restampOpenOrdersVat() {
 
 // ── CURRENCY (DISPLAY CONFIG ONLY) ────────────────────────────────────────────
 // IMPORTANT SCOPE NOTE: this configures the currency SYMBOL and ISO code the UI
-// shows — it is NOT multi-currency / FX support. Every amount in the system is
+// shows - it is NOT multi-currency / FX support. Every amount in the system is
 // still a single flat number with no currency dimension, and no conversion
 // happens anywhere. Changing this to 'USD'/'$' relabels the display; it does
 // NOT convert existing peso figures. True multi-currency (per-transaction

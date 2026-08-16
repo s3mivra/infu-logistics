@@ -1,8 +1,8 @@
-// Purchase Order workflow integration tests — draft → status → receive/reconcile.
+﻿// Purchase Order workflow integration tests - draft → status → receive/reconcile.
 // Receiving a line linked to a real Inventory item (invId set) posts straight to
 // stock (WAC costing) + a journal entry; unlinked lines stay PO-only tracking.
 // Receiving is repeatable until every line is fully received (Incomplete is not
-// terminal) — a short delivery can be reopened later for just the outstanding qty.
+// terminal) - a short delivery can be reopened later for just the outstanding qty.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
@@ -267,7 +267,7 @@ describe('receiving posts to inventory + is repeatable until fully received', ()
     expect(je.totalDebit).toBeCloseTo(800, 2); // 10 × ₱80
   });
 
-  it('a short delivery stays Incomplete and receivable — a follow-up receive tops it up to Complete', async () => {
+  it('a short delivery stays Incomplete and receivable - a follow-up receive tops it up to Complete', async () => {
     const Inventory = mongoose.model('Inventory');
     const created = await request(app).post('/api/purchase-orders').set(auth(superToken)).send({
       supplier: 'Milk Co', lines: [{ invId, itemName: 'Receiving Milk', unit: 'L', packSize: 1, orderedQty: 10, unitCost: 80 }],
@@ -283,9 +283,9 @@ describe('receiving posts to inventory + is repeatable until fully received', ()
     expect(r1.body.purchaseOrder.status).toBe('Incomplete');
     expect(r1.body.purchaseOrder.lines[0].receivedQty).toBe(6);
     const afterFirst = (await Inventory.findById(invId).lean()).stockQty;
-    expect(afterFirst - before).toBe(6000); // 6 packs × 1000ml — only the delta posted
+    expect(afterFirst - before).toBe(6000); // 6 packs × 1000ml - only the delta posted
 
-    // Still receivable (not terminal) — a second delivery brings the rest (4 more).
+    // Still receivable (not terminal) - a second delivery brings the rest (4 more).
     const r2 = await request(app).post(`/api/purchase-orders/${po._id}/receive`).set(auth(superToken))
       .send({ received: [{ lineId, receivedQty: 4 }] });
     expect(r2.status).toBe(200);
@@ -310,7 +310,7 @@ describe('receiving posts to inventory + is repeatable until fully received', ()
       .send({ received: [{ lineId: po.lines[0]._id, receivedQty: 5 }] });
     expect(res.status).toBe(200);
     expect(res.body.purchaseOrder.status).toBe('Complete');
-    // No journal entry should exist for this receive — nothing real to debit.
+    // No journal entry should exist for this receive - nothing real to debit.
     const je = await JournalEntry.findOne({ description: new RegExp(po.poNumber) }).lean();
     expect(je).toBeFalsy();
   });
@@ -361,7 +361,7 @@ describe('cancelling the remainder of a partially-received PO', () => {
     expect(cancel.body.purchaseOrder.lines[0].receivedQty).toBe(4); // the 4 already received is untouched
 
     const stockAfterCancel = (await Inventory.findById(invId).lean()).stockQty;
-    expect(stockAfterCancel).toBe(stockAfterReceive); // no reversal — nothing was un-received
+    expect(stockAfterCancel).toBe(stockAfterReceive); // no reversal - nothing was un-received
 
     // A cancelled-with-received-activity PO can no longer be received or deleted.
     const receiveAgain = await request(app).post(`/api/purchase-orders/${po._id}/receive`).set(auth(superToken))

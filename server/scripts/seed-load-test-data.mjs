@@ -1,19 +1,19 @@
-// Load-test data seeder — Part 2 of the pre-launch spec (4-tenant KVM2).
+﻿// Load-test data seeder - Part 2 of the pre-launch spec (4-tenant KVM2).
 //
 // Generates realistic-volume BACKDATED Completed order history (plus matching
 // Sales & COGS journal entries) so k6 scenarios exercise the dashboard, P&L,
 // balance sheet, and order-history endpoints against real data sizes instead
-// of empty databases — which hide exactly the query-shape problems this whole
+// of empty databases - which hide exactly the query-shape problems this whole
 // exercise exists to catch (see the Part 1 dashboard-aggregation fix).
 //
 // Run this AFTER Part 1 (the TenantStats/ProductStats counters) ships, then
 // run `node scripts/backfill-stats.mjs` once afterward so the seeded history
-// is reflected in the counters the dashboard actually reads — this script
+// is reflected in the counters the dashboard actually reads - this script
 // deliberately does NOT touch TenantStats/ProductStats itself, to keep the
 // backfill script as the single place that ever computes them from history.
 //
 // Run against ONE tenant's MONGO_URI at a time (one deployment per business,
-// per this repo's architecture) — re-run per tenant with each tenant's env.
+// per this repo's architecture) - re-run per tenant with each tenant's env.
 //
 // Usage (from server/):
 //   node scripts/seed-load-test-data.mjs
@@ -28,10 +28,10 @@
 //     quantities separately.
 //   - Complimentary orders (~2% of volume) get an Order doc but no journal
 //     entry (the real ERP engine's comp branch is a separate code path not
-//     worth duplicating here) — this still exercises the dashboard's comp-
+//     worth duplicating here) - this still exercises the dashboard's comp-
 //     revenue math, just not the accounting reports for that slice.
 //   - COGS is estimated at a flat 35% of revenue per order, not derived from
-//     actual recipes — fine for load-testing query shape/volume, not for
+//     actual recipes - fine for load-testing query shape/volume, not for
 //     testing COGS accuracy (that's what the real ERP engine's own tests are for).
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
@@ -43,7 +43,7 @@ const args = Object.fromEntries(process.argv.slice(2).map(a => {
 }));
 
 const BUSINESS_TYPE = (args['business-type'] || process.env.BUSINESS_TYPE || 'fb').toLowerCase();
-// `?? 30000`, not `|| 30000` — `--orders=0` (e.g. to top up inventory/products
+// `?? 30000`, not `|| 30000` - `--orders=0` (e.g. to top up inventory/products
 // without adding any orders) is a legitimate, meaningful value, and `||`
 // would silently discard it (0 is falsy) and fall back to the 30000 default.
 const ORDER_COUNT = args.orders !== undefined ? Number(args.orders) : 30000;
@@ -67,7 +67,7 @@ if (args.clean) {
 // this script runs standalone against a fresh tenant with no manual setup. ---
 let products = await db.collection('products').find({ businessType: BUSINESS_TYPE, isArchived: { $ne: true } }, { projection: { name: 1, productCode: 1, basePrice: 1 } }).toArray();
 if (products.length === 0) {
-  console.log('[seed] No product catalog found — creating a minimal synthetic one for load-testing.');
+  console.log('[seed] No product catalog found - creating a minimal synthetic one for load-testing.');
   const synthetic = Array.from({ length: 20 }, (_, i) => ({
     businessType: BUSINESS_TYPE,
     name: `Load Test Item ${i + 1}`,
@@ -87,18 +87,18 @@ console.log(`[seed] Using ${products.length} product(s) from the catalog.`);
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 // --- Inventory: same "use what's there, or seed synthetic" pattern as
-// products above. This was missing in the original version of this script —
+// products above. This was missing in the original version of this script -
 // it seeded orders and a product catalog but never any actual Inventory
 // documents, so every inventory endpoint (list/expiring/history/restock) had
 // nothing to operate on. That's a bigger gap for a `log` tenant than `fb`:
 // logistics products are mostly a 1:1 label over a stocked good (see
 // resolveLinkedInventory in server.js, matched by itemCode===productCode or
-// itemName===product.name) — no stock effectively means no sellable products
+// itemName===product.name) - no stock effectively means no sellable products
 // at all for that business type, not just an empty report. Synthetic items
 // here are linked 1:1 to the synthetic products above by itemCode for
 // exactly that reason, whether or not this run's businessType is `log`.
 //
-// Collection name is 'inventories', NOT 'inventory' — Mongoose pluralizes
+// Collection name is 'inventories', NOT 'inventory' - Mongoose pluralizes
 // the 'Inventory' model with the standard y→ies English rule (verified
 // against a live container: mongoose.model('Inventory').collection.name ===
 // 'inventories'). Every other collection this script touches (orders,
@@ -106,7 +106,7 @@ const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 // exactly how this got missed initially. ---
 const invCount = await db.collection('inventories').countDocuments({ businessType: BUSINESS_TYPE });
 if (invCount === 0) {
-  console.log('[seed] No inventory found — creating synthetic stock linked 1:1 to the product catalog.');
+  console.log('[seed] No inventory found - creating synthetic stock linked 1:1 to the product catalog.');
   const syntheticInventory = products.map((p, i) => ({
     businessType: BUSINESS_TYPE,
     tenantId: null,
@@ -187,7 +187,7 @@ function buildOrder(seq) {
     orderNumber: `${SEED_TAG}-${seq}`,
     loadTestSeed: true,
     isBackdated: true,
-    isArchived: true, // seeded history — keep it out of "today"-scoped operational views
+    isArchived: true, // seeded history - keep it out of "today"-scoped operational views
     status,
     isParked: false,
     customerName: 'Load Test Customer',
@@ -255,7 +255,7 @@ function paymentAccountFor(method) {
 
 // Continue numbering after whatever this businessType already has, so
 // re-running the seeder (e.g. --orders=0 to just top up inventory, or a
-// second seeding pass) never collides with orderNumber's unique index —
+// second seeding pass) never collides with orderNumber's unique index -
 // every previous run started counting at 1 again, which reliably duplicated
 // LOAD-TEST-1..N and made the whole insertMany batch fail with E11000.
 let startSeq = 1;
@@ -270,7 +270,7 @@ if (ORDER_COUNT > 0) {
   startSeq = maxSeq + 1;
 }
 
-console.log(`[seed] businessType=${BUSINESS_TYPE} — generating ${ORDER_COUNT} orders across the last ${MONTHS_BACK} months (starting at ${SEED_TAG}-${startSeq})...`);
+console.log(`[seed] businessType=${BUSINESS_TYPE} - generating ${ORDER_COUNT} orders across the last ${MONTHS_BACK} months (starting at ${SEED_TAG}-${startSeq})...`);
 
 let inserted = 0;
 let journalCount = 0;

@@ -1,8 +1,8 @@
-// Pure date-range validation for bounded report exports. No DB. Unit-testable.
+﻿// Pure date-range validation for bounded report exports. No DB. Unit-testable.
 //
 // Large exports (e.g. the full journal) must be bounded so a single request can't pull
 // the entire ledger into memory. Callers pass start/end query strings; this returns the
-// parsed Date bounds or a human error. Default cap is one quarter (92 days — the longest
+// parsed Date bounds or a human error. Default cap is one quarter (92 days - the longest
 // calendar quarter is 92 days), tunable per call.
 
 export const DEFAULT_MAX_RANGE_DAYS = 92;
@@ -12,7 +12,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 //
 // WHY this exists: `new Date('2026-07-26')` is parsed by JS as UTC midnight,
 // but `.setHours()` operates in local time. Mixing the two gave a window of
-// local 08:00 → 23:59 in UTC+8 — so a "today" report silently dropped every
+// local 08:00 → 23:59 in UTC+8 - so a "today" report silently dropped every
 // sale made between midnight and 8am, and the business never saw them in any
 // day's report. Both bounds must share one basis; local is the correct one,
 // because a shop's "day" is its own wall clock.
@@ -49,7 +49,7 @@ export function validateDateRange(start, end, maxDays = DEFAULT_MAX_RANGE_DAYS) 
 
 // Day-boundary helpers for the many routes that filter `createdAt` by a
 // YYYY-MM-DD query string. Exported so every report shares ONE definition of
-// "a day" — the inline `new Date(start)` / `d.setHours(23,59,59)` pairs each
+// "a day" - the inline `new Date(start)` / `d.setHours(23,59,59)` pairs each
 // re-introduced the UTC-vs-local mismatch described above.
 export function dayStart(value) { return parseDayStart(value); }
 export function dayEnd(value) {

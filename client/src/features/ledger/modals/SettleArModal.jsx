@@ -1,8 +1,8 @@
-import { Check, X } from 'lucide-react';
+﻿import { Check, X } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
 
 // Extracted from AdminDashboard. Reads shared dashboard state via
-// useDashboard() rather than props — see DashboardContext.
+// useDashboard() rather than props - see DashboardContext.
 export default function SettleArModal() {
   const { setSettleForm, setSettleModal, settleForm, settleModal, settleSubmitting, submitArSettlement } = useDashboard();
 

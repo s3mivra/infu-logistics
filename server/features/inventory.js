@@ -1,4 +1,4 @@
-// inventory routes — moved verbatim from server.js (feature-driven restructure).
+﻿// inventory routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { title } from '../lib/normalize.js';
@@ -387,7 +387,7 @@ function enrichThresholds(items, usage) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// #7 STORAGE PLACES & STOCK CATEGORIES — small managed reference collections.
+// #7 STORAGE PLACES & STOCK CATEGORIES - small managed reference collections.
 // Places = where stock physically sits (used by the transfer workflow #8);
 // Categories carry the item-code prefix that drives auto-numbering (#9).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -451,7 +451,7 @@ app.delete('/api/stock-locations/:id', verifyToken, requireSuperAdmin, async (re
     const loc = await StorageLocation.findById(req.params.id);
     if (!loc) return res.status(404).json({ success: false, error: 'Location not found.' });
     const inUse = await Inventory.countDocuments({ businessType: BUSINESS_TYPE, stockLocation: loc.name });
-    if (inUse > 0) return res.status(400).json({ success: false, error: `Cannot delete — ${inUse} item(s) still assigned to this location. Reassign them first, or deactivate instead.` });
+    if (inUse > 0) return res.status(400).json({ success: false, error: `Cannot delete - ${inUse} item(s) still assigned to this location. Reassign them first, or deactivate instead.` });
     await loc.deleteOne();
     res.json({ success: true });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
@@ -512,14 +512,14 @@ app.delete('/api/stock-categories/:id', verifyToken, requireSuperAdmin, async (r
     const cat = await StockCategory.findById(req.params.id);
     if (!cat) return res.status(404).json({ success: false, error: 'Category not found.' });
     const inUse = await Inventory.countDocuments({ businessType: BUSINESS_TYPE, stockCategory: cat.name });
-    if (inUse > 0) return res.status(400).json({ success: false, error: `Cannot delete — ${inUse} item(s) still in this category. Reassign them first, or deactivate instead.` });
+    if (inUse > 0) return res.status(400).json({ success: false, error: `Cannot delete - ${inUse} item(s) still in this category. Reassign them first, or deactivate instead.` });
     await cat.deleteOne();
     res.json({ success: true });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// #8 STOCK TRANSFERS — request → approve → release between two per-location items.
+// #8 STOCK TRANSFERS - request → approve → release between two per-location items.
 // Internal asset move: no journal entry; StockCard audit rows written on release.
 // ─────────────────────────────────────────────────────────────────────────────
 app.get('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => {
@@ -590,7 +590,7 @@ app.post('/api/stock-transfers/:id/reject', verifyToken, requireStaff, async (re
   try {
     const t = await StockTransfer.findById(req.params.id);
     if (!t) return res.status(404).json({ success: false, error: 'Transfer not found.' });
-    if (t.status === 'Released') return res.status(400).json({ success: false, error: 'A released transfer cannot be cancelled — reverse it with a new transfer.' });
+    if (t.status === 'Released') return res.status(400).json({ success: false, error: 'A released transfer cannot be cancelled - reverse it with a new transfer.' });
     if (['Rejected', 'Cancelled'].includes(t.status)) return res.status(400).json({ success: false, error: `Transfer already ${t.status}.` });
     const isSuper = req.user?.role === 'superadmin';
     t.status = isSuper ? 'Rejected' : 'Cancelled';
@@ -708,7 +708,7 @@ app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
     }
     // Resolve creditAccount against the full COA (canonical + custom). Allowed
     // parents: 111 (Cash), 112 (Bank), 113 (E-Wallet), 220 (AP). Any sub-account
-    // under those parents works too — so users can route to specific cash drawers,
+    // under those parents works too - so users can route to specific cash drawers,
     // bank accounts, or supplier-specific AP sub-ledgers added in the COA UI.
     const { creditAccount: rawCreditCode } = req.body;
     const isAllowedParent = (c) => /^(111|112|113|220)/.test(String(c || ''));
@@ -770,8 +770,8 @@ app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, r
 });
 
 // --- RESTOCK EXISTING INVENTORY (Weighted Average Cost, transactional) ---
-// The whole flow — read stockQty/unitCost, compute WAC, save the item, write
-// the StockCard row, post the journal entry — runs inside a single Mongo
+// The whole flow - read stockQty/unitCost, compute WAC, save the item, write
+// the StockCard row, post the journal entry - runs inside a single Mongo
 // transaction. Two simultaneous restocks of the same SKU now serialise on the
 // inventory document instead of racing the WAC math. Retries on transient
 // transient errors (WriteConflict / TransientTransactionError).
@@ -791,7 +791,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
         const item = await Inventory.findById(req.params.id).session(session);
         if (!item) throw Object.assign(new Error('Item not found'), { httpStatus: 404 });
 
-        // WAC (GAAP/IFRS). All values read inside the transaction — concurrent
+        // WAC (GAAP/IFRS). All values read inside the transaction - concurrent
         // restocks block on this document until commit.
         const currentTotalValue = item.stockQty * item.unitCost;
         const newTotalValue = currentTotalValue + totalCost;
@@ -845,7 +845,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
       await logAudit(req, { action: 'restock', entity: 'Inventory', entityId: req.params.id, after: { addedStock, totalCost } });
       return res.json({ success: true, item: savedItem });
     } catch (error) {
-      // Standalone MongoDB without a replica set throws this — fall through to
+      // Standalone MongoDB without a replica set throws this - fall through to
       // the legacy non-transactional path so dev environments still work.
       const msg = String(error?.errorLabels || error?.message || '');
       const isTransient = (error?.errorLabels || []).includes('TransientTransactionError') || /WriteConflict/i.test(msg);
@@ -857,7 +857,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
       }
       const isUnsupported = /Transaction numbers are only allowed|Transactions are not supported/i.test(msg);
       if (isUnsupported && attempt === 1) {
-        // Dev mode (no replica set) — fall back to non-transactional path.
+        // Dev mode (no replica set) - fall back to non-transactional path.
         log?.warn?.('Restock txn unsupported, falling back to non-transactional path.');
         try {
           const item = await Inventory.findById(req.params.id);
@@ -901,7 +901,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
 
 app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    // Whitelist editable fields — stockQty must NEVER be edited here
+    // Whitelist editable fields - stockQty must NEVER be edited here
     // (would bypass StockCard audit trail and double-entry accounting).
     // Stock changes go through restock / spoilage / order-completion flows.
     const allowed = ['itemName', 'unit', 'unitCost', 'lowStockThreshold', 'expiryDate', 'expiryWarnDays', 'displayUnit', 'unitMultiplier', 'srp', 'packSize', 'stockLocation', 'stockCategory'];
@@ -964,7 +964,7 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
 
     // Cascade the code rename to the linked resale product (log mode). Scoped by
     // the old code so only the matching product moves; historical order lines keep
-    // the code they were sold under, which is correct — those are booked records.
+    // the code they were sold under, which is correct - those are booked records.
     if (codeRename) {
       await Product.updateMany(
         { productCode: codeRename.from, businessType: BUSINESS_TYPE, ...tenantScope(req) },
@@ -1040,7 +1040,7 @@ app.post('/api/inventory/:id/batches', verifyToken, requireSuperAdmin, async (re
       unitCost
     });
     item.expiryDate = soonestExpiry(item.expiryBatches);
-    // A manually added batch is real stock arriving — keep stockQty in sync with
+    // A manually added batch is real stock arriving - keep stockQty in sync with
     // the batch total so they never drift, and book it like a found-stock adjustment.
     item.stockQty = +(Number(item.stockQty || 0) + n);
     await item.save();
@@ -1083,7 +1083,7 @@ app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmi
     const removedQty = Number(removed?.qty || 0);
     const unitCost   = Number(removed?.unitCost || item.unitCost || 0);
     item.expiryDate = soonestExpiry(item.expiryBatches);
-    // Removing a batch means that stock is physically gone — decrement stockQty and
+    // Removing a batch means that stock is physically gone - decrement stockQty and
     // book it as a variance/write-off so the ledger and stock card stay truthful.
     item.stockQty = +Math.max(0, Number(item.stockQty || 0) - removedQty).toFixed(4);
     await item.save();
@@ -1148,7 +1148,7 @@ app.delete('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res
 });
 
 // ============================================================
-// INVENTORY IMPORT — Stock-take semantics (new file REPLACES current qty)
+// INVENTORY IMPORT - Stock-take semantics (new file REPLACES current qty)
 // Body: { items: [{ itemName, displayUnit, qty, unitCost? }] }
 // - Existing items: stockQty replaced; diff booked as Inventory Adjustment Gain (4200) or Spoilage/Variance (5100)
 // - New items: created + booked as Inventory Adjustment Gain (4200)
@@ -1175,12 +1175,12 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       const itemCode = String(row.itemCode || row.code || '').trim();
       const itemName = String(row.itemName || row.product || row.name || '').trim();
       // Category (and the linked Product/menu-setup sync it triggers below) is a
-      // logistics-only concept — an fb import brings in raw inventory data (stock,
+      // logistics-only concept - an fb import brings in raw inventory data (stock,
       // cost, expiry) only, and never touches menu setup even if the sheet has one.
       const categoryName = BUSINESS_TYPE === 'log' ? String(row.category || '').trim() : '';
       const srp = row.srp !== undefined && row.srp !== '' ? parseFloat(row.srp) : null;
       // In log mode the product IS the stocked good, so EVERY imported item gets a
-      // linked Product (menu entry), with or without a category on the sheet — a
+      // linked Product (menu entry), with or without a category on the sheet - a
       // missing category falls back to a general bucket. fb never syncs products
       // from an import (categoryName is forced empty above), so this stays log-only.
       const syncProduct = BUSINESS_TYPE === 'log';
@@ -1223,12 +1223,12 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       // Look up by itemCode when the row provides one; only fall back to a
       // case-insensitive name match when it DOESN'T. Falling back to name-matching
       // even after an itemCode miss is what caused two genuinely different SKUs
-      // that share a base name — e.g. "DK Blueberry 3kg" (code DKB-3) and
-      // "DK Blueberry 2.5kg" (code DKB-25) — to collide into a single item once
+      // that share a base name - e.g. "DK Blueberry 3kg" (code DKB-3) and
+      // "DK Blueberry 2.5kg" (code DKB-25) - to collide into a single item once
       // the size suffix is stripped from both names down to "DK Blueberry". An
       // itemCode on the row is an unambiguous identity claim: if nothing has that
       // code yet, it's a NEW item, never a name-matched update of a different SKU.
-      // MUST be scoped to this instance's businessType — otherwise a log import
+      // MUST be scoped to this instance's businessType - otherwise a log import
       // matches (and overwrites) an fb-owned row of the same code/name, leaving the
       // stock stamped 'fb' (invisible to log, wrongly visible to fb) and vice-versa.
       let existing = null;
@@ -1248,13 +1248,13 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         const oldQty = existing.stockQty || 0;
         const diff = +(newBaseQty - oldQty).toFixed(6);
         // Gain/loss is a QUANTITY VARIANCE (physical count vs. book), so it must be
-        // valued at the cost those units are CURRENTLY carried at on the books —
+        // valued at the cost those units are CURRENTLY carried at on the books -
         // never at a new cost typed into the same row. Using the new cost here
         // previously made the loss/gain figure wrong whenever a row updated price
         // and quantity together (e.g. existing 100 @ ₱10, row says 50 @ ₱20 → the
         // 50-unit shortfall is a ₱10-cost loss of ₱500, not a ₱20-cost loss of
         // ₱1000). The new cost still gets applied to the item going forward
-        // (existing.unitCost below) — it just doesn't retroactively value this
+        // (existing.unitCost below) - it just doesn't retroactively value this
         // variance. Only fall back to the new/import cost when the item has no
         // existing cost basis at all, so a first-time cost import isn't valued at ₱0.
         const unitCostForValuation = (existing.unitCost || 0) > 0
@@ -1324,7 +1324,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         if (diff > 0) { summary.increased++; summary.gainValue += valueImpact; }
         if (diff < 0) { summary.decreased++; summary.lossValue += valueImpact; }
 
-        // Sync the linked Product (log only — the product IS the stocked good).
+        // Sync the linked Product (log only - the product IS the stocked good).
         if (syncProduct) {
           const cat = await Category.findOneAndUpdate(
             { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }, businessType: BUSINESS_TYPE },
@@ -1333,7 +1333,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           );
           // Base recipe links the product to its OWN stock item (1:1).
           const baseRecipe = [{ invId: existing._id, name: existing.itemName, qty: existing.unitMultiplier || mult, cost: existing.unitCost || 0, unit: existing.unit || baseUnit }];
-          // basePrice must never appear in both $set and $setOnInsert — Mongo
+          // basePrice must never appear in both $set and $setOnInsert - Mongo
           // rejects an update that targets the same path from two operators.
           // A valid SRP always wins (goes in $set); only fall back to
           // $setOnInsert (default 0 on first creation) when there's no SRP.
@@ -1358,7 +1358,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           }
         }
       } else {
-        // New item — onboard via Inventory Adjustment Gain (DR 1500 / CR 4200)
+        // New item - onboard via Inventory Adjustment Gain (DR 1500 / CR 4200)
         const newCode = itemCode || await generateNextSequence(Inventory, 'RML', 'itemCode');
         const initialBatches = (expiryFromExcel && newBaseQty > 0)
           ? [{ qty: newBaseQty, expiryDate: new Date(expiryFromExcel), receivedAt: new Date(), reference: impRef, unitCost: newCostPerBase || 0 }]
@@ -1392,7 +1392,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         }], { session });
 
         if (valueImpact > 0.001) {
-          // Opening-balance load: offset to Owner's Capital (equity), NOT a P&L gain —
+          // Opening-balance load: offset to Owner's Capital (equity), NOT a P&L gain -
           // the owner funded this stock; loading it is a capital contribution, not income.
           const lines = [
             { accountCode: '130000', accountName: 'Inventory Asset', debit: valueImpact, credit: 0 },
@@ -1409,7 +1409,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         summary.increased++;
         summary.gainValue += valueImpact;
 
-        // Create the linked Product (log only — the product IS the stocked good).
+        // Create the linked Product (log only - the product IS the stocked good).
         if (syncProduct) {
           const cat = await Category.findOneAndUpdate(
             { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }, businessType: BUSINESS_TYPE },
@@ -1418,7 +1418,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           );
           // Explicitly link the product's base recipe to its OWN stock item (1:1),
           // so the menu shows the stock item as the base material and each sale
-          // deducts it directly — no reliance on the code/name fallback.
+          // deducts it directly - no reliance on the code/name fallback.
           const baseRecipe = [{ invId: item._id, name: item.itemName, qty: mult, cost: item.unitCost || 0, unit: baseUnit }];
           const productExists = await Product.findOne({ productCode: item.itemCode, businessType: BUSINESS_TYPE }).session(session);
           if (!productExists) {
@@ -1433,7 +1433,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
               businessType: BUSINESS_TYPE,
             }], { session });
           } else if (!(productExists.baseRecipe || []).some(r => r.invId)) {
-            // Existing menu entry with no linked stock — backfill the link.
+            // Existing menu entry with no linked stock - backfill the link.
             productExists.baseRecipe = baseRecipe;
             await productExists.save({ session });
           }
@@ -1456,7 +1456,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
 
 // --- SPOILAGE / WASTE LOGGING ---
 app.post('/api/inventory/spoilage/:id', verifyToken, requireStaff, async (req, res) => {
-  // Money/stock event — the stock write, the stock-card row, and the balanced
+  // Money/stock event - the stock write, the stock-card row, and the balanced
   // journal entry commit together. withOptionalTransaction keeps that guarantee
   // on a replica set and still runs (non-atomically, with a warning) on a
   // standalone MongoDB, so dev/e2e environments can exercise this path.
@@ -1473,7 +1473,7 @@ app.post('/api/inventory/spoilage/:id', verifyToken, requireStaff, async (req, r
 
       const spoilageCost = spoilQty * (it.unitCost || 0);
       it.stockQty = +(it.stockQty - spoilQty).toFixed(6);
-      // FEFO-consume from batches (oldest first — typical spoilage pattern)
+      // FEFO-consume from batches (oldest first - typical spoilage pattern)
       if (it.expiryBatches && it.expiryBatches.length > 0) {
         const r = consumeBatches(it.expiryBatches, spoilQty);
         it.expiryBatches = r.batches;

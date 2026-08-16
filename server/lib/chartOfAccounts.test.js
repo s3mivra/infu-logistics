@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import {
   ACCOUNTS,
   EXPENSE_CATEGORIES,
@@ -100,7 +100,7 @@ describe('chartOfAccounts.isCogsCode + getAccount fallback (coverage)', () => {
   });
 });
 
-describe('chartOfAccounts class predicates — match/non-match/nullish (coverage)', () => {
+describe('chartOfAccounts class predicates - match/non-match/nullish (coverage)', () => {
   it('classifies by leading digit', () => {
     expect(isAssetCode('100000')).toBe(true);  expect(isAssetCode('900000')).toBe(false); expect(isAssetCode(null)).toBe(false);
     expect(isLiabilityCode('200000')).toBe(true); expect(isLiabilityCode('100000')).toBe(false);

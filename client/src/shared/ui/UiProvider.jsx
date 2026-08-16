@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useRef, useState } from 'react';
 import { __register, __unregister } from './index';
 
 // Renders the app's own toasts and confirm dialog, and registers the imperative
 // handlers in ./index so any module can call ui.alert()/ui.confirm().
 //
-// Mounted once, at the App root — so it also covers the customer menu and the
+// Mounted once, at the App root - so it also covers the customer menu and the
 // client portal, not just the admin dashboard.
 
 const TONE = {
@@ -45,7 +45,7 @@ function Toast({ t, onClose }) {
 // the countdown is how long the reversal stays offered.
 function UndoToast({ req, onDone }) {
   const [left, setLeft] = useState(req.seconds);
-  // Guard against the timer and the button both firing — whichever happens
+  // Guard against the timer and the button both firing - whichever happens
   // first must win exactly once, or the action could run twice.
   const settled = useRef(false);
 
@@ -81,7 +81,7 @@ function UndoToast({ req, onDone }) {
           Undo{left > 0 ? ` ${Math.max(0, left)}` : ''}
         </button>
       </div>
-      {/* Countdown bar — makes the remaining window visible, not just numeric. */}
+      {/* Countdown bar - makes the remaining window visible, not just numeric. */}
       <div className="h-1 bg-white/5">
         <div className="h-full bg-brand transition-[width] duration-1000 ease-linear" style={{ width: `${pct}%` }} />
       </div>
@@ -93,7 +93,7 @@ function ConfirmDialog({ req, onResolve }) {
   const confirmRef = useRef(null);
 
   // Focus the confirm button on open so the dialog is keyboard-usable, and wire
-  // Esc to cancel. Enter is intentionally NOT bound to confirm — every one of
+  // Esc to cancel. Enter is intentionally NOT bound to confirm - every one of
   // these guards a destructive action, and a stray Enter shouldn't fire it.
   useEffect(() => {
     confirmRef.current?.focus();

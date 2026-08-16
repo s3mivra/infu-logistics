@@ -1,4 +1,4 @@
-// Shared integration-test harness. Boots the real Express app against an in-memory
+﻿// Shared integration-test harness. Boots the real Express app against an in-memory
 // MongoDB REPLICA SET (transactions require a replica set), and provides small
 // fixture/login helpers. Env is set before importing server.js so the app connects to
 // the in-memory DB and skips port binding / signal handlers (NODE_ENV=test).
@@ -26,7 +26,7 @@ export async function bootApp({ businessType = 'log', jwtSecret = 'test-secret-h
   }
   return {
     app: mod.app,
-    server: mod.server, // http.Server — for socket.io tests that need a real port
+    server: mod.server, // http.Server - for socket.io tests that need a real port
     runStartupTasks: mod.runStartupTasks, // for boot-migration tests
     repl,
     stop: async () => { await mongoose.disconnect(); await repl.stop(); },
@@ -60,7 +60,7 @@ export async function loginClient(app, username, password = 'pw') {
   return r.body.token;
 }
 
-// Sum of all debits/credits across the entire ledger — used to assert the books stay
+// Sum of all debits/credits across the entire ledger - used to assert the books stay
 // balanced (a trial balance) after a sequence of money operations.
 export async function trialBalance() {
   const JournalEntry = mongoose.model('JournalEntry');

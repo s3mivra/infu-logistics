@@ -1,4 +1,4 @@
-// Multi-batch expiry helpers — FEFO (First Expired First Out).
+﻿// Multi-batch expiry helpers - FEFO (First Expired First Out).
 // All quantities are in BASE units (g/ml/pcs). Display conversion is done in the UI.
 
 // Returns the SOONEST expiry date across all non-empty batches.
@@ -36,7 +36,7 @@ export function consumeBatches(batches, qtyToConsume) {
     if (have <= 0) continue; // drop empty batches
     if (have <= remaining) {
       remaining -= have;
-      // batch fully consumed — do not add to `updated`
+      // batch fully consumed - do not add to `updated`
     } else {
       updated.push({ ...b, qty: +(have - remaining).toFixed(6) });
       remaining = 0;

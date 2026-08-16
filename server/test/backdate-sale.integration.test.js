@@ -1,4 +1,4 @@
-// Backdated sales — record historical sales for a past date. Itemized (like a
+﻿// Backdated sales - record historical sales for a past date. Itemized (like a
 // normal order) with an optional inventory-reduction toggle (default OFF), plus
 // the legacy lump-sum form. Every path must post a balanced entry dated to the
 // chosen day and leave the books balanced.
@@ -97,7 +97,7 @@ describe('backdated sale', () => {
     });
     expect(res.status).toBe(200);
     expect(res.body.order.isComplimentary).toBe(true);
-    expect(res.body.order.total).toBe(0); // free — nothing collected
+    expect(res.body.order.total).toBe(0); // free - nothing collected
 
     const JournalEntry = mongoose.model('JournalEntry');
     const je = await JournalEntry.findOne({ description: new RegExp(res.body.order.orderNumber) }).lean();

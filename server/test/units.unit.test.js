@@ -1,10 +1,10 @@
-// Unit tests for the canonical unit convention (g / mL / pcs base storage).
+﻿// Unit tests for the canonical unit convention (g / mL / pcs base storage).
 import { describe, it, expect } from 'vitest';
 import { UNIT_TO_BASE, UNIT_TABLE, unitTypeOf, resolveUnit, displayToBase } from '../lib/units.js';
 
 describe('UNIT_TO_BASE (single source of truth)', () => {
   it('keeps the exact factors baseUnitsPerSale depends on (COGS-critical)', () => {
-    // These values must not drift — they were previously duplicated in server.js.
+    // These values must not drift - they were previously duplicated in server.js.
     expect(UNIT_TO_BASE).toEqual({
       mg: 0.001, g: 1, kg: 1000,
       ml: 1, cl: 10, l: 1000,
@@ -19,7 +19,7 @@ describe('UNIT_TO_BASE (single source of truth)', () => {
   });
 });
 
-describe('unitTypeOf — mass / volume / count are separate dimensions', () => {
+describe('unitTypeOf - mass / volume / count are separate dimensions', () => {
   it('classifies mass units', () => {
     for (const u of ['g', 'kg', 'mg', 'GRAM', 'Kilogram']) expect(unitTypeOf(u)).toBe('mass');
   });

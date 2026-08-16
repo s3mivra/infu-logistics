@@ -1,4 +1,4 @@
-// Shift scheduling (roster) — manager CRUD + publish, plus a staffer's
+﻿// Shift scheduling (roster) - manager CRUD + publish, plus a staffer's
 // own-only "my upcoming schedule" view and the permission boundary between
 // them. Real Express app over HTTP against an in-memory replica set.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

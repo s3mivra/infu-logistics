@@ -1,4 +1,4 @@
-// Boot-time startup tasks on LEGACY data. We seed pre-migration documents with the raw
+﻿// Boot-time startup tasks on LEGACY data. We seed pre-migration documents with the raw
 // driver (bypassing Mongoose defaults so fields are genuinely absent), then invoke the
 // extracted runStartupTasks() and assert each one-time migration ran.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -10,7 +10,7 @@ let ctx;
 beforeAll(async () => { ctx = await bootApp({ businessType: 'log' }); }, 120000);
 afterAll(async () => { await ctx.stop(); });
 
-describe('runStartupTasks — idempotent migrations on legacy data', () => {
+describe('runStartupTasks - idempotent migrations on legacy data', () => {
   it('backfills businessType, rewrites 4→6-digit codes, syncs counters, backfills the superadmin role', async () => {
     const Order = mongoose.model('Order');
     const Product = mongoose.model('Product');
@@ -47,7 +47,7 @@ describe('runStartupTasks — idempotent migrations on legacy data', () => {
     expect((await User.findOne({ userCode: 'ADN-A0500' }).lean()).role).toBe('superadmin');
   });
 
-  it('is idempotent — a second run makes no further changes and does not throw', async () => {
+  it('is idempotent - a second run makes no further changes and does not throw', async () => {
     await expect(ctx.runStartupTasks()).resolves.not.toThrow();
     const je = await mongoose.model('JournalEntry').findOne({ reference: 'LEG-1' }).lean();
     expect(je.lines.map((l) => l.accountCode).sort()).toEqual(['111000', '410000']); // unchanged

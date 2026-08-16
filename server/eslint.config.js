@@ -1,4 +1,4 @@
-// ESLint flat config — server (Node ESM). Catches real bugs (undeclared vars,
+﻿// ESLint flat config - server (Node ESM). Catches real bugs (undeclared vars,
 // duplicate keys, unreachable code) as errors; style/noise rules are warnings so
 // the build fails only on genuine problems.
 import js from '@eslint/js';

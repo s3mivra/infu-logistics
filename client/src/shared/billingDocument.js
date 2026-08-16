@@ -1,4 +1,4 @@
-// Shared A4 "official document" template used by BOTH the Orders billing
+﻿// Shared A4 "official document" template used by BOTH the Orders billing
 // statement/order slip AND the Procurement purchase-order print, so every
 // printed document looks the same and only the labels differ
 // ("BILLING STATEMENT" vs "PURCHASE ORDER").
@@ -27,6 +27,7 @@ const money = (n) => Number(n || 0).toFixed(2);
 // Resolve the shared letterhead + payment/contact strings from settings → env → default.
 export function resolveBillingLetterhead(settings = {}) {
   const s = settings || {};
+  const logo = s.businessLogo || '';
   const companyName = pick(s.portalCompanyName, ENV_BILLING.name, BIZ_NAME);
   // Settings hold a single address field; env holds up to two lines. Prefer the
   // admin-entered value, else stitch the env lines.
@@ -47,7 +48,7 @@ export function resolveBillingLetterhead(settings = {}) {
       : '',
   );
   const slipFooter = pick(s.portalSlipFooter);
-  return { companyName, addressLines, phone, email, announcement, supportLink, accountName, paymentInstructions, slipFooter };
+  return { logo, companyName, addressLines, phone, email, announcement, supportLink, accountName, paymentInstructions, slipFooter };
 }
 
 const DEFAULT_TERMS = [
@@ -142,10 +143,13 @@ export function buildBillingDocHTML({
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #000; }
   .header { text-align: center; margin-bottom: 10px; }
+  .header .biz-row { display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .header .biz-logo { max-height: 44px; max-width: 72px; object-fit: contain; }
   .header .biz  { font-size: 14pt; font-weight: bold; letter-spacing: 1px; }
   .header .addr { font-size: 8.5pt; margin-top: 1px; color: #333; }
   .title-wrap   { text-align: center; margin-bottom: 6px; }
   .title        { display: inline-block; font-size: 13pt; font-weight: bold; border: 2px solid #000; padding: 3px 18px; }
+  .docnum-wrap  { text-align: center; margin-bottom: 8px; font-size: 9pt; }
   .announce     { text-align: center; font-size: 8.5pt; font-weight: bold; margin: 0 0 10px; }
   .meta-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 10px; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 6px 0; margin-bottom: 8px; }
   .sub-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; margin-bottom: 8px; }
@@ -179,8 +183,8 @@ export function buildBillingDocHTML({
   .bank-info { margin-top: 10px; border: 1px solid #ccc; padding: 5px 8px; font-size: 8.5pt; line-height: 1.5; }
   .bank-info strong { font-size: 9pt; }
   /* Each copy (ORIGINAL / DUPLICATE) is its own block that starts on a fresh
-     page. A multi-page copy stays intact — the whole original prints, then the
-     whole duplicate — so page order is 1..N (orig) then 1..N (dupe). */
+     page. A multi-page copy stays intact - the whole original prints, then the
+     whole duplicate - so page order is 1..N (orig) then 1..N (dupe). */
   .copy { page-break-after: always; }
   .copy:last-child { page-break-after: auto; }
   .copy-tag { text-align: right; font-size: 8pt; font-weight: bold; letter-spacing: 1px; color: #444; border: 1px solid #999; display: inline-block; padding: 1px 6px; float: right; }
@@ -192,7 +196,10 @@ ${copies.map(copyLabel => `
   <div class="copy">
   ${copyLabel ? `<div class="copy-tag">${esc(copyLabel)}</div>` : ''}
   <div class="header">
-    <div class="biz">${esc(lh.companyName)}</div>
+    <div class="biz-row">
+      ${lh.logo ? `<img class="biz-logo" src="${lh.logo}" alt="" />` : ''}
+      <div class="biz">${esc(lh.companyName)}</div>
+    </div>
     ${lh.addressLines.map(a => `<div class="addr">${esc(a)}</div>`).join('')}
     ${lh.phone ? `<div class="addr">${esc(lh.phone)}</div>` : ''}
   </div>
@@ -200,7 +207,7 @@ ${copies.map(copyLabel => `
   <div class="title-wrap"><div class="title">${esc(docTitle)}</div></div>
   ${lh.announcement ? `<div class="announce">${esc(lh.announcement)}</div>` : ''}
 
-  <p style="font-size:9pt;margin-bottom:8px;">${esc(dateLabel)}: <strong>${esc(dateStr)}</strong></p>
+  <p style="font-size:9pt;margin-bottom:8px;text-align:center;">${esc(dateLabel)}: <strong>${esc(dateStr)}</strong></p>
 
   <div class="meta-grid">${metaHTML}</div>
   ${subHTML ? `<div class="sub-grid">${subHTML}</div>` : ''}

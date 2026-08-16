@@ -1,9 +1,9 @@
-// The double-entry safety net, proven two ways:
-//   1. DATA-LAYER GUARANTEE — the JournalEntry model itself refuses to persist
+﻿// The double-entry safety net, proven two ways:
+//   1. DATA-LAYER GUARANTEE - the JournalEntry model itself refuses to persist
 //      an unbalanced entry (schema pre('validate') hook). This is the floor
 //      beneath every app-level assertBalanced(): even a buggy or future code
 //      path cannot write books that don't balance.
-//   2. PER-STEP INVARIANT — driving the real order/sales money paths over HTTP,
+//   2. PER-STEP INVARIANT - driving the real order/sales money paths over HTTP,
 //      the whole ledger's debits equal its credits after EVERY operation, not
 //      just at the end (a net-zero end check can hide two errors that cancel).
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -17,7 +17,7 @@ const auth = (m, p, t) => request(app)[m](p).set('Authorization', `Bearer ${t}`)
 // The core assertion, reused after each money operation below.
 async function expectBooksBalance(label) {
   const { debits, credits } = await trialBalance();
-  // Exact to the centavo — double-entry books balance, they don't "roughly" balance.
+  // Exact to the centavo - double-entry books balance, they don't "roughly" balance.
   expect(Math.abs(debits - credits), `books out of balance after ${label}: DR ${debits} vs CR ${credits}`).toBeLessThanOrEqual(0.01);
 }
 
@@ -55,7 +55,7 @@ describe('data-layer guarantee: the model refuses unbalanced entries', () => {
     const JournalEntry = mongoose.model('JournalEntry');
     const je = await JournalEntry.create({
       reference: 'DE-OK-1', description: 'balanced',
-      // Totals intentionally left unset — the hook must fill them from the lines.
+      // Totals intentionally left unset - the hook must fill them from the lines.
       lines: [{ accountCode: '111000', debit: 100, credit: 0 }, { accountCode: '410000', debit: 0, credit: 100 }],
     });
     expect(je.totalDebit).toBe(100);
@@ -74,7 +74,7 @@ describe('data-layer guarantee: the model refuses unbalanced entries', () => {
     const JournalEntry = mongoose.model('JournalEntry');
     const je = await JournalEntry.create({
       reference: 'DE-OK-2', description: 'totals lie, lines are truth',
-      totalDebit: 9999, totalCredit: 1, // nonsense — must be corrected to the line sums
+      totalDebit: 9999, totalCredit: 1, // nonsense - must be corrected to the line sums
       lines: [{ accountCode: '111000', debit: 75, credit: 0 }, { accountCode: '410000', debit: 0, credit: 75 }],
     });
     expect(je.totalDebit).toBe(75);

@@ -1,4 +1,4 @@
-// ESC/POS receipt byte-building — shared by the Bluetooth and WebSerial thermal
+﻿// ESC/POS receipt byte-building - shared by the Bluetooth and WebSerial thermal
 // print paths in AdminDashboard.jsx's printOrderSlip. Previously duplicated
 // almost verbatim between the two transports (which had drifted: only the
 // WebSerial copy included the VAT-registration line); this is the one copy
@@ -77,7 +77,7 @@ export function buildEscposReceiptBytes(order, { lh, dupe, vatRegLabel, business
   tx(SEP);
   b(CENTER); tx(`${businessType === 'log' ? 'Thank you for your business!' : 'Thank you for dining with us!'}\n`);
 
-  // Dynamic feed — fewer lines for larger orders (content itself advances the paper)
+  // Dynamic feed - fewer lines for larger orders (content itself advances the paper)
   const feedLines = Math.max(4, 8 - Math.floor(order.items.length / 2));
   for (let i = 0; i < feedLines; i++) b(LF);
 
@@ -87,7 +87,7 @@ export function buildEscposReceiptBytes(order, { lh, dupe, vatRegLabel, business
 
 export const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// Per-device printer preference — a Bluetooth/USB pairing is physical to one
+// Per-device printer preference - a Bluetooth/USB pairing is physical to one
 // terminal, so this deliberately lives in localStorage, not backend Settings
 // (see SettingsTab.jsx's "This Device" card for the same dash.* convention).
 const STORAGE_KEY = 'dash.printerMode'; // 'auto' | 'browser'
@@ -99,5 +99,5 @@ export function readPrinterMode() {
 
 export function writePrinterMode(mode) {
   try { localStorage.setItem(STORAGE_KEY, mode === 'browser' ? 'browser' : 'auto'); }
-  catch { /* private mode / storage disabled — degrades to default 'auto' each load */ }
+  catch { /* private mode / storage disabled - degrades to default 'auto' each load */ }
 }

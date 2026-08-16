@@ -1,4 +1,4 @@
-// Boot fail-fast: server.js must refuse to start (exit 1) when required env is missing.
+﻿// Boot fail-fast: server.js must refuse to start (exit 1) when required env is missing.
 // Spawned as a real subprocess because it's a process-level exit, not a route. We point
 // DOTENV_CONFIG_PATH at a non-existent file so dotenv can't backfill MONGO_URI from .env.
 import { describe, it, expect } from 'vitest';
@@ -12,7 +12,7 @@ describe('boot fail-fast (required env)', () => {
       execFileSync(process.execPath, ['server.js'], {
         cwd: process.cwd(), // vitest runs in the server/ dir
         env: { ...process.env, MONGO_URI: '', JWT_SECRET: '', DOTENV_CONFIG_PATH: 'no-such-file.env', NODE_ENV: 'test' },
-        timeout: 45000, // generous — the subprocess loads the whole module before exiting
+        timeout: 45000, // generous - the subprocess loads the whole module before exiting
         stdio: 'pipe',
       });
     } catch (e) {

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import { sumDebits, sumCredits, isBalanced, assertBalanced, debitAccountFor, grossSalesAmount, suggestedSettleAccount, SETTLE_DESTINATIONS } from './ledger.js';
 
 describe('ledger.sumDebits / sumCredits', () => {
@@ -62,7 +62,7 @@ describe('ledger.debitAccountFor (Non-Cash → A/R policy)', () => {
     expect(debitAccountFor('Manual Delivery').code).toBe('111000');
     expect(debitAccountFor('Lalamove').code).toBe('111000');
   });
-  it('Unknown payment methods default to A/R (safe — requires explicit settlement)', () => {
+  it('Unknown payment methods default to A/R (safe - requires explicit settlement)', () => {
     expect(debitAccountFor('Bitcoin').code).toBe('120000');
   });
 });
@@ -91,7 +91,7 @@ describe('ledger.suggestedSettleAccount', () => {
 });
 
 describe('SETTLE_DESTINATIONS chart-of-accounts integrity', () => {
-  it('contains 1000, 1010, 1015 — and only those', () => {
+  it('contains 1000, 1010, 1015 - and only those', () => {
     const codes = SETTLE_DESTINATIONS.map(d => d.code).sort();
     expect(codes).toEqual(['111000', '112000', '113000']);
   });
@@ -130,7 +130,7 @@ describe('integration: a typical Non-VAT cash sale journal entry', () => {
   });
 });
 
-describe('ledger.assertBalanced — throw path (coverage)', () => {
+describe('ledger.assertBalanced - throw path (coverage)', () => {
   it('throws a descriptive error when debits != credits', () => {
     expect(() => assertBalanced([{ debit: 10 }, { credit: 5 }], 'sale')).toThrow(/UNBALANCED/);
   });

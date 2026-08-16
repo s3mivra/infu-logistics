@@ -1,4 +1,4 @@
-// Notification feed integration tests.
+﻿// Notification feed integration tests.
 // The feed aggregates seven unrelated signals, so the risks are (a) a threshold
 // rule firing when it shouldn't and (b) leaking a record to a role that isn't
 // allowed to open it. Both are covered here.
@@ -110,7 +110,7 @@ describe('quantities are reported in DISPLAY units, not base units', () => {
     const b = await get(superToken);
     const row = b.items.find(i => /Unit Beans/.test(i.title));
     expect(row).toBeTruthy();
-    // 200 g / (packSize 1 × multiplier 1000) = 0.2 pcs — NOT the raw 200.
+    // 200 g / (packSize 1 × multiplier 1000) = 0.2 pcs - NOT the raw 200.
     expect(row.detail).toMatch(/0\.2 pcs left/);
     expect(row.detail).not.toMatch(/\b200 left\b/);
     // the threshold is converted too, so both numbers are in the same scale

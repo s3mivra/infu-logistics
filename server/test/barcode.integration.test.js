@@ -1,4 +1,4 @@
-// Barcode support — the barcode field on Product (through create) and the
+﻿// Barcode support - the barcode field on Product (through create) and the
 // POS by-barcode lookup, including the ambiguous-match flag.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';

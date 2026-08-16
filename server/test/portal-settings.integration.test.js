@@ -1,4 +1,4 @@
-// The client portal is served to clients, not staff, so it reads its copy and
+﻿// The client portal is served to clients, not staff, so it reads its copy and
 // branding from an UNAUTHENTICATED route. These tests pin the security boundary:
 // portal* keys are readable without a token, everything else is not, and writing
 // still requires a staff token with settings.manage.
@@ -40,7 +40,7 @@ describe('GET /api/public/portal-settings', () => {
   });
 
   it('never leaks non-portal settings', async () => {
-    // Operational settings live in the same collection — the whitelist is the
+    // Operational settings live in the same collection - the whitelist is the
     // only thing keeping them off a public route.
     await request(app).patch('/api/settings/globalCreditLimit')
       .set(auth(superT)).send({ value: 50000 }).expect(200);

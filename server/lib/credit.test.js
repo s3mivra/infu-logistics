@@ -1,11 +1,11 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import {
   resolveCreditLimit, checkCreditAvailable, bucketFor, ageingBuckets, ageingByClient,
 } from './credit.js';
 
 const daysAgo = (n) => new Date(Date.now() - n * 86400000);
 
-describe('resolveCreditLimit — which limit applies', () => {
+describe('resolveCreditLimit - which limit applies', () => {
   it('off: nobody is limited, even with values set', () => {
     expect(resolveCreditLimit({ mode: 'off', globalLimit: 5000, clientLimit: 100 })).toBe(null);
   });

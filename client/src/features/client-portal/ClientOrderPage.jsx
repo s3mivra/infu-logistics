@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import * as ui from '../../shared/ui';
@@ -18,7 +18,7 @@ const loadPdfLib = () => {
 };
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
-// — an UNSET var still falls back to the dev LAN box.
+// - an UNSET var still falls back to the dev LAN box.
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Semivra').toUpperCase();
 const socket = io(API_URL, { transports: ['websocket'], upgrade: false });
@@ -30,6 +30,7 @@ const PAYMENT_LABELS = {
   'E-Wallet': 'E-Wallet',
   'Bank Transfer': 'Bank Transfer',
   'Credit Card': 'Credit Card',
+  'Credit': 'Credit',
 };
 
 // Fallback support link. The `portalSupportLink` setting overrides it, so a shop
@@ -49,8 +50,8 @@ const ENV_BILLING = {
   accountNo: import.meta.env.VITE_BILLING_ACCOUNT_NO || '',
 };
 
-// Client-selectable payment methods — mirrors the POS order tab, minus delivery partners.
-const CLIENT_PAYMENT_METHODS = ['Cash', 'Bank Transfer', 'GCash', 'Maya', 'Maribank', 'Other E-Wallet'];
+// Client-selectable payment methods - mirrors the POS order tab, minus delivery partners.
+const CLIENT_PAYMENT_METHODS = ['Cash', 'Bank Transfer', 'GCash', 'Maya', 'Maribank', 'Other E-Wallet', 'Credit'];
 
 const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -69,7 +70,7 @@ const STATUS_VIEW = (status) => {
       return { label: 'Out for delivery', tone: 'blue', msg: 'Your order is on the way.' };
     // "Ready for pickup" is only true while the order is still WAITING to be
     // collected. Once it's been handed over, saying so contradicts the fully
-    // filled progress rail — these are terminal states, so name them.
+    // filled progress rail - these are terminal states, so name them.
     case 'Awaiting Pickup':
       return { label: 'Ready for pickup', tone: 'blue', msg: 'Your order is ready for pickup.' };
     case 'Delivered':
@@ -131,7 +132,7 @@ const ProductCard = memo(({ product, onAdd, showPrices }) => {
         ? 'border-white/5 opacity-50 cursor-not-allowed'
         : 'border-white/5 hover:border-brand/30 cursor-pointer active:scale-[0.97]'}`}
   >
-    {/* Product image — only present when the "Product Images" setting is on
+    {/* Product image - only present when the "Product Images" setting is on
         (the server strips product.image for customers when disabled). */}
     {product.image && (
       <div className="w-full h-24 sm:h-28 mb-2.5 rounded-xl overflow-hidden bg-page-bg/40 flex items-center justify-center">
@@ -264,7 +265,7 @@ export default function ClientOrderPage() {
 
     // Apply the client's OWN theme immediately from the cached value (no flash),
     // then from their account once the profile fetch lands. Never reads the
-    // staff `dash.theme` — see clientTheme.js.
+    // staff `dash.theme` - see clientTheme.js.
     applyClientTheme(info.theme || cachedClientTheme());
 
     // Restore the draft BEFORE falling back to the client's default payment
@@ -290,7 +291,7 @@ export default function ClientOrderPage() {
     saveDraft(clientInfo, { cart, paymentMethod, orderNotes, activeCategory, cartOpen, successOrder });
   }, [clientInfo, cart, paymentMethod, orderNotes, activeCategory, cartOpen, successOrder]);
 
-  // Portal customization — public route, no token needed.
+  // Portal customization - public route, no token needed.
   useEffect(() => {
     fetch(`${API_URL}/api/public/portal-settings`)
       .then(r => (r.ok ? r.json() : null))
@@ -377,7 +378,7 @@ export default function ClientOrderPage() {
     return () => { socket.off('orderUpdated', refresh); socket.off('erpUpdated', refresh); clearInterval(iv); };
   }, [token, fetchMyOrders]);
 
-  // Keep an open slip in sync with the live order list — otherwise a status
+  // Keep an open slip in sync with the live order list - otherwise a status
   // change behind the modal leaves the client reading a stale slip.
   useEffect(() => {
     if (!slipOrder) return;
@@ -705,7 +706,7 @@ export default function ClientOrderPage() {
         <div className="bg-sidebar-bg border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-lg max-h-[92vh] sm:max-h-[88vh] overflow-hidden flex flex-col text-left"
           onClick={e => e.stopPropagation()}>
 
-          {/* Sticky close bar — the document itself has no chrome */}
+          {/* Sticky close bar - the document itself has no chrome */}
           <div className="flex items-center justify-between px-4 sm:px-5 py-3 border-b border-white/10 flex-shrink-0">
             <p className="font-black text-accent text-[10px] uppercase tracking-widest">Order Slip</p>
             <button onClick={() => setSlipOrder(null)} className="p-2 -mr-2 rounded-xl text-fg/40 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
@@ -802,7 +803,7 @@ export default function ClientOrderPage() {
                   return (
                     <p className="text-[11px] font-bold text-blue-600 mt-2.5 flex items-center gap-1">
                       <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500" />
-                      Partial dispatch — {doneU} of {totU} unit{totU === 1 ? '' : 's'} delivered; the rest are being prepared.
+                      Partial dispatch - {doneU} of {totU} unit{totU === 1 ? '' : 's'} delivered; the rest are being prepared.
                     </p>
                   );
                 })()}
@@ -858,7 +859,7 @@ export default function ClientOrderPage() {
                           <span className="text-[10px] font-black block mt-0.5 text-emerald-600">✓ Fulfilled: {item.quantity}</span>
                         )}
                       </span>
-                      <span className="text-right tabular-nums text-accent/80">{sizeLabel || '—'}</span>
+                      <span className="text-right tabular-nums text-accent/80">{sizeLabel || '-'}</span>
                       <span className="text-right tabular-nums">{peso(unit)}</span>
                       <span className="text-right tabular-nums font-semibold">{item.quantity}</span>
                       <span className="text-right tabular-nums font-semibold">{peso(unit * Number(item.quantity || 0))}</span>
@@ -926,11 +927,13 @@ export default function ClientOrderPage() {
   return (
     <div className="min-h-screen bg-page-bg flex flex-col text-fg">
 
-      {/* Header — below `sm` the client name and actions collapse into a
+      {/* Header - below `sm` the client name and actions collapse into a
           hamburger so the brand and the cart badge still fit on a 320px screen. */}
       <header className="sticky top-0 z-30 bg-sidebar-bg border-b border-white/5 px-3 sm:px-4 h-14 flex items-center justify-between gap-2 flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <Package size={18} className="text-brand shrink-0" />
+          {portal.businessLogo
+            ? <img src={portal.businessLogo} alt="" className="w-7 h-7 rounded-lg object-cover shrink-0" />
+            : <Package size={18} className="text-brand shrink-0" />}
           <span className="font-black text-fg text-xs sm:text-sm uppercase tracking-widest truncate">{companyName}</span>
         </div>
 
@@ -1063,7 +1066,7 @@ export default function ClientOrderPage() {
                 <X size={16} />
               </button>
             </div>
-            {/* Filter chips — group the many granular statuses into what a client
+            {/* Filter chips - group the many granular statuses into what a client
                 actually asks about: still moving, partial, cancelled, or done. */}
             <div className="flex gap-1.5 px-4 py-2.5 overflow-x-auto scrollbar-hide custom-scrollbar border-b border-white/5 flex-shrink-0">
               {FILTER_BUCKETS.map(b => (
@@ -1233,7 +1236,7 @@ export default function ClientOrderPage() {
                 </div>
               </section>
 
-              {/* Appearance — this client's own, not the shop's */}
+              {/* Appearance - this client's own, not the shop's */}
               <section>
                 <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-2 flex items-center gap-1.5">
                   <Palette size={12} /> Appearance
@@ -1323,7 +1326,7 @@ export default function ClientOrderPage() {
         ))}
       </div>
 
-      {/* Product grid — leaves room at the bottom for the cart FAB on mobile */}
+      {/* Product grid - leaves room at the bottom for the cart FAB on mobile */}
       <div className="flex-1 p-3 sm:p-4 pb-28 overflow-y-auto">
         {loadingProducts ? (
           <div className="flex items-center justify-center py-20">
@@ -1436,6 +1439,7 @@ export default function ClientOrderPage() {
                 <optgroup className="bg-surface" label="In-Store Payments">
                   <option className="bg-surface" value="Cash">Cash</option>
                   <option className="bg-surface" value="Bank Transfer">Bank Transfer</option>
+                  <option className="bg-surface" value="Credit">Credit</option>
                 </optgroup>
                 <optgroup className="bg-surface" label="E-Wallets">
                   <option className="bg-surface" value="GCash">GCash</option>

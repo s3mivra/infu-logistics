@@ -1,4 +1,4 @@
-// Breadth suite — exercises EVERY route's handler body with valid input, so the whole
+﻿// Breadth suite - exercises EVERY route's handler body with valid input, so the whole
 // app is executed under test. The money/stock/auth paths are deeply asserted in the
 // other integration files; here the goal is to run every endpoint at least once on a
 // realistic request and confirm none crashes (status < 500) and the documented success

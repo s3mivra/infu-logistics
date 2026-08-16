@@ -1,11 +1,11 @@
-// Shared thermal-receipt template used by BOTH the Orders order-slip print and
+﻿// Shared thermal-receipt template used by BOTH the Orders order-slip print and
 // the Procurement purchase-order print, so every printed slip looks the same and
 // only the labels differ ("OFFICIAL ORDER SLIP" vs "PURCHASE ORDER").
 //
 // The letterhead, announcement, payment/support and footer all come from the
 // system settings the admin edits under Settings → Welcome & Announcements,
 // Support & Payment, and Order Slip Letterhead. Anything left blank falls back
-// to VITE_BILLING_* env values, then to a sensible baked-in default — so a fresh
+// to VITE_BILLING_* env values, then to a sensible baked-in default - so a fresh
 // install prints something reasonable with zero configuration.
 
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Kasa Lokal').toUpperCase();
@@ -58,7 +58,8 @@ export function resolveLetterhead(settings = {}) {
     s.portalSlipFooter,
     vatRegistered ? 'This is a VAT Transaction.' : 'This is a Non-VAT Transaction.',
   );
-  return { companyName, address, phone, email, announcement, paymentInstructions, supportLink, supportLabel, slipFooter, vatRegistered };
+  const logo = s.businessLogo || '';
+  return { logo, companyName, address, phone, email, announcement, paymentInstructions, supportLink, supportLabel, slipFooter, vatRegistered };
 }
 
 // Build the 80mm thermal receipt HTML. Callers pass their own doc label, meta
@@ -136,6 +137,8 @@ export function buildReceiptHTML({
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Courier New', Courier, monospace; font-size: 11px; color: #000; background: #fff; width: 72mm; }
   .center { text-align: center; }
+  .logo-row { display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .logo-img { max-height: 36px; max-width: 36px; object-fit: contain; }
   .store  { font-size: 15px; font-weight: bold; letter-spacing: 1px; margin-bottom: 1px; }
   .addr   { font-size: 9px; color: #333; }
   .doclabel { font-size: 12px; font-weight: bold; letter-spacing: 1px; margin-top: 3px; }
@@ -172,7 +175,10 @@ ${(duplicate ? ['', 'DUPLICATE'] : ['']).map(copyTag => `
   <div class="copy">
   ${copyTag ? `<div class="copy-tag">-- ${esc(copyTag)} --</div>` : ''}
   <div class="center">
-    <div class="store">${esc(lh.companyName)}</div>
+    <div class="logo-row">
+      ${lh.logo ? `<img class="logo-img" src="${lh.logo}" alt="" />` : ''}
+      <div class="store">${esc(lh.companyName)}</div>
+    </div>
     ${lh.address ? `<div class="addr">${esc(lh.address)}</div>` : ''}
     ${contactLine ? `<div class="addr">${contactLine}</div>` : ''}
     <div class="addr" style="font-weight:bold;margin-top:2px;">${lh.vatRegistered ? 'VAT REGISTERED' : 'NON-VAT REGISTERED'}</div>

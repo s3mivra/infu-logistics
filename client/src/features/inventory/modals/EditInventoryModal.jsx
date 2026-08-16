@@ -1,9 +1,9 @@
-import { X, Check } from 'lucide-react';
+﻿import { X, Check } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
 
 
 // Edit an inventory item's identity/costing fields. Quantity is deliberately
-// NOT editable here — stock only moves through Restock or Waste so every change
+// NOT editable here - stock only moves through Restock or Waste so every change
 // leaves a stock-card trail and a journal entry.
 export default function EditInventoryModal() {
   const {

@@ -1,4 +1,4 @@
-// Client-portal purchase flow (logistics mode), end-to-end over HTTP:
+﻿// Client-portal purchase flow (logistics mode), end-to-end over HTTP:
 //   client logs in → places an order → sees only their own orders → staff fulfils it
 //   (booked to A/R, since a client buys on their preset terms) → client confirms receipt.
 // Plus the data-isolation guarantees: a client can neither see nor confirm another
@@ -107,7 +107,7 @@ describe('client portal: a client buys from the portal', () => {
     const Order = mongoose.model('Order');
     const a = await Order.create({ orderNumber: 'ORD-ISO-1', status: 'Completed', clientId: 'someoneElse', total: 50, paymentMethod: 'Cash' });
     const res = await post(`/api/client/orders/${a._id}/received`, clientBTok);
-    expect(res.status).toBe(404); // ownership filter — not B's order
+    expect(res.status).toBe(404); // ownership filter - not B's order
   });
 
   it('a not-yet-ready order cannot be confirmed received', async () => {

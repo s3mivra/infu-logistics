@@ -1,4 +1,4 @@
-// Small localStorage-backed draft store for in-progress, not-yet-submitted work.
+﻿// Small localStorage-backed draft store for in-progress, not-yet-submitted work.
 //
 // WHY: a customer half-way through building an order loses everything to an
 // accidental refresh, a phone rotating, or the OS evicting the tab when they
@@ -16,7 +16,7 @@ export function loadDraft(key, maxAgeMs = 12 * 60 * 60 * 1000) {
     const raw = localStorage.getItem(PREFIX + key);
     if (!raw) return null;
     const { savedAt, data } = JSON.parse(raw);
-    // A stale draft is worse than none — a table's abandoned basket must not
+    // A stale draft is worse than none - a table's abandoned basket must not
     // reappear for tomorrow's customer.
     if (!savedAt || Date.now() - savedAt > maxAgeMs) {
       localStorage.removeItem(PREFIX + key);
@@ -32,7 +32,7 @@ export function saveDraft(key, data) {
   if (!key) return;
   try {
     localStorage.setItem(PREFIX + key, JSON.stringify({ savedAt: Date.now(), data }));
-  } catch { /* private mode, or quota — losing a draft must never break the page */ }
+  } catch { /* private mode, or quota - losing a draft must never break the page */ }
 }
 
 export function clearDraft(key) {

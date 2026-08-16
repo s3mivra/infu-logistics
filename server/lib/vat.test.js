@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import { computeOrderVat, extractVat, addVat, normaliseVatRate, DEFAULT_VAT_RATE } from './vat.js';
 
 describe('vat.normaliseVatRate', () => {
@@ -54,7 +54,7 @@ describe('vat.addVat', () => {
   });
 });
 
-describe('vat.computeOrderVat — VAT-EXCLUSIVE pricing', () => {
+describe('vat.computeOrderVat - VAT-EXCLUSIVE pricing', () => {
   it('adds VAT on top: a ₱100 net line becomes ₱112', () => {
     const r = computeOrderVat({ grossInclusive: 100, vatEnabled: true, vatRate: 0.12, vatInclusive: false });
     expect(r.vatableSales).toBe(100);
@@ -72,7 +72,7 @@ describe('vat.computeOrderVat — VAT-EXCLUSIVE pricing', () => {
     expect(+(r.vatableSales + r.vatAmount).toFixed(2)).toBe(r.total);
   });
 
-  it('exempt sale adds no VAT — the net is the total', () => {
+  it('exempt sale adds no VAT - the net is the total', () => {
     const r = computeOrderVat({ grossInclusive: 500, vatEnabled: true, vatRate: 0.12, vatInclusive: false, isVatExempt: true });
     expect(r.total).toBe(500);
     expect(r.vatAmount).toBe(0);
@@ -106,7 +106,7 @@ describe('vat.computeOrderVat — VAT-EXCLUSIVE pricing', () => {
   });
 });
 
-describe('vat.computeOrderVat — non-VAT business', () => {
+describe('vat.computeOrderVat - non-VAT business', () => {
   it('behaves exactly as before VAT existed: discount off gross, nothing split', () => {
     const r = computeOrderVat({ grossInclusive: 1000, discountPercent: 10, vatEnabled: false });
     expect(r.total).toBe(900);
@@ -122,11 +122,11 @@ describe('vat.computeOrderVat — non-VAT business', () => {
   });
 });
 
-describe('vat.computeOrderVat — VATable sale', () => {
+describe('vat.computeOrderVat - VATable sale', () => {
   it('does NOT change what the customer pays when VAT is switched on', () => {
     const off = computeOrderVat({ grossInclusive: 1120, vatEnabled: false });
     const on = computeOrderVat({ grossInclusive: 1120, vatEnabled: true, vatRate: 0.12 });
-    expect(on.total).toBe(off.total); // inclusive pricing — the whole point
+    expect(on.total).toBe(off.total); // inclusive pricing - the whole point
     expect(on.vatAmount).toBe(120);
     expect(on.vatableSales).toBe(1000);
   });
@@ -148,7 +148,7 @@ describe('vat.computeOrderVat — VATable sale', () => {
   });
 });
 
-describe('vat.computeOrderVat — SC/PWD exempt sale', () => {
+describe('vat.computeOrderVat - SC/PWD exempt sale', () => {
   it('strips VAT and books nothing as VATable', () => {
     const r = computeOrderVat({
       grossInclusive: 1120, discountPercent: 20, vatEnabled: true,
@@ -187,7 +187,7 @@ describe('vat.computeOrderVat — SC/PWD exempt sale', () => {
   });
 });
 
-describe('vat.computeOrderVat — partial discount base', () => {
+describe('vat.computeOrderVat - partial discount base', () => {
   it('applies the order-wide percentage only to the eligible portion', () => {
     // ₱1000 of goods, but only ₱400 is eligible (the rest carries its own
     // product discount or was excluded by the cashier). 10% off ₱400 = ₱40.
@@ -222,7 +222,7 @@ describe('vat.computeOrderVat — partial discount base', () => {
   });
 });
 
-describe('vat.computeOrderVat — per-product exemption (mixed basket)', () => {
+describe('vat.computeOrderVat - per-product exemption (mixed basket)', () => {
   it('splits a basket of VATable and exempt goods', () => {
     // ₱1120 VATable + ₱500 exempt produce = ₱1620 collected.
     const r = computeOrderVat({
@@ -276,7 +276,7 @@ describe('vat.computeOrderVat — per-product exemption (mixed basket)', () => {
   });
 });
 
-describe('vat.computeOrderVat — input safety', () => {
+describe('vat.computeOrderVat - input safety', () => {
   it('survives missing and garbage input', () => {
     expect(computeOrderVat().total).toBe(0);
     expect(computeOrderVat({ grossInclusive: 'abc', vatEnabled: true }).total).toBe(0);

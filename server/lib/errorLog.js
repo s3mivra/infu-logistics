@@ -1,7 +1,7 @@
-// Server-side error capture.
+﻿// Server-side error capture.
 //
 // Every 5xx the app returns is recorded to a CAPPED collection in the tenant's
-// own database, so errors never leave the box and can never fill the disk —
+// own database, so errors never leave the box and can never fill the disk -
 // MongoDB evicts the oldest documents once the cap is reached.
 //
 // WHY a module and not just pino: in production the API masks the real message
@@ -62,7 +62,7 @@ const sign = (route, message) =>
 
 /**
  * Record a handled server error. Safe to call from any catch block.
- * Never throws and never awaits — the response should not wait on logging.
+ * Never throws and never awaits - the response should not wait on logging.
  */
 export function captureError(req, err, { status = 500, kind = 'request' } = {}) {
   try {
@@ -87,7 +87,7 @@ let handlersInstalled = false;
 function installProcessHandlers() {
   if (handlersInstalled) return;
   handlersInstalled = true;
-  // These have no request context but are the most valuable errors to see —
+  // These have no request context but are the most valuable errors to see -
   // they're the ones that can take the process down.
   process.on('unhandledRejection', (reason) => {
     captureError(null, reason instanceof Error ? reason : new Error(String(reason)), { kind: 'rejection' });
