@@ -132,6 +132,10 @@ export default function OrdersTab({ ctx }) {
   // UI-only hint for the walk-in picker below — not persisted; the real
   // guest-vs-regular classification comes from whether a customer name is entered.
   const [walkInMode, setWalkInMode] = React.useState('guest');
+  // Payment-QR display (set in Settings > Branding). Shown full-screen for the
+  // customer to scan; they/staff dismiss it once paid.
+  const [payQrOpen, setPayQrOpen] = React.useState(false);
+  const payQrImage = systemSettings.paymentQrImage || '';
 
   return (
           <div className="w-full">
@@ -150,9 +154,16 @@ export default function OrdersTab({ ctx }) {
                       <ShoppingCart size={18} className="text-brand" />
                       <span className="font-black text-fg tracking-widest uppercase text-sm">POS Register</span>
                     </div>
-                    <button onClick={() => setIsPosOpen(false)} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-red-500/20 text-fg/40 hover:text-red-400 font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
-                      <ChevronLeft size={13} /> Orders
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {payQrImage && (
+                        <button onClick={() => setPayQrOpen(true)} title="Show the payment QR for the customer to scan" className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-brand/15 text-brand hover:bg-brand/25 font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
+                          <QrCode size={13} /> Pay QR
+                        </button>
+                      )}
+                      <button onClick={() => setIsPosOpen(false)} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-red-500/20 text-fg/40 hover:text-red-400 font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
+                        <ChevronLeft size={13} /> Orders
+                      </button>
+                    </div>
                   </div>
 
                   {/* Search + Category pills */}
@@ -168,7 +179,7 @@ export default function OrdersTab({ ctx }) {
                       />
                     </div>
                     <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
-                      {[{ _id: '__all', name: 'All' }, ...categories].map(c => (
+                      {[{ _id: '__all', name: 'All' }, ...(products.some(p => p.isBulk) ? [{ _id: '__bulk', name: 'Bulk' }] : []), ...categories].map(c => (
                         <button
                           key={c._id}
                           onClick={() => { setPosCategory(c.name === 'All' ? 'All' : c.name); setPosPage(1); }}
@@ -183,7 +194,7 @@ export default function OrdersTab({ ctx }) {
                   {/* Product grid */}
                   {(() => {
                     const posFiltered = products.filter(p =>
-                      (posCategory === 'All' || p.category === posCategory) &&
+                      (posCategory === 'All' || (posCategory === 'Bulk' ? p.isBulk : p.category === posCategory)) &&
                       (!posSearch || p.name.toLowerCase().includes(posSearch.toLowerCase()))
                     );
                     const posTotalPages = Math.ceil(posFiltered.length / POS_PER_PAGE);
@@ -1370,6 +1381,21 @@ export default function OrdersTab({ ctx }) {
                   })}
                 </div>
               </>
+            )}
+
+            {/* Payment QR — full-screen for the customer to scan; dismissed once paid. */}
+            {payQrOpen && payQrImage && (
+              <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-6" onClick={() => setPayQrOpen(false)}>
+                <div className="bg-white rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl" onClick={e => e.stopPropagation()}>
+                  <p className="text-black font-black text-lg uppercase tracking-wider mb-1">Scan to Pay</p>
+                  <p className="text-gray-500 text-xs mb-4">Open your e-wallet or bank app and scan</p>
+                  <img src={payQrImage} alt="Payment QR" className="w-full max-w-[300px] mx-auto rounded-xl" />
+                  <button onClick={() => setPayQrOpen(false)} className="mt-5 w-full bg-brand text-white font-black py-3.5 rounded-2xl uppercase tracking-widest text-sm hover:bg-brand-dark transition">
+                    Done — Paid
+                  </button>
+                  <p className="text-gray-400 text-[11px] mt-2">Tap when payment is confirmed</p>
+                </div>
+              </div>
             )}
           </div>
   );

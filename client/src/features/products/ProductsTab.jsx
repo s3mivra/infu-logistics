@@ -225,7 +225,7 @@ export default function ProductsTab({ ctx }) {
                         setFormData({ 
                           name: p.name || '', category: p.category || '', description: p.description || '',
                           basePrice: Number(p.basePrice || p.price || 0), discountPercent: Number(p.discountPercent || 0),
-                          vatExempt: p.vatExempt === true,
+                          vatExempt: p.vatExempt === true, isBulk: p.isBulk === true,
                           clientDiscounts: (p.clientDiscounts || []).map(d => ({ clientId: String(d.clientId), percent: Number(d.percent || 0) })),
                           segmentDiscounts: (p.segmentDiscounts || []).map(d => ({ segment: String(d.segment || ''), percent: Number(d.percent || 0) })),
                           bulkBreaks: (p.bulkBreaks || []).map(b => ({ minQty: Number(b.minQty || 0), percent: Number(b.percent || 0) })),
@@ -462,6 +462,20 @@ export default function ProductsTab({ ctx }) {
                     Leave unticked for normal goods. Tick only for items exempt by law — raw
                     agricultural produce, prescription medicines. Ignored while the business is
                     set to Non-VAT in Settings.
+                  </p>
+
+                  {/* Bulk-sale flag — groups the item under a "Bulk" filter in the POS & portal. */}
+                  <label className="flex items-start gap-2.5 mb-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.isBulk === true}
+                      onChange={e => setFormData({ ...formData, isBulk: e.target.checked })}
+                      className="mt-0.5 w-4 h-4 accent-brand shrink-0"
+                    />
+                    <span className="text-xs font-bold text-fg">Bulk / wholesale item</span>
+                  </label>
+                  <p className="text-[10px] text-fg/60 mb-3">
+                    Shows this product under a dedicated <span className="font-bold">Bulk</span> tab in the register and client portal — for sack/wholesale quantities sold apart from the regular menu.
                   </p>
 
                   {/* Per-client overrides - a specific client's special rate on THIS product.

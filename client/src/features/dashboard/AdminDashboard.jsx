@@ -218,7 +218,7 @@ export default function AdminDashboard() {
 
   const [inventory, setInventory] = useState([]);
   const [journalEntries, setJournalEntries] = useState([]);
-  const [invForm, setInvForm] = useState({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000' });
+  const [invForm, setInvForm] = useState({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000', stockLocation: '', stockCategory: '' });
   // --- INVENTORY EDIT MODAL ---
   const [editInvModal, setEditInvModal] = useState(null);   // { item } | null
   const [editInvForm, setEditInvForm] = useState({ itemCode: '', itemName: '', unit: '', unitCost: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, displayUnit: '', packSize: '' });
@@ -254,6 +254,14 @@ export default function AdminDashboard() {
   const [profitByCategory, setProfitByCategory] = useState(null);
   // --- SYSTEM SETTINGS (QR toggle, etc.) ---
   const [systemSettings, setSystemSettings] = useState({ isAcceptingQROrders: true, autoCloseEnabled: true, imagesEnabled: true });
+  // Cache the logo so the (pre-auth) login screen can show it too — settings
+  // themselves need a token, so the very first login falls back to the icon.
+  useEffect(() => {
+    try {
+      if (systemSettings.businessLogo) localStorage.setItem('branding.logo', systemSettings.businessLogo);
+      else if (systemSettings.businessLogo === '') localStorage.removeItem('branding.logo');
+    } catch { /* private mode */ }
+  }, [systemSettings.businessLogo]);
   // Registration stamp for every printed document. Derived in one place because
   // it appears on six of them, and a VAT-registered seller printing "NON-VAT
   // REGISTERED" on an official receipt is a compliance problem, not a typo.
@@ -324,6 +332,10 @@ export default function AdminDashboard() {
   const [apPayForm, setApPayForm] = useState({ amount: '', payFromAccount: '111000', description: '', vendorName: '', supplierId: '' });
   // Supplier list for the A/P payment picker (the Procurement tab keeps its own).
   const [suppliers, setSuppliers] = useState([]);
+  const [stockLocations, setStockLocations] = useState([]);
+  const [stockCategories, setStockCategories] = useState([]);
+  const [stockTransfers, setStockTransfers] = useState([]);
+  const [locationAnalytics, setLocationAnalytics] = useState([]);
   const [apPaySubmitting, setApPaySubmitting] = useState(false);
   const [activeInventoryItem, setActiveInventoryItem] = useState(null); // For the restock modal
 
@@ -1413,6 +1425,7 @@ export default function AdminDashboard() {
     fetchOrders();
     fetchData();
     fetchERPData();
+    fetchStockTaxonomy();
     fetchUsers();
     requestNotificationPermission(); // ask once so new-order alerts can show in the installed app
 
@@ -1955,6 +1968,50 @@ const updateStatus = async (orderId, newStatus) => {
       const d = await res.json();
       if (d.success) setSuppliers(d.suppliers || []);
     } catch (err) { console.error('fetchSuppliers', err); }
+  };
+  const fetchStockTaxonomy = async () => {
+    try {
+      const [lr, cr] = await Promise.all([apiFetch('/api/stock-locations'), apiFetch('/api/stock-categories')]);
+      const [ld, cd] = await Promise.all([lr.json(), cr.json()]);
+      if (ld.success) setStockLocations(ld.locations || []);
+      if (cd.success) setStockCategories(cd.categories || []);
+    } catch (err) { console.error('fetchStockTaxonomy', err); }
+  };
+  const saveStockLocation = async (body, id) => {
+    const res = await apiFetch(id ? `/api/stock-locations/${id}` : '/api/stock-locations', { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await res.json(); if (!d.success) { ui.alert(d.error); return false; } fetchStockTaxonomy(); return true;
+  };
+  const deleteStockLocation = async (id) => {
+    if (!await ui.confirm('Delete this location?')) return;
+    const res = await apiFetch(`/api/stock-locations/${id}`, { method: 'DELETE' });
+    const d = await res.json(); if (!d.success) ui.alert(d.error); fetchStockTaxonomy();
+  };
+  const saveStockCategory = async (body, id) => {
+    const res = await apiFetch(id ? `/api/stock-categories/${id}` : '/api/stock-categories', { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await res.json(); if (!d.success) { ui.alert(d.error); return false; } fetchStockTaxonomy(); return true;
+  };
+  const deleteStockCategory = async (id) => {
+    if (!await ui.confirm('Delete this category?')) return;
+    const res = await apiFetch(`/api/stock-categories/${id}`, { method: 'DELETE' });
+    const d = await res.json(); if (!d.success) ui.alert(d.error); fetchStockTaxonomy();
+  };
+  const fetchStockTransfers = async () => {
+    try {
+      const [tr, ar] = await Promise.all([apiFetch('/api/stock-transfers'), apiFetch('/api/stock-analytics/by-location')]);
+      const [td, ad] = await Promise.all([tr.json(), ar.json()]);
+      if (td.success) setStockTransfers(td.transfers || []);
+      if (ad.success) setLocationAnalytics(ad.locations || []);
+    } catch (err) { console.error('fetchStockTransfers', err); }
+  };
+  const requestStockTransfer = async (body) => {
+    const res = await apiFetch('/api/stock-transfers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await res.json(); if (!d.success) { ui.alert(d.error); return false; } fetchStockTransfers(); return true;
+  };
+  const actOnStockTransfer = async (id, action) => {
+    if (action === 'reject' && !await ui.confirm('Cancel/reject this transfer?')) return;
+    const res = await apiFetch(`/api/stock-transfers/${id}/${action}`, { method: 'POST' });
+    const d = await res.json(); if (!d.success) ui.alert(d.error);
+    fetchStockTransfers(); if (action === 'release') fetchERPData();
   };
   const fetchArAgeing = async () => {
     if (activeAdmin?.role !== 'superadmin') return;
@@ -2533,6 +2590,8 @@ const updateStatus = async (orderId, newStatus) => {
         displayUnit: invForm.unit,
         unitMultiplier: mult,
         packSize: invFormEff.unitPerPack ? parseFloat(invFormEff.unitPerPack) : null,
+        stockLocation: invForm.stockLocation || '',
+        stockCategory: invForm.stockCategory || '',
       };
 
       payload.creditAccount = invForm.creditAccount || '111000';
@@ -2541,7 +2600,7 @@ const updateStatus = async (orderId, newStatus) => {
       if (!data.success) return ui.alert(data.error);
     }
 
-    setInvForm({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000' });
+    setInvForm({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000', stockLocation: '', stockCategory: '' });
     fetchERPData();
   };
   const deleteInventory = async (id) => { if(await ui.confirm('Delete inventory item?')) { await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' }); fetchERPData(); } };
@@ -4123,6 +4182,7 @@ const updateStatus = async (orderId, newStatus) => {
       @media print { @page { size:80mm auto; margin:3mm; } }
     </style></head><body>
       <div class="header">
+        ${systemSettings.businessLogo ? `<img src="${systemSettings.businessLogo}" style="max-height:48px;max-width:180px;object-fit:contain;margin:0 auto 4px;display:block" />` : ''}
         <div class="order-num">${esc(order.orderNumber)}</div>
         <div class="tbl">${esc(order.table||'Takeout')} · ${esc(order.customerName||'Guest')}</div>
         <div style="font-size:11px">${new Date(order.createdAt||Date.now()).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'})}</div>
@@ -4603,9 +4663,13 @@ const updateStatus = async (orderId, newStatus) => {
         </div>
         <div className="flex-1 flex flex-col items-center justify-center p-6 lg:p-12">
         <form onSubmit={handleSystemLogin} className="bg-sidebar-bg border border-white/10 p-8 rounded-2xl shadow-2xl w-full max-w-sm text-center">
-          <div className="lg:hidden w-14 h-14 bg-brand/20 border border-brand/30 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-brand/20">
-            <Lock size={24} className="text-brand" />
-          </div>
+          {(systemSettings.businessLogo || (() => { try { return localStorage.getItem('branding.logo') || ''; } catch { return ''; } })())
+            ? <img src={systemSettings.businessLogo || localStorage.getItem('branding.logo')} alt="" className="max-h-16 max-w-[200px] object-contain mx-auto mb-4" />
+            : (
+              <div className="lg:hidden w-14 h-14 bg-brand/20 border border-brand/30 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-brand/20">
+                <Lock size={24} className="text-brand" />
+              </div>
+            )}
           <h2 className="text-2xl font-black text-fg tracking-widest mb-1 uppercase">System Locked</h2>
           <p className="text-fg/40 text-sm mb-6">Enter credentials to begin your shift.</p>
 
@@ -4827,6 +4891,9 @@ const updateStatus = async (orderId, newStatus) => {
           undiscoverable and is intentionally gone. */}
       <div className="p-5 border-b border-white/5 flex items-start gap-3">
         <div className="min-w-0 flex-1">
+          {systemSettings.businessLogo && (
+            <img src={systemSettings.businessLogo} alt="" className="max-h-12 max-w-[160px] object-contain mb-2" />
+          )}
           <p className="text-2xl font-black text-brand tracking-tight leading-none drop-shadow-sm">{BIZ_NAME}</p>
           <p className="text-[10px] text-fg/80 font-bold uppercase tracking-[0.25em] mt-0.5">
             SEMIVRA <span className="text-brand/80">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span>
@@ -4963,6 +5030,14 @@ const updateStatus = async (orderId, newStatus) => {
               <QrCode size={15} />
               {BUSINESS_TYPE === 'log' ? 'Portal' : 'Show QR'}
             </button>
+            {/* Logistics: a guest walk-in QR (below Portal) — a customer with no
+                account scans it to order on the spot, same guest menu flow as fb. */}
+            {BUSINESS_TYPE === 'log' && (
+              <button onClick={e => { e.preventDefault(); handleShowQR(); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand/60 hover:text-brand hover:bg-brand/10 transition font-bold text-sm">
+                <QrCode size={15} />
+                Guest QR
+              </button>
+            )}
             {/* Install as app (only when the browser offers it) */}
             {installable && (
               <button onClick={() => { install(); closeFn?.(); }}
@@ -5049,6 +5124,8 @@ const updateStatus = async (orderId, newStatus) => {
     pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF,
     bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF,
     arOutstanding, fetchArOutstanding, arAgeing, fetchArAgeing, suppliers, fetchSuppliers,
+    stockLocations, stockCategories, fetchStockTaxonomy, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory,
+    stockTransfers, locationAnalytics, fetchStockTransfers, requestStockTransfer, actOnStockTransfer,
     expenseModal, setExpenseModal, expenseCategories, fetchExpenseCategories,
     expenseForm, setExpenseForm, expenseSubmitting, submitExpense, expenseList, fetchExpenses,
     settleModal, setSettleModal, settleForm, setSettleForm, settleSubmitting, setSettleSubmitting,

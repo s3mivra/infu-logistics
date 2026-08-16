@@ -1347,6 +1347,21 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       emitToMgr('erpUpdated');
 
       await applyStatsDelta(order, 1, session);
+
+      // Snapshot the client's payment terms onto this receivable at the moment it
+      // Completes, so a later change to the client's default terms never moves an
+      // existing A/R's due date. Cash and complimentary orders carry no receivable.
+      if (!order.isComplimentary && order.paymentMethod !== 'Cash' && order.arDueDate == null) {
+        let termsDays = order.arTermsDays;
+        if (termsDays == null && order.clientAccountId) {
+          const cli = await ClientAccount.findById(order.clientAccountId).select('creditTermsDays').session(session).lean();
+          if (cli && cli.creditTermsDays != null) termsDays = cli.creditTermsDays;
+        }
+        if (termsDays != null) {
+          order.arTermsDays = termsDays;
+          order.arDueDate = new Date(Date.now() + termsDays * 86400000);
+        }
+      }
     }
 
     // FIX: Removed the array brackets and {session} to prevent Mongoose crash

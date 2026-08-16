@@ -393,6 +393,7 @@ const productSchema = z.object({
   image: z.string().optional(), isAvailable: z.boolean().optional(),
   vatExempt: z.boolean().optional(),
   barcode: z.string().max(120).optional(),
+  isBulk: z.boolean().optional(),
   modifierGroups: z.array(z.string()).optional(),
 });
 const comboSchema = z.object({
@@ -888,6 +889,10 @@ const ProductSchema = new mongoose.Schema({
   // hard unique constraint would reject the second on import; the lookup route
   // returns the first match and the response notes when a barcode is ambiguous.
   barcode: { type: String, default: '', index: true },
+  // Bulk-sale flag — surfaces the product under a dedicated "Bulk" filter in the
+  // POS and client portal (e.g. wholesale/sack quantities), separate from the
+  // per-line quantity-break pricing in `bulkBreaks`.
+  isBulk: { type: Boolean, default: false, index: true },
   name: { type: String, required: true, index: true },
   description: String,
   category: { type: String, index: true },
@@ -1093,6 +1098,13 @@ items: [{
   arSettledAmount:  { type: Number, default: 0 },
   arSettledMethod:  { type: String, default: '' },
   arSettledNote:    { type: String, default: '' },
+  // Payment-terms snapshot for on-account (non-cash) sales, captured when the
+  // order Completes so later changes to the client's default terms don't
+  // retroactively move an existing receivable's due date.
+  //   arTermsDays = the terms in days that applied at completion (null if none)
+  //   arDueDate   = completedAt + arTermsDays; the date this A/R turns overdue.
+  arTermsDays:      { type: Number, default: null },
+  arDueDate:        { type: Date, default: null },
   // ── Logistics fields ──────────────────────────────────────────────────────
   // billingNumber: monthly-reset sequential ref (YYYY-MM-XXXX), log mode only
   billingNumber:   { type: String, default: '' },
@@ -1122,6 +1134,12 @@ const InventorySchema = new mongoose.Schema({
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   itemCode: String,
   itemName: String,
+  // Organisational tags (both optional, free-form strings matching a StorageLocation
+  // / StockCategory `name`). stockLocation = where the physical stock sits (a branch,
+  // warehouse, or store room); stockCategory = the grouping used for the auto item-code
+  // prefix (#9) and inventory filtering. Empty = untagged.
+  stockLocation: { type: String, default: '', index: true },
+  stockCategory: { type: String, default: '', index: true },
   stockQty: { type: Number, default: 0 },           // ALWAYS stored in base unit (g/ml/pcs) for recipe precision
   unit: String,                                       // base unit: 'g', 'ml', 'pcs'
   unitCost: { type: Number, default: 0 },             // ALWAYS per base unit (e.g. P0.07/ml when 1L costs P70)
@@ -1151,6 +1169,63 @@ const InventorySchema = new mongoose.Schema({
 InventorySchema.index({ expiryDate: 1 });
 InventorySchema.index({ itemName: 1 });
 const Inventory = mongoose.model('Inventory', InventorySchema);
+
+// Storage places — the physical locations stock can sit in (branch, warehouse,
+// cold room). Referenced by name from Inventory.stockLocation and by the
+// stock-transfer workflow (#8). Kept as its own small collection so places can be
+// managed (renamed, deactivated) without touching every inventory row.
+const StorageLocationSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  name:      { type: String, required: true },
+  note:      { type: String, default: '' },
+  isActive:  { type: Boolean, default: true },
+}, { timestamps: true });
+StorageLocationSchema.index({ businessType: 1, name: 1 }, { unique: true });
+const StorageLocation = mongoose.model('StorageLocation', StorageLocationSchema);
+
+// Stock categories — the grouping for raw-material/inventory items (distinct from
+// product menu Categories). Each carries a short manual `prefix` (2 chars) that
+// drives the auto item-code sequence (#9), e.g. prefix "P" → P10001, P10002.
+const StockCategorySchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  name:      { type: String, required: true },
+  prefix:    { type: String, default: '' },   // uppercased, ≤4 chars; blank = fall back to global RML codes
+  note:      { type: String, default: '' },
+  isActive:  { type: Boolean, default: true },
+}, { timestamps: true });
+StockCategorySchema.index({ businessType: 1, name: 1 }, { unique: true });
+const StockCategory = mongoose.model('StockCategory', StockCategorySchema);
+
+// #8 Stock transfers — a request → approve → release workflow moving base-unit
+// quantity from one inventory item (at a source location) to another (at a
+// destination location). Because inventory is one-doc-per-item, "the same product
+// at two locations" is modelled as two items; a transfer moves qty between them.
+// This is an INTERNAL asset move (Inventory 130000 unchanged) so it posts NO
+// journal entry — only StockCard audit rows on release.
+const STOCK_TRANSFER_STATUSES = ['Requested', 'Approved', 'Released', 'Rejected', 'Cancelled'];
+const StockTransferSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  reference:    { type: String, index: true },
+  fromItemId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', required: true },
+  toItemId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', required: true },
+  itemName:     { type: String, default: '' },       // snapshot of the source item name for display
+  fromLocation: { type: String, default: '' },
+  toLocation:   { type: String, default: '' },
+  qtyBase:      { type: Number, required: true },     // ALWAYS base units (g/ml/pcs)
+  unit:         { type: String, default: '' },        // base unit label, for display
+  status:       { type: String, enum: STOCK_TRANSFER_STATUSES, default: 'Requested', index: true },
+  note:         { type: String, default: '' },
+  requestedBy:  { type: String, default: '' },
+  approvedBy:   { type: String, default: '' },
+  releasedBy:   { type: String, default: '' },
+  approvedAt:   { type: Date },
+  releasedAt:   { type: Date },
+}, { timestamps: true });
+StockTransferSchema.index({ businessType: 1, status: 1, createdAt: -1 });
+const StockTransfer = mongoose.model('StockTransfer', StockTransferSchema);
 
 const JournalEntrySchema = new mongoose.Schema({
   date: { type: Date, default: Date.now, index: true },
@@ -1606,6 +1681,11 @@ const ClientAccountSchema = new mongoose.Schema({
   // Whether either limit is enforced at all is decided by the `creditLimitMode`
   // setting; see resolveCreditLimit().
   creditLimit:   { type: Number, default: null },
+  // Payment terms in days for on-account (non-cash) sales. When a non-cash order
+  // Completes, this is snapshotted onto the order to compute its A/R due date
+  // (dueDate = completedAt + creditTermsDays). 0 = due on receipt (COD-style).
+  // null = no terms configured — the A/R views then age from the order date only.
+  creditTermsDays: { type: Number, default: null },
   // Free-form tags (e.g. "wholesale", "vip") a product's segmentDiscounts can
   // target instead of (or in addition to) a one-off clientDiscounts entry for
   // this specific client. Empty = no segment-level discount applies.
@@ -2442,6 +2522,13 @@ const ctx = {
   QRSession,
   InventorySchema,
   Inventory,
+  StorageLocationSchema,
+  StorageLocation,
+  StockCategorySchema,
+  StockCategory,
+  StockTransferSchema,
+  StockTransfer,
+  STOCK_TRANSFER_STATUSES,
   JournalEntrySchema,
   JournalEntry,
   TenantStatsSchema,

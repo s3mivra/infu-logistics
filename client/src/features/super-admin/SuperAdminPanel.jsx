@@ -543,7 +543,7 @@ export default function SuperAdminPanel() {
   }, [isAuthenticated, fetchClients]);
 
   const openClientCreate = () => {
-    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '', segments: '' });
+    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '', creditTermsDays: '', segments: '' });
     setClientFormError('');
     setClientModal({ open: true, mode: 'create', client: null });
   };
@@ -551,7 +551,7 @@ export default function SuperAdminPanel() {
   const openClientEdit = (client) => {
     // null/undefined means "no limit set"; 0 is a real value (cash only), so it
     // must render as "0" rather than collapsing to an empty field.
-    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false, creditLimit: client.creditLimit === null || client.creditLimit === undefined ? '' : String(client.creditLimit), segments: (client.segments || []).join(', ') });
+    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false, creditLimit: client.creditLimit === null || client.creditLimit === undefined ? '' : String(client.creditLimit), creditTermsDays: client.creditTermsDays === null || client.creditTermsDays === undefined ? '' : String(client.creditTermsDays), segments: (client.segments || []).join(', ') });
     setClientFormError('');
     setClientModal({ open: true, mode: 'edit', client });
   };
@@ -573,13 +573,13 @@ export default function SuperAdminPanel() {
       if (clientModal.mode === 'create') {
         const res = await apiFetch('/api/client-accounts', {
           method: 'POST',
-          body: JSON.stringify({ username: clientForm.username.trim(), password: clientForm.password, name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, creditLimit: clientForm.creditLimit, segments }),
+          body: JSON.stringify({ username: clientForm.username.trim(), password: clientForm.password, name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments }),
         });
         const data = await res.json();
         if (data.success) { showToast('Client account created.'); closeClientModal(); fetchClients(); }
         else setClientFormError(data.error || 'Failed to create client.');
       } else {
-        const body = { name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive, creditLimit: clientForm.creditLimit, segments };
+        const body = { name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments };
         if (clientForm.username.trim()) body.username = clientForm.username.trim();
         if (clientForm.password) body.password = clientForm.password;
         const res = await apiFetch(`/api/client-accounts/${clientModal.client._id}`, { method: 'PATCH', body: JSON.stringify(body) });
@@ -1431,6 +1431,22 @@ export default function SuperAdminPanel() {
                 <p className="text-[10px] text-fg/30 mt-1.5 leading-relaxed">
                   Blank = no limit for this client. <span className="text-fg/50 font-bold">0 = cash only</span> (blocks all on-account orders).
                   Whether limits apply at all is set in Settings &rarr; Credit Limits.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Payment Terms (days)</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={clientForm.creditTermsDays}
+                  onChange={e => setClientForm(f => ({ ...f, creditTermsDays: e.target.value }))}
+                  placeholder="e.g. 7, 15, 30"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
+                />
+                <p className="text-[10px] text-fg/30 mt-1.5 leading-relaxed">
+                  Days an on-account (utang) sale has before it turns <span className="text-fg/50 font-bold">overdue</span>. Blank = no terms. 0 = due on receipt.
+                  Captured onto each order when it completes, so later changes here don&rsquo;t move existing due dates.
                 </p>
               </div>
 

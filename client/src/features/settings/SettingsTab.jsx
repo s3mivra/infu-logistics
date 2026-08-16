@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt } from 'lucide-react';
+import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type } from 'lucide-react';
 import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
 
 // ── SettingsTab — system preferences & account controls ───────────────────────
@@ -103,6 +103,19 @@ const readLang = () => {
   try { return localStorage.getItem('dash.lang') || 'en'; } catch { return 'en'; }
 };
 
+// App-wide text size, per device. Value is a percent of the 16px base; because
+// the whole app is rem-based, scaling the root font-size scales text + spacing
+// together. Kept in sync with the boot-time apply in App.jsx.
+const FONT_SIZES = [
+  { value: 90, label: 'Small' },
+  { value: 100, label: 'Normal' },
+  { value: 110, label: 'Large' },
+  { value: 125, label: 'X-Large' },
+];
+const readFontScale = () => {
+  try { return Number(localStorage.getItem('dash.fontScale')) || 100; } catch { return 100; }
+};
+
 export default function SettingsTab({ ctx }) {
   const {
     systemSettings = {}, toggleQROrders, toggleAutoClose, toggleImages,
@@ -116,6 +129,40 @@ export default function SettingsTab({ ctx }) {
 
   const [theme, setTheme] = useState(readTheme);
   const [lang, setLang] = useState(readLang);
+  const [fontScale, setFontScale] = useState(readFontScale);
+  const applyFontScale = (v) => {
+    setFontScale(v);
+    document.documentElement.style.fontSize = (16 * v / 100) + 'px';
+    try { localStorage.setItem('dash.fontScale', String(v)); } catch { /* private mode: applies for this session only */ }
+  };
+
+  // Image settings (logo, payment QR) stored as base64 data-URLs — same
+  // approach as product images, resized to keep the payload small. `busyKey`
+  // tracks which uploader is mid-encode so only its button shows "Uploading…".
+  const [busyKey, setBusyKey] = useState('');
+  const uploadImageSetting = (settingKey, e, maxW) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusyKey(settingKey);
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.src = ev.target.result;
+      img.onload = async () => {
+        const canvas = document.createElement('canvas');
+        const scale = Math.min(1, maxW / img.width);
+        canvas.width = img.width * scale; canvas.height = img.height * scale;
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        await saveSetting(settingKey, canvas.toDataURL('image/webp', 0.85));
+        setBusyKey('');
+      };
+      img.onerror = () => setBusyKey('');
+    };
+    reader.onerror = () => setBusyKey('');
+  };
+  const currentLogo = systemSettings.businessLogo || '';
+  const currentQr = systemSettings.paymentQrImage || '';
   const [printerMode, setPrinterMode] = useState(readPrinterMode);
   const applyPrinterMode = (v) => { setPrinterMode(v); writePrinterMode(v); };
 
@@ -184,6 +231,77 @@ export default function SettingsTab({ ctx }) {
             <div className="flex items-center gap-3 px-4 py-5 text-fg/60">
               <Lock size={15} />
               <span className="text-sm font-bold">System toggles are superadmin-only.</span>
+            </div>
+          </Card>
+        )}
+
+        {/* Branding — business logo, shown on sidebar, login, receipts, menu & portal. */}
+        {isSuperAdmin && (
+          <Card title="Branding">
+            <div className="px-4 py-4">
+              <div className="flex items-start gap-4">
+                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                  <ImageIcon size={16} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-fg text-sm">Business Logo</p>
+                  <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                    Shown on the sidebar, login screen, printed receipts, the menu and the client portal. PNG or JPG; it's resized automatically.
+                  </p>
+                  <div className="flex items-center gap-4 mt-3 flex-wrap">
+                    <div className="w-20 h-20 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
+                      {currentLogo
+                        ? <img src={currentLogo} alt="Logo" className="max-w-full max-h-full object-contain" />
+                        : <ImageIcon size={22} className="text-fg/20" />}
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-white hover:bg-brand/90 transition min-h-[40px]">
+                        {busyKey === 'businessLogo' ? 'Uploading…' : (currentLogo ? 'Replace Logo' : 'Upload Logo')}
+                        <input type="file" accept="image/*" className="hidden" disabled={busyKey === 'businessLogo'} onChange={(e) => uploadImageSetting('businessLogo', e, 300)} />
+                      </label>
+                      {currentLogo && (
+                        <button onClick={() => saveSetting('businessLogo', '')} className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/5 text-fg/50 border border-white/10 hover:text-red-400 hover:border-red-400/40 transition min-h-[38px]">
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Payment QR — when set, staff can show it at checkout for the
+                customer to scan (GCash/Maya/bank QR). */}
+            <div className="px-4 py-4 border-t border-white/5">
+              <div className="flex items-start gap-4">
+                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                  <QrCode size={16} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-fg text-sm">Payment QR</p>
+                  <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                    Your GCash / Maya / bank QR. Once uploaded, staff get a “Show Payment QR” button at checkout for the customer to scan.
+                  </p>
+                  <div className="flex items-center gap-4 mt-3 flex-wrap">
+                    <div className="w-20 h-20 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
+                      {currentQr
+                        ? <img src={currentQr} alt="Payment QR" className="max-w-full max-h-full object-contain" />
+                        : <QrCode size={22} className="text-fg/20" />}
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-white hover:bg-brand/90 transition min-h-[40px]">
+                        {busyKey === 'paymentQrImage' ? 'Uploading…' : (currentQr ? 'Replace QR' : 'Upload QR')}
+                        <input type="file" accept="image/*" className="hidden" disabled={busyKey === 'paymentQrImage'} onChange={(e) => uploadImageSetting('paymentQrImage', e, 500)} />
+                      </label>
+                      {currentQr && (
+                        <button onClick={() => saveSetting('paymentQrImage', '')} className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/5 text-fg/50 border border-white/10 hover:text-red-400 hover:border-red-400/40 transition min-h-[38px]">
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </Card>
         )}
@@ -549,6 +667,32 @@ export default function SettingsTab({ ctx }) {
                           : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
                       }`}>
                       {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-4 py-4">
+            <div className="flex items-start gap-4">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-fg/50 bg-white/5 border-white/10">
+                <Type size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-fg text-sm">Text Size</p>
+                <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                  Scales the whole app — bigger is easier to read on a tablet at arm's length. Saved on this device only.
+                </p>
+                <div className="grid grid-cols-4 gap-2 mt-3 max-w-md">
+                  {FONT_SIZES.map(s => (
+                    <button key={s.value} onClick={() => applyFontScale(s.value)}
+                      className={`px-2 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
+                        fontScale === s.value
+                          ? 'bg-brand text-white border-brand'
+                          : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                      }`}>
+                      {s.label}
                     </button>
                   ))}
                 </div>

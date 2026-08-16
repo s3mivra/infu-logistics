@@ -1204,6 +1204,7 @@ export default function LedgerTab({ ctx }) {
                         <th className="text-left py-3">Channel</th>
                         <th className="text-left py-3">Date</th>
                         <th className="text-left py-3">Age</th>
+                        <th className="text-left py-3">Due</th>
                         <th className="text-right py-3">Amount</th>
                         <th className="text-right py-3">Action</th>
                       </tr>
@@ -1223,6 +1224,13 @@ export default function LedgerTab({ ctx }) {
                             <td className="py-3"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/20 text-brand px-2 py-1 rounded">{o.paymentMethod}</span></td>
                             <td className="py-3 text-fg/50 text-xs">{new Date(o.createdAt).toLocaleDateString()}</td>
                             <td className="py-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${ageBadge}`}>{days}d</span></td>
+                            <td className="py-3 text-xs">
+                              {o.arDueDate ? (
+                                o.overdue
+                                  ? <span className="text-[10px] font-black px-2 py-1 rounded bg-red-500/15 text-red-400">OVERDUE · {new Date(o.arDueDate).toLocaleDateString()}</span>
+                                  : <span className="text-fg/60">{new Date(o.arDueDate).toLocaleDateString()}</span>
+                              ) : <span className="text-fg/25">—</span>}
+                            </td>
                             <td className="py-3 text-right text-fg tabular-nums font-bold">₱{o.total.toFixed(2)}</td>
                             <td className="py-3 text-right">
                               <button onClick={() => {

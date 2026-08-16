@@ -1,6 +1,8 @@
 import React from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 import * as ui from '../../shared/ui';
+import StockTaxonomyPanel from './StockTaxonomyPanel';
+import StockTransferPanel from './StockTransferPanel';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
@@ -42,6 +44,8 @@ export default function InventoryTab({ ctx }) {
     invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter,
     inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, itemDisplay, packInfo,
     procurementCreditAccounts,
+    stockLocations, stockCategories, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory,
+    stockTransfers, locationAnalytics, fetchStockTransfers, requestStockTransfer, actOnStockTransfer,
     itemsPerPage, jeForm, journalEntries, ledgerSubTab, navMode,
     newDiscount, openEditInventory, openProductModal, orderFilter, orders,
     ordersItemsPerPage, ordersPage, parseImportFile, paymentSelections, peso,
@@ -110,7 +114,7 @@ export default function InventoryTab({ ctx }) {
             
             {/* Header & Sub-Tabs */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 border-b border-white/10 pb-4">
-              <h3 className="text-xl font-bold text-white">Inventory Hub</h3>
+              <h3 className="text-xl font-bold text-fg">Inventory Hub</h3>
               
               {/* --- NEW: THE SUB-TAB TOGGLE --- */}
               <div className="flex bg-page-bg p-1 rounded-lg shadow-inner">
@@ -126,6 +130,18 @@ export default function InventoryTab({ ctx }) {
                 >
                   <span className={`w-2 h-2 rounded-full ${invSubTab === 'eod' ? 'bg-white animate-pulse' : 'bg-red-500'}`}></span>
                   EOD Audit
+                </button>
+                <button
+                  onClick={() => setInvSubTab('places')}
+                  className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'places' ? 'bg-accent text-white shadow-md' : 'text-gray-400 hover:text-accent'}`}
+                >
+                  Places &amp; Categories
+                </button>
+                <button
+                  onClick={() => { setInvSubTab('transfers'); fetchStockTransfers(); }}
+                  className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'transfers' ? 'bg-accent text-white shadow-md' : 'text-gray-400 hover:text-accent'}`}
+                >
+                  Transfers
                 </button>
               </div>
               
@@ -144,6 +160,29 @@ export default function InventoryTab({ ctx }) {
                 </button>
               </div>
             </div>
+
+            {invSubTab === 'places' && (
+              <StockTaxonomyPanel
+                stockLocations={stockLocations}
+                stockCategories={stockCategories}
+                saveStockLocation={saveStockLocation}
+                deleteStockLocation={deleteStockLocation}
+                saveStockCategory={saveStockCategory}
+                deleteStockCategory={deleteStockCategory}
+              />
+            )}
+
+            {invSubTab === 'transfers' && (
+              <StockTransferPanel
+                inventory={inventory}
+                stockTransfers={stockTransfers}
+                locationAnalytics={locationAnalytics}
+                requestStockTransfer={requestStockTransfer}
+                actOnStockTransfer={actOnStockTransfer}
+                isSuperAdmin={isSuperAdmin}
+                peso={peso}
+              />
+            )}
 
             {/* --- SEARCH / FILTER / SORT BAR --- */}
             {invSubTab === 'live' && (() => {
@@ -214,7 +253,7 @@ export default function InventoryTab({ ctx }) {
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
-                    <tr className="text-white border-b border-white">
+                    <tr className="text-fg border-b border-white/20">
                       <th className="pb-3">Item Name</th>
                       <th className="pb-3 text-right">Live Qty</th>
                       <th className="pb-3 text-right">Threshold</th>
@@ -230,8 +269,8 @@ export default function InventoryTab({ ctx }) {
                       <tr>
                         <td colSpan={8} className="py-14 text-center">
                           <Package size={26} className="mx-auto mb-3 text-brand/50" />
-                          <p className="text-white font-black uppercase tracking-widest text-xs mb-1">No stock items yet</p>
-                          <p className="text-white text-xs">Receive your first delivery with the Procurement form to start tracking inventory.</p>
+                          <p className="text-fg font-black uppercase tracking-widest text-xs mb-1">No stock items yet</p>
+                          <p className="text-fg/70 text-xs">Receive your first delivery with the Procurement form to start tracking inventory.</p>
                         </td>
                       </tr>
                     )}
@@ -265,7 +304,7 @@ export default function InventoryTab({ ctx }) {
                       {/* data-notif-id is the jump target for the notification
                           bell — clicking a low-stock/expiry alert scrolls here. */}
                       <tr data-notif-id={item._id} className={`border-b border-white/30 hover:bg-page-bg/30 transition ${rowExpiredTint || (isLow ? 'bg-red-900/10' : '')}`}>
-                        <td className="py-3 font-bold text-white">
+                        <td className="py-3 font-bold text-fg">
                           {item.itemName}
                           {isLow && <span className="ml-2 text-[9px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase animate-pulse">LOW</span>}
                           {!itemDisplay(item).isPacked && (
@@ -273,11 +312,11 @@ export default function InventoryTab({ ctx }) {
                           )}
                         </td>
                         {(() => { const d = itemDisplay(item); return (<>
-                        <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-white'}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
-                        <td className="py-3 text-right text-white text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(effThreshold / (d.packBase || 1)).toLocaleString(undefined, { maximumFractionDigits: 3 })}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
-                        <td className="py-3 text-white pl-2 font-bold">{d.isPacked ? 'pcs' : d.unit}</td>
-                        <td className="py-3 text-right text-white font-mono text-xs tabular-nums"><>{peso(d.packCost)}<span className="text-white">/{d.packLabel}</span></></td>
-                        <td className="py-3 text-right text-white font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
+                        <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-fg'}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
+                        <td className="py-3 text-right text-fg text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(effThreshold / (d.packBase || 1)).toLocaleString(undefined, { maximumFractionDigits: 3 })}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
+                        <td className="py-3 text-fg pl-2 font-bold">{d.isPacked ? 'pcs' : d.unit}</td>
+                        <td className="py-3 text-right text-fg font-mono text-xs tabular-nums"><>{peso(d.packCost)}<span className="text-fg/50">/{d.packLabel}</span></></td>
+                        <td className="py-3 text-right text-fg font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
                         </>); })()}
                         <td className="py-3 text-center">
                           {expBadge ? (
@@ -293,20 +332,24 @@ export default function InventoryTab({ ctx }) {
                             </div>
                           ) : <span className="text-white text-xs">-</span>}
                         </td>
-                        <td className="py-3 text-center space-x-1">
-                          <button onClick={() => fetchStockHistory(item)} className="text-accent bg-page-bg hover:bg-accent hover:text-white text-xs font-bold px-2 py-1 rounded transition">History</button>
-                          <button onClick={() => openEditInventory(item)} className="text-white hover:text-fg hover:bg-blue-600 text-xs font-bold px-2 py-1 bg-blue-500 rounded transition">Edit</button>
-                          <button onClick={() => {
-                            const isExpired = expBadge && (expBadge.text.startsWith('EXPIRED') || expBadge.text === 'TODAY');
-                            setSpoilageModal({ item });
-                            const autoQty = isExpired ? itemDisplay(item).packQty : '';
-                            setSpoilageForm({
-                              qty: isExpired ? autoQty.toString() : '',
-                              reason: isExpired ? 'Spoilage' : '',
-                              note: isExpired ? `Auto-flagged expired (${new Date(item.expiryDate).toLocaleDateString()})` : ''
-                            });
-                          }} className="text-white hover:text-fg hover:bg-orange-600 text-xs font-bold px-2 py-1 bg-orange-500 rounded transition">Waste</button>
-                          <button onClick={() => deleteInventory(item._id)} className="text-white hover:text-fg text-xs font-bold px-2 py-1 bg-red-600 rounded transition">Del</button>
+                        <td className="py-3">
+                          {/* Tappable on tablets: min 36px targets, wrapping so
+                              they never overflow or shrink below a fingertip. */}
+                          <div className="flex flex-wrap gap-1.5 justify-center">
+                            <button onClick={() => fetchStockHistory(item)} className="text-accent bg-page-bg hover:bg-accent hover:text-white text-xs font-bold px-3 py-2 min-h-[36px] rounded transition">History</button>
+                            <button onClick={() => openEditInventory(item)} className="text-white hover:text-fg hover:bg-blue-600 text-xs font-bold px-3 py-2 min-h-[36px] bg-blue-500 rounded transition">Edit</button>
+                            <button onClick={() => {
+                              const isExpired = expBadge && (expBadge.text.startsWith('EXPIRED') || expBadge.text === 'TODAY');
+                              setSpoilageModal({ item });
+                              const autoQty = isExpired ? itemDisplay(item).packQty : '';
+                              setSpoilageForm({
+                                qty: isExpired ? autoQty.toString() : '',
+                                reason: isExpired ? 'Spoilage' : '',
+                                note: isExpired ? `Auto-flagged expired (${new Date(item.expiryDate).toLocaleDateString()})` : ''
+                              });
+                            }} className="text-white hover:text-fg hover:bg-orange-600 text-xs font-bold px-3 py-2 min-h-[36px] bg-orange-500 rounded transition">Waste</button>
+                            <button onClick={() => deleteInventory(item._id)} className="text-white hover:text-fg text-xs font-bold px-3 py-2 min-h-[36px] bg-red-600 rounded transition">Del</button>
+                          </div>
                         </td>
                       </tr>
                       {/* Expanded batches sub-row */}
@@ -322,6 +365,7 @@ export default function InventoryTab({ ctx }) {
                                     <th className="text-right pb-1.5">Qty</th>
                                     <th className="text-left pb-1.5 pl-3">Expiry</th>
                                     <th className="text-left pb-1.5 pl-3">Received</th>
+                                    <th className="text-right pb-1.5 pl-3">Unit Cost</th>
                                     <th className="text-left pb-1.5 pl-3">Ref</th>
                                     <th className="text-right pb-1.5">Action</th>
                                   </tr>
@@ -356,6 +400,7 @@ export default function InventoryTab({ ctx }) {
                                             {diffDays !== null && <span className="ml-1.5 text-[10px] opacity-70">({diffDays < 0 ? `${Math.abs(diffDays)}d ago` : diffDays === 0 ? 'today' : `in ${diffDays}d`})</span>}
                                           </td>
                                           <td className="py-1.5 pl-3 text-fg/40 text-[10px] tabular-nums">{b.receivedAt ? new Date(b.receivedAt).toLocaleDateString() : '-'}</td>
+                                          <td className="py-1.5 pl-3 text-right text-fg/60 text-[10px] tabular-nums">{b.unitCost ? peso(b.unitCost * bPackBase) : '-'}<span className="text-fg/30">/{bUnit}</span></td>
                                           <td className="py-1.5 pl-3 text-fg/40 text-[10px]">{b.reference || '-'}</td>
                                           <td className="py-1.5 text-right">
                                             <button onClick={async () => {
@@ -373,6 +418,9 @@ export default function InventoryTab({ ctx }) {
                                 </tbody>
                               </table>
                             </div>
+                            <p className="text-[10px] text-fg/40 mt-2">
+                              Item unit cost <span className="text-fg/70 font-bold tabular-nums">{peso((item.unitCost || 0) * (packInfo(item).packBase || 1))}/{itemDisplay(item).isPacked ? 'pcs' : itemDisplay(item).unit}</span> is the weighted average across all batches (updated on each restock).
+                            </p>
                           </td>
                         </tr>
                       )}
@@ -898,6 +946,25 @@ export default function InventoryTab({ ctx }) {
                 </div>
               </div>
               <p className="text-[9px] text-gray-600 -mt-2">For perishables. When restocking, soonest expiry across batches is kept (FEFO).</p>
+
+              {/* #7 storage place + stock category tags */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Storage Location</label>
+                  <select value={invForm.stockLocation || ''} onChange={e => setInvForm({ ...invForm, stockLocation: e.target.value })} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent text-sm">
+                    <option value="">— None —</option>
+                    {(stockLocations || []).filter(l => l.isActive !== false).map(l => <option key={l._id} value={l.name}>{l.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Stock Category</label>
+                  <select value={invForm.stockCategory || ''} onChange={e => setInvForm({ ...invForm, stockCategory: e.target.value })} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent text-sm">
+                    <option value="">— None —</option>
+                    {(stockCategories || []).filter(c => c.isActive !== false).map(c => <option key={c._id} value={c.name}>{c.name}{c.prefix ? ` (${c.prefix})` : ''}</option>)}
+                  </select>
+                </div>
+              </div>
+              <p className="text-[9px] text-gray-600 -mt-2">Manage places &amp; categories in the <span className="font-bold text-fg/70">Places &amp; Categories</span> sub-tab. A category with a prefix auto-numbers the item code (e.g. P1 → P10001).</p>
 
               {/* --- CREDIT ACCOUNT SELECTOR (dynamic from COA) --- */}
               <div>

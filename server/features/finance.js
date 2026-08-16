@@ -423,10 +423,19 @@ app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, 
       paymentMethod: { $ne: 'Cash' },
       isComplimentary: { $ne: true }, // comps collect no money — never an A/R
       arSettled: { $ne: true }
-    }, { orderNumber: 1, customerName: 1, table: 1, total: 1, paymentMethod: 1, createdAt: 1 })
+    }, { orderNumber: 1, customerName: 1, table: 1, total: 1, paymentMethod: 1, createdAt: 1, arTermsDays: 1, arDueDate: 1 })
       .sort({ createdAt: -1 }).limit(500).lean();
-    const totalOutstanding = rows.reduce((s, r) => s + (r.total || 0), 0);
-    res.json({ success: true, orders: rows, totalOutstanding });
+    // Flag each receivable overdue when its snapshotted terms date has passed.
+    // Orders booked before terms existed carry no arDueDate and are never overdue.
+    const now = Date.now();
+    let overdueTotal = 0, overdueCount = 0;
+    const orders = rows.map((r) => {
+      const overdue = r.arDueDate ? new Date(r.arDueDate).getTime() < now : false;
+      if (overdue) { overdueTotal += r.total || 0; overdueCount += 1; }
+      return { ...r, overdue };
+    });
+    const totalOutstanding = orders.reduce((s, r) => s + (r.total || 0), 0);
+    res.json({ success: true, orders, totalOutstanding, overdueTotal, overdueCount });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
