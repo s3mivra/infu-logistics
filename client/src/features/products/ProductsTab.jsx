@@ -307,6 +307,7 @@ export default function ProductsTab({ ctx }) {
   const selectCls = 'bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-brand';
 
   return (
+    <>
       <div className="flex flex-col gap-6">
         {/* FIX 1: Changed h-fixed to h-auto on mobile, and added gap-6 */}
         <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 h-auto lg:h-[calc(100vh-180px)]">
@@ -637,7 +638,7 @@ export default function ProductsTab({ ctx }) {
                     {categories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
                   </select>
                 </div>
-                <div><label className="block text-sm font-bold text-fg/60 mb-1">Description</label><textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand h-20 placeholder-white/20 font-medium" /></div>
+                <div><label className="block text-sm font-bold text-fg/60 mb-1">Description</label><textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand h-20 placeholder-white/20 font-medium"></textarea></div>
                 
                 {/* Base Size & Materials */}
                 <div className="bg-surface-2 p-4 rounded-xl border border-white/10 mt-6">
@@ -1147,7 +1148,7 @@ export default function ProductsTab({ ctx }) {
           </div>
         </div>
 
-        {/* ════════════ SALES & PROMOTIONS ════════════ */}
         <SalesSection apiFetch={apiFetch} products={products} isSuperAdmin={isSuperAdmin} />
+    </>
   );
 }
