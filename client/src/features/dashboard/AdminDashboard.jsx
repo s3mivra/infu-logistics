@@ -3543,15 +3543,21 @@ const updateStatus = async (orderId, newStatus) => {
     for (let mat of recipe) {
       const invItem = inventory.find(i => i._id === mat.invId);
       if (!invItem) return 0;
-      // Re-derive qty in base units using the CURRENT pack base so stale saved
-      // values (e.g. 1000 stored when packSize wasn't in the DB yet) self-correct.
-      // displayPacks = how many packs the recipe needs per serving (what the UI shows).
-      // currentPackBase = base units per pack from today's inventory record.
-      const storedPackBase = mat.packBase || 1;
-      const displayPacks   = mat.qty / storedPackBase;          // e.g. 1 can
-      const currentPackBase = packInfo(invItem).packBase || storedPackBase;
-      const qtyPerServing  = displayPacks * currentPackBase;    // base units needed
-      const possibleServings = Math.floor(invItem.stockQty / (qtyPerServing || 1));
+      let possibleServings;
+      if (BUSINESS_TYPE === 'log') {
+        // For logistics work in pack counts — the same unit the inventory table
+        // and recipe UI already show. itemDisplay.packQty is the authoritative
+        // "how many packs are in stock" figure (matches the Live Stock table).
+        const stockPacks   = itemDisplay(invItem).packQty;           // e.g. 782 cans
+        const storedPb     = mat.packBase || 1;
+        const recipePackQty = mat.qty / storedPb;                    // pcs shown in recipe UI
+        possibleServings = recipePackQty > 0
+          ? Math.floor(stockPacks / recipePackQty)
+          : 0;
+      } else {
+        // FB: qty stored in base units; direct division gives servings.
+        possibleServings = Math.floor(invItem.stockQty / (mat.qty || 1));
+      }
       if (possibleServings < minServings) minServings = possibleServings;
     }
     return minServings === Infinity ? 0 : minServings;
