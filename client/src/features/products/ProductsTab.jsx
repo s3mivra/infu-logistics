@@ -855,12 +855,13 @@ export default function ProductsTab({ ctx }) {
                     </div>
                     {(formData.baseRecipe || []).map((mat, i) => {
                       const currentPb = mat.packBase > 0 ? mat.packBase : 1;
-                      const dispQty = +(mat.qty / currentPb).toFixed(3);
+                      const isLog = BUSINESS_TYPE === 'log';
+                      const dispQty = isLog ? Math.round(mat.qty / currentPb) : +(mat.qty / currentPb).toFixed(3);
                       return (
                       <div key={i} className="flex items-center gap-2 mb-2 text-sm">
                         <span className="flex-1 text-white font-semibold truncate">{mat.name}</span>
-                        <input type="number" step="any" value={dispQty}
-                          onChange={e => updateMaterialQty((parseFloat(e.target.value) || 0) * currentPb, i, null)}
+                        <input type="number" step={isLog ? '1' : 'any'} min={isLog ? '1' : undefined} value={dispQty}
+                          onChange={e => updateMaterialQty((isLog ? (parseInt(e.target.value) || 0) : (parseFloat(e.target.value) || 0)) * currentPb, i, null)}
                           className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
                         <span className="text-white w-8 text-xs font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : mat.unit}</span>
                         <button type="button" onClick={() => removeMaterial(i, null)} className="text-red-400 hover:text-red-300 ml-2"><X size={16} /></button>
@@ -913,12 +914,13 @@ export default function ProductsTab({ ctx }) {
                         </div>
                         {(size.recipe || []).map((mat, i) => {
                           const currentPb = mat.packBase > 0 ? mat.packBase : 1;
-                          const dispQty = +(mat.qty / currentPb).toFixed(3);
+                          const isLog = BUSINESS_TYPE === 'log';
+                          const dispQty = isLog ? Math.round(mat.qty / currentPb) : +(mat.qty / currentPb).toFixed(3);
                           return (
                           <div key={i} className="flex items-center gap-2 mb-2 text-sm">
                             <span className="flex-1 text-white font-semibold truncate">{mat.name}</span>
-                            <input type="number" step="any" value={dispQty}
-                              onChange={e => updateMaterialQty((parseFloat(e.target.value) || 0) * currentPb, i, idx)}
+                            <input type="number" step={isLog ? '1' : 'any'} min={isLog ? '1' : undefined} value={dispQty}
+                              onChange={e => updateMaterialQty((isLog ? (parseInt(e.target.value) || 0) : (parseFloat(e.target.value) || 0)) * currentPb, i, idx)}
                               className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
                             <span className="text-white w-8 text-xs font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : mat.unit}</span>
                             <button type="button" onClick={() => removeMaterial(i, idx)} className="text-red-400 hover:text-red-300 ml-2"><X size={16} /></button>
