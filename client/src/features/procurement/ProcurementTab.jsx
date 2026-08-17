@@ -29,7 +29,8 @@ const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { month: 's
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 export default function ProcurementTab({ ctx }) {
-  const { apiFetch, peso, inventory = [], isSuperAdmin, packInfo, effectiveDisplay, systemSettings = {}, loadPdfLibs } = ctx;
+  const { apiFetch, peso, inventory = [], isSuperAdmin, packInfo, effectiveDisplay, systemSettings = {}, loadPdfLibs,
+    stockLocations = [], stockCategories = [], procurementCreditAccounts = [] } = ctx;
   const money = peso || ((n) => `₱${(Number(n) || 0).toFixed(2)}`);
 
   // Print a PO on the SAME A4 document template the Orders billing statement /
@@ -241,7 +242,7 @@ export default function ProcurementTab({ ctx }) {
   };
 
   // ── Draft form state ────────────────────────────────────────────────────────
-  const blankLine = () => ({ invId: null, itemName: '', itemCode: '', unit: '', packSize: '', orderedQty: '', unitCost: '', expiryDate: '' });
+  const blankLine = () => ({ invId: null, itemName: '', itemCode: '', unit: '', packSize: '', orderedQty: '', unitCost: '', expiryDate: '', expiryWarnDays: '', lowStockThreshold: '', stockLocation: '', stockCategory: '', creditAccount: '' });
   // Same forced g/mL/pcs display units the inventory uses (see lib/units).
   const UNIT_OPTIONS = ['', 'pcs', 'kg', 'L', 'g', 'ml'];
   const [showForm, setShowForm] = useState(false);
@@ -320,8 +321,8 @@ export default function ProcurementTab({ ctx }) {
       const res = await apiFetch('/api/reports/purchase-order?days=7');
       const d = await res.json();
       if (!d.success) { setError(d.error || 'Failed to build a suggested PO.'); return; }
-      const suggested = (d.lines || []).filter(l => (Number(l.suggestedOrder) || 0) > 0);
-      if (suggested.length === 0) { setError('Nothing to reorder - all stock is above its reorder point.'); return; }
+      const suggested = d.lines || [];
+      if (suggested.length === 0) { setError('Nothing to reorder - all stock is at or above its threshold.'); return; }
 
       const groups = new Map();
       for (const l of suggested) {
@@ -573,6 +574,11 @@ export default function ProcurementTab({ ctx }) {
         unitCost: Number(l.unitCost) || 0,
         packSize: l.packSize === '' || l.packSize == null ? null : Number(l.packSize) || null,
         expiryDate: l.expiryDate || null,
+        expiryWarnDays: l.expiryWarnDays !== '' && l.expiryWarnDays != null ? Number(l.expiryWarnDays) || null : null,
+        lowStockThreshold: l.lowStockThreshold !== '' && l.lowStockThreshold != null ? Number(l.lowStockThreshold) || null : null,
+        stockLocation: l.stockLocation || null,
+        stockCategory: l.stockCategory || null,
+        creditAccount: l.creditAccount || null,
       }))
       .filter(l => l.itemName.trim() && l.orderedQty > 0);
     if (cleanLines.length === 0) { setError('Add at least one line with an item name and quantity.'); return; }
@@ -1078,6 +1084,37 @@ export default function ProcurementTab({ ctx }) {
                         <input type="number" min="0" step="any" value={l.unitCost} onChange={e => updateLine(idx, { unitCost: e.target.value })} placeholder="Unit cost" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
                         <input type="number" min="0" step="any" value={l.packSize} onChange={e => updateLine(idx, { packSize: e.target.value })} title="Weight / volume per pack, in the selected unit" placeholder="Per-pack size (opt.)" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
                         <input type="date" value={l.expiryDate} onChange={e => updateLine(idx, { expiryDate: e.target.value })} title="Expiry date (optional)" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg/70 focus:outline-none focus:border-brand/60" />
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 border-t border-white/8 mt-1">
+                        <div>
+                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Storage Location</p>
+                          <select value={l.stockLocation || ''} onChange={e => updateLine(idx, { stockLocation: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60">
+                            <option value="">- None -</option>
+                            {(stockLocations || []).filter(loc => loc.isActive !== false).map(loc => <option key={loc._id} value={loc.name}>{loc.name}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Stock Category</p>
+                          <select value={l.stockCategory || ''} onChange={e => updateLine(idx, { stockCategory: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60">
+                            <option value="">- None -</option>
+                            {(stockCategories || []).filter(c => c.isActive !== false).map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Payment Method</p>
+                          <select value={l.creditAccount || ''} onChange={e => updateLine(idx, { creditAccount: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60">
+                            <option value="">- Select -</option>
+                            {(procurementCreditAccounts || []).map(a => <option key={a.code} value={a.code}>{a.name}{String(a.code).startsWith('220') ? ' (Credit)' : ''}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Warn Days (expiry)</p>
+                          <input type="number" min="1" max="365" value={l.expiryWarnDays || ''} onChange={e => updateLine(idx, { expiryWarnDays: e.target.value })} placeholder="e.g. 7" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Low Stock Alert</p>
+                          <input type="number" min="0" value={l.lowStockThreshold || ''} onChange={e => updateLine(idx, { lowStockThreshold: e.target.value })} placeholder="e.g. 10" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                        </div>
                       </div>
                       <p className="text-right text-fg/40 text-xs font-bold">Line: {money((Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0))}</p>
                     </div>

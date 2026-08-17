@@ -8,7 +8,11 @@ const TENANT = (() => {
   const m = (process.env.MONGO_URI || '').match(/\/semivra_([^?/]+)/);
   return m ? m[1] : 'unknown';
 })();
-const SELF_URL = `http://${TENANT}-api:5002`;
+// HUB_URL_PATTERN: override in .env for non-Docker deployments.
+// Use {slug} as the placeholder, e.g. https://{slug}.semivra.app
+const HUB_URL_PATTERN = process.env.HUB_URL_PATTERN || 'http://{slug}-api:5002';
+const hubUrlFor = (slug) => HUB_URL_PATTERN.replace('{slug}', slug);
+const SELF_URL = hubUrlFor(TENANT);
 
 export default function registerHub(ctx) {
   const {
@@ -81,7 +85,7 @@ export default function registerHub(ctx) {
     const hubSlug = parts[0];
     if (hubSlug === TENANT) return res.status(400).json({ error: 'Cannot link to yourself.' });
 
-    const hubUrl = `http://${hubSlug}-api:5002`;
+    const hubUrl = hubUrlFor(hubSlug);
     const linkToken = crypto.randomBytes(32).toString('hex');
 
     let hubData;
@@ -123,7 +127,7 @@ export default function registerHub(ctx) {
 
     await LinkedBusiness.findOneAndUpdate(
       { businessType: BUSINESS_TYPE, partnerSlug: clientSlug },
-      { role: 'hub', partnerName: clientSlug, partnerUrl: clientUrl || `http://${clientSlug}-api:5002`, linkToken, status: 'active', linkedAt: new Date() },
+      { role: 'hub', partnerName: clientSlug, partnerUrl: clientUrl || hubUrlFor(clientSlug), linkToken, status: 'active', linkedAt: new Date() },
       { upsert: true, new: true },
     );
 
