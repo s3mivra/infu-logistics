@@ -448,7 +448,14 @@ export default function ProductsTab({ ctx }) {
                           segmentDiscounts: (p.segmentDiscounts || []).map(d => ({ segment: String(d.segment || ''), percent: Number(d.percent || 0) })),
                           bulkBreaks: (p.bulkBreaks || []).map(b => ({ minQty: Number(b.minQty || 0), percent: Number(b.percent || 0) })),
                           baseSize: p.baseSize || '',
-                          sizes: p.sizes || [], image: p.image || '', baseRecipe: p.baseRecipe || [], addOns: p.addOns || [],
+                          sizes: p.sizes || [], image: p.image || '',
+                          baseRecipe: (p.baseRecipe || []).map(mat => {
+                            if (mat.packBase > 0) return mat;
+                            const invItem = inventory.find(inv => inv._id === mat.invId);
+                            const pb = invItem && packInfo ? (packInfo(invItem).packBase || 1) : 1;
+                            return { ...mat, qty: pb, packBase: pb };
+                          }),
+                          addOns: p.addOns || [],
                           modifierGroups: (p.modifierGroups || []).map(mg => (mg && mg._id) ? mg._id : mg),
                           imageUrl: (p.image || '').startsWith('http') ? p.image : ''
                         }); 
@@ -847,8 +854,7 @@ export default function ProductsTab({ ctx }) {
                       <span className="text-xs text-white font-black">Cost: ₱{calcRecipeCost(formData.baseRecipe).toFixed(2)}</span>
                     </div>
                     {(formData.baseRecipe || []).map((mat, i) => {
-                      const invItem = inventory.find(inv => inv._id === mat.invId);
-                      const currentPb = mat.packBase > 0 ? mat.packBase : (packInfo && invItem ? (packInfo(invItem).packBase || 1) : 1);
+                      const currentPb = mat.packBase > 0 ? mat.packBase : 1;
                       const dispQty = +(mat.qty / currentPb).toFixed(3);
                       return (
                       <div key={i} className="flex items-center gap-2 mb-2 text-sm">
@@ -906,8 +912,7 @@ export default function ProductsTab({ ctx }) {
                           <span className="text-xs text-white font-black">Cost: ₱{calcRecipeCost(size.recipe).toFixed(2)}</span>
                         </div>
                         {(size.recipe || []).map((mat, i) => {
-                          const invItem = inventory.find(inv => inv._id === mat.invId);
-                          const currentPb = mat.packBase > 0 ? mat.packBase : (packInfo && invItem ? (packInfo(invItem).packBase || 1) : 1);
+                          const currentPb = mat.packBase > 0 ? mat.packBase : 1;
                           const dispQty = +(mat.qty / currentPb).toFixed(3);
                           return (
                           <div key={i} className="flex items-center gap-2 mb-2 text-sm">
