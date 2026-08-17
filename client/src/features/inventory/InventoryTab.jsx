@@ -352,7 +352,7 @@ export default function InventoryTab({ ctx }) {
                                 <MoreVertical size={16} />
                               </button>
                               {openActionMenu === item._id && (
-                                <div className="absolute right-0 top-full mt-1 z-50 bg-sidebar-bg border border-white/15 rounded-xl shadow-xl min-w-[130px] overflow-hidden">
+                                <div onClick={e => e.stopPropagation()} className="absolute right-0 top-full mt-1 z-50 bg-sidebar-bg border border-white/15 rounded-xl shadow-xl min-w-[130px] overflow-hidden">
                                   <button onClick={() => { fetchStockHistory(item); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-accent transition">History</button>
                                   <button onClick={() => { openEditInventory(item); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-blue-400 transition">Edit</button>
                                   <button onClick={() => {
