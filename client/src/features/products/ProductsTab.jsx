@@ -869,7 +869,7 @@ export default function ProductsTab({ ctx }) {
                           inventory.map(inv => {
                             const pack = packInfo ? packInfo(inv) : { packBase: 1, label: inv.unit };
                             const packBase = pack.packBase || 1;
-                            const dispUnit = inv.displayUnit || inv.unit;
+                            const dispUnit = BUSINESS_TYPE === 'log' ? 'pcs' : (inv.displayUnit || inv.unit);
                             const packCost = (inv.unitCost || 0) * packBase;
                             return (
                             <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, null)} className="w-full text-left px-3 py-2 text-xs text-accent font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
