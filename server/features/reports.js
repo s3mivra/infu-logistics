@@ -768,14 +768,17 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
         const isNewSku = ageDays(invItem) < NEW_SKU_DAYS || i.adu30 === 0;
         return {
           ...i,
+          // Carry inventory fields needed by effectiveDisplay / analyticsDisplay on the client.
+          unit:        invItem?.unit,
+          displayUnit: invItem?.displayUnit,
+          packSize:    invItem?.packSize,
           dailyAvg: burn,
           daysLeft: burn > 0 ? Math.floor(i.currentStock / burn) : Infinity,
           weeklyNeed: Math.ceil(burn * 7),
           monthlyNeed: Math.ceil(burn * 30),
-          // Dynamic reorder point = cover the lead time + a safety buffer of demand.
           reorderPoint: Math.ceil(burn * (LEAD_TIME_DAYS + SAFETY_DAYS)),
           isNewSku,
-          trendPct: i.adu30 > 0 ? (i.adu7 / i.adu30 - 1) * 100 : null, // null = no baseline (NEW)
+          trendPct: i.adu30 > 0 ? (i.adu7 / i.adu30 - 1) * 100 : null,
         };
       });
 
