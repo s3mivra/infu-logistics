@@ -1866,6 +1866,7 @@ const updateStatus = async (orderId, newStatus) => {
     const { jsPDF, autoTable } = await loadPdfLibs();
     const m = pnlMonthly;
     const doc = new jsPDF(pnlmView === 'matrix' ? 'landscape' : 'portrait');
+    addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(`${BIZ_NAME} - Profit & Loss`, 14, 14);
     doc.setFontSize(9); doc.text(`${pnlmRange.start} to ${pnlmRange.end}  ·  ${pnlmView === 'matrix' ? 'Monthly' : 'Period'}`, 14, 20);
     const SECTIONS = [['revenue','REVENUE'],['contra','LESS: DISCOUNTS/RETURNS'],['cogs','COST OF SALES'],['opex','OPERATING EXPENSES'],['otherincome','OTHER INCOME'],['otherexpense','OTHER EXPENSES']];
@@ -1908,6 +1909,7 @@ const updateStatus = async (orderId, newStatus) => {
     const { jsPDF, autoTable } = await loadPdfLibs();
     const b = bsMonthly;
     const doc = new jsPDF(bsmView === 'matrix' ? 'landscape' : 'portrait');
+    addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(`${BIZ_NAME} - Balance Sheet`, 14, 14);
     doc.setFontSize(9); doc.text(`${bsmRange.start} to ${bsmRange.end}  ·  ${bsmView === 'matrix' ? 'Monthly' : 'As of ' + b.asOf}`, 14, 20);
     const SECTIONS = [['assets','ASSETS'],['liabilities','LIABILITIES'],['equity','EQUITY']];
@@ -2712,8 +2714,17 @@ const updateStatus = async (orderId, newStatus) => {
       isPacked: pack.label !== unit,
     };
   };
+  // Analytics display: for logistics, show pack-count (pcs) instead of kg/L.
+  // Mirrors the same conversion used in exportInventoryToPDF for consistency.
+  const analyticsDisplay = (item) => {
+    if (BUSINESS_TYPE === 'log') {
+      const packBase = itemDisplay(item).packBase || 1;
+      return { unit: 'pcs', mult: packBase };
+    }
+    return effectiveDisplay(item);
+  };
   // Pretty currency
-  const peso = (n) => `₱${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const peso = (n) => `₱${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
 
   // ============================================================
   // BULK EXCEL/CSV IMPORT - Stock-take semantics
@@ -3058,6 +3069,15 @@ const updateStatus = async (orderId, newStatus) => {
 
   const formatMoney = (val) => `P${(val || 0).toFixed(2)}`;
 
+  // Stamps the business logo in the top-right corner of any jsPDF doc.
+  const addLogoToPDF = (doc) => {
+    if (!systemSettings.businessLogo) return;
+    try {
+      const pw = doc.internal.pageSize.getWidth();
+      doc.addImage(systemSettings.businessLogo, 'auto', pw - 44, 4, 30, 18);
+    } catch { /* unsupported image format - skip */ }
+  };
+
   // 1. Inventory & Movement History PDF (Unchanged)
   const exportInventoryToPDF = async () => {
     if (inventory.length === 0) return ui.alert("No inventory to export.");
@@ -3066,6 +3086,7 @@ const updateStatus = async (orderId, newStatus) => {
       const data = await res.json();
       const allHistory = data.success ? data.history : [];
       const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+      addLogoToPDF(doc);
       doc.setFontSize(18); doc.text(`${BIZ_NAME} - Daily Inventory & Movement Report`, 14, 15);
       const todayStr = new Date().toLocaleDateString();
       doc.setFontSize(10); doc.text(`Date: ${todayStr} | Generated: ${new Date().toLocaleString()}`, 14, 22);
@@ -3107,6 +3128,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportLedgerToPDF = async () => {
     if (journalEntries.length === 0) return ui.alert("No entries to export.");
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    addLogoToPDF(doc);
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - General Ledger Report`, 14, 15);
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 22);
     let currentY = 30;
@@ -3133,10 +3155,11 @@ const updateStatus = async (orderId, newStatus) => {
     if (allOrders.length === 0) return ui.alert("No orders to export.");
     
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    addLogoToPDF(doc);
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Complete Sales History`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
-    
+
     const grouped = {};
     allOrders.forEach(o => {
       const date = new Date(o.createdAt).toLocaleDateString();
@@ -3240,6 +3263,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportDayToPDF = async (dateString, dayOrders) => {
     if (dayOrders.length === 0) return ui.alert("No orders to export.");
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    addLogoToPDF(doc);
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Sales Report: ${dateString}`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
@@ -3310,10 +3334,11 @@ const updateStatus = async (orderId, newStatus) => {
     if (allCompletedOrders.length === 0) return ui.alert("No analytics data to export.");
     
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    addLogoToPDF(doc);
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Analytics Report`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
-    
+
     const grouped = {};
     allCompletedOrders.forEach(o => {
       const date = new Date(o.createdAt).toLocaleDateString();
@@ -3339,9 +3364,9 @@ const updateStatus = async (orderId, newStatus) => {
       body: summaryBody, theme: 'grid', headStyles: { fillColor: [40, 40, 40] }
     });
 
-    // ── Inventory analytics sections (display units: kg/L/pcs) ──
+    // ── Inventory analytics sections (display units: pcs for log, kg/L/pcs for fb) ──
     const ad = analyticsData || {};
-    const du = (item) => effectiveDisplay(item || {});
+    const du = (item) => analyticsDisplay(item || {});
     const sect = (title, head, body, fill) => {
       if (!body.length) return;
       doc.setFontSize(12); doc.text(title, 14, doc.lastAutoTable.finalY + 8);
@@ -3382,6 +3407,7 @@ const updateStatus = async (orderId, newStatus) => {
     if (allCompletedOrders.length === 0) return ui.alert("No orders to export.");
     
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    addLogoToPDF(doc);
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Monthly Sales Summary`, 14, 15);
     const groupedByMonth = {};
     allCompletedOrders.forEach(o => {
@@ -3476,7 +3502,16 @@ const updateStatus = async (orderId, newStatus) => {
     if (!invId) return;
     const invItem = inventory.find(i => i._id === invId);
     if (!invItem) return;
-    const material = { invId: invItem._id, name: invItem.itemName, qty: 1, cost: invItem.unitCost, unit: invItem.unit };
+    const pack = packInfo(invItem);
+    const packBase = pack.packBase || 1;         // base units per display unit (e.g. 377 for a 377g can)
+    const displayUnit = invItem.displayUnit || invItem.unit;
+    const material = {
+      invId: invItem._id, name: invItem.itemName,
+      qty: packBase,           // stored in BASE units; 1 pack's worth by default
+      cost: invItem.unitCost,  // ₱ per BASE unit (for calcRecipeCost)
+      unit: displayUnit,       // display unit shown in UI (pcs, kg, L)
+      packBase,                // conversion factor; 1 = no conversion (legacy/pcs)
+    };
     if (sizeIndex === null) { setFormData({ ...formData, baseRecipe: [...(formData.baseRecipe || []), material] });
     } else { const newSizes = [...formData.sizes]; newSizes[sizeIndex].recipe = [...(newSizes[sizeIndex].recipe || []), material]; setFormData({ ...formData, sizes: newSizes }); }
   };
@@ -3645,6 +3680,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportPurchaseOrderPDF = async () => {
     if (!purchaseOrder || !(purchaseOrder.lines || []).length) return ui.alert('Generate a purchase order first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    addLogoToPDF(doc);
     const today = new Date().toLocaleDateString('en-PH');
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('PURCHASE ORDER', 105, 22, { align: 'center' });
@@ -3670,6 +3706,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportPnlPDF = async () => {
     if (!pnlData) return ui.alert('Run the P&L report first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    addLogoToPDF(doc);
     const range = `${pnlRange.start} to ${pnlRange.end}`;
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text(`PROFIT & LOSS STATEMENT ${vatStmtSuffix}`, 105, 22, { align: 'center' });
@@ -3707,6 +3744,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportBalanceSheetPDF = async () => {
     if (!bsData) return ui.alert('Load the Balance Sheet first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    addLogoToPDF(doc);
     const asOf = bsData.asOf ? new Date(bsData.asOf).toLocaleDateString() : new Date().toLocaleDateString();
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text(`BALANCE SHEET ${vatStmtSuffix}`, 105, 22, { align: 'center' });
@@ -3826,6 +3864,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportSalesSummaryPDF = async () => {
     if (!salesSummary) return ui.alert('Load the Summary Sales report first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(`${BIZ_NAME} - Sales Summary`, 14, 14);
     doc.setFontSize(9); doc.text(`${sssRange.start} to ${sssRange.end}  ·  ${sssGroup === 'day' ? 'Per Day' : 'Per Order'}`, 14, 20);
     // Fixed columns (match the on-screen Summary Sales table).
@@ -3863,6 +3902,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportSalesLineItemsPDF = async () => {
     if (!salesLineItems) return ui.alert('Load the Sales Line Items report first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(`${BIZ_NAME} - Sales Line Items`, 14, 14);
     doc.setFontSize(9); doc.text(`${sliRange.start} to ${sliRange.end}`, 14, 20);
     const head = ['Date', 'Customer ID', 'Customer Name', 'Order ID', 'Item Code', 'Item', 'Qty', 'Payment', 'Line Total'];
@@ -5203,7 +5243,7 @@ const updateStatus = async (orderId, newStatus) => {
     spoilageModal, setSpoilageModal, spoilageForm, setSpoilageForm, spoilageLoading, setSpoilageLoading,
     handleRestockSubmit, submitPhysicalCounts,
     // ── Inventory helpers ────────────────────────────────────────────────────
-    effectiveDisplay, itemDisplay, packInfo, fetchStockHistory,
+    effectiveDisplay, itemDisplay, packInfo, analyticsDisplay, fetchStockHistory,
     resolveUnitFE, submitEditInventory,
     openEditInventory, deleteInventory, parseImportFile,
     printXReading, handleSaveAddOn,

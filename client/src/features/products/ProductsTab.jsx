@@ -247,7 +247,7 @@ export default function ProductsTab({ ctx }) {
     departmentFilter, discountForm, discountInputs, discountList, discounts,
     displayOrders, downloadImportTemplate, downloadJournalCsv, editInvForm, editInvModal,
     editInvSubmitting, editPriceId, editPriceVal, editingCategory, editingProduct,
-    effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
+    packInfo, effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
     exportDayToPDF, exportInventoryToPDF, exportLedgerToPDF, fetchAnalytics, fetchArOutstanding,
     fetchBalanceSheet, fetchData, fetchEODData, fetchERPData, fetchExpenseCategories,
@@ -846,26 +846,38 @@ export default function ProductsTab({ ctx }) {
                       <span className="text-xs text-white font-black uppercase tracking-wider">Base Materials</span>
                       <span className="text-xs text-white font-black">Cost: ₱{calcRecipeCost(formData.baseRecipe).toFixed(2)}</span>
                     </div>
-                    {(formData.baseRecipe || []).map((mat, i) => (
+                    {(formData.baseRecipe || []).map((mat, i) => {
+                      const pb = mat.packBase || 1;
+                      const dispQty = +(mat.qty / pb).toFixed(3);
+                      return (
                       <div key={i} className="flex items-center gap-2 mb-2 text-sm">
                         <span className="flex-1 text-white font-semibold truncate">{mat.name}</span>
-                        <input type="number" value={mat.qty} onChange={e => updateMaterialQty(e.target.value, i, null)} className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
+                        <input type="number" step="any" value={dispQty}
+                          onChange={e => updateMaterialQty((parseFloat(e.target.value) || 0) * pb, i, null)}
+                          className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
                         <span className="text-white w-8 text-xs font-bold">{mat.unit}</span>
                         <button type="button" onClick={() => removeMaterial(i, null)} className="text-red-400 hover:text-red-300 ml-2"><X size={16} /></button>
                       </div>
-                    ))}
+                      );
+                    })}
                     <div className="mt-4 pt-3 border-t border-white">
                       <div className="text-[10px] text-white uppercase font-black mb-2 tracking-widest flex items-center gap-1"><Plus size={12}/> Tap to Add Material</div>
                       <div className="max-h-32 overflow-y-auto bg-white border border-white/10 rounded-lg custom-scrollbar p-1">
                         {inventory.length === 0 ? (
                           <p className="p-2 text-xs text-accent italic font-medium">No inventory available.</p>
                         ) : (
-                          inventory.map(inv => (
+                          inventory.map(inv => {
+                            const pack = packInfo ? packInfo(inv) : { packBase: 1, label: inv.unit };
+                            const packBase = pack.packBase || 1;
+                            const dispUnit = inv.displayUnit || inv.unit;
+                            const packCost = (inv.unitCost || 0) * packBase;
+                            return (
                             <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, null)} className="w-full text-left px-3 py-2 text-xs text-accent font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
                               <span className="truncate pr-2">{inv.itemName}</span>
-                              <span className="text-black shrink-0 font-mono">₱{inv.unitCost.toFixed(2)}/{inv.unit}</span>
+                              <span className="text-black shrink-0 font-mono">₱{packCost.toFixed(2)}/{dispUnit}</span>
                             </button>
-                          ))
+                            );
+                          })
                         )}
                       </div>
                     </div>
@@ -892,23 +904,35 @@ export default function ProductsTab({ ctx }) {
                           <span className="text-xs text-white font-black uppercase tracking-wider">{size.name || 'New Size'} Materials</span>
                           <span className="text-xs text-white font-black">Cost: ₱{calcRecipeCost(size.recipe).toFixed(2)}</span>
                         </div>
-                        {(size.recipe || []).map((mat, i) => (
+                        {(size.recipe || []).map((mat, i) => {
+                          const pb = mat.packBase || 1;
+                          const dispQty = +(mat.qty / pb).toFixed(3);
+                          return (
                           <div key={i} className="flex items-center gap-2 mb-2 text-sm">
                             <span className="flex-1 text-white font-semibold truncate">{mat.name}</span>
-                            <input type="number" value={mat.qty} onChange={e => updateMaterialQty(e.target.value, i, idx)} className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
+                            <input type="number" step="any" value={dispQty}
+                              onChange={e => updateMaterialQty((parseFloat(e.target.value) || 0) * pb, i, idx)}
+                              className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
                             <span className="text-white w-8 text-xs font-bold">{mat.unit}</span>
                             <button type="button" onClick={() => removeMaterial(i, idx)} className="text-red-400 hover:text-red-300 ml-2"><X size={16} /></button>
                           </div>
-                        ))}
+                          );
+                        })}
                         <div className="mt-4 pt-3 border-t border-white">
                           <div className="text-[10px] text-white uppercase font-black mb-2 tracking-widest flex items-center gap-1"><Plus size={12}/> Tap to Add Material</div>
                           <div className="max-h-28 overflow-y-auto bg-white border border-white/10 rounded-lg custom-scrollbar p-1">
-                            {inventory.map(inv => (
+                            {inventory.map(inv => {
+                              const pack = packInfo ? packInfo(inv) : { packBase: 1 };
+                              const packBase = pack.packBase || 1;
+                              const dispUnit = inv.displayUnit || inv.unit;
+                              const packCost = (inv.unitCost || 0) * packBase;
+                              return (
                               <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, idx)} className="w-full text-left px-3 py-2 text-xs text-accent font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
                                 <span className="truncate pr-2">{inv.itemName}</span>
-                                <span className="text-fg shrink-0 font-mono">₱{inv.unitCost.toFixed(2)}/{inv.unit}</span>
+                                <span className="text-fg shrink-0 font-mono">₱{packCost.toFixed(2)}/{dispUnit}</span>
                               </button>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       </div>

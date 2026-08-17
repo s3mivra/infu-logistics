@@ -252,8 +252,12 @@ export default function OrdersTab({ ctx }) {
                               {p.image && systemSettings.imagesEnabled !== false ? (
                                 <img src={p.image} alt="" loading="lazy" decoding="async" className="w-14 h-14 object-contain rounded-xl mb-2 group-hover:scale-105 transition-transform duration-240" style={{ filter: 'drop-shadow(0 4px 10px rgba(0,0,0,0.45))' }} />
                               ) : (
-                                <div className="w-14 h-14 bg-white/5 border border-white/8 rounded-xl mb-2 flex items-center justify-center" aria-hidden="true">
-                                  <Package size={20} className="text-fg/15" />
+                                <div className="w-14 h-14 rounded-xl mb-2 flex items-center justify-center shrink-0"
+                                  style={{ background: `hsl(${(p.name || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360}, 55%, 28%)` }}
+                                  aria-hidden="true">
+                                  <span className="text-xl font-black text-white/80 select-none leading-none">
+                                    {(p.name || '?')[0].toUpperCase()}
+                                  </span>
                                 </div>
                               )}
                               <span className="font-bold text-xs text-fg/80 line-clamp-2 leading-tight w-full">{p.name}</span>
