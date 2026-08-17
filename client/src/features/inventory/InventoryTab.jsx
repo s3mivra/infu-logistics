@@ -796,7 +796,7 @@ export default function InventoryTab({ ctx }) {
               </div>
             );
           })()}
-          </div>{/* closes xl:col-span-1 alerts column */}
+          </div>
 
           <div className="xl:col-span-2">
           <div className="bg-surface border border-white/10 rounded-xl p-6 h-fit">
@@ -1025,8 +1025,8 @@ export default function InventoryTab({ ctx }) {
               })()}
             </div>
           </div>
-          </div>{/* closes xl:col-span-2 */}
-        </div>{/* closes grid */}
-      </div>{/* closes outer flex-col */}
+          </div>
+        </div>
+      </div>
   );
 }

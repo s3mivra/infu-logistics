@@ -2718,12 +2718,12 @@ const updateStatus = async (orderId, newStatus) => {
   // Uses packInfo which already handles the pack-size → base conversion correctly.
   const analyticsDisplay = (item) => {
     if (BUSINESS_TYPE === 'log') {
-      const pi = packInfo(item);
-      // Only switch to pcs when a real pack size is recorded; otherwise fall
-      // through so items without a packSize still show their display unit.
-      if (pi.packBase > 0 && item.packSize > 0) {
-        return { unit: 'pcs', mult: pi.packBase };
-      }
+      // For logistics every quantity is a piece count.
+      // packInfo gives the right base→pack multiplier when packSize is set;
+      // it falls back to effectiveDisplay.mult otherwise (kg/L items show the
+      // same numeric value but labelled "pcs" until packSize is configured).
+      const packBase = packInfo(item).packBase || 1;
+      return { unit: 'pcs', mult: packBase };
     }
     return effectiveDisplay(item);
   };
