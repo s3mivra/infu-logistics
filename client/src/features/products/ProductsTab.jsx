@@ -862,7 +862,7 @@ export default function ProductsTab({ ctx }) {
                         <input type="number" step="any" value={dispQty}
                           onChange={e => updateMaterialQty((parseFloat(e.target.value) || 0) * currentPb, i, null)}
                           className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
-                        <span className="text-white w-8 text-xs font-bold">{mat.unit}</span>
+                        <span className="text-white w-8 text-xs font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : mat.unit}</span>
                         <button type="button" onClick={() => removeMaterial(i, null)} className="text-red-400 hover:text-red-300 ml-2"><X size={16} /></button>
                       </div>
                       );
@@ -920,7 +920,7 @@ export default function ProductsTab({ ctx }) {
                             <input type="number" step="any" value={dispQty}
                               onChange={e => updateMaterialQty((parseFloat(e.target.value) || 0) * currentPb, i, idx)}
                               className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
-                            <span className="text-white w-8 text-xs font-bold">{mat.unit}</span>
+                            <span className="text-white w-8 text-xs font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : mat.unit}</span>
                             <button type="button" onClick={() => removeMaterial(i, idx)} className="text-red-400 hover:text-red-300 ml-2"><X size={16} /></button>
                           </div>
                           );
