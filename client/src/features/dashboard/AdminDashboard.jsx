@@ -3545,15 +3545,18 @@ const updateStatus = async (orderId, newStatus) => {
       if (!invItem) return 0;
       let possibleServings;
       if (BUSINESS_TYPE === 'log') {
-        // For logistics work in pack counts — the same unit the inventory table
-        // and recipe UI already show. itemDisplay.packQty is the authoritative
-        // "how many packs are in stock" figure (matches the Live Stock table).
-        const stockPacks   = itemDisplay(invItem).packQty;           // e.g. 782 cans
-        const storedPb     = mat.packBase || 1;
-        const recipePackQty = mat.qty / storedPb;                    // pcs shown in recipe UI
-        possibleServings = recipePackQty > 0
-          ? Math.floor(stockPacks / recipePackQty)
-          : 0;
+        // Work in BASE units so stale recipe rows (saved before packBase was
+        // tracked) are handled correctly.  If mat.packBase is stored we can
+        // derive how many packs the recipe calls for; otherwise assume 1 pack.
+        const currentPackBase = packInfo(invItem).packBase || 1;
+        let qtyBase;
+        if (mat.packBase > 0) {
+          const packCount = mat.qty / mat.packBase;  // e.g. 377/377 = 1 pack
+          qtyBase = packCount * currentPackBase;      // re-express in current base
+        } else {
+          qtyBase = currentPackBase;                  // legacy: treat as 1 pack per serving
+        }
+        possibleServings = Math.floor(invItem.stockQty / (qtyBase || 1));
       } else {
         // FB: qty stored in base units; direct division gives servings.
         possibleServings = Math.floor(invItem.stockQty / (mat.qty || 1));
