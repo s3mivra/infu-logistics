@@ -796,6 +796,9 @@ export default function InventoryTab({ ctx }) {
               </div>
             );
           })()}
+          </div>{/* closes xl:col-span-1 alerts column */}
+
+          <div className="xl:col-span-2">
           <div className="bg-surface border border-white/10 rounded-xl p-6 h-fit">
             <h3 className="text-lg font-bold text-fg mb-4 border-b border-white/10 pb-2">Procurement (Receive Inventory)</h3>
             <div className="space-y-4">
@@ -1022,7 +1025,8 @@ export default function InventoryTab({ ctx }) {
               })()}
             </div>
           </div>
-          </div>
-        </div>
+          </div>{/* closes xl:col-span-2 */}
+        </div>{/* closes grid */}
+      </div>{/* closes outer flex-col */}
   );
 }
