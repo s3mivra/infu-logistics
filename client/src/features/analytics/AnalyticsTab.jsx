@@ -28,7 +28,7 @@ export default function AnalyticsTab({ ctx }) {
     departmentFilter, discountForm, discountInputs, discountList, discounts,
     displayOrders, downloadImportTemplate, downloadJournalCsv, editInvForm, editInvModal,
     editInvSubmitting, editPriceId, editPriceVal, editingCategory, editingProduct,
-    effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
+    analyticsDisplay, effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
     exportDayToPDF, exportInventoryToPDF, exportLedgerToPDF, fetchAnalytics, fetchArOutstanding,
     fetchBalanceSheet, fetchData, fetchEODData, fetchERPData, fetchExpenseCategories,
@@ -304,7 +304,7 @@ export default function AnalyticsTab({ ctx }) {
                 <div className="space-y-4">
                   {mus.length === 0 ? (
                     <p className="text-fg/60 text-xs">No sales data yet - complete orders to populate.</p>
-                  ) : musPage.pageItems.map((item, idx) => { const d = effectiveDisplay(item); return (
+                  ) : musPage.pageItems.map((item, idx) => { const d = analyticsDisplay(item); return (
                     <div key={idx} className="flex flex-col border-b border-accent/10 pb-3 last:border-0 last:pb-0">
                       <div className="flex justify-between items-center mb-2">
                         <span className="text-fg/80 font-bold text-sm truncate pr-2">{item.name}</span>
@@ -342,7 +342,7 @@ export default function AnalyticsTab({ ctx }) {
                       <div key={item._id} className="flex justify-between items-center text-sm">
                         <div className="flex flex-col min-w-0 pr-2">
                           <span className="text-fg/80 truncate font-semibold">{item.itemName}</span>
-                          <span className="text-fg/70 text-[10px]">{(Number(item.stockQty)/effectiveDisplay(item).mult).toFixed(2)} {effectiveDisplay(item).unit} left</span>
+                          <span className="text-fg/70 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit} left</span>
                         </div>
                         <span className={`font-black text-xs whitespace-nowrap px-2 py-1 rounded ${item.daysOfSupply <= 3 ? 'bg-red-100/60 text-red-500 animate-pulse' : item.daysOfSupply <= 7 ? 'bg-yellow-200/30 text-yellow-400' : 'bg-orange-200/20 text-orange-400'}`}>
                           {item.daysOfSupply <= 0 ? 'OUT' : `~${Math.floor(item.daysOfSupply)}d left`}
@@ -363,7 +363,7 @@ export default function AnalyticsTab({ ctx }) {
                       <div key={item._id} className="flex justify-between items-center text-sm">
                         <div className="flex flex-col min-w-0 pr-2">
                           <span className="text-fg/80 truncate font-semibold">{item.itemName}</span>
-                          <span className="text-fg/70 text-[10px]">{(Number(item.stockQty)/effectiveDisplay(item).mult).toFixed(2)} {effectiveDisplay(item).unit}</span>
+                          <span className="text-fg/70 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit}</span>
                         </div>
                         <div className="flex flex-col items-end gap-0.5">
                           <span className="text-fg/70 font-bold text-xs">{isFinite(item.daysOfSupply) ? `~${Math.floor(item.daysOfSupply)}d supply` : '∞ supply'}</span>
@@ -388,7 +388,7 @@ export default function AnalyticsTab({ ctx }) {
                       <div key={item._id} className="flex justify-between items-center text-sm">
                         <div className="flex flex-col min-w-0 pr-2">
                           <span className="text-fg/80 truncate font-semibold">{item.itemName}</span>
-                          <span className="text-fg/60 text-[10px]">{(Number(item.stockQty)/effectiveDisplay(item).mult).toFixed(2)} {effectiveDisplay(item).unit} on hand</span>
+                          <span className="text-fg/60 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit} on hand</span>
                         </div>
                         <div className="flex flex-col items-end gap-0.5">
                           <span className="text-yellow-500/80 font-bold text-xs whitespace-nowrap">{isFinite(item.daysOfSupply) ? `~${Math.floor(item.daysOfSupply)}d supply` : '∞'}</span>
@@ -410,7 +410,7 @@ export default function AnalyticsTab({ ctx }) {
                       <div key={item._id} className="flex justify-between items-center text-sm">
                         <div className="flex flex-col min-w-0 pr-2">
                           <span className="text-fg/80 truncate font-semibold">{item.itemName}</span>
-                          <span className="text-fg/60 text-[10px]">{(Number(item.stockQty)/effectiveDisplay(item).mult).toFixed(2)} {effectiveDisplay(item).unit} · no sales 30d</span>
+                          <span className="text-fg/60 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit} · no sales 30d</span>
                         </div>
                         {item.tiedUpCapital > 0 && <span className="text-red-400 text-[11px] font-mono font-bold whitespace-nowrap">₱{Number(item.tiedUpCapital).toFixed(0)} tied</span>}
                       </div>

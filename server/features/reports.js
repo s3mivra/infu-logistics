@@ -950,20 +950,29 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
     }
     const lines = inv.map(i => {
       const adu = (usage[i._id.toString()] || 0) / 30; // avg daily usage (base units)
-      const target = adu * days;
+      const threshold = i.lowStockThreshold || 0;
+      const lowFlag = threshold > 0 && i.stockQty <= threshold;
+      if (!lowFlag) return null;
+
       // Display in kg/L/pcs - auto-promote g/ml so the PO never shows base units.
       const { displayUnit, mult } = effectiveDisplay(i);
-      const needBase = Math.max(0, target - i.stockQty);
-      const lowFlag = i.lowStockThreshold > 0 && i.stockQty <= i.lowStockThreshold;
+
+      // Best qty = whichever is larger: velocity-based cover OR refill to 2× threshold.
+      // This ensures items with low/no velocity still get a sensible restock target.
+      const velocityTarget = adu * days;               // base units for N-day cover
+      const refillTarget   = threshold * 2;            // bring back to 2× the alert floor
+      const bestTarget     = Math.max(velocityTarget, refillTarget);
+      const needBase       = Math.max(0, bestTarget - i.stockQty);
+
       const best = bestSupplierByInv[i._id.toString()] || null;
       return {
         invId: i._id, itemCode: i.itemCode || '', unit: i.unit || '', unitCost: i.unitCost || 0,
         itemName: i.itemName, currentStock: +(i.stockQty / mult).toFixed(2), displayUnit,
         avgDailyUse: +(adu / mult).toFixed(3), suggestedOrder: +(needBase / mult).toFixed(2),
-        estCost: +((needBase) * (i.unitCost || 0)).toFixed(2), lowStock: lowFlag,
+        estCost: +((needBase) * (i.unitCost || 0)).toFixed(2), lowStock: true,
         supplierId: best?.supplierId || null, supplierName: best?.supplierName || null,
       };
-    }).filter(l => l.lowStock).sort((a, b) => (b.suggestedOrder - a.suggestedOrder));
+    }).filter(Boolean).sort((a, b) => (b.suggestedOrder - a.suggestedOrder));
     const totalEstCost = lines.reduce((s, l) => s + l.estCost, 0);
     res.json({ success: true, coverDays: days, lines, totalEstCost });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }

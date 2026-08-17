@@ -352,7 +352,7 @@ export default function LedgerTab({ ctx }) {
               stacked sections flow into two columns so they fill the width instead
               of leaving a big empty right side; every other page stays single-column. */}
           <div className={(ledgerSubTab === 'accperiods' || ledgerSubTab === 'araap')
-            ? 'lg:columns-2 lg:gap-4 [&>*]:mb-4 [&>*]:break-inside-avoid [&>*]:max-w-none'
+            ? 'grid lg:grid-cols-2 gap-4 items-start'
             : 'space-y-4'}>
 
           {/* ── TRIAL BALANCE ─────────────────────────────────────────────────── */}
@@ -573,7 +573,7 @@ export default function LedgerTab({ ctx }) {
           )}
 
           {(ledgerSubTab === 'coa' || ledgerSubTab === 'accperiods') && (
-            <div className="max-w-3xl space-y-5">
+            <div className={`space-y-4${ledgerSubTab === 'accperiods' ? ' lg:row-span-2' : ''}`}>
               {/* Add child account */}
               <div className="bg-surface border border-white/10 rounded-2xl p-5">
                 <div className="flex items-start justify-between gap-3 mb-1">
