@@ -45,15 +45,20 @@ export default function registerPurchaseOrders(ctx) {
 
   // Normalize an incoming line into our stored shape.
   const cleanLine = (l) => ({
-    invId:      l.invId && mongoose.Types.ObjectId.isValid(l.invId) ? l.invId : null,
-    itemName:   String(l.itemName || '').slice(0, 200),
-    itemCode:   String(l.itemCode || '').slice(0, 60),
-    unit:       String(l.unit || '').slice(0, 20),
-    packSize:   l.packSize != null && l.packSize !== '' ? Math.max(0, Number(l.packSize) || 0) : null,
-    orderedQty: Math.max(0, Number(l.orderedQty) || 0),
-    unitCost:   Math.max(0, money(l.unitCost)),
-    expiryDate: l.expiryDate ? new Date(l.expiryDate) : null,
-    receivedQty: null,
+    invId:             l.invId && mongoose.Types.ObjectId.isValid(l.invId) ? l.invId : null,
+    itemName:          String(l.itemName || '').slice(0, 200),
+    itemCode:          String(l.itemCode || '').slice(0, 60),
+    unit:              String(l.unit || '').slice(0, 20),
+    packSize:          l.packSize != null && l.packSize !== '' ? Math.max(0, Number(l.packSize) || 0) : null,
+    orderedQty:        Math.max(0, Number(l.orderedQty) || 0),
+    unitCost:          Math.max(0, money(l.unitCost)),
+    expiryDate:        l.expiryDate ? new Date(l.expiryDate) : null,
+    expiryWarnDays:    l.expiryWarnDays != null ? Math.max(1, Number(l.expiryWarnDays) || 7) : null,
+    lowStockThreshold: l.lowStockThreshold != null ? Math.max(0, Number(l.lowStockThreshold) || 0) : null,
+    stockLocation:     l.stockLocation ? String(l.stockLocation).slice(0, 100) : null,
+    stockCategory:     l.stockCategory ? String(l.stockCategory).slice(0, 100) : null,
+    creditAccount:     l.creditAccount ? String(l.creditAccount).slice(0, 50) : null,
+    receivedQty:       null,
   });
 
   // ── LIST ────────────────────────────────────────────────────────────────────

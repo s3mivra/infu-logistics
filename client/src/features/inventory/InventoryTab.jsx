@@ -324,7 +324,7 @@ export default function InventoryTab({ ctx }) {
                         <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-fg'}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
                         <td className="py-3 text-right text-fg text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(effThreshold / (d.packBase || 1)).toLocaleString(undefined, { maximumFractionDigits: 3 })}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
                         <td className="py-3 text-fg pl-2 font-bold">{d.isPacked ? 'pcs' : d.unit}</td>
-                        <td className="py-3 text-right text-fg font-mono text-xs tabular-nums"><>{peso(d.packCost)}<span className="text-fg/50">/{d.packLabel}</span></></td>
+                        <td className="py-3 text-right text-fg font-bold font-mono text-xs tabular-nums"><>{peso(d.packCost)}<span className="text-fg/60">/{d.packLabel}</span></></td>
                         <td className="py-3 text-right text-fg font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
                         </>); })()}
                         <td className="py-3 text-center">
@@ -342,19 +342,8 @@ export default function InventoryTab({ ctx }) {
                           ) : <span className="text-white text-xs">-</span>}
                         </td>
                         <td className="py-3">
-                          {/* Desktop: inline buttons */}
-                          <div className="hidden xl:flex flex-wrap gap-1.5 justify-center">
-                            <button onClick={() => fetchStockHistory(item)} className="text-accent bg-page-bg hover:bg-accent hover:text-white text-xs font-bold px-3 py-2 min-h-[36px] rounded transition">History</button>
-                            <button onClick={() => openEditInventory(item)} className="text-white hover:text-fg hover:bg-blue-600 text-xs font-bold px-3 py-2 min-h-[36px] bg-blue-500 rounded transition">Edit</button>
-                            <button onClick={() => {
-                              const isExpired = expBadge && (expBadge.text.startsWith('EXPIRED') || expBadge.text === 'TODAY');
-                              setSpoilageModal({ item });
-                              setSpoilageForm({ qty: isExpired ? itemDisplay(item).packQty.toString() : '', reason: isExpired ? 'Spoilage' : '', note: isExpired ? `Auto-flagged expired (${new Date(item.expiryDate).toLocaleDateString()})` : '' });
-                            }} className="text-white hover:text-fg hover:bg-orange-600 text-xs font-bold px-3 py-2 min-h-[36px] bg-orange-500 rounded transition">Waste</button>
-                            <button onClick={() => deleteInventory(item._id)} className="text-white hover:text-fg text-xs font-bold px-3 py-2 min-h-[36px] bg-red-600 rounded transition">Del</button>
-                          </div>
-                          {/* Tablet / mobile: single ⋮ button → dropdown */}
-                          <div className="xl:hidden flex justify-center">
+                          {/* Single ⋮ hamburger button → dropdown for all screen sizes */}
+                          <div className="flex justify-center">
                             <div className="relative">
                               <button
                                 onClick={() => setOpenActionMenu(openActionMenu === item._id ? null : item._id)}

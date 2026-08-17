@@ -963,7 +963,7 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
         estCost: +((needBase) * (i.unitCost || 0)).toFixed(2), lowStock: lowFlag,
         supplierId: best?.supplierId || null, supplierName: best?.supplierName || null,
       };
-    }).filter(l => l.suggestedOrder > 0 || l.lowStock).sort((a, b) => (b.lowStock - a.lowStock) || (b.suggestedOrder - a.suggestedOrder));
+    }).filter(l => l.lowStock).sort((a, b) => (b.suggestedOrder - a.suggestedOrder));
     const totalEstCost = lines.reduce((s, l) => s + l.estCost, 0);
     res.json({ success: true, coverDays: days, lines, totalEstCost });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }

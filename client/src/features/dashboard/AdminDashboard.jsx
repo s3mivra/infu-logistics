@@ -222,7 +222,7 @@ export default function AdminDashboard() {
   const [invForm, setInvForm] = useState({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000', stockLocation: '', stockCategory: '' });
   // --- INVENTORY EDIT MODAL ---
   const [editInvModal, setEditInvModal] = useState(null);   // { item } | null
-  const [editInvForm, setEditInvForm] = useState({ itemCode: '', itemName: '', unit: '', unitCost: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, displayUnit: '', packSize: '' });
+  const [editInvForm, setEditInvForm] = useState({ itemCode: '', itemName: '', unit: '', unitCost: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, displayUnit: '', packSize: '', stockLocation: '', stockCategory: '' });
   const [editInvSubmitting, setEditInvSubmitting] = useState(false);
   // --- BULK EXCEL IMPORT ---
   const [importModal, setImportModal] = useState(false);
@@ -2990,7 +2990,9 @@ const updateStatus = async (orderId, newStatus) => {
       expiryDate: item.expiryDate ? new Date(item.expiryDate).toISOString().slice(0, 10) : '',
       expiryWarnDays: item.expiryWarnDays || 7,
       displayUnit: eff.unit,
-      packSize: item.packSize != null ? String(item.packSize) : ''
+      packSize: item.packSize != null ? String(item.packSize) : '',
+      stockLocation: item.stockLocation || '',
+      stockCategory: item.stockCategory || '',
     });
     setEditInvModal({ item });
   };
@@ -3027,6 +3029,8 @@ const updateStatus = async (orderId, newStatus) => {
         displayUnit: editInvForm.displayUnit || editInvForm.unit,
         unitMultiplier: mult,
         packSize: editInvForm.packSize === '' ? null : parseFloat(editInvForm.packSize),
+        stockLocation: editInvForm.stockLocation || null,
+        stockCategory: editInvForm.stockCategory || null,
       };
       const res = await apiFetch(`/api/inventory/${editInvModal.item._id}`, {
         method: 'PUT',

@@ -9,6 +9,7 @@ export default function EditInventoryModal() {
   const {
     editInvModal, setEditInvModal, editInvForm, setEditInvForm, editInvSubmitting,
     itemDisplay, packInfo, resolveUnitFE, submitEditInventory,
+    stockLocations, stockCategories,
   } = useDashboard();
 
   if (!editInvModal) return null;
@@ -82,6 +83,24 @@ export default function EditInventoryModal() {
             <input type="number" min="0" value={editInvForm.lowStockThreshold} onChange={e => set({ lowStockThreshold: e.target.value })}
               className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold tabular-nums outline-none focus:border-brand/60" />
             <p className="text-[10px] text-fg/60 mt-1">Alert when stock drops to or below. 0 = disable.</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] text-fg/60 font-bold uppercase block mb-1">Storage Location</label>
+              <select value={editInvForm.stockLocation || ''} onChange={e => set({ stockLocation: e.target.value })}
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60">
+                <option value="">- None -</option>
+                {(stockLocations || []).filter(l => l.isActive !== false).map(l => <option key={l._id} value={l.name}>{l.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] text-fg/60 font-bold uppercase block mb-1">Stock Category</label>
+              <select value={editInvForm.stockCategory || ''} onChange={e => set({ stockCategory: e.target.value })}
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60">
+                <option value="">- None -</option>
+                {(stockCategories || []).filter(c => c.isActive !== false).map(c => <option key={c._id} value={c.name}>{c.name}{c.prefix ? ` (${c.prefix})` : ''}</option>)}
+              </select>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
