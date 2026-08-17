@@ -1866,7 +1866,7 @@ const updateStatus = async (orderId, newStatus) => {
     const { jsPDF, autoTable } = await loadPdfLibs();
     const m = pnlMonthly;
     const doc = new jsPDF(pnlmView === 'matrix' ? 'landscape' : 'portrait');
-    addLogoToPDF(doc);
+    await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(`${BIZ_NAME} - Profit & Loss`, 14, 14);
     doc.setFontSize(9); doc.text(`${pnlmRange.start} to ${pnlmRange.end}  ·  ${pnlmView === 'matrix' ? 'Monthly' : 'Period'}`, 14, 20);
     const SECTIONS = [['revenue','REVENUE'],['contra','LESS: DISCOUNTS/RETURNS'],['cogs','COST OF SALES'],['opex','OPERATING EXPENSES'],['otherincome','OTHER INCOME'],['otherexpense','OTHER EXPENSES']];
@@ -1909,7 +1909,7 @@ const updateStatus = async (orderId, newStatus) => {
     const { jsPDF, autoTable } = await loadPdfLibs();
     const b = bsMonthly;
     const doc = new jsPDF(bsmView === 'matrix' ? 'landscape' : 'portrait');
-    addLogoToPDF(doc);
+    await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(`${BIZ_NAME} - Balance Sheet`, 14, 14);
     doc.setFontSize(9); doc.text(`${bsmRange.start} to ${bsmRange.end}  ·  ${bsmView === 'matrix' ? 'Monthly' : 'As of ' + b.asOf}`, 14, 20);
     const SECTIONS = [['assets','ASSETS'],['liabilities','LIABILITIES'],['equity','EQUITY']];
@@ -3074,17 +3074,23 @@ const updateStatus = async (orderId, newStatus) => {
   const formatMoney = (val) => `P${(val || 0).toFixed(2)}`;
 
   // Stamps the business logo in the top-right corner of any jsPDF doc.
-  const addLogoToPDF = (doc) => {
+  // Converts via canvas so any format (PNG/JPEG/WebP/etc.) renders crisply.
+  const addLogoToPDF = async (doc) => {
     const logo = systemSettings.businessLogo;
     if (!logo) return;
     try {
-      // Derive format from the data-URL prefix so jsPDF renders it correctly.
-      const fmt = logo.startsWith('data:image/png') ? 'PNG'
-        : logo.startsWith('data:image/webp') ? 'WEBP'
-        : 'JPEG'; // covers jpg, jpeg, and unknown
+      const img = new Image();
+      img.src = logo;
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      const pngData = canvas.toDataURL('image/png');
       const pw = doc.internal.pageSize.getWidth();
-      doc.addImage(logo, fmt, pw - 44, 4, 30, 18);
-    } catch { /* unsupported image format - skip */ }
+      const logoW = 30, logoH = 18;
+      doc.addImage(pngData, 'PNG', pw - logoW - 8, 4, logoW, logoH);
+    } catch { /* unsupported image - skip */ }
   };
 
   // 1. Inventory & Movement History PDF (Unchanged)
@@ -3095,7 +3101,7 @@ const updateStatus = async (orderId, newStatus) => {
       const data = await res.json();
       const allHistory = data.success ? data.history : [];
       const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-      addLogoToPDF(doc);
+      await addLogoToPDF(doc);
       doc.setFontSize(18); doc.text(`${BIZ_NAME} - Daily Inventory & Movement Report`, 14, 15);
       const todayStr = new Date().toLocaleDateString();
       doc.setFontSize(10); doc.text(`Date: ${todayStr} | Generated: ${new Date().toLocaleString()}`, 14, 22);
@@ -3137,7 +3143,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportLedgerToPDF = async () => {
     if (journalEntries.length === 0) return ui.alert("No entries to export.");
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    addLogoToPDF(doc);
+    await addLogoToPDF(doc);
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - General Ledger Report`, 14, 15);
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 22);
     let currentY = 30;
@@ -3164,7 +3170,7 @@ const updateStatus = async (orderId, newStatus) => {
     if (allOrders.length === 0) return ui.alert("No orders to export.");
     
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    addLogoToPDF(doc);
+    await addLogoToPDF(doc);
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Complete Sales History`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
@@ -3272,7 +3278,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportDayToPDF = async (dateString, dayOrders) => {
     if (dayOrders.length === 0) return ui.alert("No orders to export.");
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    addLogoToPDF(doc);
+    await addLogoToPDF(doc);
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Sales Report: ${dateString}`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
@@ -3343,7 +3349,7 @@ const updateStatus = async (orderId, newStatus) => {
     if (allCompletedOrders.length === 0) return ui.alert("No analytics data to export.");
     
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    addLogoToPDF(doc);
+    await addLogoToPDF(doc);
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Analytics Report`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
@@ -3416,7 +3422,7 @@ const updateStatus = async (orderId, newStatus) => {
     if (allCompletedOrders.length === 0) return ui.alert("No orders to export.");
     
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    addLogoToPDF(doc);
+    await addLogoToPDF(doc);
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Monthly Sales Summary`, 14, 15);
     const groupedByMonth = {};
     allCompletedOrders.forEach(o => {
@@ -3705,7 +3711,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportPurchaseOrderPDF = async () => {
     if (!purchaseOrder || !(purchaseOrder.lines || []).length) return ui.alert('Generate a purchase order first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    addLogoToPDF(doc);
+    await addLogoToPDF(doc);
     const today = new Date().toLocaleDateString('en-PH');
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('PURCHASE ORDER', 105, 22, { align: 'center' });
@@ -3731,7 +3737,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportPnlPDF = async () => {
     if (!pnlData) return ui.alert('Run the P&L report first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    addLogoToPDF(doc);
+    await addLogoToPDF(doc);
     const range = `${pnlRange.start} to ${pnlRange.end}`;
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text(`PROFIT & LOSS STATEMENT ${vatStmtSuffix}`, 105, 22, { align: 'center' });
@@ -3769,7 +3775,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportBalanceSheetPDF = async () => {
     if (!bsData) return ui.alert('Load the Balance Sheet first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    addLogoToPDF(doc);
+    await addLogoToPDF(doc);
     const asOf = bsData.asOf ? new Date(bsData.asOf).toLocaleDateString() : new Date().toLocaleDateString();
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text(`BALANCE SHEET ${vatStmtSuffix}`, 105, 22, { align: 'center' });
@@ -3889,7 +3895,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportSalesSummaryPDF = async () => {
     if (!salesSummary) return ui.alert('Load the Summary Sales report first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    addLogoToPDF(doc);
+    await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(`${BIZ_NAME} - Sales Summary`, 14, 14);
     doc.setFontSize(9); doc.text(`${sssRange.start} to ${sssRange.end}  ·  ${sssGroup === 'day' ? 'Per Day' : 'Per Order'}`, 14, 20);
     // Fixed columns (match the on-screen Summary Sales table).
@@ -3927,7 +3933,7 @@ const updateStatus = async (orderId, newStatus) => {
   const exportSalesLineItemsPDF = async () => {
     if (!salesLineItems) return ui.alert('Load the Sales Line Items report first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    addLogoToPDF(doc);
+    await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(`${BIZ_NAME} - Sales Line Items`, 14, 14);
     doc.setFontSize(9); doc.text(`${sliRange.start} to ${sliRange.end}`, 14, 20);
     const head = ['Date', 'Customer ID', 'Customer Name', 'Order ID', 'Item Code', 'Item', 'Qty', 'Payment', 'Line Total'];
