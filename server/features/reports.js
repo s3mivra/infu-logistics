@@ -910,7 +910,7 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
     const days = Math.max(1, parseInt(req.query.days) || 7); // cover N days of supply
     const since = new Date(Date.now() - 30 * 86400000);
     const [inv, orders, products, suppliers] = await Promise.all([
-      Inventory.find(bizScope, { itemCode: 1, itemName: 1, stockQty: 1, unit: 1, unitCost: 1, lowStockThreshold: 1, displayUnit: 1, unitMultiplier: 1 }).lean(),
+      Inventory.find(bizScope, { itemCode: 1, itemName: 1, stockQty: 1, unit: 1, unitCost: 1, lowStockThreshold: 1, displayUnit: 1, unitMultiplier: 1, packSize: 1 }).lean(),
       Order.find({ ...bizScope, status: 'Completed', createdAt: { $gte: since } }, { items: 1 }).lean(),
       Product.find(bizScope, { _id: 1, name: 1, productCode: 1, baseRecipe: 1, sizes: 1 }).lean(),
       Supplier.find({ ...tenantScope(req), isActive: true, 'catalog.invId': { $ne: null } }, { name: 1, catalog: 1 }).lean(),
@@ -957,8 +957,12 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
       const lowFlag = threshold > 0 && i.stockQty <= threshold;
       if (!lowFlag) return null;
 
-      // Display in kg/L/pcs - auto-promote g/ml so the PO never shows base units.
-      const { displayUnit, mult } = effectiveDisplay(i);
+      // For LOG mode display in pcs (pack units); otherwise promote g→kg, ml→L.
+      const { displayUnit: effUnit, mult: effMult } = effectiveDisplay(i);
+      const isLogBiz = (BUSINESS_TYPE || '').toLowerCase() === 'log';
+      const packBase = isLogBiz && i.packSize > 0 ? i.packSize * effMult : effMult;
+      const displayUnit = isLogBiz ? 'pcs' : effUnit;
+      const divisor = isLogBiz ? packBase : effMult;
 
       // Best qty = whichever is larger: velocity-based cover OR refill to 2× threshold.
       // This ensures items with low/no velocity still get a sensible restock target.
@@ -970,8 +974,8 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
       const best = bestSupplierByInv[i._id.toString()] || null;
       return {
         invId: i._id, itemCode: i.itemCode || '', unit: i.unit || '', unitCost: i.unitCost || 0,
-        itemName: i.itemName, currentStock: +(i.stockQty / mult).toFixed(2), displayUnit,
-        avgDailyUse: +(adu / mult).toFixed(3), suggestedOrder: +(needBase / mult).toFixed(2),
+        itemName: i.itemName, currentStock: Math.round(i.stockQty / divisor), displayUnit,
+        avgDailyUse: +(adu / divisor).toFixed(3), suggestedOrder: Math.ceil(needBase / divisor),
         estCost: +((needBase) * (i.unitCost || 0)).toFixed(2), lowStock: true,
         supplierId: best?.supplierId || null, supplierName: best?.supplierName || null,
       };
