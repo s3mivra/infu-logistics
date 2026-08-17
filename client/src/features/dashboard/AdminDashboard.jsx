@@ -2715,11 +2715,15 @@ const updateStatus = async (orderId, newStatus) => {
     };
   };
   // Analytics display: for logistics, show pack-count (pcs) instead of kg/L.
-  // Mirrors the same conversion used in exportInventoryToPDF for consistency.
+  // Uses packInfo which already handles the pack-size → base conversion correctly.
   const analyticsDisplay = (item) => {
     if (BUSINESS_TYPE === 'log') {
-      const packBase = itemDisplay(item).packBase || 1;
-      return { unit: 'pcs', mult: packBase };
+      const pi = packInfo(item);
+      // Only switch to pcs when a real pack size is recorded; otherwise fall
+      // through so items without a packSize still show their display unit.
+      if (pi.packBase > 0 && item.packSize > 0) {
+        return { unit: 'pcs', mult: pi.packBase };
+      }
     }
     return effectiveDisplay(item);
   };
@@ -3071,10 +3075,15 @@ const updateStatus = async (orderId, newStatus) => {
 
   // Stamps the business logo in the top-right corner of any jsPDF doc.
   const addLogoToPDF = (doc) => {
-    if (!systemSettings.businessLogo) return;
+    const logo = systemSettings.businessLogo;
+    if (!logo) return;
     try {
+      // Derive format from the data-URL prefix so jsPDF renders it correctly.
+      const fmt = logo.startsWith('data:image/png') ? 'PNG'
+        : logo.startsWith('data:image/webp') ? 'WEBP'
+        : 'JPEG'; // covers jpg, jpeg, and unknown
       const pw = doc.internal.pageSize.getWidth();
-      doc.addImage(systemSettings.businessLogo, 'auto', pw - 44, 4, 30, 18);
+      doc.addImage(logo, fmt, pw - 44, 4, 30, 18);
     } catch { /* unsupported image format - skip */ }
   };
 
