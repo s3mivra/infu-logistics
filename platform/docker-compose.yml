@@ -88,3 +88,4 @@ volumes:
 networks:
   semivra-net:
     name: semivra-net
+    external: true
