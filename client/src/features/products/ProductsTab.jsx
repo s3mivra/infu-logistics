@@ -847,13 +847,14 @@ export default function ProductsTab({ ctx }) {
                       <span className="text-xs text-white font-black">Cost: ₱{calcRecipeCost(formData.baseRecipe).toFixed(2)}</span>
                     </div>
                     {(formData.baseRecipe || []).map((mat, i) => {
-                      const pb = mat.packBase || 1;
-                      const dispQty = +(mat.qty / pb).toFixed(3);
+                      const invItem = inventory.find(inv => inv._id === mat.invId);
+                      const currentPb = mat.packBase > 0 ? mat.packBase : (packInfo && invItem ? (packInfo(invItem).packBase || 1) : 1);
+                      const dispQty = +(mat.qty / currentPb).toFixed(3);
                       return (
                       <div key={i} className="flex items-center gap-2 mb-2 text-sm">
                         <span className="flex-1 text-white font-semibold truncate">{mat.name}</span>
                         <input type="number" step="any" value={dispQty}
-                          onChange={e => updateMaterialQty((parseFloat(e.target.value) || 0) * pb, i, null)}
+                          onChange={e => updateMaterialQty((parseFloat(e.target.value) || 0) * currentPb, i, null)}
                           className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
                         <span className="text-white w-8 text-xs font-bold">{mat.unit}</span>
                         <button type="button" onClick={() => removeMaterial(i, null)} className="text-red-400 hover:text-red-300 ml-2"><X size={16} /></button>
@@ -905,13 +906,14 @@ export default function ProductsTab({ ctx }) {
                           <span className="text-xs text-white font-black">Cost: ₱{calcRecipeCost(size.recipe).toFixed(2)}</span>
                         </div>
                         {(size.recipe || []).map((mat, i) => {
-                          const pb = mat.packBase || 1;
-                          const dispQty = +(mat.qty / pb).toFixed(3);
+                          const invItem = inventory.find(inv => inv._id === mat.invId);
+                          const currentPb = mat.packBase > 0 ? mat.packBase : (packInfo && invItem ? (packInfo(invItem).packBase || 1) : 1);
+                          const dispQty = +(mat.qty / currentPb).toFixed(3);
                           return (
                           <div key={i} className="flex items-center gap-2 mb-2 text-sm">
                             <span className="flex-1 text-white font-semibold truncate">{mat.name}</span>
                             <input type="number" step="any" value={dispQty}
-                              onChange={e => updateMaterialQty((parseFloat(e.target.value) || 0) * pb, i, idx)}
+                              onChange={e => updateMaterialQty((parseFloat(e.target.value) || 0) * currentPb, i, idx)}
                               className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
                             <span className="text-white w-8 text-xs font-bold">{mat.unit}</span>
                             <button type="button" onClick={() => removeMaterial(i, idx)} className="text-red-400 hover:text-red-300 ml-2"><X size={16} /></button>
