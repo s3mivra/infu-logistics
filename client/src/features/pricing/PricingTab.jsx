@@ -49,6 +49,7 @@ export default function PricingTab({ ctx }) {
     posDiscountType, posDiscountValue, posGrandTotal, posPage, posPayment,
     posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable,
     pricingItemsPerPage, pricingPage, printOrderSlip, printXReading, products,
+    priceTiers, pricingTable, fetchPricingTable, handleTierCellUpdate, handleTierPercentUpdate,
     removeAddOnFromOrder, removeComplimentary, removeMaterial, removeSize, restockData,
     rfActiveFund, rfDisbForm, rfDisbModal, rfDisbSubmitting, rfFunds,
     rfLoading, rfNewForm, rfNewModal, rfNewSubmitting, rfReplForm,
@@ -85,6 +86,11 @@ export default function PricingTab({ ctx }) {
   const [pricingCatFilter, setPricingCatFilter] = useState('');
   const [pricingSearch, setPricingSearch] = useState('');
   const [localPage, setLocalPage] = useState(1);
+  const [tierSearch, setTierSearch] = useState('');
+  const [tierPage, setTierPage] = useState(1);
+  const tierItemsPerPage = 12;
+  const [editTierCell, setEditTierCell] = useState(null); // `${tierId}:${productId}` or null
+  const [editTierCellVal, setEditTierCellVal] = useState('');
 
   const categoryOptions = useMemo(() => {
     const seen = new Set();
@@ -110,7 +116,18 @@ export default function PricingTab({ ctx }) {
   const handleCatChange = (val) => { setPricingCatFilter(val); setLocalPage(1); };
   const handleSearchChange = (val) => { setPricingSearch(val); setLocalPage(1); };
 
+  const tierFilteredProducts = useMemo(() => {
+    const q = tierSearch.trim().toLowerCase();
+    let list = pricingTable.products || [];
+    if (q) list = list.filter(p => (p.name || '').toLowerCase().includes(q));
+    return list;
+  }, [pricingTable.products, tierSearch]);
+  const tierTotalPages = Math.max(1, Math.ceil(tierFilteredProducts.length / tierItemsPerPage));
+  const tierPagedProducts = tierFilteredProducts.slice((tierPage - 1) * tierItemsPerPage, tierPage * tierItemsPerPage);
+  const handleTierSearchChange = (val) => { setTierSearch(val); setTierPage(1); };
+
   return (
+      <>
         <div className="flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-180px)]">
 
           {/* LEFT COLUMN: Read-Only Pricing Table */}
@@ -407,5 +424,161 @@ export default function PricingTab({ ctx }) {
             </div>
           </div>
         </div>
+
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {/* MARKET SEGMENT PRICING - dealer/satellite/wholesale price table  */}
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {BUSINESS_TYPE === 'log' && priceTiers && priceTiers.length > 0 && (
+          <div className="bg-surface border border-white/10 rounded-xl p-6 mt-6">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-4 flex-wrap gap-2">
+              <h3 className="text-xl font-bold text-accent flex items-center gap-2">
+                <Tag size={18} /> Market Segment Pricing
+              </h3>
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Search product name…"
+                  value={tierSearch}
+                  onChange={e => handleTierSearchChange(e.target.value)}
+                  className="bg-page-bg border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-xs text-fg outline-none focus:border-accent w-56"
+                />
+              </div>
+            </div>
+            <p className="text-[11px] text-fg/40 mb-4 leading-relaxed">
+              What each customer class pays, right next to the regular price. Click any cell to edit it.
+              <span className="text-fg/60 font-bold"> Default %</span> tiers edit as a <span className="text-fg/60 font-bold">percent</span> - one shared rate, so
+              it moves every product in that column together. <span className="text-fg/60 font-bold">Price List</span> tiers edit as a <span className="text-fg/60 font-bold">₱ price</span>,
+              independently per product.
+            </p>
+
+            <div className="overflow-x-auto pr-2">
+              <table className="w-full text-left text-sm min-w-[700px]">
+                <thead>
+                  <tr className="text-fg/80 border-b border-gray-800">
+                    <th className="pb-3 uppercase tracking-wider text-xs sticky left-0 bg-surface">Product</th>
+                    <th className="pb-3 text-right uppercase tracking-wider text-xs">List Price</th>
+                    {pricingTable.tiers.map(t => (
+                      <th key={t._id} className="pb-3 text-right uppercase tracking-wider text-xs whitespace-nowrap">
+                        {t.name}
+                        {t.isActive === false && <span className="ml-1 text-fg/25 normal-case">(inactive)</span>}
+                        <span className="block text-[9px] text-fg/30 normal-case font-normal">
+                          {t.pricingMode === 'per_product' ? 'price list' : `${t.percent}% off`}
+                        </span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tierPagedProducts.length === 0 ? (
+                    <tr><td colSpan={2 + pricingTable.tiers.length} className="py-4 text-center text-gray-500">No products found.</td></tr>
+                  ) : tierPagedProducts.map(p => (
+                    <tr key={p._id} className="border-t border-white/10 hover:bg-page-bg/30 transition">
+                      <td className="py-2 font-bold text-fg sticky left-0 bg-surface">{p.name}</td>
+                      <td className="py-2 text-right font-mono text-xs text-fg/50">₱{Number(p.basePrice || 0).toFixed(2)}</td>
+                      {pricingTable.tiers.map(t => {
+                        const price = t.prices[p._id];
+                        const off = price !== null && p.basePrice > 0 ? Math.round((1 - price / p.basePrice) * 100) : null;
+                        const cellId = `${t._id}:${p._id}`;
+                        const isPerProduct = t.pricingMode === 'per_product';
+                        // Percent-mode cells are ALWAYS editable too - but every cell in
+                        // that column shares one rate, so the field IS the tier's percent
+                        // (not a price to reverse-engineer one from), and saving applies
+                        // it to the whole tier (handleTierPercentUpdate) - there's no
+                        // per-product price to store in this mode.
+                        const save = () => {
+                          if (isPerProduct) handleTierCellUpdate(t._id, p._id, editTierCellVal);
+                          else handleTierPercentUpdate(t._id, editTierCellVal);
+                          setEditTierCell(null);
+                        };
+                        if (editTierCell === cellId) {
+                          return (
+                            <td key={t._id} className="py-2 text-right font-mono font-bold text-accent">
+                              <div className="flex justify-end items-center gap-2">
+                                {isPerProduct ? (
+                                  <div className="relative w-20">
+                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-fg/30 text-xs">₱</span>
+                                    <input
+                                      type="number" step="0.01" min="0" autoFocus
+                                      className="w-full bg-page-bg border border-accent rounded pl-5 pr-1 py-1 text-fg outline-none text-right"
+                                      value={editTierCellVal}
+                                      onChange={e => setEditTierCellVal(e.target.value)}
+                                      onKeyDown={e => {
+                                        if (e.key === 'Enter') save();
+                                        if (e.key === 'Escape') setEditTierCell(null);
+                                      }}
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="relative w-16">
+                                    <input
+                                      type="number" step="0.01" min="0" max="100" autoFocus
+                                      className="w-full bg-page-bg border border-accent rounded pl-1 pr-5 py-1 text-fg outline-none text-right"
+                                      value={editTierCellVal}
+                                      onChange={e => setEditTierCellVal(e.target.value)}
+                                      onKeyDown={e => {
+                                        if (e.key === 'Enter') save();
+                                        if (e.key === 'Escape') setEditTierCell(null);
+                                      }}
+                                    />
+                                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/30 text-xs">%</span>
+                                  </div>
+                                )}
+                                <button onClick={save} className="text-green-400 hover:text-green-300"><Check size={14} /></button>
+                                <button onClick={() => setEditTierCell(null)} className="text-red-400 hover:text-red-300">✕</button>
+                              </div>
+                            </td>
+                          );
+                        }
+                        return (
+                          <td key={t._id} className="py-2 text-right font-mono">
+                            <div
+                              className="cursor-pointer hover:bg-white/10 px-2 py-1 rounded inline-flex items-center gap-1.5 transition group justify-end"
+                              onClick={() => { setEditTierCell(cellId); setEditTierCellVal(isPerProduct ? (price === null ? '' : String(price)) : String(t.percent)); }}
+                              title={isPerProduct ? 'Set this product\'s price for this tier' : `Shared rate - editing this changes ${t.name}'s % for every product`}
+                            >
+                              {price === null ? (
+                                <span className="text-fg/20 text-xs">not set</span>
+                              ) : (
+                                <span className={off > 0 ? (isPerProduct ? 'text-accent font-bold' : 'text-fg/70 font-bold') : 'text-fg/40'}>
+                                  ₱{price.toFixed(2)}
+                                  {off > 0 && <span className="text-[9px] text-fg/30 ml-1">-{off}%</span>}
+                                </span>
+                              )}
+                              <span className="text-[10px] text-gray-500 group-hover:text-accent">✎</span>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {tierTotalPages > 1 && (
+              <div className="flex justify-between items-center bg-page-bg p-3 rounded-lg border border-white/10 mt-4 shrink-0">
+                <button
+                  onClick={() => setTierPage(prev => Math.max(prev - 1, 1))}
+                  disabled={tierPage === 1}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${tierPage === 1 ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                >
+                  <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
+                </button>
+                <span className="text-gray-400 text-xs font-bold tracking-widest">
+                  PAGE <span className="text-accent text-sm">{tierPage}</span> OF {tierTotalPages}
+                </span>
+                <button
+                  onClick={() => setTierPage(prev => Math.min(prev + 1, tierTotalPages))}
+                  disabled={tierPage === tierTotalPages}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${tierPage === tierTotalPages ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                >
+                  <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </>
   );
 }

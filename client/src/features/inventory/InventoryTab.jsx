@@ -83,16 +83,21 @@ export default function InventoryTab({ ctx }) {
     submitRfNew, submitRfRepl, toggleDay, toggleOrderList,
     totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
-    users, varianceNoteMode, varianceReasons,
+    users, varianceNoteMode, varianceReasons, historyLoading,
   } = ctx;
 
   // Which row's action menu is open (by item._id), null = all closed
   const [openActionMenu, setOpenActionMenu] = useState(null);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
   useEffect(() => {
     if (!openActionMenu) return;
     const close = () => setOpenActionMenu(null);
-    document.addEventListener('click', close, { capture: true });
-    return () => document.removeEventListener('click', close, { capture: true });
+    document.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    return () => {
+      document.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+    };
   }, [openActionMenu]);
 
   // Physical count: default each item's count input to the current SYSTEM ending value
@@ -190,6 +195,7 @@ export default function InventoryTab({ ctx }) {
                 actOnStockTransfer={actOnStockTransfer}
                 isSuperAdmin={isSuperAdmin}
                 peso={peso}
+                apiFetch={apiFetch}
               />
             )}
 
@@ -346,22 +352,41 @@ export default function InventoryTab({ ctx }) {
                           <div className="flex justify-center">
                             <div className="relative">
                               <button
-                                onClick={() => setOpenActionMenu(openActionMenu === item._id ? null : item._id)}
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  if (openActionMenu === item._id) { setOpenActionMenu(null); return; }
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  setMenuPosition({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                                  setOpenActionMenu(item._id);
+                                }}
                                 className="p-2 rounded-lg bg-white/5 hover:bg-white/15 text-fg/60 hover:text-fg transition min-h-[36px] min-w-[36px] flex items-center justify-center"
                               >
                                 <MoreVertical size={16} />
                               </button>
                               {openActionMenu === item._id && (
-                                <div onClick={e => e.stopPropagation()} className="absolute right-0 top-full mt-1 z-50 bg-sidebar-bg border border-white/15 rounded-xl shadow-xl min-w-[130px] overflow-hidden">
-                                  <button onClick={() => { fetchStockHistory(item); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-accent transition">History</button>
-                                  <button onClick={() => { openEditInventory(item); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-blue-400 transition">Edit</button>
+                                <div
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ top: menuPosition.top, right: menuPosition.right }}
+                                  className="fixed z-[9999] bg-sidebar-bg border border-white/15 rounded-xl shadow-2xl min-w-[150px] py-1 animate-scale-in origin-top-right"
+                                >
+                                  <button onClick={() => { fetchStockHistory(item); setOpenActionMenu(null); }} disabled={historyLoading} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-accent transition disabled:opacity-50 disabled:cursor-wait">
+                                    {historyLoading ? 'Loading…' : 'History'}
+                                  </button>
+                                  <button onClick={() => { openEditInventory(item); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-blue-400 transition">
+                                    Edit
+                                  </button>
                                   <button onClick={() => {
                                     const isExpired = expBadge && (expBadge.text.startsWith('EXPIRED') || expBadge.text === 'TODAY');
                                     setSpoilageModal({ item });
                                     setSpoilageForm({ qty: isExpired ? itemDisplay(item).packQty.toString() : '', reason: isExpired ? 'Spoilage' : '', note: isExpired ? `Auto-flagged expired (${new Date(item.expiryDate).toLocaleDateString()})` : '' });
                                     setOpenActionMenu(null);
-                                  }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-orange-400 transition">Waste</button>
-                                  <button onClick={() => { deleteInventory(item._id); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-red-400 hover:bg-red-500/10 transition">Delete</button>
+                                  }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-orange-400 transition">
+                                    Waste
+                                  </button>
+                                  <div className="border-t border-white/8 mx-2 my-1" />
+                                  <button onClick={() => { deleteInventory(item._id); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-red-400/80 hover:bg-red-500/10 hover:text-red-400 transition">
+                                    Delete
+                                  </button>
                                 </div>
                               )}
                             </div>
@@ -738,277 +763,264 @@ export default function InventoryTab({ ctx }) {
               );
             })()}
           </div>
-          {/* BOTTOM SECTION: Alerts + Procurement */}
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
-          <div className="xl:col-span-1 space-y-4">
-          {/* LOW STOCK ALERTS SUMMARY */}
-          {inventory.filter(i => { const t = i.effectiveThreshold != null ? i.effectiveThreshold : (i.lowStockThreshold || 0); return t > 0 && i.stockQty <= t; }).length > 0 && (
-            <div className="bg-red-900/20 border border-red-500/30 rounded-xl p-4">
-              <h4 className="text-red-400 font-black uppercase tracking-wider text-xs mb-2 flex items-center gap-1.5"><AlertTriangle size={13} /> Low Stock Alerts</h4>
-              <div className="space-y-1">
-                {inventory.filter(i => { const t = i.effectiveThreshold != null ? i.effectiveThreshold : (i.lowStockThreshold || 0); return t > 0 && i.stockQty <= t; }).map(i => {
-                  const d = itemDisplay(i);
-                  const mult = effectiveDisplay(i).mult;
-                  const eff = i.effectiveThreshold != null ? i.effectiveThreshold : (i.lowStockThreshold || 0);
-                  const minDisp = (eff / mult).toLocaleString(undefined, { maximumFractionDigits: 3 });
-                  return (
-                  <div key={i._id} className="flex justify-between text-xs">
-                    <span className="text-red-300 font-bold">{i.itemName}</span>
-                    <span className="text-red-400 font-mono tabular-nums">{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? 'pcs' : d.unit} (min: {minDisp})</span>
-                  </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* EXPIRY WATCH PANEL */}
+          {invSubTab === 'live' && (<>
+          {/* ALERTS ROW — full width, only shown when items exist */}
           {(() => {
+            const lowItems = inventory.filter(i => { const t = i.effectiveThreshold != null ? i.effectiveThreshold : (i.lowStockThreshold || 0); return t > 0 && i.stockQty <= t; });
             const today = new Date(); today.setHours(0,0,0,0);
-            const watch = inventory
-              .filter(i => i.expiryDate && i.stockQty > 0)
-              .map(i => ({ ...i, _days: Math.ceil((new Date(i.expiryDate) - today) / 86400000) }))
-              .filter(i => i._days <= 30)
-              .sort((a, b) => a._days - b._days);
-            if (watch.length === 0) return null;
-            const expired = watch.filter(i => i._days < 0);
-            const soon = watch.filter(i => i._days >= 0 && i._days <= (i.expiryWarnDays || 7));
-            const later = watch.filter(i => i._days > (i.expiryWarnDays || 7));
+            const watch = inventory.filter(i => i.expiryDate && i.stockQty > 0).map(i => ({ ...i, _days: Math.ceil((new Date(i.expiryDate) - today) / 86400000) })).filter(i => i._days <= 30).sort((a, b) => a._days - b._days);
+            if (lowItems.length === 0 && watch.length === 0) return null;
             return (
-              <div className="bg-orange-900/15 border border-orange-500/30 rounded-xl p-4 space-y-2">
-                <h4 className="text-orange-300 font-black uppercase tracking-wider text-xs flex items-center gap-1.5"><Clock size={13} /> Expiry Watch
-                  <span className="ml-auto text-[9px] bg-orange-500/30 text-orange-200 px-1.5 py-0.5 rounded">{watch.length}</span>
-                </h4>
-                {expired.length > 0 && <p className="text-[10px] text-red-300 font-black uppercase tracking-wider">⚠ {expired.length} Expired - log spoilage</p>}
-                <div className="space-y-1 max-h-48 overflow-y-auto custom-scrollbar">
-                  {watch.map(i => {
-                    const txt = i._days < 0 ? `${Math.abs(i._days)}d ago` : i._days === 0 ? 'today' : `in ${i._days}d`;
-                    const color = i._days < 0 ? 'text-red-300' : i._days <= (i.expiryWarnDays || 7) ? 'text-yellow-300' : 'text-orange-300/80';
-                    const d = itemDisplay(i);
-                    return (
-                      <div key={i._id} className="flex justify-between text-xs items-center">
-                        <span className={`font-bold ${color}`}>{i.itemName}</span>
-                        <span className={`tabular-nums ${color}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? 'pcs' : d.unit} · <span className="font-black">{txt}</span></span>
-                      </div>
-                    );
-                  })}
-                </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                {lowItems.length > 0 && (
+                  <div className="bg-red-900/20 border border-red-500/30 rounded-xl p-4">
+                    <h4 className="text-red-400 font-black uppercase tracking-wider text-xs mb-2 flex items-center gap-1.5"><AlertTriangle size={13} /> Low Stock Alerts</h4>
+                    <div className="space-y-1">
+                      {lowItems.map(i => {
+                        const d = itemDisplay(i);
+                        const mult = effectiveDisplay(i).mult;
+                        const eff = i.effectiveThreshold != null ? i.effectiveThreshold : (i.lowStockThreshold || 0);
+                        const minDisp = (eff / mult).toLocaleString(undefined, { maximumFractionDigits: 3 });
+                        return (
+                          <div key={i._id} className="flex justify-between text-xs">
+                            <span className="text-red-300 font-bold">{i.itemName}</span>
+                            <span className="text-red-400 font-mono tabular-nums">{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? 'pcs' : d.unit} (min: {minDisp})</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {watch.length > 0 && (
+                  <div className="bg-orange-900/15 border border-orange-500/30 rounded-xl p-4 space-y-2">
+                    <h4 className="text-orange-300 font-black uppercase tracking-wider text-xs flex items-center gap-1.5">
+                      <Clock size={13} /> Expiry Watch
+                      <span className="ml-auto text-[9px] bg-orange-500/30 text-orange-200 px-1.5 py-0.5 rounded">{watch.length}</span>
+                    </h4>
+                    {watch.filter(i => i._days < 0).length > 0 && <p className="text-[10px] text-red-300 font-black uppercase tracking-wider">{watch.filter(i => i._days < 0).length} Expired — log spoilage</p>}
+                    <div className="space-y-1 max-h-36 overflow-y-auto custom-scrollbar">
+                      {watch.map(i => {
+                        const txt = i._days < 0 ? `${Math.abs(i._days)}d ago` : i._days === 0 ? 'today' : `in ${i._days}d`;
+                        const color = i._days < 0 ? 'text-red-300' : i._days <= (i.expiryWarnDays || 7) ? 'text-yellow-300' : 'text-orange-300/80';
+                        const d = itemDisplay(i);
+                        return (
+                          <div key={i._id} className="flex justify-between text-xs items-center">
+                            <span className={`font-bold ${color}`}>{i.itemName}</span>
+                            <span className={`tabular-nums ${color}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? 'pcs' : d.unit} · <span className="font-black">{txt}</span></span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })()}
-          </div>
 
-          <div className="xl:col-span-2">
-          <div className="bg-surface border border-white/10 rounded-xl p-6 h-fit">
-            <h3 className="text-lg font-bold text-fg mb-4 border-b border-white/10 pb-2">Procurement (Receive Inventory)</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">Item Name</label>
-                <input 
-                  type="text" 
-                  list="inventory-names" 
-                  placeholder="e.g., Condensed Milk" 
-                  value={invForm.itemName} 
-                  onChange={e => {
-                    const typed = e.target.value;
-                    const match = inventory.find(i => i.itemName.toLowerCase() === typed.toLowerCase());
-                    setInvForm({...invForm, itemName: typed, unit: match ? match.unit : invForm.unit});
-                  }} 
-                  className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent" 
-                />
-                <datalist id="inventory-names">
-                  {inventory.map(inv => <option key={inv._id} value={inv.itemName} />)}
-                </datalist>
-                
-                {inventory.some(i => i.itemName.toLowerCase() === invForm.itemName.toLowerCase().trim()) && (
-                  <p className="text-[10px] text-accent font-bold mt-1 uppercase tracking-wider">★ Existing Item: Will be Restocked</p>
-                )}
-              </div>
-              {/* Field order: item name → qty → unit → unit cost → per-qty size.
-                  Both fb and log expose Unit + Per-Qty Size so a "10× 1L Milk"
-                  restock is entered as qty 10, unit L, per-qty size 1. */}
-              <div className="flex gap-2">
-                 <div className="w-1/2">
-                   <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Qty Bought</label>
-                   <input type="number" placeholder="Cans/Packs" value={invForm.packQty} onChange={e => setInvForm({...invForm, packQty: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent" />
-                 </div>
-                 <div className="w-1/2">
-                   <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Unit</label>
-                   <select value={invForm.unit} onChange={e => setInvForm({...invForm, unit: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent">
-                     <option value="" disabled>Select…</option>
-                     <option value="L">Liters (L) - liquids</option>
-                     <option value="kg">Kilograms (kg) - solids</option>
-                     <option value="pcs">Pieces (pcs)</option>
-                   </select>
-                   <p className="text-[9px] text-gray-500 mt-1">Unit cost reads as ₱/{invForm.unit || 'unit'}.</p>
-                 </div>
-              </div>
+          {/* RECEIVE INVENTORY — full width, bento grid inside */}
+          <div className="bg-surface border border-white/10 rounded-2xl overflow-hidden">
 
-              {/* --- UPDATED PRICE SECTION WITH CASH VALIDATION --- */}
-              {/* --- UPDATED PRICE SECTION WITH RED INPUT WARNING --- */}
-              {(() => {
-                const totalPurchaseCost = (parseFloat(invForm.packQty) || 0) * (parseFloat(invForm.costPerPack) || 0);
-                const isOverBudget = cashOnHand < totalPurchaseCost;
+            {/* Header */}
+            <div className="border-b border-white/8 px-4 py-3 flex items-center gap-2">
+              <Package size={14} className="text-accent flex-shrink-0" />
+              <h3 className="font-black text-fg tracking-widest text-xs uppercase">Receive Inventory</h3>
+            </div>
 
-                return (
+            <div className="p-3">
+              {/* ── BENTO GRID ── */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mb-2">
+
+                {/* ══ TILE 1 · ITEM ══ */}
+                <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-[3px] h-4 rounded-full bg-accent" />
+                    <span className="text-[9px] font-black uppercase tracking-widest text-fg/40">Item</span>
+                  </div>
+
                   <div>
-                    <div className="flex justify-between items-end mb-1">
-                      <label className={`text-[10px] uppercase font-bold transition-colors ${isOverBudget ? 'text-red-400' : 'text-gray-400'}`}>
-                        Price Paid Per Pack/Can (P)
-                      </label>
-                      <span className={`text-[10px] font-bold tracking-wider ${isOverBudget ? 'text-red-400 animate-pulse' : 'text-green-400'}`}>
-                        Available Cash: ₱{cashOnHand.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                    
+                    <label className="text-[10px] text-fg/40 font-bold uppercase tracking-wider block mb-1">Item Name</label>
                     <input
-                      type="number"
-                      placeholder="e.g., 45.00"
-                      value={invForm.costPerPack}
-                      onChange={e => setInvForm({...invForm, costPerPack: e.target.value})}
-                      className={`w-full bg-page-bg border rounded p-2 outline-none transition-all ${
-                        isOverBudget
-                        ? 'border-red-500  text-red-400 focus:border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.2)]'
-                        : 'border-white/10 text-fg focus:border-accent'
-                      }`}
+                      type="text"
+                      list="inventory-names"
+                      placeholder="e.g., Condensed Milk"
+                      value={invForm.itemName}
+                      onChange={e => {
+                        const typed = e.target.value;
+                        const match = inventory.find(i => i.itemName.toLowerCase() === typed.toLowerCase());
+                        setInvForm({...invForm, itemName: typed, unit: match ? match.unit : invForm.unit});
+                      }}
+                      className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/15 transition placeholder:text-fg/15"
                     />
-                    {/* Price-change + WAC preview on restock. Pack-based in both
-                        modes now; packInfo() falls back to the plain display unit
-                        for items with no pack size, so this stays correct. */}
-                    {(() => {
-                      const existingItem = inventory.find(i => i.itemName.toLowerCase() === invForm.itemName.toLowerCase().trim());
-                      if (!existingItem || !invForm.costPerPack) return null;
-                      const pack = packInfo(existingItem);
-                      const packBase = pack.packBase || 1;
-                      const oldCostPerPack = (existingItem.unitCost || 0) * packBase;
-                      const newCostPerPack = parseFloat(invForm.costPerPack);
-                      if (!oldCostPerPack && !newCostPerPack) return null;
-                      const isUp = newCostPerPack > oldCostPerPack;
-                      const isSame = Math.abs(newCostPerPack - oldCostPerPack) < 0.005;
-                      // WAC preview: addedStock in base units = qty * packBase
-                      const addedStockBase = (parseFloat(invForm.packQty) || 0) * packBase;
-                      const addedCost = (parseFloat(invForm.packQty) || 0) * newCostPerPack;
-                      const wacBase = (existingItem.stockQty + addedStockBase) > 0
-                        ? (existingItem.stockQty * existingItem.unitCost + addedCost) / (existingItem.stockQty + addedStockBase)
-                        : 0;
-                      const wacPerPack = wacBase * packBase;
-                      return (
-                        <div className={`mt-1.5 rounded p-2 text-[10px] font-bold flex flex-col gap-0.5 ${isSame ? 'bg-white/5 border border-white/10' : isUp ? 'bg-red-500/10 border border-red-500/20' : 'bg-green-500/10 border border-green-500/20'}`}>
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">Previous cost/pack:</span>
-                            <span className="font-mono text-fg">₱{oldCostPerPack.toFixed(2)}</span>
+                    <datalist id="inventory-names">
+                      {inventory.map(inv => <option key={inv._id} value={inv.itemName} />)}
+                    </datalist>
+                    {inventory.some(i => i.itemName.toLowerCase() === invForm.itemName.toLowerCase().trim()) && (
+                      <div className="mt-1.5 flex items-center gap-1.5 bg-accent/10 border border-accent/20 rounded-md px-2 py-1">
+                        <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse flex-shrink-0" />
+                        <p className="text-[10px] text-accent font-black uppercase tracking-wide">Restock — existing item</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-5 gap-2">
+                    <div className="col-span-2">
+                      <label className="text-[10px] text-fg/40 font-bold uppercase tracking-wider block mb-1">Qty</label>
+                      <input type="number" placeholder="0" value={invForm.packQty} onChange={e => setInvForm({...invForm, packQty: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/15 transition placeholder:text-fg/15" />
+                    </div>
+                    <div className="col-span-3">
+                      <label className="text-[10px] text-fg/40 font-bold uppercase tracking-wider block mb-1">Unit</label>
+                      <select value={invForm.unit} onChange={e => setInvForm({...invForm, unit: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 transition">
+                        <option value="" disabled>Select…</option>
+                        <option value="L">Liters (L)</option>
+                        <option value="kg">Kilograms (kg)</option>
+                        <option value="pcs">Pieces (pcs)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase tracking-wider block mb-1">
+                      Per-Pack Size <span className="text-fg/25 normal-case font-normal">· {invForm.unit || 'unit'}/pack</span>
+                    </label>
+                    <input type="number" placeholder="e.g., 1" value={invForm.unitPerPack} onChange={e => setInvForm({...invForm, unitPerPack: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/15 transition placeholder:text-fg/15" />
+                    <p className="text-[9px] text-fg/25 mt-1">{BUSINESS_TYPE === 'log' ? 'Appended to item name, e.g. "Milk 1L".' : 'How much one pack holds in the selected unit.'}</p>
+                  </div>
+                </div>
+
+                {/* ══ TILE 2 · PRICING ══ */}
+                <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-[3px] h-4 rounded-full bg-yellow-400/70" />
+                    <span className="text-[9px] font-black uppercase tracking-widest text-fg/40">Pricing</span>
+                  </div>
+                  {(() => {
+                    const totalPurchaseCost = (parseFloat(invForm.packQty) || 0) * (parseFloat(invForm.costPerPack) || 0);
+                    const isOverBudget = cashOnHand < totalPurchaseCost;
+                    return (
+                      <>
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className={`text-[10px] font-bold uppercase tracking-wider transition-colors ${isOverBudget ? 'text-red-400' : 'text-fg/40'}`}>Price / Pack (₱)</label>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full tabular-nums ${isOverBudget ? 'bg-red-500/15 text-red-400 animate-pulse' : 'bg-green-500/10 text-green-400'}`}>
+                              Cash ₱{cashOnHand.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </span>
                           </div>
-                          {!isSame && (
-                            <div className="flex justify-between">
-                              <span className={isUp ? 'text-red-400' : 'text-green-400'}>{isUp ? '▲ Price increase' : '▼ Price decrease'}</span>
-                              <span className={`font-mono ${isUp ? 'text-red-400' : 'text-green-400'}`}>{isUp ? '+' : ''}{(newCostPerPack - oldCostPerPack).toFixed(2)}</span>
-                            </div>
-                          )}
-                          {invForm.packQty && (
-                            <div className="flex justify-between border-t border-white/10 pt-0.5 mt-0.5">
-                              <span className="text-accent">New WAC/pack after restock:</span>
-                              <span className="font-mono text-accent">₱{wacPerPack.toFixed(2)}</span>
-                            </div>
-                          )}
+                          <input
+                            type="number"
+                            placeholder="e.g., 45.00"
+                            value={invForm.costPerPack}
+                            onChange={e => setInvForm({...invForm, costPerPack: e.target.value})}
+                            className={`w-full bg-page-bg border rounded-lg px-3 py-2.5 text-sm outline-none transition-all ${isOverBudget ? 'border-red-500/50 text-red-400 focus:border-red-400 shadow-[0_0_10px_rgba(239,68,68,0.12)]' : 'border-white/10 text-fg focus:border-accent/50 focus:ring-1 focus:ring-accent/15'}`}
+                          />
+                          {(() => {
+                            const existingItem = inventory.find(i => i.itemName.toLowerCase() === invForm.itemName.toLowerCase().trim());
+                            if (!existingItem || !invForm.costPerPack) return null;
+                            const pack = packInfo(existingItem);
+                            const packBase = pack.packBase || 1;
+                            const oldCostPerPack = (existingItem.unitCost || 0) * packBase;
+                            const newCostPerPack = parseFloat(invForm.costPerPack);
+                            if (!oldCostPerPack && !newCostPerPack) return null;
+                            const isUp = newCostPerPack > oldCostPerPack;
+                            const isSame = Math.abs(newCostPerPack - oldCostPerPack) < 0.005;
+                            const addedStockBase = (parseFloat(invForm.packQty) || 0) * packBase;
+                            const addedCost = (parseFloat(invForm.packQty) || 0) * newCostPerPack;
+                            const wacBase = (existingItem.stockQty + addedStockBase) > 0 ? (existingItem.stockQty * existingItem.unitCost + addedCost) / (existingItem.stockQty + addedStockBase) : 0;
+                            const wacPerPack = wacBase * packBase;
+                            return (
+                              <div className={`mt-2 rounded-lg px-3 py-2 text-[10px] font-bold flex flex-col gap-1 ${isSame ? 'bg-white/5 border border-white/8' : isUp ? 'bg-red-500/8 border border-red-500/15' : 'bg-green-500/8 border border-green-500/15'}`}>
+                                <div className="flex justify-between text-fg/50"><span>Prev cost/pack</span><span className="font-mono">₱{oldCostPerPack.toFixed(2)}</span></div>
+                                {!isSame && <div className="flex justify-between"><span className={isUp ? 'text-red-400' : 'text-green-400'}>{isUp ? '▲ Up' : '▼ Down'}</span><span className={`font-mono ${isUp ? 'text-red-400' : 'text-green-400'}`}>{isUp ? '+' : ''}{(newCostPerPack - oldCostPerPack).toFixed(2)}</span></div>}
+                                {invForm.packQty && <div className="flex justify-between border-t border-white/8 pt-1 mt-0.5 text-accent"><span>New WAC/pack</span><span className="font-mono">₱{wacPerPack.toFixed(2)}</span></div>}
+                              </div>
+                            );
+                          })()}
                         </div>
-                      );
-                    })()}
+                        {(invForm.packQty && invForm.unitPerPack && invForm.costPerPack && invForm.unit) && (
+                          <div className="bg-accent/8 border border-accent/15 rounded-lg px-4 py-3 space-y-1.5">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-accent/50 mb-2">Summary</p>
+                            <div className="flex justify-between text-[11px]"><span className="text-fg/50">Stock added</span><span className="font-bold text-fg tabular-nums">{(invForm.packQty * invForm.unitPerPack).toLocaleString()} {invForm.unit}</span></div>
+                            <div className="flex justify-between text-[11px]"><span className="text-fg/50">Cost per {invForm.unit}</span><span className="font-bold text-fg tabular-nums">₱{(invForm.costPerPack / invForm.unitPerPack).toFixed(4)}</span></div>
+                            <div className="flex justify-between text-[13px] font-black border-t border-accent/15 pt-2 mt-1">
+                              <span className="text-fg/60">Total cost</span>
+                              <span className={`tabular-nums ${cashOnHand < (invForm.packQty * invForm.costPerPack) ? 'text-red-400' : 'text-accent'}`}>₱{(invForm.packQty * invForm.costPerPack).toFixed(2)}</span>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+
+                {/* ══ TILE 3 · STORAGE & EXPIRY ══ */}
+                <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-[3px] h-4 rounded-full bg-blue-400/70" />
+                    <span className="text-[9px] font-black uppercase tracking-widest text-fg/40">Storage & Expiry</span>
                   </div>
-                );
-              })()}
-
-              <div>
-                <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Per-Qty Size (Weight/Vol per pack)</label>
-                <input type="number" placeholder={`Per pack, in ${invForm.unit || 'unit'}`} value={invForm.unitPerPack} onChange={e => setInvForm({...invForm, unitPerPack: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent" />
-                <p className="text-[9px] text-gray-500 mt-1">
-                  {BUSINESS_TYPE === 'log'
-                    ? 'Appended to the item name for new items, e.g. "Milk 1L".'
-                    : 'How much one purchased pack holds. Set it so stock counts in packs and cost shows per pack.'}
-                </p>
-              </div>
-
-              {(invForm.packQty && invForm.unitPerPack && invForm.costPerPack && invForm.unit) && (
-                <div className="bg-page-bg/50 p-3 rounded border border-white/10 text-sm">
-                  <p className="text-fg font-bold mb-1">System will save to inventory:</p>
-                  <div className="flex justify-between font-bold text-fg mb-1">
-                    <span>Total Stock Added:</span>
-                    <span className="text-fg">{(invForm.packQty * invForm.unitPerPack).toLocaleString()} {invForm.unit}</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-fg/40 font-bold uppercase tracking-wider block mb-1">Location</label>
+                      <select value={invForm.stockLocation || ''} onChange={e => setInvForm({ ...invForm, stockLocation: e.target.value })} className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 transition">
+                        <option value="">None</option>
+                        {(stockLocations || []).filter(l => l.isActive !== false).map(l => <option key={l._id} value={l.name}>{l.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-fg/40 font-bold uppercase tracking-wider block mb-1">Category</label>
+                      <select value={invForm.stockCategory || ''} onChange={e => setInvForm({ ...invForm, stockCategory: e.target.value })} className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 transition">
+                        <option value="">None</option>
+                        {(stockCategories || []).filter(c => c.isActive !== false).map(c => <option key={c._id} value={c.name}>{c.name}{c.prefix ? ` (${c.prefix})` : ''}</option>)}
+                      </select>
+                    </div>
                   </div>
-                  <div className="flex justify-between font-bold text-fg mb-1">
-                    <span>Cost per {invForm.unit}:</span>
-                    <span className="text-fg">P{(invForm.costPerPack / invForm.unitPerPack).toFixed(4)}</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-fg/40 font-bold uppercase tracking-wider block mb-1">Low Stock Alert <span className="text-fg/25 font-normal normal-case">({invForm.unit || 'unit'})</span></label>
+                      <input type="number" min="0" placeholder="0 = off" value={invForm.lowStockThreshold || ''} onChange={e => setInvForm({...invForm, lowStockThreshold: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/15 transition placeholder:text-fg/15" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-fg/40 font-bold uppercase tracking-wider block mb-1">Expiry Date</label>
+                      <input type="date" value={invForm.expiryDate || ''} onChange={e => setInvForm({...invForm, expiryDate: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 transition" />
+                    </div>
                   </div>
-                  
-                  {/* --- NEW: TOTAL COST ROW --- */}
-                  <div className="flex justify-between font-bold text-fg border-t border-white/10 pt-2 mt-2">
-                    <span>Total Purchase Cost:</span>
-                    <span className={cashOnHand < (invForm.packQty * invForm.costPerPack) ? "text-red-400" : "text-fg"}>
-                      P{(invForm.packQty * invForm.costPerPack).toFixed(2)}
-                    </span>
+                  {invForm.expiryDate && (
+                    <div>
+                      <label className="text-[10px] text-fg/40 font-bold uppercase tracking-wider block mb-1">Warn days before expiry</label>
+                      <input type="number" min="1" max="365" value={invForm.expiryWarnDays} onChange={e => setInvForm({...invForm, expiryWarnDays: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 transition" />
+                      <p className="text-[9px] text-fg/25 mt-1">FEFO: oldest expiry consumed first.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* ══ TILE 4 · PAYMENT ══ */}
+                <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-[3px] h-4 rounded-full bg-green-400/70" />
+                    <span className="text-[9px] font-black uppercase tracking-widest text-fg/40">Payment</span>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase tracking-wider block mb-1">Paid From / Charge To</label>
+                    <select
+                      value={invForm.creditAccount || ''}
+                      onChange={e => setInvForm({...invForm, creditAccount: e.target.value})}
+                      className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 transition"
+                    >
+                      <option value="" disabled>Select payment source</option>
+                      {(procurementCreditAccounts || []).map(a => (
+                        <option key={a.code} value={a.code}>{a.name} ({a.code}){String(a.code).startsWith('220') ? ' · On Credit' : ''}</option>
+                      ))}
+                    </select>
+                    {String(invForm.creditAccount || '').startsWith('220') && (
+                      <p className="text-[9px] text-yellow-400/70 mt-1.5 bg-yellow-500/8 border border-yellow-500/15 rounded-md px-2 py-1">
+                        Goods on credit — settle later via AP payment.
+                      </p>
+                    )}
                   </div>
                 </div>
-              )}
-              
-              <div>
-                <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Low Stock Alert Threshold ({invForm.unit || 'unit'})</label>
-                <input type="number" min="0" placeholder="e.g., 500" value={invForm.lowStockThreshold || ''} onChange={e => setInvForm({...invForm, lowStockThreshold: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent text-sm" />
-                <p className="text-[9px] text-gray-600 mt-1">Alert fires when stock drops to or below this number. Leave 0 to disable.</p>
-              </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Expiry Date (optional)</label>
-                  <input type="date" value={invForm.expiryDate || ''} onChange={e => setInvForm({...invForm, expiryDate: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent text-sm" />
-                </div>
-                <div>
-                  <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Warn (days before)</label>
-                  <input type="number" min="1" max="365" value={invForm.expiryWarnDays} onChange={e => setInvForm({...invForm, expiryWarnDays: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent text-sm" />
-                </div>
-              </div>
-              <p className="text-[9px] text-gray-600 -mt-2">For perishables. When restocking, soonest expiry across batches is kept (FEFO).</p>
+              </div>{/* end bento grid */}
 
-              {/* #7 storage place + stock category tags */}
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Storage Location</label>
-                  <select value={invForm.stockLocation || ''} onChange={e => setInvForm({ ...invForm, stockLocation: e.target.value })} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent text-sm">
-                    <option value="">- None -</option>
-                    {(stockLocations || []).filter(l => l.isActive !== false).map(l => <option key={l._id} value={l.name}>{l.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Stock Category</label>
-                  <select value={invForm.stockCategory || ''} onChange={e => setInvForm({ ...invForm, stockCategory: e.target.value })} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent text-sm">
-                    <option value="">- None -</option>
-                    {(stockCategories || []).filter(c => c.isActive !== false).map(c => <option key={c._id} value={c.name}>{c.name}{c.prefix ? ` (${c.prefix})` : ''}</option>)}
-                  </select>
-                </div>
-              </div>
-              <p className="text-[9px] text-gray-600 -mt-2">Manage places &amp; categories in the <span className="font-bold text-fg/70">Places &amp; Categories</span> sub-tab. A category with a prefix auto-numbers the item code (e.g. P1 → P10001).</p>
-
-              {/* --- CREDIT ACCOUNT SELECTOR (dynamic from COA) --- */}
-              <div>
-                <label className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">Paid From / Charge To</label>
-                <select
-                  value={invForm.creditAccount || ''}
-                  onChange={e => setInvForm({...invForm, creditAccount: e.target.value})}
-                  className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none focus:border-accent text-sm"
-                >
-                  <option value="" disabled>- Select payment source -</option>
-                  {(procurementCreditAccounts || []).map(a => (
-                    <option key={a.code} value={a.code}>
-                      {a.name} ({a.code}){String(a.code).startsWith('220') ? ' - Buy on Credit' : ''}
-                    </option>
-                  ))}
-                </select>
-                {String(invForm.creditAccount || '').startsWith('220') && (
-                  <p className="text-[9px] text-yellow-500/80 mt-1">Goods received on credit. Settle later via Add Expense → AP payment.</p>
-                )}
-                <p className="text-[9px] text-gray-600 mt-1">Add sub-accounts under Cash/Bank/AP via Ledger → COA to extend this list.</p>
-              </div>
-
-              {/* --- SUBMIT BUTTON: only block when paying from a cash/bank account with insufficient funds.
-                   Any AP sub-account (220xxx) means buy-on-credit, so cash check doesn't apply. --- */}
+              {/* ══ SUBMIT ══ */}
               {(() => {
                 const isApAccount = String(invForm.creditAccount || '').startsWith('220');
                 const totalCost = (parseFloat(invForm.packQty) || 0) * (parseFloat(invForm.costPerPack) || 0);
@@ -1017,7 +1029,7 @@ export default function InventoryTab({ ctx }) {
                   <button
                     onClick={addInventory}
                     disabled={blocked}
-                    className={`w-full font-bold py-3 rounded transition shadow-lg ${blocked ? 'bg-white/10 text-white cursor-not-allowed' : 'bg-accent text-white hover:bg-page-bg hover:text-accent shadow-accent/20'}`}
+                    className={`w-full font-black py-4 rounded-xl transition-all text-sm tracking-widest uppercase ${blocked ? 'bg-white/5 text-fg/25 cursor-not-allowed border border-white/8' : 'bg-accent text-white hover:brightness-110 active:scale-[0.99] shadow-xl shadow-accent/25'}`}
                   >
                     {blocked ? 'Insufficient Funds' : 'Add to Stock'}
                   </button>
@@ -1025,8 +1037,7 @@ export default function InventoryTab({ ctx }) {
               })()}
             </div>
           </div>
-          </div>
+          </>)}
         </div>
-      </div>
   );
 }

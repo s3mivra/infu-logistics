@@ -116,7 +116,10 @@ UserCard.displayName = 'UserCard';
 const NAV_ITEMS = [
   { id: 'users', label: 'User Control',  icon: Users },
   { id: 'roles', label: 'Access Roles',  icon: Tag },
-  ...(BUSINESS_TYPE === 'log' ? [{ id: 'clients', label: 'Client Accounts', icon: Package }] : []),
+  ...(BUSINESS_TYPE === 'log' ? [
+    { id: 'clients', label: 'Client Accounts', icon: Package },
+    { id: 'tiers', label: 'Price Tiers', icon: Tag },
+  ] : []),
 ];
 
 function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }) {
@@ -241,6 +244,17 @@ export default function SuperAdminPanel() {
   // Client accounts (logistics mode)
   const [clients, setClients]           = useState([]);
   const [clientsLoading, setClientsLoading] = useState(false);
+  const [priceTiers, setPriceTiers]     = useState([]);
+  const [tierModal, setTierModal]       = useState({ open: false, mode: 'create', tier: null });
+  const [tierForm, setTierForm]         = useState({ name: '', percent: '', pricingMode: 'percent', note: '', isActive: true });
+  const [tierFormError, setTierFormError]     = useState('');
+  const [tierFormLoading, setTierFormLoading] = useState(false);
+  const [tierView, setTierView] = useState('list'); // 'list' | 'table' - the pricing table across every tier
+  const [pricingTable, setPricingTable] = useState({ products: [], tiers: [] });
+  const [pricingTableLoading, setPricingTableLoading] = useState(false);
+  const [productPriceModal, setProductPriceModal] = useState({ open: false, tier: null });
+  const [productPriceRows, setProductPriceRows] = useState({}); // { [productId]: string }
+  const [productPriceSaving, setProductPriceSaving] = useState(false);
   const [clientModal, setClientModal]   = useState({ open: false, mode: 'create', client: null });
   // Reset-password flow: confirm your OWN password first, then a freshly-
   // generated client password is shown exactly once (it can't be shown again
@@ -542,6 +556,127 @@ export default function SuperAdminPanel() {
     if (isAuthenticated) fetchClients();
   }, [isAuthenticated, fetchClients]);
 
+  // Price tiers - the canonical customer classes (Dealer, Satellite, ...). The
+  // segment picker below assigns these by name; typing them free-hand is what
+  // used to silently break the discount when the casing didn't match the
+  // override on the product.
+  const fetchPriceTiers = useCallback(async () => {
+    if (BUSINESS_TYPE !== 'log') return;
+    try {
+      const res = await apiFetch('/api/price-tiers');
+      if (res.ok) setPriceTiers((await res.json()).tiers || []);
+    } catch { /* non-fatal - picker falls back to whatever tags exist */ }
+  }, [apiFetch]);
+
+  useEffect(() => {
+    if (isAuthenticated) fetchPriceTiers();
+  }, [isAuthenticated, fetchPriceTiers]);
+
+  const openTierCreate = () => {
+    setTierForm({ name: '', percent: '', pricingMode: 'percent', note: '', isActive: true });
+    setTierFormError('');
+    setTierModal({ open: true, mode: 'create', tier: null });
+  };
+
+  const openTierEdit = (tier) => {
+    setTierForm({ name: tier.name, percent: String(tier.percent ?? 0), pricingMode: tier.pricingMode === 'per_product' ? 'per_product' : 'percent', note: tier.note || '', isActive: tier.isActive !== false });
+    setTierFormError('');
+    setTierModal({ open: true, mode: 'edit', tier });
+  };
+
+  const closeTierModal = () => setTierModal({ open: false, mode: 'create', tier: null });
+
+  const handleTierSubmit = async (e) => {
+    e.preventDefault();
+    setTierFormError('');
+    if (!tierForm.name.trim()) { setTierFormError('Tier name is required.'); return; }
+    setTierFormLoading(true);
+    const body = {
+      name: tierForm.name.trim(),
+      percent: Math.max(0, Math.min(100, parseFloat(tierForm.percent) || 0)),
+      pricingMode: tierForm.pricingMode,
+      note: tierForm.note.trim(),
+      isActive: tierForm.isActive,
+    };
+    try {
+      const isCreate = tierModal.mode === 'create';
+      const res = await apiFetch(
+        isCreate ? '/api/price-tiers' : `/api/price-tiers/${tierModal.tier._id}`,
+        { method: isCreate ? 'POST' : 'PUT', body: JSON.stringify(body) },
+      );
+      const data = await res.json();
+      if (data.success) {
+        // A rename cascades onto every tagged client, so refresh both lists.
+        showToast(data.retagged ? `Tier saved. ${data.retagged} client${data.retagged === 1 ? '' : 's'} re-tagged.` : 'Tier saved.');
+        closeTierModal(); fetchPriceTiers(); fetchClients(); fetchPricingTable();
+        // Per-product tiers need a price for every product - walk straight into
+        // that screen instead of leaving a freshly-created tier with no rates.
+        if (data.tier.pricingMode === 'per_product') openProductPricing(data.tier);
+      } else setTierFormError(data.error || 'Failed to save tier.');
+    } catch { setTierFormError('Network error.'); }
+    finally { setTierFormLoading(false); }
+  };
+
+  // -------------------------------------------------------------------------
+  // Pricing table + per-product tier price list
+  const fetchPricingTable = useCallback(async () => {
+    if (BUSINESS_TYPE !== 'log') return;
+    setPricingTableLoading(true);
+    try {
+      const res = await apiFetch('/api/price-tiers/pricing-table');
+      if (res.ok) setPricingTable(await res.json());
+    } catch { /* non-fatal */ } finally { setPricingTableLoading(false); }
+  }, [apiFetch]);
+
+  useEffect(() => {
+    if (isAuthenticated) fetchPricingTable();
+  }, [isAuthenticated, fetchPricingTable]);
+
+  const openProductPricing = (tier) => {
+    // Pre-fill from the pricing table's already-resolved prices for this tier -
+    // for a per_product tier a resolved value IS the stored row; a product with
+    // no row resolves to null and starts blank (this tier grants nothing for it
+    // until a price is typed in).
+    const row = pricingTable.tiers.find(t => t._id === tier._id);
+    const rows = {};
+    for (const p of pricingTable.products) {
+      const v = row?.prices?.[p._id];
+      rows[p._id] = v === null || v === undefined ? '' : String(v);
+    }
+    setProductPriceRows(rows);
+    setProductPriceModal({ open: true, tier });
+  };
+
+  const closeProductPricing = () => setProductPriceModal({ open: false, tier: null });
+
+  const handleProductPricingSubmit = async () => {
+    setProductPriceSaving(true);
+    const prices = Object.entries(productPriceRows)
+      .filter(([, v]) => v !== '' && v !== null && !Number.isNaN(parseFloat(v)))
+      .map(([productId, v]) => ({ productId, price: Math.max(0, parseFloat(v)) }));
+    try {
+      const res = await apiFetch(`/api/price-tiers/${productPriceModal.tier._id}/products`, { method: 'PUT', body: JSON.stringify({ prices }) });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Prices saved for ${prices.length} of ${pricingTable.products.length} products.`);
+        closeProductPricing(); fetchPricingTable(); fetchPriceTiers();
+      } else showToast(data.error || 'Failed to save prices.', 'error');
+    } catch { showToast('Network error.', 'error'); }
+    finally { setProductPriceSaving(false); }
+  };
+
+  const handleTierDelete = async (tier) => {
+    if (!confirm(`Remove price tier "${tier.name}"?`)) return;
+    try {
+      const res = await apiFetch(`/api/price-tiers/${tier._id}`, { method: 'DELETE' });
+      const data = await res.json();
+      // The server refuses while clients still carry the tag - surface that
+      // reason rather than a generic failure, it tells you what to do next.
+      if (data.success) { showToast('Tier removed.'); fetchPriceTiers(); }
+      else showToast(data.error || 'Failed to remove tier.', 'error');
+    } catch { showToast('Failed to remove tier.', 'error'); }
+  };
+
   const openClientCreate = () => {
     setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '', creditTermsDays: '', segments: '' });
     setClientFormError('');
@@ -807,6 +942,15 @@ export default function SuperAdminPanel() {
               New Client
             </button>
           )}
+          {activeSection === 'tiers' && (
+            <button
+              onClick={openTierCreate}
+              className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-fg font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex-shrink-0"
+            >
+              <Plus size={15} />
+              New Tier
+            </button>
+          )}
         </div>
 
         {/* ----------------------------------------------------------------- */}
@@ -893,6 +1037,145 @@ export default function SuperAdminPanel() {
                   ))
               }
             </div>
+          </div>
+        )}
+
+        {/* ----------------------------------------------------------------- */}
+        {/* PRICE TIERS SECTION (logistics mode only)                         */}
+        {/* ----------------------------------------------------------------- */}
+        {activeSection === 'tiers' && (
+          <div className="flex-1 p-6 space-y-3">
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+              <p className="text-[11px] text-fg/50 leading-relaxed">
+                A tier is a class of customer &mdash; <span className="text-fg/80 font-bold">Dealer</span>, <span className="text-fg/80 font-bold">Satellite</span>, <span className="text-fg/80 font-bold">Wholesale</span>.
+                Give it either a flat <span className="text-fg/80 font-bold">Default %</span> off every product, or a full <span className="text-fg/80 font-bold">Price List</span> with an
+                exact price per product. Assign a client to a tier in <span className="text-fg/80 font-bold">Client Accounts</span>.
+              </p>
+              <p className="text-[11px] text-fg/35 leading-relaxed mt-2">
+                Need one product priced differently for a <em>Default %</em> tier? Add a <span className="text-fg/60 font-bold">Segment Override</span> on that product
+                (Products tab). A per-client override beats everything.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="flex bg-white/5 p-1 rounded-xl">
+                <button
+                  onClick={() => setTierView('list')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${tierView === 'list' ? 'bg-brand text-white' : 'text-fg/50 hover:text-fg'}`}
+                >Tiers</button>
+                <button
+                  onClick={() => setTierView('table')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${tierView === 'table' ? 'bg-brand text-white' : 'text-fg/50 hover:text-fg'}`}
+                >Pricing Table</button>
+              </div>
+            </div>
+
+            {tierView === 'list' ? (
+              priceTiers.length === 0 ? (
+                <div className="flex flex-col items-center py-20 text-center">
+                  <Tag size={40} className="text-fg/10 mb-4" />
+                  <p className="text-fg/40 font-bold text-sm">No price tiers yet.</p>
+                  <button
+                    onClick={openTierCreate}
+                    className="mt-4 flex items-center gap-2 bg-brand/20 hover:bg-brand/30 text-brand font-bold px-4 py-2 rounded-xl transition text-sm"
+                  >
+                    <Plus size={14} /> Add First Tier
+                  </button>
+                </div>
+              ) : priceTiers.map(tier => {
+                const assigned = clients.filter(c => (c.segments || []).some(s => s.toLowerCase() === tier.name.toLowerCase())).length;
+                const isPerProduct = tier.pricingMode === 'per_product';
+                const priced = isPerProduct ? (pricingTable.tiers.find(t => t._id === tier._id)?.prices
+                  ? Object.values(pricingTable.tiers.find(t => t._id === tier._id).prices).filter(v => v !== null).length : 0) : null;
+                return (
+                  <div key={tier._id} className="flex items-center gap-4 p-4 rounded-xl border bg-white/5 border-white/5 hover:border-white/15 transition-all">
+                    <div className="w-11 h-11 rounded-xl bg-brand/15 border border-brand/25 flex items-center justify-center flex-shrink-0">
+                      {isPerProduct
+                        ? <Tag size={16} className="text-brand" />
+                        : <span className="text-brand font-black text-sm tabular-nums">{tier.percent}%</span>}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="font-bold text-fg text-sm truncate">{tier.name}</p>
+                        {tier.isActive === false && (
+                          <span className="text-[9px] font-black uppercase tracking-wider bg-white/10 text-fg/40 px-1.5 py-0.5 rounded">Inactive</span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-fg/40 truncate">
+                        {assigned} client{assigned === 1 ? '' : 's'}
+                        {isPerProduct
+                          ? ` · price list · ${priced}/${pricingTable.products.length} products priced`
+                          : ''}
+                        {tier.note ? ` · ${tier.note}` : ''}
+                      </p>
+                    </div>
+                    {isPerProduct && (
+                      <button
+                        onClick={() => openProductPricing(tier)}
+                        className="text-[11px] font-bold text-brand hover:text-fg transition px-3 py-2 flex-shrink-0"
+                      >Set Prices</button>
+                    )}
+                    <button
+                      onClick={() => openTierEdit(tier)}
+                      className="text-[11px] font-bold text-fg/50 hover:text-brand transition px-3 py-2 flex-shrink-0"
+                    >Edit</button>
+                    <button
+                      onClick={() => handleTierDelete(tier)}
+                      className="text-[11px] font-bold text-red-400/70 hover:text-red-400 transition px-3 py-2 flex-shrink-0"
+                    >Remove</button>
+                  </div>
+                );
+              })
+            ) : (
+              // ── PRICING TABLE: every product x every tier's resolved price ──
+              pricingTableLoading ? (
+                <div className="flex justify-center py-20"><Loader2 size={24} className="animate-spin text-fg/30" /></div>
+              ) : pricingTable.products.length === 0 ? (
+                <p className="text-fg/40 text-sm text-center py-20">No products yet - add some in the Products tab.</p>
+              ) : pricingTable.tiers.length === 0 ? (
+                <p className="text-fg/40 text-sm text-center py-20">No price tiers yet - create one to see prices here.</p>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-white/10">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-white/5 border-b border-white/10">
+                        <th className="text-left px-4 py-3 font-black text-[10px] uppercase tracking-widest text-fg/40 sticky left-0 bg-sidebar-bg">Product</th>
+                        <th className="text-right px-4 py-3 font-black text-[10px] uppercase tracking-widest text-fg/40">List Price</th>
+                        {pricingTable.tiers.map(t => (
+                          <th key={t._id} className="text-right px-4 py-3 font-black text-[10px] uppercase tracking-widest text-fg/40 whitespace-nowrap">
+                            {t.name}{t.isActive === false ? ' (inactive)' : ''}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pricingTable.products.map(p => (
+                        <tr key={p._id} className="border-b border-white/5 hover:bg-white/[0.03]">
+                          <td className="px-4 py-2.5 text-fg font-bold truncate max-w-[220px] sticky left-0 bg-sidebar-bg">{p.name}</td>
+                          <td className="px-4 py-2.5 text-right text-fg/50 font-mono tabular-nums">₱{Number(p.basePrice || 0).toFixed(2)}</td>
+                          {pricingTable.tiers.map(t => {
+                            const price = t.prices[p._id];
+                            const off = price !== null && p.basePrice > 0 ? Math.round((1 - price / p.basePrice) * 100) : null;
+                            return (
+                              <td key={t._id} className="px-4 py-2.5 text-right font-mono tabular-nums">
+                                {price === null ? (
+                                  <span className="text-fg/20">&mdash;</span>
+                                ) : (
+                                  <span className={off > 0 ? 'text-brand font-bold' : 'text-fg/70'}>
+                                    ₱{price.toFixed(2)}
+                                    {off > 0 && <span className="text-[9px] text-fg/30 ml-1">-{off}%</span>}
+                                  </span>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            )}
           </div>
         )}
 
@@ -1330,6 +1613,220 @@ export default function SuperAdminPanel() {
       )}
 
       {/* =================================================================== */}
+      {/* PRICE TIER CREATE / EDIT MODAL                                       */}
+      {/* =================================================================== */}
+      {tierModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md animate-fade-in">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
+              <div>
+                <h2 className="font-black text-fg text-lg">
+                  {tierModal.mode === 'create' ? 'New Price Tier' : 'Edit Price Tier'}
+                </h2>
+                <p className="text-fg/40 text-xs mt-0.5">
+                  {tierModal.mode === 'create' ? 'A customer class with its own rate.' : `Editing ${tierModal.tier?.name}`}
+                </p>
+              </div>
+              <button onClick={closeTierModal} className="p-2 rounded-xl text-fg/30 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleTierSubmit} className="px-6 py-5 space-y-4">
+              <div>
+                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Tier Name</label>
+                <input
+                  type="text"
+                  value={tierForm.name}
+                  onChange={e => setTierForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder="e.g. Dealer"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                />
+                {tierModal.mode === 'edit' && (
+                  <p className="text-[10px] text-fg/30 mt-1.5 leading-relaxed">
+                    Renaming re-tags every client in this tier and every product override that names it, so nobody silently loses their rate.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Pricing Mode</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTierForm(f => ({ ...f, pricingMode: 'percent' }))}
+                    className={`text-left px-3 py-2.5 rounded-xl border text-xs transition ${tierForm.pricingMode === 'percent' ? 'bg-brand/15 border-brand/50 text-fg' : 'bg-white/5 border-white/10 text-fg/50 hover:border-white/20'}`}
+                  >
+                    <span className="font-bold block">Default %</span>
+                    <span className="text-[10px] opacity-70">One rate, every product</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTierForm(f => ({ ...f, pricingMode: 'per_product' }))}
+                    className={`text-left px-3 py-2.5 rounded-xl border text-xs transition ${tierForm.pricingMode === 'per_product' ? 'bg-brand/15 border-brand/50 text-fg' : 'bg-white/5 border-white/10 text-fg/50 hover:border-white/20'}`}
+                  >
+                    <span className="font-bold block">Price List</span>
+                    <span className="text-[10px] opacity-70">Set every product's price</span>
+                  </button>
+                </div>
+              </div>
+
+              {tierForm.pricingMode === 'percent' ? (
+                <div>
+                  <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Default Discount</label>
+                  <div className="relative">
+                    <input
+                      type="number" min="0" max="100" step="0.01"
+                      value={tierForm.percent}
+                      onChange={e => setTierForm(f => ({ ...f, percent: e.target.value }))}
+                      placeholder="e.g. 15"
+                      className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 pr-9 rounded-xl outline-none transition text-sm tabular-nums"
+                    />
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-fg/30 text-sm font-bold">%</span>
+                  </div>
+                  <p className="text-[10px] text-fg/30 mt-1.5 leading-relaxed">
+                    Comes off every product a client in this tier buys. 0 = tag only, no automatic rate.
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                  <p className="text-[11px] text-fg/50 leading-relaxed">
+                    {tierModal.mode === 'create'
+                      ? "You'll set a price for every product right after saving this tier."
+                      : "Use “Set Prices” on the tier list to edit this tier's price list."}
+                    A product with no price set here isn&rsquo;t discounted for this tier at all.
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Note</label>
+                <input
+                  type="text"
+                  value={tierForm.note}
+                  onChange={e => setTierForm(f => ({ ...f, note: e.target.value }))}
+                  placeholder="Optional"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                />
+              </div>
+
+              <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                <div>
+                  <span className="text-sm font-bold text-fg">Tier Active</span>
+                  <p className="text-[10px] text-fg/30 mt-0.5">Inactive tiers grant no rate but keep their tags.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTierForm(f => ({ ...f, isActive: !f.isActive }))}
+                  className={`w-11 h-6 rounded-full transition relative flex-shrink-0 ${tierForm.isActive ? 'bg-brand' : 'bg-white/15'}`}
+                  aria-label="Toggle tier active"
+                >
+                  <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${tierForm.isActive ? 'left-6' : 'left-1'}`} />
+                </button>
+              </div>
+
+              {tierFormError && (
+                <p className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{tierFormError}</p>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button" onClick={closeTierModal}
+                  className="flex-1 py-3 rounded-xl font-bold text-sm text-fg/60 hover:text-fg bg-white/5 hover:bg-white/10 transition"
+                >Cancel</button>
+                <button
+                  type="submit" disabled={tierFormLoading}
+                  className="flex-1 py-3 rounded-xl font-bold text-sm bg-brand hover:bg-brand-dark text-fg transition flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {tierFormLoading && <Loader2 size={14} className="animate-spin" />}
+                  {tierFormLoading ? 'Saving…' : 'Save Tier'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* PER-PRODUCT PRICE LIST EDITOR                                        */}
+      {/* =================================================================== */}
+      {productPriceModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col animate-fade-in">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 flex-shrink-0">
+              <div>
+                <h2 className="font-black text-fg text-lg">{productPriceModal.tier?.name} &mdash; Prices</h2>
+                <p className="text-fg/40 text-xs mt-0.5">
+                  One price per product. Blank = this tier grants no discount on that product.
+                </p>
+              </div>
+              <button onClick={closeProductPricing} className="p-2 rounded-xl text-fg/30 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 px-6 py-4">
+              {pricingTable.products.length === 0 ? (
+                <p className="text-fg/40 text-sm text-center py-10">No products yet - add some in the Products tab first.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {pricingTable.products.map(p => {
+                    const val = productPriceRows[p._id] ?? '';
+                    const off = val !== '' && p.basePrice > 0 ? Math.round((1 - parseFloat(val) / p.basePrice) * 100) : null;
+                    return (
+                      <div key={p._id} className="flex items-center gap-3 py-1.5">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-fg font-bold truncate">{p.name}</p>
+                          <p className="text-[10px] text-fg/35">List ₱{Number(p.basePrice || 0).toFixed(2)}{p.category ? ` · ${p.category}` : ''}</p>
+                        </div>
+                        {off !== null && (
+                          <span className={`text-[10px] font-bold tabular-nums w-14 text-right flex-shrink-0 ${off > 0 ? 'text-brand' : off < 0 ? 'text-red-400' : 'text-fg/30'}`}>
+                            {off > 0 ? `-${off}%` : off < 0 ? `+${Math.abs(off)}%` : '—'}
+                          </span>
+                        )}
+                        <div className="relative w-32 flex-shrink-0">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30 text-xs font-bold">₱</span>
+                          <input
+                            type="number" min="0" step="0.01"
+                            value={val}
+                            placeholder={Number(p.basePrice || 0).toFixed(2)}
+                            onChange={e => setProductPriceRows(r => ({ ...r, [p._id]: e.target.value }))}
+                            className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/15 pl-6 pr-2 py-2 rounded-lg outline-none transition text-xs tabular-nums text-right"
+                          />
+                        </div>
+                        {val !== '' && (
+                          <button
+                            type="button"
+                            onClick={() => setProductPriceRows(r => { const n = { ...r }; delete n[p._id]; return n; })}
+                            className="text-fg/20 hover:text-red-400 transition flex-shrink-0"
+                            aria-label={`Clear price for ${p.name}`}
+                          ><X size={13} /></button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2 px-6 py-4 border-t border-white/5 flex-shrink-0">
+              <button
+                type="button" onClick={closeProductPricing}
+                className="flex-1 py-3 rounded-xl font-bold text-sm text-fg/60 hover:text-fg bg-white/5 hover:bg-white/10 transition"
+              >Cancel</button>
+              <button
+                type="button" onClick={handleProductPricingSubmit} disabled={productPriceSaving}
+                className="flex-1 py-3 rounded-xl font-bold text-sm bg-brand hover:bg-brand-dark text-fg transition flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {productPriceSaving && <Loader2 size={14} className="animate-spin" />}
+                {productPriceSaving ? 'Saving…' : 'Save Prices'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
       {/* CLIENT ACCOUNT CREATE / EDIT MODAL                                   */}
       {/* =================================================================== */}
       {clientModal.open && (
@@ -1451,18 +1948,62 @@ export default function SuperAdminPanel() {
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Segments</label>
-                <input
-                  type="text"
-                  value={clientForm.segments}
-                  onChange={e => setClientForm(f => ({ ...f, segments: e.target.value }))}
-                  placeholder="e.g. wholesale, vip"
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
-                />
-                <p className="text-[10px] text-fg/30 mt-1.5 leading-relaxed">
-                  Comma-separated tags. A product's Segment Overrides (Products tab) give a
-                  special rate to any client tagged with a matching segment.
-                </p>
+                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Price Tier</label>
+                {(() => {
+                  // The form still stores segments as a comma string (that's what
+                  // the submit handler splits), but assignment is by click so the
+                  // tag always matches a real tier name exactly.
+                  const selected = (clientForm.segments || '').split(',').map(s => s.trim()).filter(Boolean);
+                  const toggle = (name) => {
+                    const has = selected.some(s => s.toLowerCase() === name.toLowerCase());
+                    const next = has
+                      ? selected.filter(s => s.toLowerCase() !== name.toLowerCase())
+                      : [...selected, name];
+                    setClientForm(f => ({ ...f, segments: next.join(', ') }));
+                  };
+                  // Tags already on the account that no longer match any tier -
+                  // typos from the old free-text field, or a since-deleted tier.
+                  const orphans = selected.filter(s => !priceTiers.some(t => t.name.toLowerCase() === s.toLowerCase()));
+                  return (
+                    <>
+                      {priceTiers.length === 0 ? (
+                        <p className="text-[11px] text-fg/40 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                          No price tiers yet. Create them in <span className="text-fg/70 font-bold">Price Tiers</span> below, then assign one here.
+                        </p>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {priceTiers.map(t => {
+                            const on = selected.some(s => s.toLowerCase() === t.name.toLowerCase());
+                            return (
+                              <button
+                                key={t._id}
+                                type="button"
+                                onClick={() => toggle(t.name)}
+                                className={`px-3 py-2 rounded-xl text-xs font-bold border transition ${
+                                  on
+                                  ? 'bg-brand/20 border-brand/50 text-brand'
+                                  : 'bg-white/5 border-white/10 text-fg/50 hover:border-white/25 hover:text-fg/80'
+                                } ${t.isActive === false ? 'opacity-40' : ''}`}
+                              >
+                                {t.name}
+                                {t.percent > 0 && <span className="ml-1.5 opacity-70 tabular-nums">{t.percent}%</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {orphans.length > 0 && (
+                        <p className="text-[10px] text-yellow-400/70 mt-2 bg-yellow-500/8 border border-yellow-500/20 rounded-lg px-3 py-2">
+                          Unrecognised tag{orphans.length === 1 ? '' : 's'}: <span className="font-bold">{orphans.join(', ')}</span>. No tier matches, so no automatic rate applies. Click a tier above to replace, or create a matching tier.
+                        </p>
+                      )}
+                      <p className="text-[10px] text-fg/30 mt-1.5 leading-relaxed">
+                        The tier&rsquo;s percent applies to every product this client buys. A product&rsquo;s
+                        Segment Override (Products tab) can set a different rate for that one product.
+                      </p>
+                    </>
+                  );
+                })()}
               </div>
 
               {clientModal.mode === 'edit' && (

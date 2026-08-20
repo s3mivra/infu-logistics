@@ -405,8 +405,17 @@ export default function ClientOrderPage() {
     return myOrders.filter(o => bucket.statuses.includes(o.status));
   }, [myOrders, orderFilter]);
 
+  // A PLACED order's line discount lives in TWO fields: productDiscountPercent
+  // (the server-resolved client/segment/price-tier rate, set at order creation)
+  // and discountPercent (a separate cashier-typed override on an existing
+  // order, added later by staff). The server's own math takes whichever is
+  // higher (see validateOrderMath) - reading only `discountPercent` here
+  // showed a tiered client the full undiscounted price even though the order
+  // total they were actually charged already had the tier rate applied.
+  const lineDiscPct = (it) => Math.max(Number(it.productDiscountPercent || 0), Number(it.discountPercent || 0));
+
   const orderTotal = useCallback((order) => (order?.items || []).reduce(
-    (s, i) => s + Number(i.price || 0) * (1 - Number(i.discountPercent || 0) / 100) * Number(i.quantity || 0), 0
+    (s, i) => s + Number(i.price || 0) * (1 - lineDiscPct(i) / 100) * Number(i.quantity || 0), 0
   ), []);
 
   // Renders the slip using the SAME shared A4 document template as the staff-side
@@ -416,7 +425,7 @@ export default function ClientOrderPage() {
     setSlipDownloading(true);
     try {
       const items = (order.items || []).map((it, idx) => {
-        const pct = Number(it.discountPercent || 0);
+        const pct = lineDiscPct(it);
         const unit = Number(it.price || 0) * (1 - pct / 100);
         return {
           code: it.productCode || String(idx + 1),
@@ -660,7 +669,7 @@ export default function ClientOrderPage() {
             printed a total made the two screens contradict each other. */}
         <div className="bg-sidebar-bg border border-white/10 rounded-2xl p-5 w-full max-w-sm mb-6 text-left space-y-2">
           {successOrder.items?.map((item, i) => {
-            const unit = Number(item.price || 0) * (1 - Number(item.discountPercent || 0) / 100);
+            const unit = Number(item.price || 0) * (1 - lineDiscPct(item) / 100);
             return (
               <div key={i} className="flex justify-between gap-3 text-sm">
                 <span className="text-fg font-bold min-w-0 truncate">
@@ -834,7 +843,7 @@ export default function ClientOrderPage() {
                 {items.length === 0 && <p className="text-[11.5px] text-accent italic py-2">No items on this order.</p>}
                 {items.map((item, i) => {
                   const gross = Number(item.price || 0);
-                  const pct = Number(item.discountPercent || 0);
+                  const pct = lineDiscPct(item);
                   // The unit selling price IS the SRP for these items; it now has its
                   // own column, so the old "₱x each" sub-line under the name is gone.
                   const unit = gross * (1 - pct / 100);

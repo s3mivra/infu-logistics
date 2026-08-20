@@ -240,7 +240,7 @@ export default function ProductsTab({ ctx }) {
     applyComplimentary, applyDiscount, applyItemDiscount, arOutstanding, archiveDay,
     archivedOrders, auditCancelPage, auditCompPage, auditDiscPage, auditFilter,
     auditStaffPage, bsData, calcRecipeCost, cashOnHand, cashTendered,
-    catForm, categories, clientAccounts, closeRfFund, collapsedOrders, compOverride,
+    catForm, categories, clientAccounts, priceTiers, closeRfFund, collapsedOrders, compOverride,
     compReasonNotes, compReasonTypes, compSelections, confirmPosItem, currentEntries,
     currentInventory, currentOrders, currentPage, currentPricingProducts, currentProducts,
     dailyMovement, deleteAddOn, deleteCategory, deleteInventory, deleteProduct,
@@ -764,17 +764,34 @@ export default function ProductsTab({ ctx }) {
                         className="text-[11px] font-black text-brand hover:text-fg transition">+ Add segment</button>
                     </div>
                     {(!formData.segmentDiscounts || formData.segmentDiscounts.length === 0) && (
-                      <p className="text-[10px] text-fg/30 italic">No segment rates yet - tag client accounts (e.g. "wholesale") in the Client Accounts panel, then add a matching rate here.</p>
+                      <p className="text-[10px] text-fg/30 italic">
+                        {(priceTiers || []).length === 0
+                          ? 'No price tiers yet - create them in Price Tiers (Super Admin), assign clients to one, then set a per-product rate here.'
+                          : 'Optional. A tier already applies its own percent to every product; add a row here only to override this one product for that tier.'}
+                      </p>
                     )}
                     {(formData.segmentDiscounts || []).map((sd, idx) => (
                       <div key={idx} className="flex items-center gap-2 mb-1.5">
-                        <input type="text" value={sd.segment} placeholder="Segment tag (e.g. wholesale)"
+                        {/* Picked from the tier registry, never typed - orders.js matches
+                            this against ClientAccount.segments by exact string, so a
+                            free-text typo here silently charges the client full price. */}
+                        <select value={sd.segment}
                           onChange={e => {
                             const list = [...(formData.segmentDiscounts || [])];
                             list[idx] = { ...list[idx], segment: e.target.value };
                             setFormData({ ...formData, segmentDiscounts: list });
                           }}
-                          className="w-1/2 sm:w-3/5 shrink-0 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-fg text-xs outline-none focus:border-brand" />
+                          className="w-1/2 sm:w-3/5 shrink-0 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-fg text-xs outline-none focus:border-brand">
+                          <option value="">Select tier…</option>
+                          {(priceTiers || []).map(t => (
+                            <option key={t._id} value={t.name}>{t.name}{t.percent > 0 ? ` (default ${t.percent}%)` : ''}</option>
+                          ))}
+                          {/* A tag saved before the registry existed, or a since-renamed
+                              tier - kept selectable so editing the row doesn't wipe it. */}
+                          {sd.segment && !(priceTiers || []).some(t => t.name === sd.segment) && (
+                            <option value={sd.segment}>{sd.segment} (unrecognised)</option>
+                          )}
+                        </select>
                         <div className="relative w-28">
                           <input type="number" min="0" max="100" step="0.01" value={sd.percent}
                             onChange={e => {

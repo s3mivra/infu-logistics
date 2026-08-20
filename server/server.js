@@ -39,6 +39,7 @@ import registerReports from './features/reports.js';
 import registerShifts from './features/shifts.js';
 import registerScheduling from './features/scheduling.js';
 import registerDiscountRules from './features/discount-rules.js';
+import registerPriceTiers from './features/price-tiers.js';
 import registerAdminTools from './features/admin-tools.js';
 import registerAudit from './features/audit.js';
 import registerSettings from './features/settings.js';
@@ -1887,6 +1888,42 @@ const DiscountRuleSchema = new mongoose.Schema({
 DiscountRuleSchema.index({ businessType: 1, active: 1 });
 const DiscountRule = mongoose.model('DiscountRule', DiscountRuleSchema);
 
+// --- PRICE TIERS (customer classes: Dealer, Satellite, Wholesale, ...) ---
+// The canonical registry for the free-form tags that already live in
+// ClientAccount.segments and Product.segmentDiscounts[].segment. Those two
+// fields are matched by EXACT string in orders.js productDiscPct, so a
+// "Dealer" tag on the account and a "dealer" override on the product silently
+// grant no discount at all - money quietly leaks with no error anywhere. This
+// collection makes the tag list pickable in both editors so the two sides can
+// never disagree.
+//
+// `percent` is the tier's DEFAULT rate, applied to every product the buyer
+// touches. It's what makes "Dealers get 15% off" a one-line setup instead of a
+// segmentDiscounts row on every single product. A per-product segment override
+// still beats it (see productDiscPct), so a tier default is a floor, not a cap.
+const PriceTierSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  name:     { type: String, required: true },                        // the segment tag itself, e.g. "Dealer"
+  percent:  { type: Number, default: 0, min: 0, max: 100 },          // default discount for this class; 0 = tag only, no automatic rate
+  // 'percent' = the flat `percent` above applies to every product (the original
+  // behaviour). 'per_product' = this tier instead prices EVERY product
+  // individually via `productPrices` below - for a dealer sheet that isn't a
+  // clean percent off list price. `percent` is ignored in that mode.
+  pricingMode: { type: String, enum: ['percent', 'per_product'], default: 'percent' },
+  // Only meaningful when pricingMode === 'per_product'. One row per product
+  // this tier has an explicit price for; a product with no row here has no
+  // per-product rate from this tier (falls through to whatever else applies).
+  productPrices: [{
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
+    price:     { type: Number, required: true, min: 0 },
+  }],
+  note:     { type: String, default: '' },
+  isActive: { type: Boolean, default: true },
+}, { timestamps: true });
+PriceTierSchema.index({ businessType: 1, name: 1 }, { unique: true });
+const PriceTier = mongoose.model('PriceTier', PriceTierSchema);
+
 const EODRecordSchema = new mongoose.Schema({
   dateString: String, // e.g., '2026-04-29'
   status: { type: String, default: 'OPEN' }, // 'OPEN' or 'LOCKED'
@@ -2595,6 +2632,8 @@ const ctx = {
   StorageLocation,
   StockCategorySchema,
   StockCategory,
+  PriceTierSchema,
+  PriceTier,
   StockTransferSchema,
   StockTransfer,
   STOCK_TRANSFER_STATUSES,
@@ -2713,6 +2752,7 @@ registerReports(ctx);
 registerShifts(ctx);
 registerScheduling(ctx);
 registerDiscountRules(ctx);
+registerPriceTiers(ctx);
 registerAdminTools(ctx);
 registerAudit(ctx);
 registerSettings(ctx);
