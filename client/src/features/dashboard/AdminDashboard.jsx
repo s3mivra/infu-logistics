@@ -345,6 +345,7 @@ export default function AdminDashboard() {
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [historyItemName, setHistoryItemName] = useState('');
   const [historyItem, setHistoryItem] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const [cashOnHand, setCashOnHand] = useState(0);
   // --- NEW LOGIN STATES ---
@@ -447,6 +448,11 @@ export default function AdminDashboard() {
   // Optional client account link - when set, the order qualifies for that
   // client's per-product discount overrides on the server side.
   const [posClientId, setPosClientId] = useState('');
+  // The selected client's resolved discount per product (clientDiscounts,
+  // segmentDiscounts, AND price tiers - the same resolver orders.js uses at
+  // checkout), so the POS cart shows their real price live instead of only
+  // revealing it after the order is placed. { [productId]: percent }
+  const [posBuyerDiscounts, setPosBuyerDiscounts] = useState({});
   // Reserve-only mode: place order with status 'Reserved' (no payment yet).
   // Cashier later promotes Reserved → Pending (pay later) or Preparing (pay now).
   const [posReserveOnly, setPosReserveOnly] = useState(false);
@@ -1117,6 +1123,7 @@ export default function AdminDashboard() {
   };
 
   const fetchStockHistory = async (item) => {
+    setHistoryLoading(true);
     try {
       const res = await apiFetch(`/api/inventory/history/${item._id}`);
       const data = await res.json();
@@ -1126,8 +1133,15 @@ export default function AdminDashboard() {
         setHistoryItem(item);
         setHistoryPage(1);
         setHistoryModalOpen(true);
+      } else {
+        ui.alert(data.error || 'Could not load stock history.');
       }
-    } catch (err) { console.error("Failed to fetch history"); }
+    } catch (err) {
+      console.error('Failed to fetch history', err);
+      ui.alert('Failed to load stock history. Check your connection.');
+    } finally {
+      setHistoryLoading(false);
+    }
   };
   
   const [jeForm, setJeForm] = useState({
@@ -1365,7 +1379,75 @@ export default function AdminDashboard() {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { if (isAuthenticated) { fetchDiscounts(); fetchCoa(); fetchClientAccounts(); fetchClosedPeriods(); fetchPaymentMap(); } }, [isAuthenticated]);
+  // ── Price tiers (customer classes for the per-product segment picker) ──
+  const [priceTiers, setPriceTiers] = useState([]);
+  const fetchPriceTiers = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/price-tiers');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.success) setPriceTiers(d.tiers || []);
+    } catch { /* ignore */ }
+  }, []);
+
+  // The full tier x product matrix - what every tier actually charges for every
+  // product. Powers the Market Segment Pricing table on Pricing Control, so
+  // staff see dealer/satellite prices right next to the regular masterlist
+  // instead of hunting for them in Super Admin.
+  const [pricingTable, setPricingTable] = useState({ products: [], tiers: [] });
+  const fetchPricingTable = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/price-tiers/pricing-table');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.success) setPricingTable(d);
+    } catch { /* ignore */ }
+  }, []);
+
+  // Inline single-cell edit for a 'per_product' tier's price list. Percent-mode
+  // tiers have no per-product rows to edit here - their whole column is a flat
+  // rate, changed on the tier itself (Super Admin > Price Tiers). Sends the
+  // tier's FULL price list back (the server route replaces it wholesale), built
+  // from the already-loaded table plus this one cell's new value.
+  const handleTierCellUpdate = async (tierId, productId, rawValue) => {
+    const tierRow = pricingTable.tiers.find(t => t._id === tierId);
+    if (!tierRow) return;
+    const merged = { ...tierRow.prices, [productId]: rawValue === '' ? null : Math.max(0, parseFloat(rawValue) || 0) };
+    const prices = Object.entries(merged)
+      .filter(([, v]) => v !== null && v !== undefined && !Number.isNaN(v))
+      .map(([pid, v]) => ({ productId: pid, price: v }));
+    try {
+      const res = await apiFetch(`/api/price-tiers/${tierId}/products`, { method: 'PUT', body: JSON.stringify({ prices }) });
+      const data = await res.json();
+      if (data.success) fetchPricingTable();
+      else ui.alert(data.error || 'Failed to update price.');
+    } catch { ui.alert('Failed to update price. Check your connection.'); }
+  };
+
+  // Editing a cell under a 'percent'-mode tier: that column is ONE shared rate
+  // across every product, so the field edited there IS the percent itself, not
+  // a price to reverse-engineer a percent from - a ₱ input would imply a
+  // per-product price the discount system has no room to store. Confirmed
+  // first since the blast radius is the whole tier, not the one row clicked.
+  const handleTierPercentUpdate = async (tierId, rawPct) => {
+    const tierRow = pricingTable.tiers.find(t => t._id === tierId);
+    if (!tierRow) return;
+    const pct = Math.max(0, Math.min(100, parseFloat(rawPct) || 0));
+    const ok = await ui.confirm({
+      title: `Change ${tierRow.name}'s rate to ${pct}%?`,
+      message: `${tierRow.name} is a shared rate - every product priced under it will move to ${pct}% off, not just the row you clicked.`,
+      confirmLabel: 'Apply to whole tier',
+    });
+    if (!ok) return;
+    try {
+      const res = await apiFetch(`/api/price-tiers/${tierId}`, { method: 'PUT', body: JSON.stringify({ percent: pct }) });
+      const data = await res.json();
+      if (data.success) { fetchPricingTable(); fetchPriceTiers(); }
+      else ui.alert(data.error || 'Failed to update tier rate.');
+    } catch { ui.alert('Failed to update tier rate. Check your connection.'); }
+  };
+
+  useEffect(() => { if (isAuthenticated) { fetchDiscounts(); fetchCoa(); fetchClientAccounts(); fetchPriceTiers(); fetchPricingTable(); fetchClosedPeriods(); fetchPaymentMap(); } }, [isAuthenticated]);
 
   // ── Partial fulfillment (logistics) ────────────────────────────────────────
   const [partialModal, setPartialModal] = useState(null);  // the order being split
@@ -1481,6 +1563,40 @@ export default function AdminDashboard() {
   }, [isAuthenticated]);
 
   // --- MANUAL POS LOGIC ---
+  // Fetch the selected client's real resolved pricing (clientDiscounts,
+  // segmentDiscounts, price tiers - the exact server-side resolver, not a
+  // client-side guess) so the cart can show it before the order is placed.
+  // Deliberately does NOT touch the shared `products` state - that list is
+  // read by Products/Pricing Control too, and leaking one client's special
+  // pricing into those unrelated, buyer-agnostic views would be wrong.
+  useEffect(() => {
+    if (!posClientId) { setPosBuyerDiscounts({}); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch(`/api/products?onBehalfClientId=${posClientId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const map = {};
+        (data.products || []).forEach(p => { map[p._id] = p.effectiveDiscountPercent || 0; });
+        setPosBuyerDiscounts(map);
+      } catch { /* non-fatal - cart falls back to no live discount preview */ }
+    })();
+    return () => { cancelled = true; };
+  }, [posClientId]);
+
+  // Re-price whatever's already in the cart when the client changes (added
+  // before picking a client, or picked a different one mid-order) - so
+  // switching clients moves every line's discount, not just new adds.
+  useEffect(() => {
+    setPosCart(cart => cart.map(item => {
+      const pct = item.productId ? (posBuyerDiscounts[item.productId] || 0) : 0;
+      return item.discountPercent === pct ? item : { ...item, discountPercent: pct };
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posBuyerDiscounts]);
+
   const openProductModal = (product) => {
     setPosSelectedProduct(product);
     setPosActiveSize(null);
@@ -1522,7 +1638,11 @@ export default function AdminDashboard() {
       price: finalPrice,
       quantity: Math.max(1, posItemQty),
       department,
-      selectedAddOns: [...posActiveAddOns]
+      selectedAddOns: [...posActiveAddOns],
+      // The selected client's resolved rate for this product, if any - live
+      // preview only; the server re-resolves and enforces the real rate at
+      // checkout regardless of what's sent here.
+      discountPercent: posBuyerDiscounts[posSelectedProduct._id] || 0,
     };
 
     setPosCart([...posCart, newItem]);
@@ -5221,6 +5341,10 @@ const updateStatus = async (orderId, newStatus) => {
     tenancyReport, tenancyBusy, fetchTenancyReport, runTenancyRebackfill,
     // ── Client accounts (for per-product per-client discount picker) ──
     clientAccounts,
+    // ── Price tiers (for the per-product segment override picker) ──
+    priceTiers,
+    // ── Market segment pricing table (Pricing Control) ──
+    pricingTable, fetchPricingTable, handleTierCellUpdate, handleTierPercentUpdate,
     // ── Partial fulfillment ──
     partialModal, setPartialModal, partialQtys, setPartialQtys,
     partialMode, setPartialMode, partialPayment, setPartialPayment,
@@ -5246,7 +5370,7 @@ const updateStatus = async (orderId, newStatus) => {
     orderSearch, setOrderSearch,
     collapsedOrders, setCollapsedOrders, updatingOrders, cashTendered, setCashTendered,
     isPosOpen, setIsPosOpen, posCart, setPosCart, posCategory, setPosCategory, posPage, setPosPage,
-    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posReserveOnly, setPosReserveOnly, posTable, setPosTable,
+    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posBuyerDiscounts, posReserveOnly, setPosReserveOnly, posTable, setPosTable,
     posPayment, setPosPayment, posSelectedProduct, setPosSelectedProduct,
     posActiveSize, setPosActiveSize, posActiveAddOns, setPosActiveAddOns, posItemQty, setPosItemQty,
     posDiscountType, setPosDiscountType, posDiscountValue, setPosDiscountValue,
@@ -5264,7 +5388,7 @@ const updateStatus = async (orderId, newStatus) => {
     invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter,
     importProgress,
     activeInventoryItem, setActiveInventoryItem, restockData, setRestockData,
-    stockHistory, setStockHistory, historyModalOpen, setHistoryModalOpen, historyItemName, setHistoryItemName, historyItem,
+    stockHistory, setStockHistory, historyModalOpen, setHistoryModalOpen, historyItemName, setHistoryItemName, historyItem, historyLoading,
     physicalCounts, setPhysicalCounts, varianceReasons, setVarianceReasons,
     varianceNoteMode, setVarianceNoteMode,
     eodStatus, eodLockedAt, dailyMovement,

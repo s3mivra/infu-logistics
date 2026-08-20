@@ -80,7 +80,7 @@ export default function OrdersTab({ ctx }) {
     ordersItemsPerPage, ordersPage, parseImportFile, paymentSelections, peso,
     physicalCounts, pnlData, pnlRange, posActiveAddOns, posActiveSize, posItemQty, setPosItemQty,
     posCart, posCashTendered, posCategory, posCheckoutModal, posCustomerName,
-    posClientId, setPosClientId, clientAccounts, coaAccounts,
+    posClientId, setPosClientId, posBuyerDiscounts, clientAccounts, coaAccounts,
     posReserveOnly, setPosReserveOnly,
     posCustomerPhone, posDeliveryAddress, posDeliveryFee, posDeliveryFeeNum, posDiscountAmt,
     posDiscountType, posDiscountValue, posItemDiscountAmt, posGrandTotal, posSubmitting, posPage, posPayment,
@@ -325,6 +325,20 @@ export default function OrdersTab({ ctx }) {
                         ...(clientAccounts || []).map(c => ({ value: String(c._id), label: `${c.name || c.username} (${c.clientCode})`, Icon: Users })),
                       ]}
                     />
+                    {/* Live pricing preview for the selected client - resolved via the
+                        SAME server logic checkout uses, so this is the real price, not
+                        a guess. Empty once the picker fetch lands = this client has no
+                        discount on anything currently in view. */}
+                    {posClientId && (() => {
+                      const pcts = Object.values(posBuyerDiscounts || {});
+                      const best = pcts.length ? Math.max(...pcts) : 0;
+                      return best > 0 ? (
+                        <div className="flex items-center gap-1.5 bg-accent/10 border border-accent/20 rounded-lg px-2.5 py-1.5">
+                          <Tag size={11} className="text-accent flex-shrink-0" />
+                          <span className="text-[10px] text-accent font-bold">Pricing applied - up to {best}% off for this client</span>
+                        </div>
+                      ) : null;
+                    })()}
                     <input type="text" placeholder="Customer / Driver Name *" value={posCustomerName} onChange={e => setPosCustomerName(e.target.value)}
                       className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60 text-sm transition" />
                     <IconSelect value={posTable} onChange={setPosTable} options={BUSINESS_TYPE === 'log' ? [

@@ -6,6 +6,7 @@ import { title } from '../lib/normalize.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
+import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
 
 export default function registerOrders(ctx) {
   const {
@@ -151,6 +152,7 @@ export default function registerOrders(ctx) {
     User,
     ClientAccountSchema,
     ClientAccount,
+    PriceTier,
     RefreshSessionSchema,
     RefreshSession,
     RoleSchema,
@@ -580,7 +582,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     const _prodNames = items.map(i => i.name).filter(Boolean);
     const _discProds = await Product.find(
       { $or: [{ _id: { $in: _prodIds } }, { name: { $in: _prodNames } }] },
-      { _id: 1, name: 1, discountPercent: 1, clientDiscounts: 1, segmentDiscounts: 1, bulkBreaks: 1, vatExempt: 1 }
+      { _id: 1, name: 1, basePrice: 1, discountPercent: 1, clientDiscounts: 1, segmentDiscounts: 1, bulkBreaks: 1, vatExempt: 1 }
     ).lean();
     const _discById = new Map(_discProds.map(p => [String(p._id), p]));
     const _discByName = new Map(_discProds.map(p => [p.name, p]));
@@ -600,21 +602,19 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
         _buyerSegments = buyerAcct?.segments || [];
       } catch { /* ignore - no segment discount applies */ }
     }
+    // The buyer's price-tier context, and the per-product discount decision
+    // itself, both come from the shared resolver (lib/discounts.js) - the
+    // SAME function the pre-checkout price display (products.js) uses, so a
+    // buyer is never shown one price and charged a different one.
+    const { tierDefaultPct: _tierDefaultPct, perProductTiers: _perProductTiers } = await loadTierContext({
+      PriceTier, businessType: BUSINESS_TYPE, tenantScope, req, buyerSegments: _buyerSegments,
+    });
     const productDiscPct = (item) => {
       const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
-      if (!p) return 0;
-      // 1) per-client override beats everything else when a client is buying
-      if (_buyerClientId) {
-        const ov = (p.clientDiscounts || []).find(d => String(d.clientId) === _buyerClientId);
-        if (ov) return Math.max(0, Math.min(100, Number(ov.percent || 0)));
-      }
-      // 2) segment override - highest percent among any segment the buyer carries
-      if (_buyerSegments.length && (p.segmentDiscounts || []).length) {
-        const matches = p.segmentDiscounts.filter(d => _buyerSegments.includes(d.segment));
-        if (matches.length) return Math.max(0, Math.min(100, Math.max(...matches.map(d => Number(d.percent || 0)))));
-      }
-      // 3) flat per-product default
-      return Math.max(0, Math.min(100, Number(p.discountPercent || 0)));
+      return resolveEffectiveDiscountPercent(p, {
+        buyerClientId: _buyerClientId, buyerSegments: _buyerSegments,
+        tierDefaultPct: _tierDefaultPct, perProductTiers: _perProductTiers,
+      });
     };
     // Quantity-break bulk pricing, independent of clientDiscounts/segmentDiscounts
     // above - combined via Math.max where it's applied, never stacked.

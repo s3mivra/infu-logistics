@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
+import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
 
 export default function registerProducts(ctx) {
   const {
@@ -141,6 +142,7 @@ export default function registerProducts(ctx) {
     User,
     ClientAccountSchema,
     ClientAccount,
+    PriceTier,
     RefreshSessionSchema,
     RefreshSession,
     RoleSchema,
@@ -270,6 +272,29 @@ app.get('/api/products', async (req, res) => {
       }
     } catch { /* anonymous / invalid token - fall back to the default discount */ }
 
+    // Staff placing a manual/POS order "on behalf of" a client: previewing
+    // THAT client's price (not the caller's own) requires an explicit id -
+    // never trusted from anywhere but this query param, and only honoured for
+    // an authenticated staff caller, never anonymous or a client impersonating
+    // another client.
+    if (isAdminCaller && req.query.onBehalfClientId && mongoose.Types.ObjectId.isValid(req.query.onBehalfClientId)) {
+      buyerClientId = String(req.query.onBehalfClientId);
+    }
+
+    // Buyer's segment tags, for segmentDiscounts + price-tier resolution. Only
+    // fetched when a specific buyer is in play (self via client JWT, or an
+    // explicit on-behalf id) - an anonymous/regular-walk-in view has none.
+    let buyerSegments = [];
+    if (buyerClientId) {
+      try {
+        const acct = await ClientAccount.findById(buyerClientId, { segments: 1 }).lean();
+        buyerSegments = acct?.segments || [];
+      } catch { /* invalid id - no segment/tier discount applies */ }
+    }
+    const { tierDefaultPct, perProductTiers } = await loadTierContext({
+      PriceTier, businessType: BUSINESS_TYPE, tenantScope, req, buyerSegments,
+    });
+
     // Exclude soft-deleted products; tenancy-scoped to this server's businessType.
     // Removed products (isAvailable=false): visible to admin/staff for management,
     // hidden from customer-facing menu. OOS products: visible to everyone (UI
@@ -285,15 +310,15 @@ app.get('/api/products', async (req, res) => {
       const imgSetting = await Settings.findOne({ key: 'imagesEnabled' }).lean();
       imagesEnabled = !imgSetting || imgSetting.value !== false;
     }
-    // Resolve the effective per-line discount for this caller.
+    // Resolve the effective per-line discount for this caller, via the SAME
+    // resolver orders.js uses at checkout - a buyer sees exactly the price
+    // they'll be charged, including per-product and price-tier discounts, not
+    // just the per-client override this endpoint used to consider alone.
     products.forEach(p => {
       if (!isAdminCaller && !imagesEnabled) p.image = '';
-      let pct = Number(p.discountPercent || 0);
-      if (buyerClientId) {
-        const ov = (p.clientDiscounts || []).find(d => String(d.clientId) === buyerClientId);
-        if (ov) pct = Number(ov.percent || 0);
-      }
-      p.effectiveDiscountPercent = Math.max(0, Math.min(100, pct));
+      p.effectiveDiscountPercent = resolveEffectiveDiscountPercent(p, {
+        buyerClientId, buyerSegments, tierDefaultPct, perProductTiers,
+      });
       // Only strip raw overrides from non-admin responses. Admin / staff need
       // them to power the edit form and the on-behalf client picker in POS;
       // stripping made the form silently lose overrides on save (the form
