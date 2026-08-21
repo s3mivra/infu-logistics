@@ -328,7 +328,14 @@ export default function InventoryTab({ ctx }) {
                           )}
                         </td>
                         {(() => { const d = itemDisplay(item); return (<>
-                        <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-fg'}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
+                        <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-fg'}`}>
+                          {d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}
+                          {d.isPacked && (
+                            <div className="text-[10px] font-normal text-fg/40 normal-case">
+                              {(item.stockQty || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} {item.unit} exact
+                            </div>
+                          )}
+                        </td>
                         <td className="py-3 text-right text-fg text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(effThreshold / (d.packBase || 1)).toLocaleString(undefined, { maximumFractionDigits: 3 })}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
                         <td className="py-3 text-fg pl-2 font-bold">{d.isPacked ? 'pcs' : d.unit}</td>
                         <td className="py-3 text-right text-fg font-bold font-mono text-xs tabular-nums"><>{peso(d.packCost)}<span className="text-fg/60">/{d.packLabel}</span></></td>

@@ -334,15 +334,14 @@ export default function registerHub(ctx) {
     await targetItem.save();
 
     await StockCard.create([{
-      businessType: BUSINESS_TYPE,
-      itemId: targetItem._id,
+      inventoryId: targetItem._id,
       itemName: targetItem.itemName,
-      movementType: 'Transfer In',
-      qty: transfer.qtyBase,
-      unit: targetItem.unit,
+      type: 'Transfer In',
       reference: transfer.reference,
-      note: `Received from ${transfer.partnerName}`,
-      ordered: true,
+      qtyChange: transfer.qtyBase,
+      balanceAfter: targetItem.stockQty,
+      unitCost: targetItem.unitCost,
+      remarks: `Received from ${transfer.partnerName}`,
     }], { ordered: true });
 
     // DR Inventory Asset / CR Hub Transfer Clearing
@@ -409,15 +408,14 @@ export default function registerHub(ctx) {
       await item.save();
 
       await StockCard.create([{
-        businessType: BUSINESS_TYPE,
-        itemId: item._id,
+        inventoryId: item._id,
         itemName: item.itemName,
-        movementType: 'Transfer Out',
-        qty: transfer.qtyBase,
-        unit: item.unit,
+        type: 'Transfer Out',
         reference: transfer.reference,
-        note: `Sent to ${req.linkedPartner.partnerName || req.linkedPartner.partnerSlug}`,
-        ordered: true,
+        qtyChange: -transfer.qtyBase,
+        balanceAfter: item.stockQty,
+        unitCost: item.unitCost,
+        remarks: `Sent to ${req.linkedPartner.partnerName || req.linkedPartner.partnerSlug}`,
       }], { ordered: true });
 
       // DR Hub Transfer Clearing / CR Inventory Asset
