@@ -964,10 +964,13 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
       const displayUnit = isLogBiz ? 'pcs' : effUnit;
       const divisor = isLogBiz ? packBase : effMult;
 
-      // Best qty = whichever is larger: velocity-based cover OR refill to 2× threshold.
-      // This ensures items with low/no velocity still get a sensible restock target.
+      // Best qty = whichever is larger: velocity-based cover OR refill back up to
+      // the alert floor itself. Previously this doubled the threshold, so an item
+      // sitting just 1 unit under a threshold of 925 suggested ordering ~926 units
+      // instead of the 1 actually needed - items with low/no velocity still get a
+      // sensible target since refillTarget alone covers the real shortfall.
       const velocityTarget = adu * days;               // base units for N-day cover
-      const refillTarget   = threshold * 2;            // bring back to 2× the alert floor
+      const refillTarget   = threshold;                // bring back to the alert floor
       const bestTarget     = Math.max(velocityTarget, refillTarget);
       const needBase       = Math.max(0, bestTarget - i.stockQty);
 
