@@ -123,10 +123,10 @@ export default function HubTab({ ctx }) {
       for (const line of sendCart) {
         const r = await authFetch('/api/hub/transfers/send', {
           method: 'POST',
-          body: JSON.stringify({ partnerSlug: sendPartner, itemId: line.itemId, qtyBase: line.qtyBase, note: line.note }),
+          body: JSON.stringify({ partnerSlug: sendPartner, items: [{ itemId: line.itemId, qty: line.qtyBase, note: line.note }] }),
         });
         const d = await r.json();
-        if (!r.ok) { setSendErr(d.error); return; }
+        if (!r.ok) { setSendErr(d.error || (d.errors || []).join('; ')); return; }
         if (d.warning) warnings.push(d.warning);
       }
       setSendCart([]);

@@ -179,6 +179,7 @@ export default function InventoryTab({ ctx }) {
               <StockTaxonomyPanel
                 stockLocations={stockLocations}
                 stockCategories={stockCategories}
+                inventory={inventory}
                 saveStockLocation={saveStockLocation}
                 deleteStockLocation={deleteStockLocation}
                 saveStockCategory={saveStockCategory}

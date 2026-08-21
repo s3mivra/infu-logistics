@@ -4,7 +4,7 @@
 // context-provided save/delete handlers; kept in its own component so the small
 // add/edit form state doesn't bloat InventoryTab.
 export default function StockTaxonomyPanel({
-  stockLocations = [], stockCategories = [],
+  stockLocations = [], stockCategories = [], inventory = [],
   saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory,
 }) {
   const [locName, setLocName] = useState('');
@@ -12,6 +12,22 @@ export default function StockTaxonomyPanel({
   const [catName, setCatName] = useState('');
   const [catPrefix, setCatPrefix] = useState('');
   const [busy, setBusy] = useState(false);
+  const [registering, setRegistering] = useState('');
+
+  // Items can carry a free-text stockCategory tag (e.g. from import) that was
+  // never turned into a real StockCategory record - those show up in the
+  // Live Stock filter but not here. Surface them so they can be registered
+  // with one click instead of retyping the name.
+  const registeredNames = new Set(stockCategories.map(c => c.name.toLowerCase()));
+  const unregistered = [...new Set(
+    inventory.map(i => (i.stockCategory || '').trim()).filter(Boolean)
+  )].filter(n => !registeredNames.has(n.toLowerCase())).sort();
+
+  const registerCat = async (name) => {
+    setRegistering(name);
+    await saveStockCategory({ name, prefix: '' });
+    setRegistering('');
+  };
 
   const addLoc = async () => {
     if (!locName.trim() || busy) return;
@@ -71,6 +87,21 @@ export default function StockTaxonomyPanel({
           <input value={catPrefix} onChange={e => setCatPrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))} placeholder="Prefix" className={`${input} sm:max-w-[110px] uppercase font-mono`} maxLength={4} />
           <button onClick={addCat} disabled={busy || !catName.trim()} className="bg-accent text-white px-4 py-2 rounded font-bold text-xs uppercase tracking-wider disabled:opacity-40 shrink-0 min-h-[40px]">Add</button>
         </div>
+        {unregistered.length > 0 && (
+          <div className="mb-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-2.5">
+            <p className="text-[10px] text-yellow-400 uppercase font-bold mb-1.5">Used on items but not registered</p>
+            <ul className="space-y-1">
+              {unregistered.map(n => (
+                <li key={n} className="flex items-center justify-between gap-2">
+                  <span className="text-fg/80 text-xs truncate">{n}</span>
+                  <button onClick={() => registerCat(n)} disabled={registering === n} className={`${rowBtn} bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25 disabled:opacity-40 shrink-0`}>
+                    {registering === n ? '…' : 'Register'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {stockCategories.length === 0 ? (
           <p className="text-fg/40 text-xs py-4 text-center uppercase tracking-widest">No categories yet</p>
         ) : (
