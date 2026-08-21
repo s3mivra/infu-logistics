@@ -344,7 +344,7 @@ export default function HubTab({ ctx }) {
                             value={sendRowQty[i._id] || ''}
                             onChange={e => setSendRowQty(q => ({ ...q, [i._id]: e.target.value }))}
                             onKeyDown={e => e.key === 'Enter' && addToCart(i._id)}
-                            className="w-full bg-card-bg border border-white/10 rounded-lg px-2 py-1 text-fg text-xs outline-none focus:border-accent text-right"
+                            className="w-full bg-card-bg border border-white/10 rounded-lg px-2 py-1 text-black text-xs outline-none focus:border-accent text-right"
                             placeholder={factor ? 'pcs' : i.unit}
                           />
                         </td>

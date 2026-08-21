@@ -3208,7 +3208,10 @@ const updateStatus = async (orderId, newStatus) => {
       canvas.getContext('2d').drawImage(img, 0, 0);
       const pngData = canvas.toDataURL('image/png');
       const pw = doc.internal.pageSize.getWidth();
-      const logoW = 30, logoH = 18;
+      // Fit inside a 30x18 box without distorting the aspect ratio.
+      const boxW = 30, boxH = 18;
+      const scale = Math.min(boxW / img.naturalWidth, boxH / img.naturalHeight);
+      const logoW = img.naturalWidth * scale, logoH = img.naturalHeight * scale;
       doc.addImage(pngData, 'PNG', pw - logoW - 8, 4, logoW, logoH);
     } catch { /* unsupported image - skip */ }
   };
