@@ -106,9 +106,13 @@ export default function registerHub(ctx) {
     const { code } = req.body || {};
     if (!String(code || '').trim()) return res.status(400).json({ error: 'code is required.' });
 
-    const parts = String(code).trim().split('-');
-    if (parts.length < 2) return res.status(400).json({ error: 'Invalid code format. Paste the full code your hub gave you.' });
-    const hubSlug = parts[0];
+    // Codes are `${slug}-${10 hex chars}` (see /api/hub/invite below). Slugs
+    // themselves can contain hyphens (e.g. "infu-main"), so splitting on '-'
+    // and taking parts[0] would truncate them - strip the fixed-width hex
+    // suffix instead and keep everything before it as the slug.
+    const codeMatch = String(code).trim().match(/^(.+)-([0-9A-Fa-f]{10})$/);
+    if (!codeMatch) return res.status(400).json({ error: 'Invalid code format. Paste the full code your hub gave you.' });
+    const hubSlug = codeMatch[1];
     if (hubSlug === TENANT) return res.status(400).json({ error: 'Cannot link to yourself.' });
 
     const linkToken = crypto.randomBytes(32).toString('hex');
