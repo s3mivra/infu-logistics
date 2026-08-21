@@ -1170,6 +1170,26 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
 
     const summary = { created: 0, updated: 0, increased: 0, decreased: 0, gainValue: 0, lossValue: 0, errors: [] };
 
+    // Find-or-create the StockCategory for a sheet's Category column, so an
+    // import populates Places & Categories the same way manually editing an
+    // item does - not just the log-only Product/menu category sync below.
+    // Cached per-name since the same category repeats across many rows.
+    const stockCatCache = new Map();
+    const resolveStockCategory = async (rawName) => {
+      const name = title(String(rawName || '').trim());
+      if (!name) return '';
+      const key = name.toLowerCase();
+      if (stockCatCache.has(key)) return stockCatCache.get(key);
+      let cat = await StockCategory.findOne({ businessType: BUSINESS_TYPE, name: { $regex: `^${escapeRegex(name)}$`, $options: 'i' } }).session(session);
+      if (!cat) {
+        try { cat = (await StockCategory.create([{ businessType: BUSINESS_TYPE, name, prefix: '' }], { session }))[0]; }
+        catch { cat = await StockCategory.findOne({ businessType: BUSINESS_TYPE, name: { $regex: `^${escapeRegex(name)}$`, $options: 'i' } }).session(session); }
+      }
+      const resolved = cat?.name || name;
+      stockCatCache.set(key, resolved);
+      return resolved;
+    };
+
     for (let i = 0; i < items.length; i++) {
       const row = items[i] || {};
       const itemCode = String(row.itemCode || row.code || '').trim();
@@ -1178,6 +1198,10 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       // logistics-only concept - an fb import brings in raw inventory data (stock,
       // cost, expiry) only, and never touches menu setup even if the sheet has one.
       const categoryName = BUSINESS_TYPE === 'log' ? String(row.category || '').trim() : '';
+      // Stock category (Places & Categories / item-code prefix) is independent of
+      // the log-only Product sync above - any tenant's sheet with a Category
+      // column gets it registered here.
+      const stockCategoryName = await resolveStockCategory(row.category);
       const srp = row.srp !== undefined && row.srp !== '' ? parseFloat(row.srp) : null;
       // In log mode the product IS the stocked good, so EVERY imported item gets a
       // linked Product (menu entry), with or without a category on the sheet - a
@@ -1269,6 +1293,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         existing.unitMultiplier = mult;
         if (baseUnit) existing.unit = baseUnit;
         if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
+        if (stockCategoryName && !existing.stockCategory) existing.stockCategory = stockCategoryName;
 
         // Expiry batches:
         //  - If Excel row carries an expiry: append it as a new batch with the +diff qty (only if diff > 0).
@@ -1376,6 +1401,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           expiryBatches: initialBatches,
           expiryDate: soonestExpiry(initialBatches),
           businessType: BUSINESS_TYPE,
+          stockCategory: stockCategoryName,
         }], { session });
         const item = created[0];
         const valueImpact = newBaseQty * (item.unitCost || 0);
