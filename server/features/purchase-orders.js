@@ -87,7 +87,7 @@ export default function registerPurchaseOrders(ctx) {
   // POST /api/purchase-orders  { supplier, expectedDate, notes, lines:[{invId,itemName,itemCode,unit,orderedQty,unitCost}] }
   app.post('/api/purchase-orders', verifyToken, ...canManageProc, async (req, res) => {
     try {
-      const { supplier = '', supplierId = null, expectedDate = null, notes = '', lines = [] } = req.body || {};
+      const { supplier = '', supplierId = null, supplierRef = '', expectedDate = null, notes = '', lines = [] } = req.body || {};
       // Link to the supplier record when one is given, and prefer its canonical
       // name over the free-text field. The PO schema has always had supplierId;
       // the create route was silently dropping it, which left every payable
@@ -105,6 +105,7 @@ export default function registerPurchaseOrders(ctx) {
       const poNumber = await mkSeqRef('PO');
       const po = await PurchaseOrder.create({
         poNumber,
+        supplierRef: String(supplierRef).slice(0, 100),
         supplier: supplierDoc?.name || String(supplier).slice(0, 200),
         supplierId: supplierDoc?._id || null,
         expectedDate: expectedDate ? new Date(expectedDate) : null,
@@ -137,7 +138,8 @@ export default function registerPurchaseOrders(ctx) {
         return res.status(409).json({ success: false, error: 'This PO has already been received. Reconciled POs cannot be edited.' });
       }
 
-      const { supplier, expectedDate, notes, status, lines } = req.body || {};
+      const { supplier, supplierRef, expectedDate, notes, status, lines } = req.body || {};
+      if (supplierRef !== undefined) po.supplierRef = String(supplierRef).slice(0, 100);
       if (supplier !== undefined) po.supplier = String(supplier).slice(0, 200);
       if (notes !== undefined) po.notes = String(notes).slice(0, 1000);
       if (expectedDate !== undefined) po.expectedDate = expectedDate ? new Date(expectedDate) : null;

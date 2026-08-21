@@ -3,6 +3,7 @@ import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, Trending
 import * as ui from '../../shared/ui';
 import StockTaxonomyPanel from './StockTaxonomyPanel';
 import StockTransferPanel from './StockTransferPanel';
+import ProductionTab from './ProductionTab';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
@@ -157,6 +158,14 @@ export default function InventoryTab({ ctx }) {
                 >
                   Transfers
                 </button>
+                {BUSINESS_TYPE === 'log' && (
+                  <button
+                    onClick={() => setInvSubTab('production')}
+                    className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'production' ? 'bg-accent text-white shadow-md' : 'text-gray-400 hover:text-accent'}`}
+                  >
+                    Production
+                  </button>
+                )}
               </div>
               
               <div className="flex items-center gap-1.5">
@@ -197,6 +206,14 @@ export default function InventoryTab({ ctx }) {
                 isSuperAdmin={isSuperAdmin}
                 peso={peso}
                 apiFetch={apiFetch}
+              />
+            )}
+
+            {invSubTab === 'production' && BUSINESS_TYPE === 'log' && (
+              <ProductionTab
+                apiFetch={apiFetch}
+                inventory={inventory}
+                peso={peso}
               />
             )}
 

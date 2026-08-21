@@ -1,32 +1,26 @@
-﻿import { useState, useEffect, useCallback } from 'react';
-import * as ui from '../../shared/ui';
+import { useState, useEffect, useCallback } from 'react';
 
 // #8 - multi-location stock transfers. Request a move between two inventory items
 // (each tagged to a location), route it through approve → release, and see on-hand
 // value grouped by location. Quantity is entered in the source item's base unit.
 //
-// The SAME "To (destination)" picker also offers any Hub-connected business as
-// a target. Picking a partner instead of one of your own items ships stock OUT
-// of your inventory to them (POST /api/hub/transfers/send) - a different money
-// path (it crosses a company boundary, so it posts a real journal entry via
-// Hub Transfer Clearing on both sides once they accept) from a same-tenant
-// location move, which is a plain internal asset move with no JE. Receiving an
-// INBOUND hub shipment still happens on the Hub tab - accepting one requires
-// picking which of your items to receive into (or creating a new one), which
-// doesn't fit this panel's one-line request form.
+// Cross-business shipping (Hub) is a different money path - it crosses a company
+// boundary and posts a real journal entry via Hub Transfer Clearing - and lives
+// entirely on the Hub tab now, both for sending and for accepting. This panel
+// only creates same-tenant location moves; it shows Hub transfers alongside them
+// purely as read-only history so "Transfers" is one place to see everything that
+// left or arrived at any location, without duplicating the send/accept forms.
 export default function StockTransferPanel({
   inventory = [], stockTransfers = [], locationAnalytics = [],
   requestStockTransfer, actOnStockTransfer, isSuperAdmin, peso, apiFetch,
 }) {
   const [fromItemId, setFromItemId] = useState('');
-  const [toValue, setToValue] = useState(''); // an inventory _id, or `hub:<partnerSlug>`
+  const [toItemId, setToItemId] = useState('');
   const [qty, setQty] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
   const fromItem = inventory.find(i => i._id === fromItemId);
-  const isHubTarget = toValue.startsWith('hub:');
-  const toItemId = isHubTarget ? '' : toValue;
 
   // Same packSize-based pcs conversion as the Hub transfer form: an item with
   // a purchased-package size (e.g. 377 for "Condensed Milk 377g") can only be
@@ -35,48 +29,23 @@ export default function StockTransferPanel({
   const pcsFactor = (inv) => (inv?.packSize > 0 ? inv.packSize * (inv.unitMultiplier || 1) : null);
   const fromFactor = pcsFactor(fromItem);
 
-  // Connected Hub partners + this business's own outbound shipment history.
-  // Kept local to this panel (not the giant AdminDashboard ctx) since only
-  // this one form needs them.
-  const [hubLinks, setHubLinks] = useState([]);
+  // Hub transfers (both directions), fetched read-only just to merge into the
+  // combined history list below. Sending/accepting still happens on the Hub tab.
   const [hubTransfers, setHubTransfers] = useState([]);
   const loadHub = useCallback(async () => {
     if (!apiFetch) return;
     try {
-      const [infoRes, transfersRes] = await Promise.all([
-        apiFetch('/api/hub/info'),
-        apiFetch('/api/hub/transfers'),
-      ]);
-      const [info, transfers] = await Promise.all([infoRes.json(), transfersRes.json()]);
-      if (infoRes.ok) setHubLinks((info.links || []).filter(l => l.status === 'active'));
-      if (transfersRes.ok) setHubTransfers((transfers.transfers || []).filter(t => t.direction === 'outbound'));
-    } catch { /* non-fatal - Hub destinations just won't be offered */ }
+      const r = await apiFetch('/api/hub/transfers');
+      const d = await r.json();
+      if (r.ok) setHubTransfers(d.transfers || []);
+    } catch { /* non-fatal - Hub history just won't be merged in */ }
   }, [apiFetch]);
   useEffect(() => { loadHub(); }, [loadHub]);
 
   const submit = async () => {
-    if (!fromItemId || !toValue || !(parseFloat(qty) > 0) || busy) return;
+    if (!fromItemId || !toItemId || !(parseFloat(qty) > 0) || busy) return;
     setBusy(true);
     const qtyBase = fromFactor ? parseFloat(qty) * fromFactor : parseFloat(qty);
-    if (isHubTarget) {
-      const partnerSlug = toValue.slice('hub:'.length);
-      try {
-        const res = await apiFetch('/api/hub/transfers/send', {
-          method: 'POST',
-          body: JSON.stringify({ partnerSlug, items: [{ itemId: fromItemId, qty: qtyBase, note: note.trim() }] }),
-        });
-        const data = await res.json();
-        if (!res.ok || data.errors?.length) {
-          ui.alert(data.error || (data.errors || []).join('; ') || 'Failed to send transfer.');
-        } else {
-          setQty(''); setNote('');
-          if (data.warning) ui.alert(data.warning);
-          loadHub();
-        }
-      } catch { ui.alert('Failed to send transfer. Check your connection.'); }
-      setBusy(false);
-      return;
-    }
     const ok = await requestStockTransfer({ fromItemId, toItemId, qtyBase, note: note.trim() });
     setBusy(false);
     if (ok) { setQty(''); setNote(''); }
@@ -90,17 +59,24 @@ export default function StockTransferPanel({
     Released: 'bg-green-500/15 text-green-500',
     Rejected: 'bg-red-500/15 text-red-400',
     Cancelled: 'bg-white/10 text-fg/40',
-  };
-  // CrossTransfer (Hub) statuses are a different vocabulary from StockTransfer's -
-  // same color language, different words.
-  const hubStatusColor = {
+    // CrossTransfer (Hub) statuses are a different vocabulary from StockTransfer's -
+    // same color language, different words.
     Pending: 'bg-yellow-500/15 text-yellow-400',
     Accepted: 'bg-blue-500/15 text-blue-400',
-    Released: 'bg-blue-500/15 text-blue-400',
     Received: 'bg-green-500/15 text-green-500',
-    Rejected: 'bg-red-500/15 text-red-400',
   };
   const label = (i) => `${i.itemName}${i.stockLocation ? ` · ${i.stockLocation}` : ''}`;
+
+  // Combined history: local location moves + Hub cross-business transfers,
+  // newest first, tagged so the table can show which kind each row is.
+  const combinedHistory = [
+    ...stockTransfers.map(t => ({ ...t, _kind: 'local', _route: `${t.fromLocation || '?'} → ${t.toLocation || '?'}`, _date: t.createdAt })),
+    ...hubTransfers.map(t => ({
+      ...t, _kind: 'hub',
+      _route: t.direction === 'outbound' ? `You → ${t.partnerName || t.partnerSlug}` : `${t.partnerName || t.partnerSlug} → You`,
+      _date: t.createdAt,
+    })),
+  ].sort((a, b) => new Date(b._date || 0) - new Date(a._date || 0));
 
   return (
     <div className="space-y-4">
@@ -117,7 +93,8 @@ export default function StockTransferPanel({
         </div>
       )}
 
-      {/* New transfer request */}
+      {/* New transfer request - same-business location moves only. Sending to a
+          Hub partner is done from the Hub tab. */}
       <div className={card}>
         <h3 className="text-fg font-black uppercase tracking-wider text-sm mb-3">New Transfer Request</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
@@ -133,22 +110,10 @@ export default function StockTransferPanel({
           </div>
           <div>
             <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">To (destination)</label>
-            <select value={toValue} onChange={e => setToValue(e.target.value)} className={input}>
+            <select value={toItemId} onChange={e => setToItemId(e.target.value)} className={input}>
               <option value="">- Select item -</option>
-              <optgroup label="My Locations">
-                {inventory.filter(i => i._id !== fromItemId).map(i => <option key={i._id} value={i._id}>{label(i)}</option>)}
-              </optgroup>
-              {hubLinks.length > 0 && (
-                <optgroup label="Hub Partners">
-                  {hubLinks.map(l => <option key={l.partnerSlug} value={`hub:${l.partnerSlug}`}>{l.partnerName || l.partnerSlug} (connected business)</option>)}
-                </optgroup>
-              )}
+              {inventory.filter(i => i._id !== fromItemId).map(i => <option key={i._id} value={i._id}>{label(i)}</option>)}
             </select>
-            {isHubTarget && (
-              <p className="text-[10px] text-accent/70 mt-1">
-                Ships {fromItem ? fromItem.itemName : 'this item'} OUT of your inventory to {hubLinks.find(l => `hub:${l.partnerSlug}` === toValue)?.partnerName || 'this partner'} - they must accept it on their end before it's released from yours.
-              </p>
-            )}
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
@@ -161,15 +126,17 @@ export default function StockTransferPanel({
             <input value={note} onChange={e => setNote(e.target.value)} placeholder="Reason / reference" className={input} />
           </div>
         </div>
-        <button onClick={submit} disabled={busy || !fromItemId || !toValue || !(parseFloat(qty) > 0)} className="bg-accent text-white px-5 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-40 min-h-[44px]">
-          {isHubTarget ? 'Send to Partner' : 'Request Transfer'}
+        <button onClick={submit} disabled={busy || !fromItemId || !toItemId || !(parseFloat(qty) > 0)} className="bg-accent text-white px-5 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-40 min-h-[44px]">
+          Request Transfer
         </button>
       </div>
 
-      {/* Transfer list */}
+      {/* Combined transfer history - local location moves + Hub shipments,
+          newest first. Sending/accepting Hub transfers still happens on the Hub
+          tab; this is just visibility. */}
       <div className={card}>
-        <h3 className="text-fg font-black uppercase tracking-wider text-sm mb-3">Transfers</h3>
-        {stockTransfers.length === 0 ? (
+        <h3 className="text-fg font-black uppercase tracking-wider text-sm mb-3">Transfer History</h3>
+        {combinedHistory.length === 0 ? (
           <p className="text-fg/40 text-xs py-6 text-center uppercase tracking-widest">No transfers yet</p>
         ) : (
           <div className="overflow-x-auto">
@@ -177,6 +144,7 @@ export default function StockTransferPanel({
               <thead>
                 <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
                   <th className="text-left py-2">Ref</th>
+                  <th className="text-left py-2">Kind</th>
                   <th className="text-left py-2">Item</th>
                   <th className="text-left py-2">Route</th>
                   <th className="text-right py-2">Qty</th>
@@ -185,25 +153,33 @@ export default function StockTransferPanel({
                 </tr>
               </thead>
               <tbody>
-                {stockTransfers.map(t => (
-                  <tr key={t._id} className="border-b border-white/5">
+                {combinedHistory.map(t => (
+                  <tr key={`${t._kind}-${t._id}`} className="border-b border-white/5">
                     <td className="py-2 text-fg/60 text-xs font-mono">{t.reference}</td>
+                    <td className="py-2">
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${t._kind === 'hub' ? 'bg-purple-500/15 text-purple-400' : 'bg-white/10 text-fg/50'}`}>
+                        {t._kind === 'hub' ? 'HUB' : 'LOCAL'}
+                      </span>
+                    </td>
                     <td className="py-2 text-fg font-bold">{t.itemName}</td>
-                    <td className="py-2 text-fg/60 text-xs">{t.fromLocation || '?'} → {t.toLocation || '?'}</td>
+                    <td className="py-2 text-fg/60 text-xs">{t._route}</td>
                     <td className="py-2 text-right text-fg tabular-nums font-bold">{t.qtyBase} {t.unit}</td>
                     <td className="py-2 pl-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${statusColor[t.status] || 'bg-white/10 text-fg/50'}`}>{t.status}</span></td>
                     <td className="py-2 text-right">
-                      <div className="flex gap-1.5 justify-end">
-                        {t.status === 'Requested' && isSuperAdmin && (
-                          <button onClick={() => actOnStockTransfer(t._id, 'approve')} className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 min-h-[32px]">Approve</button>
-                        )}
-                        {t.status === 'Approved' && (
-                          <button onClick={() => actOnStockTransfer(t._id, 'release')} className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded bg-green-500/15 text-green-500 hover:bg-green-500/25 min-h-[32px]">Release</button>
-                        )}
-                        {['Requested', 'Approved'].includes(t.status) && (
-                          <button onClick={() => actOnStockTransfer(t._id, 'reject')} className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 min-h-[32px]">{isSuperAdmin ? 'Reject' : 'Cancel'}</button>
-                        )}
-                      </div>
+                      {t._kind === 'local' && (
+                        <div className="flex gap-1.5 justify-end">
+                          {t.status === 'Requested' && isSuperAdmin && (
+                            <button onClick={() => actOnStockTransfer(t._id, 'approve')} className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 min-h-[32px]">Approve</button>
+                          )}
+                          {t.status === 'Approved' && (
+                            <button onClick={() => actOnStockTransfer(t._id, 'release')} className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded bg-green-500/15 text-green-500 hover:bg-green-500/25 min-h-[32px]">Release</button>
+                          )}
+                          {['Requested', 'Approved'].includes(t.status) && (
+                            <button onClick={() => actOnStockTransfer(t._id, 'reject')} className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 min-h-[32px]">{isSuperAdmin ? 'Reject' : 'Cancel'}</button>
+                          )}
+                        </div>
+                      )}
+                      {t._kind === 'hub' && <span className="text-fg/30 text-[10px] uppercase">Hub tab</span>}
                     </td>
                   </tr>
                 ))}
@@ -212,49 +188,6 @@ export default function StockTransferPanel({
           </div>
         )}
       </div>
-
-      {/* Hub shipments - outbound cross-business transfers sent from here. Only
-          shown when at least one Hub partner is connected, so a shop that never
-          uses the Hub doesn't see an empty section. Accepting an INBOUND
-          shipment (someone else sending to you) still happens on the Hub tab -
-          it needs to pick which of your items receives the stock (or create a
-          new one), which this one-line request form has no room for. */}
-      {hubLinks.length > 0 && (
-        <div className={card}>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-fg font-black uppercase tracking-wider text-sm">Hub Shipments (to connected businesses)</h3>
-            <span className="text-[10px] text-fg/30">Incoming shipments · use the Hub tab to accept</span>
-          </div>
-          {hubTransfers.length === 0 ? (
-            <p className="text-fg/40 text-xs py-6 text-center uppercase tracking-widest">No hub shipments yet</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
-                    <th className="text-left py-2">Ref</th>
-                    <th className="text-left py-2">Item</th>
-                    <th className="text-left py-2">To Partner</th>
-                    <th className="text-right py-2">Qty</th>
-                    <th className="text-left py-2 pl-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {hubTransfers.map(t => (
-                    <tr key={t._id} className="border-b border-white/5">
-                      <td className="py-2 text-fg/60 text-xs font-mono">{t.reference}</td>
-                      <td className="py-2 text-fg font-bold">{t.itemName}</td>
-                      <td className="py-2 text-fg/60 text-xs">{t.partnerName || t.partnerSlug}</td>
-                      <td className="py-2 text-right text-fg tabular-nums font-bold">{t.qtyBase} {t.unit}</td>
-                      <td className="py-2 pl-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${hubStatusColor[t.status] || 'bg-white/10 text-fg/50'}`}>{t.status}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

@@ -50,6 +50,7 @@ export default function ProcurementTab({ ctx }) {
       : items.reduce((s, l) => s + l.total, 0);
 
     const schedRows = [
+      po.supplierRef ? { label: 'Reference #:', value: po.supplierRef } : null,
       po.expectedDate ? { label: 'Expected Delivery:', value: fmtDate(po.expectedDate) } : null,
       po.notes ? { label: 'Notes:', value: po.notes } : null,
     ].filter(Boolean);
@@ -247,12 +248,12 @@ export default function ProcurementTab({ ctx }) {
   const UNIT_OPTIONS = ['', 'pcs', 'kg', 'L', 'g', 'ml'];
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({ supplier: '', supplierId: '', expectedDate: '', notes: '', lines: [blankLine()] });
+  const [form, setForm] = useState({ supplier: '', supplierId: '', supplierRef: '', expectedDate: '', notes: '', lines: [blankLine()] });
   const [saving, setSaving] = useState(false);
 
   const openNewForm = () => {
     setEditId(null);
-    setForm({ supplier: '', supplierId: '', expectedDate: '', notes: '', lines: [blankLine()] });
+    setForm({ supplier: '', supplierId: '', supplierRef: '', expectedDate: '', notes: '', lines: [blankLine()] });
     setSuggestedQueue([]); setSuggestedQueueTotal(0);
     setShowForm(true);
   };
@@ -262,6 +263,7 @@ export default function ProcurementTab({ ctx }) {
     setForm({
       supplier: po.supplier || '',
       supplierId: po.supplierId || '',
+      supplierRef: po.supplierRef || '',
       expectedDate: po.expectedDate ? new Date(po.expectedDate).toISOString().slice(0, 10) : '',
       notes: po.notes || '',
       lines: (po.lines || []).map(l => ({
@@ -591,7 +593,7 @@ export default function ProcurementTab({ ctx }) {
       const url = editId ? `/api/purchase-orders/${editId}` : '/api/purchase-orders';
       const res = await apiFetch(url, {
         method: editId ? 'PATCH' : 'POST',
-        body: JSON.stringify({ supplier: form.supplier, supplierId: form.supplierId || null, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines }),
+        body: JSON.stringify({ supplier: form.supplier, supplierId: form.supplierId || null, supplierRef: form.supplierRef, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines }),
       });
       const d = await res.json();
       if (d.success) {
@@ -964,6 +966,7 @@ export default function ProcurementTab({ ctx }) {
                   </div>
                   <p className="text-fg/40 text-xs font-bold mt-0.5 truncate">
                     {po.supplier || 'No supplier'} · {po.lines?.length || 0} item(s) · Expected {fmtDate(po.expectedDate)}
+                    {po.supplierRef && <> · Ref {po.supplierRef}</>}
                   </p>
                 </div>
                 <span className="text-fg/50 font-black text-sm whitespace-nowrap">{money(po.estTotal)}</span>
@@ -1057,6 +1060,10 @@ export default function ProcurementTab({ ctx }) {
                 <div>
                   <label className="text-[11px] font-black uppercase tracking-wider text-fg/40 mb-1 block">Expected Delivery</label>
                   <input type="date" value={form.expectedDate} onChange={e => setForm(f => ({ ...f, expectedDate: e.target.value }))} className={inputCls} />
+                </div>
+                <div>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/40 mb-1 block">Reference #</label>
+                  <input value={form.supplierRef} onChange={e => setForm(f => ({ ...f, supplierRef: e.target.value }))} placeholder="Supplier's invoice / PO number" className={inputCls} />
                 </div>
               </div>
 

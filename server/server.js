@@ -49,6 +49,7 @@ import registerCollections from './features/collections.js';
 import registerNotifications from './features/notifications.js';
 import registerClients from './features/clients.js';
 import registerHub from './features/hub.js';
+import registerProduction from './features/production.js';
 
 const log = pino({
   level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
@@ -1416,6 +1417,27 @@ StockCardSchema.index({ inventoryId: 1 });
 StockCardSchema.index({ reference: 1 });
 const StockCard = mongoose.model('StockCard', StockCardSchema);
 
+// Raw-material -> finished-good conversion (e.g. green coffee beans -> roasted
+// beans). A pure Inventory Asset reclassification - the output's cost is the
+// rolled-up cost of the inputs consumed (+ nothing else in v1), so it never
+// changes the total value of Inventory Asset and needs no journal entry.
+const ProductionOrderSchema = new mongoose.Schema({
+  businessType: { type: String, required: true, index: true },
+  reference:    { type: String, index: true },
+  inputs: [{
+    invId:    mongoose.Schema.Types.ObjectId,
+    itemName: String,
+    qtyBase:  Number,
+    unitCost: Number,
+  }],
+  outputInvId:     mongoose.Schema.Types.ObjectId,
+  outputItemName:  String,
+  outputQtyBase:   Number,
+  outputUnitCost:  Number,
+  note: { type: String, default: '' },
+}, { timestamps: true });
+const ProductionOrder = mongoose.model('ProductionOrder', ProductionOrderSchema);
+
 // --- SHIFT MANAGEMENT SCHEMA ---
 const ShiftSchema = new mongoose.Schema({
   cashierId:       { type: String, required: true },
@@ -1987,6 +2009,7 @@ const Supplier = mongoose.model('Supplier', SupplierSchema);
 const PO_STATUSES = ['Ordered', 'Processing', 'Complete', 'Incomplete', 'Cancelled'];
 const PurchaseOrderSchema = new mongoose.Schema({
   poNumber:     { type: String, index: true },              // PO-2026-000001
+  supplierRef:  { type: String, default: '', index: true }, // supplier's own invoice/PO number, for matching their paperwork
   supplier:     { type: String, default: '' },              // name snapshot at draft time
   supplierId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Supplier', default: null },
   status:       { type: String, default: 'Ordered', enum: PO_STATUSES, index: true },
@@ -2664,6 +2687,8 @@ const ctx = {
   InventoryMovement,
   StockCardSchema,
   StockCard,
+  ProductionOrderSchema,
+  ProductionOrder,
   ShiftSchema,
   Shift,
   ClockEntrySchema,
@@ -2775,6 +2800,7 @@ registerCollections(ctx);
 registerNotifications(ctx);
 registerClients(ctx);
 registerHub(ctx);
+registerProduction(ctx);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Not found.' });
