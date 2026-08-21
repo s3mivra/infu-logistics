@@ -88,16 +88,26 @@ export default function HubTab({ ctx }) {
     load();
   };
 
+  // When an item has a packSize (its purchased-package weight/volume, e.g. 377
+  // for "Condensed Milk 377g"), transfers move whole pieces - you can't ship a
+  // partial opened can. pcsFactor = base units (g/ml) per 1 pcs; entering "2"
+  // in the qty box then means 2 pieces, converted to base units under the hood
+  // so stockQty (always base units) stays correct.
+  const pcsFactor = (inv) => (inv?.packSize > 0 ? inv.packSize * (inv.unitMultiplier || 1) : null);
+
   const addToCart = (itemId) => {
-    const qty = parseFloat(sendRowQty[itemId]);
-    if (!(qty > 0)) return;
+    const entered = parseFloat(sendRowQty[itemId]);
+    if (!(entered > 0)) return;
     const inv = inventory.find(i => i._id === itemId);
     if (!inv) return;
+    const factor = pcsFactor(inv);
+    const unit = factor ? 'pcs' : inv.unit;
+    const qtyBase = factor ? entered * factor : entered;
     setSendCart(c => {
       const idx = c.findIndex(l => l.itemId === itemId);
-      if (idx === -1) return [...c, { itemId, itemName: inv.itemName, unit: inv.unit, qty, note: '' }];
+      if (idx === -1) return [...c, { itemId, itemName: inv.itemName, unit, qty: entered, qtyBase, note: '' }];
       const next = [...c];
-      next[idx] = { ...next[idx], qty: next[idx].qty + qty };
+      next[idx] = { ...next[idx], qty: next[idx].qty + entered, qtyBase: next[idx].qtyBase + qtyBase };
       return next;
     });
     setSendRowQty(q => ({ ...q, [itemId]: '' }));
@@ -113,7 +123,7 @@ export default function HubTab({ ctx }) {
       for (const line of sendCart) {
         const r = await authFetch('/api/hub/transfers/send', {
           method: 'POST',
-          body: JSON.stringify({ partnerSlug: sendPartner, itemId: line.itemId, qtyBase: line.qty, note: line.note }),
+          body: JSON.stringify({ partnerSlug: sendPartner, itemId: line.itemId, qtyBase: line.qtyBase, note: line.note }),
         });
         const d = await r.json();
         if (!r.ok) { setSendErr(d.error); return; }
@@ -320,10 +330,14 @@ export default function HubTab({ ctx }) {
                 <tbody>
                   {inventory
                     .filter(i => i.itemName.toLowerCase().includes(sendSearch.trim().toLowerCase()))
-                    .map(i => (
+                    .map(i => {
+                      const factor = pcsFactor(i);
+                      return (
                       <tr key={i._id} className="border-b border-white/5 last:border-0 hover:bg-white/3">
                         <td className="py-1.5 px-3 font-bold text-fg">{i.itemName}</td>
-                        <td className="py-1.5 px-3 text-right tabular-nums text-fg/50">{i.stockQty} {i.unit}</td>
+                        <td className="py-1.5 px-3 text-right tabular-nums text-fg/50">
+                          {i.stockQty} {i.unit}{factor ? ` (${(i.stockQty / factor).toFixed(2)} pcs)` : ''}
+                        </td>
                         <td className="py-1.5 px-3">
                           <input
                             type="number" min="0.001" step="any"
@@ -331,7 +345,7 @@ export default function HubTab({ ctx }) {
                             onChange={e => setSendRowQty(q => ({ ...q, [i._id]: e.target.value }))}
                             onKeyDown={e => e.key === 'Enter' && addToCart(i._id)}
                             className="w-full bg-card-bg border border-white/10 rounded-lg px-2 py-1 text-fg text-xs outline-none focus:border-accent text-right"
-                            placeholder={i.unit}
+                            placeholder={factor ? 'pcs' : i.unit}
                           />
                         </td>
                         <td className="py-1.5 px-3 text-right">
@@ -343,7 +357,8 @@ export default function HubTab({ ctx }) {
                           ><Plus size={14} /></button>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   {inventory.filter(i => i.itemName.toLowerCase().includes(sendSearch.trim().toLowerCase())).length === 0 && (
                     <tr><td colSpan={4} className="py-4 text-center text-fg/30 text-[10px] uppercase tracking-widest">No products found</td></tr>
                   )}

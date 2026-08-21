@@ -28,6 +28,13 @@ export default function StockTransferPanel({
   const isHubTarget = toValue.startsWith('hub:');
   const toItemId = isHubTarget ? '' : toValue;
 
+  // Same packSize-based pcs conversion as the Hub transfer form: an item with
+  // a purchased-package size (e.g. 377 for "Condensed Milk 377g") can only be
+  // moved in whole pieces, so the qty box collects pcs and we convert to base
+  // units (g/ml) before submitting.
+  const pcsFactor = (inv) => (inv?.packSize > 0 ? inv.packSize * (inv.unitMultiplier || 1) : null);
+  const fromFactor = pcsFactor(fromItem);
+
   // Connected Hub partners + this business's own outbound shipment history.
   // Kept local to this panel (not the giant AdminDashboard ctx) since only
   // this one form needs them.
@@ -50,12 +57,13 @@ export default function StockTransferPanel({
   const submit = async () => {
     if (!fromItemId || !toValue || !(parseFloat(qty) > 0) || busy) return;
     setBusy(true);
+    const qtyBase = fromFactor ? parseFloat(qty) * fromFactor : parseFloat(qty);
     if (isHubTarget) {
       const partnerSlug = toValue.slice('hub:'.length);
       try {
         const res = await apiFetch('/api/hub/transfers/send', {
           method: 'POST',
-          body: JSON.stringify({ partnerSlug, items: [{ itemId: fromItemId, qty: parseFloat(qty), note: note.trim() }] }),
+          body: JSON.stringify({ partnerSlug, items: [{ itemId: fromItemId, qty: qtyBase, note: note.trim() }] }),
         });
         const data = await res.json();
         if (!res.ok || data.errors?.length) {
@@ -69,7 +77,7 @@ export default function StockTransferPanel({
       setBusy(false);
       return;
     }
-    const ok = await requestStockTransfer({ fromItemId, toItemId, qtyBase: parseFloat(qty), note: note.trim() });
+    const ok = await requestStockTransfer({ fromItemId, toItemId, qtyBase, note: note.trim() });
     setBusy(false);
     if (ok) { setQty(''); setNote(''); }
   };
@@ -117,7 +125,10 @@ export default function StockTransferPanel({
             <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">From (source)</label>
             <select value={fromItemId} onChange={e => setFromItemId(e.target.value)} className={input}>
               <option value="">- Select item -</option>
-              {inventory.map(i => <option key={i._id} value={i._id}>{label(i)} ({i.stockQty} {i.unit})</option>)}
+              {inventory.map(i => {
+                const f = pcsFactor(i);
+                return <option key={i._id} value={i._id}>{label(i)} ({f ? `${(i.stockQty / f).toFixed(2)} pcs` : `${i.stockQty} ${i.unit}`})</option>;
+              })}
             </select>
           </div>
           <div>
@@ -142,8 +153,8 @@ export default function StockTransferPanel({
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
           <div>
-            <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">Quantity{fromItem ? ` (${fromItem.unit})` : ''}</label>
-            <input type="number" min="0" value={qty} onChange={e => setQty(e.target.value)} placeholder="Base units" className={input} />
+            <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">Quantity{fromItem ? ` (${fromFactor ? 'pcs' : fromItem.unit})` : ''}</label>
+            <input type="number" min="0" value={qty} onChange={e => setQty(e.target.value)} placeholder={fromFactor ? 'pcs' : 'Base units'} className={input} />
           </div>
           <div>
             <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">Note (optional)</label>
