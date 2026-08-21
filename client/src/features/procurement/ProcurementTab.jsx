@@ -299,8 +299,12 @@ export default function ProcurementTab({ ctx }) {
     const packSize = inv?.packSize && inv.packSize > 0 ? inv.packSize : null;
     let orderedQty = displayQty;
     let unitCost = displayQty > 0 ? +((Number(l.estCost) || 0) / displayQty).toFixed(4) : (inv?.unitCost ?? l.unitCost ?? '');
+    // The report already returns suggestedOrder in whole packs (pcs) for log
+    // businesses - it divided by packBase server-side (see reports.js). Dividing
+    // by packSize again here double-converted it (e.g. 926 pcs / 0.377 -> 2456.23),
+    // so just round to a whole pack count instead of re-converting.
     if (BUSINESS_TYPE === 'log' && packSize && packInfo && inv) {
-      orderedQty = +(displayQty / packSize).toFixed(2);
+      orderedQty = Math.round(displayQty);
       unitCost = +(packInfo(inv).cost).toFixed(4);
     }
     return {
