@@ -160,7 +160,7 @@ export default function HubTab({ ctx }) {
     load();
   };
 
-  const card  = 'bg-card-bg border border-white/10 rounded-xl p-4 mb-4';
+  const card  = 'bg-surface border border-white/10 rounded-xl p-4 mb-4';
   const input = 'w-full bg-page-bg border border-white/10 rounded-lg p-2.5 text-fg text-sm outline-none focus:border-accent';
   const btn   = (v = 'primary') => `px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider min-h-[40px] disabled:opacity-40 transition ${
     v === 'primary' ? 'bg-accent text-white hover:opacity-90' :
@@ -344,7 +344,7 @@ export default function HubTab({ ctx }) {
                             value={sendRowQty[i._id] || ''}
                             onChange={e => setSendRowQty(q => ({ ...q, [i._id]: e.target.value }))}
                             onKeyDown={e => e.key === 'Enter' && addToCart(i._id)}
-                            className="w-full bg-card-bg border border-white/10 rounded-lg px-2 py-1 text-black text-xs outline-none focus:border-accent text-right"
+                            className="w-full bg-white border border-white/10 rounded-lg px-2 py-1 text-black text-xs outline-none focus:border-accent text-right"
                             placeholder={factor ? 'pcs' : i.unit}
                           />
                         </td>
@@ -414,7 +414,7 @@ export default function HubTab({ ctx }) {
           </h3>
           <div className="space-y-3">
             {pendingInbound.map(t => (
-              <div key={t._id} className="flex items-center justify-between gap-3 bg-card-bg rounded-lg p-3">
+              <div key={t._id} className="flex items-center justify-between gap-3 bg-surface rounded-lg p-3">
                 <div>
                   <p className="text-fg font-bold text-sm">{t.itemName}</p>
                   <p className="text-fg/50 text-xs">{t.qtyBase} {t.unit} from <span className="text-fg/80 font-bold">{t.partnerName || t.partnerSlug}</span></p>
@@ -489,7 +489,7 @@ export default function HubTab({ ctx }) {
       {/* ── Accept modal ── */}
       {acceptTarget && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-card-bg border border-white/10 rounded-2xl p-6 w-full max-w-md">
+          <div className="bg-surface border border-white/10 rounded-2xl p-6 w-full max-w-md">
             <h3 className="text-fg font-black text-base mb-1">Accept Transfer</h3>
             <p className="text-fg/50 text-sm mb-4">
               Receiving <span className="text-fg font-bold">{acceptTarget.qtyBase} {acceptTarget.unit}</span> of{' '}

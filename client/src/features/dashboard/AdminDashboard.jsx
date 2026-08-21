@@ -2768,8 +2768,12 @@ const updateStatus = async (orderId, newStatus) => {
     let displayUnit = item.displayUnit;
     let mult = (item.unitMultiplier && item.unitMultiplier > 0) ? item.unitMultiplier : null;
     if (!displayUnit || displayUnit === 'g' || displayUnit === 'ml') {
-      if (baseUnit === 'g')        { displayUnit = 'kg';  mult = mult || 1000; }
-      else if (baseUnit === 'ml')  { displayUnit = 'L';   mult = mult || 1000; }
+      // Auto-promoting from a bare/unset display unit - a stray unitMultiplier
+      // of 1 here (e.g. an item saved without ever setting it) means "not
+      // configured", not "1 base unit per display unit", so it must not block
+      // the g/ml->kg/L promotion below.
+      if (baseUnit === 'g')        { displayUnit = 'kg';  mult = 1000; }
+      else if (baseUnit === 'ml')  { displayUnit = 'L';   mult = 1000; }
       else                          { displayUnit = baseUnit || 'pcs'; mult = mult || 1; }
     }
     return { unit: displayUnit, mult: mult || 1 };

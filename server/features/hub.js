@@ -226,6 +226,10 @@ export default function registerHub(ctx) {
         itemName: item.itemName,
         unit: item.unit,
         qtyBase: Number(qty),
+        unitCost: item.unitCost || 0,
+        displayUnit: item.displayUnit || '',
+        unitMultiplier: item.unitMultiplier || 1,
+        packSize: item.packSize,
         note: String(note || '').trim(),
         reference,
         shipmentRef,
@@ -249,6 +253,10 @@ export default function registerHub(ctx) {
           unit:      t.unit,
           qtyBase:   t.qtyBase,
           note:      t.note,
+          unitCost:       t.unitCost,
+          displayUnit:    t.displayUnit,
+          unitMultiplier: t.unitMultiplier,
+          packSize:       t.packSize,
         })),
       });
     } catch (e) {
@@ -271,6 +279,10 @@ export default function registerHub(ctx) {
         itemName: line.itemName,
         unit: line.unit,
         qtyBase: Number(line.qtyBase),
+        unitCost: line.unitCost || 0,
+        displayUnit: line.displayUnit || '',
+        unitMultiplier: line.unitMultiplier || 1,
+        packSize: line.packSize,
         note: String(line.note || '').trim(),
         reference: line.reference,
         shipmentRef,
@@ -298,7 +310,10 @@ export default function registerHub(ctx) {
         itemName: transfer.itemName,
         unit: transfer.unit,
         stockQty: 0,
-        unitCost: 0,
+        unitCost: transfer.unitCost || 0,
+        displayUnit: transfer.displayUnit || '',
+        unitMultiplier: transfer.unitMultiplier || 1,
+        packSize: transfer.packSize,
       });
     } else {
       return res.status(400).json({ error: 'Provide itemId to receive into, or set createNew:true to auto-create.' });

@@ -1284,6 +1284,12 @@ const CrossTransferSchema = new mongoose.Schema({
   itemName:     String,
   unit:         String,
   qtyBase:      Number,
+  // Carried over from the source item so an auto-created receiving item isn't
+  // left blank (unit cost, display/package size) - see hub.js accept handler.
+  unitCost:       { type: Number, default: 0 },
+  displayUnit:    { type: String, default: '' },
+  unitMultiplier: { type: Number, default: 1 },
+  packSize:       { type: Number, default: null },
   note:         String,
   reference:    { type: String, index: true },
   // Groups all line-items sent in the same "send" action.
