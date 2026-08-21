@@ -331,7 +331,7 @@ export default function InventoryTab({ ctx }) {
                         <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-fg'}`}>
                           {d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}
                           {d.isPacked && (
-                            <div className="text-[10px] font-normal text-fg/40 normal-case">
+                            <div className="text-[10px] font-normal text-white normal-case">
                               {(item.stockQty || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} {item.unit} exact
                             </div>
                           )}
