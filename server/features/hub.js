@@ -14,6 +14,19 @@ const HUB_URL_PATTERN = process.env.HUB_URL_PATTERN || 'http://{slug}-api:5002';
 const hubUrlFor = (slug) => HUB_URL_PATTERN.replace('{slug}', slug);
 const SELF_URL = hubUrlFor(TENANT);
 
+// Fallback: the internal Docker alias (http://{slug}-api:5002) only resolves
+// while both tenants sit on the same semivra-net network with a healthy
+// container. If that's flaky (container mid-restart, not yet attached, DNS
+// cache hiccup), fall back to the tenant's public URL - same Caddy/nginx path
+// every browser already uses to reach the API, so it works from anywhere.
+const PUBLIC_HUB_URL_PATTERN = process.env.PUBLIC_HUB_URL_PATTERN
+  || (process.env.DOMAIN ? `${process.env.LOCAL_MODE === '1' ? 'http' : 'https'}://{slug}.${process.env.DOMAIN}` : null);
+const hubUrlCandidatesFor = (slug) => {
+  const primary = hubUrlFor(slug);
+  const fallback = PUBLIC_HUB_URL_PATTERN ? PUBLIC_HUB_URL_PATTERN.replace('{slug}', slug) : null;
+  return fallback && fallback !== primary ? [primary, fallback] : [primary];
+};
+
 export default function registerHub(ctx) {
   const {
     app, BUSINESS_TYPE,
@@ -34,15 +47,28 @@ export default function registerHub(ctx) {
   }
 
   async function partnerCall(link, path, body) {
-    const res = await fetch(`${link.partnerUrl}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-link-token': link.linkToken },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15_000),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `Partner returned ${res.status}`);
-    return data;
+    // link.partnerUrl is whichever URL worked at handshake time - try it first,
+    // then fall back to the other candidate for that slug in case the network
+    // path that worked then doesn't work now (container restart, IP change).
+    const candidates = [link.partnerUrl, ...hubUrlCandidatesFor(link.partnerSlug)]
+      .filter((v, i, arr) => v && arr.indexOf(v) === i);
+    let lastErr;
+    for (const url of candidates) {
+      try {
+        const res = await fetch(`${url}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-link-token': link.linkToken },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(15_000),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `Partner returned ${res.status}`);
+        return data;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr;
   }
 
   // Double-entry journal entry for hub stock movements.
@@ -85,23 +111,30 @@ export default function registerHub(ctx) {
     const hubSlug = parts[0];
     if (hubSlug === TENANT) return res.status(400).json({ error: 'Cannot link to yourself.' });
 
-    const hubUrl = hubUrlFor(hubSlug);
     const linkToken = crypto.randomBytes(32).toString('hex');
 
-    let hubData;
-    try {
-      hubData = await fetch(`${hubUrl}/api/hub/internal/handshake`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: String(code).trim(), clientSlug: TENANT, clientUrl: SELF_URL, linkToken }),
-        signal: AbortSignal.timeout(20_000),
-      }).then(async (r) => {
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d.error || `Hub returned ${r.status}`);
-        return d;
-      });
-    } catch (e) {
-      return res.status(502).json({ error: `Could not reach hub (${hubSlug}): ${e.message}` });
+    let hubData, hubUrl;
+    const attempts = [];
+    for (const candidateUrl of hubUrlCandidatesFor(hubSlug)) {
+      try {
+        hubData = await fetch(`${candidateUrl}/api/hub/internal/handshake`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: String(code).trim(), clientSlug: TENANT, clientUrl: SELF_URL, linkToken }),
+          signal: AbortSignal.timeout(20_000),
+        }).then(async (r) => {
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.error || `Hub returned ${r.status}`);
+          return d;
+        });
+        hubUrl = candidateUrl;
+        break;
+      } catch (e) {
+        attempts.push(`${candidateUrl} -> ${e.message}`);
+      }
+    }
+    if (!hubData) {
+      return res.status(502).json({ error: `Could not reach hub (${hubSlug}). Tried: ${attempts.join('; ')}` });
     }
 
     await LinkedBusiness.findOneAndUpdate(

@@ -37,6 +37,9 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       ADMIN_PASS: ${ADMIN_PASS}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Lets server/features/hub.js fall back to https://{slug}.$DOMAIN (via
+      # Caddy) when the internal semivra-net alias {slug}-api isn't reachable.
+      DOMAIN: ${DOMAIN}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:5002/health"]
       interval: 30s

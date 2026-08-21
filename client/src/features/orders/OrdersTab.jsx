@@ -686,7 +686,7 @@ export default function OrdersTab({ ctx }) {
                   );
                 })()}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
                   {displayOrders.length === 0 ? (
                     <div className="col-span-full flex flex-col items-center justify-center py-20 px-6 text-center">
                       <div className="w-16 h-16 rounded-2xl bg-surface-2 border border-white/5 flex items-center justify-center mb-5">

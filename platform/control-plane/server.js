@@ -426,6 +426,7 @@ app.post('/api/tenants', requireAuth, async (req, res) => {
     ...resourceEnv(memMb, cpuShares),
     // Each tenant gets its own database inside the one shared mongod.
     MONGO_URI: `mongodb://mongo:27017/semivra_${slug}?replicaSet=rs0`,
+    DOMAIN,
     JWT_SECRET: crypto.randomBytes(32).toString('hex'),
     ADMIN_PASS: adminPass,
     ALLOWED_ORIGINS: origins,
