@@ -150,6 +150,7 @@ export default function HubTab({ ctx }) {
       const d = await r.json();
       if (!r.ok) { setAcceptErr(d.error); return; }
       setAcceptTarget(null);
+      if (d.warning) setRetryErr(d.warning);
       load();
     } catch (e) { setAcceptErr(e.message); }
     finally { setAcceptBusy(false); }
@@ -158,6 +159,19 @@ export default function HubTab({ ctx }) {
   const act = async (id, action) => {
     await authFetch(`/api/hub/transfers/${id}/${action}`, { method: 'POST', body: '{}' });
     load();
+  };
+
+  const [retryingId, setRetryingId] = useState('');
+  const [retryErr, setRetryErr] = useState('');
+  const retryRelease = async (id) => {
+    setRetryingId(id); setRetryErr('');
+    try {
+      const r = await authFetch(`/api/hub/transfers/${id}/retry-release`, { method: 'POST', body: '{}' });
+      const d = await r.json();
+      if (!r.ok) setRetryErr(d.error || 'Retry failed.');
+      load();
+    } catch (e) { setRetryErr(e.message); }
+    finally { setRetryingId(''); }
   };
 
   const card  = 'bg-surface border border-white/10 rounded-xl p-4 mb-4';
@@ -436,6 +450,7 @@ export default function HubTab({ ctx }) {
           <h3 className="text-fg font-black uppercase tracking-wider text-sm">Transfer History</h3>
           <button onClick={load} className={btn('ghost')}><RefreshCw size={13} /></button>
         </div>
+        {retryErr && <p className="text-red-400 text-xs mb-2">{retryErr}</p>}
         {transfers.length === 0 ? (
           <p className="text-fg/40 text-xs py-6 text-center uppercase tracking-widest">No transfers yet</p>
         ) : (
@@ -476,6 +491,16 @@ export default function HubTab({ ctx }) {
                       )}
                       {t.direction === 'outbound' && t.status === 'Pending' && (
                         <button onClick={() => act(t._id, 'cancel')} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/8 text-fg/50 hover:bg-white/15 min-h-[28px]">Cancel</button>
+                      )}
+                      {t.direction === 'inbound' && t.status === 'Received' && (
+                        <button
+                          onClick={() => retryRelease(t._id)}
+                          disabled={retryingId === t._id}
+                          title="Ask the partner to release/sync their stock again if it didn't reconcile on their end"
+                          className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/8 text-fg/50 hover:bg-white/15 disabled:opacity-40 min-h-[28px]"
+                        >
+                          {retryingId === t._id ? '…' : 'Retry Sync'}
+                        </button>
                       )}
                     </td>
                   </tr>

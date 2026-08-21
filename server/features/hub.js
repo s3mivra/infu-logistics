@@ -34,6 +34,7 @@ export default function registerHub(ctx) {
     Inventory, StockCard, JournalEntry,
     verifyToken,
     requireStaff: requireAuth, requireSuperAdmin,
+    emitToMgr,
   } = ctx;
 
   // Internal auth: partner calls use a shared linkToken
@@ -304,6 +305,14 @@ export default function registerHub(ctx) {
     if (itemId) {
       targetItem = await Inventory.findOne({ _id: itemId, businessType: BUSINESS_TYPE });
       if (!targetItem) return res.status(404).json({ error: 'Target inventory item not found.' });
+      // Backfill unit cost / pack size on an existing item that was never
+      // properly set up (e.g. auto-created by an older version of this
+      // handler, or a manually-added placeholder) - never overwrite values
+      // the operator already configured.
+      if (!targetItem.unitCost && transfer.unitCost) targetItem.unitCost = transfer.unitCost;
+      if (!targetItem.packSize && transfer.packSize) targetItem.packSize = transfer.packSize;
+      if (!targetItem.displayUnit && transfer.displayUnit) targetItem.displayUnit = transfer.displayUnit;
+      if ((!targetItem.unitMultiplier || targetItem.unitMultiplier === 1) && transfer.unitMultiplier > 1) targetItem.unitMultiplier = transfer.unitMultiplier;
     } else if (createNew) {
       targetItem = await Inventory.create({
         businessType: BUSINESS_TYPE,
@@ -349,13 +358,41 @@ export default function registerHub(ctx) {
     transfer.targetItemId = targetItem._id;
     transfer.receivedAt = new Date();
     await transfer.save();
+    emitToMgr('erpUpdated');
 
+    // Tell the sender to decrement their stock + log "Transfer Out" now that
+    // we've received it. If this call fails (partner offline, bad URL, etc.)
+    // the sender is left holding stock they've already shipped and gets no
+    // history entry for it - surface that instead of swallowing it, so the
+    // operator knows to retry (see /retry-release below) rather than assuming
+    // everything reconciled.
+    let releaseWarning;
     const link = await LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug: transfer.partnerSlug, status: 'active' }).lean();
     if (link) {
-      try { await partnerCall(link, '/api/hub/internal/transfer-release', { reference: transfer.reference }); } catch {}
+      try { await partnerCall(link, '/api/hub/internal/transfer-release', { reference: transfer.reference }); }
+      catch (e) { releaseWarning = `Received here, but could not notify ${transfer.partnerName} to release their stock: ${e.message}. Retry from the Transfers list.`; }
     }
 
-    res.json({ ok: true, transfer });
+    res.json({ ok: true, transfer, ...(releaseWarning ? { warning: releaseWarning } : {}) });
+  });
+
+  // Retry notifying the sender to release stock for an already-received
+  // transfer, in case the first attempt (right after accept) failed.
+  app.post('/api/hub/transfers/:id/retry-release', verifyToken, requireAuth, async (req, res) => {
+    const transfer = await CrossTransfer.findOne({
+      _id: req.params.id, businessType: BUSINESS_TYPE, direction: 'inbound', status: 'Received',
+    });
+    if (!transfer) return res.status(404).json({ error: 'Received transfer not found.' });
+
+    const link = await LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug: transfer.partnerSlug, status: 'active' }).lean();
+    if (!link) return res.status(404).json({ error: 'No active link with that partner.' });
+
+    try {
+      await partnerCall(link, '/api/hub/internal/transfer-release', { reference: transfer.reference });
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(502).json({ error: `Still could not reach ${transfer.partnerName}: ${e.message}` });
+    }
   });
 
   // Internal: sender decrements stock after receiver accepted + posts JE
@@ -391,6 +428,7 @@ export default function registerHub(ctx) {
         creditCode: '130000', creditName: 'Inventory Asset',
         amount: releasedValue,
       });
+      emitToMgr('erpUpdated');
     }
 
     transfer.status = 'Released';
