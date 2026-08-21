@@ -233,6 +233,13 @@ function baseUnitsPerSale(product, invItem) {
     const f = UNIT_TO_BASE[mt[2].toLowerCase()];
     if (f !== undefined && val > 0) return val * (f / invBaseFactor);
   }
+  // No size token in the name (imports strip it into packSize instead) - use
+  // the SKU's real pack size (in base units) rather than unitMultiplier, which
+  // is just the fixed kg/L<->g/ml conversion factor and has nothing to do with
+  // how big THIS item's pack is. Using unitMultiplier here inflated per-sale
+  // consumption (e.g. counting a 377g can as 1000g), which cascaded into wildly
+  // oversized velocity-based reorder suggestions.
+  if (invItem?.packSize > 0) return invItem.packSize * (invItem.unitMultiplier || 1);
   return invItem?.unitMultiplier || 1;
 }
 
