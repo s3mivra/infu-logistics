@@ -27,9 +27,8 @@ export default function HubTab({ ctx }) {
   // send transfer form
   const [sendFrom, setSendFrom]       = useState('__self__');
   const [sendPartner, setSendPartner] = useState('');
-  const [sendItem, setSendItem]       = useState('');
-  const [sendQty, setSendQty]         = useState('');
-  const [sendNote, setSendNote]       = useState('');
+  const [sendSearch, setSendSearch]   = useState('');
+  const [sendRowQty, setSendRowQty]   = useState({}); // {itemId: qty string}
   const [sendCart, setSendCart]       = useState([]); // [{itemId,itemName,unit,qty,note}]
   const [sendBusy, setSendBusy]       = useState(false);
   const [sendErr, setSendErr]         = useState('');
@@ -89,13 +88,19 @@ export default function HubTab({ ctx }) {
     load();
   };
 
-  const addToCart = () => {
-    const qty = parseFloat(sendQty);
-    if (!sendItem || !(qty > 0)) return;
-    const inv = inventory.find(i => i._id === sendItem);
+  const addToCart = (itemId) => {
+    const qty = parseFloat(sendRowQty[itemId]);
+    if (!(qty > 0)) return;
+    const inv = inventory.find(i => i._id === itemId);
     if (!inv) return;
-    setSendCart(c => [...c, { itemId: sendItem, itemName: inv.itemName, unit: inv.unit, qty, note: sendNote.trim() }]);
-    setSendItem(''); setSendQty(''); setSendNote('');
+    setSendCart(c => {
+      const idx = c.findIndex(l => l.itemId === itemId);
+      if (idx === -1) return [...c, { itemId, itemName: inv.itemName, unit: inv.unit, qty, note: '' }];
+      const next = [...c];
+      next[idx] = { ...next[idx], qty: next[idx].qty + qty };
+      return next;
+    });
+    setSendRowQty(q => ({ ...q, [itemId]: '' }));
   };
 
   const removeFromCart = (idx) => setSendCart(c => c.filter((_, i) => i !== idx));
@@ -293,30 +298,58 @@ export default function HubTab({ ctx }) {
             </div>
           </div>
 
-          {/* Add item row */}
+          {/* Add item table */}
           <div className="bg-page-bg border border-white/8 rounded-xl p-3 mb-3">
             <p className="text-[10px] text-fg/40 uppercase font-bold mb-2">Add Item</p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              <select value={sendItem} onChange={e => setSendItem(e.target.value)} className={input}>
-                <option value="">- Select product -</option>
-                {inventory.map(i => (
-                  <option key={i._id} value={i._id}>{i.itemName} · {i.stockQty} {i.unit}</option>
-                ))}
-              </select>
-              <input
-                type="number" min="0.001" step="any" value={sendQty}
-                onChange={e => setSendQty(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addToCart()}
-                className={input}
-                placeholder={sendItem && inventory.find(i => i._id === sendItem) ? `Qty (${inventory.find(i => i._id === sendItem).unit})` : 'Quantity'}
-              />
-              <input value={sendNote} onChange={e => setSendNote(e.target.value)} onKeyDown={e => e.key === 'Enter' && addToCart()} className={input} placeholder="Note (optional)" />
+            <input
+              value={sendSearch}
+              onChange={e => setSendSearch(e.target.value)}
+              className={`${input} mb-2`}
+              placeholder="Search products…"
+            />
+            <div className="max-h-64 overflow-y-auto border border-white/8 rounded-lg">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-page-bg">
+                  <tr className="text-fg/40 text-[9px] uppercase tracking-widest border-b border-white/8">
+                    <th className="text-left py-2 px-3">Product</th>
+                    <th className="text-right py-2 px-3">Stock</th>
+                    <th className="text-right py-2 px-3 w-28">Qty</th>
+                    <th className="py-2 px-3 w-10" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {inventory
+                    .filter(i => i.itemName.toLowerCase().includes(sendSearch.trim().toLowerCase()))
+                    .map(i => (
+                      <tr key={i._id} className="border-b border-white/5 last:border-0 hover:bg-white/3">
+                        <td className="py-1.5 px-3 font-bold text-fg">{i.itemName}</td>
+                        <td className="py-1.5 px-3 text-right tabular-nums text-fg/50">{i.stockQty} {i.unit}</td>
+                        <td className="py-1.5 px-3">
+                          <input
+                            type="number" min="0.001" step="any"
+                            value={sendRowQty[i._id] || ''}
+                            onChange={e => setSendRowQty(q => ({ ...q, [i._id]: e.target.value }))}
+                            onKeyDown={e => e.key === 'Enter' && addToCart(i._id)}
+                            className="w-full bg-card-bg border border-white/10 rounded-lg px-2 py-1 text-fg text-xs outline-none focus:border-accent text-right"
+                            placeholder={i.unit}
+                          />
+                        </td>
+                        <td className="py-1.5 px-3 text-right">
+                          <button
+                            onClick={() => addToCart(i._id)}
+                            disabled={!(parseFloat(sendRowQty[i._id]) > 0)}
+                            className="text-accent hover:text-accent/70 disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Add to transfer"
+                          ><Plus size={14} /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  {inventory.filter(i => i.itemName.toLowerCase().includes(sendSearch.trim().toLowerCase())).length === 0 && (
+                    <tr><td colSpan={4} className="py-4 text-center text-fg/30 text-[10px] uppercase tracking-widest">No products found</td></tr>
+                  )}
+                </tbody>
+              </table>
             </div>
-            <button
-              onClick={addToCart}
-              disabled={!sendItem || !(parseFloat(sendQty) > 0)}
-              className={`mt-2 ${btn('ghost')} text-xs`}
-            >+ Add to Transfer</button>
           </div>
 
           {/* Cart */}
