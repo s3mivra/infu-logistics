@@ -124,7 +124,12 @@ const WALK_IN_CUSTOMER_CODE = 'CUS-1000-A0001';
 const ENV_ORIGINS = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '')
   .split(',').map(s => s.trim()).filter(Boolean);
 const allowedOrigins = [
-  "http://localhost:3000",
+  // Dev-only origin - unlike this, the LAN auto-allow below is already gated
+  // on !IS_PROD. Leaving this unconditional would trust a page served from
+  // localhost:3000 on ANY machine (operator's or attacker's) as a valid
+  // origin for CORS and the refresh/logout cookie endpoints' CSRF check, even
+  // in production.
+  ...(!IS_PROD ? ["http://localhost:3000"] : []),
   ...ENV_ORIGINS
 ];
 
@@ -798,7 +803,11 @@ mongoose.connect(process.env.MONGO_URI, {
       }
     }
     const { sessionId, table } = req.body;
-    if (sessionId && table && !['Takeout', 'Grab Delivery', 'Foodpanda', 'Manual Delivery'].includes(table)) {
+    // sessionId/table must be plain strings before they ever reach a Mongo query -
+    // an object here (e.g. { "$ne": null }) would be interpreted as a query
+    // operator by Mongoose instead of a literal value, letting an unauthenticated
+    // caller match/hijack an arbitrary active QR session.
+    if (typeof sessionId === 'string' && sessionId && typeof table === 'string' && table && !['Takeout', 'Grab Delivery', 'Foodpanda', 'Manual Delivery'].includes(table)) {
       const qrSession = await QRSession.findOne({ sessionId, table, isActive: true });
       if (qrSession && new Date() < qrSession.expiresAt) {
         req.qrSession = qrSession;

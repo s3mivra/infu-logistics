@@ -164,12 +164,25 @@ export default function registerHub(ctx) {
 
     for (const line of items) {
       const { itemId, qty, batchIdx, note } = line;
-      if (!itemId || !(Number(qty) > 0)) { errors.push(`Invalid line`); continue; }
+      const wantQty = Number(qty);
+      if (!itemId || !(wantQty > 0)) { errors.push(`Invalid line`); continue; }
 
-      const item = await Inventory.findOne({ _id: itemId, businessType: BUSINESS_TYPE }).lean();
-      if (!item) { errors.push(`Item not found.`); continue; }
-      if (item.stockQty < Number(qty)) {
-        errors.push(`Insufficient stock for ${item.itemName}. On hand: ${item.stockQty} ${item.unit}.`);
+      const preCheck = await Inventory.findOne({ _id: itemId, businessType: BUSINESS_TYPE }).lean();
+      if (!preCheck) { errors.push(`Item not found.`); continue; }
+
+      // Reserve the stock atomically NOW, not at release time. Two outbound
+      // sends racing for the same item (two staff, or a double-click) would
+      // otherwise both pass a plain read-then-compare check and both commit to
+      // shipping stock that only exists once - this $gte guard makes only one
+      // of them able to claim it. cancel/reject below restore the reservation
+      // if the transfer doesn't end up released.
+      const item = await Inventory.findOneAndUpdate(
+        { _id: itemId, businessType: BUSINESS_TYPE, stockQty: { $gte: wantQty } },
+        { $inc: { stockQty: -wantQty } },
+        { new: true }
+      );
+      if (!item) {
+        errors.push(`Insufficient stock for ${preCheck.itemName}. On hand: ${preCheck.stockQty} ${preCheck.unit}.`);
         continue;
       }
 
@@ -180,21 +193,30 @@ export default function registerHub(ctx) {
       }
 
       const reference = `${shipmentRef}-L${created.length + 1}`;
-      const transfer = await CrossTransfer.create({
-        businessType: BUSINESS_TYPE,
-        direction: 'outbound',
-        partnerSlug,
-        partnerName: link.partnerName || partnerSlug,
-        itemId: item._id,
-        itemName: item.itemName,
-        unit: item.unit,
-        qtyBase: Number(qty),
-        note: String(note || '').trim(),
-        reference,
-        shipmentRef,
-        batchInfo,
-        status: 'Pending',
-      });
+      let transfer;
+      try {
+        transfer = await CrossTransfer.create({
+          businessType: BUSINESS_TYPE,
+          direction: 'outbound',
+          partnerSlug,
+          partnerName: link.partnerName || partnerSlug,
+          itemId: item._id,
+          itemName: item.itemName,
+          unit: item.unit,
+          qtyBase: wantQty,
+          note: String(note || '').trim(),
+          reference,
+          shipmentRef,
+          batchInfo,
+          status: 'Pending',
+        });
+      } catch (e) {
+        // Creating the transfer record failed after stock was already reserved -
+        // give it back rather than leaving it silently short.
+        await Inventory.findByIdAndUpdate(item._id, { $inc: { stockQty: wantQty } });
+        errors.push(`Failed to record transfer for ${item.itemName}: ${e.message}`);
+        continue;
+      }
       created.push(transfer);
     }
 
@@ -306,7 +328,11 @@ export default function registerHub(ctx) {
     res.json({ ok: true, transfer });
   });
 
-  // Internal: sender decrements stock after receiver accepted + posts JE
+  // Internal: sender posts the JE after receiver accepted. Stock itself was
+  // already reserved/decremented at send time (see /api/hub/transfers/send) -
+  // this only recognizes the financial movement, it does not touch stockQty
+  // again (that used to double-decrement when two sends both cleared the
+  // stale pre-reservation check).
   app.post('/api/hub/internal/transfer-release', requireLinkToken, async (req, res) => {
     const { reference } = req.body || {};
     const transfer = await CrossTransfer.findOne({ businessType: BUSINESS_TYPE, reference, direction: 'outbound' });
@@ -315,9 +341,6 @@ export default function registerHub(ctx) {
     const item = await Inventory.findById(transfer.itemId);
     if (item) {
       const releasedValue = (item.unitCost || 0) * transfer.qtyBase;
-
-      item.stockQty = Math.max(0, item.stockQty - transfer.qtyBase);
-      await item.save();
 
       await StockCard.create([{
         businessType: BUSINESS_TYPE,
@@ -366,13 +389,18 @@ export default function registerHub(ctx) {
 
   // Cancel outbound transfer (before partner accepts)
   app.post('/api/hub/transfers/:id/cancel', verifyToken, requireAuth, async (req, res) => {
-    const transfer = await CrossTransfer.findOne({
-      _id: req.params.id, businessType: BUSINESS_TYPE, direction: 'outbound', status: 'Pending',
-    });
+    // Atomic claim on status:'Pending' so a double-click can't restore the
+    // reserved stock twice.
+    const transfer = await CrossTransfer.findOneAndUpdate(
+      { _id: req.params.id, businessType: BUSINESS_TYPE, direction: 'outbound', status: 'Pending' },
+      { $set: { status: 'Rejected' } },
+      { new: true }
+    );
     if (!transfer) return res.status(404).json({ error: 'Transfer not found or already processed.' });
 
-    transfer.status = 'Rejected';
-    await transfer.save();
+    // The send step reserved (decremented) this stock up front - give it back
+    // now that the transfer isn't going anywhere.
+    await Inventory.findByIdAndUpdate(transfer.itemId, { $inc: { stockQty: transfer.qtyBase } });
 
     const link = await LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug: transfer.partnerSlug, status: 'active' }).lean();
     if (link) {
@@ -385,10 +413,25 @@ export default function registerHub(ctx) {
   // Internal: partner updates transfer status on our outbound record
   app.post('/api/hub/internal/transfer-status', requireLinkToken, async (req, res) => {
     const { reference, status } = req.body || {};
-    await CrossTransfer.updateOne(
-      { businessType: BUSINESS_TYPE, reference, direction: 'outbound' },
-      { $set: { status } },
-    );
+    if (status === 'Rejected') {
+      // Guard on status:'Pending' so a duplicate/retried call can't restore
+      // the reserved stock twice.
+      const transfer = await CrossTransfer.findOneAndUpdate(
+        { businessType: BUSINESS_TYPE, reference, direction: 'outbound', status: 'Pending' },
+        { $set: { status: 'Rejected' } },
+        { new: true }
+      );
+      if (transfer) {
+        // The send step reserved (decremented) this stock up front - give it
+        // back now that the receiving partner has rejected the shipment.
+        await Inventory.findByIdAndUpdate(transfer.itemId, { $inc: { stockQty: transfer.qtyBase } });
+      }
+    } else {
+      await CrossTransfer.updateOne(
+        { businessType: BUSINESS_TYPE, reference, direction: 'outbound' },
+        { $set: { status } },
+      );
+    }
     res.json({ ok: true });
   });
 }

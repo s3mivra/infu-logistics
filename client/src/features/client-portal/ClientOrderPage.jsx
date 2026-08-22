@@ -598,12 +598,18 @@ export default function ClientOrderPage() {
   const handleSubmitOrder = async () => {
     if (!cart.length || submitting) return;
     setSubmitting(true);
+    // Matches the idempotency-key convention used by the other two
+    // order-creation flows (CustomerMenu, AdminDashboard POS) - without it, a
+    // lost response on a flaky connection leads the user to retry and the
+    // server has nothing to dedupe against, creating a second fully-priced order.
+    const idempotencyKey = `${token}-${Date.now()}`;
     try {
       const res = await fetch(`${API_URL}/api/orders`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
+          'idempotency-key': idempotencyKey,
         },
         body: JSON.stringify({
           items: cart,

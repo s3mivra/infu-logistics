@@ -187,16 +187,30 @@ app.post('/api/shifts/start', verifyToken, requireStaff, async (req, res) => {
         !Number.isFinite(opening) || opening < 0) {
       return res.status(400).json({ success: false, error: 'A valid starting cash amount is required.' });
     }
-    // Close any dangling open shifts for this cashier
-    await Shift.updateMany(
-      { cashierId: String(req.user._id), status: 'Open' },
-      { status: 'Closed', shiftEnd: new Date() }
-    );
-    const shift = await Shift.create({
-      cashierId:    String(req.user._id),
-      cashierName:  req.user.name,
-      startingCash: opening,
-    });
+    // Close any dangling open shifts + open the new one atomically. A
+    // double-click/retried login (see AdminDashboard's handleSystemLogin) that
+    // fired two of these concurrently, un-transacted, could otherwise both
+    // "close prior open shifts" before either had created its own, leaving two
+    // Open shifts for the same cashier and corrupting EOD cash reconciliation.
+    const session = await mongoose.startSession();
+    let shift;
+    try {
+      await session.withTransaction(async () => {
+        await Shift.updateMany(
+          { cashierId: String(req.user._id), status: 'Open' },
+          { status: 'Closed', shiftEnd: new Date() },
+          { session }
+        );
+        const created = await Shift.create([{
+          cashierId:    String(req.user._id),
+          cashierName:  req.user.name,
+          startingCash: opening,
+        }], { session });
+        shift = created[0];
+      });
+    } finally {
+      session.endSession();
+    }
     res.json({ success: true, shift });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));

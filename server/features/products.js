@@ -40,6 +40,7 @@ export default function registerProducts(ctx) {
     sortBatchesFEFO,
     batchesTotal,
     requireStaff,
+    requirePermission,
     evaluateClientAccess,
     computePercentageTax,
     PERCENTAGE_TAX_RATE,
@@ -204,7 +205,7 @@ function validDepartment(dept) {
   return dept;
 }
 
-app.post('/api/categories', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/categories', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const department = validDepartment(req.body.department);
     // Stamp businessType/tenant so the row survives the scoped GET filter above -
@@ -225,7 +226,7 @@ app.post('/api/categories', verifyToken, requireStaff, async (req, res) => {
 });
 
 // --- NEW: UPDATE CATEGORY ROUTE ---
-app.put('/api/categories/:id', verifyToken, requireStaff, async (req, res) => {
+app.put('/api/categories/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const department = validDepartment(req.body.department);
     // Only overwrite department when one was supplied; otherwise leave the stored
@@ -244,7 +245,7 @@ app.put('/api/categories/:id', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
-app.delete('/api/categories/:id', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/categories/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     await Category.findByIdAndDelete(req.params.id);
     emitToAll('menuUpdated');
@@ -459,7 +460,7 @@ app.get('/api/products/by-barcode/:code', verifyToken, requireStaff, async (req,
   }
 });
 
-app.post('/api/products', verifyToken, requireStaff, validate(productSchema), async (req, res) => {
+app.post('/api/products', verifyToken, requireStaff, requirePermission('products.manage'), validate(productSchema), async (req, res) => {
   try {
   // Generate base product code (e.g., DRS-A0001)
   const catPrefix = getCategoryPrefix(req.body.category);
@@ -482,7 +483,7 @@ app.post('/api/products', verifyToken, requireStaff, validate(productSchema), as
   }
 });
 
-app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
+app.put('/api/products/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const existing = await Product.findById(req.params.id).lean();
     const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' });
@@ -554,7 +555,7 @@ app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
 
 // PATCH /api/products/:id/availability - superadmin toggle. Permanently REMOVES
 // the product from menu + POS. Reporting still surfaces it while stock remains.
-app.patch('/api/products/:id/availability', verifyToken, requireSuperAdmin, async (req, res) => {
+app.patch('/api/products/:id/availability', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const { isAvailable } = req.body;
     if (typeof isAvailable !== 'boolean')
@@ -578,7 +579,7 @@ app.patch('/api/products/:id/availability', verifyToken, requireSuperAdmin, asyn
 // PATCH /api/products/:id/oos - toggle "Out of Stock". Distinct from Removed -
 // OOS products still appear in menu (with a badge) and in all reports. Use this
 // for a temporary stockout; use /availability for permanent removal.
-app.patch('/api/products/:id/oos', verifyToken, requireSuperAdmin, async (req, res) => {
+app.patch('/api/products/:id/oos', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const { isOutOfStock } = req.body;
     if (typeof isOutOfStock !== 'boolean')
@@ -600,7 +601,7 @@ app.patch('/api/products/:id/oos', verifyToken, requireSuperAdmin, async (req, r
 });
 
 // Change to PUT or handle inside DELETE for archiving
-app.delete('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/products/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const product = await Product.findByIdAndUpdate(
       req.params.id, 

@@ -310,7 +310,7 @@ export default function registerPurchaseOrders(ctx) {
   });
 
   // ── DELETE (only drafts / cancelled - never a reconciled record) ───────────────
-  app.delete('/api/purchase-orders/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  app.delete('/api/purchase-orders/:id', verifyToken, ...canDeleteProc, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const po = await PurchaseOrder.findOne({ _id: req.params.id, ...tenantScope(req) });

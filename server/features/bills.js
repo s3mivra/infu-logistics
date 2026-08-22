@@ -122,13 +122,24 @@ export default function registerBills(ctx) {
   app.post('/api/bills/:id/approve', verifyToken, ...canPostAcct, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
-      const bill = await Bill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
-      if (!bill) return res.status(404).json({ success: false, error: 'Not found' });
-      if (bill.status !== 'Pending') return res.status(409).json({ success: false, error: `Only a Pending bill can be approved (this one is ${bill.status}).` });
+      const existing = await Bill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+      if (!existing) return res.status(404).json({ success: false, error: 'Not found' });
+      if (existing.source === 'Manual' && !acctMeta(existing.expenseAccountCode)) {
+        return res.status(400).json({ success: false, error: 'This bill\'s expense account no longer exists - cannot post.' });
+      }
+
+      // Atomic compare-and-swap: claims the Pending→Approved transition itself, so
+      // a double-click or retried request can't both pass the status check and
+      // both post the liability journal entry for the same bill.
+      const bill = await Bill.findOneAndUpdate(
+        { _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Pending' },
+        { $set: { status: 'Approved', approvedBy: req.user?.name || '', approvedAt: new Date() } },
+        { new: true }
+      );
+      if (!bill) return res.status(409).json({ success: false, error: `Only a Pending bill can be approved (this one is ${existing.status}).` });
 
       if (bill.source === 'Manual') {
         const expMeta = acctMeta(bill.expenseAccountCode);
-        if (!expMeta) return res.status(400).json({ success: false, error: 'This bill\'s expense account no longer exists - cannot post.' });
         const reference = await mkSeqRef('BILL-APR');
         const lines = [
           { accountCode: bill.expenseAccountCode, accountName: expMeta.name, debit: bill.amount, credit: 0 },
@@ -142,13 +153,9 @@ export default function registerBills(ctx) {
           supplierId: String(bill.supplierId), supplierName: bill.supplierName,
         });
         bill.journalEntryRef = reference;
+        await bill.save();
         emitToMgr('erpUpdated');
       }
-
-      bill.status = 'Approved';
-      bill.approvedBy = req.user?.name || '';
-      bill.approvedAt = new Date();
-      await bill.save();
 
       await logAudit(req, { action: 'approve', entity: 'Bill', entityId: bill._id, after: { billNumber: bill.billNumber, approvedBy: bill.approvedBy } });
       res.json({ success: true, bill });
@@ -206,9 +213,19 @@ export default function registerBills(ctx) {
   app.post('/api/bills/:id/pay', verifyToken, ...canPostAcct, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
-      const bill = await Bill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
-      if (!bill) return res.status(404).json({ success: false, error: 'Not found' });
-      if (bill.status !== 'Approved') return res.status(409).json({ success: false, error: 'Only an Approved bill can be paid.' });
+      // Atomic compare-and-swap: claims the Approved→Paid transition itself, so a
+      // double-click or retried request can't both pass the status check and both
+      // post the payment journal entry for the same bill.
+      const bill = await Bill.findOneAndUpdate(
+        { _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Approved' },
+        { $set: { status: 'Paid', paidAt: new Date() } },
+        { new: true }
+      );
+      if (!bill) {
+        const existing = await Bill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+        if (!existing) return res.status(404).json({ success: false, error: 'Not found' });
+        return res.status(409).json({ success: false, error: 'Only an Approved bill can be paid.' });
+      }
 
       const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
       const { payFromAccount } = req.body || {};
@@ -229,8 +246,6 @@ export default function registerBills(ctx) {
         supplierId: String(bill.supplierId), supplierName: bill.supplierName,
       });
 
-      bill.status = 'Paid';
-      bill.paidAt = new Date();
       bill.journalEntryRef = reference;
       await bill.save();
 

@@ -767,25 +767,42 @@ app.get('/api/journal/export', verifyToken, ...canViewAcct, async (req, res) => 
 });
 
 // --- BANK DEPOSIT ROUTES ---
-app.post('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/bank-deposits', verifyToken, requireStaff, requirePermission('accounting.manage'), async (req, res) => {
   try {
     const { shiftId, amount, reference, sourceAccount: rawSrc, destAccount: rawDest } = req.body;
     const depositAmount = parseFloat(amount);
     if (isNaN(depositAmount) || depositAmount <= 0)
       return res.status(400).json({ success: false, error: 'Invalid deposit amount.' });
 
-    const shift = await Shift.findById(shiftId);
-    if (!shift) return res.status(404).json({ success: false, error: 'Shift not found.' });
-    if (shift.status === 'Open')
-      return res.status(400).json({ success: false, error: 'Close the shift before posting a deposit.' });
-
-    const cashOnHand = (shift.actualCash || 0) - (shift.depositedAmount || 0);
-    const maxDeposit = cashOnHand - shift.startingCash;
-
-    if (depositAmount > cashOnHand + 0.01)
-      return res.status(400).json({ success: false, error: `Amount exceeds Cash on Hand (₱${cashOnHand.toFixed(2)}).` });
-    if (depositAmount > maxDeposit + 0.01)
-      return res.status(400).json({ success: false, error: `Cannot reduce drawer below starting fund (₱${shift.startingCash.toFixed(2)}).` });
+    // Atomic compare-and-swap: the "doesn't exceed cash on hand" / "doesn't dip
+    // below the starting fund" guards are encoded in the filter itself, so two
+    // concurrent deposit requests against the same shift can't both read the same
+    // pre-deposit balance and both pass - only one $inc can land per guard window.
+    const shift = await Shift.findOneAndUpdate(
+      {
+        _id: shiftId,
+        status: { $ne: 'Open' },
+        $expr: {
+          $and: [
+            { $lte: [{ $add: [{ $ifNull: ['$depositedAmount', 0] }, depositAmount] }, { $add: [{ $ifNull: ['$actualCash', 0] }, 0.01] }] },
+            { $lte: [{ $add: [{ $ifNull: ['$depositedAmount', 0] }, depositAmount, { $ifNull: ['$startingCash', 0] }] }, { $add: [{ $ifNull: ['$actualCash', 0] }, 0.01] }] },
+          ],
+        },
+      },
+      { $inc: { depositedAmount: depositAmount } },
+      { new: true }
+    );
+    if (!shift) {
+      // Guard failed or shift doesn't exist - re-read to report a specific reason.
+      const existing = await Shift.findById(shiftId);
+      if (!existing) return res.status(404).json({ success: false, error: 'Shift not found.' });
+      if (existing.status === 'Open') return res.status(400).json({ success: false, error: 'Close the shift before posting a deposit.' });
+      const cashOnHand = (existing.actualCash || 0) - (existing.depositedAmount || 0);
+      const maxDeposit = cashOnHand - existing.startingCash;
+      if (depositAmount > cashOnHand + 0.01)
+        return res.status(400).json({ success: false, error: `Amount exceeds Cash on Hand (₱${cashOnHand.toFixed(2)}).` });
+      return res.status(400).json({ success: false, error: `Cannot reduce drawer below starting fund (₱${existing.startingCash.toFixed(2)}).` });
+    }
 
     // Resolve source (cash) and destination (bank) accounts from COA.
     // Source MUST be a cash account (111xxx); dest MUST be a bank account (112xxx).
@@ -810,11 +827,9 @@ app.post('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
       totalCredit: depositAmount,
     });
 
-    shift.depositedAmount = (shift.depositedAmount || 0) + depositAmount;
     const drawerBalanceAfter = (shift.actualCash || 0) - shift.depositedAmount;
     const isReconciled = Math.abs(drawerBalanceAfter - shift.startingCash) < 0.01;
-    if (isReconciled) { shift.isReconciled = true; shift.status = 'Reconciled'; }
-    await shift.save();
+    if (isReconciled) { shift.isReconciled = true; shift.status = 'Reconciled'; await shift.save(); }
 
     const deposit = await BankDeposit.create({
       shiftId: shift._id,
@@ -1099,36 +1114,47 @@ app.post('/api/revolving-funds', verifyToken, ...canPostAcct, async (req, res) =
 // POST disburse from a fund (any staff - they need to log what they spend)
 app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, async (req, res) => {
   try {
-    const fund = await RevolvingFund.findById(req.params.id);
-    if (!fund || !fund.isActive) return res.status(404).json({ success: false, error: 'Fund not found.' });
+    const preCheck = await RevolvingFund.findById(req.params.id);
+    if (!preCheck || !preCheck.isActive) return res.status(404).json({ success: false, error: 'Fund not found.' });
 
     const { amount, description, categoryCode } = req.body;
     const amt = Number(amount);
     if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Amount must be a positive number.' });
     if (!description?.trim()) return res.status(400).json({ success: false, error: 'Description is required.' });
-    if (amt > fund.currentBalance)
-      return res.status(400).json({ success: false, error: `Insufficient fund balance. Available: ₱${fund.currentBalance.toFixed(2)}` });
 
     const expCode = categoryCode || '760000';
     const { ACCOUNTS } = await import('../lib/chartOfAccounts.js');
     const expName  = ACCOUNTS[expCode]?.name || 'Other Operating Expenses';
 
-    fund.currentBalance = +(fund.currentBalance - amt).toFixed(2);
-    await fund.save();
+    // Atomic compare-and-swap: the "sufficient balance" guard is in the filter
+    // itself (via $expr), so two concurrent disbursements against the same fund
+    // can't both read the same pre-disbursement balance and both pass. amt is
+    // rounded to cents first so the $inc doesn't accumulate float dust.
+    const roundedAmt = Math.round(amt * 100) / 100;
+    const fund = await RevolvingFund.findOneAndUpdate(
+      { _id: req.params.id, isActive: true, $expr: { $gte: [{ $ifNull: ['$currentBalance', 0] }, roundedAmt] } },
+      { $inc: { currentBalance: -roundedAmt } },
+      { new: true }
+    );
+    if (!fund) {
+      const existing = await RevolvingFund.findById(req.params.id);
+      const bal = existing?.currentBalance || 0;
+      return res.status(400).json({ success: false, error: `Insufficient fund balance. Available: ₱${bal.toFixed(2)}` });
+    }
 
     // DR expense / CR 1050 Petty Cash
     const je = await JournalEntry.create({
       date: new Date(), description: `Revolving Fund disbursement (${fund.name}): ${description}`,
       lines: [
-        { accountCode: expCode, accountName: expName,                    debit: amt, credit: 0 },
-        { accountCode: '114000',  accountName: 'Petty Cash / Revolving Fund', debit: 0, credit: amt },
+        { accountCode: expCode, accountName: expName,                    debit: roundedAmt, credit: 0 },
+        { accountCode: '114000',  accountName: 'Petty Cash / Revolving Fund', debit: 0, credit: roundedAmt },
       ],
-      totalDebit: amt, totalCredit: amt,
+      totalDebit: roundedAmt, totalCredit: roundedAmt,
       reference: await mkSeqRef('RF-OUT'),
     });
 
     const tx = await RevolvingFundTx.create({
-      fundId: fund._id, type: 'disbursement', amount: amt,
+      fundId: fund._id, type: 'disbursement', amount: roundedAmt,
       description, categoryCode: expCode,
       performedBy: req.user?.name,
       balanceAfter: fund.currentBalance,

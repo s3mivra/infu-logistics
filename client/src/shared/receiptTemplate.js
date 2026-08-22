@@ -95,9 +95,14 @@ export function buildReceiptHTML({
   const lh = resolveLetterhead(settings);
 
   const metaHTML = [
-    ...(docNumber ? [{ label: docNumber.label, value: `<strong>${esc(docNumber.value || '-')}</strong>` }] : []),
+    ...(docNumber ? [{ label: docNumber.label, value: `<strong>${esc(docNumber.value || '-')}</strong>`, html: true }] : []),
     ...metaRows.filter(r => r && pick(r.value)),
-  ].map(r => `<tr><td>${esc(r.label)}</td><td>${r.value}</td></tr>`).join('');
+  // r.value is plain text from callers (order fields, several of which are
+  // customer-supplied via the unauthenticated QR menu) unless explicitly
+  // marked html:true (only the pre-escaped docNumber row above) - escape it
+  // like every other field in this template, or a name like
+  // <img src=x onerror=...> prints straight into the receipt HTML.
+  ].map(r => `<tr><td>${esc(r.label)}</td><td>${r.html ? r.value : esc(r.value)}</td></tr>`).join('');
 
   const itemsHTML = lineItems.map(it => {
     const subHTML = (it.subLines || []).map(s =>

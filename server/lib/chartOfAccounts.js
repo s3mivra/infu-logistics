@@ -74,13 +74,19 @@ export const ACCOUNTS = {
   '800000': { name: 'Other Income',               type: 'other-income', isParent: true },
   '810000': { name: 'Interest Income',            type: 'other-income', parent: '800000' },
   '820000': { name: 'Gain on Asset Disposal',     type: 'other-income', parent: '800000' },
-  '830000': { name: 'Other Non-Operating Income', type: 'other-income', parent: '800000' },
+  // Named for its one actual poster (shifts.js EOD cash-variance JE), not the
+  // generic "Other Non-Operating Income" this code was seeded as before - the
+  // two names disagreed, and acctMeta() (server.js) always resolves THIS
+  // registry first, so reports were mislabeling every cash-over entry.
+  '830000': { name: 'Cash Short & Over Income', type: 'other-income', parent: '800000' },
 
   // ===== 900000 OTHER EXPENSES =====
   '900000': { name: 'Other Expenses',             type: 'expense', isParent: true },
   '910000': { name: 'Interest Expense',           type: 'expense', parent: '900000' },
   '920000': { name: 'Loss on Asset Disposal',     type: 'expense', parent: '900000' },
-  '930000': { name: 'Other Non-Operating Expenses', type: 'expense', parent: '900000' },
+  // Same fix as 830000 above - named for its one actual poster (shifts.js
+  // cash-short JE), matching DEFAULT_ACCOUNTS in server.js.
+  '930000': { name: 'Cash Short & Over Expense', type: 'expense', parent: '900000' },
 };
 
 // One-time migration map: old 4-digit code → new 6-digit code (used to rewrite

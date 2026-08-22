@@ -7,6 +7,28 @@ import { withOptionalTransaction } from '../lib/txn.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
+import { evaluateStaffAccess } from '../lib/authz.js';
+
+// Per-client in-process mutex for the credit-limit gate on order creation.
+// The gate reads a computed "outstanding" total across many Order documents,
+// then (if it passes) writes a new one - a classic TOCTOU: two concurrent
+// requests for the same client (two browser tabs, a double-tap) can both read
+// the same pre-order outstanding figure and both pass, jointly exceeding the
+// limit. This serializes that read-then-write section per clientId so a
+// second concurrent request for the same client waits for the first to
+// finish before computing its own outstanding total. This deployment is
+// single-instance-per-business (see PROJECT_CHARTER.md), so an in-process
+// lock closes the race for the actual topology; a horizontally-scaled
+// deployment would need a persistent atomic counter instead.
+const _creditLocks = new Map(); // clientId -> tail promise of the wait queue
+function withCreditLock(key, fn) {
+  const prevTail = _creditLocks.get(key) || Promise.resolve();
+  const result = prevTail.then(fn, fn); // run fn once the previous holder settles, regardless of its outcome
+  const tail = result.then(() => {}, () => {});
+  _creditLocks.set(key, tail);
+  tail.finally(() => { if (_creditLocks.get(key) === tail) _creditLocks.delete(key); });
+  return result;
+}
 
 export default function registerOrders(ctx) {
   const {
@@ -44,6 +66,7 @@ export default function registerOrders(ctx) {
     sortBatchesFEFO,
     batchesTotal,
     requireStaff,
+    requirePermission,
     evaluateClientAccess,
     computePercentageTax,
     computeOrderVat,
@@ -108,6 +131,7 @@ export default function registerOrders(ctx) {
     Product,
     ComboSchema,
     Combo,
+    Sale,
     OrderSchema,
     Order,
     QRSessionSchema,
@@ -401,7 +425,7 @@ app.get('/api/orders/archives', verifyToken, requireSuperAdmin, async (req, res)
 // ── PARKED ORDERS / OPEN TABS ────────────────────────────────────────────────
 // IMPORTANT: these literal paths MUST be registered before '/api/orders/:id',
 // otherwise Express matches ':id' first and treats "parked"/"park" as an order id.
-app.post('/api/orders/park', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/orders/park', verifyToken, requireStaff, requirePermission('orders.manage'), async (req, res) => {
   try {
     const { items, customerName, table, orderNotes, guestCount } = req.body;
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ success: false, error: 'Cannot park an empty cart.' });
@@ -424,7 +448,7 @@ app.get('/api/orders/parked', verifyToken, requireStaff, async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.delete('/api/orders/parked/:id', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/orders/parked/:id', verifyToken, requireStaff, requirePermission('orders.manage'), async (req, res) => {
   try {
     const order = await Order.findOne({ _id: req.params.id, isParked: true });
     if (!order) return res.status(404).json({ success: false, error: 'Parked order not found.' });
@@ -437,21 +461,34 @@ app.delete('/api/orders/parked/:id', verifyToken, requireStaff, async (req, res)
 app.get('/api/orders/:id', async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, message: "Order not found" });
-    // Access control: staff/admin and authenticated clients get the full document.
+    // Access control: staff tokens get the full document. Authenticated client
+    // tokens get the full document ONLY for the order they themselves own (checked
+    // below, since aud:'client' alone doesn't imply ownership of every order id).
     // Anonymous callers (QR status polling) get a PII-SAFE projection so order ids
     // can't be enumerated to harvest customer phone / delivery address.
-    let isPrivileged = false;
+    let decoded = null;
     try {
       const raw = req.headers.authorization?.replace(/^Bearer /, '') || '';
-      if (raw) { const d = jwt.verify(raw, process.env.JWT_SECRET); if (d?.role) isPrivileged = true; }
+      if (raw) decoded = jwt.verify(raw, process.env.JWT_SECRET);
     } catch { /* invalid/expired token → treat as anonymous */ }
+    const isStaff = decoded ? evaluateStaffAccess(decoded).ok : false;
+    const isClient = !isStaff && decoded ? evaluateClientAccess(decoded).ok : false;
     const safeProjection = {
       orderNumber: 1, status: 1, dispatchStatus: 1, isParked: 1, table: 1,
       total: 1, customerName: 1, createdAt: 1, scheduledTime: 1,
       'items.name': 1, 'items.quantity': 1, 'items.itemStatus': 1, 'items.department': 1,
     };
-    const order = await Order.findById(req.params.id, isPrivileged ? undefined : safeProjection);
+    // Ownership isn't known until the order is fetched, so a client token pulls
+    // the full doc provisionally and is downgraded to 404 below if it's not theirs.
+    const order = await Order.findById(req.params.id, (isStaff || isClient) ? undefined : safeProjection);
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
+    if (isClient) {
+      const callerClientId = String(decoded.clientId || decoded._id || '');
+      const ownerClientId = String(order.clientId || '');
+      if (!callerClientId || !ownerClientId || callerClientId !== ownerClientId) {
+        return res.status(404).json({ success: false, message: "Order not found" });
+      }
+    }
     res.json(order); // sent as the raw order object so the frontend can read it directly
   } catch (error) {
     captureError(req, error);
@@ -530,6 +567,75 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       }
       if (item.price === undefined || item.price < 0) {
         throw new Error(`Invalid price for item: ${item.name || item.productId}`);
+      }
+    }
+
+    // Server-authoritative price validation. The checks above only confirm
+    // item.price is a well-formed non-negative number - they don't stop a caller
+    // from submitting an arbitrary price. Validate every line against the actual
+    // catalog (base price / size price / active-sale price for products, fixed
+    // bundle price for combos, add-on/modifier prices) before it's ever used to
+    // compute subtotal, VAT, discounts, or inventory value.
+    {
+      const directIds = items.filter(i => !i.isCombo).map(i => i.productId).filter(Boolean);
+      const comboIds = items.filter(i => i.isCombo).map(i => i.productId).filter(Boolean);
+      const [catalogProducts, catalogCombos, activeSales] = await Promise.all([
+        directIds.length
+          ? Product.find({ _id: { $in: directIds } }, { basePrice: 1, sizes: 1, addOns: 1, modifierGroups: 1 }).lean()
+          : [],
+        comboIds.length ? Combo.find({ _id: { $in: comboIds } }, { price: 1 }).lean() : [],
+        Sale.find({ isActive: true, startsAt: { $lte: new Date() }, endsAt: { $gte: new Date() } }, { rules: 1 }).lean(),
+      ]);
+      const prodById = new Map(catalogProducts.map(p => [String(p._id), p]));
+      const comboById = new Map(catalogCombos.map(c => [String(c._id), c]));
+      // productId -> { salePrice? , salePercent? } - same "last fixed_price wins,
+      // else first percent_off" resolution as the /api/products listing overlay.
+      const saleOverlay = new Map();
+      for (const sale of activeSales) {
+        for (const rule of (sale.rules || [])) {
+          if (rule.ruleType === 'threshold' || !rule.productId) continue;
+          const pid = String(rule.productId);
+          const existing = saleOverlay.get(pid);
+          if (rule.ruleType === 'fixed_price') saleOverlay.set(pid, { salePrice: rule.salePrice });
+          else if (rule.ruleType === 'percent_off' && !existing?.salePrice) saleOverlay.set(pid, { salePercent: rule.discountPercent });
+        }
+      }
+      const modGroupIds = [...new Set(catalogProducts.flatMap(p => (p.modifierGroups || []).map(String)))];
+      const modGroups = modGroupIds.length ? await ModifierGroup.find({ _id: { $in: modGroupIds } }, { name: 1, options: 1 }).lean() : [];
+      const modGroupById = new Map(modGroups.map(g => [String(g._id), g]));
+      const EPS = 0.01; // tolerate float rounding, not a real price discrepancy
+      const closeEnough = (a, b) => Math.abs(Number(a) - Number(b)) < EPS;
+      for (const item of items) {
+        if (item.isCombo) {
+          const combo = item.productId ? comboById.get(String(item.productId)) : null;
+          if (!combo || !closeEnough(item.price, combo.price)) {
+            throw new Error(`Price mismatch for combo: ${item.name || item.productId}`);
+          }
+          continue;
+        }
+        if (!item.productId) continue; // no catalog reference to validate against (e.g. legacy free-text line)
+        const product = prodById.get(String(item.productId));
+        if (!product) throw new Error(`Unknown product: ${item.name || item.productId}`);
+        const allowedPrices = [Number(product.basePrice || 0), ...(product.sizes || []).map(s => Number(s.price))];
+        const overlay = saleOverlay.get(String(item.productId));
+        if (overlay?.salePrice != null) allowedPrices.push(Number(overlay.salePrice));
+        if (overlay?.salePercent != null) allowedPrices.push(+(Number(product.basePrice || 0) * (1 - overlay.salePercent / 100)).toFixed(2));
+        if (!allowedPrices.some((p) => closeEnough(p, item.price))) {
+          throw new Error(`Price mismatch for item: ${item.name || item.productId}`);
+        }
+        const catalogAddOns = [
+          ...(product.addOns || []).map(a => ({ name: a.name, price: a.price })),
+          ...(product.modifierGroups || []).flatMap((gid) => {
+            const g = modGroupById.get(String(gid));
+            return g ? (g.options || []).map(opt => ({ name: `${g.name}: ${opt.name}`, price: opt.price })) : [];
+          }),
+        ];
+        for (const addOn of (item.selectedAddOns || [])) {
+          const match = catalogAddOns.find(a => a.name === addOn.name);
+          if (!match || !closeEnough(match.price, addOn.price)) {
+            throw new Error(`Price mismatch for add-on: ${addOn.name}`);
+          }
+        }
       }
     }
 
@@ -711,57 +817,60 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // Only on-account (non-cash) buying consumes credit - a cash sale settles
     // immediately and can never grow the receivable. Checked here, after the
     // total is server-authoritative and before anything is written, so a
-    // rejected order leaves no partial state behind.
+    // rejected order leaves no partial state behind. The check-then-create
+    // below runs inside withCreditLock (per clientId) so two concurrent
+    // requests for the same client can't both read the same outstanding
+    // total and both pass - see the comment on withCreditLock above.
     const creditClientId = _buyerClientId;
-    if (creditClientId && resolvedPaymentMethod !== 'Cash' && !isComplimentary && finalTotal > 0) {
-      const [modeRow, globalRow, client] = await Promise.all([
-        Settings.findOne({ key: 'creditLimitMode' }).lean(),
-        Settings.findOne({ key: 'globalCreditLimit' }).lean(),
-        ClientAccount.findById(creditClientId).lean(),
-      ]);
-      const limit = resolveCreditLimit({
-        mode: modeRow?.value,
-        globalLimit: globalRow?.value,
-        clientLimit: client?.creditLimit,
-      });
-      if (limit !== null) {
-        // Outstanding = everything already sold to them on account and not yet
-        // settled. Mirrors the A/R report's definition exactly.
-        // Match BOTH identity fields: a portal order carries `clientId`, while an
-        // order a cashier placed on the client's behalf carries `clientAccountId`.
-        // Checking only one lets a client run up unlimited debt via the other route.
-        //
-        // Statuses: exposure is everything COMMITTED, not just what has already
-        // become a book receivable. Orders sit at Pending/Preparing for a while,
-        // and counting only 'Completed' would let a client place ten orders in a
-        // row before any of them lands - trivially defeating the limit. Only
-        // terminal non-debts (Cancelled/Voided/Refunded) and parked drafts are
-        // excluded.
-        const openRows = await Order.find({
-          businessType: BUSINESS_TYPE,
-          $or: [
-            { clientAccountId: String(creditClientId) },
-            { clientId: String(creditClientId) },
-          ],
-          status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
-          isParked: { $ne: true },
-          paymentMethod: { $ne: 'Cash' },
-          isComplimentary: { $ne: true },
-          arSettled: { $ne: true },
-        }, { total: 1 }).lean();
-        const outstanding = openRows.reduce((s, r) => s + (Number(r.total) || 0), 0);
-        const check = checkCreditAvailable({ limit, outstanding, orderTotal: finalTotal });
-        if (!check.allowed) {
-          return res.status(409).json({
-            success: false,
-            error: `Credit limit reached. Limit ₱${check.limit.toFixed(2)}, already owing ₱${check.outstanding.toFixed(2)}, available ₱${check.available.toFixed(2)}.`,
-            creditLimit: check,
-          });
+    const needsCreditGate = !!(creditClientId && resolvedPaymentMethod !== 'Cash' && !isComplimentary && finalTotal > 0);
+    let creditRejection = null;
+
+    const createOrderDoc = async () => {
+      if (needsCreditGate) {
+        const [modeRow, globalRow, client] = await Promise.all([
+          Settings.findOne({ key: 'creditLimitMode' }).lean(),
+          Settings.findOne({ key: 'globalCreditLimit' }).lean(),
+          ClientAccount.findById(creditClientId).lean(),
+        ]);
+        const limit = resolveCreditLimit({
+          mode: modeRow?.value,
+          globalLimit: globalRow?.value,
+          clientLimit: client?.creditLimit,
+        });
+        if (limit !== null) {
+          // Outstanding = everything already sold to them on account and not yet
+          // settled. Mirrors the A/R report's definition exactly.
+          // Match BOTH identity fields: a portal order carries `clientId`, while an
+          // order a cashier placed on the client's behalf carries `clientAccountId`.
+          // Checking only one lets a client run up unlimited debt via the other route.
+          //
+          // Statuses: exposure is everything COMMITTED, not just what has already
+          // become a book receivable. Orders sit at Pending/Preparing for a while,
+          // and counting only 'Completed' would let a client place ten orders in a
+          // row before any of them lands - trivially defeating the limit. Only
+          // terminal non-debts (Cancelled/Voided/Refunded) and parked drafts are
+          // excluded.
+          const openRows = await Order.find({
+            businessType: BUSINESS_TYPE,
+            $or: [
+              { clientAccountId: String(creditClientId) },
+              { clientId: String(creditClientId) },
+            ],
+            status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
+            isParked: { $ne: true },
+            paymentMethod: { $ne: 'Cash' },
+            isComplimentary: { $ne: true },
+            arSettled: { $ne: true },
+          }, { total: 1 }).lean();
+          const outstanding = openRows.reduce((s, r) => s + (Number(r.total) || 0), 0);
+          const check = checkCreditAvailable({ limit, outstanding, orderTotal: finalTotal });
+          if (!check.allowed) {
+            creditRejection = check;
+            return null;
+          }
         }
       }
-    }
-
-    const newOrder = await Order.create({
+      return Order.create({
       orderNumber, table, items: validatedItems,
       subtotal: totalGross,
       vatRate: vatRate,
@@ -791,7 +900,20 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       ...(isClientOrder && { clientId: req.user._id || req.user.clientId || '', clientUsername: req.user.username || '' }),
       ...(idempotencyKey && { idempotencyKey }),
       ...(paymentsInput?.length > 0 && { payments: paymentsInput }),
-    });
+      });
+    };
+
+    const newOrder = needsCreditGate
+      ? await withCreditLock(String(creditClientId), createOrderDoc)
+      : await createOrderDoc();
+
+    if (creditRejection) {
+      return res.status(409).json({
+        success: false,
+        error: `Credit limit reached. Limit ₱${creditRejection.limit.toFixed(2)}, already owing ₱${creditRejection.outstanding.toFixed(2)}, available ₱${creditRejection.available.toFixed(2)}.`,
+        creditLimit: creditRejection,
+      });
+    }
 
     emitToOps('newOrder', newOrder);
     res.json({ success: true, order: newOrder });
@@ -812,7 +934,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
 });
 
 // --- COMPLIMENTARY: APPLY ---
-app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, res) => {
+app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, requirePermission('orders.manage'), async (req, res) => {
   try {
     const { reasonType, reasonNote, approvedBy, forEmployee } = req.body;
     if (!reasonType) return res.status(400).json({ success: false, error: 'reasonType is required' });
@@ -850,7 +972,7 @@ app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, 
 });
 
 // --- COMPLIMENTARY: REMOVE ---
-app.delete('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/orders/:id/complimentary', verifyToken, requireStaff, requirePermission('orders.manage'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found' });
@@ -879,7 +1001,7 @@ app.delete('/api/orders/:id/complimentary', verifyToken, requireStaff, async (re
   }
 });
 
-app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
+app.put('/api/orders/:id', verifyToken, requireStaff, requirePermission('orders.manage'), async (req, res) => {
   await runWithStatsRetry(completeOrderOnce, req, res);
 });
 
@@ -1717,7 +1839,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
   return false;
 };
 
-app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/orders/archive', verifyToken, requireStaff, requirePermission('orders.manage'), async (req, res) => {
   try {
     // 1. Force any hanging order to Cancelled - includes Ready (made but never
     //    handed over) and Parked (held unpaid tabs). Parked orders also lose the
@@ -1759,8 +1881,15 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
 
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Settlement amount must be > 0.' });
-    if (amt > order.total + 0.01)
-      return res.status(400).json({ success: false, error: `Settlement amount exceeds outstanding A/R (₱${order.total.toFixed(2)}).` });
+    // arSettled is a one-shot flag - every A/R view (ar-outstanding, ar-ageing,
+    // collections, credit-limit gate) treats arSettled:true as "fully closed,
+    // nothing left owed". A settlement for less than the order total must NOT be
+    // accepted here: it would flip that flag and silently write off the
+    // remainder as if it were paid. Require the full outstanding amount (a
+    // partial-payout tracker that keeps the order open for the remainder is a
+    // separate feature this schema doesn't yet support).
+    if (Math.abs(amt - order.total) > 0.01)
+      return res.status(400).json({ success: false, error: `Settlement amount must equal the outstanding A/R (₱${order.total.toFixed(2)}). Partial settlements aren't supported yet - they would incorrectly close out the remaining balance.` });
 
     // Debit-side account from configurable payment-method map.
     const debitAcct = accountForPaymentMethod(paymentMethod);
@@ -1803,7 +1932,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
 
 // --- PARTIAL DELIVERY ROUTE ---
 // Sets status to 'Partially Delivered' without triggering ERP (inventory deduction deferred to Completed)
-app.post('/api/orders/:id/partial-delivery', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/orders/:id/partial-delivery', verifyToken, requireStaff, requirePermission('orders.manage'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
@@ -1828,7 +1957,7 @@ app.post('/api/orders/:id/partial-delivery', verifyToken, requireStaff, async (r
 //   • 'full'    - collect the whole remaining goods value now; the not-yet-fulfilled
 //                 portion is held as Customer Deposits and recognized as revenue on
 //                 later rounds (no new charge then).
-app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, requirePermission('orders.manage'), async (req, res) => {
   await runWithStatsRetry(partialFulfillOnce, req, res);
 });
 
@@ -2019,7 +2148,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
 // the dropped units carry NO ledger entries because they were never fulfilled.
 // The one money movement is refunding any prepaid-but-undelivered deposit
 // (only possible when an earlier batch was paid in 'full' mode).
-app.post('/api/orders/:id/drop-remaining', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/orders/:id/drop-remaining', verifyToken, requireStaff, requirePermission('orders.manage'), async (req, res) => {
   await runWithStatsRetry(dropRemainingOnce, req, res);
 });
 
@@ -2106,13 +2235,18 @@ const refundOnce = async (req, res, mayRetry) => {
   try {
     session.startTransaction();
     const { reason, refundAmount, inventoryAction } = req.body;
-    if (!reason?.trim()) return res.status(400).json({ success: false, error: 'Reason required.' });
+    if (!reason?.trim()) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Reason required.' }); }
     const order = await Order.findById(req.params.id).session(session);
-    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
-    if (order.status !== 'Completed') return res.status(400).json({ success: false, error: 'Can only refund Completed orders.' });
-    if (order.transactionType === 'REFUND') return res.status(400).json({ success: false, error: 'Already refunded.' });
-    const amt = parseFloat(refundAmount) || order.total;
-    if (amt <= 0 || amt > order.total + 0.01) return res.status(400).json({ success: false, error: `Refund amount must be between ₱0.01 and ₱${order.total.toFixed(2)}.` });
+    if (!order) { await session.abortTransaction(); session.endSession(); return res.status(404).json({ success: false, error: 'Order not found.' }); }
+    if (order.status !== 'Completed') { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Can only refund Completed orders.' }); }
+    if (order.transactionType === 'REFUND') { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Already refunded.' }); }
+    // refundAmount omitted/blank → default to a full refund. An explicit 0 (or any
+    // other out-of-range/non-numeric value) must fall through to the range check
+    // below, not silently become a full refund via `|| order.total`.
+    const amt = (refundAmount === undefined || refundAmount === null || refundAmount === '')
+      ? order.total
+      : parseFloat(refundAmount);
+    if (!Number.isFinite(amt) || amt <= 0 || amt > order.total + 0.01) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: `Refund amount must be between ₱0.01 and ₱${order.total.toFixed(2)}.` }); }
     const reference = mkRef('REFUND', order.orderNumber);
     const creditAcct = debitAccountFor(order.paymentMethod);
     const lines = [
@@ -2239,7 +2373,7 @@ const refundOnce = async (req, res, mayRetry) => {
 };
 
 // --- DISPATCH STATUS UPDATE ---
-app.patch('/api/orders/:id/dispatch', verifyToken, requireStaff, async (req, res) => {
+app.patch('/api/orders/:id/dispatch', verifyToken, requireStaff, requirePermission('orders.manage'), async (req, res) => {
   try {
     const { dispatchStatus } = req.body;
     const order = await Order.findByIdAndUpdate(req.params.id, { dispatchStatus }, { returnDocument: 'after' });

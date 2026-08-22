@@ -41,6 +41,7 @@ export default function registerInventory(ctx) {
     sortBatchesFEFO,
     batchesTotal,
     requireStaff,
+    requirePermission,
     evaluateClientAccess,
     computePercentageTax,
     PERCENTAGE_TAX_RATE,
@@ -182,7 +183,7 @@ export default function registerInventory(ctx) {
   } = ctx;
 
 // --- 1. FETCH EOD STATUS & REAL MOVEMENTS ---
-app.get('/api/inventory/eod-data', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/inventory/eod-data', verifyToken, requireStaff, requirePermission('inventory.view'), async (req, res) => {
   try {
     // Get local date string (e.g., "2026-04-29")
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
@@ -215,7 +216,7 @@ app.get('/api/inventory/eod-data', verifyToken, requireStaff, async (req, res) =
 });
 
 // --- 2. SUBMIT & LOCK EOD ---
-app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory/count', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -300,7 +301,7 @@ app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => 
 });
 
 // --- UNLOCK / REOPEN EOD (ADMIN ONLY) ---
-app.post('/api/inventory/eod/reopen', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory/eod/reopen', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   try {
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
     
@@ -319,7 +320,7 @@ app.post('/api/inventory/eod/reopen', verifyToken, requireStaff, async (req, res
   }
 });
 
-app.get('/api/inventory/history/:id', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/inventory/history/:id', verifyToken, requireStaff, requirePermission('inventory.view'), async (req, res) => {
   try {
     const history = await StockCard.find({ inventoryId: req.params.id }).sort({ date: -1 });
     res.json({ success: true, history });
@@ -329,7 +330,7 @@ app.get('/api/inventory/history/:id', verifyToken, requireStaff, async (req, res
 });
 
 // Fetch ALL stock card history for the master PDF report
-app.get('/api/inventory/history', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/inventory/history', verifyToken, requireStaff, requirePermission('inventory.view'), async (req, res) => {
   try {
     const history = await StockCard.find().sort({ date: -1 });
     res.json({ success: true, history });
@@ -409,7 +410,7 @@ async function nextCategoryCode(prefix) {
 }
 
 // --- Storage locations ---
-app.get('/api/stock-locations', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/stock-locations', verifyToken, requireStaff, requirePermission('inventory.view'), async (req, res) => {
   try {
     const rows = await StorageLocation.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).sort({ name: 1 }).lean();
     res.json({ success: true, locations: rows });
@@ -458,7 +459,7 @@ app.delete('/api/stock-locations/:id', verifyToken, requireSuperAdmin, async (re
 });
 
 // --- Stock categories ---
-app.get('/api/stock-categories', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/stock-categories', verifyToken, requireStaff, requirePermission('inventory.view'), async (req, res) => {
   try {
     const rows = await StockCategory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).sort({ name: 1 }).lean();
     res.json({ success: true, categories: rows });
@@ -522,7 +523,7 @@ app.delete('/api/stock-categories/:id', verifyToken, requireSuperAdmin, async (r
 // #8 STOCK TRANSFERS - request → approve → release between two per-location items.
 // Internal asset move: no journal entry; StockCard audit rows written on release.
 // ─────────────────────────────────────────────────────────────────────────────
-app.get('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/stock-transfers', verifyToken, requireStaff, requirePermission('inventory.view'), async (req, res) => {
   try {
     const filter = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
     if (req.query.status) filter.status = String(req.query.status);
@@ -532,7 +533,7 @@ app.get('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => {
 });
 
 // Cross-location analytics: on-hand qty & value grouped by storage location.
-app.get('/api/stock-analytics/by-location', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/stock-analytics/by-location', verifyToken, requireStaff, requirePermission('inventory.view'), async (req, res) => {
   try {
     const items = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) },
       { itemName: 1, stockQty: 1, unitCost: 1, stockLocation: 1, unit: 1, lowStockThreshold: 1 }).lean();
@@ -550,7 +551,7 @@ app.get('/api/stock-analytics/by-location', verifyToken, requireStaff, async (re
 });
 
 // Request a transfer (staff). Validates both items exist and qty > 0.
-app.post('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/stock-transfers', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   try {
     const { fromItemId, toItemId, qtyBase, note } = req.body || {};
     if (!fromItemId || !toItemId) return res.status(400).json({ success: false, error: 'Source and destination items are required.' });
@@ -586,7 +587,7 @@ app.post('/api/stock-transfers/:id/approve', verifyToken, requireSuperAdmin, asy
 });
 
 // Reject (superadmin) or cancel (staff, own request while still Requested).
-app.post('/api/stock-transfers/:id/reject', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/stock-transfers/:id/reject', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   try {
     const t = await StockTransfer.findById(req.params.id);
     if (!t) return res.status(404).json({ success: false, error: 'Transfer not found.' });
@@ -602,7 +603,7 @@ app.post('/api/stock-transfers/:id/reject', verifyToken, requireStaff, async (re
 
 // Release (staff): Approved → Released. Moves the quantity between the two items
 // inside a transaction and writes a StockCard row on each side.
-app.post('/api/stock-transfers/:id/release', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/stock-transfers/:id/release', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   const MAX_ATTEMPTS = 3;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const session = await mongoose.startSession();
@@ -650,7 +651,7 @@ app.post('/api/stock-transfers/:id/release', verifyToken, requireStaff, async (r
   }
 });
 
-app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/inventory', verifyToken, requireStaff, requirePermission('inventory.view'), async (req, res) => {
   try {
   const { page, limit: lim, search } = req.query;
   // Tenancy: stamp businessType on the filter so each instance only sees its own.
@@ -674,7 +675,7 @@ app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
-app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   try {
     // Canonicalize first so the stored name is stable ("test milk" → "Test Milk")
     // and the existing case-insensitive dup check compares like with like.
@@ -775,8 +776,18 @@ app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, r
 // transaction. Two simultaneous restocks of the same SKU now serialise on the
 // inventory document instead of racing the WAC math. Retries on transient
 // transient errors (WriteConflict / TransientTransactionError).
-app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory/restock/:id', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   const { addedStock, totalCost, expiryDate, creditAccount: rawCreditCode } = req.body;
+  // Unlike the batch/edit routes, this feeds straight into the WAC calculation
+  // below - an unvalidated negative or non-numeric value can drive stockQty
+  // negative or write NaN into the document, corrupting every atomic $gte
+  // stock guard that reads it afterward.
+  if (!(Number.isFinite(addedStock) && addedStock > 0)) {
+    return res.status(400).json({ success: false, error: 'addedStock must be a positive number.' });
+  }
+  if (!(Number.isFinite(totalCost) && totalCost >= 0)) {
+    return res.status(400).json({ success: false, error: 'totalCost must be a non-negative number.' });
+  }
   const isAllowedParent = (c) => /^(111|112|113|220)/.test(String(c || ''));
   const resolved = acctMeta(rawCreditCode);
   const creditCode = (resolved && isAllowedParent(rawCreditCode)) ? rawCreditCode : '111000';
@@ -981,7 +992,7 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
 });
 
 // --- EXPIRY WATCH: items expiring within N days (default 30), plus already-expired ---
-app.get('/api/inventory/expiring', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/inventory/expiring', verifyToken, requireStaff, requirePermission('inventory.view'), async (req, res) => {
   try {
     const days = Math.max(1, parseInt(req.query.days) || 30);
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() + days);
@@ -1115,7 +1126,7 @@ app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmi
 });
 
 // --- PATCH expiry only (after a partial spoilage clears the expired batch) ---
-app.patch('/api/inventory/:id/expiry', verifyToken, requireStaff, async (req, res) => {
+app.patch('/api/inventory/:id/expiry', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   try {
     const { expiryDate, expiryWarnDays } = req.body;
     const update = {};
@@ -1455,7 +1466,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
 });
 
 // --- SPOILAGE / WASTE LOGGING ---
-app.post('/api/inventory/spoilage/:id', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory/spoilage/:id', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   // Money/stock event - the stock write, the stock-card row, and the balanced
   // journal entry commit together. withOptionalTransaction keeps that guarantee
   // on a replica set and still runs (non-atomically, with a warning) on a

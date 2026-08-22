@@ -430,6 +430,12 @@ export default function AdminDashboard() {
   const [updatingOrders, setUpdatingOrders] = useState({}); // orderId → true while PUT in flight
   const [cashTendered, setCashTendered] = useState({}); // orderId → amount string
   const [loginError, setLoginError] = useState('');
+  const [loginSubmitting, setLoginSubmitting] = useState(false);
+  // Synchronous guard (state updates are async, a rapid double-tap can fire the
+  // handler twice before a re-render disables the button) - the server-side
+  // shift-start has no idempotency key either, so a double submit here can
+  // create two concurrent Open shifts for the same cashier.
+  const loginSubmittingRef = useRef(false);
   const [users, setUsers] = useState([]); // Stores the employee list
 
   const [globalAddOns, setGlobalAddOns] = useState([]);
@@ -703,6 +709,9 @@ export default function AdminDashboard() {
 
   const handleSystemLogin = async (e) => {
     e.preventDefault();
+    if (loginSubmittingRef.current) return;
+    loginSubmittingRef.current = true;
+    setLoginSubmitting(true);
     setLoginError('');
     try {
       const res = await fetch(`${API_URL}/api/users/login`, {
@@ -754,6 +763,9 @@ export default function AdminDashboard() {
     } catch (err) {
       setLoginError('Network error. Please try again.');
       console.error('Login failed', err);
+    } finally {
+      loginSubmittingRef.current = false;
+      setLoginSubmitting(false);
     }
   };
 
@@ -4920,8 +4932,8 @@ const updateStatus = async (orderId, newStatus) => {
           <p className="text-fg/25 text-xs mb-5 text-center font-medium">
             Required for staff · Optional for Superadmin
           </p>
-          <button type="submit" className="w-full bg-brand hover:bg-brand-dark text-fg font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest">
-            Start Shift
+          <button type="submit" disabled={loginSubmitting} className="w-full bg-brand hover:bg-brand-dark disabled:opacity-50 disabled:cursor-not-allowed text-fg font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest">
+            {loginSubmitting ? 'Starting…' : 'Start Shift'}
           </button>
         </form>
         </div>

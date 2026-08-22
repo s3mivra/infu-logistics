@@ -39,6 +39,7 @@ export default function registerPricing(ctx) {
     sortBatchesFEFO,
     batchesTotal,
     requireStaff,
+    requirePermission,
     evaluateClientAccess,
     computePercentageTax,
     PERCENTAGE_TAX_RATE,
@@ -186,7 +187,7 @@ app.get('/api/discounts', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
-app.post('/api/discounts', verifyToken, requireStaff, validate(discountSchema), async (req, res) => {
+app.post('/api/discounts', verifyToken, requireStaff, requirePermission('settings.manage'), validate(discountSchema), async (req, res) => {
   try {
     const newDiscount = await Discount.create(req.body);
     res.json({ success: true, discount: newDiscount });
@@ -195,7 +196,7 @@ app.post('/api/discounts', verifyToken, requireStaff, validate(discountSchema), 
   }
 });
 
-app.delete('/api/discounts/:id', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/discounts/:id', verifyToken, requireStaff, requirePermission('settings.manage'), async (req, res) => {
   try {
     await Discount.findByIdAndDelete(req.params.id);
     res.json({ success: true });
