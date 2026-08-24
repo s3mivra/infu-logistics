@@ -79,6 +79,11 @@ export default function EditInventoryModal() {
             <p className="text-[10px] text-fg/60 mt-1">How much one purchased pack/unit holds, e.g. "Milk 1L" → 1. Leave blank if not tracked.</p>
           </div>
           <div>
+            <label className="text-[10px] text-fg/60 font-bold uppercase block mb-1">SRP <span className="text-fg/40 font-normal normal-case">(suggested retail price, optional)</span></label>
+            <input type="number" min="0" step="0.01" value={editInvForm.srp ?? ''} onChange={e => set({ srp: e.target.value })}
+              className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold tabular-nums outline-none focus:border-brand/60" />
+          </div>
+          <div>
             <label className="text-[10px] text-fg/60 font-bold uppercase block mb-1">Low Stock Threshold ({thresholdUnit})</label>
             <input type="number" min="0" value={editInvForm.lowStockThreshold} onChange={e => set({ lowStockThreshold: e.target.value })}
               className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold tabular-nums outline-none focus:border-brand/60" />
@@ -105,10 +110,18 @@ export default function EditInventoryModal() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-[10px] text-fg/60 font-bold uppercase block mb-1">Expiry Date</label>
-              <input type="date" value={editInvForm.expiryDate} onChange={e => set({ expiryDate: e.target.value })}
-                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60" />
-              {editInvForm.expiryDate && (
-                <button type="button" onClick={() => set({ expiryDate: '' })} className="text-[10px] text-red-400 hover:text-red-300 mt-1 font-bold uppercase">Clear expiry</button>
+              {(editInvModal.item.expiryBatches?.length || 0) > 1 ? (
+                <p className="text-[11px] text-fg/50 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5">
+                  This item has {editInvModal.item.expiryBatches.length} expiry batches - expand the row on Live Stock to manage them individually instead of a single date here.
+                </p>
+              ) : (
+                <>
+                  <input type="date" value={editInvForm.expiryDate} onChange={e => set({ expiryDate: e.target.value })}
+                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60" />
+                  {editInvForm.expiryDate && (
+                    <button type="button" onClick={() => set({ expiryDate: '' })} className="text-[10px] text-red-400 hover:text-red-300 mt-1 font-bold uppercase">Clear expiry</button>
+                  )}
+                </>
               )}
             </div>
             <div>

@@ -177,6 +177,7 @@ export default function registerProducts(ctx) {
     verifyClientToken,
     requireSuperAdmin,
     requireSuperOrAdmin,
+    requirePermission,
     verifyOrderAuth,
   } = ctx;
 
@@ -459,7 +460,7 @@ app.get('/api/products/by-barcode/:code', verifyToken, requireStaff, async (req,
   }
 });
 
-app.post('/api/products', verifyToken, requireStaff, validate(productSchema), async (req, res) => {
+app.post('/api/products', verifyToken, requireStaff, requirePermission('products.manage'), validate(productSchema), async (req, res) => {
   try {
   // Generate base product code (e.g., DRS-A0001)
   const catPrefix = getCategoryPrefix(req.body.category);
@@ -482,7 +483,7 @@ app.post('/api/products', verifyToken, requireStaff, validate(productSchema), as
   }
 });
 
-app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
+app.put('/api/products/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const existing = await Product.findById(req.params.id).lean();
     const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' });
@@ -600,7 +601,7 @@ app.patch('/api/products/:id/oos', verifyToken, requireSuperAdmin, async (req, r
 });
 
 // Change to PUT or handle inside DELETE for archiving
-app.delete('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/products/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const product = await Product.findByIdAndUpdate(
       req.params.id, 
@@ -622,7 +623,7 @@ app.delete('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
     res.json({ success: true, message: 'Product securely archived.' });
   } catch (error) {
     captureError(req, error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : error.message });
   }
 });
 

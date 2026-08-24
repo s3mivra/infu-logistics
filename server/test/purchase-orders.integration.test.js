@@ -38,6 +38,17 @@ const draftBody = {
   ],
 };
 
+// #Req-1: PO creation now goes through POST /api/requisitions + approval, not
+// the direct route (superadmin-only break-glass now) - requests as `token`,
+// approves as `superToken` (superadmin bypasses the accounting.manage gate),
+// and returns the approval response so callers can read `.body.purchaseOrder`
+// exactly like the old direct-create response.
+const createPOviaRequisition = async (token, poPayload) => {
+  const reqRes = await request(app).post('/api/requisitions').set(auth(token)).send({ type: 'purchase_order', poPayload });
+  if (reqRes.status !== 201) return reqRes;
+  return request(app).post(`/api/requisitions/${reqRes.body.requisition._id}/approve`).set(auth(superToken));
+};
+
 describe('purchase order creation', () => {
   it('rejects a PO with no valid lines', async () => {
     const res = await request(app).post('/api/purchase-orders').set(auth(superToken))
@@ -47,8 +58,8 @@ describe('purchase order creation', () => {
   });
 
   it('creates a draft PO with an auto PO number, Ordered status, and est total', async () => {
-    const res = await request(app).post('/api/purchase-orders').set(auth(managerToken)).send(draftBody);
-    expect(res.status).toBe(201);
+    const res = await createPOviaRequisition(managerToken, draftBody);
+    expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     const po = res.body.purchaseOrder;
     expect(po.poNumber).toMatch(/^PO-\d{4}-\d{6}$/);
@@ -57,15 +68,17 @@ describe('purchase order creation', () => {
     expect(po.estTotal).toBe(4100);
     expect(po.lines).toHaveLength(2);
     expect(po.lines[0].receivedQty).toBeNull();
+    // createdBy is the ORIGINAL REQUESTER (manager), not the approver (super) -
+    // #Req-1's whole point is a movement stays attributed to who asked for it.
     expect(po.createdBy).toBe('PoManager');
   });
 
   it('persists optional per-line unit, pack size, and expiry date', async () => {
-    const res = await request(app).post('/api/purchase-orders').set(auth(managerToken)).send({
+    const res = await createPOviaRequisition(managerToken, {
       supplier: 'PackCo',
       lines: [{ itemName: 'Oatside 1L', unit: 'L', packSize: 1, orderedQty: 12, unitCost: 100, expiryDate: '2027-01-15' }],
     });
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(200);
     const line = res.body.purchaseOrder.lines[0];
     expect(line.unit).toBe('L');
     expect(line.packSize).toBe(1);
@@ -73,11 +86,11 @@ describe('purchase order creation', () => {
   });
 
   it('leaves pack size / expiry null when omitted (they are optional)', async () => {
-    const res = await request(app).post('/api/purchase-orders').set(auth(managerToken)).send({
+    const res = await createPOviaRequisition(managerToken, {
       supplier: 'PlainCo',
       lines: [{ itemName: 'Sugar', unit: 'kg', orderedQty: 5, unitCost: 60 }],
     });
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(200);
     const line = res.body.purchaseOrder.lines[0];
     expect(line.packSize).toBeNull();
     expect(line.expiryDate).toBeNull();
@@ -88,8 +101,13 @@ describe('purchase order creation', () => {
     expect(res.status).toBe(401);
   });
 
-  it('a view-only role (cashier) cannot create a PO (needs procurement.manage)', async () => {
-    const res = await request(app).post('/api/purchase-orders').set(auth(cashierToken)).send(draftBody);
+  it('a view-only role (cashier) cannot request a PO (needs procurement.manage)', async () => {
+    const res = await request(app).post('/api/requisitions').set(auth(cashierToken)).send({ type: 'purchase_order', poPayload: draftBody });
+    expect(res.status).toBe(403);
+  });
+
+  it('the direct create route is now superadmin-only break-glass, not manager-reachable', async () => {
+    const res = await request(app).post('/api/purchase-orders').set(auth(managerToken)).send(draftBody);
     expect(res.status).toBe(403);
   });
 
@@ -189,8 +207,8 @@ describe('listing & deletion guards', () => {
   });
 
   it('a manager (manage but not delete) cannot delete a PO', async () => {
-    const draft = await request(app).post('/api/purchase-orders').set(auth(managerToken)).send(draftBody);
-    expect(draft.status).toBe(201); // manager CAN create
+    const draft = await createPOviaRequisition(managerToken, draftBody);
+    expect(draft.status).toBe(200); // manager CAN request+get one approved
     const del = await request(app).delete(`/api/purchase-orders/${draft.body.purchaseOrder._id}`).set(auth(managerToken));
     expect(del.status).toBe(403);   // ...but NOT delete (needs procurement.delete)
   });

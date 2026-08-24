@@ -291,7 +291,7 @@ export default function ProductsTab({ ctx }) {
     setSpoilageForm, setSpoilageModal, setStockHistory, setVarianceNoteMode, setVarianceReasons,
     settleForm, settleModal, settleSubmitting, shiftFilter, shiftHistory,
     shiftHistoryPage, shiftHistoryTotal, spoilageForm, spoilageLoading, spoilageModal,
-    standardAccounts, stockHistory, submitManualOrder, submitPhysicalCounts, submitRfDisb,
+    standardAccounts, stockHistory, stockLocations, submitManualOrder, submitPhysicalCounts, submitRfDisb,
     submitRfNew, submitRfRepl, toggleDay, toggleOrderList,
     totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
@@ -896,9 +896,12 @@ export default function ProductsTab({ ctx }) {
                             const packBase = pack.packBase || 1;
                             const dispUnit = BUSINESS_TYPE === 'log' ? 'pcs' : (inv.displayUnit || inv.unit);
                             const packCost = (inv.unitCost || 0) * packBase;
+                            // #10: same item name can now exist at multiple locations (separate
+                            // docs) - show which one this button binds to so it's not ambiguous.
+                            const locLabel = inv.stockLocation ? ((stockLocations || []).find(l => l.name === inv.stockLocation)?.shortCode || inv.stockLocation) : '';
                             return (
                             <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, null)} className="w-full text-left px-3 py-2 text-xs text-accent font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
-                              <span className="truncate pr-2">{inv.itemName}</span>
+                              <span className="truncate pr-2">{inv.itemName}{locLabel && <span className="text-fg/40 font-normal"> · {locLabel}</span>}</span>
                               <span className="text-black shrink-0 font-mono">₱{packCost.toFixed(2)}/{dispUnit}</span>
                             </button>
                             );
@@ -952,9 +955,10 @@ export default function ProductsTab({ ctx }) {
                               const packBase = pack.packBase || 1;
                               const dispUnit = inv.displayUnit || inv.unit;
                               const packCost = (inv.unitCost || 0) * packBase;
+                              const locLabel = inv.stockLocation ? ((stockLocations || []).find(l => l.name === inv.stockLocation)?.shortCode || inv.stockLocation) : '';
                               return (
                               <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, idx)} className="w-full text-left px-3 py-2 text-xs text-accent font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
-                                <span className="truncate pr-2">{inv.itemName}</span>
+                                <span className="truncate pr-2">{inv.itemName}{locLabel && <span className="text-fg/40 font-normal"> · {locLabel}</span>}</span>
                                 <span className="text-fg shrink-0 font-mono">₱{packCost.toFixed(2)}/{dispUnit}</span>
                               </button>
                               );

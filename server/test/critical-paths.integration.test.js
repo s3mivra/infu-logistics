@@ -182,8 +182,13 @@ describe('finance: every money endpoint posts a balanced double-entry', () => {
     expect(open.status).toBe(200);
     const fundId = open.body.fund._id;
 
-    const dis = await auth('post', `/api/revolving-funds/${fundId}/disburse`, tok.staff)
-      .send({ amount: 100, description: 'Snacks', categoryCode: '650000' });
+    // #Req-1: disbursement now goes through POST /api/requisitions + approval,
+    // not the direct route (superadmin-only break-glass now) - staff still
+    // requests it (matches the old "any staff" gate), superadmin approves.
+    const disReq = await auth('post', '/api/requisitions', tok.staff)
+      .send({ type: 'fund_disbursement', fundId, amount: 100, description: 'Snacks', categoryCode: '650000' });
+    expect(disReq.status).toBe(201);
+    const dis = await auth('post', `/api/requisitions/${disReq.body.requisition._id}/approve`, tok.super).send();
     expect(dis.status).toBe(200);
     expect(dis.body.fund.currentBalance).toBeCloseTo(900, 2);
 

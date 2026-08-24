@@ -106,6 +106,47 @@ export default function ProcurementTab({ ctx }) {
 
   useEffect(() => { fetchPOs(); }, [fetchPOs]);
 
+  // ── PO requisitions ─────────────────────────────────────────────────────────
+  // Creating a PO no longer happens directly - it raises a Pending requisition
+  // that an accounting.manage/superadmin approver must approve before the PO
+  // actually exists. This list surfaces that Pending queue (plus recently
+  // decided ones) right where the PO list already renders.
+  const canApproveReq = can('accounting.manage');
+  const [poRequisitions, setPoRequisitions] = useState([]);
+  const [decidingReqId, setDecidingReqId] = useState(null);
+  const fetchPoRequisitions = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/requisitions?type=purchase_order&limit=100');
+      const d = await res.json();
+      if (d.success) setPoRequisitions(d.requisitions || []);
+    } catch { /* non-fatal */ }
+  }, [apiFetch]);
+  useEffect(() => { fetchPoRequisitions(); }, [fetchPoRequisitions]);
+  const pendingPoRequisitions = poRequisitions.filter(r => r.status === 'Pending');
+
+  const approveRequisition = async (req) => {
+    setDecidingReqId(req._id); setError('');
+    try {
+      const res = await apiFetch(`/api/requisitions/${req._id}/approve`, { method: 'POST' });
+      const d = await res.json();
+      if (d.success) { await Promise.all([fetchPOs(), fetchPoRequisitions()]); }
+      else setError(d.error || 'Failed to approve requisition.');
+    } catch { setError('Network error approving requisition.'); }
+    finally { setDecidingReqId(null); }
+  };
+  const rejectRequisition = async (req) => {
+    const reason = prompt(`Reject requisition ${req.reqNumber}? Enter a reason:`);
+    if (!reason || !reason.trim()) return;
+    setDecidingReqId(req._id); setError('');
+    try {
+      const res = await apiFetch(`/api/requisitions/${req._id}/reject`, { method: 'POST', body: JSON.stringify({ reason: reason.trim() }) });
+      const d = await res.json();
+      if (d.success) await fetchPoRequisitions();
+      else setError(d.error || 'Failed to reject requisition.');
+    } catch { setError('Network error rejecting requisition.'); }
+    finally { setDecidingReqId(null); }
+  };
+
   // ── Suppliers ─────────────────────────────────────────────────────────────────
   const [suppliers, setSuppliers] = useState([]);
   const fetchSuppliers = useCallback(async () => {
@@ -228,9 +269,9 @@ export default function ProcurementTab({ ctx }) {
       const match = suppliers.find(s => (p.supplierCode && s.supplierCode === p.supplierCode) || (p.supplier && s.name.toLowerCase() === p.supplier.toLowerCase()));
       const noteBits = [p.poNo && `Supplier PO ${p.poNo}`, p.drsi && `DR/SI ${p.drsi}`, p.leadTime && `Lead time ${p.leadTime}d`].filter(Boolean);
       try {
-        const res = await apiFetch('/api/purchase-orders', {
+        const res = await apiFetch('/api/requisitions', {
           method: 'POST',
-          body: JSON.stringify({ supplier: p.supplier, supplierId: match?._id || null, notes: noteBits.join(' · '), lines: p.lines }),
+          body: JSON.stringify({ type: 'purchase_order', poPayload: { supplier: p.supplier, supplierId: match?._id || null, notes: noteBits.join(' · '), lines: p.lines } }),
         });
         const d = await res.json();
         if (d.success) ok++; else fail++;
@@ -238,8 +279,8 @@ export default function ProcurementTab({ ctx }) {
     }
     setImporting(false);
     setImportPreview(null);
-    await fetchPOs();
-    setError(fail ? `Imported ${ok} PO(s); ${fail} failed.` : '');
+    await Promise.all([fetchPOs(), fetchPoRequisitions()]);
+    setError(fail ? `Imported ${ok} PO(s); ${fail} failed.` : `Submitted ${ok} PO(s) for approval.`);
   };
 
   // ── Draft form state ────────────────────────────────────────────────────────
@@ -590,14 +631,19 @@ export default function ProcurementTab({ ctx }) {
     if (cleanLines.length === 0) { setError('Add at least one line with an item name and quantity.'); return; }
     setSaving(true); setError('');
     try {
-      const url = editId ? `/api/purchase-orders/${editId}` : '/api/purchase-orders';
+      // Creating a new PO now raises a Pending requisition instead of creating
+      // the PO directly - it only becomes a real PO once an accounting.manage/
+      // superadmin approver approves it (see requisitions.js). Editing an
+      // already-created PO is unaffected.
+      const poPayload = { supplier: form.supplier, supplierId: form.supplierId || null, supplierRef: form.supplierRef, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines };
+      const url = editId ? `/api/purchase-orders/${editId}` : '/api/requisitions';
       const res = await apiFetch(url, {
         method: editId ? 'PATCH' : 'POST',
-        body: JSON.stringify({ supplier: form.supplier, supplierId: form.supplierId || null, supplierRef: form.supplierRef, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines }),
+        body: JSON.stringify(editId ? poPayload : { type: 'purchase_order', poPayload }),
       });
       const d = await res.json();
       if (d.success) {
-        await fetchPOs();
+        await Promise.all([fetchPOs(), fetchPoRequisitions()]);
         if (suggestedQueue.length > 0) {
           const [next, ...rest] = suggestedQueue;
           setEditId(null);
@@ -745,6 +791,47 @@ export default function ProcurementTab({ ctx }) {
       ) : subTab === 'orders' ? (
         /* ── PURCHASE ORDERS LIST ── */
         <div className="space-y-6">
+          {pendingPoRequisitions.length > 0 && (
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-wider text-amber-400/80 mb-2">
+                Awaiting Approval <span className="text-amber-400/40">({pendingPoRequisitions.length})</span>
+              </p>
+              <div className="space-y-2">
+                {pendingPoRequisitions.map(r => (
+                  <div key={r._id} className="bg-amber-500/5 border border-amber-500/20 rounded-2xl px-4 py-3.5">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-black text-fg text-sm">{r.reqNumber}</span>
+                          <span className="inline-flex items-center text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border bg-amber-500 text-white border-amber-500">Pending</span>
+                        </div>
+                        <p className="text-fg/40 text-xs font-bold mt-0.5 truncate">
+                          {r.poPayload?.supplier || 'No supplier'} · {r.poPayload?.lines?.length || 0} item(s) · Requested by {r.requestedBy || '-'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-fg/50 font-black text-sm whitespace-nowrap">
+                          {money((r.poPayload?.lines || []).reduce((s, l) => s + (Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0), 0))}
+                        </span>
+                        {canApproveReq && (
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => approveRequisition(r)} disabled={decidingReqId === r._id}
+                              className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-green-500 text-white hover:bg-green-500/80 transition disabled:opacity-50">
+                              {decidingReqId === r._id ? <Loader2 size={12} className="animate-spin" /> : 'Approve'}
+                            </button>
+                            <button onClick={() => rejectRequisition(r)} disabled={decidingReqId === r._id}
+                              className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-red-300/80 hover:bg-red-500/15 transition disabled:opacity-50">
+                              Reject
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <PoSection title="Active" empty="No active purchase orders. Create one with “New PO”." pos={activePOs} money={money} showReceived
             renderActions={(po) => {
               // Incomplete already has a partial delivery reconciled against it -
@@ -1144,7 +1231,7 @@ export default function ProcurementTab({ ctx }) {
                 <button onClick={() => !saving && closeForm()} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">{suggestedQueue.length > 0 ? 'Cancel remaining' : 'Cancel'}</button>
                 <button onClick={saveDraft} disabled={saving} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
                   {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-                  {editId ? 'Save Changes' : (suggestedQueue.length > 0 ? 'Create PO & Continue' : 'Create PO')}
+                  {editId ? 'Save Changes' : (suggestedQueue.length > 0 ? 'Submit & Continue' : 'Submit for Approval')}
                 </button>
               </div>
             </div>
@@ -1330,7 +1417,7 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
   }
   return (
     <div>
-      <p className="text-[11px] font-black uppercase tracking-wider text-fg/30 mb-2">{title} <span className="text-fg/20">({pos.length})</span></p>
+      <p className="text-[11px] font-black uppercase tracking-wider text-slate-300 mb-2">{title} <span className="text-slate-400">({pos.length})</span></p>
       <div className="space-y-2">
         {pos.map(po => {
           const isOpen = open[po._id];

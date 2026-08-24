@@ -63,7 +63,9 @@ describe('catalog CRUD: categories, products, addons, modifier-groups, combos, d
   });
 
   it('POST/PUT/PATCH/DELETE product', async () => {
-    const p = await req('post', '/api/products', T.staff).send({ name: 'Espresso', category: 'Bev', basePrice: 90 });
+    // products.manage required as of the Phase 7 permissions sweep - staff
+    // (view-only by design) can no longer create products; admin can.
+    const p = await req('post', '/api/products', T.admin).send({ name: 'Espresso', category: 'Bev', basePrice: 90 });
     expect(p.status).toBe(200);
     const pid = p.body.product?._id || p.body._id;
     ids.tmpProduct = pid;
@@ -98,10 +100,12 @@ describe('catalog CRUD: categories, products, addons, modifier-groups, combos, d
 
   it('GET/POST/DELETE discount', async () => {
     ran(await req('get', '/api/discounts', T.staff));
-    const d = await req('post', '/api/discounts', T.staff).send({ name: 'Promo10', percentage: 10 });
+    // Create/delete require products.manage (#Audit-1a) - staff's default role
+    // doesn't carry it, so this exercises admin instead.
+    const d = await req('post', '/api/discounts', T.admin).send({ name: 'Promo10', percentage: 10 });
     expect(d.status).toBe(200);
     const did = d.body.discount?._id || d.body._id;
-    ran(await req('delete', `/api/discounts/${did}`, T.staff));
+    ran(await req('delete', `/api/discounts/${did}`, T.admin));
   });
 
   it('GET/POST/DELETE role', async () => {
@@ -121,7 +125,9 @@ describe('inventory: list, create, restock, batches, expiry, revalue, edit, hist
     ran(await req('get', `/api/inventory/history/${ids.invId}`, T.staff));
   });
   it('POST create inventory item', async () => {
-    const r = await req('post', '/api/inventory', T.staff).send({ itemName: 'Sugar', stockQty: 1000, unit: 'g', unitCost: 0.2, displayUnit: 'kg', unitMultiplier: 1000, creditAccount: '111000' });
+    // inventory.manage required as of the Phase 7 permissions sweep - staff
+    // (view-only by design) can no longer create/restock inventory; admin can.
+    const r = await req('post', '/api/inventory', T.admin).send({ itemName: 'Sugar', stockQty: 1000, unit: 'g', unitCost: 0.2, displayUnit: 'kg', unitMultiplier: 1000, creditAccount: '111000' });
     expect(r.status).toBe(200);
     ids.sugarId = r.body.item?._id || r.body._id;
   });

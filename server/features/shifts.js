@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
+import { withOptionalTransaction } from '../lib/txn.js';
 
 export default function registerShifts(ctx) {
   const {
@@ -187,16 +188,45 @@ app.post('/api/shifts/start', verifyToken, requireStaff, async (req, res) => {
         !Number.isFinite(opening) || opening < 0) {
       return res.status(400).json({ success: false, error: 'A valid starting cash amount is required.' });
     }
-    // Close any dangling open shifts for this cashier
-    await Shift.updateMany(
-      { cashierId: String(req.user._id), status: 'Open' },
-      { status: 'Closed', shiftEnd: new Date() }
-    );
-    const shift = await Shift.create({
-      cashierId:    String(req.user._id),
-      cashierName:  req.user.name,
-      startingCash: opening,
-    });
+    // Any shift this cashier left open (logged out without clicking "End
+    // Shift", a token expiring mid-shift, a crashed tab) gets closed here so
+    // a new one can start - but never as an indistinguishable, silently
+    // uncounted 'Closed'. That used to flip straight to 'Closed' with no
+    // cash count and variance left null, which ALSO meant it silently
+    // vanished from the cashier-variance report (which filters out null-
+    // variance rows) - a cashier could dodge ever being cash-counted just by
+    // re-logging-in instead of properly ending shift. 'Abandoned' keeps it
+    // distinct and still fully visible in shift history, with the expected-
+    // cash figure computed and preserved for review even though there was no
+    // physical count to compare it against.
+    const dangling = await Shift.find({ cashierId: String(req.user._id), status: 'Open' });
+    for (const d of dangling) {
+      const cashOrders = await Order.find(shiftCashFilter(d.cashierName, d.shiftStart));
+      d.salesTotal   = cashOrders.reduce((sum, o) => sum + o.total, 0);
+      d.expectedCash = d.startingCash + d.salesTotal;
+      d.shiftEnd     = new Date();
+      d.status       = 'Abandoned';
+      await d.save();
+    }
+
+    let shift;
+    try {
+      shift = await Shift.create({
+        cashierId:    String(req.user._id),
+        cashierName:  req.user.name,
+        startingCash: opening,
+      });
+    } catch (err) {
+      // Unique partial index on {cashierId, status:'Open'} (see ShiftSchema)
+      // is the DB-level backstop: two concurrent /start calls for the same
+      // cashier can both race past the dangling-shift cleanup above before
+      // either commits its create() - the loser gets a clean 409 instead of
+      // silently opening a second, unreachable Open shift.
+      if (err.code === 11000) {
+        return res.status(409).json({ success: false, error: 'A shift is already open for this account. Refresh and try again.' });
+      }
+      throw err;
+    }
     res.json({ success: true, shift });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -207,47 +237,71 @@ app.post('/api/shifts/start', verifyToken, requireStaff, async (req, res) => {
 app.post('/api/shifts/end', verifyToken, requireStaff, async (req, res) => {
   try {
     const { actualCash } = req.body;
-    const shift = await Shift.findOne({ cashierId: String(req.user._id), status: 'Open' });
-    if (!shift) return res.status(404).json({ success: false, error: 'No open shift found.' });
-
-    // Cash sales only (GCash/Card stay with the POS partner, not the register).
-    const cashOrders = await Order.find(shiftCashFilter(req.user.name, shift.shiftStart));
-    const salesTotal   = cashOrders.reduce((sum, o) => sum + o.total, 0);
-    const expectedCash = shift.startingCash + salesTotal;
-    const actual       = parseFloat(actualCash) || 0;
-
-    shift.shiftEnd     = new Date();
-    shift.salesTotal   = salesTotal;
-    shift.expectedCash = expectedCash;
-    shift.actualCash   = actual;
-    shift.variance     = actual - expectedCash;
-    shift.status       = 'Closed';
-    await shift.save();
-
-    // Variance journal entry (Cash Short & Over)
-    const variance = shift.variance;
-    if (Math.abs(variance) > 0.001) {
-      const varLines = variance < 0
-        ? [ // Short: cashier is missing money
-            { accountCode: '930000', accountName: 'Cash Short & Over Expense', debit: Math.abs(variance), credit: 0 },
-            { accountCode: '111000', accountName: 'Cash on Hand', debit: 0, credit: Math.abs(variance) },
-          ]
-        : [ // Over: cashier has extra money
-            { accountCode: '111000', accountName: 'Cash on Hand', debit: variance, credit: 0 },
-            { accountCode: '830000', accountName: 'Cash Short & Over Income', debit: 0, credit: variance },
-          ];
-      await JournalEntry.create({
-        reference: await mkSeqRef('SHIFT-VAR'),
-        description: `Variance adjustment: ${shift.cashierName} (${variance >= 0 ? 'Over' : 'Short'} ₱${Math.abs(variance).toFixed(2)})`,
-        lines: varLines,
-        totalDebit: Math.abs(variance),
-        totalCredit: Math.abs(variance),
-      });
+    // Mandatory counted cash - reject missing/invalid/negative, same as
+    // startingCash on open. This used to silently coerce a missing/invalid
+    // value to 0 (`parseFloat(actualCash) || 0`), which could post an
+    // alarming and simply WRONG full-shortage variance entry instead of
+    // failing the request.
+    const actual = Number(actualCash);
+    if (actualCash === undefined || actualCash === null || actualCash === '' ||
+        !Number.isFinite(actual) || actual < 0) {
+      return res.status(400).json({ success: false, error: 'A valid counted cash amount is required.' });
     }
+
+    // Atomic close, wrapped so a WriteConflict from a genuinely concurrent
+    // /end call (double-tap, a retried request after a slow network) is
+    // RETRIED rather than crashing the request: two overlapping transactions
+    // that both write to the same Shift document don't "one gets null back"
+    // cleanly the way a plain non-transactional findOneAndUpdate would - the
+    // second one to touch the document inside an open transaction gets a
+    // real WriteConflict error. withOptionalTransaction retries that
+    // automatically; on retry, the loser re-reads and correctly finds the
+    // shift already Closed. Session-wrapped together with the variance JE so
+    // a crash in the narrow window between the two can't leave the shift
+    // Closed with a variance recorded but no matching ledger entry - either
+    // both land or neither does.
+    const shift = await withOptionalTransaction(mongoose, async (session) => {
+      const openShift = await Shift.findOne({ cashierId: String(req.user._id), status: 'Open' }).session(session ?? null);
+      if (!openShift) throw Object.assign(new Error('No open shift found.'), { httpStatus: 404 });
+
+      // Cash sales only (GCash/Card stay with the POS partner, not the register).
+      const cashOrders = await Order.find(shiftCashFilter(req.user.name, openShift.shiftStart)).session(session ?? null);
+      const salesTotal   = cashOrders.reduce((sum, o) => sum + o.total, 0);
+      const expectedCash = openShift.startingCash + salesTotal;
+      const variance      = actual - expectedCash;
+
+      const closed = await Shift.findOneAndUpdate(
+        { _id: openShift._id, status: 'Open' },
+        { $set: { shiftEnd: new Date(), salesTotal, expectedCash, actualCash: actual, variance, status: 'Closed' } },
+        { new: true, session },
+      );
+      if (!closed) throw Object.assign(new Error('This shift was already closed.'), { httpStatus: 409 });
+
+      if (Math.abs(variance) > 0.001) {
+        const varLines = variance < 0
+          ? [ // Short: cashier is missing money
+              { accountCode: '930000', accountName: 'Cash Short & Over Expense', debit: Math.abs(variance), credit: 0 },
+              { accountCode: '111000', accountName: 'Cash on Hand', debit: 0, credit: Math.abs(variance) },
+            ]
+          : [ // Over: cashier has extra money
+              { accountCode: '111000', accountName: 'Cash on Hand', debit: variance, credit: 0 },
+              { accountCode: '830000', accountName: 'Cash Short & Over Income', debit: 0, credit: variance },
+            ];
+        await JournalEntry.create([{
+          reference: await mkSeqRef('SHIFT-VAR'),
+          description: `Variance adjustment: ${closed.cashierName} (${variance >= 0 ? 'Over' : 'Short'} ₱${Math.abs(variance).toFixed(2)})`,
+          lines: varLines,
+          totalDebit: Math.abs(variance),
+          totalCredit: Math.abs(variance),
+        }], { session });
+      }
+      return closed;
+    }, { log });
 
     emitToMgr('erpUpdated'); // auto-refresh the general ledger (variance entry)
     res.json({ success: true, shift });
   } catch (err) {
+    if (err?.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.message });
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });

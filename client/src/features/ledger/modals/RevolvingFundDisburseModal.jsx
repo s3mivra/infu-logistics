@@ -48,7 +48,7 @@ export default function RevolvingFundDisburseModal() {
               </select>
             </div>
             <div className="bg-danger/10 border border-danger/20 rounded-xl p-3 text-xs text-danger/80">
-              This will deduct from the revolving fund balance and post a journal entry:<br/>
+              This submits a requisition for approval. Once approved, it deducts from the fund balance and posts a journal entry:<br/>
               <span className="font-bold">DR Expense / CR Petty Cash / Revolving Fund</span>
             </div>
           </div>
@@ -56,7 +56,7 @@ export default function RevolvingFundDisburseModal() {
             <button onClick={() => setRfDisbModal(false)} className="flex-1 bg-white/5 text-fg/60 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
             <button onClick={submitRfDisb} disabled={rfDisbSubmitting}
               className="flex-1 bg-danger text-fg rounded-xl py-3 font-bold text-sm hover:bg-danger/90 transition disabled:opacity-50">
-              {rfDisbSubmitting ? 'Recording…' : 'Record Disbursement'}
+              {rfDisbSubmitting ? 'Submitting…' : 'Submit for Approval'}
             </button>
           </div>
         </div>

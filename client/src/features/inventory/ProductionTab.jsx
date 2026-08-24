@@ -12,16 +12,25 @@ import { useState, useEffect, useCallback } from 'react';
 const unitKind = (u) => (u === 'g' ? 'mass' : u === 'ml' ? 'volume' : 'count');
 const UNIT_OPTIONS = { mass: [{ v: 'g', l: 'g' }], volume: [{ v: 'ml', l: 'ml' }], count: [{ v: 'pcs', l: 'pcs' }] };
 
-export default function ProductionTab({ apiFetch, inventory = [], peso }) {
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
+export default function ProductionTab({ apiFetch, inventory = [], peso, stockLocations = [], stockCategories = [] }) {
   const [rows, setRows] = useState([{ invId: '', qty: '' }]);
   const [outputMode, setOutputMode] = useState('existing'); // 'existing' | 'new'
   const [outputInvId, setOutputInvId] = useState('');
   const [newItemName, setNewItemName] = useState('');
   const [newUnit, setNewUnit] = useState('pcs');
   const [outputQty, setOutputQty] = useState('');
+  const [productionDate, setProductionDate] = useState(todayStr());
+  const [newSrp, setNewSrp] = useState('');
+  const [newPackSize, setNewPackSize] = useState('');
+  const [newLocation, setNewLocation] = useState('');
+  const [newCategory, setNewCategory] = useState('');
+  const [newExpiryDate, setNewExpiryDate] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [lastResult, setLastResult] = useState(null);
 
   // Dimension of the raw materials currently selected - null if the rows mix
   // mass/volume/count (that combination has no sensible single output unit,
@@ -81,6 +90,7 @@ export default function ProductionTab({ apiFetch, inventory = [], peso }) {
 
   const submit = async () => {
     setErr('');
+    setLastResult(null);
     const cleanRows = rows.filter(r => r.invId && parseFloat(r.qty) > 0);
     if (cleanRows.length === 0) return setErr('Add at least one raw material with a qty.');
     if (!(parseFloat(outputQty) > 0)) return setErr('Output qty must be greater than 0.');
@@ -93,16 +103,28 @@ export default function ProductionTab({ apiFetch, inventory = [], peso }) {
       const body = {
         inputs: cleanRows.map(r => ({ invId: r.invId, qty: parseFloat(r.qty) })),
         outputQty: parseFloat(outputQty),
+        productionDate,
         note: note.trim(),
         ...(outputMode === 'existing'
           ? { outputInvId }
-          : { outputNew: { itemName: newItemName.trim(), unit: newUnit } }),
+          : { outputNew: {
+              itemName: newItemName.trim(),
+              unit: newUnit,
+              srp: parseFloat(newSrp) || 0,
+              packSize: newPackSize === '' ? null : parseFloat(newPackSize),
+              stockLocation: newLocation,
+              stockCategory: newCategory,
+              expiryDate: newExpiryDate || undefined,
+            } }),
       };
       const r = await apiFetch('/api/production', { method: 'POST', body: JSON.stringify(body) });
       const d = await r.json();
       if (!d.success) { setErr(d.error || 'Failed to record production.'); return; }
+      setLastResult({ itemName: d.order?.outputItemName, batchNumber: d.order?.outputBatchNumber });
       setRows([{ invId: '', qty: '' }]);
       setOutputInvId(''); setNewItemName(''); setOutputQty(''); setNote('');
+      setNewSrp(''); setNewPackSize(''); setNewLocation(''); setNewCategory(''); setNewExpiryDate('');
+      setProductionDate(todayStr());
       load();
     } catch (e) { setErr(e.message); }
     finally { setBusy(false); }
@@ -172,7 +194,33 @@ export default function ProductionTab({ apiFetch, inventory = [], peso }) {
             {outputItem.itemName} is tracked in {outputItem.unit}, but the raw materials selected are in {rawUnits.join('/')} - a conversion can't change what's being measured (weight vs volume vs count). Pick a matching item or use "New Item".
           </p>
         )}
-        <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note (optional)" className={`${input} mb-3`} />
+
+        {outputMode === 'new' && (
+          <div className="mb-3 bg-page-bg/60 border border-white/10 rounded-lg p-3">
+            <label className="text-[10px] text-fg/40 uppercase font-bold block mb-2">New Item Details</label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <input type="number" min="0" step="any" value={newSrp} onChange={e => setNewSrp(e.target.value)} placeholder="SRP / selling price (optional)" className={input} />
+              <input type="number" min="0" step="any" value={newPackSize} onChange={e => setNewPackSize(e.target.value)} placeholder="Pack size (optional)" className={input} />
+              <select value={newLocation} onChange={e => setNewLocation(e.target.value)} className={input}>
+                <option value="">- Storage location -</option>
+                {stockLocations.filter(l => l.isActive !== false).map(l => <option key={l._id} value={l.name}>{l.name}</option>)}
+              </select>
+              <select value={newCategory} onChange={e => setNewCategory(e.target.value)} className={input}>
+                <option value="">- Stock category -</option>
+                {stockCategories.filter(c => c.isActive !== false).map(c => <option key={c._id} value={c.name}>{c.name}{c.prefix ? ` (${c.prefix})` : ''}</option>)}
+              </select>
+              <input type="date" value={newExpiryDate} onChange={e => setNewExpiryDate(e.target.value)} placeholder="Expiry date (optional)" className={`${input} md:col-span-2`} />
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] text-fg/40 uppercase font-bold">Production Date</span>
+            <input type="date" value={productionDate} onChange={e => setProductionDate(e.target.value)} className={input} />
+          </label>
+          <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note (optional)" className={`${input} self-end`} />
+        </div>
 
         {(totalRawCost > 0 || totalRawQty != null) && (
           <div className="text-xs mb-3 space-y-1">
@@ -197,6 +245,11 @@ export default function ProductionTab({ apiFetch, inventory = [], peso }) {
         )}
 
         {err && <p className="text-red-400 text-xs mb-3">{err}</p>}
+        {lastResult && (
+          <p className="text-green-400 text-xs mb-3">
+            Recorded — {lastResult.itemName}{lastResult.batchNumber ? <>, batch <span className="font-mono font-bold">{lastResult.batchNumber}</span></> : null}
+          </p>
+        )}
         <button onClick={submit} disabled={busy} className="bg-accent text-white px-5 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-40 min-h-[44px]">
           {busy ? 'Recording…' : 'Record Production'}
         </button>
@@ -212,9 +265,10 @@ export default function ProductionTab({ apiFetch, inventory = [], peso }) {
               <thead>
                 <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
                   <th className="text-left py-2">Ref</th>
-                  <th className="text-left py-2">Date</th>
+                  <th className="text-left py-2">Prod. Date</th>
                   <th className="text-left py-2">Inputs</th>
                   <th className="text-left py-2">Output</th>
+                  <th className="text-left py-2">Batch #</th>
                   <th className="text-right py-2">Unit Cost</th>
                 </tr>
               </thead>
@@ -222,9 +276,10 @@ export default function ProductionTab({ apiFetch, inventory = [], peso }) {
                 {orders.map(o => (
                   <tr key={o._id} className="border-b border-white/5">
                     <td className="py-2 text-fg/50 text-xs font-mono">{o.reference}</td>
-                    <td className="py-2 text-fg/60 text-xs">{new Date(o.createdAt).toLocaleString()}</td>
+                    <td className="py-2 text-fg/60 text-xs">{new Date(o.productionDate || o.createdAt).toLocaleDateString()}</td>
                     <td className="py-2 text-fg/70 text-xs">{(o.inputs || []).map(l => `${l.qtyBase} ${l.itemName}`).join(', ')}</td>
                     <td className="py-2 text-fg font-bold text-xs">{o.outputQtyBase} {o.outputItemName}</td>
+                    <td className="py-2 text-fg/70 text-xs font-mono">{o.outputBatchNumber || '—'}</td>
                     <td className="py-2 text-right text-fg font-mono text-xs tabular-nums">{peso(o.outputUnitCost)}</td>
                   </tr>
                 ))}

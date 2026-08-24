@@ -1,13 +1,14 @@
 ﻿import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network, ClipboardCheck } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
 import { buildReceiptHTML as buildSharedReceipt, printReceiptHTML, resolveLetterhead } from '../../shared/receiptTemplate';
 import { buildEscposReceiptBytes, sleep as escposSleep, readPrinterMode, writePrinterMode } from '../../shared/escpos';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import { queueOrder, requestNotificationPermission, notify, queueClock, getQueuedClock, flushClockQueue } from '../../shared/pwa';
+import ApprovalsBadge from '../approvals/ApprovalsBadge';
 import * as auth from '../auth/auth';
 import { DashboardProvider } from './DashboardContext';
 // Modals extracted out of this file. They read shared state via useDashboard()
@@ -42,6 +43,7 @@ const ProcurementTab = lazy(() => import('../procurement/ProcurementTab'));
 const SettingsTab   = lazy(() => import('../settings/SettingsTab'));
 const ClientsTab    = lazy(() => import('../clients/ClientsTab'));
 const HubTab        = lazy(() => import('../hub/HubTab'));
+const ApprovalsTab  = lazy(() => import('../approvals/ApprovalsTab'));
 
 // Small fallback shown while a tab chunk loads.
 const TabFallback = () => (
@@ -222,7 +224,7 @@ export default function AdminDashboard() {
   const [invForm, setInvForm] = useState({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000', stockLocation: '', stockCategory: '' });
   // --- INVENTORY EDIT MODAL ---
   const [editInvModal, setEditInvModal] = useState(null);   // { item } | null
-  const [editInvForm, setEditInvForm] = useState({ itemCode: '', itemName: '', unit: '', unitCost: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, displayUnit: '', packSize: '', stockLocation: '', stockCategory: '' });
+  const [editInvForm, setEditInvForm] = useState({ itemCode: '', itemName: '', unit: '', unitCost: '', srp: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, displayUnit: '', packSize: '', stockLocation: '', stockCategory: '' });
   const [editInvSubmitting, setEditInvSubmitting] = useState(false);
   // --- BULK EXCEL IMPORT ---
   const [importModal, setImportModal] = useState(false);
@@ -507,6 +509,7 @@ export default function AdminDashboard() {
   const [arOutstanding, setArOutstanding] = useState({ orders: [], totalOutstanding: 0 });
   // Per-client A/R ageing + each client's credit limit and headroom.
   const [arAgeing, setArAgeing] = useState({ clients: [], totals: null, mode: 'off' });
+  const [arSettledHistory, setArSettledHistory] = useState({ orders: [] });
   const [expenseModal, setExpenseModal] = useState(false);
   // Recent expenses + per-category totals backing the Expenses page.
   const [expenseList, setExpenseList] = useState({ expenses: [], byCategory: [], total: 0 });
@@ -514,7 +517,7 @@ export default function AdminDashboard() {
   const [expenseForm, setExpenseForm] = useState({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', date: new Date().toISOString().slice(0,10) });
   const [expenseSubmitting, setExpenseSubmitting] = useState(false);
   const [settleModal, setSettleModal] = useState(null); // { order }
-  const [settleForm, setSettleForm] = useState({ amount: '', paymentMethod: 'Cash on Hand', note: '' });
+  const [settleForm, setSettleForm] = useState({ amount: '', paymentMethod: 'Cash on Hand', note: '', depositedAt: new Date().toISOString().slice(0, 10) });
   const [settleSubmitting, setSettleSubmitting] = useState(false);
 
   // --- SERVER-SIDE ANALYTICS ---
@@ -556,6 +559,7 @@ export default function AdminDashboard() {
   // --- REVOLVING FUND STATES ---
   const [rfFunds, setRfFunds] = useState([]);
   const [rfLoading, setRfLoading] = useState(false);
+  const [rfPendingReqs, setRfPendingReqs] = useState([]);
   const [rfActiveFund, setRfActiveFund] = useState(null);      // selected fund for transactions
   const [rfTxs, setRfTxs] = useState([]);
   const [rfTxTotal, setRfTxTotal] = useState(0);
@@ -2085,6 +2089,14 @@ const updateStatus = async (orderId, newStatus) => {
       if (data.success) setArOutstanding({ orders: data.orders, totalOutstanding: data.totalOutstanding });
     } catch (err) { console.error('fetchArOutstanding', err); }
   };
+  const fetchArSettled = async () => {
+    if (activeAdmin?.role !== 'superadmin') return;
+    try {
+      const res = await apiFetch(`/api/finance/ar-settled`);
+      const data = await res.json();
+      if (data.success) setArSettledHistory({ orders: data.orders });
+    } catch (err) { console.error('fetchArSettled', err); }
+  };
   // Per-client ageing is server-computed so the buckets, the credit limits and
   // the order-time enforcement all read from one rule set.
   const fetchExpenses = async () => {
@@ -2165,6 +2177,40 @@ const updateStatus = async (orderId, newStatus) => {
     finally { setRfLoading(false); }
   };
 
+  // Fund disbursements now raise a Pending requisition (see requisitions.js)
+  // instead of hitting the fund balance directly - this pulls that queue so
+  // the fund cards can show what's awaiting an accounting.manage/superadmin
+  // approval, alongside the already-settled transaction history.
+  const fetchRfPendingReqs = async () => {
+    if (activeAdmin?.role !== 'superadmin') return;
+    try {
+      const res = await apiFetch('/api/requisitions?type=fund_disbursement&status=Pending&limit=100');
+      const data = await res.json();
+      if (data.success) setRfPendingReqs(data.requisitions || []);
+    } catch (err) { console.error('fetchRfPendingReqs', err); }
+  };
+
+  const approveRfRequisition = async (req) => {
+    try {
+      const res = await apiFetch(`/api/requisitions/${req._id}/approve`, { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) return ui.alert(data.error || 'Failed to approve.');
+      await fetchRfPendingReqs();
+      await fetchRfFunds();
+      if (rfActiveFund?._id === req.fundId) await fetchRfTxs(req.fundId, 1);
+    } catch (err) { ui.alert('Network error.'); }
+  };
+  const rejectRfRequisition = async (req) => {
+    const reason = prompt(`Reject requisition ${req.reqNumber}? Enter a reason:`);
+    if (!reason || !reason.trim()) return;
+    try {
+      const res = await apiFetch(`/api/requisitions/${req._id}/reject`, { method: 'POST', body: JSON.stringify({ reason: reason.trim() }) });
+      const data = await res.json();
+      if (!data.success) return ui.alert(data.error || 'Failed to reject.');
+      await fetchRfPendingReqs();
+    } catch (err) { ui.alert('Network error.'); }
+  };
+
   const fetchRfTxs = async (fundId, page = 1) => {
     if (activeAdmin?.role !== 'superadmin') return;
     try {
@@ -2207,19 +2253,20 @@ const updateStatus = async (orderId, newStatus) => {
     if (!rfDisbForm.description.trim()) return ui.alert('Description is required.');
     setRfDisbSubmitting(true);
     try {
-      const res = await apiFetch(`/api/revolving-funds/${rfActiveFund._id}/disburse`, {
+      // Raises a Pending requisition instead of disbursing directly - the fund
+      // balance only moves once an accounting.manage/superadmin approver
+      // approves it (see requisitions.js / fetchRfPendingReqs).
+      const res = await apiFetch('/api/requisitions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: amt, description: rfDisbForm.description.trim(), categoryCode: rfDisbForm.categoryCode }),
+        body: JSON.stringify({ type: 'fund_disbursement', fundId: rfActiveFund._id, amount: amt, description: rfDisbForm.description.trim(), categoryCode: rfDisbForm.categoryCode }),
       });
       const data = await res.json();
-      if (!data.success) return ui.alert(data.error || 'Disbursement failed.');
+      if (!data.success) return ui.alert(data.error || 'Disbursement request failed.');
       setRfDisbModal(false);
       setRfDisbForm({ amount: '', description: '', categoryCode: '760000' });
-      // Update local fund balance without full refetch
-      setRfFunds(prev => prev.map(f => f._id === data.fund._id ? data.fund : f));
-      setRfActiveFund(data.fund);
-      await fetchRfTxs(rfActiveFund._id, 1);
+      ui.alert('Submitted for approval.');
+      await fetchRfPendingReqs();
     } catch (err) { ui.alert('Network error.'); }
     finally { setRfDisbSubmitting(false); }
   };
@@ -2301,14 +2348,15 @@ const updateStatus = async (orderId, newStatus) => {
     try {
       const res = await apiFetch(`/api/orders/${settleModal.order._id}/settle-ar`, {
         method: 'POST',
-        body: JSON.stringify({ amount: amt, paymentMethod: settleForm.paymentMethod, note: settleForm.note })
+        body: JSON.stringify({ amount: amt, paymentMethod: settleForm.paymentMethod, note: settleForm.note, depositedAt: settleForm.depositedAt })
       });
       const data = await res.json();
       if (data.success) {
         setSettleModal(null);
-        setSettleForm({ amount: '', paymentMethod: 'Cash on Hand', note: '' });
+        setSettleForm({ amount: '', paymentMethod: 'Cash on Hand', note: '', depositedAt: new Date().toISOString().slice(0, 10) });
         fetchArOutstanding();
         fetchArAgeing();
+        fetchArSettled();
         ui.alert('A/R settled successfully.');
       } else {
         ui.alert(data.error || 'Failed to settle A/R.');
@@ -2676,8 +2724,12 @@ const updateStatus = async (orderId, newStatus) => {
     let itemNameClean = invFormEff.itemName.trim();
     const totalCost = qtyBought * costPerPack;
 
+    // #10: "already exists" is scoped by location too - the same name is fine
+    // at a different place (two separate docs), matching the server's dup-check.
+    const sameLocation = (i) => (i.stockLocation || '') === (invForm.stockLocation || '');
+
     // log: auto-append weight/vol suffix to name for new items
-    const existingItemCheck = inventory.find(i => i.itemName.toLowerCase() === itemNameClean.toLowerCase());
+    const existingItemCheck = inventory.find(i => i.itemName.toLowerCase() === itemNameClean.toLowerCase() && sameLocation(i));
     if (BUSINESS_TYPE === 'log' && !existingItemCheck && invFormEff.unitPerPack && invFormEff.unit && invFormEff.unit !== 'pcs') {
       const wvSuffix = `${invFormEff.unitPerPack}${invFormEff.unit}`;
       if (!itemNameClean.toLowerCase().includes(wvSuffix.toLowerCase())) {
@@ -2685,8 +2737,8 @@ const updateStatus = async (orderId, newStatus) => {
       }
     }
 
-    // Check if the item already exists!
-    const existingItem = inventory.find(i => i.itemName.toLowerCase() === itemNameClean.toLowerCase());
+    // Check if the item already exists AT THIS LOCATION!
+    const existingItem = inventory.find(i => i.itemName.toLowerCase() === itemNameClean.toLowerCase() && sameLocation(i));
 
     // Resolve display unit → base unit + multiplier
     const resolved = resolveUnitFE(invFormEff.unit);
@@ -2724,6 +2776,7 @@ const updateStatus = async (orderId, newStatus) => {
         packSize: invFormEff.unitPerPack ? parseFloat(invFormEff.unitPerPack) : null,
         stockLocation: invForm.stockLocation || '',
         stockCategory: invForm.stockCategory || '',
+        srp: parseFloat(invForm.srp) || 0,
       };
 
       payload.creditAccount = invForm.creditAccount || '111000';
@@ -3125,6 +3178,7 @@ const updateStatus = async (orderId, newStatus) => {
       itemName: item.itemName || '',
       unit: item.unit || '',
       unitCost: ((item.unitCost || 0) * costBasis).toFixed(2),                      // base → per-pack (log) / per-display (fb)
+      srp: item.srp != null ? String(item.srp) : '',
       lowStockThreshold: ((item.lowStockThreshold || 0) / costBasis).toString(),    // base → packages (log) / display (fb)
       expiryDate: item.expiryDate ? new Date(item.expiryDate).toISOString().slice(0, 10) : '',
       expiryWarnDays: item.expiryWarnDays || 7,
@@ -3162,6 +3216,7 @@ const updateStatus = async (orderId, newStatus) => {
         itemName: editInvForm.itemName.trim(),
         unit: resolved.base,                            // base storage unit (g/ml/pcs)
         unitCost: unitCostNum / costBasis,              // per-pack (log) / per-display (fb) → ₱/baseUnit
+        srp: parseFloat(editInvForm.srp) || 0,
         lowStockThreshold: Math.max(0, parseFloat(editInvForm.lowStockThreshold) || 0) * costBasis, // packages (log) / display (fb) → base
         expiryWarnDays: Math.max(1, parseInt(editInvForm.expiryWarnDays) || 7),
         expiryDate: editInvForm.expiryDate ? new Date(editInvForm.expiryDate).toISOString() : null,
@@ -3263,6 +3318,62 @@ const updateStatus = async (orderId, newStatus) => {
         head: [['Item Name', 'Unit', 'Beginning Bal.', 'Purchases (In)', 'Sales (Out)', 'Adjustments', 'Ending Bal.']],
         body: stockBody, theme: 'grid', headStyles: { fillColor: [204, 163, 0], textColor: [0,0,0] }
       });
+
+      // ── Fast Movers / Near-Expiry / Slow Movers ────────────────────────────
+      // Reuses data every item already carries (avgDailyUse from enrichThresholds,
+      // expiryDate from FEFO batch tracking) - no extra fetch. Near-Expiry mirrors
+      // the exact 30-day/in-stock predicate the Inventory tab's Expiry Watch panel
+      // uses, so the PDF never disagrees with what the live dashboard shows.
+      let sectionY = (doc.lastAutoTable?.finalY || 30) + 10;
+      const ensureRoom = (needed = 30) => {
+        if (sectionY > doc.internal.pageSize.getHeight() - needed) { doc.addPage(); sectionY = 20; }
+      };
+      const dispOf = (item) => BUSINESS_TYPE === 'log'
+        ? { mult: itemDisplay(item).packBase || 1, unit: 'pcs' }
+        : effectiveDisplay(item);
+      const convQty = (item) => { const eff = dispOf(item); return (item.stockQty / eff.mult).toLocaleString(undefined, { maximumFractionDigits: 3 }) + ' ' + eff.unit; };
+
+      const fastMovers = [...inventory].filter(i => (i.avgDailyUse || 0) > 0).sort((a, b) => (b.avgDailyUse || 0) - (a.avgDailyUse || 0)).slice(0, 20);
+      if (fastMovers.length > 0) {
+        ensureRoom();
+        doc.setFontSize(13); doc.setFont(undefined, 'bold'); doc.text('Fast Movers (by 30-day sell-through)', 14, sectionY); doc.setFont(undefined, 'normal');
+        autoTable(doc, {
+          startY: sectionY + 4,
+          head: [['Item Name', 'On Hand', 'Avg Daily Use']],
+          body: fastMovers.map(i => [i.itemName, convQty(i), `${i.avgDailyUse.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${i.unit}/day`]),
+          theme: 'grid', headStyles: { fillColor: [40, 130, 90], textColor: [255, 255, 255] }, styles: { fontSize: 8 },
+        });
+        sectionY = doc.lastAutoTable.finalY + 12;
+      }
+
+      const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+      const nearExpiry = inventory.filter(i => i.expiryDate && i.stockQty > 0)
+        .map(i => ({ ...i, _days: Math.ceil((new Date(i.expiryDate) - today0) / 86400000) }))
+        .filter(i => i._days <= 30).sort((a, b) => a._days - b._days);
+      if (nearExpiry.length > 0) {
+        ensureRoom();
+        doc.setFontSize(13); doc.setFont(undefined, 'bold'); doc.text('Near-Expiry (within 30 days)', 14, sectionY); doc.setFont(undefined, 'normal');
+        autoTable(doc, {
+          startY: sectionY + 4,
+          head: [['Item Name', 'On Hand', 'Expires']],
+          body: nearExpiry.map(i => [i.itemName, convQty(i), i._days < 0 ? `Expired ${Math.abs(i._days)}d ago` : i._days === 0 ? 'Today' : `In ${i._days}d`]),
+          theme: 'grid', headStyles: { fillColor: [190, 90, 20], textColor: [255, 255, 255] }, styles: { fontSize: 8 },
+        });
+        sectionY = doc.lastAutoTable.finalY + 12;
+      }
+
+      const slowMovers = inventory.filter(i => i.stockQty > 0 && (i.avgDailyUse || 0) < 0.01).sort((a, b) => b.stockQty - a.stockQty).slice(0, 20);
+      if (slowMovers.length > 0) {
+        ensureRoom();
+        doc.setFontSize(13); doc.setFont(undefined, 'bold'); doc.text('Slow Movers (no meaningful 30-day movement)', 14, sectionY); doc.setFont(undefined, 'normal');
+        autoTable(doc, {
+          startY: sectionY + 4,
+          head: [['Item Name', 'On Hand']],
+          body: slowMovers.map(i => [i.itemName, convQty(i)]),
+          theme: 'grid', headStyles: { fillColor: [90, 90, 90], textColor: [255, 255, 255] }, styles: { fontSize: 8 },
+        });
+      }
+
       doc.save(`Inventory_Movement_${new Date().toISOString().split('T')[0]}.pdf`);
     } catch (err) { ui.alert("Failed to generate PDF: " + err.message); }
   };
@@ -3676,6 +3787,11 @@ const updateStatus = async (orderId, newStatus) => {
     for (let mat of recipe) {
       const invItem = inventory.find(i => i._id === mat.invId);
       if (!invItem) return 0;
+      // #10: the recipe binds to ONE specific location's document, but the same
+      // item can now be stocked at other locations too - sum stock across every
+      // doc sharing this item's name so the estimate isn't falsely low/zero just
+      // because the one bound location is running low.
+      const availableQty = inventory.reduce((sum, i) => i.itemName === invItem.itemName ? sum + (i.stockQty || 0) : sum, 0);
       let possibleServings;
       if (BUSINESS_TYPE === 'log') {
         // Work in BASE units so stale recipe rows (saved before packBase was
@@ -3689,10 +3805,10 @@ const updateStatus = async (orderId, newStatus) => {
         } else {
           qtyBase = currentPackBase;                  // legacy: treat as 1 pack per serving
         }
-        possibleServings = Math.floor(invItem.stockQty / (qtyBase || 1));
+        possibleServings = Math.floor(availableQty / (qtyBase || 1));
       } else {
         // FB: qty stored in base units; direct division gives servings.
-        possibleServings = Math.floor(invItem.stockQty / (mat.qty || 1));
+        possibleServings = Math.floor(availableQty / (mat.qty || 1));
       }
       if (possibleServings < minServings) minServings = possibleServings;
     }
@@ -5172,12 +5288,13 @@ const updateStatus = async (orderId, newStatus) => {
           // Default sub-tab for each grouped tab, set on click so switching between
           // Ledger and Reports (both rendered by LedgerTab) lands on the right page.
           const mgmtItems = [
-            { id: 'analytics', label: 'Analytics',       icon: BarChart3,   show: can('analytics.view') },
-            { id: 'reports',   label: 'Reports',         icon: BarChart2,   show: can('reports.view'), sub: 'salessummary' },
-            { id: 'ledger',    label: 'Ledger',          icon: FileText,    show: can('accounting.view'), sub: 'journal' },
-            { id: 'pricing',   label: 'Pricing Control', icon: DollarSign,  show: can('products.manage') },
-            { id: 'history',   label: 'Shifts & Cash',   icon: Clock,       show: isSuperAdmin },
-            { id: 'audit',     label: 'Audit Report',    icon: ShieldCheck, show: can('audit.view') },
+            { id: 'analytics',  label: 'Analytics',       icon: BarChart3,      show: can('analytics.view') },
+            { id: 'reports',    label: 'Reports',         icon: BarChart2,      show: can('reports.view'), sub: 'salessummary' },
+            { id: 'ledger',     label: 'Ledger',          icon: FileText,       show: can('accounting.view'), sub: 'journal' },
+            { id: 'approvals',  label: 'Approvals',       icon: ClipboardCheck, show: isSuperAdmin || can('accounting.manage') },
+            { id: 'pricing',    label: 'Pricing Control', icon: DollarSign,     show: can('products.manage') },
+            { id: 'history',    label: 'Shifts & Cash',   icon: Clock,          show: isSuperAdmin },
+            { id: 'audit',      label: 'Audit Report',    icon: ShieldCheck,    show: can('audit.view') },
           ].filter(it => it.show);
           if (mgmtItems.length === 0 && !isSuperAdmin) return null;
           return (
@@ -5191,7 +5308,8 @@ const updateStatus = async (orderId, newStatus) => {
                 >
                   <Icon size={16} />
                   {label}
-                  {activeTab === id && navMode === 'negotium' && <ChevronRight size={13} className="ml-auto" />}
+                  {id === 'approvals' && <ApprovalsBadge />}
+                  {activeTab === id && navMode === 'negotium' && !(id === 'approvals') && <ChevronRight size={13} className="ml-auto" />}
                 </button>
               ))}
               {isSuperAdmin && (
@@ -5326,7 +5444,7 @@ const updateStatus = async (orderId, newStatus) => {
     handleEndShift, handleBankDeposit, performLogout, startingCash,
     depositAmount, setDepositAmount, depositError, setDepositError, depositLoading,
     // ── Stock history / import / partial fulfil modals ──────────────────────
-    submitImport, loadPdfLibs,
+    submitImport, loadPdfLibs, addLogoToPDF,
     // ── Ledger sub-tabs ─────────────────────────────────────────────────────
     ledgerSubTab, setLedgerSubTab, jeForm, setJeForm, cashOnHand, standardAccounts,
     // ── Chart of Accounts CRUD ──
@@ -5359,7 +5477,7 @@ const updateStatus = async (orderId, newStatus) => {
     pnlData, pnlRange, setPnlRange, fetchPnl, bsData, fetchBalanceSheet, reconcileInventory,
     pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF,
     bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF,
-    arOutstanding, fetchArOutstanding, arAgeing, fetchArAgeing, suppliers, fetchSuppliers,
+    arOutstanding, fetchArOutstanding, arAgeing, fetchArAgeing, arSettledHistory, fetchArSettled, suppliers, fetchSuppliers,
     stockLocations, stockCategories, fetchStockTaxonomy, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory,
     stockTransfers, locationAnalytics, fetchStockTransfers, requestStockTransfer, actOnStockTransfer,
     expenseModal, setExpenseModal, expenseCategories, fetchExpenseCategories,
@@ -5372,6 +5490,7 @@ const updateStatus = async (orderId, newStatus) => {
     rfDisbModal, setRfDisbModal, rfDisbForm, setRfDisbForm, rfDisbSubmitting,
     rfReplModal, setRfReplModal, rfReplForm, setRfReplForm, rfReplSubmitting,
     fetchRfFunds, fetchRfTxs, submitRfNew, submitRfDisb, submitRfRepl, closeRfFund,
+    rfPendingReqs, fetchRfPendingReqs, approveRfRequisition, rejectRfRequisition,
     // ── Orders & POS ────────────────────────────────────────────────────────
     filteredOrders, displayOrders, orderFilter, setOrderFilter, departmentFilter, setDepartmentFilter,
     orderSearch, setOrderSearch,
@@ -5732,6 +5851,9 @@ const updateStatus = async (orderId, newStatus) => {
 
 {/* --- PROCUREMENT (PURCHASE ORDERS) --- */}
       {activeTab === 'procurement' && <Suspense fallback={<TabFallback />}><ProcurementTab ctx={ctx} /></Suspense>}
+
+{/* --- APPROVALS --- */}
+      {activeTab === 'approvals' && <Suspense fallback={<TabFallback />}><ApprovalsTab /></Suspense>}
 
       {/* --- CLIENTS TAB --- */}
       {activeTab === 'clients' && <Suspense fallback={<TabFallback />}><ClientsTab /></Suspense>}

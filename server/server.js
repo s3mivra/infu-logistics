@@ -50,6 +50,7 @@ import registerNotifications from './features/notifications.js';
 import registerClients from './features/clients.js';
 import registerHub from './features/hub.js';
 import registerProduction from './features/production.js';
+import registerRequisitions from './features/requisitions.js';
 
 const log = pino({
   level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
@@ -78,11 +79,19 @@ if (!process.env.MONGO_URI || !process.env.JWT_SECRET) {
 // deployment can never silently ship a guessable signing key or admin password.
 if (process.env.NODE_ENV === 'production') {
   const weakReasons = [];
+  // Length alone lets a 32-char string of one repeated character through -
+  // require a minimum spread of DISTINCT characters too, so an actually-random
+  // secret is required, not just a long one.
+  const lowEntropy = (s) => new Set(String(s || '')).size < 12;
   if ((process.env.JWT_SECRET || '').length < 32) {
     weakReasons.push('JWT_SECRET must be at least 32 chars (use `openssl rand -hex 32`)');
+  } else if (lowEntropy(process.env.JWT_SECRET)) {
+    weakReasons.push('JWT_SECRET looks low-entropy (too few distinct characters) - use `openssl rand -hex 32`');
   }
   if (!process.env.ADMIN_PASS || process.env.ADMIN_PASS === 'ChangeMe@2026!') {
     weakReasons.push('ADMIN_PASS must be set to a strong, non-default value');
+  } else if (process.env.ADMIN_PASS.length < 12 || lowEntropy(process.env.ADMIN_PASS)) {
+    weakReasons.push('ADMIN_PASS is too short or low-entropy - use at least 12 characters with real variety');
   }
   if (!(process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL)) {
     weakReasons.push('ALLOWED_ORIGINS (or FRONTEND_URL) must list your frontend origin(s)');
@@ -465,6 +474,22 @@ const loginLimiter = rateLimit({
   message: { success: false, error: 'Too many failed login attempts. Try again in 15 minutes.' }
 });
 
+// Companion to loginLimiter: that one buckets by IP, which a distributed
+// attacker (many IPs, one target account) sails straight through. This
+// buckets by the submitted username/name instead, so credential-stuffing a
+// single known account is throttled regardless of how many source IPs it
+// comes from. Deliberately looser than the per-IP limit (a shared office IP
+// hitting the account cap first is the more common false-positive to avoid).
+const perAccountLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => String(req.body?.username || req.body?.name || '').trim().toLowerCase() || 'unknown',
+  message: { success: false, error: 'Too many failed login attempts for this account. Try again in 15 minutes.' }
+});
+
 const orderLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 60,
@@ -724,7 +749,32 @@ mongoose.connect(process.env.MONGO_URI, {
   // The capped error collection has to be registered once the connection is up;
   // captureError() is a no-op until then, so early boot errors are simply not
   // recorded rather than crashing the process.
-  .then(() => { initErrorLog(); return runStartupTasks(); })
+  .then(async () => {
+    initErrorLog();
+    // Every model with a UNIQUE index and autoIndex:false gets its indexes
+    // built here, supervised, instead of relying on Mongoose's implicit
+    // background build. Reason: a unique index whose constraint is already
+    // violated by pre-existing data fails to build, and with nothing
+    // listening for that failure it surfaces as an uncaught exception -
+    // which both uncaughtException and unhandledRejection are wired to turn
+    // into a hard process.exit below. That took production down once already
+    // this cycle (Inventory's businessType+itemCode index against a legacy
+    // duplicate SKU) - every unique index added since is supervised the same
+    // way so the failure mode is a startup warning, never an outage.
+    const supervisedIndexSyncs = [
+      { model: Inventory, hint: "Likely a duplicate itemCode under the same businessType. Find it with:\n   db.inventories.aggregate([{$match:{itemCode:{$type:'string',$gt:''}}},{$group:{_id:{businessType:'$businessType',itemCode:'$itemCode'},count:{$sum:1}}},{$match:{count:{$gt:1}}}])" },
+      { model: Shift, hint: "Likely two Shift docs already Open for the same cashierId. Find them with:\n   db.shifts.aggregate([{$match:{status:'Open'}},{$group:{_id:'$cashierId',count:{$sum:1}}},{$match:{count:{$gt:1}}}]) - close the stale one(s) manually, keeping whichever is actually current." },
+      { model: EODRecord, hint: "Likely two EODRecord docs already exist for the same dateString. Find them with:\n   db.eodrecords.aggregate([{$group:{_id:'$dateString',count:{$sum:1}}},{$match:{count:{$gt:1}}}]) - keep the correct one and delete the duplicate." },
+    ];
+    for (const { model, hint } of supervisedIndexSyncs) {
+      try { await model.syncIndexes(); }
+      catch (err) {
+        console.error(`⚠️  ${model.modelName} index sync failed (server continues running):`, err.message);
+        console.error(`   ${hint}`);
+      }
+    }
+    return runStartupTasks();
+  })
   .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
   // --- 🔒 NEW: JWT MIDDLEWARE 🔒 ---
@@ -759,17 +809,26 @@ mongoose.connect(process.env.MONGO_URI, {
   // valid signature AND aud:'client' AND role:'client' (see evaluateClientAccess). A
   // staff token, or a client token missing the aud claim, is rejected - clients
   // re-authenticate after deploy. Staff routes use verifyToken + requireStaff instead.
-  const verifyClientToken = (req, res, next) => {
+  const verifyClientToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, error: 'Unauthorized: No token provided' });
     }
+    const raw = authHeader.split(' ')[1];
     try {
-      const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+      const decoded = jwt.verify(raw, process.env.JWT_SECRET);
       if (!evaluateClientAccess(decoded).ok) {
         return res.status(403).json({ success: false, error: 'Client session required.' });
       }
+      // Client tokens have no refresh session to revoke - check the logout
+      // denylist so a client who explicitly logged out can't keep using a
+      // token that's still cryptographically valid until its 8h expiry.
+      const revoked = await RevokedClientToken.findOne({ tokenHash: hashToken(raw) }).lean();
+      if (revoked) {
+        return res.status(401).json({ success: false, error: 'Unauthorized: Session has been logged out' });
+      }
       req.user = decoded;
+      req.clientRawToken = raw;
       return next();
     } catch (error) {
       return res.status(401).json({ success: false, error: 'Unauthorized: Invalid or expired token' });
@@ -1131,6 +1190,10 @@ items: [{
   arSettledAmount:  { type: Number, default: 0 },
   arSettledMethod:  { type: String, default: '' },
   arSettledNote:    { type: String, default: '' },
+  // Manually entered - when the funds actually landed in the account, which can
+  // trail arSettledAt by a few days (e.g. a check clearing). Distinct from
+  // arSettledAt (when the settlement was recorded in the system).
+  arDepositedAt:    { type: Date },
   // Payment-terms snapshot for on-account (non-cash) sales, captured when the
   // order Completes so later changes to the client's default terms don't
   // retroactively move an existing receivable's due date.
@@ -1196,11 +1259,35 @@ const InventorySchema = new mongoose.Schema({
     expiryDate:  { type: Date },
     receivedAt:  { type: Date, default: Date.now },
     reference:   { type: String, default: '' },
-    unitCost:    { type: Number, default: 0 }       // per-base-unit cost when this batch was received
-  }]
-}, { timestamps: true });
+    unitCost:    { type: Number, default: 0 },      // per-base-unit cost when this batch was received
+    batchNumber: { type: String, default: '' }      // e.g. "P1-20260823-0001" - set on batches produced via #10
+  }],
+  // Soft-delete: hard-deleting orphaned StockCard history and any PurchaseOrder
+  // line still referencing this item's invId. Archived items are excluded from
+  // the main Live Stock list but their history stays intact.
+  isArchived: { type: Boolean, default: false },
+}, { timestamps: true, autoIndex: false });
 InventorySchema.index({ expiryDate: 1 });
 InventorySchema.index({ itemName: 1 });
+// itemCode uniqueness was previously app-level only (check-then-generate in
+// nextCategoryCode/generateNextSequence) with no DB backstop - a genuine race
+// under concurrent item creation could insert two docs with the same code.
+// A plain `sparse` index only excludes documents missing the field entirely -
+// it still enforces uniqueness on an explicit empty/null itemCode, which many
+// existing items (and test fixtures) legitimately have. A partial filter
+// excludes those too, only deduping real non-empty codes.
+//
+// autoIndex is off for this schema (see above) specifically so THIS index's
+// build is supervised: a deployment with a pre-existing duplicate itemCode
+// (legacy data, a bad import) must not crash the whole server on boot. It's
+// built explicitly, inside a try/catch, right after mongoose.connect() below -
+// a failure there logs a warning and the server keeps running with the rest
+// of Inventory's indexes in place; only this dedup guard stays soft until the
+// underlying duplicate is cleaned up.
+InventorySchema.index(
+  { businessType: 1, itemCode: 1 },
+  { unique: true, partialFilterExpression: { itemCode: { $type: 'string', $gt: '' } } }
+);
 const Inventory = mongoose.model('Inventory', InventorySchema);
 
 // Storage places - the physical locations stock can sit in (branch, warehouse,
@@ -1211,6 +1298,7 @@ const StorageLocationSchema = new mongoose.Schema({
   businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   name:      { type: String, required: true },
+  shortCode: { type: String, default: '', uppercase: true, trim: true, maxlength: 6 },
   note:      { type: String, default: '' },
   isActive:  { type: Boolean, default: true },
 }, { timestamps: true });
@@ -1314,7 +1402,7 @@ const JournalEntrySchema = new mongoose.Schema({
   reference: { type: String, index: true },
   description: String,
   lines: [{
-    accountCode: String,
+    accountCode: { type: String, required: true },
     accountName: String,
     debit: { type: Number, default: 0 },
     credit: { type: Number, default: 0 }
@@ -1430,10 +1518,12 @@ const ProductionOrderSchema = new mongoose.Schema({
     qtyBase:  Number,
     unitCost: Number,
   }],
-  outputInvId:     mongoose.Schema.Types.ObjectId,
-  outputItemName:  String,
-  outputQtyBase:   Number,
-  outputUnitCost:  Number,
+  outputInvId:       mongoose.Schema.Types.ObjectId,
+  outputItemName:    String,
+  outputQtyBase:     Number,
+  outputUnitCost:    Number,
+  productionDate:    { type: Date, default: Date.now },
+  outputBatchNumber: { type: String, default: '' },
   note: { type: String, default: '' },
 }, { timestamps: true });
 const ProductionOrder = mongoose.model('ProductionOrder', ProductionOrderSchema);
@@ -1451,8 +1541,14 @@ const ShiftSchema = new mongoose.Schema({
   variance:        Number,                          // actualCash - expectedCash
   depositedAmount: { type: Number, default: 0 },   // Total posted to bank this shift
   isReconciled:    { type: Boolean, default: false },
-  status:          { type: String, default: 'Open' } // 'Open' | 'Closed' | 'Reconciled'
-}, { timestamps: true });
+  status:          { type: String, default: 'Open' } // 'Open' | 'Closed' | 'Abandoned' | 'Reconciled'
+}, { timestamps: true, autoIndex: false });
+// One open shift per cashier, enforced at the DB level - two concurrent
+// POST /api/shifts/start calls for the same cashier (double-tap, a retried
+// request) used to both slip past the app-level dangling-shift cleanup and
+// each create a new Open shift, leaving one of them unreachable and never
+// closed/cash-counted. The second create() now throws E11000 instead.
+ShiftSchema.index({ cashierId: 1 }, { unique: true, partialFilterExpression: { status: 'Open' } });
 const Shift = mongoose.model('Shift', ShiftSchema);
 
 // ── STAFF CLOCK ENTRIES ──────────────────────────────────────────────────────
@@ -1843,6 +1939,19 @@ const RefreshSessionSchema = new mongoose.Schema({
 RefreshSessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // TTL auto-cleanup
 const RefreshSession = mongoose.model('RefreshSession', RefreshSessionSchema);
 
+// Client-portal tokens are a single self-contained 8h JWT with no refresh/
+// session record behind them (unlike staff's dual-token model above), so
+// there was previously no way to revoke one before natural expiry - a leaked
+// token stayed valid for up to 8h regardless of logout. This is a minimal
+// denylist: on logout the token's hash is recorded until it would have
+// expired anyway, then the TTL index reclaims the row - no manual pruning.
+const RevokedClientTokenSchema = new mongoose.Schema({
+  tokenHash: { type: String, required: true, unique: true },
+  expiresAt: { type: Date, required: true },
+}, { timestamps: true });
+RevokedClientTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+const RevokedClientToken = mongoose.model('RevokedClientToken', RevokedClientTokenSchema);
+
 // --- NEW: CUSTOM ROLES SCHEMA & ROUTES ---
 // Custom roles created in the UI role-maker. `permissions` is the granular set a
 // user with this role gets by default (unless the user has an explicit override).
@@ -1964,7 +2073,15 @@ const EODRecordSchema = new mongoose.Schema({
   status: { type: String, default: 'OPEN' }, // 'OPEN' or 'LOCKED'
   lockedAt: Date,
   lockedBy: String
-});
+}, { autoIndex: false });
+// Without this, two concurrent "Lock EOD" submissions for the same day can
+// both pass the LOCKED-status read check before either commits (a TOCTOU
+// window the transaction alone doesn't close - see InventorySchema's own
+// unique-index comment above for why), each post their own inventory
+// shrinkage/gain adjustments, and each upsert an EODRecord - duplicating the
+// day's variance postings. The unique index turns the loser's upsert into a
+// duplicate-key error instead of a silent second lock.
+EODRecordSchema.index({ dateString: 1 }, { unique: true });
 const EODRecord = mongoose.model('EODRecord', EODRecordSchema);
 
 // Atomic sequence counter - one document per prefix, incremented with $inc to prevent race conditions
@@ -2080,6 +2197,46 @@ const BillSchema = new mongoose.Schema({
 }, { timestamps: true });
 BillSchema.index({ businessType: 1, status: 1 });
 const Bill = mongoose.model('Bill', BillSchema);
+
+// #Req-1: request -> approve/reject -> movement. Neither a new Purchase Order
+// nor a Revolving Fund disbursement happens directly anymore - both go through
+// one of these first, so a stock/funds movement always has a named requester
+// and a named approver on record before it commences. Mirrors BillSchema's
+// Pending/Approved/Rejected shape (same audit-pair fields, same
+// rejection-requires-reason rule) rather than inventing a new pattern.
+const REQUISITION_STATUSES = ['Pending', 'Approved', 'Rejected'];
+const REQUISITION_TYPES = ['purchase_order', 'fund_disbursement'];
+const RequisitionSlipSchema = new mongoose.Schema({
+  businessType:    { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:        { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  reqNumber:       { type: String, index: true },     // REQ-2026-000001
+  type:            { type: String, enum: REQUISITION_TYPES, required: true, index: true },
+  status:          { type: String, default: 'Pending', enum: REQUISITION_STATUSES, index: true },
+  requestedBy:     { type: String, default: '' },
+  requestedAt:     { type: Date, default: Date.now },
+  approvedBy:      { type: String, default: '' },
+  approvedAt:      { type: Date, default: null },
+  rejectedBy:      { type: String, default: '' },
+  rejectedAt:      { type: Date, default: null },
+  rejectionReason: { type: String, default: '' },
+  // type: 'purchase_order' - snapshot of what POST /api/purchase-orders used to
+  // take directly. Re-used verbatim to create the PO once approved.
+  poPayload: {
+    supplier: String, supplierId: String, supplierRef: String,
+    expectedDate: Date, notes: String,
+    lines: [{ type: mongoose.Schema.Types.Mixed }],
+  },
+  // type: 'fund_disbursement' - snapshot of what POST
+  // /api/revolving-funds/:id/disburse used to take directly.
+  fundId:       { type: mongoose.Schema.Types.ObjectId, ref: 'RevolvingFund', default: null },
+  amount:       { type: Number, default: null },
+  description:  { type: String, default: '' },
+  categoryCode: { type: String, default: '' },
+  // The PurchaseOrder or RevolvingFundTx actually created on approval.
+  resultRef: { type: mongoose.Schema.Types.ObjectId, default: null },
+}, { timestamps: true });
+RequisitionSlipSchema.index({ businessType: 1, status: 1 });
+const RequisitionSlip = mongoose.model('RequisitionSlip', RequisitionSlipSchema);
 
 // --- API ROUTES ---
 
@@ -2213,6 +2370,40 @@ const generateNextSequence = async (_Model, prefix, _fieldName) => {
   );
   return `${prefix}-A${counter.seq.toString().padStart(4, '0')}`;
 };
+
+// Next item code under a stock-category prefix: PREFIX + zero-padded running
+// number, e.g. prefix "P1" -> P10001, P10002. Scans existing codes with that
+// exact prefix so gaps from deletes don't reuse a number. Shared by both the
+// manual Add-Item flow (inventory.js) and Production's new-item flow (production.js).
+async function nextCategoryCode(prefix) {
+  const p = String(prefix || '').toUpperCase().trim();
+  if (!p) return null;
+  const rx = new RegExp(`^${escapeRegex(p)}(\\d+)$`);
+  const rows = await Inventory.find(
+    { itemCode: { $regex: `^${escapeRegex(p)}\\d+$` }, businessType: BUSINESS_TYPE },
+    { itemCode: 1 }
+  ).lean();
+  let max = 0;
+  for (const r of rows) { const m = rx.exec(r.itemCode || ''); if (m) max = Math.max(max, parseInt(m[1], 10)); }
+  return `${p}${String(max + 1).padStart(4, '0')}`;
+}
+
+// Automated batch number for a production run: PREFIX-YYYYMMDD-####, the
+// sequence resetting to 0001 per category per day. Falls back to "GEN" when
+// the produced item has no stock category / the category has no prefix.
+// Uses the same atomic Counter increment as generateNextSequence/mkSeqRef so
+// concurrent production runs never collide on the same number.
+async function nextBatchNumber(prefix, date) {
+  const p = String(prefix || 'GEN').toUpperCase().trim() || 'GEN';
+  const ymd = new Date(date || Date.now()).toISOString().slice(0, 10).replace(/-/g, '');
+  const key = `BATCH-${p}-${ymd}`;
+  const counter = await Counter.findOneAndUpdate(
+    { _id: key },
+    { $inc: { seq: 1 } },
+    { upsert: true, returnDocument: 'after' }
+  );
+  return `${p}-${ymd}-${String(counter.seq).padStart(4, '0')}`;
+}
 
 // --- MIDNIGHT AUTO-ARCHIVE SYSTEM ---
 function scheduleMidnightArchive() {
@@ -2638,6 +2829,7 @@ const ctx = {
   modifierGroupSchema,
   mkSeqRef,
   loginLimiter,
+  perAccountLoginLimiter,
   orderLimiter,
   generalApiLimiter,
   runStartupTasks,
@@ -2723,6 +2915,8 @@ const ctx = {
   CollectionReminder,
   RefreshSessionSchema,
   RefreshSession,
+  RevokedClientTokenSchema,
+  RevokedClientToken,
   RoleSchema,
   Role,
   AuditLogSchema,
@@ -2743,11 +2937,17 @@ const ctx = {
   BillSchema,
   Bill,
   BILL_STATUSES,
+  RequisitionSlipSchema,
+  RequisitionSlip,
+  REQUISITION_STATUSES,
+  REQUISITION_TYPES,
   emitToOps,
   emitToAll,
   emitToMgr,
   getCategoryPrefix,
   generateNextSequence,
+  nextCategoryCode,
+  nextBatchNumber,
   scheduleMidnightArchive,
   validateOrderMath,
   normalBalanceForCode,
@@ -2801,6 +3001,10 @@ registerNotifications(ctx);
 registerClients(ctx);
 registerHub(ctx);
 registerProduction(ctx);
+// Must register AFTER registerPurchaseOrders and registerFinance - it reads
+// ctx.createPurchaseOrder / ctx.disburseFromFund, which those two attach onto
+// the shared ctx object as they register (see the comment in each file).
+registerRequisitions(ctx);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Not found.' });

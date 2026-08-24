@@ -82,6 +82,7 @@ export default function registerUsers(ctx) {
     modifierGroupSchema,
     mkSeqRef,
     loginLimiter,
+    perAccountLoginLimiter,
     orderLimiter,
     generalApiLimiter,
     runStartupTasks,
@@ -240,7 +241,7 @@ app.delete('/api/roles/:id', verifyToken, requireSuperAdmin, async (req, res) =>
   }
 });
 
-app.post('/api/users/login', loginLimiter, validate(loginSchema), async (req, res) => {
+app.post('/api/users/login', loginLimiter, perAccountLoginLimiter, validate(loginSchema), async (req, res) => {
   try {
     const { name, password } = req.body;
     if (!name || !password) return res.status(400).json({ success: false, message: 'Name and password are required.' });
@@ -342,6 +343,20 @@ app.put('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const updateData = { name: req.body.name };
 
+    // Cash-shift matching (shiftCashFilter) and sales commissions both key off
+    // Order.cashier === User.name, not a stable id - the create route already
+    // rejects a duplicate name, but a RENAME here had no such check, so two
+    // staff could end up sharing a display name and silently pool each
+    // other's cash-variance/commission figures. Same case-insensitive check,
+    // only when the name is actually changing.
+    if (updateData.name) {
+      const dupe = await User.findOne({
+        _id: { $ne: req.params.id },
+        name: { $regex: new RegExp(`^${escapeRegex(updateData.name.trim())}$`, 'i') },
+      });
+      if (dupe) return res.status(400).json({ success: false, error: 'Another user already has that name.' });
+    }
+
     // Only hash and update the password if they actually typed a new one
     if (req.body.password && req.body.password.trim() !== '') {
       updateData.password = await bcrypt.hash(req.body.password, BCRYPT_ROUNDS);
@@ -359,7 +374,15 @@ app.patch('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => 
   try {
     const { name, password, role, permissions, commissionRate } = req.body;
     const updates = {};
-    if (name) updates.name = name.trim();
+    if (name) {
+      updates.name = name.trim();
+      // Same duplicate-name guard as PUT above.
+      const dupe = await User.findOne({
+        _id: { $ne: req.params.id },
+        name: { $regex: new RegExp(`^${escapeRegex(updates.name)}$`, 'i') },
+      });
+      if (dupe) return res.status(400).json({ success: false, error: 'Another user already has that name.' });
+    }
     if (role) updates.role = role;
     if (Array.isArray(permissions)) updates.permissions = permissions.filter((k) => PERMISSION_KEYS.has(k));
     if (password && password.trim()) updates.password = await bcrypt.hash(password, BCRYPT_ROUNDS);

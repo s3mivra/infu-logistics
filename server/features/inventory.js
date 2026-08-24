@@ -161,6 +161,7 @@ export default function registerInventory(ctx) {
     emitToMgr,
     getCategoryPrefix,
     generateNextSequence,
+    nextCategoryCode,
     scheduleMidnightArchive,
     validateOrderMath,
     normalBalanceForCode,
@@ -178,6 +179,7 @@ export default function registerInventory(ctx) {
     verifyClientToken,
     requireSuperAdmin,
     requireSuperOrAdmin,
+    requirePermission,
     verifyOrderAuth,
   } = ctx;
 
@@ -295,12 +297,16 @@ app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => 
     await session.abortTransaction();
     session.endSession();
     captureError(req, error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : error.message });
   }
 });
 
 // --- UNLOCK / REOPEN EOD (ADMIN ONLY) ---
-app.post('/api/inventory/eod/reopen', verifyToken, requireStaff, async (req, res) => {
+// Was requireStaff (any cashier) until this pass - the comment said "ADMIN
+// ONLY" but nothing enforced it, so any staff member could reopen a locked
+// register and let orders/voids flow back into a day that was supposed to be
+// closed for the night.
+app.post('/api/inventory/eod/reopen', verifyToken, requireSuperOrAdmin, async (req, res) => {
   try {
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
     
@@ -385,6 +391,12 @@ function enrichThresholds(items, usage) {
     return { ...i, avgDailyUse: +adu.toFixed(3), autoThreshold, thresholdIsAuto, effectiveThreshold: manual > 0 ? manual : autoThreshold };
   });
 }
+// hub.js's inventory-snapshot route (registered after this module) reuses
+// these so a host's view of a client's stock velocity agrees with what that
+// client sees on their own Inventory tab, instead of a second computation
+// silently drifting from this one.
+ctx.computeUsage30d = computeUsage30d;
+ctx.enrichThresholds = enrichThresholds;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // #7 STORAGE PLACES & STOCK CATEGORIES - small managed reference collections.
@@ -392,21 +404,8 @@ function enrichThresholds(items, usage) {
 // Categories carry the item-code prefix that drives auto-numbering (#9).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Next item code under a category prefix: PREFIX + zero-padded running number,
-// e.g. prefix "P1" → P10001, P10002. Scans existing codes with that exact prefix
-// so gaps from deletes don't reuse a number.
-async function nextCategoryCode(prefix) {
-  const p = String(prefix || '').toUpperCase().trim();
-  if (!p) return null;
-  const rx = new RegExp(`^${escapeRegex(p)}(\\d+)$`);
-  const rows = await Inventory.find(
-    { itemCode: { $regex: `^${escapeRegex(p)}\\d+$` }, businessType: BUSINESS_TYPE },
-    { itemCode: 1 }
-  ).lean();
-  let max = 0;
-  for (const r of rows) { const m = rx.exec(r.itemCode || ''); if (m) max = Math.max(max, parseInt(m[1], 10)); }
-  return `${p}${String(max + 1).padStart(4, '0')}`;
-}
+// nextCategoryCode is defined in server.js and shared via ctx (both this file
+// and production.js's new-item flow need it).
 
 // --- Storage locations ---
 app.get('/api/stock-locations', verifyToken, requireStaff, async (req, res) => {
@@ -422,7 +421,12 @@ app.post('/api/stock-locations', verifyToken, requireSuperAdmin, async (req, res
     if (!name) return res.status(400).json({ success: false, error: 'Location name required.' });
     const dup = await StorageLocation.findOne({ businessType: BUSINESS_TYPE, name: { $regex: `^${escapeRegex(name)}$`, $options: 'i' } });
     if (dup) return res.status(400).json({ success: false, error: 'Location already exists.' });
-    const loc = await StorageLocation.create({ name, note: String(req.body.note || '').trim().slice(0, 500) });
+    const shortCode = String(req.body.shortCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+    if (shortCode) {
+      const sdup = await StorageLocation.findOne({ businessType: BUSINESS_TYPE, shortCode });
+      if (sdup) return res.status(400).json({ success: false, error: `Shortcut "${shortCode}" already used by "${sdup.name}". Pick a unique shortcut.` });
+    }
+    const loc = await StorageLocation.create({ name, shortCode, note: String(req.body.note || '').trim().slice(0, 500) });
     res.json({ success: true, location: loc });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
@@ -436,6 +440,14 @@ app.put('/api/stock-locations/:id', verifyToken, requireSuperAdmin, async (req, 
       const name = title(String(req.body.name || '').trim());
       if (!name) return res.status(400).json({ success: false, error: 'Location name required.' });
       loc.name = name;
+    }
+    if (req.body.shortCode !== undefined) {
+      const shortCode = String(req.body.shortCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+      if (shortCode && shortCode !== loc.shortCode) {
+        const sdup = await StorageLocation.findOne({ businessType: BUSINESS_TYPE, shortCode, _id: { $ne: loc._id } });
+        if (sdup) return res.status(400).json({ success: false, error: `Shortcut "${shortCode}" already used by "${sdup.name}".` });
+      }
+      loc.shortCode = shortCode;
     }
     if (req.body.note !== undefined) loc.note = String(req.body.note || '').trim().slice(0, 500);
     if (typeof req.body.isActive === 'boolean') loc.isActive = req.body.isActive;
@@ -655,7 +667,9 @@ app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   const { page, limit: lim, search } = req.query;
   // Tenancy: stamp businessType on the filter so each instance only sees its own.
   // Escape the user-supplied search string to neutralise ReDoS / regex injection.
-  const filter = search ? { itemName: { $regex: escapeRegex(search), $options: 'i' }, businessType: BUSINESS_TYPE } : { businessType: BUSINESS_TYPE };
+  const filter = search
+    ? { itemName: { $regex: escapeRegex(search), $options: 'i' }, businessType: BUSINESS_TYPE, isArchived: { $ne: true } }
+    : { businessType: BUSINESS_TYPE, isArchived: { $ne: true } };
   Object.assign(filter, tenantScope(req)); // per-tenant scoping (no-op when token has no tenantId)
   const usage = await computeUsage30d({ businessType: BUSINESS_TYPE, ...tenantScope(req) });
   if (page) {
@@ -674,15 +688,21 @@ app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
-app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   try {
     // Canonicalize first so the stored name is stable ("test milk" → "Test Milk")
     // and the existing case-insensitive dup check compares like with like.
     // title() leaves digit-bearing tokens uppercase, so pack labels survive: "1L".
     req.body.itemName = title(req.body.itemName);
     if (!req.body.itemName) return res.status(400).json({ success: false, error: 'Item name required.' });
-    const existing = await Inventory.findOne({ itemName: { $regex: new RegExp(`^${escapeRegex(req.body.itemName)}$`, 'i') } });
-    if (existing) return res.status(400).json({ success: false, error: 'Item already exists.' });
+    // Scoped by location (#10) - the same product can be stocked at more than
+    // one place (e.g. "Beans" at Warehouse AND at Store Front) as two separate
+    // documents; only a true duplicate at the SAME location is rejected.
+    const existing = await Inventory.findOne({
+      itemName: { $regex: new RegExp(`^${escapeRegex(req.body.itemName)}$`, 'i') },
+      stockLocation: req.body.stockLocation || '',
+    });
+    if (existing) return res.status(400).json({ success: false, error: existing.stockLocation ? `Item already exists at "${existing.stockLocation}".` : 'Item already exists.' });
 
     // Item code (#9): if the chosen stock category carries a prefix, auto-number
     // under it (Beans "P1" → P10001, P10002); otherwise fall back to global RML codes.
@@ -775,8 +795,17 @@ app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, r
 // transaction. Two simultaneous restocks of the same SKU now serialise on the
 // inventory document instead of racing the WAC math. Retries on transient
 // transient errors (WriteConflict / TransientTransactionError).
-app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory/restock/:id', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   const { addedStock, totalCost, expiryDate, creditAccount: rawCreditCode } = req.body;
+  // Both were previously trusted verbatim into a WAC blend with no sign/finite
+  // check - a negative addedStock/totalCost silently drained stock and cost
+  // while the resulting StockCard read "Restocked".
+  if (!Number.isFinite(Number(addedStock)) || Number(addedStock) <= 0) {
+    return res.status(400).json({ success: false, error: 'Added stock must be a positive number.' });
+  }
+  if (!Number.isFinite(Number(totalCost)) || Number(totalCost) < 0) {
+    return res.status(400).json({ success: false, error: 'Total cost must be a non-negative number.' });
+  }
   const isAllowedParent = (c) => /^(111|112|113|220)/.test(String(c || ''));
   const resolved = acctMeta(rawCreditCode);
   const creditCode = (resolved && isAllowedParent(rawCreditCode)) ? rawCreditCode : '111000';
@@ -796,7 +825,11 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
         const currentTotalValue = item.stockQty * item.unitCost;
         const newTotalValue = currentTotalValue + totalCost;
         const newStockQty = item.stockQty + addedStock;
-        const newUnitCost = newStockQty > 0 ? newTotalValue / newStockQty : 0;
+        // unitCost is PER BASE UNIT and can legitimately be a small fraction of a
+        // centavo (e.g. ₱0.002/g for cheap bulk goods), so this can't round to 2dp
+        // like a money total would - 6dp kills float noise (0.1+0.2-style drift)
+        // without touching real per-unit precision.
+        const newUnitCost = newStockQty > 0 ? Math.round((newTotalValue / newStockQty) * 1e6) / 1e6 : 0;
 
         item.stockQty = newStockQty;
         item.unitCost = newUnitCost;
@@ -865,7 +898,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
           const currentTotalValue = item.stockQty * item.unitCost;
           const newTotalValue = currentTotalValue + totalCost;
           const newStockQty = item.stockQty + addedStock;
-          const newUnitCost = newStockQty > 0 ? newTotalValue / newStockQty : 0;
+          const newUnitCost = newStockQty > 0 ? Math.round((newTotalValue / newStockQty) * 1e6) / 1e6 : 0;
           item.stockQty = newStockQty;
           item.unitCost = newUnitCost;
           const rstRef = await mkSeqRef('INV-RST');
@@ -936,12 +969,17 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
       // Same canonical form as create, so an edit can't reintroduce a variant
       // spelling that the create path would have collapsed.
       update.itemName = title(update.itemName);
-      // Prevent duplicate-name collisions (case-insensitive)
+      // Prevent duplicate-name collisions (case-insensitive), scoped by location
+      // (#10) same as create - the same name is fine at a different location.
+      const effLocation = 'stockLocation' in update
+        ? (update.stockLocation || '')
+        : ((await Inventory.findById(req.params.id).select('stockLocation').lean())?.stockLocation || '');
       const dupe = await Inventory.findOne({
         _id: { $ne: req.params.id },
-        itemName: { $regex: new RegExp(`^${update.itemName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+        itemName: { $regex: new RegExp(`^${update.itemName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+        stockLocation: effLocation,
       });
-      if (dupe) return res.status(400).json({ success: false, error: `Another item already named "${update.itemName}".` });
+      if (dupe) return res.status(400).json({ success: false, error: effLocation ? `Another item already named "${update.itemName}" at "${effLocation}".` : `Another item already named "${update.itemName}".` });
     }
     if ('unitCost' in update) {
       const n = parseFloat(update.unitCost);
@@ -955,8 +993,25 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
     }
     if ('expiryWarnDays' in update)    update.expiryWarnDays    = Math.max(1, parseInt(update.expiryWarnDays) || 7);
     if ('expiryDate' in update) {
-      if (update.expiryDate === null || update.expiryDate === '') update.expiryDate = null;
-      else update.expiryDate = new Date(update.expiryDate);
+      update.expiryDate = (update.expiryDate === null || update.expiryDate === '') ? null : new Date(update.expiryDate);
+
+      // Reconcile with expiryBatches - it's the source of truth for the FEFO
+      // breakdown UI, so editing the top-level field directly must not let it
+      // silently diverge (that's why the batch toggle can go "missing" even
+      // when someone knows there were two separate deliveries with different
+      // expiry dates - the second one only ever touched this bare field).
+      const batchDoc = await Inventory.findById(req.params.id).select('expiryBatches stockQty unitCost').lean();
+      const batches = batchDoc?.expiryBatches || [];
+      if (batches.length > 1) {
+        return res.status(400).json({ success: false, error: 'This item has multiple expiry batches already - edit them individually (Restock to add a new batch, or remove one from the breakdown) instead of the single expiry date field.' });
+      }
+      if (update.expiryDate === null) {
+        update.expiryBatches = [];
+      } else if (batches.length === 1) {
+        update.expiryBatches = [{ ...batches[0], expiryDate: update.expiryDate }];
+      } else if ((batchDoc?.stockQty || 0) > 0) {
+        update.expiryBatches = [{ qty: batchDoc.stockQty, expiryDate: update.expiryDate, receivedAt: new Date(), reference: '', unitCost: batchDoc.unitCost || 0 }];
+      }
     }
 
     const updatedItem = await Inventory.findByIdAndUpdate(req.params.id, update, { returnDocument: 'after' });
@@ -1134,7 +1189,9 @@ app.patch('/api/inventory/:id/expiry', verifyToken, requireStaff, async (req, re
 
 app.delete('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const item = await Inventory.findByIdAndDelete(req.params.id);
+    // Soft-delete: a hard delete orphaned this item's StockCard history and any
+    // PurchaseOrder line still referencing its invId.
+    const item = await Inventory.findByIdAndUpdate(req.params.id, { isArchived: true }, { returnDocument: 'after' });
     if (!item) return res.status(404).json({ success: false, error: 'Item not found.' });
     await logAudit(req, {
       action: 'delete', entity: 'Inventory', entityId: req.params.id,

@@ -441,6 +441,24 @@ app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, 
   }
 });
 
+// A/R SETTLEMENT HISTORY - orders already settled, newest first. Companion to
+// ar-outstanding so "who owes me" and "what did we already collect" are both
+// answerable without digging through the general ledger.
+app.get('/api/finance/ar-settled', verifyToken, ...canViewAcct, async (req, res) => {
+  try {
+    const rows = await Order.find({
+      businessType: BUSINESS_TYPE,
+      arSettled: true,
+    }, {
+      orderNumber: 1, customerName: 1, total: 1, paymentMethod: 1, createdAt: 1,
+      arSettledAt: 1, arSettledAmount: 1, arSettledMethod: 1, arSettledNote: 1, arDepositedAt: 1,
+    }).sort({ arSettledAt: -1 }).limit(500).lean();
+    res.json({ success: true, orders: rows });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 // A/R AGEING - the same receivables as ar-outstanding, split into 30/60/90 buckets
 // and grouped per client, plus each client's credit limit and headroom.
 // "How much does this client owe me, and how old is it?" is a three-tab question
@@ -799,32 +817,45 @@ app.post('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
     const destName = acctMeta(destCode)?.name || 'Cash in Bank';
 
     const depRef = reference ? reference : await mkSeqRef('DEP');
-    const je = await JournalEntry.create({
-      reference: depRef,
-      description: `Bank deposit: ${shift.cashierName}${reference ? ` (${reference})` : ''}`,
-      lines: [
-        { accountCode: destCode, accountName: destName, debit: depositAmount, credit: 0 },
-        { accountCode: srcCode,  accountName: srcName,  debit: 0, credit: depositAmount },
-      ],
-      totalDebit: depositAmount,
-      totalCredit: depositAmount,
-    });
-
     shift.depositedAmount = (shift.depositedAmount || 0) + depositAmount;
     const drawerBalanceAfter = (shift.actualCash || 0) - shift.depositedAmount;
     const isReconciled = Math.abs(drawerBalanceAfter - shift.startingCash) < 0.01;
     if (isReconciled) { shift.isReconciled = true; shift.status = 'Reconciled'; }
-    await shift.save();
 
-    const deposit = await BankDeposit.create({
-      shiftId: shift._id,
-      amount: depositAmount,
-      depositedBy: req.user.name,
-      reference: depRef,
-      journalEntryId: je._id,
-      drawerBalanceAfter,
-      isDrawerReconciled: isReconciled,
-    });
+    // The JE, the shift update, and the BankDeposit record were three
+    // unguarded writes - a crash partway through could post the deposit to
+    // the books while the shift's drawer never reflects it, or vice versa.
+    const session = await mongoose.startSession();
+    let je, deposit;
+    try {
+      session.startTransaction();
+      je = (await JournalEntry.create([{
+        reference: depRef,
+        description: `Bank deposit: ${shift.cashierName}${reference ? ` (${reference})` : ''}`,
+        lines: [
+          { accountCode: destCode, accountName: destName, debit: depositAmount, credit: 0 },
+          { accountCode: srcCode,  accountName: srcName,  debit: 0, credit: depositAmount },
+        ],
+        totalDebit: depositAmount,
+        totalCredit: depositAmount,
+      }], { session }))[0];
+      await shift.save({ session });
+      deposit = (await BankDeposit.create([{
+        shiftId: shift._id,
+        amount: depositAmount,
+        depositedBy: req.user.name,
+        reference: depRef,
+        journalEntryId: je._id,
+        drawerBalanceAfter,
+        isDrawerReconciled: isReconciled,
+      }], { session }))[0];
+      await session.commitTransaction();
+    } catch (err) {
+      await session.abortTransaction().catch(() => {});
+      throw err;
+    } finally {
+      session.endSession();
+    }
 
     emitToMgr('erpUpdated'); // auto-refresh the general ledger (bank deposit)
     res.json({ success: true, deposit, shift, drawerBalanceAfter, isReconciled });
@@ -1096,48 +1127,93 @@ app.post('/api/revolving-funds', verifyToken, ...canPostAcct, async (req, res) =
   }
 });
 
-// POST disburse from a fund (any staff - they need to log what they spend)
-app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, async (req, res) => {
+// ── DISBURSE (shared logic) ──────────────────────────────────────────────────
+// #Req-1: this used to be the whole POST /disburse handler. Now also called
+// from requisitions.js once a fund_disbursement-type requisition is approved -
+// actual money only ever leaves a fund from there (or the superadmin
+// break-glass route below), never directly off a plain staff request. Throws
+// with a `.httpStatus` for the caller to map to a response. `performedByOverride`:
+// when called from an approved requisition, the person accountable for the
+// spend is whoever REQUESTED it, not whoever clicked Approve - same reasoning
+// as createPurchaseOrder's createdByOverride.
+const disburseFromFund = async (req, fundId, { amount, description, categoryCode }, performedByOverride) => {
+  const fund = await RevolvingFund.findById(fundId);
+  if (!fund || !fund.isActive) throw Object.assign(new Error('Fund not found.'), { httpStatus: 404 });
+
+  const amt = Number(amount);
+  if (!amt || amt <= 0) throw Object.assign(new Error('Amount must be a positive number.'), { httpStatus: 400 });
+  if (!description?.trim()) throw Object.assign(new Error('Description is required.'), { httpStatus: 400 });
+  if (amt > fund.currentBalance)
+    throw Object.assign(new Error(`Insufficient fund balance. Available: ₱${fund.currentBalance.toFixed(2)}`), { httpStatus: 400 });
+
+  const expCode = categoryCode || '760000';
+  const { ACCOUNTS } = await import('../lib/chartOfAccounts.js');
+  const expName  = ACCOUNTS[expCode]?.name || 'Other Operating Expenses';
+
+  const rfOutRef = await mkSeqRef('RF-OUT');
+
+  // The fund balance update, the JE, and the tx record were three unguarded
+  // writes - a crash partway through could debit the books without the fund
+  // balance moving, or move the balance with no ledger/audit trail at all.
+  // The balance mutation is also atomic (findOneAndUpdate with a $gte guard,
+  // not read-then-write) - two concurrent disbursements from the same fund
+  // now genuinely can't both succeed against a balance neither of them saw
+  // the other spend from.
+  const session = await mongoose.startSession();
+  let tx, updatedFund;
   try {
-    const fund = await RevolvingFund.findById(req.params.id);
-    if (!fund || !fund.isActive) return res.status(404).json({ success: false, error: 'Fund not found.' });
-
-    const { amount, description, categoryCode } = req.body;
-    const amt = Number(amount);
-    if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Amount must be a positive number.' });
-    if (!description?.trim()) return res.status(400).json({ success: false, error: 'Description is required.' });
-    if (amt > fund.currentBalance)
-      return res.status(400).json({ success: false, error: `Insufficient fund balance. Available: ₱${fund.currentBalance.toFixed(2)}` });
-
-    const expCode = categoryCode || '760000';
-    const { ACCOUNTS } = await import('../lib/chartOfAccounts.js');
-    const expName  = ACCOUNTS[expCode]?.name || 'Other Operating Expenses';
-
-    fund.currentBalance = +(fund.currentBalance - amt).toFixed(2);
-    await fund.save();
-
+    session.startTransaction();
+    updatedFund = await RevolvingFund.findOneAndUpdate(
+      { _id: fund._id, currentBalance: { $gte: amt } },
+      { $inc: { currentBalance: -amt } },
+      { session, new: true },
+    );
+    if (!updatedFund) {
+      throw Object.assign(new Error(`Insufficient fund balance. Available: ₱${fund.currentBalance.toFixed(2)}`), { httpStatus: 400 });
+    }
     // DR expense / CR 1050 Petty Cash
-    const je = await JournalEntry.create({
+    const je = (await JournalEntry.create([{
       date: new Date(), description: `Revolving Fund disbursement (${fund.name}): ${description}`,
       lines: [
         { accountCode: expCode, accountName: expName,                    debit: amt, credit: 0 },
         { accountCode: '114000',  accountName: 'Petty Cash / Revolving Fund', debit: 0, credit: amt },
       ],
       totalDebit: amt, totalCredit: amt,
-      reference: await mkSeqRef('RF-OUT'),
-    });
-
-    const tx = await RevolvingFundTx.create({
-      fundId: fund._id, type: 'disbursement', amount: amt,
+      reference: rfOutRef,
+    }], { session }))[0];
+    tx = (await RevolvingFundTx.create([{
+      fundId: updatedFund._id, type: 'disbursement', amount: amt,
       description, categoryCode: expCode,
-      performedBy: req.user?.name,
-      balanceAfter: fund.currentBalance,
+      performedBy: performedByOverride || req.user?.name,
+      balanceAfter: updatedFund.currentBalance,
       journalRef: je._id,
-    });
+    }], { session }))[0];
+    await session.commitTransaction();
+  } catch (err) {
+    await session.abortTransaction().catch(() => {});
+    throw err;
+  } finally {
+    session.endSession();
+  }
 
-    emitToMgr('erpUpdated'); // auto-refresh the general ledger (fund disbursement)
+  emitToMgr('erpUpdated'); // auto-refresh the general ledger (fund disbursement)
+  return { fund: updatedFund, tx };
+};
+// Let requisitions.js (registered after this module - see server.js) call the
+// same disbursement logic the normal flow uses.
+ctx.disburseFromFund = disburseFromFund;
+
+// ── DISBURSE (break-glass direct route) ──────────────────────────────────────
+// #Req-1: normal disbursement goes through POST /api/requisitions (type:
+// fund_disbursement) + approval now - superadmin-only direct route for the
+// rare case a disbursement needs to happen with the approver acting directly
+// instead of a step ahead of it.
+app.post('/api/revolving-funds/:id/disburse', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { fund, tx } = await disburseFromFund(req, req.params.id, req.body || {});
     res.json({ success: true, fund, tx });
   } catch (err) {
+    if (err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.message });
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
@@ -1161,31 +1237,49 @@ app.post('/api/revolving-funds/:id/replenish', verifyToken, ...canPostAcct, asyn
 
     if (amt <= 0) return res.status(400).json({ success: false, error: 'Fund is already full; nothing to replenish.' });
 
-    fund.currentBalance = +(fund.currentBalance + amt).toFixed(2);
-    await fund.save();
+    const rfInRef = await mkSeqRef('RF-IN');
 
-    // DR 1050 Petty Cash / CR sourceAccount
-    const je = await JournalEntry.create({
-      date: new Date(),
-      description: `Revolving Fund replenishment: ${fund.name} (from ${srcName})${note ? ': ' + note : ''}`,
-      lines: [
-        { accountCode: '114000', accountName: 'Petty Cash / Revolving Fund', debit: amt, credit: 0 },
-        { accountCode: srcCode,  accountName: srcName,                      debit: 0, credit: amt },
-      ],
-      totalDebit: amt, totalCredit: amt,
-      reference: await mkSeqRef('RF-IN'),
-    });
-
-    const tx = await RevolvingFundTx.create({
-      fundId: fund._id, type: 'replenishment', amount: amt,
-      description: note || `Replenished ₱${amt.toFixed(2)}; balance restored`,
-      performedBy: req.user?.name,
-      balanceAfter: fund.currentBalance,
-      journalRef: je._id,
-    });
+    // Same reasoning as disburse: balance update + JE + tx record must land
+    // together or not at all, and the balance mutation is atomic ($inc, not
+    // read-then-write) so two concurrent replenishments can't lose one of
+    // their additions to the other overwriting a stale in-memory balance.
+    const session = await mongoose.startSession();
+    let tx, updatedFund;
+    try {
+      session.startTransaction();
+      updatedFund = await RevolvingFund.findOneAndUpdate(
+        { _id: fund._id },
+        { $inc: { currentBalance: amt } },
+        { session, new: true },
+      );
+      // DR 1050 Petty Cash / CR sourceAccount
+      const je = (await JournalEntry.create([{
+        date: new Date(),
+        description: `Revolving Fund replenishment: ${fund.name} (from ${srcName})${note ? ': ' + note : ''}`,
+        lines: [
+          { accountCode: '114000', accountName: 'Petty Cash / Revolving Fund', debit: amt, credit: 0 },
+          { accountCode: srcCode,  accountName: srcName,                      debit: 0, credit: amt },
+        ],
+        totalDebit: amt, totalCredit: amt,
+        reference: rfInRef,
+      }], { session }))[0];
+      tx = (await RevolvingFundTx.create([{
+        fundId: updatedFund._id, type: 'replenishment', amount: amt,
+        description: note || `Replenished ₱${amt.toFixed(2)}; balance restored`,
+        performedBy: req.user?.name,
+        balanceAfter: updatedFund.currentBalance,
+        journalRef: je._id,
+      }], { session }))[0];
+      await session.commitTransaction();
+    } catch (err) {
+      await session.abortTransaction().catch(() => {});
+      throw err;
+    } finally {
+      session.endSession();
+    }
 
     emitToMgr('erpUpdated'); // auto-refresh the general ledger (fund replenishment)
-    res.json({ success: true, fund, tx });
+    res.json({ success: true, fund: updatedFund, tx });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

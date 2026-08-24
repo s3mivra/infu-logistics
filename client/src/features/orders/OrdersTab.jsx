@@ -220,9 +220,9 @@ export default function OrdersTab({ ctx }) {
                         )}
                         <div className="flex-1 overflow-y-auto px-3 pb-3 grid grid-cols-3 sm:grid-cols-3 xl:grid-cols-4 gap-3 content-start custom-scrollbar">
                           {posPaged.length === 0 && (
-                            <div className="col-span-full flex flex-col items-center justify-center py-16 text-fg/20">
-                              <ShoppingCart size={32} className="mb-3 opacity-30" />
-                              <p className="font-bold text-sm uppercase tracking-widest">No items found</p>
+                            <div className="col-span-full flex flex-col items-center justify-center py-16 text-slate-400">
+                              <ShoppingCart size={32} className="mb-3 opacity-50" />
+                              <p className="font-bold text-sm uppercase tracking-widest text-slate-300">No items found</p>
                             </div>
                           )}
                           {posPaged.map(p => {
@@ -379,8 +379,8 @@ export default function OrdersTab({ ctx }) {
                     const met = posSubtotal >= rule.thresholdAmount;
                     const remain = rule.thresholdAmount - posSubtotal;
                     return (
-                      <div key={i} className={`mx-3 mt-2 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 ${met ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30' : 'bg-white/5 text-fg/40 border border-white/8'}`}>
-                        <Flame size={12} className={met ? 'text-orange-400' : 'text-fg/20'} />
+                      <div key={i} className={`mx-3 mt-2 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 ${met ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30' : 'bg-white/5 text-slate-300 border border-white/8'}`}>
+                        <Flame size={12} className={met ? 'text-orange-400' : 'text-slate-400'} />
                         {met
                           ? <span>🎉 Deal unlocked! <span className="font-black">{rule.productName}</span> gets <span className="font-black">{rule.discountPercent}%</span> off</span>
                           : <span>Spend <span className="font-black">₱{remain.toFixed(2)}</span> more → <span className="font-black">{rule.productName}</span> gets {rule.discountPercent}% off</span>
@@ -392,10 +392,10 @@ export default function OrdersTab({ ctx }) {
                   {/* Cart items */}
                   <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar min-h-0">
                     {posCart.length === 0 ? (
-                      <div className="h-full flex flex-col items-center justify-center gap-2 text-fg/15">
-                        <ShoppingCart size={36} className="opacity-40" />
-                        <p className="font-black uppercase tracking-widest text-xs">Cart is Empty</p>
-                        <p className="text-[10px] text-fg/10">Tap a menu item to add</p>
+                      <div className="h-full flex flex-col items-center justify-center gap-2 text-slate-400">
+                        <ShoppingCart size={36} className="opacity-60" />
+                        <p className="font-black uppercase tracking-widest text-xs text-slate-300">Cart is Empty</p>
+                        <p className="text-[10px] text-slate-400">Tap a menu item to add</p>
                       </div>
                     ) : posCart.map((item, idx) => {
                       const addOnTotal = item.selectedAddOns.reduce((s, a) => s + Number(a.price), 0);
@@ -407,7 +407,7 @@ export default function OrdersTab({ ctx }) {
                           <div className="flex-1 pr-2 min-w-0">
                             <p className="font-bold text-fg/90 text-sm truncate leading-tight">{item.name}</p>
                             {item.selectedAddOns.map((a, i) => (
-                              <p key={i} className="text-[10px] text-fg/35 truncate">+ {a.name} ₱{a.price}</p>
+                              <p key={i} className="text-[10px] text-slate-400 truncate">+ {a.name} ₱{a.price}</p>
                             ))}
                             <div className="flex items-center gap-2 mt-2">
                               <button onClick={() => setPosCart(posCart.map((c, i) => i === idx ? {...c, quantity: Math.max(1, c.quantity - 1)} : c))}
@@ -423,7 +423,7 @@ export default function OrdersTab({ ctx }) {
                                   onChange={e => setPosCart(posCart.map((c, i) => i === idx ? {...c, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))} : c))}
                                   className="w-14 bg-white/5 border border-white/10 rounded-lg pl-2 pr-5 py-1 text-fg text-xs font-bold outline-none focus:border-brand/60 placeholder-white/20 tabular-nums"
                                 />
-                                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-fg/30 text-[10px] font-bold pointer-events-none">%</span>
+                                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 text-[10px] font-bold pointer-events-none">%</span>
                               </div>
                             </div>
                           </div>
@@ -443,7 +443,7 @@ export default function OrdersTab({ ctx }) {
                   {/* Totals + CTA */}
                   <div className="px-4 pb-4 pt-2 border-t border-white/10 bg-page-bg/60 shrink-0">
                     <div className="space-y-1 mb-3">
-                      <div className="flex justify-between text-xs text-fg/40 font-bold">
+                      <div className="flex justify-between text-xs text-slate-300 font-bold">
                         <span>Subtotal</span><span>₱{posSubtotal.toFixed(2)}</span>
                       </div>
                       {posItemDiscountAmt > 0 && (
@@ -457,44 +457,50 @@ export default function OrdersTab({ ctx }) {
                         </div>
                       )}
                       {posDeliveryFeeNum > 0 && (
-                        <div className="flex justify-between text-xs text-fg/40 font-bold">
+                        <div className="flex justify-between text-xs text-slate-300 font-bold">
                           <span>Delivery Fee</span><span>₱{posDeliveryFeeNum.toFixed(2)}</span>
                         </div>
                       )}
                       <div className="flex justify-between items-baseline pt-1.5 border-t border-white/10">
-                        <span className="text-xs text-fg/50 font-bold uppercase tracking-widest">Total</span>
-                        <span className="text-3xl font-black text-fg">₱<span className="tabular-nums">{posGrandTotal.toFixed(2)}</span></span>
+                        <span className="text-xs text-slate-300 font-bold uppercase tracking-widest">Total</span>
+                        <span className="text-3xl font-black text-white">₱<span className="tabular-nums">{posGrandTotal.toFixed(2)}</span></span>
                       </div>
                     </div>
-                    <p className="text-center text-[9px] text-fg/15 font-black uppercase tracking-[0.2em] mb-2">NON-VAT TRANSACTION</p>
+                    <p className="text-center text-[9px] text-slate-400 font-black uppercase tracking-[0.2em] mb-2">NON-VAT TRANSACTION</p>
                     {/* Reserve-only: skip payment now. Order is held with status Reserved
                         and the cashier promotes it later (Pending → Preparing). */}
                     <label className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg bg-white/5 border border-white/10 cursor-pointer hover:bg-white/10 transition">
                       <input type="checkbox" checked={!!posReserveOnly} onChange={e => setPosReserveOnly(e.target.checked)}
                         className="w-4 h-4 accent-brand" />
-                      <span className="text-[11px] font-bold text-fg/70">Reserve only (pay later)</span>
-                      <span className="ml-auto text-[9px] uppercase tracking-widest font-black text-fg/30">Status: {posReserveOnly ? 'Reserved' : 'Pending'}</span>
+                      <span className="text-[11px] font-bold text-slate-200">Reserve only (pay later)</span>
+                      <span className="ml-auto text-[9px] uppercase tracking-widest font-black text-slate-400">Status: {posReserveOnly ? 'Reserved' : 'Pending'}</span>
                     </label>
                     <div className="flex gap-2">
                       <button
                         onClick={parkCurrentOrder}
-                        className="px-4 py-4 bg-white/5 border border-white/10 text-fg/60 font-black rounded-xl uppercase tracking-wider text-xs hover:bg-white/10 hover:text-fg active:scale-98 transition flex items-center justify-center gap-1.5 min-h-[56px]"
+                        className="px-4 py-4 bg-white/5 border border-white/10 text-slate-300 font-black rounded-xl uppercase tracking-wider text-xs hover:bg-white/10 hover:text-fg active:scale-98 transition flex items-center justify-center gap-1.5 min-h-[56px]"
                         title="Hold this order as an open tab">
                         <Clock size={16}/> Park
                       </button>
                       <button
                         onClick={submitManualOrder}
                         disabled={posSubmitting}
-                        className="flex-1 py-4 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active:scale-98 transition shadow-lg shadow-brand/20 flex items-center justify-center gap-2 min-h-[56px] disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
+                        className="flex-1 py-3 bg-brand text-white font-black rounded-xl hover:bg-brand/90 active:scale-98 transition shadow-lg shadow-brand/20 flex flex-col items-center justify-center gap-0.5 min-h-[56px] disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100 leading-tight"
                       >
-                        <ShoppingCart size={18}/>
                         {posSubmitting ? (
-                          'Placing…'
+                          <span className="flex items-center gap-2 uppercase tracking-widest text-sm"><ShoppingCart size={18}/> Placing…</span>
                         ) : (() => {
                           const itemCount = posCart.reduce((s, c) => s + (c.quantity || 0), 0);
-                          if (itemCount === 0) return 'Cart Empty';
+                          if (itemCount === 0) {
+                            return <span className="flex items-center gap-2 uppercase tracking-widest text-sm"><ShoppingCart size={18}/> Cart Empty</span>;
+                          }
                           const label = itemCount === 1 ? '1 Item' : `${itemCount} Items`;
-                          return (<>Place Order · {label} · ₱<span className="tabular-nums">{posGrandTotal.toFixed(2)}</span></>);
+                          return (
+                            <>
+                              <span className="flex items-center gap-2 uppercase tracking-widest text-sm"><ShoppingCart size={18}/> Place Order</span>
+                              <span className="text-[11px] font-bold text-white/80 tabular-nums normal-case tracking-normal">{label} · ₱{posGrandTotal.toFixed(2)}</span>
+                            </>
+                          );
                         })()}
                       </button>
                     </div>

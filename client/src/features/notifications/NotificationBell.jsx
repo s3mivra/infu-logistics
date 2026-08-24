@@ -25,6 +25,14 @@ const POLL_MS = 120000;
 // sidebar, where a right-anchored panel would run off the left of the screen.
 export default function NotificationBell({ align = 'right', full = false }) {
   const { apiFetch, setActiveTab, setLedgerSubTab } = useDashboard();
+  // apiFetch is a fresh function every AdminDashboard render (it and setActiveTab/
+  // setLedgerSubTab aren't memoized), and the dashboard re-renders roughly every
+  // second (e.g. the clock-out countdown). A ref lets `load` always call the
+  // latest apiFetch without needing it in a dependency array - otherwise the
+  // poll effect below tears down and restarts on every parent render, which
+  // turns a 120s poll into a fetch on nearly every tick.
+  const apiFetchRef = useRef(apiFetch);
+  apiFetchRef.current = apiFetch;
   const [open, setOpen] = useState(false);
   const [data, setData] = useState({ items: [], count: 0, criticalCount: 0 });
   const [loading, setLoading] = useState(false);
@@ -58,14 +66,14 @@ export default function NotificationBell({ align = 'right', full = false }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiFetch('/api/notifications');
+      const res = await apiFetchRef.current('/api/notifications');
       const d = await res.json();
       if (d?.success) setData({ items: d.items || [], count: d.count || 0, criticalCount: d.criticalCount || 0 });
     } catch {
       // A failed poll is not worth a toast - the bell simply keeps its last
       // known state and tries again on the next tick.
     } finally { setLoading(false); }
-  }, [apiFetch]);
+  }, []);
 
   useEffect(() => {
     load();
@@ -164,7 +172,7 @@ export default function NotificationBell({ align = 'right', full = false }) {
             {count === 0 ? (
               <div className="px-4 py-10 text-center">
                 <p className="text-fg/40 text-sm font-bold">Nothing needs attention</p>
-                <p className="text-fg/20 text-xs mt-1">Stock, expiry, A/R and POs all look fine.</p>
+                <p className="text-slate-400 text-xs mt-1">Stock, expiry, A/R and POs all look fine.</p>
               </div>
             ) : (
               data.items.map((item) => {

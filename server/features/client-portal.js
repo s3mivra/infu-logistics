@@ -99,6 +99,7 @@ export default function registerClientPortal(ctx) {
     modifierGroupSchema,
     mkSeqRef,
     loginLimiter,
+    perAccountLoginLimiter,
     orderLimiter,
     generalApiLimiter,
     runStartupTasks,
@@ -158,6 +159,7 @@ export default function registerClientPortal(ctx) {
     ClientAccount,
     RefreshSessionSchema,
     RefreshSession,
+    RevokedClientToken,
     RoleSchema,
     Role,
     AuditLogSchema,
@@ -194,7 +196,7 @@ export default function registerClientPortal(ctx) {
   } = ctx;
 
 // Client login - returns a short-lived JWT with role='client' and pre-set paymentMethod
-app.post('/api/client-auth/login', loginLimiter, async (req, res) => {
+app.post('/api/client-auth/login', loginLimiter, perAccountLoginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ success: false, error: 'Username and password are required.' });
@@ -215,6 +217,23 @@ app.post('/api/client-auth/login', loginLimiter, async (req, res) => {
       { expiresIn: '8h' }
     );
     res.json({ success: true, token, client: { _id: String(client._id), clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, theme: client.theme || null } });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// Client logout - client tokens are a single self-contained JWT with no
+// refresh session to revoke, so a leaked/shared-device token otherwise stays
+// valid until its natural 8h expiry regardless of clicking "log out". This
+// denylists this specific token; verifyClientToken checks it on every request.
+app.post('/api/client-auth/logout', verifyClientToken, async (req, res) => {
+  try {
+    const decoded = jwt.decode(req.clientRawToken);
+    await RevokedClientToken.create({
+      tokenHash: hashToken(req.clientRawToken),
+      expiresAt: decoded?.exp ? new Date(decoded.exp * 1000) : new Date(Date.now() + 8 * 60 * 60 * 1000),
+    });
+    res.json({ success: true });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -496,7 +515,18 @@ app.post('/api/client-accounts/:id/reset-password', verifyToken, requireSuperAdm
 
 app.delete('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    await ClientAccount.findByIdAndDelete(req.params.id);
+    const client = await ClientAccount.findById(req.params.id);
+    if (!client) return res.status(404).json({ success: false, error: 'Client not found.' });
+    // Hard-deleting with unpaid A/R still outstanding lost the ability to resolve
+    // this client's name in ageing reports. Block instead of orphaning the debt.
+    const openAr = await Order.countDocuments({ clientId: String(client._id), status: 'Completed', arSettled: { $ne: true }, paymentMethod: { $ne: 'Cash' } });
+    if (openAr > 0) {
+      return res.status(400).json({ success: false, error: `Cannot delete - ${openAr} order(s) still have unsettled A/R. Settle them first, or deactivate the account instead.` });
+    }
+    // Soft-delete: reuse the existing isActive flag (already checked at login) so
+    // the record - and any historical order/AR reference to it - stays intact.
+    client.isActive = false;
+    await client.save();
     res.json({ success: true });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));

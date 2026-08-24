@@ -509,6 +509,11 @@ export default function ClientOrderPage() {
   }, [products, activeCategory, productSearch]);
 
   const handleLogout = () => {
+    // Best-effort: revoke the token server-side so it can't be reused on this
+    // device (or if it leaked) before its natural expiry. Never blocks the
+    // actual logout on network failure - clearing the local session is what
+    // matters to the person clicking the button.
+    fetch(`${API_URL}/api/client-auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
     clearSession();      // also drops this client's saved draft
     clearClientTheme();  // next client on this device starts from the default
     navigate('/client/portal', { replace: true });
@@ -595,15 +600,33 @@ export default function ClientOrderPage() {
     } finally { setPwBusy(false); }
   }, [pwForm, authHeaders]);
 
+  // Generated once per submit attempt, not on every render, and reused across
+  // retries of the SAME cart - a network drop after the server already
+  // committed the order (response never arrives) used to mean tapping Submit
+  // again created a second real order, since this screen never sent an
+  // Idempotency-Key at all (unlike the staff POS and QR ordering, both of
+  // which already do). Cleared once the order actually succeeds, or if the
+  // cart changes, so a genuinely new order still gets a fresh key.
+  const orderIdemKeyRef = useRef(null);
+  // Any cart edit after a failed submit means a retry must be treated as a
+  // genuinely different order, not the same idempotency-key'd attempt -
+  // otherwise the server would correctly-but-wrongly hand back the FIRST
+  // (now stale) order instead of processing the edited cart.
+  useEffect(() => { orderIdemKeyRef.current = null; }, [cart]);
+
   const handleSubmitOrder = async () => {
     if (!cart.length || submitting) return;
     setSubmitting(true);
+    if (!orderIdemKeyRef.current) {
+      orderIdemKeyRef.current = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    }
     try {
       const res = await fetch(`${API_URL}/api/orders`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
+          'Idempotency-Key': orderIdemKeyRef.current,
         },
         body: JSON.stringify({
           items: cart,
@@ -615,6 +638,7 @@ export default function ClientOrderPage() {
       });
       const data = await res.json();
       if (data.success) {
+        orderIdemKeyRef.current = null;
         setSuccessOrder(data.order);
         setCart([]);
         setCartOpen(false);

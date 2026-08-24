@@ -11,7 +11,10 @@ const auth = (method, path, token) => request(app)[method](path).set('Authorizat
 beforeAll(async () => {
   ctx = await bootApp({ businessType: 'log' });
   app = ctx.app;
-  await makeUser({ name: 'bcStaff', role: 'staff' });
+  // This suite is about barcode behavior, not permission boundaries - admin
+  // (which carries products.manage, required to create a product as of the
+  // Phase 7 permissions sweep) keeps the focus there rather than on RBAC.
+  await makeUser({ name: 'bcStaff', role: 'admin' });
   staffTok = await loginStaff(app, 'bcStaff');
   await mongoose.model('Category').create({ name: 'BC-Cat', department: 'Kitchen' });
 }, 120000);

@@ -1,5 +1,7 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
-import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus } from 'lucide-react';
+import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus, Package, ChevronDown, ChevronRight, FileText } from 'lucide-react';
+
+const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Kasa Lokal').toUpperCase();
 
 const statusColor = {
   Pending:  'bg-yellow-500/15 text-yellow-400',
@@ -10,7 +12,7 @@ const statusColor = {
 };
 
 export default function HubTab({ ctx }) {
-  const { apiFetch: authFetch, isSuperAdmin, inventory = [], peso } = ctx;
+  const { apiFetch: authFetch, isSuperAdmin, inventory = [], peso, loadPdfLibs, addLogoToPDF } = ctx;
 
   const [info, setInfo]           = useState(null);
   const [transfers, setTransfers] = useState([]);
@@ -87,6 +89,44 @@ export default function HubTab({ ctx }) {
     await authFetch(`/api/hub/links/${partnerSlug}`, { method: 'DELETE' });
     load();
   };
+
+  // ── Client inventory visibility (host side only) ────────────────────────────
+  // Read-only snapshot of a business I host - stock, qty (pcs + actual
+  // measurement), and sell-through velocity. Superadmin-only both here and on
+  // the server; nothing renders or is callable for a partner where I'm the
+  // client side (no route exists for that direction - see hub.js).
+  const [invExpanded, setInvExpanded] = useState(null); // partnerSlug currently open
+  const [invByPartner, setInvByPartner] = useState({}); // { [slug]: { loading, error, items } }
+
+  const toggleInventory = async (partnerSlug) => {
+    if (invExpanded === partnerSlug) { setInvExpanded(null); return; }
+    setInvExpanded(partnerSlug);
+    if (invByPartner[partnerSlug]?.items) return; // already loaded
+    setInvByPartner(m => ({ ...m, [partnerSlug]: { loading: true, error: '', items: null } }));
+    try {
+      const r = await authFetch(`/api/hub/partners/${partnerSlug}/inventory`);
+      const d = await r.json();
+      if (!r.ok) { setInvByPartner(m => ({ ...m, [partnerSlug]: { loading: false, error: d.error || 'Failed to load.', items: null } })); return; }
+      setInvByPartner(m => ({ ...m, [partnerSlug]: { loading: false, error: '', items: d.items || [] } }));
+    } catch (e) {
+      setInvByPartner(m => ({ ...m, [partnerSlug]: { loading: false, error: e.message, items: null } }));
+    }
+  };
+
+  // Same pack-size convention as pcsFactor() above, applied to the snapshot's
+  // base-unit figures: pieces where a real pack size is known, the raw
+  // display-unit measurement always.
+  const snapshotRow = (item) => {
+    const factor = item.packSize > 0 ? item.packSize * (item.unitMultiplier || 1) : null;
+    const qtyPcs = factor ? item.stockQtyBase / factor : (item.unit === 'pcs' ? item.stockQtyBase : null);
+    const qtyMeasurement = item.stockQtyBase / (item.unitMultiplier || 1);
+    const weeklyBase = (item.avgDailyUse || 0) * 7;
+    const weeklyPcs = factor ? weeklyBase / factor : null;
+    const weeklyMeasurement = weeklyBase / (item.unitMultiplier || 1);
+    return { qtyPcs, qtyMeasurement, weeklyPcs, weeklyMeasurement };
+  };
+
+  const [exportingReports, setExportingReports] = useState(false);
 
   // When an item has a packSize (its purchased-package weight/volume, e.g. 377
   // for "Condensed Milk 377g"), transfers move whole pieces - you can't ship a
@@ -185,6 +225,74 @@ export default function HubTab({ ctx }) {
   const partners = info?.links || [];
   const pendingInbound = transfers.filter(t => t.direction === 'inbound' && t.status === 'Pending');
 
+  // One PDF, one section per hosted client - pulls the same read-only
+  // snapshot the Inventory panel above shows, so the export can never surface
+  // more than the UI already does. A partner that can't be reached gets a
+  // "could not reach" note in its section instead of aborting the whole
+  // export - one offline client shouldn't block the report for the rest.
+  const hostedPartners = partners.filter(p => p.role === 'hub' && p.status === 'active');
+
+  const exportBusinessReports = async () => {
+    if (hostedPartners.length === 0) return;
+    setExportingReports(true);
+    try {
+      const { jsPDF, autoTable } = await loadPdfLibs();
+      const doc = new jsPDF();
+      await addLogoToPDF(doc);
+      doc.setFontSize(18); doc.text(`${BIZ_NAME} - Linked Business Reports`, 14, 15);
+      doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 22);
+      let cursorY = 30;
+
+      for (const p of hostedPartners) {
+        if (cursorY > doc.internal.pageSize.getHeight() - 30) { doc.addPage(); cursorY = 20; }
+        doc.setFontSize(13); doc.setFont(undefined, 'bold');
+        doc.text(p.partnerName || p.partnerSlug, 14, cursorY);
+        doc.setFont(undefined, 'normal');
+        cursorY += 6;
+
+        let items = [];
+        let sectionError = '';
+        try {
+          const r = await authFetch(`/api/hub/partners/${p.partnerSlug}/inventory`);
+          const d = await r.json();
+          if (!r.ok) sectionError = d.error || 'Could not load this business.';
+          else items = d.items || [];
+        } catch (e) { sectionError = e.message; }
+
+        if (sectionError) {
+          doc.setFontSize(9); doc.setTextColor(200, 50, 50);
+          doc.text(`Could not reach ${p.partnerName || p.partnerSlug}: ${sectionError}`, 14, cursorY);
+          doc.setTextColor(0, 0, 0);
+          cursorY += 10;
+          continue;
+        }
+        if (items.length === 0) {
+          doc.setFontSize(9); doc.text('No stock on record.', 14, cursorY);
+          cursorY += 10;
+          continue;
+        }
+
+        autoTable(doc, {
+          startY: cursorY,
+          head: [['Item', 'Qty (pcs)', 'Qty (measurement)', 'Velocity / wk']],
+          body: items.map(item => {
+            const row = snapshotRow(item);
+            return [
+              item.itemName,
+              row.qtyPcs != null ? `${row.qtyPcs.toFixed(row.qtyPcs % 1 ? 2 : 0)} pcs` : '-',
+              `${row.qtyMeasurement.toFixed(2)} ${item.displayUnit}`,
+              row.weeklyPcs != null ? `${row.weeklyPcs.toFixed(1)} pcs/wk` : `${row.weeklyMeasurement.toFixed(2)} ${item.displayUnit}/wk`,
+            ];
+          }),
+          styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
+        });
+        cursorY = (doc.lastAutoTable?.finalY || cursorY) + 12;
+      }
+
+      doc.save(`hub_business_reports_${new Date().toISOString().split('T')[0]}.pdf`);
+    } finally { setExportingReports(false); }
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-4 pb-10">
 
@@ -205,35 +313,97 @@ export default function HubTab({ ctx }) {
 
       {/* ── Connected Partners ── */}
       <div className={card}>
-        <h3 className="text-fg font-black uppercase tracking-wider text-sm mb-3">
-          Connected Partners <span className="text-fg/40 font-normal normal-case tracking-normal">({partners.length})</span>
-        </h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-fg font-black uppercase tracking-wider text-sm">
+            Connected Partners <span className="text-fg/40 font-normal normal-case tracking-normal">({partners.length})</span>
+          </h3>
+          {isSuperAdmin && hostedPartners.length > 0 && (
+            <button onClick={exportBusinessReports} disabled={exportingReports} className={btn('ghost')} title="One PDF with a stock section per business I host">
+              <FileText size={13} className="inline mr-1" />{exportingReports ? 'Exporting…' : 'Export Business Reports'}
+            </button>
+          )}
+        </div>
         {partners.length === 0 ? (
           <p className="text-fg/40 text-xs py-4 text-center uppercase tracking-widest">No connections yet</p>
         ) : (
           <div className="space-y-2">
-            {partners.map(p => (
-              <div key={p._id} className="flex items-center justify-between gap-3 py-2 border-b border-white/5 last:border-0">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Link2 size={13} className="text-accent" />
-                    <span className="text-fg font-bold text-sm">{p.partnerName || p.partnerSlug}</span>
-                    <span className={`text-[10px] font-black px-2 py-0.5 rounded ${p.role === 'hub' ? 'bg-blue-500/15 text-blue-400' : 'bg-purple-500/15 text-purple-400'}`}>
-                      {p.role === 'hub' ? 'HUB' : 'CLIENT'}
-                    </span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded ${p.status === 'active' ? 'bg-green-500/15 text-green-500' : 'bg-red-500/15 text-red-400'}`}>
-                      {p.status}
-                    </span>
+            {partners.map(p => {
+              const canSeeInventory = isSuperAdmin && p.role === 'hub' && p.status === 'active';
+              const isOpen = invExpanded === p.partnerSlug;
+              const invState = invByPartner[p.partnerSlug];
+              return (
+              <div key={p._id} className="py-2 border-b border-white/5 last:border-0">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Link2 size={13} className="text-accent" />
+                      <span className="text-fg font-bold text-sm">{p.partnerName || p.partnerSlug}</span>
+                      <span className={`text-[10px] font-black px-2 py-0.5 rounded ${p.role === 'hub' ? 'bg-blue-500/15 text-blue-400' : 'bg-purple-500/15 text-purple-400'}`}>
+                        {p.role === 'hub' ? 'HUB' : 'CLIENT'}
+                      </span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded ${p.status === 'active' ? 'bg-green-500/15 text-green-500' : 'bg-red-500/15 text-red-400'}`}>
+                        {p.status}
+                      </span>
+                    </div>
+                    <p className="text-fg/40 text-xs mt-0.5 ml-5">{p.partnerSlug}</p>
                   </div>
-                  <p className="text-fg/40 text-xs mt-0.5 ml-5">{p.partnerSlug}</p>
+                  <div className="flex items-center gap-2">
+                    {canSeeInventory && (
+                      <button onClick={() => toggleInventory(p.partnerSlug)} className={btn('ghost')} title="View their inventory (read-only)">
+                        <Package size={13} className="inline mr-1" />Inventory
+                        {isOpen ? <ChevronDown size={13} className="inline ml-1" /> : <ChevronRight size={13} className="inline ml-1" />}
+                      </button>
+                    )}
+                    {isSuperAdmin && (
+                      <button onClick={() => disconnect(p.partnerSlug)} className={btn('red')} title="Disconnect">
+                        <Link2Off size={13} />
+                      </button>
+                    )}
+                  </div>
                 </div>
-                {isSuperAdmin && (
-                  <button onClick={() => disconnect(p.partnerSlug)} className={btn('red')} title="Disconnect">
-                    <Link2Off size={13} />
-                  </button>
+
+                {canSeeInventory && isOpen && (
+                  <div className="mt-2 ml-5 bg-page-bg border border-white/8 rounded-xl p-3">
+                    {invState?.loading ? (
+                      <p className="text-fg/40 text-xs py-3 text-center uppercase tracking-widest">Loading…</p>
+                    ) : invState?.error ? (
+                      <p className="text-red-400 text-xs py-2">{invState.error}</p>
+                    ) : !invState?.items?.length ? (
+                      <p className="text-fg/40 text-xs py-3 text-center uppercase tracking-widest">No stock on record.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-fg/40 text-[9px] uppercase tracking-widest border-b border-white/8">
+                              <th className="text-left py-1.5 px-2">Item</th>
+                              <th className="text-right py-1.5 px-2">Qty (pcs)</th>
+                              <th className="text-right py-1.5 px-2">Qty (measurement)</th>
+                              <th className="text-right py-1.5 px-2">Velocity / wk</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {invState.items.map((item, i) => {
+                              const row = snapshotRow(item);
+                              return (
+                                <tr key={item.itemCode || i} className="border-b border-white/5 last:border-0">
+                                  <td className="py-1.5 px-2 font-bold text-fg">{item.itemName}</td>
+                                  <td className="py-1.5 px-2 text-right tabular-nums text-fg/70">{row.qtyPcs != null ? `${row.qtyPcs.toFixed(row.qtyPcs % 1 ? 2 : 0)} pcs` : '-'}</td>
+                                  <td className="py-1.5 px-2 text-right tabular-nums text-fg/70">{row.qtyMeasurement.toFixed(2)} {item.displayUnit}</td>
+                                  <td className="py-1.5 px-2 text-right tabular-nums text-fg/50">
+                                    {row.weeklyPcs != null ? `${row.weeklyPcs.toFixed(1)} pcs/wk` : `${row.weeklyMeasurement.toFixed(2)} ${item.displayUnit}/wk`}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

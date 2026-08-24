@@ -11,9 +11,10 @@ const unitKind = (u) => (u === 'g' ? 'mass' : u === 'ml' ? 'volume' : 'count');
 
 export default function registerProduction(ctx) {
   const {
-    app, BUSINESS_TYPE, mongoose,
-    Inventory, StockCard, ProductionOrder,
+    app, BUSINESS_TYPE, mongoose, IS_PROD,
+    Inventory, StockCard, ProductionOrder, StockCategory,
     verifyToken, requireStaff, tenantScope, mkSeqRef, emitToMgr,
+    nextCategoryCode, nextBatchNumber, generateNextSequence,
   } = ctx;
 
   app.get('/api/production', verifyToken, requireStaff, async (req, res) => {
@@ -22,7 +23,7 @@ export default function registerProduction(ctx) {
         .sort({ createdAt: -1 }).limit(200).lean();
       res.json({ success: true, orders: rows });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
     }
   });
 
@@ -32,6 +33,7 @@ export default function registerProduction(ctx) {
     try {
       const { inputs, outputInvId, outputNew, outputQty, note } = req.body || {};
       const qtyOut = parseFloat(outputQty);
+      const productionDate = req.body.productionDate ? new Date(req.body.productionDate) : new Date();
 
       if (!Array.isArray(inputs) || inputs.length === 0) {
         await session.abortTransaction(); session.endSession();
@@ -89,6 +91,8 @@ export default function registerProduction(ctx) {
 
       const newUnitCost = totalRawCost / qtyOut;
       let outputItem;
+      let batchCategoryPrefix = null;
+      let outputBatchNumber;
 
       if (outputInvId) {
         outputItem = await Inventory.findOne({ _id: outputInvId, businessType: BUSINESS_TYPE }).session(session);
@@ -104,6 +108,20 @@ export default function registerProduction(ctx) {
         const newStockQty = outputItem.stockQty + qtyOut;
         outputItem.unitCost = newStockQty > 0 ? (currentTotalValue + totalRawCost) / newStockQty : 0;
         outputItem.stockQty = newStockQty;
+
+        if (String(outputItem.stockCategory || '').trim()) {
+          const cat = await StockCategory.findOne({ businessType: BUSINESS_TYPE, name: outputItem.stockCategory }).session(session);
+          batchCategoryPrefix = cat?.prefix || null;
+        }
+        outputBatchNumber = await nextBatchNumber(batchCategoryPrefix, productionDate);
+        outputItem.expiryBatches.push({
+          qty: qtyOut,
+          receivedAt: productionDate,
+          reference,
+          unitCost: outputItem.unitCost,
+          batchNumber: outputBatchNumber,
+        });
+
         await outputItem.save({ session });
       } else {
         const newOutputUnit = outputNew.unit || 'pcs';
@@ -111,8 +129,24 @@ export default function registerProduction(ctx) {
           await session.abortTransaction(); session.endSession();
           return res.status(400).json({ success: false, error: `Output unit "${newOutputUnit}" doesn't match the raw materials' unit. A conversion can't change what's being measured (weight/volume/count).` });
         }
+
+        // New output item (#10): treat this like manually adding an item -
+        // stock category drives the same auto-numbered item code as the
+        // Add-Item flow (inventory.js), and location/SRP/expiry come along too.
+        const stockCategory = String(outputNew.stockCategory || '').trim();
+        let itemCode = null;
+        if (stockCategory) {
+          const cat = await StockCategory.findOne({ businessType: BUSINESS_TYPE, name: stockCategory }).session(session);
+          batchCategoryPrefix = cat?.prefix || null;
+          if (cat?.prefix) itemCode = await nextCategoryCode(cat.prefix);
+        }
+        if (!itemCode) itemCode = await generateNextSequence(Inventory, 'RML', 'itemCode');
+        outputBatchNumber = await nextBatchNumber(batchCategoryPrefix, productionDate);
+
+        const expiryDate = outputNew.expiryDate ? new Date(outputNew.expiryDate) : undefined;
         const created = await Inventory.create([{
           businessType: BUSINESS_TYPE,
+          itemCode,
           itemName: outputNew.itemName.trim(),
           unit: newOutputUnit,
           displayUnit: outputNew.displayUnit || '',
@@ -120,6 +154,18 @@ export default function registerProduction(ctx) {
           packSize: outputNew.packSize || null,
           stockQty: qtyOut,
           unitCost: newUnitCost,
+          srp: outputNew.srp || 0,
+          stockLocation: String(outputNew.stockLocation || '').trim(),
+          stockCategory,
+          expiryDate,
+          expiryBatches: [{
+            qty: qtyOut,
+            expiryDate,
+            receivedAt: productionDate,
+            reference,
+            unitCost: newUnitCost,
+            batchNumber: outputBatchNumber,
+          }],
         }], { session });
         outputItem = created[0];
       }
@@ -143,6 +189,8 @@ export default function registerProduction(ctx) {
         outputItemName: outputItem.itemName,
         outputQtyBase: qtyOut,
         outputUnitCost: newUnitCost,
+        productionDate,
+        outputBatchNumber,
         note: String(note || '').trim(),
       }], { session });
 
@@ -153,7 +201,7 @@ export default function registerProduction(ctx) {
     } catch (err) {
       await session.abortTransaction().catch(() => {});
       session.endSession();
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
     }
   });
 }

@@ -538,7 +538,7 @@ export default function PricingTab({ ctx }) {
                               title={isPerProduct ? 'Set this product\'s price for this tier' : `Shared rate - editing this changes ${t.name}'s % for every product`}
                             >
                               {price === null ? (
-                                <span className="text-fg/20 text-xs">not set</span>
+                                <span className="text-slate-400 text-xs">not set</span>
                               ) : (
                                 <span className={off > 0 ? (isPerProduct ? 'text-accent font-bold' : 'text-fg/70 font-bold') : 'text-fg/40'}>
                                   ₱{price.toFixed(2)}

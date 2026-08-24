@@ -26,6 +26,8 @@ export default function registerPurchaseOrders(ctx) {
     requireStaff,
     requireSuperAdmin,
     requirePermission,
+    addBatch,
+    soonestExpiry,
   } = ctx;
 
   // Procurement domain gates (superadmin bypasses inside requirePermission).
@@ -83,42 +85,68 @@ export default function registerPurchaseOrders(ctx) {
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
-  // ── CREATE (draft a planned PO) ───────────────────────────────────────────────
-  // POST /api/purchase-orders  { supplier, expectedDate, notes, lines:[{invId,itemName,itemCode,unit,orderedQty,unitCost}] }
-  app.post('/api/purchase-orders', verifyToken, ...canManageProc, async (req, res) => {
-    try {
-      const { supplier = '', supplierId = null, supplierRef = '', expectedDate = null, notes = '', lines = [] } = req.body || {};
-      // Link to the supplier record when one is given, and prefer its canonical
-      // name over the free-text field. The PO schema has always had supplierId;
-      // the create route was silently dropping it, which left every payable
-      // unattributed downstream.
-      let supplierDoc = null;
-      if (supplierId && mongoose.Types.ObjectId.isValid(String(supplierId))) {
-        supplierDoc = await Supplier.findOne({ _id: supplierId, ...tenantScope(req) }).lean();
-        if (!supplierDoc) return res.status(404).json({ success: false, error: 'Supplier not found.' });
-      }
-      const clean = (Array.isArray(lines) ? lines : [])
-        .map(cleanLine)
-        .filter(l => l.itemName && l.orderedQty > 0);
-      if (clean.length === 0) return res.status(400).json({ success: false, error: 'A purchase order needs at least one line with a name and quantity.' });
+  // ── CREATE (shared logic) ──────────────────────────────────────────────────────
+  // #Req-1: this used to be the whole POST /api/purchase-orders handler. It's now
+  // also called from requisitions.js once a purchase_order-type requisition is
+  // approved - the actual PO only ever gets created from there (or from the
+  // superadmin break-glass route below), never directly by a procurement.manage
+  // request. Throws on validation failure with a `.httpStatus` for the caller to
+  // map to a response, same convention as inventory.js's restock route.
+  // `createdByOverride`: when called from an approved requisition, the PO's
+  // creator is the person who REQUESTED it, not whoever clicked Approve - `req`
+  // there belongs to the approver's own request, so req.user.name would
+  // otherwise silently mislabel who actually raised this PO.
+  const createPurchaseOrder = async (req, body, createdByOverride) => {
+    const { supplier = '', supplierId = null, supplierRef = '', expectedDate = null, notes = '', lines = [] } = body || {};
+    // Link to the supplier record when one is given, and prefer its canonical
+    // name over the free-text field. The PO schema has always had supplierId;
+    // the create route was silently dropping it, which left every payable
+    // unattributed downstream.
+    let supplierDoc = null;
+    if (supplierId && mongoose.Types.ObjectId.isValid(String(supplierId))) {
+      supplierDoc = await Supplier.findOne({ _id: supplierId, ...tenantScope(req) }).lean();
+      if (!supplierDoc) throw Object.assign(new Error('Supplier not found.'), { httpStatus: 404 });
+    }
+    const clean = (Array.isArray(lines) ? lines : [])
+      .map(cleanLine)
+      .filter(l => l.itemName && l.orderedQty > 0);
+    if (clean.length === 0) throw Object.assign(new Error('A purchase order needs at least one line with a name and quantity.'), { httpStatus: 400 });
 
-      const poNumber = await mkSeqRef('PO');
-      const po = await PurchaseOrder.create({
-        poNumber,
-        supplierRef: String(supplierRef).slice(0, 100),
-        supplier: supplierDoc?.name || String(supplier).slice(0, 200),
-        supplierId: supplierDoc?._id || null,
-        expectedDate: expectedDate ? new Date(expectedDate) : null,
-        notes: String(notes).slice(0, 1000),
-        status: 'Ordered',
-        lines: clean,
-        estTotal: estTotalOf(clean),
-        createdBy: req.user?.name || '',
-        ...tenantScope(req),
-      });
-      logAudit?.(req, { action: 'create', entity: 'purchase_order', entityId: poNumber, after: { lines: clean.length, estTotal: po.estTotal } });
+    const poNumber = await mkSeqRef('PO');
+    const po = await PurchaseOrder.create({
+      poNumber,
+      supplierRef: String(supplierRef).slice(0, 100),
+      supplier: supplierDoc?.name || String(supplier).slice(0, 200),
+      supplierId: supplierDoc?._id || null,
+      expectedDate: expectedDate ? new Date(expectedDate) : null,
+      notes: String(notes).slice(0, 1000),
+      status: 'Ordered',
+      lines: clean,
+      estTotal: estTotalOf(clean),
+      createdBy: createdByOverride || req.user?.name || '',
+      ...tenantScope(req),
+    });
+    logAudit?.(req, { action: 'create', entity: 'purchase_order', entityId: poNumber, after: { lines: clean.length, estTotal: po.estTotal } });
+    return po;
+  };
+  // Let requisitions.js (registered after this module - see server.js) call the
+  // same creation logic the normal flow uses.
+  ctx.createPurchaseOrder = createPurchaseOrder;
+
+  // ── CREATE (break-glass direct route) ─────────────────────────────────────────
+  // #Req-1: normal PO creation goes through POST /api/requisitions (type:
+  // purchase_order) + approval now, not this route directly - superadmin-only,
+  // for the rare case for a POs needs to be raised while the approver is on the
+  // requisition itself instead of a step ahead of it.
+  // POST /api/purchase-orders  { supplier, expectedDate, notes, lines:[{invId,itemName,itemCode,unit,orderedQty,unitCost}] }
+  app.post('/api/purchase-orders', verifyToken, requireSuperAdmin, async (req, res) => {
+    try {
+      const po = await createPurchaseOrder(req, req.body);
       res.status(201).json({ success: true, purchaseOrder: po.toObject() });
-    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+    } catch (err) {
+      if (err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.message });
+      (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+    }
   });
 
   // ── UPDATE (edit draft header/lines, or move status Ordered↔Processing) ────────
@@ -170,11 +198,11 @@ export default function registerPurchaseOrders(ctx) {
   // Unit model: a PO line is priced and counted in PACKS, while Inventory holds
   // BASE units (ml/g/pcs). basePerPack = line.packSize × item.unitMultiplier, so
   // 10 packs of 1L milk with unitMultiplier 1000 posts 10,000 ml at ₱0.08/ml.
-  const postReceiptToStock = async (req, deltas, po) => {
+  const postReceiptToStock = async (req, deltas, po, session) => {
     let totalCost = 0;
     for (const { line, delta } of deltas) {
       if (!line.invId || !mongoose.Types.ObjectId.isValid(String(line.invId))) continue;
-      const item = await Inventory.findById(line.invId);
+      const item = await Inventory.findById(line.invId).session(session);
       if (!item) continue;
 
       const basePerPack = (Number(line.packSize) || 1) * (Number(item.unitMultiplier) || 1);
@@ -185,12 +213,35 @@ export default function registerPurchaseOrders(ctx) {
       // WAC (GAAP/IFRS): blend the incoming batch into the existing holding.
       const currentValue = (Number(item.stockQty) || 0) * (Number(item.unitCost) || 0);
       const newStockQty = (Number(item.stockQty) || 0) + baseQty;
-      item.unitCost = newStockQty > 0 ? (currentValue + lineCost) / newStockQty : 0;
+      const receivedUnitCost = newStockQty > 0 ? (currentValue + lineCost) / newStockQty : 0;
+      item.unitCost = receivedUnitCost;
       item.stockQty = newStockQty;
-      await item.save();
 
       const rcvRef = await mkSeqRef('PO-RCV');
-      await StockCard.create({
+
+      // The PO line can carry expiry/threshold/location/category the operator
+      // set when placing the order - without this, receiving a PO silently
+      // dropped all of it (#PO-1). Batch-track the expiry like every other
+      // restock path so FEFO/the breakdown UI sees this delivery. Metadata
+      // fields only fill in what's currently unset, so a receipt never
+      // clobbers a location/category/threshold someone already configured.
+      if (line.expiryDate) {
+        item.expiryBatches = addBatch(item.expiryBatches || [], {
+          qty: baseQty,
+          expiryDate: line.expiryDate,
+          receivedAt: new Date(),
+          reference: rcvRef,
+          unitCost: receivedUnitCost,
+        });
+        item.expiryDate = soonestExpiry(item.expiryBatches);
+      }
+      if (line.expiryWarnDays != null && !item.expiryWarnDays) item.expiryWarnDays = line.expiryWarnDays;
+      if (line.lowStockThreshold != null && !item.lowStockThreshold) item.lowStockThreshold = line.lowStockThreshold;
+      if (line.stockLocation && !item.stockLocation) item.stockLocation = line.stockLocation;
+      if (line.stockCategory && !item.stockCategory) item.stockCategory = line.stockCategory;
+
+      await item.save({ session });
+      await StockCard.create([{
         inventoryId: item._id,
         itemName: item.itemName,
         type: 'Restock',
@@ -199,12 +250,12 @@ export default function registerPurchaseOrders(ctx) {
         unitCost: baseQty > 0 ? lineCost / baseQty : 0,
         balanceAfter: item.stockQty,
         remarks: `Received on PO`,
-      });
+      }], { session });
 
       if (lineCost > 0) {
         // Credit A/P: a PO is a purchase on account. Paying the supplier is a
         // separate A/P settlement, not part of receiving the goods.
-        await JournalEntry.create({
+        await JournalEntry.create([{
           reference: rcvRef,
           description: `Received ${delta} × ${line.itemName || item.itemName} on ${po?.poNumber || 'PO'}${po?.supplier ? ` from ${po.supplier}` : ''}`,
           // Attributed so the A/P view can answer "how much do we owe this
@@ -217,7 +268,7 @@ export default function registerPurchaseOrders(ctx) {
           ],
           totalDebit: lineCost,
           totalCredit: lineCost,
-        });
+        }], { session });
         totalCost = money(totalCost + lineCost);
       }
     }
@@ -271,12 +322,30 @@ export default function registerPurchaseOrders(ctx) {
       po.receivedAt = new Date();
       po.receivedBy = req.user?.name || '';
       if (req.body?.notes !== undefined) po.notes = String(req.body.notes).slice(0, 1000);
-      await po.save();
 
-      // Post the delivery into stock and the books. Without this the PO flips to
-      // Complete while inventory never moves - goods marked received that the
-      // stock ledger never hears about.
-      const posted = await postReceiptToStock(req, deltas, po);
+      // The PO status flip and the stock/ledger posting below were previously
+      // three separate unguarded writes per line - a crash partway through left
+      // the PO saying "Complete" while only some lines had actually posted to
+      // stock/the books. One session covers the PO save and every per-line
+      // write inside postReceiptToStock. Bill creation deliberately stays
+      // OUTSIDE this transaction (see comment below) - a bill hiccup must not
+      // roll back a receipt that has already posted.
+      const session = await mongoose.startSession();
+      let posted;
+      try {
+        session.startTransaction();
+        await po.save({ session });
+        // Post the delivery into stock and the books. Without this the PO flips
+        // to Complete while inventory never moves - goods marked received that
+        // the stock ledger never hears about.
+        posted = await postReceiptToStock(req, deltas, po, session);
+        await session.commitTransaction();
+      } catch (err) {
+        await session.abortTransaction().catch(() => {});
+        throw err;
+      } finally {
+        session.endSession();
+      }
 
       // One Bill per delivery (not per line - a supplier sends one invoice for
       // the whole shipment), awaiting approval before it can be scheduled/paid.

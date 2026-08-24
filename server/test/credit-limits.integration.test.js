@@ -22,10 +22,14 @@ const setClientLimit = (limit) =>
   request(app).patch(`/api/client-accounts/${clientId}`).set(auth(superToken)).send({ creditLimit: limit });
 
 // Places an order as the logged-in client. GCash = on account (non-cash).
+// `total` drives quantity against the fixed ₱100 basePrice, not price itself -
+// client orders are now server-price-validated (#Audit-CRITICAL), so a line's
+// price must match the catalog; qty is still free to vary the order total for
+// these threshold tests.
 const placeOrder = (total, method = 'GCash') =>
   request(app).post('/api/orders')
     .set({ Authorization: `Bearer ${clientToken}` })
-    .send({ items: [{ productId, name: 'Credit Widget', price: total, quantity: 1 }], paymentMethod: method });
+    .send({ items: [{ productId, name: 'Credit Widget', price: 100, quantity: total / 100 }], paymentMethod: method });
 
 // Seeds an already-owed, unsettled receivable for the client.
 const owe = async (amount, ageDays = 1) => {

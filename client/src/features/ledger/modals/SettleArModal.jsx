@@ -40,6 +40,12 @@ export default function SettleArModal() {
               </select>
             </div>
             <div>
+              <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Date Deposited *</label>
+              <input type="date" value={settleForm.depositedAt} onChange={e => setSettleForm({...settleForm, depositedAt: e.target.value})}
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg font-bold outline-none focus:border-brand/60" />
+              <p className="text-[10px] text-fg/40 mt-1">When the funds actually landed in the account - may trail today if it's a check clearing.</p>
+            </div>
+            <div>
               <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Note (optional)</label>
               <input type="text" placeholder="Grab payout batch #..." value={settleForm.note} onChange={e => setSettleForm({...settleForm, note: e.target.value})}
                 className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />

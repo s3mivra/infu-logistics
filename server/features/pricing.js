@@ -173,6 +173,7 @@ export default function registerPricing(ctx) {
     verifyClientToken,
     requireSuperAdmin,
     requireSuperOrAdmin,
+    requirePermission,
     verifyOrderAuth,
   } = ctx;
 
@@ -186,7 +187,7 @@ app.get('/api/discounts', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
-app.post('/api/discounts', verifyToken, requireStaff, validate(discountSchema), async (req, res) => {
+app.post('/api/discounts', verifyToken, requireStaff, requirePermission('products.manage'), validate(discountSchema), async (req, res) => {
   try {
     const newDiscount = await Discount.create(req.body);
     res.json({ success: true, discount: newDiscount });
@@ -195,7 +196,7 @@ app.post('/api/discounts', verifyToken, requireStaff, validate(discountSchema), 
   }
 });
 
-app.delete('/api/discounts/:id', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/discounts/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     await Discount.findByIdAndDelete(req.params.id);
     res.json({ success: true });

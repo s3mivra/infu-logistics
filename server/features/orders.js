@@ -437,20 +437,37 @@ app.delete('/api/orders/parked/:id', verifyToken, requireStaff, async (req, res)
 app.get('/api/orders/:id', async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, message: "Order not found" });
-    // Access control: staff/admin and authenticated clients get the full document.
-    // Anonymous callers (QR status polling) get a PII-SAFE projection so order ids
-    // can't be enumerated to harvest customer phone / delivery address.
-    let isPrivileged = false;
+    // Access control: staff/admin get the full document for any order (support/
+    // POS lookups). Authenticated clients get the full document ONLY for their
+    // own order - a client token used to previously get the full document for
+    // ANY order id (anyone else's name/phone/address/items), same bug class as
+    // an anonymous caller. Anonymous callers (QR status polling) and clients
+    // requesting someone else's order get a PII-SAFE projection instead of a 403,
+    // so order ids still can't be enumerated to confirm they exist.
+    let isStaffPrivileged = false;
+    let requestingClientId = null;
     try {
       const raw = req.headers.authorization?.replace(/^Bearer /, '') || '';
-      if (raw) { const d = jwt.verify(raw, process.env.JWT_SECRET); if (d?.role) isPrivileged = true; }
+      if (raw) {
+        const d = jwt.verify(raw, process.env.JWT_SECRET);
+        if (d?.aud === 'client' && d?.role === 'client') requestingClientId = String(d.clientId || d._id || '');
+        else if (d?.role) isStaffPrivileged = true;
+      }
     } catch { /* invalid/expired token → treat as anonymous */ }
     const safeProjection = {
       orderNumber: 1, status: 1, dispatchStatus: 1, isParked: 1, table: 1,
       total: 1, customerName: 1, createdAt: 1, scheduledTime: 1,
       'items.name': 1, 'items.quantity': 1, 'items.itemStatus': 1, 'items.department': 1,
     };
-    const order = await Order.findById(req.params.id, isPrivileged ? undefined : safeProjection);
+    let order;
+    if (isStaffPrivileged) {
+      order = await Order.findById(req.params.id);
+    } else if (requestingClientId) {
+      order = (await Order.findOne({ _id: req.params.id, clientId: requestingClientId }))
+        || (await Order.findById(req.params.id, safeProjection));
+    } else {
+      order = await Order.findById(req.params.id, safeProjection);
+    }
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
     res.json(order); // sent as the raw order object so the frontend can read it directly
   } catch (error) {
@@ -582,10 +599,52 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     const _prodNames = items.map(i => i.name).filter(Boolean);
     const _discProds = await Product.find(
       { $or: [{ _id: { $in: _prodIds } }, { name: { $in: _prodNames } }] },
-      { _id: 1, name: 1, basePrice: 1, discountPercent: 1, clientDiscounts: 1, segmentDiscounts: 1, bulkBreaks: 1, vatExempt: 1 }
+      { _id: 1, name: 1, basePrice: 1, discountPercent: 1, clientDiscounts: 1, segmentDiscounts: 1, bulkBreaks: 1, vatExempt: 1, sizes: 1, addOns: 1 }
     ).lean();
     const _discById = new Map(_discProds.map(p => [String(p._id), p]));
     const _discByName = new Map(_discProds.map(p => [p.name, p]));
+
+    // Server-authoritative price check - CUSTOMER-ORIGINATED orders only (client
+    // portal / QR self-checkout). `item.price` is client-supplied and, for these
+    // two entry points, a devtools-edited request could previously ring up any
+    // item at any price. Staff-placed POS orders are deliberately exempt: staff
+    // are trusted to key in negotiated/manual prices (freight quotes, one-off
+    // rates), a tested and relied-upon capability - the actual untrusted surface
+    // is a customer's own browser, not the register. Every item that resolves to
+    // a real catalog product must be priced at that product's base price or one
+    // of its declared size prices (never trust which one the client claims);
+    // add-ons must match one of the product's own add-on prices. Combos are
+    // checked against the fixed bundle price. An item matching NO catalog
+    // product/combo (a legitimate free-text/custom line) is left as-is, same
+    // tolerance the existing discount/VAT resolution already gives them.
+    if (isClientOrder || req.qrSession) {
+      const PRICE_EPSILON = 0.01;
+      const _comboNames = [...new Set(items.filter(i => i.isCombo && i.name).map(i => i.name))];
+      const _combos = _comboNames.length ? await Combo.find({ name: { $in: _comboNames } }, { name: 1, price: 1 }).lean() : [];
+      const _comboByName = new Map(_combos.map(c => [c.name, c]));
+      for (const item of items) {
+        if (item.isCombo) {
+          const combo = _comboByName.get(item.name);
+          if (!combo) throw new Error(`Unknown combo: ${item.name || 'unnamed'}`);
+          if (Math.abs((Number(item.price) || 0) - combo.price) > PRICE_EPSILON) {
+            throw new Error(`Price mismatch for "${item.name}" - please refresh and try again.`);
+          }
+          continue;
+        }
+        const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+        if (!p) continue; // no catalog match - custom/free-text line, trust as entered
+        const acceptable = [p.basePrice, ...(p.sizes || []).map(s => s.price)].filter(v => v != null);
+        if (!acceptable.some(v => Math.abs(v - (Number(item.price) || 0)) <= PRICE_EPSILON)) {
+          throw new Error(`Price mismatch for "${item.name || p.name}" - please refresh and try again.`);
+        }
+        for (const a of (item.selectedAddOns || [])) {
+          const knownAddOn = (p.addOns || []).find(x => x.name === a.name);
+          if (knownAddOn && Math.abs((Number(a.price) || 0) - (knownAddOn.price || 0)) > PRICE_EPSILON) {
+            throw new Error(`Price mismatch for add-on "${a.name}" - please refresh and try again.`);
+          }
+        }
+      }
+    }
     // Buyer identity for per-client discount resolution. Authenticated client
     // wins; otherwise we fall back to the admin-on-behalf clientAccountId.
     const _buyerClientId = isClientOrder
@@ -713,55 +772,9 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // total is server-authoritative and before anything is written, so a
     // rejected order leaves no partial state behind.
     const creditClientId = _buyerClientId;
-    if (creditClientId && resolvedPaymentMethod !== 'Cash' && !isComplimentary && finalTotal > 0) {
-      const [modeRow, globalRow, client] = await Promise.all([
-        Settings.findOne({ key: 'creditLimitMode' }).lean(),
-        Settings.findOne({ key: 'globalCreditLimit' }).lean(),
-        ClientAccount.findById(creditClientId).lean(),
-      ]);
-      const limit = resolveCreditLimit({
-        mode: modeRow?.value,
-        globalLimit: globalRow?.value,
-        clientLimit: client?.creditLimit,
-      });
-      if (limit !== null) {
-        // Outstanding = everything already sold to them on account and not yet
-        // settled. Mirrors the A/R report's definition exactly.
-        // Match BOTH identity fields: a portal order carries `clientId`, while an
-        // order a cashier placed on the client's behalf carries `clientAccountId`.
-        // Checking only one lets a client run up unlimited debt via the other route.
-        //
-        // Statuses: exposure is everything COMMITTED, not just what has already
-        // become a book receivable. Orders sit at Pending/Preparing for a while,
-        // and counting only 'Completed' would let a client place ten orders in a
-        // row before any of them lands - trivially defeating the limit. Only
-        // terminal non-debts (Cancelled/Voided/Refunded) and parked drafts are
-        // excluded.
-        const openRows = await Order.find({
-          businessType: BUSINESS_TYPE,
-          $or: [
-            { clientAccountId: String(creditClientId) },
-            { clientId: String(creditClientId) },
-          ],
-          status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
-          isParked: { $ne: true },
-          paymentMethod: { $ne: 'Cash' },
-          isComplimentary: { $ne: true },
-          arSettled: { $ne: true },
-        }, { total: 1 }).lean();
-        const outstanding = openRows.reduce((s, r) => s + (Number(r.total) || 0), 0);
-        const check = checkCreditAvailable({ limit, outstanding, orderTotal: finalTotal });
-        if (!check.allowed) {
-          return res.status(409).json({
-            success: false,
-            error: `Credit limit reached. Limit ₱${check.limit.toFixed(2)}, already owing ₱${check.outstanding.toFixed(2)}, available ₱${check.available.toFixed(2)}.`,
-            creditLimit: check,
-          });
-        }
-      }
-    }
+    const needsCreditGate = !!(creditClientId && resolvedPaymentMethod !== 'Cash' && !isComplimentary && finalTotal > 0);
 
-    const newOrder = await Order.create({
+    const orderPayload = {
       orderNumber, table, items: validatedItems,
       subtotal: totalGross,
       vatRate: vatRate,
@@ -791,7 +804,98 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       ...(isClientOrder && { clientId: req.user._id || req.user.clientId || '', clientUsername: req.user.username || '' }),
       ...(idempotencyKey && { idempotencyKey }),
       ...(paymentsInput?.length > 0 && { payments: paymentsInput }),
-    });
+    };
+
+    let newOrder;
+    if (needsCreditGate) {
+      // The read-check-then-create below used to run with no transaction at
+      // all: two genuinely concurrent on-account orders for the SAME client
+      // could each read the same `outstanding` total before either order was
+      // persisted, both pass the limit check individually, and together push
+      // the client over their limit. A Mongo transaction alone doesn't fix
+      // this - two transactions each creating a brand-new Order document
+      // don't conflict with each other at the write level, so both would
+      // still commit. What actually serializes them is a real write to a
+      // SHARED document both transactions touch: here, the client's own
+      // ClientAccount row. The second transaction's write collides with the
+      // first's (WriteConflict), aborts, and is retried - on retry it
+      // re-reads the now-committed outstanding total, so the second order
+      // sees the first one's debt and is correctly rejected if it would push
+      // the client over. Same WriteConflict-retry convention already used
+      // for void/refund/complete/partial-fulfill elsewhere in this file.
+      const CREDIT_RETRY_ATTEMPTS = 4;
+      for (let attempt = 1; attempt <= CREDIT_RETRY_ATTEMPTS; attempt++) {
+        const session = await mongoose.startSession();
+        try {
+          session.startTransaction();
+          // Sequential, not Promise.all - a single MongoDB session/transaction
+          // does not support concurrent operations; firing these three in
+          // parallel on the same session raced on its transaction number and
+          // threw "ConflictingOperationInProgress" on every credit-gated order.
+          const modeRow = await Settings.findOne({ key: 'creditLimitMode' }).session(session).lean();
+          const globalRow = await Settings.findOne({ key: 'globalCreditLimit' }).session(session).lean();
+          const client = await ClientAccount.findById(creditClientId).session(session).lean();
+          const limit = resolveCreditLimit({
+            mode: modeRow?.value,
+            globalLimit: globalRow?.value,
+            clientLimit: client?.creditLimit,
+          });
+          if (limit !== null) {
+            // Outstanding = everything already sold to them on account and not yet
+            // settled. Mirrors the A/R report's definition exactly.
+            // Match BOTH identity fields: a portal order carries `clientId`, while an
+            // order a cashier placed on the client's behalf carries `clientAccountId`.
+            // Checking only one lets a client run up unlimited debt via the other route.
+            //
+            // Statuses: exposure is everything COMMITTED, not just what has already
+            // become a book receivable. Orders sit at Pending/Preparing for a while,
+            // and counting only 'Completed' would let a client place ten orders in a
+            // row before any of them lands - trivially defeating the limit. Only
+            // terminal non-debts (Cancelled/Voided/Refunded) and parked drafts are
+            // excluded.
+            const openRows = await Order.find({
+              businessType: BUSINESS_TYPE,
+              $or: [
+                { clientAccountId: String(creditClientId) },
+                { clientId: String(creditClientId) },
+              ],
+              status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
+              isParked: { $ne: true },
+              paymentMethod: { $ne: 'Cash' },
+              isComplimentary: { $ne: true },
+              arSettled: { $ne: true },
+            }, { total: 1 }).session(session).lean();
+            const outstanding = openRows.reduce((s, r) => s + (Number(r.total) || 0), 0);
+            const check = checkCreditAvailable({ limit, outstanding, orderTotal: finalTotal });
+            if (!check.allowed) {
+              await session.abortTransaction(); session.endSession();
+              return res.status(409).json({
+                success: false,
+                error: `Credit limit reached. Limit ₱${check.limit.toFixed(2)}, already owing ₱${check.outstanding.toFixed(2)}, available ₱${check.available.toFixed(2)}.`,
+                creditLimit: check,
+              });
+            }
+          }
+          // Real write against the shared ClientAccount doc - see comment above.
+          await ClientAccount.updateOne({ _id: creditClientId }, { $set: { creditCheckedAt: new Date() } }, { session });
+          const [created] = await Order.create([orderPayload], { session });
+          await session.commitTransaction();
+          session.endSession();
+          newOrder = created;
+          break;
+        } catch (err) {
+          await session.abortTransaction().catch(() => {});
+          session.endSession();
+          if (isTransientTxnError(err) && attempt < CREDIT_RETRY_ATTEMPTS) {
+            await statsRetryDelay(attempt);
+            continue;
+          }
+          throw err;
+        }
+      }
+    } else {
+      newOrder = await Order.create(orderPayload);
+    }
 
     emitToOps('newOrder', newOrder);
     res.json({ success: true, order: newOrder });
@@ -1267,22 +1371,44 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         }
       }
 
-      // Auto-mark products unavailable when a required ingredient hits zero stock
+      // Auto-mark products unavailable when a required ingredient hits zero stock.
+      // #10: the same item name can now exist at more than one location (separate
+      // Inventory docs) - a recipe only ever binds to ONE of them by _id, so
+      // before disabling anything, check whether OTHER locations sharing that
+      // item's name still have stock. Only truly-depleted names (zero everywhere)
+      // should flip a product unavailable.
       if (depletedInvIds.size > 0) {
         const ids = [...depletedInvIds];
-        await Product.updateMany(
-          {
-            isAvailable: true,
-            $or: [
-              { 'baseRecipe.invId': { $in: ids } },
-              { 'sizes.recipe.invId': { $in: ids } },
-              { 'addOns.recipe.invId': { $in: ids } },
-            ],
-          },
-          { $set: { isAvailable: false } }
-        );
-        emitToAll('menuUpdated');
-        log.info({ depletedInvIds: ids }, 'Auto-marked products unavailable due to depleted stock');
+        const depletedDocs = await Inventory.find({ _id: { $in: ids }, businessType: BUSINESS_TYPE, ...tenantScope(req) }, { itemName: 1 }).session(session).lean();
+        const nameById = new Map(depletedDocs.map(d => [String(d._id), (d.itemName || '').toLowerCase()]));
+        const names = [...new Set(nameById.values())].filter(Boolean);
+        const siblingTotals = names.length
+          ? await Inventory.aggregate([
+              { $match: {
+                  businessType: BUSINESS_TYPE, ...tenantScope(req),
+                  itemName: { $in: names.map(n => new RegExp(`^${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')) },
+                } },
+              { $group: { _id: { $toLower: '$itemName' }, total: { $sum: '$stockQty' } } },
+            ]).session(session)
+          : [];
+        const totalByName = new Map(siblingTotals.map(s => [s._id, s.total]));
+        const trulyDepletedIds = ids.filter(id => (totalByName.get(nameById.get(id)) ?? 0) <= 0);
+
+        if (trulyDepletedIds.length > 0) {
+          await Product.updateMany(
+            {
+              isAvailable: true,
+              $or: [
+                { 'baseRecipe.invId': { $in: trulyDepletedIds } },
+                { 'sizes.recipe.invId': { $in: trulyDepletedIds } },
+                { 'addOns.recipe.invId': { $in: trulyDepletedIds } },
+              ],
+            },
+            { $set: { isAvailable: false } }
+          );
+          emitToAll('menuUpdated');
+          log.info({ depletedInvIds: trulyDepletedIds }, 'Auto-marked products unavailable due to depleted stock');
+        }
       }
 
       // Batch-insert all stock card entries in one round-trip
@@ -1329,9 +1455,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
 
       const totalDebit = lines.reduce((sum, line) => sum + line.debit, 0);
       const totalCredit = lines.reduce((sum, line) => sum + line.credit, 0);
-      if (Math.abs(totalDebit - totalCredit) > 0.01) {
-        throw new Error(`Journal imbalance on ${reference}: DR=${totalDebit.toFixed(2)} CR=${totalCredit.toFixed(2)}`);
-      }
+      assertBalanced(lines, reference);
 
       await JournalEntry.create([{
         reference,
@@ -1391,7 +1515,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
     if (isTransientTxnError(error) && mayRetry && !res.headersSent) return true; // ask the caller to retry
     console.error("[ERP CRITICAL ERROR] Failed to process order:", error);
     captureError(req, error);
-    if (!res.headersSent) res.status(500).json({ success: false, error: error.message });
+    if (!res.headersSent) res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : error.message });
   }
   return false;
 };
@@ -1671,9 +1795,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
 
     const totalDebit = lines.reduce((sum, line) => sum + line.debit, 0);
     const totalCredit = lines.reduce((sum, line) => sum + line.credit, 0);
-    if (totalDebit > 0 && Math.abs(totalDebit - totalCredit) > 0.01) {
-      throw new Error(`Journal imbalance on ${mkRef('VOID', order.orderNumber)}: DR=${totalDebit.toFixed(2)} CR=${totalCredit.toFixed(2)}`);
-    }
+    assertBalanced(lines, mkRef('VOID', order.orderNumber));
 
     // If totalDebit/Credit is 0, it means the item had no BOM and wasn't complimentary. We still log the order status change.
     if (totalDebit > 0) {
@@ -1712,7 +1834,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
     if (isTransientTxnError(error) && mayRetry && !res.headersSent) return true;   // ask the caller to retry
     console.error("Void Error:", error);
     captureError(req, error);
-    if (!res.headersSent) res.status(500).json({ success: false, error: error.message });
+    if (!res.headersSent) res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : error.message });
   }
   return false;
 };
@@ -1748,19 +1870,37 @@ app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
 // Used when Grab / Foodpanda / Manual Delivery payouts arrive
 // ============================================================
 app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req, res) => {
+  const session = await mongoose.startSession();
   try {
-    const { amount, paymentMethod, note } = req.body;
-    const order = await Order.findById(req.params.id);
-    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
-    if (order.paymentMethod === 'Cash')
+    session.startTransaction();
+    const { amount, paymentMethod, note, depositedAt } = req.body;
+    const order = await Order.findById(req.params.id).session(session);
+    if (!order) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(404).json({ success: false, error: 'Order not found.' });
+    }
+    if (order.paymentMethod === 'Cash') {
+      await session.abortTransaction(); session.endSession();
       return res.status(400).json({ success: false, error: 'Cash sales do not require A/R settlement (already booked to Cash on Hand).' });
-    if (order.arSettled) return res.status(400).json({ success: false, error: 'Order already settled.' });
-    if (order.status !== 'Completed') return res.status(400).json({ success: false, error: 'Order must be Completed before settlement.' });
+    }
+    if (order.arSettled) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'Order already settled.' });
+    }
+    if (order.status !== 'Completed') {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'Order must be Completed before settlement.' });
+    }
 
     const amt = parseFloat(amount);
-    if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Settlement amount must be > 0.' });
-    if (amt > order.total + 0.01)
+    if (!amt || amt <= 0) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'Settlement amount must be > 0.' });
+    }
+    if (amt > order.total + 0.01) {
+      await session.abortTransaction(); session.endSession();
       return res.status(400).json({ success: false, error: `Settlement amount exceeds outstanding A/R (₱${order.total.toFixed(2)}).` });
+    }
 
     // Debit-side account from configurable payment-method map.
     const debitAcct = accountForPaymentMethod(paymentMethod);
@@ -1779,23 +1919,34 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     ];
     assertBalanced(lines, reference);
 
-    await JournalEntry.create({
+    // Settlement JE + the arSettled flag flip used to be two unguarded writes -
+    // a crash between them left the JE posted but the order still showing
+    // unsettled, and a retry (or a second click) would pass the `arSettled`
+    // check again and post a SECOND settlement entry for the same receivable.
+    // Same transaction now covers both, so either both land or neither does.
+    await JournalEntry.create([{
       reference,
       description: `A/R settlement: ${order.orderNumber} via ${order.paymentMethod}${note ? ` (${note})` : ''}`,
       lines, totalDebit: amt, totalCredit: amt,
-    });
+    }], { session });
 
     order.arSettled = true;
     order.arSettledAt = new Date();
     order.arSettledAmount = amt;
     order.arSettledMethod = paymentMethod || 'Cash on Hand';
     order.arSettledNote = note || '';
-    await order.save();
+    order.arDepositedAt = depositedAt ? new Date(depositedAt) : new Date();
+    await order.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
 
     emitToMgr('erpUpdated');
     emitToOps('orderUpdated', order.toObject());
     res.json({ success: true, order });
   } catch (err) {
+    await session.abortTransaction().catch(() => {});
+    session.endSession();
     log.error({ err }, 'A/R settlement failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -2106,13 +2257,31 @@ const refundOnce = async (req, res, mayRetry) => {
   try {
     session.startTransaction();
     const { reason, refundAmount, inventoryAction } = req.body;
-    if (!reason?.trim()) return res.status(400).json({ success: false, error: 'Reason required.' });
+    // Every early-exit below must abort+end the session it just opened - a bare
+    // `return res.status(...)` here previously left the transaction/session open,
+    // leaking implicit document locks on repeated invalid refund attempts.
+    if (!reason?.trim()) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'Reason required.' });
+    }
     const order = await Order.findById(req.params.id).session(session);
-    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
-    if (order.status !== 'Completed') return res.status(400).json({ success: false, error: 'Can only refund Completed orders.' });
-    if (order.transactionType === 'REFUND') return res.status(400).json({ success: false, error: 'Already refunded.' });
+    if (!order) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(404).json({ success: false, error: 'Order not found.' });
+    }
+    if (order.status !== 'Completed') {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'Can only refund Completed orders.' });
+    }
+    if (order.transactionType === 'REFUND') {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'Already refunded.' });
+    }
     const amt = parseFloat(refundAmount) || order.total;
-    if (amt <= 0 || amt > order.total + 0.01) return res.status(400).json({ success: false, error: `Refund amount must be between ₱0.01 and ₱${order.total.toFixed(2)}.` });
+    if (amt <= 0 || amt > order.total + 0.01) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: `Refund amount must be between ₱0.01 and ₱${order.total.toFixed(2)}.` });
+    }
     const reference = mkRef('REFUND', order.orderNumber);
     const creditAcct = debitAccountFor(order.paymentMethod);
     const lines = [

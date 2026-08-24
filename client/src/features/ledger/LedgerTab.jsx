@@ -23,7 +23,7 @@ export default function LedgerTab({ ctx }) {
     journalSearch, setJournalSearch,
     activeAdmin, activeInventoryItem, activeTab, addInventory, addMaterialToRecipe,
     addOnForm, addSize, analyticsData, analyticsLoading, apiFetch,
-    applyComplimentary, applyDiscount, applyItemDiscount, arOutstanding, arAgeing, fetchArAgeing, archiveDay, fetchExpenses,
+    applyComplimentary, applyDiscount, applyItemDiscount, arOutstanding, arAgeing, fetchArAgeing, arSettledHistory, fetchArSettled, archiveDay, fetchExpenses,
     archivedOrders, auditCancelPage, auditCompPage, auditDiscPage, auditFilter,
     auditStaffPage, bsData, calcRecipeCost, cashOnHand, cashTendered,
     catForm, categories, closeRfFund, collapsedOrders, compOverride,
@@ -37,7 +37,7 @@ export default function LedgerTab({ ctx }) {
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
     exportDayToPDF, exportInventoryToPDF, exportLedgerToPDF, fetchAnalytics, fetchArOutstanding,
     fetchBalanceSheet, fetchData, fetchEODData, fetchERPData, fetchExpenseCategories,
-    fetchOrders, fetchPnl, fetchRfFunds, fetchRfTxs, fetchShiftHistory,
+    fetchOrders, fetchPnl, fetchRfFunds, fetchRfPendingReqs, rfPendingReqs, approveRfRequisition, rejectRfRequisition, fetchRfTxs, fetchShiftHistory,
     fetchStockHistory, filteredOrders, formData, getEstimatedStock, globalAddOns,
     groupedArchives, handleImageUpload, handleInlinePriceUpdate, handleRestockSubmit, handleSaveAddOn,
     handleSaveCategory, handleSaveProduct, handleVoidOrder, historyItemName, historyModalOpen,
@@ -272,6 +272,8 @@ export default function LedgerTab({ ctx }) {
 
   // ── Report-table pagination (client-side, 10 rows/page) ──
   const arPage   = usePagination(arOutstanding?.orders, 10);
+  const arSettledPage = usePagination(arSettledHistory?.orders, 10);
+  const [arSettledCollapsed, setArSettledCollapsed] = useState(true);
   const apPage   = usePagination(apData?.recent, 10);
   const sbpPage  = usePagination(salesByPayment?.breakdown, 10);
   const sssPage  = usePagination(sssRows, 15);
@@ -323,7 +325,7 @@ export default function LedgerTab({ ctx }) {
                   // Merged "Accounts & Periods" page: load all its sections.
                   if (id === 'accperiods') { fetchCoa(); fetchClosedPeriods(); fetchPaymentMap(); }
                   // Merged "AR & AP" page.
-                  if (id === 'araap') { fetchArOutstanding(); fetchArAgeing(); fetchApData(); fetchSuppliers(); }
+                  if (id === 'araap') { fetchArOutstanding(); fetchArAgeing(); fetchArSettled(); fetchApData(); fetchSuppliers(); }
                   if (id === 'bills') { fetchBills(); fetchSuppliers(); fetchCoa(); }
                   if (id === 'pnl' && !pnlData) fetchPnl();
                   if (id === 'trial') loadTrial();
@@ -338,7 +340,7 @@ export default function LedgerTab({ ctx }) {
                   if (id === 'menueng') fetchMenuEngineering();
                   if (id === 'variance') fetchCashierVariance();
                   if (id === 'commissions') fetchCommissions();
-                  if (id === 'revolving') { fetchRfFunds(); setRfActiveFund(null); setRfTxs([]); }
+                  if (id === 'revolving') { fetchRfFunds(); fetchRfPendingReqs(); setRfActiveFund(null); setRfTxs([]); }
                   if (id === 'expenses') { fetchExpenseCategories(); fetchExpenses(); }
                 }}
                 className={`shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[44px] ${ledgerSubTab === id ? 'bg-brand text-white shadow-elev-1' : 'bg-transparent text-fg/50 hover:text-fg hover:bg-white/5'}`}
@@ -1128,7 +1130,7 @@ export default function LedgerTab({ ctx }) {
                     {buckets.map(b => (
                       <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.bg}`}>
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
-                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/20'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-slate-400'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                       </div>
                     ))}
                   </div>
@@ -1239,7 +1241,7 @@ export default function LedgerTab({ ctx }) {
                                 else if (['GCash','Maya','Maribank','E-Wallet','Other E-Wallet'].includes(o.paymentMethod)) defaultMethod = o.paymentMethod === 'Other E-Wallet' ? 'GCash' : o.paymentMethod;
                                 else if (['Grab Delivery','Foodpanda','Manual Delivery'].includes(o.paymentMethod)) defaultMethod = 'Bank Transfer';
                                 setSettleModal({ order: o });
-                                setSettleForm({ amount: o.total.toFixed(2), paymentMethod: defaultMethod, note: '' });
+                                setSettleForm({ amount: o.total.toFixed(2), paymentMethod: defaultMethod, note: '', depositedAt: new Date().toISOString().slice(0, 10) });
                               }}
                                 className="bg-brand text-white px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
                                 Settle
@@ -1253,6 +1255,54 @@ export default function LedgerTab({ ctx }) {
                   <Pager {...arPage} label="orders" />
                 </div>
               )}
+
+              {/* Settlement history - "what did we already collect" companion to the
+                  outstanding table above. Collapsed by default since it's secondary
+                  to the actionable outstanding list. */}
+              <div className="border-t border-white/10 pt-4">
+                <button type="button" onClick={() => setArSettledCollapsed(c => !c)} className="w-full flex items-center gap-2 text-left">
+                  <h4 className="text-fg font-black uppercase tracking-wider text-sm">Settlement History</h4>
+                  <span className="text-[10px] font-black uppercase tracking-widest bg-white/10 text-fg/60 px-2 py-0.5 rounded-full">{arSettledHistory.orders.length}</span>
+                  <span className="ml-auto text-fg/50">{arSettledCollapsed ? <ChevronDown size={16}/> : <ChevronUp size={16}/>}</span>
+                </button>
+                {!arSettledCollapsed && (
+                  arSettledHistory.orders.length === 0 ? (
+                    <div className="py-10 text-center text-fg/60 font-bold uppercase tracking-widest text-sm">No settlements recorded yet</div>
+                  ) : (
+                    <div className="overflow-x-auto mt-3">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-fg/60 text-xs uppercase tracking-widest border-b border-white/10">
+                            <th className="text-left py-3">Order #</th>
+                            <th className="text-left py-3">Customer</th>
+                            <th className="text-left py-3">Channel</th>
+                            <th className="text-left py-3">Settled</th>
+                            <th className="text-left py-3">Deposited</th>
+                            <th className="text-left py-3">Method</th>
+                            <th className="text-left py-3">Note</th>
+                            <th className="text-right py-3">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {arSettledPage.pageItems.map(o => (
+                            <tr key={o._id} className="border-b border-white/5 hover:bg-white/5 transition">
+                              <td className="py-3 text-fg font-bold">{o.orderNumber}</td>
+                              <td className="py-3 text-fg/70">{o.customerName}</td>
+                              <td className="py-3"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/20 text-brand px-2 py-1 rounded">{o.paymentMethod}</span></td>
+                              <td className="py-3 text-fg/50 text-xs">{o.arSettledAt ? new Date(o.arSettledAt).toLocaleDateString() : '-'}</td>
+                              <td className="py-3 text-fg/50 text-xs">{o.arDepositedAt ? new Date(o.arDepositedAt).toLocaleDateString() : '-'}</td>
+                              <td className="py-3 text-fg/70 text-xs">{o.arSettledMethod || '-'}</td>
+                              <td className="py-3 text-fg/50 text-xs max-w-[200px] truncate" title={o.arSettledNote}>{o.arSettledNote || '-'}</td>
+                              <td className="py-3 text-right text-fg tabular-nums font-bold">₱{(o.arSettledAmount ?? o.total).toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <Pager {...arSettledPage} label="settlements" />
+                    </div>
+                  )
+                )}
+              </div>
             </div>
           )}
 
@@ -1387,7 +1437,7 @@ export default function LedgerTab({ ctx }) {
                       {buckets.map(b => (
                         <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.bg}`}>
                           <p className="text-[10px] font-black uppercase tracking-widest text-fg/40">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
-                          <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/20'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                          <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-slate-400'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                         </div>
                       ))}
                     </div>
@@ -1947,6 +1997,7 @@ export default function LedgerTab({ ctx }) {
                     const pct      = fund.initialAmount > 0 ? (fund.currentBalance / fund.initialAmount) * 100 : 0;
                     const low      = pct <= 25;
                     const isActive = rfActiveFund?._id === fund._id;
+                    const pendingForFund = rfPendingReqs.filter(r => String(r.fundId) === String(fund._id));
                     return (
                       <div key={fund._id}
                         className={`bg-surface border rounded-2xl p-5 space-y-4 transition ${isActive ? 'border-brand shadow-lg shadow-brand/10' : 'border-white/10'}`}
@@ -1985,6 +2036,32 @@ export default function LedgerTab({ ctx }) {
                             {pct.toFixed(0)}% remaining{low ? ' - LOW' : ''}
                           </p>
                         </div>
+
+                        {/* Pending disbursement requisitions - amounts don't move until approved */}
+                        {pendingForFund.length > 0 && (
+                          <div className="space-y-1.5 pt-1 border-t border-white/5">
+                            <p className="text-amber-400/80 text-[10px] font-black uppercase tracking-widest">
+                              {pendingForFund.length} pending approval
+                            </p>
+                            {pendingForFund.map(r => (
+                              <div key={r._id} className="flex items-center justify-between gap-2 bg-amber-500/5 border border-amber-500/20 rounded-lg px-2.5 py-1.5">
+                                <div className="min-w-0">
+                                  <p className="text-fg/70 text-xs font-bold truncate">{r.description}</p>
+                                  <p className="text-fg/30 text-[10px]">by {r.requestedBy || '-'}</p>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className="text-danger font-black text-xs tabular-nums">₱{(r.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                  {isSuperAdmin && (
+                                    <div className="flex items-center gap-1">
+                                      <button onClick={() => approveRfRequisition(r)} className="text-[10px] font-bold px-2 py-1 rounded-md bg-green-500 text-white hover:bg-green-500/80 transition">Approve</button>
+                                      <button onClick={() => rejectRfRequisition(r)} className="text-[10px] font-bold px-2 py-1 rounded-md bg-white/5 text-red-300/80 hover:bg-red-500/15 transition">Reject</button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
                         {/* Action buttons */}
                         <div className="grid grid-cols-3 gap-1.5 pt-1">
@@ -2047,7 +2124,7 @@ export default function LedgerTab({ ctx }) {
                     <div className="py-14 text-center">
                       <FileText size={28} className="mx-auto text-fg/15 mb-3"/>
                       <p className="text-fg/60 text-sm font-bold uppercase tracking-widest">No transactions yet</p>
-                      <p className="text-fg/20 text-xs mt-1">Disbursements and replenishments will appear here.</p>
+                      <p className="text-slate-400 text-xs mt-1">Disbursements and replenishments will appear here.</p>
                     </div>
                   ) : (
                     <div className="overflow-x-auto">

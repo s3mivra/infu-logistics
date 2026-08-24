@@ -261,7 +261,7 @@ export default function HistoryTab({ ctx }) {
                 </button>
               </div>
               {clockEntries.length === 0 ? (
-                <p className="text-fg/20 text-sm p-6 text-center font-bold">Click Load to view staff clock-in/out records.</p>
+                <p className="text-slate-400 text-sm p-6 text-center font-bold">Click Load to view staff clock-in/out records.</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[480px]">

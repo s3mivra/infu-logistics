@@ -106,6 +106,15 @@ export default function CustomerMenu() {
   const [categories, setCategories] = useState([]); // <-- THE FIX: Add this state
   const [combos, setCombos] = useState([]); // active combos / promos
   const [cart, setCart] = useState([]);
+  // Generated once per submit attempt, not regenerated on every confirmOrder()
+  // call - it used to mint a fresh key from Date.now() on every retry, which
+  // defeats the server's idempotency check (a network drop after the order
+  // actually committed, then tapping Confirm again, could create a second
+  // real order). Reused across retries of the SAME cart; cleared on success
+  // or whenever the cart itself changes, so an edited cart still gets a
+  // genuinely new key.
+  const orderIdemKeyRef = useRef(null);
+  useEffect(() => { orderIdemKeyRef.current = null; }, [cart]);
   const [customerName, setCustomerName] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -496,13 +505,13 @@ export default function CustomerMenu() {
     if (isSubmitting) return;
     setIsSubmitting(true);
 
-    const idempotencyKey = `${sessionToken}-${Date.now()}`;
+    if (!orderIdemKeyRef.current) orderIdemKeyRef.current = `${sessionToken}-${Date.now()}`;
     try {
       const res = await fetch(`${API_URL}/api/orders`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'idempotency-key': idempotencyKey
+          'idempotency-key': orderIdemKeyRef.current
         },
         body: JSON.stringify({
           items: cart,
@@ -518,6 +527,7 @@ export default function CustomerMenu() {
       const data = await res.json();
 
       if (data.success) {
+        orderIdemKeyRef.current = null;
         setCart([]);
         clearDraft(`qr:${sessionToken}`);   // it's a real order now, not a draft
         setSuccessMessage(true);
@@ -600,7 +610,7 @@ export default function CustomerMenu() {
           <h2 className="text-3xl font-black text-fg mb-3 uppercase tracking-widest">Thank You!</h2>
           <p className="text-fg/50 font-medium mb-8">We hope you enjoy your order. Come back soon!</p>
           <div className="border-t border-white/5 pt-6">
-            <p className="text-fg/20 text-xs uppercase font-bold tracking-widest">You may now close this page.</p>
+            <p className="text-slate-400 text-xs uppercase font-bold tracking-widest">You may now close this page.</p>
           </div>
         </div>
       </div>
@@ -711,7 +721,7 @@ export default function CustomerMenu() {
           >
             Start Order
           </button>
-          <p className="text-fg/20 text-xs mt-5 font-medium">Scan QR at your table to order</p>
+          <p className="text-slate-400 text-xs mt-5 font-medium">Scan QR at your table to order</p>
         </div>
       </div>
     );

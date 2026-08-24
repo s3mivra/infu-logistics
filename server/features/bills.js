@@ -135,20 +135,37 @@ export default function registerBills(ctx) {
           { accountCode: '220000', accountName: 'Accounts Payable', debit: 0, credit: bill.amount },
         ];
         assertBalanced(lines, reference);
-        await JournalEntry.create({
-          date: new Date(), reference,
-          description: `Bill approved: ${bill.description} (${bill.billNumber})`,
-          lines, totalDebit: bill.amount, totalCredit: bill.amount,
-          supplierId: String(bill.supplierId), supplierName: bill.supplierName,
-        });
         bill.journalEntryRef = reference;
+        bill.status = 'Approved';
+        bill.approvedBy = req.user?.name || '';
+        bill.approvedAt = new Date();
+        // The journal entry and the status flip previously posted as two
+        // unguarded writes - a crash between them left a posted JE with the
+        // bill still Pending, or vice versa.
+        const session = await mongoose.startSession();
+        try {
+          session.startTransaction();
+          await JournalEntry.create([{
+            date: new Date(), reference,
+            description: `Bill approved: ${bill.description} (${bill.billNumber})`,
+            lines, totalDebit: bill.amount, totalCredit: bill.amount,
+            supplierId: String(bill.supplierId), supplierName: bill.supplierName,
+          }], { session });
+          await bill.save({ session });
+          await session.commitTransaction();
+        } catch (err) {
+          await session.abortTransaction().catch(() => {});
+          throw err;
+        } finally {
+          session.endSession();
+        }
         emitToMgr('erpUpdated');
+      } else {
+        bill.status = 'Approved';
+        bill.approvedBy = req.user?.name || '';
+        bill.approvedAt = new Date();
+        await bill.save();
       }
-
-      bill.status = 'Approved';
-      bill.approvedBy = req.user?.name || '';
-      bill.approvedAt = new Date();
-      await bill.save();
 
       await logAudit(req, { action: 'approve', entity: 'Bill', entityId: bill._id, after: { billNumber: bill.billNumber, approvedBy: bill.approvedBy } });
       res.json({ success: true, bill });
@@ -222,17 +239,30 @@ export default function registerBills(ctx) {
         { accountCode: srcCode, accountName: srcName, debit: 0, credit: bill.amount },
       ];
       assertBalanced(lines, reference);
-      await JournalEntry.create({
-        date: new Date(), reference,
-        description: `Payment for bill ${bill.billNumber} (${bill.description || bill.poNumber || bill.supplierName})`,
-        lines, totalDebit: bill.amount, totalCredit: bill.amount,
-        supplierId: String(bill.supplierId), supplierName: bill.supplierName,
-      });
 
       bill.status = 'Paid';
       bill.paidAt = new Date();
       bill.journalEntryRef = reference;
-      await bill.save();
+      // Same reasoning as approve: the payment JE and the status flip must land
+      // together or not at all - a crash between them previously could post a
+      // cash-out JE against a bill that still read "Approved".
+      const session = await mongoose.startSession();
+      try {
+        session.startTransaction();
+        await JournalEntry.create([{
+          date: new Date(), reference,
+          description: `Payment for bill ${bill.billNumber} (${bill.description || bill.poNumber || bill.supplierName})`,
+          lines, totalDebit: bill.amount, totalCredit: bill.amount,
+          supplierId: String(bill.supplierId), supplierName: bill.supplierName,
+        }], { session });
+        await bill.save({ session });
+        await session.commitTransaction();
+      } catch (err) {
+        await session.abortTransaction().catch(() => {});
+        throw err;
+      } finally {
+        session.endSession();
+      }
 
       await AuditLog.create({
         userId: req.user?.name || 'System', action: 'BILL_PAID', targetReference: bill.billNumber,

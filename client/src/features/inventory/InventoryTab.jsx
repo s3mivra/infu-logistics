@@ -90,6 +90,11 @@ export default function InventoryTab({ ctx }) {
   // Which row's action menu is open (by item._id), null = all closed
   const [openActionMenu, setOpenActionMenu] = useState(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
+  const [lowStockCollapsed, setLowStockCollapsed] = useState(false);
+  const [expiryWatchCollapsed, setExpiryWatchCollapsed] = useState(false);
+  // #10: same itemName can now live at more than one location (separate docs) -
+  // which item-name groups are expanded to show their per-location breakdown.
+  const [expandedLocationGroups, setExpandedLocationGroups] = useState({});
   useEffect(() => {
     if (!openActionMenu) return;
     const close = () => setOpenActionMenu(null);
@@ -120,6 +125,221 @@ export default function InventoryTab({ ctx }) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inventory]);
+
+  // Renders one Live Stock row (+ its FEFO batch expansion). Reused both as the
+  // "primary" row for an item name and, when `isSub` is set, for its sibling
+  // location-variants nested underneath (#10) - same item name, separate docs.
+  const renderInventoryRow = (item, { isSub = false } = {}) => {
+    const effThreshold = item.effectiveThreshold != null ? item.effectiveThreshold : (item.lowStockThreshold || 0);
+    const isLow = effThreshold > 0 && item.stockQty <= effThreshold;
+    // Expiry classification
+    let expBadge = null;
+    let rowExpiredTint = '';
+    if (item.expiryDate) {
+      const exp = new Date(item.expiryDate);
+      const today = new Date(); today.setHours(0,0,0,0);
+      const diffDays = Math.ceil((exp - today) / 86400000);
+      const warn = item.expiryWarnDays || 7;
+      if (diffDays < 0) {
+        expBadge = { text: `EXPIRED ${Math.abs(diffDays)}d`, cls: 'bg-red-500 text-white animate-pulse' };
+        rowExpiredTint = 'bg-red-900/15';
+      } else if (diffDays === 0) {
+        expBadge = { text: 'TODAY', cls: 'bg-red-500 text-white animate-pulse' };
+        rowExpiredTint = 'bg-red-900/10';
+      } else if (diffDays <= warn) {
+        expBadge = { text: `${diffDays}d`, cls: 'bg-yellow-500 text-black' };
+      } else if (diffDays <= 30) {
+        expBadge = { text: `${diffDays}d`, cls: 'bg-orange-400/30 text-orange-300 border border-orange-400/40' };
+      } else {
+        expBadge = { text: exp.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), cls: 'bg-white/10 text-gray-300' };
+      }
+    }
+    // Sibling location-variants of this item name (separate docs) - only
+    // computed for primary rows, so a sub-row never shows its own toggle.
+    const siblings = !isSub ? inventory.filter(i => i._id !== item._id && i.itemName === item.itemName) : [];
+    return (
+    <React.Fragment key={item._id}>
+    {/* data-notif-id is the jump target for the notification
+        bell - clicking a low-stock/expiry alert scrolls here. */}
+    <tr data-notif-id={item._id} className={`border-b border-white/30 hover:bg-page-bg/30 transition ${isSub ? 'bg-page-bg/20' : ''} ${rowExpiredTint || (isLow ? 'bg-red-900/10' : '')}`}>
+      <td className={`py-3 font-bold text-fg ${isSub ? 'pl-6' : ''}`}>
+        {isSub ? <span className="text-fg/30 mr-1">↳</span> : null}
+        {item.itemName}
+        {isLow && <span className="ml-2 text-[9px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase animate-pulse">LOW</span>}
+        {!itemDisplay(item).isPacked && (
+          <span title="No pack size in the name - add e.g. 250G / 1L / 500ML so cost shows per package" className="ml-2 text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1.5 py-0.5 rounded uppercase">SET SIZE</span>
+        )}
+      </td>
+      <td className="py-3 text-fg/70 text-xs font-mono">
+        <div className="flex items-center gap-1.5">
+          <span>{item.stockLocation ? (stockLocations.find(l => l.name === item.stockLocation)?.shortCode || item.stockLocation) : '—'}</span>
+          {siblings.length > 0 && (
+            <button onClick={() => setExpandedLocationGroups(s => ({ ...s, [item.itemName]: !s[item.itemName] }))}
+              title={`${siblings.length + 1} locations`}
+              className="text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide bg-white/10 text-white hover:bg-white/20 transition flex items-center gap-0.5">
+              {expandedLocationGroups[item.itemName] ? <ChevronUp size={9}/> : <ChevronDown size={9}/>} {siblings.length + 1} locations
+            </button>
+          )}
+        </div>
+      </td>
+      {(() => { const d = itemDisplay(item); return (<>
+      <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-fg'}`}>
+        {d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}
+        {d.isPacked && (
+          <div className="text-[10px] font-normal text-white normal-case">
+            {(item.stockQty || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} {item.unit} exact
+          </div>
+        )}
+      </td>
+      <td className="py-3 text-right text-fg text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(effThreshold / (d.packBase || 1)).toLocaleString(undefined, { maximumFractionDigits: 3 })}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
+      <td className="py-3 text-fg pl-2 font-bold">{d.isPacked ? 'pcs' : d.unit}</td>
+      <td className="py-3 text-right text-fg font-bold font-mono text-xs tabular-nums"><>{peso(d.packCost)}<span className="text-fg/60">/{d.packLabel}</span></></td>
+      <td className="py-3 text-right text-fg font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
+      </>); })()}
+      <td className="py-3 text-center">
+        {expBadge ? (
+          <div className="inline-flex items-center gap-1.5">
+            <span title={item.expiryDate ? new Date(item.expiryDate).toLocaleDateString() : ''} className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide ${expBadge.cls}`}>{expBadge.text}</span>
+            {(item.expiryBatches?.length || 0) > 1 && (
+              <button onClick={() => setExpandedBatchRows(s => ({ ...s, [item._id]: !s[item._id] }))}
+                title={`${item.expiryBatches.length} batches`}
+                className="text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide bg-white/10 text-white hover:bg-white/20 transition flex items-center gap-0.5">
+                {expandedBatchRows[item._id] ? <ChevronUp size={10}/> : <ChevronDown size={10}/>} {item.expiryBatches.length}
+              </button>
+            )}
+          </div>
+        ) : <span className="text-white text-xs">-</span>}
+      </td>
+      <td className="py-3">
+        {/* Single ⋮ hamburger button → dropdown for all screen sizes */}
+        <div className="flex justify-center">
+          <div className="relative">
+            <button
+              onClick={e => {
+                e.stopPropagation();
+                if (openActionMenu === item._id) { setOpenActionMenu(null); return; }
+                const rect = e.currentTarget.getBoundingClientRect();
+                setMenuPosition({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                setOpenActionMenu(item._id);
+              }}
+              className="p-2 rounded-lg bg-white/5 hover:bg-white/15 text-fg/60 hover:text-fg transition min-h-[36px] min-w-[36px] flex items-center justify-center"
+            >
+              <MoreVertical size={16} />
+            </button>
+            {openActionMenu === item._id && (
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{ top: menuPosition.top, right: menuPosition.right }}
+                className="fixed z-[9999] bg-sidebar-bg border border-white/15 rounded-xl shadow-2xl min-w-[150px] py-1 animate-scale-in origin-top-right"
+              >
+                <button onClick={() => { fetchStockHistory(item); setOpenActionMenu(null); }} disabled={historyLoading} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-accent transition disabled:opacity-50 disabled:cursor-wait">
+                  {historyLoading ? 'Loading…' : 'History'}
+                </button>
+                <button onClick={() => { openEditInventory(item); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-blue-400 transition">
+                  Edit
+                </button>
+                <button onClick={() => {
+                  const isExpired = expBadge && (expBadge.text.startsWith('EXPIRED') || expBadge.text === 'TODAY');
+                  setSpoilageModal({ item });
+                  setSpoilageForm({ qty: isExpired ? itemDisplay(item).packQty.toString() : '', reason: isExpired ? 'Spoilage' : '', note: isExpired ? `Auto-flagged expired (${new Date(item.expiryDate).toLocaleDateString()})` : '' });
+                  setOpenActionMenu(null);
+                }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-orange-400 transition">
+                  Waste
+                </button>
+                <div className="border-t border-white/8 mx-2 my-1" />
+                <button onClick={() => { deleteInventory(item._id); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-red-400/80 hover:bg-red-500/10 hover:text-red-400 transition">
+                  Delete
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </td>
+    </tr>
+    {/* Expanded batches sub-row */}
+    {expandedBatchRows[item._id] && (item.expiryBatches?.length || 0) > 0 && (
+      <tr className="bg-white/5">
+        <td colSpan={9} className="px-6 py-3">
+          <p className="text-[10px] uppercase tracking-widest font-black text-slate-300 mb-2">Batches (FEFO - oldest used first)</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                {/* Solid slate, not an fg/NN opacity token - against this row's
+                    saturated brand-green fill, translucent text blends INTO the
+                    green (it's literally rendering pale-green-tinted-white) and
+                    stays low-contrast no matter how high the opacity goes. A
+                    solid, fully-opaque color sits on top of the green instead. */}
+                <tr className="text-slate-300 text-[10px] uppercase tracking-widest">
+                  <th className="text-left pb-1.5">#</th>
+                  <th className="text-right pb-1.5">Qty</th>
+                  <th className="text-left pb-1.5 pl-3">Expiry</th>
+                  <th className="text-left pb-1.5 pl-3">Received</th>
+                  <th className="text-right pb-1.5 pl-3">Unit Cost</th>
+                  <th className="text-left pb-1.5 pl-3">Ref</th>
+                  <th className="text-left pb-1.5 pl-3">Batch #</th>
+                  <th className="text-right pb-1.5">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...item.expiryBatches]
+                  .map((b, originalIdx) => ({ ...b, _originalIdx: originalIdx }))
+                  .sort((a, b) => (a.expiryDate ? new Date(a.expiryDate) : Infinity) - (b.expiryDate ? new Date(b.expiryDate) : Infinity))
+                  .map((b, displayIdx) => {
+                    const bPackBase = packInfo(item).packBase || 1;
+                    const dispQty = (b.qty || 0) / bPackBase;
+                    const bUnit = itemDisplay(item).isPacked ? 'pcs' : itemDisplay(item).unit;
+                    const exp = b.expiryDate ? new Date(b.expiryDate) : null;
+                    const today = new Date(); today.setHours(0,0,0,0);
+                    const diffDays = exp ? Math.ceil((exp - today) / 86400000) : null;
+                    let badge = '';
+                    if (diffDays !== null) {
+                      if (diffDays < 0) badge = 'text-red-400 font-black';
+                      else if (diffDays === 0) badge = 'text-red-400 font-black';
+                      else if (diffDays <= (item.expiryWarnDays || 7)) badge = 'text-yellow-300 font-bold';
+                      else badge = 'text-slate-200';
+                    }
+                    const isOldest = displayIdx === 0;
+                    return (
+                      <tr key={b._originalIdx} className="border-t border-white/5">
+                        <td className="py-1.5 text-slate-200 font-bold">
+                          {isOldest ? <span className="text-[9px] bg-white text-black px-1.5 py-0.5 rounded font-black uppercase tracking-wider shadow-sm">NEXT</span> : `#${displayIdx + 1}`}
+                        </td>
+                        <td className="py-1.5 text-right text-white font-bold tabular-nums">{dispQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {bUnit}</td>
+                        <td className={`py-1.5 pl-3 tabular-nums ${badge}`}>
+                          {exp ? exp.toLocaleDateString() : '-'}
+                          {diffDays !== null && <span className="ml-1.5 text-[10px] text-slate-300">({diffDays < 0 ? `${Math.abs(diffDays)}d ago` : diffDays === 0 ? 'today' : `in ${diffDays}d`})</span>}
+                        </td>
+                        <td className="py-1.5 pl-3 text-slate-200 text-[10px] tabular-nums">{b.receivedAt ? new Date(b.receivedAt).toLocaleDateString() : '-'}</td>
+                        <td className="py-1.5 pl-3 text-right text-white text-[10px] tabular-nums">{b.unitCost ? peso(b.unitCost * bPackBase) : '-'}<span className="text-slate-300">/{bUnit}</span></td>
+                        <td className="py-1.5 pl-3 text-slate-200 text-[10px]">{b.reference || '-'}</td>
+                        <td className="py-1.5 pl-3 text-slate-200 text-[10px] font-mono">{b.batchNumber || '-'}</td>
+                        <td className="py-1.5 text-right">
+                          <button onClick={async () => {
+                            if (!(await ui.confirm(`Remove this batch (${dispQty} ${bUnit}, expires ${exp ? exp.toLocaleDateString() : 'n/a'})? This will NOT change stockQty - only the batch record.`))) return;
+                            await apiFetch(`/api/inventory/${item._id}/batches/${b._originalIdx}`, { method: 'DELETE' });
+                            fetchERPData();
+                          }} className="text-red-300 hover:text-red-200 hover:bg-red-500/20 px-2 py-0.5 rounded transition text-[10px] font-black uppercase tracking-wider">
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                }
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[10px] text-slate-300 mt-2">
+            Item unit cost <span className="text-white font-bold tabular-nums">{peso((item.unitCost || 0) * (packInfo(item).packBase || 1))}/{itemDisplay(item).isPacked ? 'pcs' : itemDisplay(item).unit}</span> is the weighted average across all batches (updated on each restock).
+          </p>
+        </td>
+      </tr>
+    )}
+    {/* Sibling location-variants (#10), nested one level deep */}
+    {!isSub && expandedLocationGroups[item.itemName] && siblings.map(sib => renderInventoryRow(sib, { isSub: true }))}
+    </React.Fragment>
+    );
+  };
 
   return (
         <div className="flex flex-col gap-6">
@@ -214,6 +434,8 @@ export default function InventoryTab({ ctx }) {
                 apiFetch={apiFetch}
                 inventory={inventory}
                 peso={peso}
+                stockLocations={stockLocations}
+                stockCategories={stockCategories}
               />
             )}
 
@@ -288,6 +510,7 @@ export default function InventoryTab({ ctx }) {
                   <thead>
                     <tr className="text-fg border-b border-white/20">
                       <th className="pb-3">Item Name</th>
+                      <th className="pb-3">Location</th>
                       <th className="pb-3 text-right">Live Qty</th>
                       <th className="pb-3 text-right">Threshold</th>
                       <th className="pb-3">Unit</th>
@@ -300,199 +523,26 @@ export default function InventoryTab({ ctx }) {
                   <tbody>
                     {currentInventory.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="py-14 text-center">
+                        <td colSpan={9} className="py-14 text-center">
                           <Package size={26} className="mx-auto mb-3 text-brand/50" />
                           <p className="text-fg font-black uppercase tracking-widest text-xs mb-1">No stock items yet</p>
                           <p className="text-fg/70 text-xs">Receive your first delivery with the Procurement form to start tracking inventory.</p>
                         </td>
                       </tr>
                     )}
-                    {currentInventory.map(item => {
-                      const effThreshold = item.effectiveThreshold != null ? item.effectiveThreshold : (item.lowStockThreshold || 0);
-                      const isLow = effThreshold > 0 && item.stockQty <= effThreshold;
-                      // Expiry classification
-                      let expBadge = null;
-                      let rowExpiredTint = '';
-                      if (item.expiryDate) {
-                        const exp = new Date(item.expiryDate);
-                        const today = new Date(); today.setHours(0,0,0,0);
-                        const diffDays = Math.ceil((exp - today) / 86400000);
-                        const warn = item.expiryWarnDays || 7;
-                        if (diffDays < 0) {
-                          expBadge = { text: `EXPIRED ${Math.abs(diffDays)}d`, cls: 'bg-red-500 text-white animate-pulse' };
-                          rowExpiredTint = 'bg-red-900/15';
-                        } else if (diffDays === 0) {
-                          expBadge = { text: 'TODAY', cls: 'bg-red-500 text-white animate-pulse' };
-                          rowExpiredTint = 'bg-red-900/10';
-                        } else if (diffDays <= warn) {
-                          expBadge = { text: `${diffDays}d`, cls: 'bg-yellow-500 text-black' };
-                        } else if (diffDays <= 30) {
-                          expBadge = { text: `${diffDays}d`, cls: 'bg-orange-400/30 text-orange-300 border border-orange-400/40' };
-                        } else {
-                          expBadge = { text: exp.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), cls: 'bg-white/10 text-gray-300' };
-                        }
-                      }
-                      return (
-                      <React.Fragment key={item._id}>
-                      {/* data-notif-id is the jump target for the notification
-                          bell - clicking a low-stock/expiry alert scrolls here. */}
-                      <tr data-notif-id={item._id} className={`border-b border-white/30 hover:bg-page-bg/30 transition ${rowExpiredTint || (isLow ? 'bg-red-900/10' : '')}`}>
-                        <td className="py-3 font-bold text-fg">
-                          {item.itemName}
-                          {isLow && <span className="ml-2 text-[9px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase animate-pulse">LOW</span>}
-                          {!itemDisplay(item).isPacked && (
-                            <span title="No pack size in the name - add e.g. 250G / 1L / 500ML so cost shows per package" className="ml-2 text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1.5 py-0.5 rounded uppercase">SET SIZE</span>
-                          )}
-                        </td>
-                        {(() => { const d = itemDisplay(item); return (<>
-                        <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-fg'}`}>
-                          {d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}
-                          {d.isPacked && (
-                            <div className="text-[10px] font-normal text-white normal-case">
-                              {(item.stockQty || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} {item.unit} exact
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-3 text-right text-fg text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(effThreshold / (d.packBase || 1)).toLocaleString(undefined, { maximumFractionDigits: 3 })}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
-                        <td className="py-3 text-fg pl-2 font-bold">{d.isPacked ? 'pcs' : d.unit}</td>
-                        <td className="py-3 text-right text-fg font-bold font-mono text-xs tabular-nums"><>{peso(d.packCost)}<span className="text-fg/60">/{d.packLabel}</span></></td>
-                        <td className="py-3 text-right text-fg font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
-                        </>); })()}
-                        <td className="py-3 text-center">
-                          {expBadge ? (
-                            <div className="inline-flex items-center gap-1.5">
-                              <span title={item.expiryDate ? new Date(item.expiryDate).toLocaleDateString() : ''} className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide ${expBadge.cls}`}>{expBadge.text}</span>
-                              {(item.expiryBatches?.length || 0) > 1 && (
-                                <button onClick={() => setExpandedBatchRows(s => ({ ...s, [item._id]: !s[item._id] }))}
-                                  title={`${item.expiryBatches.length} batches`}
-                                  className="text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide bg-white/10 text-white hover:bg-white/20 transition flex items-center gap-0.5">
-                                  {expandedBatchRows[item._id] ? <ChevronUp size={10}/> : <ChevronDown size={10}/>} {item.expiryBatches.length}
-                                </button>
-                              )}
-                            </div>
-                          ) : <span className="text-white text-xs">-</span>}
-                        </td>
-                        <td className="py-3">
-                          {/* Single ⋮ hamburger button → dropdown for all screen sizes */}
-                          <div className="flex justify-center">
-                            <div className="relative">
-                              <button
-                                onClick={e => {
-                                  e.stopPropagation();
-                                  if (openActionMenu === item._id) { setOpenActionMenu(null); return; }
-                                  const rect = e.currentTarget.getBoundingClientRect();
-                                  setMenuPosition({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
-                                  setOpenActionMenu(item._id);
-                                }}
-                                className="p-2 rounded-lg bg-white/5 hover:bg-white/15 text-fg/60 hover:text-fg transition min-h-[36px] min-w-[36px] flex items-center justify-center"
-                              >
-                                <MoreVertical size={16} />
-                              </button>
-                              {openActionMenu === item._id && (
-                                <div
-                                  onClick={e => e.stopPropagation()}
-                                  style={{ top: menuPosition.top, right: menuPosition.right }}
-                                  className="fixed z-[9999] bg-sidebar-bg border border-white/15 rounded-xl shadow-2xl min-w-[150px] py-1 animate-scale-in origin-top-right"
-                                >
-                                  <button onClick={() => { fetchStockHistory(item); setOpenActionMenu(null); }} disabled={historyLoading} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-accent transition disabled:opacity-50 disabled:cursor-wait">
-                                    {historyLoading ? 'Loading…' : 'History'}
-                                  </button>
-                                  <button onClick={() => { openEditInventory(item); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-blue-400 transition">
-                                    Edit
-                                  </button>
-                                  <button onClick={() => {
-                                    const isExpired = expBadge && (expBadge.text.startsWith('EXPIRED') || expBadge.text === 'TODAY');
-                                    setSpoilageModal({ item });
-                                    setSpoilageForm({ qty: isExpired ? itemDisplay(item).packQty.toString() : '', reason: isExpired ? 'Spoilage' : '', note: isExpired ? `Auto-flagged expired (${new Date(item.expiryDate).toLocaleDateString()})` : '' });
-                                    setOpenActionMenu(null);
-                                  }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-orange-400 transition">
-                                    Waste
-                                  </button>
-                                  <div className="border-t border-white/8 mx-2 my-1" />
-                                  <button onClick={() => { deleteInventory(item._id); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-red-400/80 hover:bg-red-500/10 hover:text-red-400 transition">
-                                    Delete
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                      {/* Expanded batches sub-row */}
-                      {expandedBatchRows[item._id] && (item.expiryBatches?.length || 0) > 0 && (
-                        <tr className="bg-white/5">
-                          <td colSpan={8} className="px-6 py-3">
-                            <p className="text-[10px] uppercase tracking-widest font-black text-fg/40 mb-2">Batches (FEFO - oldest used first)</p>
-                            <div className="overflow-x-auto">
-                              <table className="w-full text-xs">
-                                <thead>
-                                  <tr className="text-fg/30 text-[10px] uppercase tracking-widest">
-                                    <th className="text-left pb-1.5">#</th>
-                                    <th className="text-right pb-1.5">Qty</th>
-                                    <th className="text-left pb-1.5 pl-3">Expiry</th>
-                                    <th className="text-left pb-1.5 pl-3">Received</th>
-                                    <th className="text-right pb-1.5 pl-3">Unit Cost</th>
-                                    <th className="text-left pb-1.5 pl-3">Ref</th>
-                                    <th className="text-right pb-1.5">Action</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {[...item.expiryBatches]
-                                    .map((b, originalIdx) => ({ ...b, _originalIdx: originalIdx }))
-                                    .sort((a, b) => (a.expiryDate ? new Date(a.expiryDate) : Infinity) - (b.expiryDate ? new Date(b.expiryDate) : Infinity))
-                                    .map((b, displayIdx) => {
-                                      const bPackBase = packInfo(item).packBase || 1;
-                                      const dispQty = (b.qty || 0) / bPackBase;
-                                      const bUnit = itemDisplay(item).isPacked ? 'pcs' : itemDisplay(item).unit;
-                                      const exp = b.expiryDate ? new Date(b.expiryDate) : null;
-                                      const today = new Date(); today.setHours(0,0,0,0);
-                                      const diffDays = exp ? Math.ceil((exp - today) / 86400000) : null;
-                                      let badge = '';
-                                      if (diffDays !== null) {
-                                        if (diffDays < 0) badge = 'text-red-400 font-black';
-                                        else if (diffDays === 0) badge = 'text-red-400 font-black';
-                                        else if (diffDays <= (item.expiryWarnDays || 7)) badge = 'text-yellow-300 font-bold';
-                                        else badge = 'text-fg/70';
-                                      }
-                                      const isOldest = displayIdx === 0;
-                                      return (
-                                        <tr key={b._originalIdx} className="border-t border-white/5">
-                                          <td className="py-1.5 text-fg/40 font-bold">
-                                            {isOldest ? <span className="text-[9px] bg-brand/30 text-brand px-1.5 py-0.5 rounded font-black uppercase tracking-wider">NEXT</span> : `#${displayIdx + 1}`}
-                                          </td>
-                                          <td className="py-1.5 text-right text-fg font-bold tabular-nums">{dispQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {bUnit}</td>
-                                          <td className={`py-1.5 pl-3 tabular-nums ${badge}`}>
-                                            {exp ? exp.toLocaleDateString() : '-'}
-                                            {diffDays !== null && <span className="ml-1.5 text-[10px] opacity-70">({diffDays < 0 ? `${Math.abs(diffDays)}d ago` : diffDays === 0 ? 'today' : `in ${diffDays}d`})</span>}
-                                          </td>
-                                          <td className="py-1.5 pl-3 text-fg/40 text-[10px] tabular-nums">{b.receivedAt ? new Date(b.receivedAt).toLocaleDateString() : '-'}</td>
-                                          <td className="py-1.5 pl-3 text-right text-fg/60 text-[10px] tabular-nums">{b.unitCost ? peso(b.unitCost * bPackBase) : '-'}<span className="text-fg/30">/{bUnit}</span></td>
-                                          <td className="py-1.5 pl-3 text-fg/40 text-[10px]">{b.reference || '-'}</td>
-                                          <td className="py-1.5 text-right">
-                                            <button onClick={async () => {
-                                              if (!(await ui.confirm(`Remove this batch (${dispQty} ${bUnit}, expires ${exp ? exp.toLocaleDateString() : 'n/a'})? This will NOT change stockQty - only the batch record.`))) return;
-                                              await apiFetch(`/api/inventory/${item._id}/batches/${b._originalIdx}`, { method: 'DELETE' });
-                                              fetchERPData();
-                                            }} className="text-red-400/60 hover:text-red-400 hover:bg-red-500/10 px-2 py-0.5 rounded transition text-[10px] font-black uppercase tracking-wider">
-                                              Remove
-                                            </button>
-                                          </td>
-                                        </tr>
-                                      );
-                                    })
-                                  }
-                                </tbody>
-                              </table>
-                            </div>
-                            <p className="text-[10px] text-fg/40 mt-2">
-                              Item unit cost <span className="text-fg/70 font-bold tabular-nums">{peso((item.unitCost || 0) * (packInfo(item).packBase || 1))}/{itemDisplay(item).isPacked ? 'pcs' : itemDisplay(item).unit}</span> is the weighted average across all batches (updated on each restock).
-                            </p>
-                          </td>
-                        </tr>
-                      )}
-                      </React.Fragment>
-                      );
-                    })}
+                    {(() => {
+                      // A same-named item can now exist at multiple locations (separate
+                      // docs). Render each distinct name only once as a "primary" row on
+                      // this page - its location siblings (pulled from the full inventory
+                      // list, not just this page) render nested underneath when expanded,
+                      // so the same doc never appears twice if two siblings land on one page.
+                      const seenNames = new Set();
+                      return currentInventory.map(item => {
+                        if (seenNames.has(item.itemName)) return null;
+                        seenNames.add(item.itemName);
+                        return renderInventoryRow(item);
+                      });
+                    })()}
                   </tbody>
                 </table>
                 {/* --- INVENTORY PAGINATION CONTROLS --- */}
@@ -799,30 +849,43 @@ export default function InventoryTab({ ctx }) {
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
                 {lowItems.length > 0 && (
                   <div className="bg-red-900/20 border border-red-500/30 rounded-xl p-4">
-                    <h4 className="text-red-400 font-black uppercase tracking-wider text-xs mb-2 flex items-center gap-1.5"><AlertTriangle size={13} /> Low Stock Alerts</h4>
-                    <div className="space-y-1">
-                      {lowItems.map(i => {
-                        const d = itemDisplay(i);
-                        const mult = effectiveDisplay(i).mult;
-                        const eff = i.effectiveThreshold != null ? i.effectiveThreshold : (i.lowStockThreshold || 0);
-                        const minDisp = (eff / mult).toLocaleString(undefined, { maximumFractionDigits: 3 });
-                        return (
-                          <div key={i._id} className="flex justify-between text-xs">
-                            <span className="text-red-300 font-bold">{i.itemName}</span>
-                            <span className="text-red-400 font-mono tabular-nums">{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? 'pcs' : d.unit} (min: {minDisp})</span>
-                          </div>
-                        );
-                      })}
-                    </div>
+                    <button type="button" onClick={() => setLowStockCollapsed(c => !c)} className="w-full flex items-center gap-1.5 text-red-400 font-black uppercase tracking-wider text-xs mb-2">
+                      <AlertTriangle size={13} /> Low Stock Alerts
+                      <span className="text-[9px] bg-red-500/30 text-red-200 px-1.5 py-0.5 rounded">{lowItems.length}</span>
+                      <span className="ml-auto">{lowStockCollapsed ? <ChevronDown size={13}/> : <ChevronUp size={13}/>}</span>
+                    </button>
+                    {!lowStockCollapsed && (
+                      <div className="space-y-1 max-h-56 overflow-y-auto custom-scrollbar">
+                        {lowItems.map(i => {
+                          const d = itemDisplay(i);
+                          const mult = effectiveDisplay(i).mult;
+                          const eff = i.effectiveThreshold != null ? i.effectiveThreshold : (i.lowStockThreshold || 0);
+                          // Same divisor as d.packQty above - a "packed" item (log business
+                          // type forces pcs display) must divide the threshold by packBase,
+                          // not the raw unit multiplier, or the two numbers won't line up
+                          // (e.g. "782 pcs (min: 295.191)" instead of a whole pcs count).
+                          const minDivisor = d.isPacked ? (d.packBase || 1) : mult;
+                          const minDisp = (eff / minDivisor).toLocaleString(undefined, { maximumFractionDigits: d.isPacked ? 0 : 3 });
+                          return (
+                            <div key={i._id} className="flex justify-between text-xs">
+                              <span className="text-red-300 font-bold">{i.itemName}</span>
+                              <span className="text-red-400 font-mono tabular-nums">{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? 'pcs' : d.unit} (min: {minDisp})</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
                 {watch.length > 0 && (
                   <div className="bg-orange-900/15 border border-orange-500/30 rounded-xl p-4 space-y-2">
-                    <h4 className="text-orange-300 font-black uppercase tracking-wider text-xs flex items-center gap-1.5">
+                    <button type="button" onClick={() => setExpiryWatchCollapsed(c => !c)} className="w-full text-orange-300 font-black uppercase tracking-wider text-xs flex items-center gap-1.5">
                       <Clock size={13} /> Expiry Watch
-                      <span className="ml-auto text-[9px] bg-orange-500/30 text-orange-200 px-1.5 py-0.5 rounded">{watch.length}</span>
-                    </h4>
-                    {watch.filter(i => i._days < 0).length > 0 && <p className="text-[10px] text-red-300 font-black uppercase tracking-wider">{watch.filter(i => i._days < 0).length} Expired — log spoilage</p>}
+                      <span className="text-[9px] bg-orange-500/30 text-orange-200 px-1.5 py-0.5 rounded">{watch.length}</span>
+                      <span className="ml-auto">{expiryWatchCollapsed ? <ChevronDown size={13}/> : <ChevronUp size={13}/>}</span>
+                    </button>
+                    {!expiryWatchCollapsed && watch.filter(i => i._days < 0).length > 0 && <p className="text-[10px] text-red-300 font-black uppercase tracking-wider">{watch.filter(i => i._days < 0).length} Expired — log spoilage</p>}
+                    {!expiryWatchCollapsed && (
                     <div className="space-y-1 max-h-36 overflow-y-auto custom-scrollbar">
                       {watch.map(i => {
                         const txt = i._days < 0 ? `${Math.abs(i._days)}d ago` : i._days === 0 ? 'today' : `in ${i._days}d`;
@@ -836,6 +899,7 @@ export default function InventoryTab({ ctx }) {
                         );
                       })}
                     </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -959,6 +1023,17 @@ export default function InventoryTab({ ctx }) {
                               </div>
                             );
                           })()}
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold uppercase tracking-wider text-fg/40 block mb-1">SRP <span className="text-fg/25 font-normal normal-case">(suggested retail price, optional)</span></label>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="e.g., 65.00"
+                            value={invForm.srp || ''}
+                            onChange={e => setInvForm({...invForm, srp: e.target.value})}
+                            className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/15 transition placeholder:text-fg/15"
+                          />
                         </div>
                         {(invForm.packQty && invForm.unitPerPack && invForm.costPerPack && invForm.unit) && (
                           <div className="bg-accent/8 border border-accent/15 rounded-lg px-4 py-3 space-y-1.5">
