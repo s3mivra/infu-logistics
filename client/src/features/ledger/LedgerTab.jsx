@@ -177,6 +177,143 @@ export default function LedgerTab({ ctx }) {
     finally { setBdBusy(false); }
   };
 
+  // ── Backdate Sale - bulk Excel import ────────────────────────────────────────
+  // Parses a billing-statement-style spreadsheet (one row per line item, sharing
+  // a transaction no./client/date across the rows of one sale - same shape as
+  // the printed "BILLING STATEMENT" doc these are usually exported from) and
+  // groups it into one backdated sale per transaction. Confirming loops through
+  // the SAME /api/admin/backdate-sale endpoint the manual cart above uses, one
+  // call per transaction, so every posting rule (period lock, journal entry,
+  // etc.) is identical to entering them by hand - just faster for a batch.
+  const [bdImportPreview, setBdImportPreview] = useState(null); // { groups: [...], skipped }
+  const [bdImporting, setBdImporting] = useState(false);
+  const [bdImportSettings, setBdImportSettings] = useState({ paymentMethod: 'Cash', affectInventory: false });
+
+  const bdNumify = (v) => { const n = parseFloat(String(v ?? '').replace(/[₱,\s]/g, '')); return Number.isFinite(n) ? n : 0; };
+  const bdNorm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Excel dates arrive as a JS Date (when the sheet used real date cells), a
+  // serial day-number (Excel's own epoch, 1899-12-30), or plain text.
+  const bdParseDate = (v) => {
+    if (!v) return '';
+    if (v instanceof Date) return isNaN(v) ? '' : v.toISOString().slice(0, 10);
+    if (typeof v === 'number') { const d = new Date(Math.round((v - 25569) * 86400 * 1000)); return isNaN(d) ? '' : d.toISOString().slice(0, 10); }
+    const d = new Date(String(v).trim());
+    return isNaN(d) ? '' : d.toISOString().slice(0, 10);
+  };
+
+  const downloadBackdateTemplate = async () => {
+    const XLSX = await import('xlsx');
+    const headers = ['TRANSACTION NO.', 'PAYABLE TO', 'SUBMITTED DATE', 'CODE', 'DESCRIPTION', 'QTY', 'UNIT PRICE'];
+    const sample = [
+      ['2026-08-1936', "DAR'S KITCHEN", '2026-08-25', 'P30008', 'HORCHATA POWDER 1KG', 2, 800],
+      ['', '', '', 'P30020', 'BLACK SESAME POWDER 1KG', 1, 800],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...sample]);
+    ws['!cols'] = headers.map(h => ({ wch: Math.max(14, Math.min(28, h.length + 2)) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Backdated Sales');
+    XLSX.writeFile(wb, 'backdate_sale_import_template.xlsx');
+  };
+
+  const parseBackdateExcel = async (file) => {
+    if (!file) return;
+    setBdImporting(true);
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+      let hIdx = -1;
+      for (let i = 0; i < Math.min(grid.length, 40); i++) {
+        const cells = (grid[i] || []).map(bdNorm);
+        if (cells.some(c => c.includes('description') || c === 'item') && cells.some(c => c === 'qty' || c.includes('quantity'))) { hIdx = i; break; }
+      }
+      if (hIdx === -1) { ui.alert('Could not find the header row (needs at least a Description and Qty column).'); return; }
+
+      const header = (grid[hIdx] || []).map(bdNorm);
+      const col = (aliases) => header.findIndex(c => aliases.some(a => c.includes(a)));
+      const idx = {
+        transNo: col(['transactionno', 'transno', 'invoiceno', 'transactionnumber']),
+        client:  col(['payableto', 'client', 'customer', 'invoicefor']),
+        date:    col(['submitteddate', 'date']),
+        code:    col(['code', 'itemcode']),
+        desc:    col(['description']),
+        qty:     header.findIndex(c => c === 'qty' || c.includes('quantity')),
+        price:   col(['unitprice', 'price']),
+      };
+      if (idx.desc < 0) idx.desc = header.findIndex(c => c === 'item' || c === 'product');
+
+      // Transaction/client/date usually only repeat on the FIRST row of a sale
+      // (exactly how the billing statement template lays them out) - carry the
+      // last-seen value forward onto the item-only rows that follow.
+      const byTrans = new Map();
+      let skipped = 0;
+      let curTrans = '', curClient = '', curDate = '';
+      for (let i = hIdx + 1; i < grid.length; i++) {
+        const row = grid[i] || [];
+        const desc = idx.desc >= 0 ? String(row[idx.desc] ?? '').trim() : '';
+        const qty = idx.qty >= 0 ? bdNumify(row[idx.qty]) : 0;
+        const rowTrans = idx.transNo >= 0 ? String(row[idx.transNo] ?? '').trim() : '';
+        const rowClient = idx.client >= 0 ? String(row[idx.client] ?? '').trim() : '';
+        const rowDate = idx.date >= 0 ? row[idx.date] : '';
+        if (rowTrans) curTrans = rowTrans;
+        if (rowClient) curClient = rowClient;
+        if (rowDate) curDate = rowDate;
+        if (!desc || qty <= 0) { if (desc || qty) skipped++; continue; }
+
+        const key = curTrans || (curClient && curDate ? `${curClient}|${curDate}` : `row-${i}`);
+        if (!byTrans.has(key)) byTrans.set(key, { transNo: curTrans, client: curClient, date: bdParseDate(curDate), items: [] });
+        byTrans.get(key).items.push({
+          code: idx.code >= 0 ? String(row[idx.code] ?? '').trim() : '',
+          name: desc, quantity: qty,
+          price: idx.price >= 0 ? bdNumify(row[idx.price]) : 0,
+        });
+      }
+
+      const groups = [...byTrans.values()].filter(g => g.items.length).map(g => {
+        const items = g.items.map(it => {
+          const match = (products || []).find(p => (it.code && p.productCode === it.code) || p.name.toLowerCase() === it.name.toLowerCase());
+          return { ...it, productId: match?._id || null, productCode: match?.productCode || it.code || null, matched: !!match };
+        });
+        return { ...g, items, total: items.reduce((s, x) => s + x.price * x.quantity, 0) };
+      });
+
+      if (groups.length === 0) { ui.alert('No sale rows found under the header.'); return; }
+      setBdImportPreview({ groups, skipped });
+    } catch {
+      ui.alert('Could not read the file. Make sure it is a valid .xlsx / .csv.');
+    } finally { setBdImporting(false); }
+  };
+
+  const confirmBdImport = async () => {
+    if (!bdImportPreview) return;
+    setBdImporting(true);
+    let ok = 0, fail = 0;
+    const errors = [];
+    for (const g of bdImportPreview.groups) {
+      const label = g.client || g.transNo || 'row';
+      if (!g.date) { fail++; errors.push(`${label}: missing/unreadable date`); continue; }
+      try {
+        const res = await apiFetch('/api/admin/backdate-sale', {
+          method: 'POST',
+          body: JSON.stringify({
+            date: g.date, customerName: g.client, paymentMethod: bdImportSettings.paymentMethod,
+            notes: g.transNo ? `Imported - ${g.transNo}` : 'Imported from Excel',
+            affectInventory: bdImportSettings.affectInventory, isComplimentary: false, discountPercent: 0,
+            items: g.items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity, productId: it.productId, productCode: it.productCode })),
+          }),
+        });
+        const d = await res.json();
+        if (d.success) ok++; else { fail++; errors.push(`${label}: ${d.error}`); }
+      } catch { fail++; errors.push(`${label}: network error`); }
+    }
+    setBdImporting(false);
+    setBdImportPreview(null);
+    fetchERPData();
+    ui.alert(`Imported ${ok} sale(s).${fail ? `\n\n${fail} failed:\n${errors.slice(0, 10).join('\n')}` : ''}`);
+  };
+
   const [backfillBusy, setBackfillBusy] = useState(false);
   const runBackfillLedger = async () => {
     if (!(await ui.confirm('Scan every backdated sale and post a journal entry for any that are missing one?'))) return;
@@ -2522,9 +2659,23 @@ export default function LedgerTab({ ctx }) {
           {/* ── BACKDATE SALES (superadmin only) ──────────────────────────── */}
           {ledgerSubTab === 'backdate' && (
             <div className="space-y-4 animate-fade-in">
-              <div>
-                <h3 className="text-xl font-black text-fg flex items-center gap-2"><Clock size={18} className="text-brand"/> Backdate Sale</h3>
-                <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-1">Ring up a historical sale like the register, then post it to a past date. Books a real, balanced journal entry.</p>
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                  <h3 className="text-xl font-black text-fg flex items-center gap-2"><Clock size={18} className="text-brand"/> Backdate Sale</h3>
+                  <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-1">Ring up a historical sale like the register, then post it to a past date. Books a real, balanced journal entry.</p>
+                </div>
+                {isSuperAdmin && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button onClick={downloadBackdateTemplate} title="Download a blank template with the expected headers" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition">
+                      <FileText size={15} /> Template
+                    </button>
+                    <label className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition cursor-pointer">
+                      <Download size={15} className="rotate-180" /> {bdImporting ? 'Reading…' : 'Import Excel'}
+                      <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={bdImporting}
+                        onChange={e => { parseBackdateExcel(e.target.files?.[0]); e.target.value = ''; }} />
+                    </label>
+                  </div>
+                )}
               </div>
               {!isSuperAdmin ? (
                 <p className="mt-2 text-[10px] uppercase tracking-widest font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5 inline-flex items-center gap-1.5">
@@ -2680,6 +2831,77 @@ export default function LedgerTab({ ctx }) {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ── BACKDATE IMPORT PREVIEW ── */}
+          {bdImportPreview && (
+            <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !bdImporting && setBdImportPreview(null)}>
+              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-3xl my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+                  <div>
+                    <h2 className="font-black text-fg text-lg">Import Backdated Sales</h2>
+                    <p className="text-fg/40 text-xs mt-0.5">
+                      {bdImportPreview.groups.length} sale(s) · {bdImportPreview.groups.reduce((s, g) => s + g.items.length, 0)} line item(s)
+                      {bdImportPreview.skipped > 0 && ` · ${bdImportPreview.skipped} row(s) skipped`}
+                    </p>
+                  </div>
+                  <button onClick={() => !bdImporting && setBdImportPreview(null)} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+                </div>
+                <div className="px-5 py-4 border-b border-white/10 grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Payment Method (applies to all)</label>
+                    <select value={bdImportSettings.paymentMethod} onChange={e => setBdImportSettings(s => ({ ...s, paymentMethod: e.target.value }))}
+                      className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
+                      <option value="Cash">Cash</option>
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="GCash">GCash</option>
+                      <option value="Maya">Maya</option>
+                      <option value="On Account">On Account (A/R)</option>
+                    </select>
+                  </div>
+                  <div className="flex items-end">
+                    <button onClick={() => setBdImportSettings(s => ({ ...s, affectInventory: !s.affectInventory }))}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border transition ${bdImportSettings.affectInventory ? 'bg-amber-500/10 border-amber-500/40' : 'bg-page-bg border-white/10'}`}>
+                      <span className="text-xs font-bold text-fg">Reduce current inventory</span>
+                      <span className={`w-9 h-5 rounded-full shrink-0 relative transition ${bdImportSettings.affectInventory ? 'bg-amber-500' : 'bg-white/15'}`}>
+                        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bdImportSettings.affectInventory ? 'left-[18px]' : 'left-0.5'}`}/>
+                      </span>
+                    </button>
+                  </div>
+                </div>
+                <div className="p-5 space-y-3 max-h-[50vh] overflow-y-auto">
+                  {bdImportPreview.groups.map((g, gi) => (
+                    <div key={gi} className="bg-white/5 border border-white/10 rounded-xl p-3">
+                      <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                        <span className="font-black text-fg text-sm">{g.client || 'Walk-in'}</span>
+                        <div className="flex items-center gap-2 text-[11px] text-fg/40 font-bold">
+                          {g.transNo && <span>{g.transNo}</span>}
+                          <span>{g.date || <span className="text-red-400">no date</span>}</span>
+                          <span className="text-brand">{peso(g.total)}</span>
+                        </div>
+                      </div>
+                      <div className="space-y-0.5">
+                        {g.items.map((it, li) => (
+                          <div key={li} className="flex items-center justify-between text-xs text-fg/60">
+                            <span className="truncate pr-2">
+                              {it.code ? `${it.code} · ` : ''}{it.name}
+                              {!it.matched && <span className="ml-1.5 text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1 py-0.5 rounded uppercase align-middle">No product match</span>}
+                            </span>
+                            <span className="whitespace-nowrap font-mono">{it.quantity} × {peso(it.price)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
+                  <button onClick={() => !bdImporting && setBdImportPreview(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
+                  <button onClick={confirmBdImport} disabled={bdImporting} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+                    {bdImporting ? 'Importing…' : `Import ${bdImportPreview.groups.length} Sale(s)`}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
