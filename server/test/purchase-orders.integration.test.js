@@ -267,6 +267,23 @@ describe('receiving posts to inventory + is repeatable until fully received', ()
     expect(je.totalDebit).toBeCloseTo(800, 2); // 10 × ₱80
   });
 
+  it('an expiryDate on the actual delivery creates a batch and updates the item\'s soonest expiry', async () => {
+    const Inventory = mongoose.model('Inventory');
+    const created = await request(app).post('/api/purchase-orders').set(auth(superToken)).send({
+      supplier: 'Milk Co', lines: [{ invId, itemName: 'Receiving Milk', unit: 'L', packSize: 1, orderedQty: 5, unitCost: 80 }],
+    });
+    const po = created.body.purchaseOrder;
+    const res = await request(app).post(`/api/purchase-orders/${po._id}/receive`).set(auth(superToken))
+      .send({ received: [{ lineId: po.lines[0]._id, receivedQty: 5, expiryDate: '2026-09-01' }] });
+    expect(res.status).toBe(200);
+
+    const inv = await Inventory.findById(invId).lean();
+    const batch = (inv.expiryBatches || []).find(b => new Date(b.expiryDate).toISOString().slice(0, 10) === '2026-09-01');
+    expect(batch).toBeTruthy();
+    expect(batch.qty).toBe(5000); // 5 packs × 1L × 1000 ml/L
+    expect(new Date(inv.expiryDate).toISOString().slice(0, 10)).toBe('2026-09-01');
+  });
+
   it('a short delivery stays Incomplete and receivable - a follow-up receive tops it up to Complete', async () => {
     const Inventory = mongoose.model('Inventory');
     const created = await request(app).post('/api/purchase-orders').set(auth(superToken)).send({

@@ -19,7 +19,7 @@ import { assertBalanced, debitAccountFor, suggestedSettleAccount } from './lib/l
 import { ACCOUNTS, EXPENSE_CATEGORIES, CODE_MAP } from './lib/chartOfAccounts.js';
 import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf } from './lib/units.js';
 import { title, code, lower, freeText, zTitle, zText, zMoneyLoose } from './lib/normalize.js';
-import { addBatch, consumeBatches, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
+import { addBatch, consumeBatches, consumeSpecificBatch, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
 import { requireStaff, evaluateClientAccess, requirePermission, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS, setCustomRolePermissions } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from './lib/vat.js';
@@ -1241,6 +1241,9 @@ const StockTransferSchema = new mongoose.Schema({
   toLocation:   { type: String, default: '' },
   qtyBase:      { type: Number, required: true },     // ALWAYS base units (g/ml/pcs)
   unit:         { type: String, default: '' },        // base unit label, for display
+  // Which expiry lot to draw from on release. null = FEFO (oldest first, the
+  // default); set = pinned to that one batch only, no FEFO spillover.
+  expiryDate:   { type: Date, default: null },
   status:       { type: String, enum: STOCK_TRANSFER_STATUSES, default: 'Requested', index: true },
   note:         { type: String, default: '' },
   requestedBy:  { type: String, default: '' },
@@ -2549,6 +2552,7 @@ const ctx = {
   effectiveDisplay,
   addBatch,
   consumeBatches,
+  consumeSpecificBatch,
   soonestExpiry,
   sortBatchesFEFO,
   batchesTotal,

@@ -37,6 +37,7 @@ export default function registerInventory(ctx) {
     effectiveDisplay,
     addBatch,
     consumeBatches,
+    consumeSpecificBatch,
     soonestExpiry,
     sortBatchesFEFO,
     batchesTotal,
@@ -550,9 +551,12 @@ app.get('/api/stock-analytics/by-location', verifyToken, requireStaff, async (re
 });
 
 // Request a transfer (staff). Validates both items exist and qty > 0.
+// Optional expiryDate pins the transfer to one specific expiry lot on the source
+// item (an ISO date matching one of its expiryBatches); omitted/null = FEFO
+// (oldest expiry first) at release time - the default and recommended choice.
 app.post('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => {
   try {
-    const { fromItemId, toItemId, qtyBase, note } = req.body || {};
+    const { fromItemId, toItemId, qtyBase, note, expiryDate } = req.body || {};
     if (!fromItemId || !toItemId) return res.status(400).json({ success: false, error: 'Source and destination items are required.' });
     if (String(fromItemId) === String(toItemId)) return res.status(400).json({ success: false, error: 'Source and destination must be different items.' });
     const qty = Number(qtyBase);
@@ -560,11 +564,21 @@ app.post('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => 
     const [from, to] = await Promise.all([Inventory.findById(fromItemId), Inventory.findById(toItemId)]);
     if (!from || !to) return res.status(404).json({ success: false, error: 'Source or destination item not found.' });
     if (qty > (from.stockQty || 0) + 1e-6) return res.status(400).json({ success: false, error: `Only ${from.stockQty} ${from.unit || ''} on hand at source.` });
+    // Early feedback only - release() re-validates against stock as of that moment,
+    // which is authoritative (this item's batches can change between request and release).
+    let pinnedExpiry = null;
+    if (expiryDate) {
+      const targetTime = new Date(expiryDate).getTime();
+      const batch = (from.expiryBatches || []).find(b => b.expiryDate && new Date(b.expiryDate).getTime() === targetTime);
+      if (!batch) return res.status(400).json({ success: false, error: 'Selected batch not found on the source item.' });
+      if (qty > (batch.qty || 0) + 1e-6) return res.status(400).json({ success: false, error: `Only ${batch.qty} ${from.unit || ''} in the selected batch.` });
+      pinnedExpiry = batch.expiryDate;
+    }
     const reference = await mkSeqRef('XFER');
     const transfer = await StockTransfer.create({
       reference, fromItemId, toItemId, itemName: from.itemName,
       fromLocation: from.stockLocation || '', toLocation: to.stockLocation || '',
-      qtyBase: qty, unit: from.unit || '', status: 'Requested',
+      qtyBase: qty, unit: from.unit || '', status: 'Requested', expiryDate: pinnedExpiry,
       note: String(note || '').trim().slice(0, 500), requestedBy: req.user?.name || '',
     });
     emitToMgr('erpUpdated');
@@ -619,6 +633,31 @@ app.post('/api/stock-transfers/:id/release', verifyToken, requireStaff, async (r
 
         from.stockQty = +(from.stockQty - t.qtyBase).toFixed(6);
         to.stockQty = +(to.stockQty + t.qtyBase).toFixed(6);
+
+        // FEFO by default, or drawn from the one batch the requester pinned.
+        // Items with no batches at all (non-perishables) are untouched here -
+        // the stockQty move above is the whole story for them, same as before.
+        if ((from.expiryBatches || []).length > 0) {
+          const r = t.expiryDate
+            ? consumeSpecificBatch(from.expiryBatches, t.expiryDate, t.qtyBase)
+            : consumeBatches(from.expiryBatches, t.qtyBase);
+          if (r.leftover > 1e-6) {
+            const msg = t.expiryDate
+              ? `Only ${r.consumed} ${from.unit || ''} left in the selected batch (exp ${new Date(t.expiryDate).toLocaleDateString()}).`
+              : `Only ${r.consumed} ${from.unit || ''} left across the source item's batches.`;
+            throw Object.assign(new Error(msg), { httpStatus: 400 });
+          }
+          from.expiryBatches = r.batches;
+          from.expiryDate = soonestExpiry(from.expiryBatches);
+          for (const c of r.consumedDetail) {
+            to.expiryBatches = addBatch(to.expiryBatches || [], {
+              qty: c.qty, expiryDate: c.expiryDate, receivedAt: new Date(),
+              reference: t.reference, unitCost: from.unitCost,
+            });
+          }
+          to.expiryDate = soonestExpiry(to.expiryBatches);
+        }
+
         await from.save({ session });
         await to.save({ session });
 
@@ -1169,6 +1208,12 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
     }
 
     const summary = { created: 0, updated: 0, increased: 0, decreased: 0, gainValue: 0, lossValue: 0, errors: [] };
+    // Tracks item keys already processed within THIS import call. A code/name
+    // appearing more than once in one file is a second expiry lot to ADD, not a
+    // corrected recount to replace the first row with - see the additive branch
+    // below. Scoped to this one request, so re-importing the same single-row
+    // sheet on a later day still does a plain stock-take replace, unaffected.
+    const seenThisImport = new Set();
 
     for (let i = 0; i < items.length; i++) {
       const row = items[i] || {};
@@ -1244,7 +1289,72 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       // Pre-generate one reference for this import row (shared by StockCard + JournalEntry)
       const impRef = await mkSeqRef('INV-IMP');
 
-      if (existing) {
+      const importKey = itemCode || itemName.toLowerCase();
+      const isRepeatBatchRow = existing && seenThisImport.has(importKey);
+      seenThisImport.add(importKey);
+
+      if (existing && isRepeatBatchRow) {
+        // Same item code/name seen again in this same file - a second expiry lot
+        // arriving alongside the first row, not a corrected recount. ADD the qty
+        // (never replace), and always record it as its own batch so it doesn't
+        // silently merge into whatever the first row already set up.
+        const unitCostForThisLot = newCostPerBase != null ? newCostPerBase : (existing.unitCost || 0);
+        const valueImpact = newBaseQty * unitCostForThisLot;
+
+        const currentValue = (existing.stockQty || 0) * (existing.unitCost || 0);
+        existing.stockQty = (existing.stockQty || 0) + newBaseQty;
+        existing.unitCost = existing.stockQty > 0 ? (currentValue + valueImpact) / existing.stockQty : unitCostForThisLot;
+        existing.displayUnit = displayUnit;
+        existing.unitMultiplier = mult;
+        if (baseUnit) existing.unit = baseUnit;
+        if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
+
+        existing.expiryBatches = addBatch(existing.expiryBatches || [], {
+          qty: newBaseQty,
+          expiryDate: expiryFromExcel ? new Date(expiryFromExcel) : null,
+          receivedAt: new Date(),
+          reference: impRef,
+          unitCost: unitCostForThisLot,
+        });
+        existing.expiryDate = soonestExpiry(existing.expiryBatches);
+        await existing.save({ session });
+
+        await StockCard.create([{
+          inventoryId: existing._id,
+          itemName: existing.itemName,
+          type: 'Stock Take Import',
+          reference: impRef,
+          qtyChange: newBaseQty,
+          balanceAfter: existing.stockQty,
+          unitCost: existing.unitCost,
+          remarks: `Bulk import: +${newBaseQty} ${baseUnit} (new batch${expiryFromExcel ? `, exp ${expiryFromExcel}` : ''})`
+        }], { session });
+
+        if (Math.abs(valueImpact) > 0.001) {
+          const lines = [
+            { accountCode: '130000', accountName: 'Inventory Asset', debit: valueImpact, credit: 0 },
+            { accountCode: '310000', accountName: "Owner's Capital", debit: 0, credit: valueImpact }
+          ];
+          assertBalanced(lines, `IMPORT-BATCH-${existing.itemName}`);
+          await JournalEntry.create([{
+            reference: impRef,
+            description: `Stock take import (new batch): ${existing.itemName} (+${newBaseQty.toFixed(2)} ${baseUnit} @ P${unitCostForThisLot.toFixed(4)})`,
+            lines, totalDebit: valueImpact, totalCredit: valueImpact
+          }], { session });
+        }
+
+        summary.updated++;
+        summary.increased++;
+        summary.gainValue += valueImpact;
+
+        if (syncProduct) {
+          await Product.findOneAndUpdate(
+            { productCode: existing.itemCode, businessType: BUSINESS_TYPE },
+            { $set: { isAvailable: existing.stockQty > 0 } },
+            { session }
+          );
+        }
+      } else if (existing) {
         const oldQty = existing.stockQty || 0;
         const diff = +(newBaseQty - oldQty).toFixed(6);
         // Gain/loss is a QUANTITY VARIANCE (physical count vs. book), so it must be

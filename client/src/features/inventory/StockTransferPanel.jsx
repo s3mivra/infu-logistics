@@ -23,10 +23,19 @@ export default function StockTransferPanel({
   const [qty, setQty] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  // '' = FEFO (oldest expiry first, the default); otherwise an ISO expiryDate
+  // pinning the transfer to that one batch on the source item.
+  const [expiryChoice, setExpiryChoice] = useState('');
 
   const fromItem = inventory.find(i => i._id === fromItemId);
+  const fromBatches = (fromItem?.expiryBatches || []).filter(b => (b.qty || 0) > 0);
   const isHubTarget = toValue.startsWith('hub:');
   const toItemId = isHubTarget ? '' : toValue;
+
+  // Switching the source item invalidates any batch pinned on the old one.
+  useEffect(() => { setExpiryChoice(''); }, [fromItemId]);
+
+  const fmtExpiry = (d) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
   // Connected Hub partners + this business's own outbound shipment history.
   // Kept local to this panel (not the giant AdminDashboard ctx) since only
@@ -69,9 +78,9 @@ export default function StockTransferPanel({
       setBusy(false);
       return;
     }
-    const ok = await requestStockTransfer({ fromItemId, toItemId, qtyBase: parseFloat(qty), note: note.trim() });
+    const ok = await requestStockTransfer({ fromItemId, toItemId, qtyBase: parseFloat(qty), note: note.trim(), expiryDate: expiryChoice || null });
     setBusy(false);
-    if (ok) { setQty(''); setNote(''); }
+    if (ok) { setQty(''); setNote(''); setExpiryChoice(''); }
   };
 
   const card = 'bg-card-bg border border-white/10 rounded-xl p-4';
@@ -119,6 +128,17 @@ export default function StockTransferPanel({
               <option value="">- Select item -</option>
               {inventory.map(i => <option key={i._id} value={i._id}>{label(i)} ({i.stockQty} {i.unit})</option>)}
             </select>
+            {fromBatches.length > 0 && (
+              <div className="mt-1.5">
+                <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">Batch / Expiry</label>
+                <select value={expiryChoice} onChange={e => setExpiryChoice(e.target.value)} className={input}>
+                  <option value="">FEFO - oldest expiry first (recommended)</option>
+                  {fromBatches.map((b, i) => (
+                    <option key={i} value={b.expiryDate}>Exp {fmtExpiry(b.expiryDate)} - {b.qty} {fromItem.unit} available</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
           <div>
             <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">To (destination)</label>
@@ -179,7 +199,10 @@ export default function StockTransferPanel({
                     <td className="py-2 text-fg/60 text-xs font-mono">{t.reference}</td>
                     <td className="py-2 text-fg font-bold">{t.itemName}</td>
                     <td className="py-2 text-fg/60 text-xs">{t.fromLocation || '?'} → {t.toLocation || '?'}</td>
-                    <td className="py-2 text-right text-fg tabular-nums font-bold">{t.qtyBase} {t.unit}</td>
+                    <td className="py-2 text-right text-fg tabular-nums font-bold">
+                      {t.qtyBase} {t.unit}
+                      {t.expiryDate && <span className="block text-[10px] font-normal text-fg/40">exp {fmtExpiry(t.expiryDate)}</span>}
+                    </td>
                     <td className="py-2 pl-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${statusColor[t.status] || 'bg-white/10 text-fg/50'}`}>{t.status}</span></td>
                     <td className="py-2 text-right">
                       <div className="flex gap-1.5 justify-end">

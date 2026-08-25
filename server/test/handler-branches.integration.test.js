@@ -285,6 +285,59 @@ describe('import never merges two different-itemCode SKUs by cleaned name', () =
   });
 });
 
+describe('import: same item code repeated in one file sums as separate batches (not a replace)', () => {
+  it('two rows, same itemCode, different expiryDate/qty in one payload -> stockQty sums, two batches recorded', async () => {
+    const Inventory = mongoose.model('Inventory');
+    // Mirrors the screenshot scenario: P10001 COMMERCIAL BLEND 1KG appears twice
+    // in one sheet - 60 units exp 2026-08-13, then 40 units exp 2027-08-13.
+    const r = await post('/api/inventory/import', superTok, {
+      items: [
+        { itemCode: 'BATCH-DUP-1', itemName: 'Commercial Blend 1kg', qty: 60, unit: 'kg', unitCost: 200, expiryDate: '2026-08-13' },
+        { itemCode: 'BATCH-DUP-1', itemName: 'Commercial Blend 1kg', qty: 40, unit: 'kg', unitCost: 200, expiryDate: '2027-08-13' },
+      ],
+    });
+    expect(r.status).toBe(200);
+
+    const item = await Inventory.findOne({ itemCode: 'BATCH-DUP-1' }).lean();
+    expect(item.stockQty).toBe(100000); // 60kg + 40kg summed, in grams - NOT 40kg (a replace would leave this at 40000)
+    expect(item.expiryBatches).toHaveLength(2);
+    const dstr = (d) => new Date(d).toISOString().slice(0, 10);
+    expect(item.expiryBatches.find(b => dstr(b.expiryDate) === '2026-08-13').qty).toBe(60000);
+    expect(item.expiryBatches.find(b => dstr(b.expiryDate) === '2027-08-13').qty).toBe(40000);
+    // Soonest expiry across both batches drives the item-level expiryDate.
+    expect(dstr(item.expiryDate)).toBe('2026-08-13');
+  });
+
+  it('a brand-new item repeated in one file is created once, then the repeat row adds a second batch', async () => {
+    const Inventory = mongoose.model('Inventory');
+    const r = await post('/api/inventory/import', superTok, {
+      items: [
+        { itemCode: 'BATCH-DUP-2', itemName: 'Fresh Blend 1kg', qty: 25, unit: 'kg', unitCost: 150, expiryDate: '2026-05-01' },
+        { itemCode: 'BATCH-DUP-2', itemName: 'Fresh Blend 1kg', qty: 15, unit: 'kg', unitCost: 150, expiryDate: '2026-11-01' },
+      ],
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.summary.created).toBe(1); // only the first row creates it
+    const count = await Inventory.countDocuments({ itemCode: 'BATCH-DUP-2' });
+    expect(count).toBe(1); // no duplicate item created
+
+    const item = await Inventory.findOne({ itemCode: 'BATCH-DUP-2' }).lean();
+    expect(item.stockQty).toBe(40000); // 25kg + 15kg
+    expect(item.expiryBatches).toHaveLength(2);
+  });
+
+  it('re-importing the same single-row-per-item sheet on a later call still does a plain stock-take replace', async () => {
+    const Inventory = mongoose.model('Inventory');
+    await Inventory.create({ itemCode: 'BATCH-DUP-3', itemName: 'Replace Me', stockQty: 60000, unit: 'g', unitCost: 0.2, displayUnit: 'kg', unitMultiplier: 1000 });
+    const r = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'BATCH-DUP-3', itemName: 'Replace Me', qty: 40, unit: 'kg', unitCost: 0.2 }],
+    });
+    expect(r.status).toBe(200);
+    const item = await Inventory.findOne({ itemCode: 'BATCH-DUP-3' }).lean();
+    expect(item.stockQty).toBe(40000); // replaced to 40kg, NOT 60kg + 40kg
+  });
+});
+
 describe('editing an inventory item can set/clear packSize', () => {
   it('PUT /api/inventory/:id accepts and persists packSize', async () => {
     const Inventory = mongoose.model('Inventory');

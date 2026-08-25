@@ -4,6 +4,7 @@
 import { title, lower, freeText, squish } from '../lib/normalize.js';
 
 import { captureError } from '../lib/errorLog.js';
+import { addBatch, soonestExpiry } from '../lib/expiry.js';
 
 export default function registerPurchaseOrders(ctx) {
   const {
@@ -170,7 +171,7 @@ export default function registerPurchaseOrders(ctx) {
   // 10 packs of 1L milk with unitMultiplier 1000 posts 10,000 ml at ₱0.08/ml.
   const postReceiptToStock = async (req, deltas, po) => {
     let totalCost = 0;
-    for (const { line, delta } of deltas) {
+    for (const { line, delta, expiryDate } of deltas) {
       if (!line.invId || !mongoose.Types.ObjectId.isValid(String(line.invId))) continue;
       const item = await Inventory.findById(line.invId);
       if (!item) continue;
@@ -180,14 +181,28 @@ export default function registerPurchaseOrders(ctx) {
       const lineCost = money(delta * (Number(line.unitCost) || 0));
       if (baseQty <= 0) continue;
 
+      const rcvRef = await mkSeqRef('PO-RCV');
+
       // WAC (GAAP/IFRS): blend the incoming batch into the existing holding.
       const currentValue = (Number(item.stockQty) || 0) * (Number(item.unitCost) || 0);
       const newStockQty = (Number(item.stockQty) || 0) + baseQty;
       item.unitCost = newStockQty > 0 ? (currentValue + lineCost) / newStockQty : 0;
       item.stockQty = newStockQty;
+
+      // Expiry (FEFO): the actual delivery's expiry, entered at receiving time -
+      // may differ from whatever was planned on the PO line at draft time.
+      if (expiryDate) {
+        item.expiryBatches = addBatch(item.expiryBatches || [], {
+          qty: baseQty,
+          expiryDate: new Date(expiryDate),
+          receivedAt: new Date(),
+          reference: rcvRef,
+          unitCost: baseQty > 0 ? lineCost / baseQty : 0,
+        });
+        item.expiryDate = soonestExpiry(item.expiryBatches);
+      }
       await item.save();
 
-      const rcvRef = await mkSeqRef('PO-RCV');
       await StockCard.create({
         inventoryId: item._id,
         itemName: item.itemName,
@@ -244,23 +259,26 @@ export default function registerPurchaseOrders(ctx) {
       const received = Array.isArray(req.body?.received) ? req.body.received : [];
       // Map incoming actuals onto lines - accept a line _id or a positional index.
       // Each entry is what arrived in THIS delivery (a delta), not a replacement total.
+      // expiryDate (optional) is the actual delivery's expiry for that line, entered
+      // at receiving time - independent of whatever was planned on the PO draft.
       const byId = new Map();
       received.forEach((r, i) => {
         const key = r.lineId != null ? String(r.lineId) : (r.index != null ? `#${r.index}` : `#${i}`);
-        byId.set(key, Math.max(0, Number(r.receivedQty) || 0));
+        byId.set(key, { receivedQty: Math.max(0, Number(r.receivedQty) || 0), expiryDate: r.expiryDate || null });
       });
       // Collect this delivery's deltas per line BEFORE mutating, so stock posting
       // moves only what arrived now - a top-up delivery must not re-post the
       // quantities an earlier delivery already put into inventory.
       const deltas = [];
       po.lines.forEach((line, idx) => {
-        let delta;
-        if (byId.has(String(line._id))) delta = byId.get(String(line._id));
-        else if (byId.has(`#${idx}`)) delta = byId.get(`#${idx}`);
+        let entry;
+        if (byId.has(String(line._id))) entry = byId.get(String(line._id));
+        else if (byId.has(`#${idx}`)) entry = byId.get(`#${idx}`);
         // Lines omitted from this delivery's payload are left untouched - NOT reset to 0.
-        if (delta == null) return;
+        if (entry == null) return;
+        const delta = entry.receivedQty;
         line.receivedQty = (Number(line.receivedQty) || 0) + delta;
-        if (delta > 0) deltas.push({ line, delta });
+        if (delta > 0) deltas.push({ line, delta, expiryDate: entry.expiryDate });
       });
 
       const allFull = po.lines.every(l => (l.receivedQty ?? 0) >= (l.orderedQty || 0));

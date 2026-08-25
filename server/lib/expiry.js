@@ -23,26 +23,54 @@ export function sortBatchesFEFO(batches) {
 }
 
 // Consume `qtyToConsume` from batches (FEFO).
-// Returns { batches: updatedArray, consumed: actualConsumed, leftover: unconsumed }.
+// Returns { batches: updatedArray, consumed: actualConsumed, leftover: unconsumed,
+//           consumedDetail: [{ qty, expiryDate }] - per-batch breakdown of what was taken,
+//           in the order batches were drawn from (oldest first) }.
 // Removes batches that drop to zero.
 export function consumeBatches(batches, qtyToConsume) {
-  if (!qtyToConsume || qtyToConsume <= 0) return { batches: [...batches], consumed: 0, leftover: 0 };
+  if (!qtyToConsume || qtyToConsume <= 0) return { batches: [...batches], consumed: 0, leftover: 0, consumedDetail: [] };
   const sorted = sortBatchesFEFO(batches);
   let remaining = qtyToConsume;
   const updated = [];
+  const consumedDetail = [];
   for (const b of sorted) {
     if (remaining <= 0) { updated.push(b); continue; }
     const have = b.qty || 0;
     if (have <= 0) continue; // drop empty batches
     if (have <= remaining) {
       remaining -= have;
+      consumedDetail.push({ qty: have, expiryDate: b.expiryDate ?? null });
       // batch fully consumed - do not add to `updated`
     } else {
       updated.push({ ...b, qty: +(have - remaining).toFixed(6) });
+      consumedDetail.push({ qty: remaining, expiryDate: b.expiryDate ?? null });
       remaining = 0;
     }
   }
-  return { batches: updated, consumed: qtyToConsume - remaining, leftover: remaining };
+  return { batches: updated, consumed: qtyToConsume - remaining, leftover: remaining, consumedDetail };
+}
+
+// Consume `qtyToConsume` from the ONE batch matching `expiryDate` only - no FEFO
+// spillover into other batches. Used when a movement (e.g. a transfer) is pinned
+// to a specific expiry lot instead of "oldest first".
+// Returns the same shape as consumeBatches.
+export function consumeSpecificBatch(batches, expiryDate, qtyToConsume) {
+  if (!qtyToConsume || qtyToConsume <= 0) return { batches: [...batches], consumed: 0, leftover: 0, consumedDetail: [] };
+  const targetTime = expiryDate ? new Date(expiryDate).getTime() : null;
+  let remaining = qtyToConsume;
+  const consumedDetail = [];
+  const updated = (batches || []).map(b => {
+    if (remaining <= 0) return b;
+    const bTime = b.expiryDate ? new Date(b.expiryDate).getTime() : null;
+    if (bTime !== targetTime) return b;
+    const have = b.qty || 0;
+    if (have <= 0) return b;
+    const take = Math.min(have, remaining);
+    remaining -= take;
+    consumedDetail.push({ qty: take, expiryDate: b.expiryDate ?? null });
+    return { ...b, qty: +(have - take).toFixed(6) };
+  }).filter(b => (b.qty || 0) > 0);
+  return { batches: updated, consumed: qtyToConsume - remaining, leftover: remaining, consumedDetail };
 }
 
 // Append a new batch (or merge into an existing one with same expiryDate +/- 1 day).

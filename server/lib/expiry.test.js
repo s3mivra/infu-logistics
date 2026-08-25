@@ -1,5 +1,5 @@
 ﻿import { describe, it, expect } from 'vitest';
-import { soonestExpiry, sortBatchesFEFO, consumeBatches, addBatch, batchesTotal } from './expiry.js';
+import { soonestExpiry, sortBatchesFEFO, consumeBatches, consumeSpecificBatch, addBatch, batchesTotal } from './expiry.js';
 
 const D = (s) => new Date(s);
 
@@ -104,6 +104,67 @@ describe('consumeBatches (FEFO)', () => {
     const batches = [{ qty: 5, expiryDate: D('2026-06-15') }];
     expect(consumeBatches(batches, 0).batches).toEqual(batches);
     expect(consumeBatches(batches, -1).batches).toEqual(batches);
+  });
+});
+
+describe('consumeBatches - consumedDetail', () => {
+  it('reports a single-batch breakdown when everything comes from one batch', () => {
+    const batches = [
+      { qty: 5, expiryDate: D('2026-06-22') },
+      { qty: 3, expiryDate: D('2026-06-15') },
+    ];
+    const r = consumeBatches(batches, 2);
+    expect(r.consumedDetail).toEqual([{ qty: 2, expiryDate: D('2026-06-15') }]);
+  });
+  it('reports a per-batch breakdown when consumption spans two batches', () => {
+    const batches = [
+      { qty: 5, expiryDate: D('2026-06-22') },
+      { qty: 3, expiryDate: D('2026-06-15') },
+    ];
+    const r = consumeBatches(batches, 6);
+    expect(r.consumedDetail).toEqual([
+      { qty: 3, expiryDate: D('2026-06-15') },
+      { qty: 3, expiryDate: D('2026-06-22') },
+    ]);
+  });
+  it('is empty when nothing is consumed', () => {
+    expect(consumeBatches([{ qty: 5, expiryDate: D('2026-06-15') }], 0).consumedDetail).toEqual([]);
+  });
+});
+
+describe('consumeSpecificBatch', () => {
+  const batches = [
+    { qty: 5, expiryDate: D('2026-06-22') },
+    { qty: 3, expiryDate: D('2026-06-15') },
+  ];
+  it('consumes only from the matching batch, no FEFO spillover', () => {
+    const r = consumeSpecificBatch(batches, D('2026-06-22'), 2);
+    expect(r.consumed).toBe(2);
+    expect(r.leftover).toBe(0);
+    expect(r.consumedDetail).toEqual([{ qty: 2, expiryDate: D('2026-06-22') }]);
+    const untouched = r.batches.find(b => b.expiryDate.toISOString() === D('2026-06-15').toISOString());
+    expect(untouched.qty).toBe(3);
+    const drawn = r.batches.find(b => b.expiryDate.toISOString() === D('2026-06-22').toISOString());
+    expect(drawn.qty).toBe(3);
+  });
+  it('reports leftover instead of spilling into another batch when the matched one is insufficient', () => {
+    const r = consumeSpecificBatch(batches, D('2026-06-15'), 10);
+    expect(r.consumed).toBe(3);
+    expect(r.leftover).toBe(7);
+    expect(r.batches.find(b => b.expiryDate?.toISOString() === D('2026-06-15').toISOString())).toBeUndefined();
+    // the OTHER batch is untouched despite having enough stock
+    const other = r.batches.find(b => b.expiryDate.toISOString() === D('2026-06-22').toISOString());
+    expect(other.qty).toBe(5);
+  });
+  it('reports full leftover when no batch matches the expiry', () => {
+    const r = consumeSpecificBatch(batches, D('2099-01-01'), 1);
+    expect(r.consumed).toBe(0);
+    expect(r.leftover).toBe(1);
+    expect(r.consumedDetail).toEqual([]);
+  });
+  it('removes a batch that hits exactly zero', () => {
+    const r = consumeSpecificBatch(batches, D('2026-06-22'), 5);
+    expect(r.batches.find(b => b.expiryDate?.toISOString() === D('2026-06-22').toISOString())).toBeUndefined();
   });
 });
 

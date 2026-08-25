@@ -3004,6 +3004,13 @@ const updateStatus = async (orderId, newStatus) => {
       // Diff against current inventory for preview
       // Track category from header rows (rows where code = category name, product = empty)
       let currentCategory = '';
+      // Tracks item keys already seen WITHIN this sheet. A code/name repeated in
+      // the same file (e.g. same product with two different expiry dates, like a
+      // stock-take that lists each lot separately) is a second batch to ADD, not
+      // a corrected recount - mirrors the backend's seenThisImport logic exactly,
+      // so the preview's numbers match what actually gets posted. `qty` here is
+      // the running projected total (base units) after each row for that item.
+      const projected = new Map(); // importKey -> { existing: itemOrNull, qty }
       const previewed = rows.map(raw => {
         const r = normalise(raw);
         // Category header row: no itemName but code column has a plain word (not a product code)
@@ -3016,12 +3023,22 @@ const updateStatus = async (orderId, newStatus) => {
           return { ...r, _error: 'Missing itemName' };
         }
         r.category = currentCategory;
+        const resolved = resolveUnitFE(r.displayUnit);
+        const newBaseQty = r.qty * resolved.mult;
+        const importKey = r.itemCode || r.itemName.toLowerCase();
+
+        if (projected.has(importKey)) {
+          // Repeat of the same item within this one file - always additive.
+          const p = projected.get(importKey);
+          const oldDisplay = { qty: p.qty / resolved.mult, unit: r.displayUnit };
+          p.qty += newBaseQty;
+          return { ...r, _newItem: false, _existing: p.existing, _diff: r.qty, _oldDisplay: oldDisplay, _newBatch: true };
+        }
+
         const existing = inventory.find(inv =>
           (r.itemCode && inv.itemCode && inv.itemCode === r.itemCode) ||
           inv.itemName.toLowerCase() === r.itemName.toLowerCase()
         );
-        const resolved = resolveUnitFE(r.displayUnit);
-        const newBaseQty = r.qty * resolved.mult;
         if (existing) {
           const oldDisplay = itemDisplay(existing);
           const diff = newBaseQty - (existing.stockQty || 0);
@@ -3030,8 +3047,10 @@ const updateStatus = async (orderId, newStatus) => {
           const existingExpiry = existing.expiryDate ? String(existing.expiryDate).slice(0, 10) : '';
           const importExpiry = r.expiryDate ? String(r.expiryDate).slice(0, 10) : '';
           const isNewBatch = !!(importExpiry && existingExpiry && importExpiry !== existingExpiry);
+          projected.set(importKey, { existing, qty: newBaseQty });
           return { ...r, _newItem: false, _existing: existing, _diff: diffDisplay, _oldDisplay: oldDisplay, _newBatch: isNewBatch };
         }
+        projected.set(importKey, { existing: null, qty: newBaseQty });
         return { ...r, _newItem: true, _diff: r.qty };
       });
 

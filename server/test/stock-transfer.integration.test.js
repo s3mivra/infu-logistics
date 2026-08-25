@@ -83,3 +83,91 @@ describe('#8 stock transfer workflow', () => {
     expect(names).toContain('Store Front');
   });
 });
+
+describe('#8 stock transfer - FEFO by default, or pin a specific batch', () => {
+  const Inventory = () => mongoose.model('Inventory');
+  const dstr = (d) => new Date(d).toISOString().slice(0, 10);
+
+  const makeBatchedPair = async (fromName, toName) => {
+    const fromR = await auth('post', '/api/inventory', superTok).send({ itemName: fromName, unit: 'g', unitCost: 0.2, stockQty: 0, stockLocation: 'Warehouse' });
+    const toR = await auth('post', '/api/inventory', superTok).send({ itemName: toName, unit: 'g', unitCost: 0.2, stockQty: 0, stockLocation: 'Store Front' });
+    const from = fromR.body.item, to = toR.body.item;
+    await auth('post', `/api/inventory/${from._id}/batches`, superTok).send({ qty: 300, expiryDate: '2026-06-01' });
+    await auth('post', `/api/inventory/${from._id}/batches`, superTok).send({ qty: 400, expiryDate: '2026-07-01' });
+    return { from, to };
+  };
+
+  it('FEFO (default): release with no expiryDate draws from the oldest batch and carries its expiry to the destination', async () => {
+    const { from, to } = await makeBatchedPair('Flour FEFO Src', 'Flour FEFO Dst');
+    const req1 = await auth('post', '/api/stock-transfers', staffTok).send({ fromItemId: from._id, toItemId: to._id, qtyBase: 200 });
+    expect(req1.status).toBe(200);
+    const id = req1.body.transfer._id;
+    await auth('post', `/api/stock-transfers/${id}/approve`, superTok);
+    const rel = await auth('post', `/api/stock-transfers/${id}/release`, staffTok);
+    expect(rel.status).toBe(200);
+
+    const a = await Inventory().findById(from._id).lean();
+    const b = await Inventory().findById(to._id).lean();
+    expect(a.stockQty).toBe(500);
+    expect(a.expiryBatches.find(x => dstr(x.expiryDate) === '2026-06-01').qty).toBe(100); // 300 - 200, drawn first
+    expect(a.expiryBatches.find(x => dstr(x.expiryDate) === '2026-07-01').qty).toBe(400); // untouched
+
+    expect(b.stockQty).toBe(200);
+    expect(b.expiryBatches).toHaveLength(1);
+    expect(dstr(b.expiryBatches[0].expiryDate)).toBe('2026-06-01');
+    expect(b.expiryBatches[0].qty).toBe(200);
+  });
+
+  it('pinned batch: release draws only from the chosen expiry lot, even when it is not the oldest', async () => {
+    const { from, to } = await makeBatchedPair('Flour Pin Src', 'Flour Pin Dst');
+    const req1 = await auth('post', '/api/stock-transfers', staffTok).send({ fromItemId: from._id, toItemId: to._id, qtyBase: 100, expiryDate: '2026-07-01' });
+    expect(req1.status).toBe(200);
+    expect(req1.body.transfer.expiryDate).toBeTruthy();
+    const id = req1.body.transfer._id;
+    await auth('post', `/api/stock-transfers/${id}/approve`, superTok);
+    const rel = await auth('post', `/api/stock-transfers/${id}/release`, staffTok);
+    expect(rel.status).toBe(200);
+
+    const a = await Inventory().findById(from._id).lean();
+    const b = await Inventory().findById(to._id).lean();
+    expect(a.expiryBatches.find(x => dstr(x.expiryDate) === '2026-06-01').qty).toBe(300); // untouched - NOT the FEFO oldest
+    expect(a.expiryBatches.find(x => dstr(x.expiryDate) === '2026-07-01').qty).toBe(300); // 400 - 100
+
+    expect(b.expiryBatches).toHaveLength(1);
+    expect(dstr(b.expiryBatches[0].expiryDate)).toBe('2026-07-01');
+  });
+
+  it('rejects a pinned batch that cannot cover the requested qty at request time', async () => {
+    const { from, to } = await makeBatchedPair('Flour Insuff Src', 'Flour Insuff Dst');
+    const r = await auth('post', '/api/stock-transfers', staffTok).send({ fromItemId: from._id, toItemId: to._id, qtyBase: 350, expiryDate: '2026-06-01' });
+    expect(r.status).toBe(400); // that batch only has 300
+  });
+
+  it('release re-validates: a pinned batch drained between request and release fails cleanly', async () => {
+    const { from, to } = await makeBatchedPair('Flour Race Src', 'Flour Race Dst');
+    const req1 = await auth('post', '/api/stock-transfers', staffTok).send({ fromItemId: from._id, toItemId: to._id, qtyBase: 100, expiryDate: '2026-06-01' });
+    const id = req1.body.transfer._id;
+    await auth('post', `/api/stock-transfers/${id}/approve`, superTok);
+
+    // Drain the whole June batch out from under it via a second transfer.
+    const drain = await auth('post', '/api/stock-transfers', staffTok).send({ fromItemId: from._id, toItemId: to._id, qtyBase: 300, expiryDate: '2026-06-01' });
+    await auth('post', `/api/stock-transfers/${drain.body.transfer._id}/approve`, superTok);
+    const drainRel = await auth('post', `/api/stock-transfers/${drain.body.transfer._id}/release`, staffTok);
+    expect(drainRel.status).toBe(200);
+
+    const rel = await auth('post', `/api/stock-transfers/${id}/release`, staffTok);
+    expect(rel.status).toBe(400);
+  });
+
+  it('an item with no batches transfers exactly as before (regression)', async () => {
+    const before = await Inventory().findById(itemA._id).lean();
+    const req1 = await auth('post', '/api/stock-transfers', staffTok).send({ fromItemId: itemA._id, toItemId: itemB._id, qtyBase: 50 });
+    const id = req1.body.transfer._id;
+    await auth('post', `/api/stock-transfers/${id}/approve`, superTok);
+    const rel = await auth('post', `/api/stock-transfers/${id}/release`, staffTok);
+    expect(rel.status).toBe(200);
+    const a = await Inventory().findById(itemA._id).lean();
+    expect(a.expiryBatches || []).toHaveLength(0);
+    expect(a.stockQty).toBe(before.stockQty - 50);
+  });
+});

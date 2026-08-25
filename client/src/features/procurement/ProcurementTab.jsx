@@ -631,6 +631,7 @@ export default function ProcurementTab({ ctx }) {
   // ── Receiving / reconciliation ────────────────────────────────────────────────
   const [receiveId, setReceiveId] = useState(null);
   const [receiveQtys, setReceiveQtys] = useState({});
+  const [receiveExpiry, setReceiveExpiry] = useState({});
   const [receiveNotes, setReceiveNotes] = useState('');
   const [receiving, setReceiving] = useState(false);
 
@@ -641,8 +642,18 @@ export default function ProcurementTab({ ctx }) {
     // the outstanding balance, and the value entered is submitted as THIS
     // delivery's quantity (a delta), never a replacement total.
     const q = {};
-    (po.lines || []).forEach((l, i) => { const rem = remainingOf(l); if (rem > 0) q[l._id || i] = String(rem); });
+    const exp = {};
+    (po.lines || []).forEach((l, i) => {
+      const rem = remainingOf(l);
+      if (rem > 0) {
+        q[l._id || i] = String(rem);
+        // Default to whatever expiry was planned on the draft - editable, since
+        // the actual delivery's expiry can differ from what was planned.
+        exp[l._id || i] = l.expiryDate ? new Date(l.expiryDate).toISOString().slice(0, 10) : '';
+      }
+    });
     setReceiveQtys(q);
+    setReceiveExpiry(exp);
     setReceiveNotes(po.notes || '');
   };
 
@@ -650,7 +661,7 @@ export default function ProcurementTab({ ctx }) {
     setReceiving(true); setError('');
     try {
       const received = (po.lines || [])
-        .map((l, i) => ({ lineId: l._id, index: i, receivedQty: Number(receiveQtys[l._id || i]) || 0 }))
+        .map((l, i) => ({ lineId: l._id, index: i, receivedQty: Number(receiveQtys[l._id || i]) || 0, expiryDate: receiveExpiry[l._id || i] || null }))
         .filter(r => r.receivedQty > 0); // only send lines the user actually entered a delivered qty for
       const res = await apiFetch(`/api/purchase-orders/${po._id}/receive`, { method: 'POST', body: JSON.stringify({ received, notes: receiveNotes }) });
       const d = await res.json();
@@ -996,6 +1007,10 @@ export default function ProcurementTab({ ctx }) {
                               onChange={e => setReceiveQtys(q => ({ ...q, [key]: e.target.value }))}
                               className={`w-24 bg-white/5 border rounded-lg px-2 py-1.5 text-sm text-right text-fg focus:outline-none ${short ? 'border-red-500/50' : 'border-white/10 focus:border-brand/60'}`} />
                             <span className="text-fg/40 text-xs font-bold w-8">{l.unit}</span>
+                            <input type="date" value={receiveExpiry[key] ?? ''}
+                              onChange={e => setReceiveExpiry(x => ({ ...x, [key]: e.target.value }))}
+                              title="Expiry date on this delivery (optional)"
+                              className="w-[9.5rem] bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg/70 focus:outline-none focus:border-brand/60" />
                           </div>
                         </div>
                       );
