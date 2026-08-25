@@ -95,6 +95,23 @@ describe('manual bill: create -> approve posts JE -> pay', () => {
   });
 });
 
+describe('paying a bill with an external reference number', () => {
+  it('stores it on the bill and the journal entry description, for reconciliation', async () => {
+    const created = await auth('post', '/api/bills', tok).send({
+      supplierId, description: 'July electricity', amount: 300, expenseAccountCode: '520000',
+    });
+    const id = created.body.bill._id;
+    await auth('post', `/api/bills/${id}/approve`, tok);
+
+    const res = await auth('post', `/api/bills/${id}/pay`, tok).send({ payFromAccount: '111000', referenceNumber: 'CHECK-00219' });
+    expect(res.status).toBe(200);
+    expect(res.body.bill.paymentReference).toBe('CHECK-00219');
+
+    const je = await mongoose.model('JournalEntry').findOne({ reference: res.body.bill.journalEntryRef }).lean();
+    expect(je.description).toContain('CHECK-00219');
+  });
+});
+
 describe('manual bill rejection', () => {
   it('rejecting requires a reason and never posts a journal entry', async () => {
     const JournalEntry = mongoose.model('JournalEntry');

@@ -54,6 +54,7 @@ export default function registerPurchaseOrders(ctx) {
     orderedQty:        Math.max(0, Number(l.orderedQty) || 0),
     unitCost:          Math.max(0, money(l.unitCost)),
     expiryDate:        l.expiryDate ? new Date(l.expiryDate) : null,
+    productionDate:    l.productionDate ? new Date(l.productionDate) : null,
     expiryWarnDays:    l.expiryWarnDays != null ? Math.max(1, Number(l.expiryWarnDays) || 7) : null,
     lowStockThreshold: l.lowStockThreshold != null ? Math.max(0, Number(l.lowStockThreshold) || 0) : null,
     stockLocation:     l.stockLocation ? String(l.stockLocation).slice(0, 100) : null,
@@ -171,7 +172,7 @@ export default function registerPurchaseOrders(ctx) {
   // 10 packs of 1L milk with unitMultiplier 1000 posts 10,000 ml at ₱0.08/ml.
   const postReceiptToStock = async (req, deltas, po) => {
     let totalCost = 0;
-    for (const { line, delta, expiryDate } of deltas) {
+    for (const { line, delta, expiryDate, productionDate } of deltas) {
       if (!line.invId || !mongoose.Types.ObjectId.isValid(String(line.invId))) continue;
       const item = await Inventory.findById(line.invId);
       if (!item) continue;
@@ -189,12 +190,14 @@ export default function registerPurchaseOrders(ctx) {
       item.unitCost = newStockQty > 0 ? (currentValue + lineCost) / newStockQty : 0;
       item.stockQty = newStockQty;
 
-      // Expiry (FEFO): the actual delivery's expiry, entered at receiving time -
-      // may differ from whatever was planned on the PO line at draft time.
-      if (expiryDate) {
+      // Expiry (FEFO), or production date for goods with no real expiry (roasted
+      // beans, etc.): the actual delivery's date, entered at receiving time - may
+      // differ from whatever was planned on the PO line at draft time.
+      if (expiryDate || productionDate) {
         item.expiryBatches = addBatch(item.expiryBatches || [], {
           qty: baseQty,
-          expiryDate: new Date(expiryDate),
+          expiryDate: expiryDate ? new Date(expiryDate) : null,
+          productionDate: productionDate ? new Date(productionDate) : null,
           receivedAt: new Date(),
           reference: rcvRef,
           unitCost: baseQty > 0 ? lineCost / baseQty : 0,
@@ -259,12 +262,13 @@ export default function registerPurchaseOrders(ctx) {
       const received = Array.isArray(req.body?.received) ? req.body.received : [];
       // Map incoming actuals onto lines - accept a line _id or a positional index.
       // Each entry is what arrived in THIS delivery (a delta), not a replacement total.
-      // expiryDate (optional) is the actual delivery's expiry for that line, entered
-      // at receiving time - independent of whatever was planned on the PO draft.
+      // expiryDate/productionDate (both optional) is the actual delivery's date for
+      // that line, entered at receiving time - independent of whatever was planned
+      // on the PO draft. productionDate is for goods with no real expiry (beans, etc.).
       const byId = new Map();
       received.forEach((r, i) => {
         const key = r.lineId != null ? String(r.lineId) : (r.index != null ? `#${r.index}` : `#${i}`);
-        byId.set(key, { receivedQty: Math.max(0, Number(r.receivedQty) || 0), expiryDate: r.expiryDate || null });
+        byId.set(key, { receivedQty: Math.max(0, Number(r.receivedQty) || 0), expiryDate: r.expiryDate || null, productionDate: r.productionDate || null });
       });
       // Collect this delivery's deltas per line BEFORE mutating, so stock posting
       // moves only what arrived now - a top-up delivery must not re-post the
@@ -278,7 +282,7 @@ export default function registerPurchaseOrders(ctx) {
         if (entry == null) return;
         const delta = entry.receivedQty;
         line.receivedQty = (Number(line.receivedQty) || 0) + delta;
-        if (delta > 0) deltas.push({ line, delta, expiryDate: entry.expiryDate });
+        if (delta > 0) deltas.push({ line, delta, expiryDate: entry.expiryDate, productionDate: entry.productionDate });
       });
 
       const allFull = po.lines.every(l => (l.receivedQty ?? 0) >= (l.orderedQty || 0));

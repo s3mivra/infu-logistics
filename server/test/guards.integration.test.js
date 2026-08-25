@@ -138,3 +138,23 @@ describe('GET /api/products - COGS/recipe strip (fix verification)', () => {
     expect(p.costOverride).toBe(42);
   });
 });
+
+describe('GET /api/products - raw materials (no SRP) hidden from customer-facing menu/portal', () => {
+  beforeAll(async () => {
+    const Product = mongoose.model('Product');
+    await Product.create({ name: 'RM No Price Good', productCode: 'RM-NOPRICE', basePrice: 0, businessType: 'fb' });
+    await Product.create({ name: 'RM Priced Good', productCode: 'RM-PRICED', basePrice: 45, businessType: 'fb' });
+  });
+  it('anonymous caller never sees a basePrice<=0 product', async () => {
+    const res = await request(app).get('/api/products');
+    const names = res.body.products.map(p => p.name);
+    expect(names).not.toContain('RM No Price Good');
+    expect(names).toContain('RM Priced Good');
+  });
+  it('admin/staff caller still sees it, for management', async () => {
+    const res = await request(app).get('/api/products').set(auth(superToken));
+    const names = res.body.products.map(p => p.name);
+    expect(names).toContain('RM No Price Good');
+    expect(names).toContain('RM Priced Good');
+  });
+});

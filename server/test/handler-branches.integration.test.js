@@ -201,6 +201,80 @@ describe('log inventory import creates the linked product', () => {
     const product = await mongoose.model('Product').findOne({ productCode: 'LOGSYNC-1' });
     expect(product.isAvailable).toBe(false);
   });
+
+  // Raw materials (unit-cost only, e.g. an "RM1xxx" stock category) never get a
+  // shop/POS listing - a row with no SRP must not create one.
+  it('a new item with NO srp creates the inventory item but NOT a linked Product', async () => {
+    const res = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'RM1001', itemName: 'Raw Flour', qty: 20, unit: 'kg', unitCost: 30 }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.summary.created).toBeGreaterThanOrEqual(1);
+
+    const invItem = await mongoose.model('Inventory').findOne({ itemCode: 'RM1001' });
+    expect(invItem).toBeTruthy(); // the inventory item itself is always created
+
+    const product = await mongoose.model('Product').findOne({ productCode: 'RM1001' });
+    expect(product).toBeFalsy(); // but no shop/POS listing
+  });
+
+  it('a raw material stays out of the shop across repeat imports as long as it never gets an srp', async () => {
+    await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'RM1002', itemName: 'Raw Sugar', qty: 10, unit: 'kg', unitCost: 25 }],
+    });
+    const res = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'RM1002', itemName: 'Raw Sugar', qty: 15, unit: 'kg', unitCost: 25 }],
+    });
+    expect(res.status).toBe(200);
+    const product = await mongoose.model('Product').findOne({ productCode: 'RM1002' });
+    expect(product).toBeFalsy();
+  });
+
+  it('giving a previously-SRP-less item a real srp on a later import brings it into the shop', async () => {
+    await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'RM1003', itemName: 'Raw Cocoa', qty: 5, unit: 'kg', unitCost: 60 }],
+    });
+    expect(await mongoose.model('Product').findOne({ productCode: 'RM1003' })).toBeFalsy();
+
+    const res = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'RM1003', itemName: 'Raw Cocoa', qty: 3, unit: 'kg', unitCost: 60, srp: 90 }],
+    });
+    expect(res.status).toBe(200);
+    const product = await mongoose.model('Product').findOne({ productCode: 'RM1003' });
+    expect(product).toBeTruthy();
+    expect(product.basePrice).toBe(90);
+  });
+
+  it('once an item has a shop listing, a later import with no srp leaves that listing alone (does not hide it)', async () => {
+    await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'RM1004', itemName: 'Finished Blend', qty: 5, unit: 'kg', unitCost: 60, srp: 120 }],
+    });
+    const before = await mongoose.model('Product').findOne({ productCode: 'RM1004' });
+    expect(before.isAvailable).toBe(true);
+
+    // A routine restock row that forgets to repeat the SRP must not pull the item off the shelf.
+    const res = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'RM1004', itemName: 'Finished Blend', qty: 8, unit: 'kg', unitCost: 60 }],
+    });
+    expect(res.status).toBe(200);
+    const after = await mongoose.model('Product').findOne({ productCode: 'RM1004' });
+    expect(after.isAvailable).toBe(true); // still listed - stock went up, not depleted
+    expect(after.basePrice).toBe(120);    // price untouched by the srp-less row
+  });
+
+  it('a repeat-batch row (same code twice in one file) with no srp does not create a Product for a brand-new raw material', async () => {
+    const res = await post('/api/inventory/import', superTok, {
+      items: [
+        { itemCode: 'RM1005', itemName: 'Raw Yeast', qty: 10, unit: 'kg', unitCost: 40, expiryDate: '2026-06-01' },
+        { itemCode: 'RM1005', itemName: 'Raw Yeast', qty: 5, unit: 'kg', unitCost: 40, expiryDate: '2026-09-01' },
+      ],
+    });
+    expect(res.status).toBe(200);
+    const invItem = await mongoose.model('Inventory').findOne({ itemCode: 'RM1005' });
+    expect(invItem.stockQty).toBe(15000); // both batches summed
+    const product = await mongoose.model('Product').findOne({ productCode: 'RM1005' });
+    expect(product).toBeFalsy();
+  });
 });
 
 describe('inventory import persists per-qty (pack) size', () => {
@@ -335,6 +409,56 @@ describe('import: same item code repeated in one file sums as separate batches (
     expect(r.status).toBe(200);
     const item = await Inventory.findOne({ itemCode: 'BATCH-DUP-3' }).lean();
     expect(item.stockQty).toBe(40000); // replaced to 40kg, NOT 60kg + 40kg
+  });
+});
+
+describe('production date - goods with no real expiry (e.g. roasted beans)', () => {
+  it('POST /api/inventory/:id/batches accepts productionDate alone (no expiryDate required)', async () => {
+    const Inventory = mongoose.model('Inventory');
+    const item = await Inventory.create({ itemCode: 'BEANS-1', itemName: 'Roast Beans', stockQty: 0, unit: 'g', unitCost: 0.3, displayUnit: 'kg', unitMultiplier: 1000 });
+    const res = await post(`/api/inventory/${item._id}/batches`, superTok, { qty: 5000, productionDate: '2026-04-01' });
+    expect(res.status).toBe(200);
+    const after = await Inventory.findById(item._id).lean();
+    expect(after.stockQty).toBe(5000);
+    const batch = after.expiryBatches.find(b => b.productionDate);
+    expect(batch).toBeTruthy();
+    expect(batch.expiryDate).toBeFalsy();
+    expect(new Date(batch.productionDate).toISOString().slice(0, 10)).toBe('2026-04-01');
+  });
+
+  it('POST /api/inventory/:id/batches rejects a batch with neither expiryDate nor productionDate', async () => {
+    const Inventory = mongoose.model('Inventory');
+    const item = await Inventory.create({ itemCode: 'BEANS-2', itemName: 'No Date Beans', stockQty: 0, unit: 'g', unitCost: 0.3, displayUnit: 'kg', unitMultiplier: 1000 });
+    const res = await post(`/api/inventory/${item._id}/batches`, superTok, { qty: 1000 });
+    expect(res.status).toBe(400);
+  });
+
+  it('Excel import: a "Production Date" column (no expiry) creates a production-dated batch', async () => {
+    const Inventory = mongoose.model('Inventory');
+    const res = await post('/api/inventory/import', superTok, {
+      items: [{ itemCode: 'BEANS-IMPORT-1', itemName: 'Import Beans', qty: 10, unit: 'kg', unitCost: 300, productionDate: '2026-05-15' }],
+    });
+    expect(res.status).toBe(200);
+    const item = await Inventory.findOne({ itemCode: 'BEANS-IMPORT-1' }).lean();
+    expect(item.stockQty).toBe(10000);
+    const batch = item.expiryBatches.find(b => b.productionDate);
+    expect(batch).toBeTruthy();
+    expect(batch.expiryDate).toBeFalsy();
+    expect(new Date(batch.productionDate).toISOString().slice(0, 10)).toBe('2026-05-15');
+  });
+
+  it('a repeated code in one import file with only production dates still sums as two batches', async () => {
+    const Inventory = mongoose.model('Inventory');
+    const res = await post('/api/inventory/import', superTok, {
+      items: [
+        { itemCode: 'BEANS-IMPORT-2', itemName: 'Import Beans 2', qty: 6, unit: 'kg', unitCost: 300, productionDate: '2026-02-01' },
+        { itemCode: 'BEANS-IMPORT-2', itemName: 'Import Beans 2', qty: 4, unit: 'kg', unitCost: 300, productionDate: '2026-05-01' },
+      ],
+    });
+    expect(res.status).toBe(200);
+    const item = await Inventory.findOne({ itemCode: 'BEANS-IMPORT-2' }).lean();
+    expect(item.stockQty).toBe(10000); // 6kg + 4kg summed
+    expect(item.expiryBatches).toHaveLength(2);
   });
 });
 

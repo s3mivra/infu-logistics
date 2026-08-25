@@ -194,6 +194,8 @@ export default function OrdersTab({ ctx }) {
                   {/* Product grid */}
                   {(() => {
                     const posFiltered = products.filter(p =>
+                      p.isAvailable !== false &&
+                      (p.basePrice || 0) > 0 && // raw material, no SRP - not sellable
                       (posCategory === 'All' || (posCategory === 'Bulk' ? p.isBulk : p.category === posCategory)) &&
                       (!posSearch || p.name.toLowerCase().includes(posSearch.toLowerCase()))
                     );

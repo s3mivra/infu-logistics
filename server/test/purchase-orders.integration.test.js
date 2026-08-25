@@ -284,6 +284,30 @@ describe('receiving posts to inventory + is repeatable until fully received', ()
     expect(new Date(inv.expiryDate).toISOString().slice(0, 10)).toBe('2026-09-01');
   });
 
+  it('a productionDate on the actual delivery creates a batch for goods with no real expiry (e.g. beans)', async () => {
+    const Inventory = mongoose.model('Inventory');
+    const beans = await Inventory.create({
+      itemCode: 'PO-RCV-BEANS', itemName: 'Receiving Beans', stockQty: 0, unit: 'g',
+      unitCost: 0, displayUnit: 'kg', unitMultiplier: 1000, packSize: 1,
+    });
+    const created = await request(app).post('/api/purchase-orders').set(auth(superToken)).send({
+      supplier: 'Bean Co', lines: [{ invId: String(beans._id), itemName: 'Receiving Beans', unit: 'kg', packSize: 1, orderedQty: 20, unitCost: 300 }],
+    });
+    const po = created.body.purchaseOrder;
+    const res = await request(app).post(`/api/purchase-orders/${po._id}/receive`).set(auth(superToken))
+      .send({ received: [{ lineId: po.lines[0]._id, receivedQty: 20, productionDate: '2026-04-10' }] });
+    expect(res.status).toBe(200);
+
+    const inv = await Inventory.findById(beans._id).lean();
+    const batch = (inv.expiryBatches || []).find(b => b.productionDate);
+    expect(batch).toBeTruthy();
+    expect(batch.expiryDate).toBeFalsy();
+    expect(batch.qty).toBe(20000); // 20 packs × 1kg × 1000 g/kg
+    expect(new Date(batch.productionDate).toISOString().slice(0, 10)).toBe('2026-04-10');
+    // No expiry batches exist for this item, so the item-level expiryDate summary stays null.
+    expect(inv.expiryDate).toBeFalsy();
+  });
+
   it('a short delivery stays Incomplete and receivable - a follow-up receive tops it up to Complete', async () => {
     const Inventory = mongoose.model('Inventory');
     const created = await request(app).post('/api/purchase-orders').set(auth(superToken)).send({

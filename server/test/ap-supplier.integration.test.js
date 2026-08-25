@@ -105,6 +105,14 @@ describe('paying a supplier draws down their balance', () => {
     expect(res.status).toBe(404);
   });
 
+  it('records an optional external reference number on the journal entry, for reconciliation', async () => {
+    const res = await request(app).post('/api/finance/ap-payment').set(auth(superToken))
+      .send({ amount: 10, payFromAccount: '111000', supplierId: supplierAId, referenceNumber: 'GCASH-REF-9981' });
+    expect(res.status).toBe(200);
+    const je = await mongoose.model('JournalEntry').findOne({ reference: res.body.journalEntry.reference }).lean();
+    expect(je.description).toContain('GCASH-REF-9981');
+  });
+
   it('still allows an ad-hoc payment with no supplier record', async () => {
     const res = await request(app).post('/api/finance/ap-payment').set(auth(superToken))
       .send({ amount: 25, payFromAccount: '111000', vendorName: 'One-off Hauler' });

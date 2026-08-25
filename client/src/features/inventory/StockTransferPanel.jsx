@@ -132,10 +132,15 @@ export default function StockTransferPanel({
               <div className="mt-1.5">
                 <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">Batch / Expiry</label>
                 <select value={expiryChoice} onChange={e => setExpiryChoice(e.target.value)} className={input}>
-                  <option value="">FEFO - oldest expiry first (recommended)</option>
-                  {fromBatches.map((b, i) => (
-                    <option key={i} value={b.expiryDate}>Exp {fmtExpiry(b.expiryDate)} - {b.qty} {fromItem.unit} available</option>
-                  ))}
+                  <option value="">FEFO/FPFO - oldest first (recommended)</option>
+                  {fromBatches.map((b, i) => {
+                    // Goods with no real expiry (beans, etc.) rotate by production date instead.
+                    const rotationDate = b.expiryDate || b.productionDate;
+                    const dateLabel = b.expiryDate ? `Exp ${fmtExpiry(b.expiryDate)}` : `Prod ${fmtExpiry(b.productionDate)}`;
+                    return (
+                      <option key={i} value={rotationDate}>{dateLabel} - {b.qty} {fromItem.unit} available</option>
+                    );
+                  })}
                 </select>
               </div>
             )}
@@ -201,7 +206,9 @@ export default function StockTransferPanel({
                     <td className="py-2 text-fg/60 text-xs">{t.fromLocation || '?'} → {t.toLocation || '?'}</td>
                     <td className="py-2 text-right text-fg tabular-nums font-bold">
                       {t.qtyBase} {t.unit}
-                      {t.expiryDate && <span className="block text-[10px] font-normal text-fg/40">exp {fmtExpiry(t.expiryDate)}</span>}
+                      {/* t.expiryDate holds whichever rotation date the pinned batch used - a
+                          real expiry, or a production date for goods with no real expiry. */}
+                      {t.expiryDate && <span className="block text-[10px] font-normal text-fg/40">batch {fmtExpiry(t.expiryDate)}</span>}
                     </td>
                     <td className="py-2 pl-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${statusColor[t.status] || 'bg-white/10 text-fg/50'}`}>{t.status}</span></td>
                     <td className="py-2 text-right">

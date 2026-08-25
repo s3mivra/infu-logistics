@@ -73,6 +73,7 @@ export default function ImportModal() {
                           <span title="No unit/size found in the name or a Unit column - imported as pcs. Edit the item afterward to set its real size." className="ml-1.5 text-[9px] font-black bg-amber-500 text-white border border-amber-500/40 px-1.5 py-0.5 rounded uppercase align-middle">SET SIZE</span>
                         )}
                         {isBatch && r.expiryDate && <span className="ml-1.5 text-purple-300/60 text-[10px]">exp {r.expiryDate}</span>}
+                        {isBatch && !r.expiryDate && r.productionDate && <span className="ml-1.5 text-purple-300/60 text-[10px]">prod {r.productionDate}</span>}
                       </td>
                       <td className="px-2 py-2.5">
                         {isErr && <span className="text-[10px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">{r._error}</span>}

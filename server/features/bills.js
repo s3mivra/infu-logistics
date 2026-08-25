@@ -211,7 +211,7 @@ export default function registerBills(ctx) {
       if (bill.status !== 'Approved') return res.status(409).json({ success: false, error: 'Only an Approved bill can be paid.' });
 
       const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
-      const { payFromAccount } = req.body || {};
+      const { payFromAccount, referenceNumber } = req.body || {};
       const srcMeta = acctMeta(payFromAccount);
       const srcCode = (srcMeta && isCashLike(payFromAccount)) ? payFromAccount : '111000';
       const srcName = acctMeta(srcCode)?.name || 'Cash on Hand';
@@ -224,7 +224,7 @@ export default function registerBills(ctx) {
       assertBalanced(lines, reference);
       await JournalEntry.create({
         date: new Date(), reference,
-        description: `Payment for bill ${bill.billNumber} (${bill.description || bill.poNumber || bill.supplierName})`,
+        description: `Payment for bill ${bill.billNumber} (${bill.description || bill.poNumber || bill.supplierName})${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}`,
         lines, totalDebit: bill.amount, totalCredit: bill.amount,
         supplierId: String(bill.supplierId), supplierName: bill.supplierName,
       });
@@ -232,11 +232,12 @@ export default function registerBills(ctx) {
       bill.status = 'Paid';
       bill.paidAt = new Date();
       bill.journalEntryRef = reference;
+      bill.paymentReference = referenceNumber || '';
       await bill.save();
 
       await AuditLog.create({
         userId: req.user?.name || 'System', action: 'BILL_PAID', targetReference: bill.billNumber,
-        details: { amount: bill.amount, payFromAccount: srcCode, supplierId: String(bill.supplierId), recordedBy: req.user?.name },
+        details: { amount: bill.amount, payFromAccount: srcCode, referenceNumber: referenceNumber || '', supplierId: String(bill.supplierId), recordedBy: req.user?.name },
       });
       emitToMgr('erpUpdated');
       res.json({ success: true, bill });

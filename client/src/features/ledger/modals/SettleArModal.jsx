@@ -40,6 +40,12 @@ export default function SettleArModal() {
               </select>
             </div>
             <div>
+              <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Reference No. (optional)</label>
+              <input type="text" placeholder="Bank txn ID, check no., GCash ref..." value={settleForm.referenceNumber || ''} onChange={e => setSettleForm({...settleForm, referenceNumber: e.target.value})}
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+              <p className="text-[9px] text-fg/25 mt-1">For reconciling against the bank statement or receipt later.</p>
+            </div>
+            <div>
               <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Note (optional)</label>
               <input type="text" placeholder="Grab payout batch #..." value={settleForm.note} onChange={e => setSettleForm({...settleForm, note: e.target.value})}
                 className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />

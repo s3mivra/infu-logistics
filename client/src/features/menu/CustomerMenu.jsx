@@ -83,11 +83,12 @@ const MenuItemCard = memo(({ product, onAdd }) => {
 MenuItemCard.displayName = 'MenuItemCard';
 
 // A product is only HIDDEN when staff manually removed it from the menu
-// (isAvailable === false). A stock-driven unavailability (stockAvailable ===
-// false - missing/zero recipe ingredient) still shows the card, just disabled
-// with a "Not available" badge (see MenuItemCard), so customers see it exists
-// but can't order it right now.
-const isProductVisible = (p) => p.isAvailable !== false;
+// (isAvailable === false), or it's a raw material with no SRP (basePrice <= 0 -
+// stock the admin tracks but never sells). A stock-driven unavailability
+// (stockAvailable === false - missing/zero recipe ingredient) still shows the
+// card, just disabled with a "Not available" badge (see MenuItemCard), so
+// customers see it exists but can't order it right now.
+const isProductVisible = (p) => p.isAvailable !== false && (p.basePrice || 0) > 0;
 
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Kasa Lokal').toUpperCase();
 

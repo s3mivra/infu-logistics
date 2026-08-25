@@ -114,7 +114,7 @@ describe('consumeBatches - consumedDetail', () => {
       { qty: 3, expiryDate: D('2026-06-15') },
     ];
     const r = consumeBatches(batches, 2);
-    expect(r.consumedDetail).toEqual([{ qty: 2, expiryDate: D('2026-06-15') }]);
+    expect(r.consumedDetail).toEqual([{ qty: 2, expiryDate: D('2026-06-15'), productionDate: null }]);
   });
   it('reports a per-batch breakdown when consumption spans two batches', () => {
     const batches = [
@@ -123,8 +123,8 @@ describe('consumeBatches - consumedDetail', () => {
     ];
     const r = consumeBatches(batches, 6);
     expect(r.consumedDetail).toEqual([
-      { qty: 3, expiryDate: D('2026-06-15') },
-      { qty: 3, expiryDate: D('2026-06-22') },
+      { qty: 3, expiryDate: D('2026-06-15'), productionDate: null },
+      { qty: 3, expiryDate: D('2026-06-22'), productionDate: null },
     ]);
   });
   it('is empty when nothing is consumed', () => {
@@ -141,7 +141,7 @@ describe('consumeSpecificBatch', () => {
     const r = consumeSpecificBatch(batches, D('2026-06-22'), 2);
     expect(r.consumed).toBe(2);
     expect(r.leftover).toBe(0);
-    expect(r.consumedDetail).toEqual([{ qty: 2, expiryDate: D('2026-06-22') }]);
+    expect(r.consumedDetail).toEqual([{ qty: 2, expiryDate: D('2026-06-22'), productionDate: null }]);
     const untouched = r.batches.find(b => b.expiryDate.toISOString() === D('2026-06-15').toISOString());
     expect(untouched.qty).toBe(3);
     const drawn = r.batches.find(b => b.expiryDate.toISOString() === D('2026-06-22').toISOString());
@@ -184,6 +184,63 @@ describe('addBatch', () => {
     const batches = [{ qty: 5, expiryDate: D('2026-06-15') }];
     addBatch(batches, { qty: 3, expiryDate: D('2026-06-22') });
     expect(batches).toHaveLength(1);
+  });
+});
+
+describe('production date fallback (goods with no real expiry, e.g. beans)', () => {
+  it('sortBatchesFEFO falls back to productionDate when expiryDate is absent', () => {
+    const batches = [
+      { qty: 5, productionDate: D('2026-07-01') },
+      { qty: 3, productionDate: D('2026-06-15') },
+      { qty: 7, productionDate: D('2026-06-22') },
+    ];
+    const sorted = sortBatchesFEFO(batches);
+    expect(sorted.map(b => b.productionDate.toISOString())).toEqual([
+      D('2026-06-15').toISOString(),
+      D('2026-06-22').toISOString(),
+      D('2026-07-01').toISOString(),
+    ]);
+  });
+  it('a mix of expiry-dated and production-only batches sorts by whichever date each one has', () => {
+    // Batches for a single item are normally all-expiry or all-production, never
+    // mixed, but the rotation key falls back independently per batch either way -
+    // whichever date (expiry or production) a batch carries, oldest goes first.
+    const batches = [
+      { qty: 5, productionDate: D('2026-01-01') },
+      { qty: 3, expiryDate: D('2026-12-01') },
+    ];
+    const sorted = sortBatchesFEFO(batches);
+    expect(sorted[0].productionDate).toEqual(D('2026-01-01'));
+    expect(sorted[1].expiryDate).toEqual(D('2026-12-01'));
+  });
+  it('consumeBatches (FPFO) consumes the oldest-produced batch first', () => {
+    const batches = [
+      { qty: 5, productionDate: D('2026-06-22') },
+      { qty: 3, productionDate: D('2026-06-15') },
+    ];
+    const r = consumeBatches(batches, 2);
+    expect(r.consumedDetail).toEqual([{ qty: 2, expiryDate: null, productionDate: D('2026-06-15') }]);
+    const remaining = r.batches.find(b => b.productionDate.toISOString() === D('2026-06-15').toISOString());
+    expect(remaining.qty).toBe(1);
+  });
+  it('consumeSpecificBatch matches a batch by its productionDate when it has no expiryDate', () => {
+    const batches = [
+      { qty: 5, productionDate: D('2026-06-22') },
+      { qty: 3, productionDate: D('2026-06-15') },
+    ];
+    const r = consumeSpecificBatch(batches, D('2026-06-22'), 2);
+    expect(r.consumed).toBe(2);
+    expect(r.batches.find(b => b.productionDate.toISOString() === D('2026-06-15').toISOString()).qty).toBe(3); // untouched
+    expect(r.batches.find(b => b.productionDate.toISOString() === D('2026-06-22').toISOString()).qty).toBe(3);
+  });
+  it('addBatch stores productionDate independently of expiryDate', () => {
+    const updated = addBatch([], { qty: 10, productionDate: D('2026-03-01') });
+    expect(updated[0].expiryDate).toBeNull();
+    expect(updated[0].productionDate).toEqual(D('2026-03-01'));
+  });
+  it('soonestExpiry ignores production-date-only batches (expiry-specific by design)', () => {
+    const batches = [{ qty: 5, productionDate: D('2026-01-01') }];
+    expect(soonestExpiry(batches)).toBeNull();
   });
 });
 

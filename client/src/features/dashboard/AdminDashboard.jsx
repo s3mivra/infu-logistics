@@ -331,7 +331,7 @@ export default function AdminDashboard() {
   // --- AP OUTSTANDING ---
   const [apData, setApData] = useState(null);
   const [apPayModal, setApPayModal] = useState(false);
-  const [apPayForm, setApPayForm] = useState({ amount: '', payFromAccount: '111000', description: '', vendorName: '', supplierId: '' });
+  const [apPayForm, setApPayForm] = useState({ amount: '', payFromAccount: '111000', description: '', vendorName: '', supplierId: '', referenceNumber: '' });
   // Supplier list for the A/P payment picker (the Procurement tab keeps its own).
   const [suppliers, setSuppliers] = useState([]);
   const [stockLocations, setStockLocations] = useState([]);
@@ -514,7 +514,7 @@ export default function AdminDashboard() {
   const [expenseForm, setExpenseForm] = useState({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', date: new Date().toISOString().slice(0,10) });
   const [expenseSubmitting, setExpenseSubmitting] = useState(false);
   const [settleModal, setSettleModal] = useState(null); // { order }
-  const [settleForm, setSettleForm] = useState({ amount: '', paymentMethod: 'Cash on Hand', note: '' });
+  const [settleForm, setSettleForm] = useState({ amount: '', paymentMethod: 'Cash on Hand', note: '', referenceNumber: '' });
   const [settleSubmitting, setSettleSubmitting] = useState(false);
 
   // --- SERVER-SIDE ANALYTICS ---
@@ -2301,12 +2301,12 @@ const updateStatus = async (orderId, newStatus) => {
     try {
       const res = await apiFetch(`/api/orders/${settleModal.order._id}/settle-ar`, {
         method: 'POST',
-        body: JSON.stringify({ amount: amt, paymentMethod: settleForm.paymentMethod, note: settleForm.note })
+        body: JSON.stringify({ amount: amt, paymentMethod: settleForm.paymentMethod, note: settleForm.note, referenceNumber: settleForm.referenceNumber })
       });
       const data = await res.json();
       if (data.success) {
         setSettleModal(null);
-        setSettleForm({ amount: '', paymentMethod: 'Cash on Hand', note: '' });
+        setSettleForm({ amount: '', paymentMethod: 'Cash on Hand', note: '', referenceNumber: '' });
         fetchArOutstanding();
         fetchArAgeing();
         ui.alert('A/R settled successfully.');
@@ -2707,7 +2707,7 @@ const updateStatus = async (orderId, newStatus) => {
       if (!(await ui.confirm(`Restock "${existingItem.itemName}"?\n\nQty: +${qtyBought} pcs\nCost per pack: ₱${costPerPack.toFixed(2)}\nTotal cost: ₱${totalCost.toFixed(2)}`))) return;
       await apiFetch(`/api/inventory/restock/${existingItem._id}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ addedStock: restockBase, totalCost, expiryDate: invFormEff.expiryDate || null, creditAccount: invFormEff.creditAccount || '111000' })
+        body: JSON.stringify({ addedStock: restockBase, totalCost, expiryDate: invFormEff.expiryDate || null, productionDate: invFormEff.productionDate || null, creditAccount: invFormEff.creditAccount || '111000' })
       });
     } else {
       // ADD BRAND NEW ITEM
@@ -2718,6 +2718,7 @@ const updateStatus = async (orderId, newStatus) => {
         unitCost: costPerBase,
         lowStockThreshold: (parseFloat(invForm.lowStockThreshold) || 0) * mult, // threshold also enters in displayUnit
         expiryDate: invForm.expiryDate || null,
+        productionDate: invForm.productionDate || null,
         expiryWarnDays: parseInt(invForm.expiryWarnDays) || 7,
         displayUnit: invForm.unit,
         unitMultiplier: mult,
@@ -2732,7 +2733,7 @@ const updateStatus = async (orderId, newStatus) => {
       if (!data.success) return ui.alert(data.error);
     }
 
-    setInvForm({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000', stockLocation: '', stockCategory: '' });
+    setInvForm({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', productionDate: '', expiryWarnDays: 7, creditAccount: '111000', stockLocation: '', stockCategory: '' });
     fetchERPData();
   };
   const deleteInventory = async (id) => { if(await ui.confirm('Delete inventory item?')) { await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' }); fetchERPData(); } };
@@ -2970,6 +2971,11 @@ const updateStatus = async (orderId, newStatus) => {
         const exp = lower['expiry date'] || lower['expiry'] || lower['expirydate'] || '';
         const expStr = exp === '' || exp == null ? '' : String(exp).trim();
 
+        // Production date - for goods with no real expiry (roasted beans, etc.).
+        // Only meaningful when there's no expiry on the row.
+        const prod = lower['production date'] || lower['production'] || lower['prod date'] || lower['proddate'] || lower['roast date'] || lower['roastdate'] || '';
+        const prodStr = expStr ? '' : (prod === '' || prod == null ? '' : String(prod).trim());
+
         // SRP - strip ₱ symbol and commas
         const rawSrp = String(lower.srp || lower['selling price'] || lower['retail price'] || '').replace(/[₱,\s]/g, '');
         const srp = rawSrp ? parseFloat(rawSrp) : '';
@@ -2990,6 +2996,7 @@ const updateStatus = async (orderId, newStatus) => {
           qty,
           unitCost,
           expiryDate: expStr,
+          productionDate: prodStr,
           srp,
           // Per-qty (pack) size parsed from the name, e.g. "Milk 1L" → packSize 1.
           // null when the name carried no size hint (nothing to persist).
@@ -3043,10 +3050,13 @@ const updateStatus = async (orderId, newStatus) => {
           const oldDisplay = itemDisplay(existing);
           const diff = newBaseQty - (existing.stockQty || 0);
           const diffDisplay = diff / resolved.mult;
-          // Detect new expiry batch: import has expiry AND it differs from existing soonest expiry
+          // Detect new expiry batch: import has expiry AND it differs from existing soonest expiry.
+          // A production date on the row (goods with no real expiry, e.g. beans) is also
+          // flagged as a new batch on any increase - there's no single "current production
+          // date" summary on the item to diff against, unlike expiryDate.
           const existingExpiry = existing.expiryDate ? String(existing.expiryDate).slice(0, 10) : '';
           const importExpiry = r.expiryDate ? String(r.expiryDate).slice(0, 10) : '';
-          const isNewBatch = !!(importExpiry && existingExpiry && importExpiry !== existingExpiry);
+          const isNewBatch = !!(importExpiry && existingExpiry && importExpiry !== existingExpiry) || !!(r.productionDate && diff > 0);
           projected.set(importKey, { existing, qty: newBaseQty });
           return { ...r, _newItem: false, _existing: existing, _diff: diffDisplay, _oldDisplay: oldDisplay, _newBatch: isNewBatch };
         }
@@ -3090,6 +3100,7 @@ const updateStatus = async (orderId, newStatus) => {
           qty: r.qty,
           unitCost: r.unitCost === '' || r.unitCost === undefined ? undefined : r.unitCost,
           expiryDate: r.expiryDate || undefined,
+          productionDate: r.productionDate || undefined,
           category: r.category || undefined,
           srp: r.srp === '' || r.srp === undefined ? undefined : r.srp,
           packSize: r.packSize == null ? undefined : r.packSize,
@@ -4104,6 +4115,58 @@ const updateStatus = async (orderId, newStatus) => {
     finally { setRefundSubmitting(false); }
   };
 
+  // Line-item + qty precise refund - not everything on the order has to come
+  // back, and not all of a line's qty either. `items` is [{ itemIndex, qty }].
+  const handlePartialRefund = async (items) => {
+    if (!refundModal || !refundForm.reason.trim()) return ui.alert('Reason required.');
+    if (!items || items.length === 0) return ui.alert('Select at least one item to refund.');
+    setRefundSubmitting(true);
+    try {
+      const res = await apiFetch(`/api/orders/${refundModal._id}/partial-refund`, {
+        method: 'POST',
+        body: JSON.stringify({ items, reason: refundForm.reason, inventoryAction: refundForm.inventoryAction }),
+      });
+      const d = await res.json();
+      if (d.success) {
+        setRefundModal(null);
+        setRefundForm({ reason: '', refundAmount: '', inventoryAction: 'Restock' });
+        fetchOrders();
+        ui.alert(d.fullyRefunded
+          ? `Refunded ₱${(d.refundAmount || 0).toFixed(2)} - every item on this order is now refunded.`
+          : `Refunded ₱${(d.refundAmount || 0).toFixed(2)}. The order stays Completed - the rest can still be refunded later.`);
+      } else ui.alert(d.error || 'Refund failed.');
+    } catch { ui.alert('Network error.'); }
+    finally { setRefundSubmitting(false); }
+  };
+
+  // Return some line(s)/qty and add a replacement item on the SAME order, net-
+  // settled in one cash movement. `returnItems` is [{ itemIndex, qty }] (may be
+  // empty - a pure add-on exchange), `newItems` is [{ productId, quantity }].
+  const handleExchange = async (returnItems, newItems) => {
+    if (!refundModal || !refundForm.reason.trim()) return ui.alert('Reason required.');
+    if (!newItems || newItems.length === 0) return ui.alert('Pick at least one replacement item.');
+    setRefundSubmitting(true);
+    try {
+      const res = await apiFetch(`/api/orders/${refundModal._id}/exchange`, {
+        method: 'POST',
+        body: JSON.stringify({ returnItems, newItems, reason: refundForm.reason, inventoryAction: refundForm.inventoryAction }),
+      });
+      const d = await res.json();
+      if (d.success) {
+        setRefundModal(null);
+        setRefundForm({ reason: '', refundAmount: '', inventoryAction: 'Restock' });
+        fetchOrders();
+        const delta = d.netDelta || 0;
+        ui.alert(Math.abs(delta) < 0.01
+          ? 'Exchange processed - even swap, no cash movement.'
+          : delta > 0
+            ? `Exchange processed - customer paid ₱${delta.toFixed(2)} more.`
+            : `Exchange processed - ₱${Math.abs(delta).toFixed(2)} refunded to the customer.`);
+      } else ui.alert(d.error || 'Exchange failed.');
+    } catch { ui.alert('Network error.'); }
+    finally { setRefundSubmitting(false); }
+  };
+
   // ── Clock in/out ─────────────────────────────────────────────────────────────
   // Apply any queued offline clock events on top of a base status so the gate /
   // button reflect the staff member's optimistic state until the queue syncs.
@@ -4588,7 +4651,7 @@ const updateStatus = async (orderId, newStatus) => {
       if (data.success) {
         ui.alert('AP payment recorded.');
         setApPayModal(false);
-        setApPayForm({ amount: '', payFromAccount: '111000', description: '', vendorName: '', supplierId: '' });
+        setApPayForm({ amount: '', payFromAccount: '111000', description: '', vendorName: '', supplierId: '', referenceNumber: '' });
         fetchApData();
       } else ui.alert(data.error || 'Failed to record payment.');
     } catch { ui.alert('Network error.'); }
@@ -4601,6 +4664,7 @@ const updateStatus = async (orderId, newStatus) => {
   const [billCreate, setBillCreate] = useState({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000' });
   const [billPayModal, setBillPayModal] = useState(null); // the bill being paid
   const [billPayFrom, setBillPayFrom] = useState('111000');
+  const [billPayReference, setBillPayReference] = useState('');
   const [billBusy, setBillBusy] = useState(false);
 
   const fetchBills = async (status = billsFilter) => {
@@ -4636,8 +4700,8 @@ const updateStatus = async (orderId, newStatus) => {
     billAction(b._id, 'schedule', { scheduledPaymentDate: date.trim() || null });
   };
   const submitBillPay = async () => {
-    const ok = await billAction(billPayModal._id, 'pay', { payFromAccount: billPayFrom });
-    if (ok) { setBillPayModal(null); ui.alert('Payment recorded.'); }
+    const ok = await billAction(billPayModal._id, 'pay', { payFromAccount: billPayFrom, referenceNumber: billPayReference });
+    if (ok) { setBillPayModal(null); setBillPayReference(''); ui.alert('Payment recorded.'); }
   };
   const submitCreateBill = async () => {
     const amt = parseFloat(billCreate.amount);
@@ -5491,7 +5555,7 @@ const updateStatus = async (orderId, newStatus) => {
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
     salesLineItems, sliRange, setSliRange, fetchSalesLineItems, exportSalesLineItemsPDF,
     // ── Refund ───────────────────────────────────────────────────────────────
-    refundModal, setRefundModal, refundForm, setRefundForm, refundSubmitting, handleRefund,
+    refundModal, setRefundModal, refundForm, setRefundForm, refundSubmitting, handleRefund, handlePartialRefund, handleExchange,
     // ── Clock In/Out ─────────────────────────────────────────────────────────
     clockStatus, clockEntries, clockEntriesTotal, clockEntriesPage,
     fetchClockStatus, fetchClockEntries, handleClockIn, handleClockOut,
@@ -5507,7 +5571,7 @@ const updateStatus = async (orderId, newStatus) => {
     bills, billsFilter, setBillsFilter, fetchBills, billBusy,
     billCreate, setBillCreate, submitCreateBill,
     approveBill, rejectBill, scheduleBill,
-    billPayModal, setBillPayModal, billPayFrom, setBillPayFrom, submitBillPay,
+    billPayModal, setBillPayModal, billPayFrom, setBillPayFrom, billPayReference, setBillPayReference, submitBillPay,
     expenseAccounts,
     // ── Order Notes ─────────────────────────────────────────────────────────
     posNotes, setPosNotes,

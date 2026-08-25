@@ -124,6 +124,17 @@ describe('void variants', () => {
     expect(v.status).toBe(403);
   });
 
+  it('settle-AR stores an optional external reference number, for reconciliation', async () => {
+    const o = await mkOrder({ ...line('productId'), paymentMethod: 'Bank Transfer' });
+    const id = o.body.order._id;
+    await complete(id);
+    const s = await req('post', `/api/orders/${id}/settle-ar`, T.super).send({ amount: 100, paymentMethod: 'Bank Transfer', referenceNumber: 'BANK-TXN-4471' });
+    expect(s.status).toBe(200);
+    expect(s.body.order.arSettledReference).toBe('BANK-TXN-4471');
+    const je = await mongoose.model('JournalEntry').findOne({ reference: new RegExp(`ARS.*${o.body.order.orderNumber}`) }).lean();
+    expect(je.description).toContain('BANK-TXN-4471');
+  });
+
   it('settle-AR rejects a cash sale (400)', async () => {
     const o = await mkOrder({ ...line('productId'), paymentMethod: 'Cash' });
     await complete(o.body.order._id);

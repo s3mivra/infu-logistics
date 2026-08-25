@@ -242,7 +242,7 @@ export default function ProcurementTab({ ctx }) {
   };
 
   // ── Draft form state ────────────────────────────────────────────────────────
-  const blankLine = () => ({ invId: null, itemName: '', itemCode: '', unit: '', packSize: '', orderedQty: '', unitCost: '', expiryDate: '', expiryWarnDays: '', lowStockThreshold: '', stockLocation: '', stockCategory: '', creditAccount: '' });
+  const blankLine = () => ({ invId: null, itemName: '', itemCode: '', unit: '', packSize: '', orderedQty: '', unitCost: '', expiryDate: '', productionDate: '', expiryWarnDays: '', lowStockThreshold: '', stockLocation: '', stockCategory: '', creditAccount: '' });
   // Same forced g/mL/pcs display units the inventory uses (see lib/units).
   const UNIT_OPTIONS = ['', 'pcs', 'kg', 'L', 'g', 'ml'];
   const [showForm, setShowForm] = useState(false);
@@ -268,6 +268,7 @@ export default function ProcurementTab({ ctx }) {
         invId: l.invId || null, itemName: l.itemName || '', itemCode: l.itemCode || '',
         unit: l.unit || '', packSize: l.packSize ?? '', orderedQty: l.orderedQty ?? '', unitCost: l.unitCost ?? '',
         expiryDate: l.expiryDate ? new Date(l.expiryDate).toISOString().slice(0, 10) : '',
+        productionDate: l.productionDate ? new Date(l.productionDate).toISOString().slice(0, 10) : '',
       })),
     });
     setShowForm(true);
@@ -537,6 +538,19 @@ export default function ProcurementTab({ ctx }) {
   //   pack costing ₱133.46 showed as ₱533.84 (its ₱/kg price × 4).
   //   FB: ordering is by display unit (kg/L), so the per-display-unit cost is
   //   the correct one to prefill.
+  // Qty prefills from the most recent OTHER PO that ordered this same item (by
+  // PLU/invId) - a fast "same as last time" default the user can still retype.
+  // `pos` is already sorted newest-first by the server, so the first match found
+  // walking it in order is the most recent one. The PO currently being edited is
+  // skipped so re-picking an item already on this draft doesn't just echo itself.
+  const lastOrderedQtyFor = (invId) => {
+    for (const po of pos) {
+      if (editId && po._id === editId) continue;
+      const line = (po.lines || []).find(l => l.invId && String(l.invId) === String(invId));
+      if (line) return line.orderedQty;
+    }
+    return null;
+  };
   const pickInventory = (idx, invId) => {
     const item = inventory.find(i => String(i._id) === String(invId));
     if (!item) { updateLine(idx, { invId: null }); return; }
@@ -548,6 +562,7 @@ export default function ProcurementTab({ ctx }) {
       const { mult } = effectiveDisplay(item);
       if (item.unitCost != null) unitCost = +(item.unitCost * (mult || 1)).toFixed(4);
     }
+    const lastQty = lastOrderedQtyFor(item._id);
     updateLine(idx, {
       invId: item._id,
       itemName: item.itemName || '',
@@ -558,6 +573,7 @@ export default function ProcurementTab({ ctx }) {
       // and is NOT a pack size.
       packSize: item.packSize && item.packSize > 0 ? item.packSize : '',
       unitCost,
+      ...(lastQty != null ? { orderedQty: lastQty } : {}),
     });
   };
 
@@ -574,6 +590,7 @@ export default function ProcurementTab({ ctx }) {
         unitCost: Number(l.unitCost) || 0,
         packSize: l.packSize === '' || l.packSize == null ? null : Number(l.packSize) || null,
         expiryDate: l.expiryDate || null,
+        productionDate: l.expiryDate ? null : (l.productionDate || null),
         expiryWarnDays: l.expiryWarnDays !== '' && l.expiryWarnDays != null ? Number(l.expiryWarnDays) || null : null,
         lowStockThreshold: l.lowStockThreshold !== '' && l.lowStockThreshold != null ? Number(l.lowStockThreshold) || null : null,
         stockLocation: l.stockLocation || null,
@@ -632,6 +649,7 @@ export default function ProcurementTab({ ctx }) {
   const [receiveId, setReceiveId] = useState(null);
   const [receiveQtys, setReceiveQtys] = useState({});
   const [receiveExpiry, setReceiveExpiry] = useState({});
+  const [receiveProduction, setReceiveProduction] = useState({});
   const [receiveNotes, setReceiveNotes] = useState('');
   const [receiving, setReceiving] = useState(false);
 
@@ -643,17 +661,20 @@ export default function ProcurementTab({ ctx }) {
     // delivery's quantity (a delta), never a replacement total.
     const q = {};
     const exp = {};
+    const prod = {};
     (po.lines || []).forEach((l, i) => {
       const rem = remainingOf(l);
       if (rem > 0) {
         q[l._id || i] = String(rem);
-        // Default to whatever expiry was planned on the draft - editable, since
-        // the actual delivery's expiry can differ from what was planned.
+        // Default to whatever expiry/production date was planned on the draft -
+        // editable, since the actual delivery's date can differ from what was planned.
         exp[l._id || i] = l.expiryDate ? new Date(l.expiryDate).toISOString().slice(0, 10) : '';
+        prod[l._id || i] = l.productionDate ? new Date(l.productionDate).toISOString().slice(0, 10) : '';
       }
     });
     setReceiveQtys(q);
     setReceiveExpiry(exp);
+    setReceiveProduction(prod);
     setReceiveNotes(po.notes || '');
   };
 
@@ -661,7 +682,11 @@ export default function ProcurementTab({ ctx }) {
     setReceiving(true); setError('');
     try {
       const received = (po.lines || [])
-        .map((l, i) => ({ lineId: l._id, index: i, receivedQty: Number(receiveQtys[l._id || i]) || 0, expiryDate: receiveExpiry[l._id || i] || null }))
+        .map((l, i) => ({
+          lineId: l._id, index: i, receivedQty: Number(receiveQtys[l._id || i]) || 0,
+          expiryDate: receiveExpiry[l._id || i] || null,
+          productionDate: receiveExpiry[l._id || i] ? null : (receiveProduction[l._id || i] || null),
+        }))
         .filter(r => r.receivedQty > 0); // only send lines the user actually entered a delivered qty for
       const res = await apiFetch(`/api/purchase-orders/${po._id}/receive`, { method: 'POST', body: JSON.stringify({ received, notes: receiveNotes }) });
       const d = await res.json();
@@ -1011,6 +1036,12 @@ export default function ProcurementTab({ ctx }) {
                               onChange={e => setReceiveExpiry(x => ({ ...x, [key]: e.target.value }))}
                               title="Expiry date on this delivery (optional)"
                               className="w-[9.5rem] bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg/70 focus:outline-none focus:border-brand/60" />
+                            {!receiveExpiry[key] && (
+                              <input type="date" value={receiveProduction[key] ?? ''}
+                                onChange={e => setReceiveProduction(x => ({ ...x, [key]: e.target.value }))}
+                                title="Production date on this delivery - for goods with no real expiry, e.g. beans"
+                                className="w-[9.5rem] bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg/70 focus:outline-none focus:border-brand/60" />
+                            )}
                           </div>
                         </div>
                       );
@@ -1099,6 +1130,9 @@ export default function ProcurementTab({ ctx }) {
                         <input type="number" min="0" step="any" value={l.unitCost} onChange={e => updateLine(idx, { unitCost: e.target.value })} placeholder="Unit cost" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
                         <input type="number" min="0" step="any" value={l.packSize} onChange={e => updateLine(idx, { packSize: e.target.value })} title="Weight / volume per pack, in the selected unit" placeholder="Per-pack size (opt.)" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
                         <input type="date" value={l.expiryDate} onChange={e => updateLine(idx, { expiryDate: e.target.value })} title="Expiry date (optional)" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg/70 focus:outline-none focus:border-brand/60" />
+                        {!l.expiryDate && (
+                          <input type="date" value={l.productionDate || ''} onChange={e => updateLine(idx, { productionDate: e.target.value })} title="Production date - for goods with no real expiry, e.g. beans" placeholder="Production date" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg/70 focus:outline-none focus:border-brand/60" />
+                        )}
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 border-t border-white/8 mt-1">
                         <div>

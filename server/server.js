@@ -1021,6 +1021,14 @@ items: [{
     price: Number,
     quantity: Number,
     fulfilledQty: { type: Number, default: 0 },        // units fulfilled so far (partial fulfillment)
+    // Cumulative units of THIS line refunded/returned so far, across however many
+    // partial-refund passes (see POST /api/orders/:id/partial-refund). Never
+    // exceeds `quantity`. Whole-order /refund and /void don't touch this - they
+    // already terminate the order outright.
+    refundedQty: { type: Number, default: 0 },
+    // True for a line added by POST /api/orders/:id/exchange (a replacement item) -
+    // distinguishes it from the order's original lines in the UI/receipt history.
+    addedViaExchange: { type: Boolean, default: false },
     productDiscountPercent: { type: Number, default: 0 }, // per-product discount applied to this line
     // VAT classification COPIED from the product at ring-up. Stamped rather than
     // looked up later: reclassifying a product must never rewrite the tax on
@@ -1095,6 +1103,19 @@ items: [{
   voidedAt: { type: Date },
   cancelledBy: { type: String, default: '' },
   cancelledAt: { type: Date },
+  // Audit trail of partial refunds (see POST /api/orders/:id/partial-refund) -
+  // not everything has to be refunded at once, and it can happen more than once
+  // over time as long as no line is ever refunded past what was ordered. Whole-
+  // order /refund and /void are unaffected - they stay one-shot/terminal.
+  refundHistory: [{
+    reference:       { type: String, default: '' },
+    at:              { type: Date, default: Date.now },
+    by:              { type: String, default: '' },
+    reason:          { type: String, default: '' },
+    inventoryAction: { type: String, default: 'None' }, // 'Restock' | 'Spoilage' | 'None'
+    items:           [{ itemIndex: Number, name: String, qty: Number }],
+    amount:          { type: Number, default: 0 },
+  }],
   // True when a logged-in client placed the order directly from the client portal.
   // Used to exclude these orders from "staff activity" panels - their `cashier`
   // is the client's own username, not real staff.
@@ -1123,6 +1144,11 @@ items: [{
   arSettledAmount:  { type: Number, default: 0 },
   arSettledMethod:  { type: String, default: '' },
   arSettledNote:    { type: String, default: '' },
+  // External reference for this settlement - a bank transaction ID, check
+  // number, GCash ref, etc. Distinct from the auto-generated internal
+  // JournalEntry.reference (mkRef('ARS', ...)) - this is what ties the record
+  // back to an actual bank statement line or receipt for reconciliation.
+  arSettledReference: { type: String, default: '' },
   // Payment-terms snapshot for on-account (non-cash) sales, captured when the
   // order Completes so later changes to the client's default terms don't
   // retroactively move an existing receivable's due date.
@@ -1186,6 +1212,10 @@ const InventorySchema = new mongoose.Schema({
   expiryBatches: [{
     qty:         { type: Number, default: 0 },      // qty in BASE units (ml/g/pcs)
     expiryDate:  { type: Date },
+    // For goods with no real expiry (roasted beans, etc.) - dates freshness by
+    // when it was made instead. Used as the FEFO fallback (see batchSortDate in
+    // lib/expiry.js): rotation goes by expiryDate when known, else productionDate.
+    productionDate: { type: Date },
     receivedAt:  { type: Date, default: Date.now },
     reference:   { type: String, default: '' },
     unitCost:    { type: Number, default: 0 }       // per-base-unit cost when this batch was received
@@ -1991,6 +2021,7 @@ const PurchaseOrderSchema = new mongoose.Schema({
     orderedQty:  { type: Number, default: 0 },
     unitCost:    { type: Number, default: 0 },
     expiryDate:  { type: Date, default: null },             // optional expiry for the incoming stock
+    productionDate: { type: Date, default: null },          // for goods with no real expiry (beans, etc.)
     receivedQty: { type: Number, default: null },           // null until reconciled
   }],
   estTotal:     { type: Number, default: 0 },
@@ -2044,6 +2075,10 @@ const BillSchema = new mongoose.Schema({
   // source:'PO' bills, the approval entry for source:'Manual' bills, and
   // overwritten with the payment entry's reference once Paid.
   journalEntryRef:   { type: String, default: '' },
+  // External reference for the payment - a bank transaction ID, check number,
+  // GCash ref, etc. Distinct from journalEntryRef (the internal mkSeqRef code) -
+  // this is what ties the record back to an actual bank statement or receipt.
+  paymentReference:  { type: String, default: '' },
 }, { timestamps: true });
 BillSchema.index({ businessType: 1, status: 1 });
 const Bill = mongoose.model('Bill', BillSchema);

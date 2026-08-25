@@ -667,7 +667,7 @@ app.get('/api/finance/vendor-statement/:supplierId', verifyToken, ...canViewAcct
 // POST /api/finance/ap-payment - record a supplier payment (DR 2000 AP / CR cash account)
 app.post('/api/finance/ap-payment', verifyToken, ...canPostAcct, async (req, res) => {
   try {
-    const { amount, payFromAccount, description, vendorName, supplierId } = req.body;
+    const { amount, payFromAccount, description, vendorName, supplierId, referenceNumber } = req.body;
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Amount must be positive.' });
 
@@ -687,7 +687,7 @@ app.post('/api/finance/ap-payment', verifyToken, ...canPostAcct, async (req, res
     const srcCode = (srcMeta && isCashLike(payFromAccount)) ? payFromAccount : '111000';
     const srcName = acctMeta(srcCode)?.name || 'Cash on Hand';
 
-    const desc = description?.trim() || `AP payment${payeeName ? ` to ${payeeName}` : ''}`;
+    const desc = (description?.trim() || `AP payment${payeeName ? ` to ${payeeName}` : ''}`) + (referenceNumber ? ` [ref: ${referenceNumber}]` : '');
     const reference = await mkSeqRef('AP-PAY');
 
     const lines = [
@@ -706,7 +706,7 @@ app.post('/api/finance/ap-payment', verifyToken, ...canPostAcct, async (req, res
       userId: req.user?.name || 'System',
       action: 'AP_PAYMENT',
       targetReference: reference,
-      details: { amount: amt, payFromAccount: srcCode, vendorName: payeeName, supplierId: supplier ? String(supplier._id) : null, recordedBy: req.user?.name }
+      details: { amount: amt, payFromAccount: srcCode, referenceNumber: referenceNumber || '', vendorName: payeeName, supplierId: supplier ? String(supplier._id) : null, recordedBy: req.user?.name }
     });
 
     emitToMgr('erpUpdated'); // auto-refresh the general ledger

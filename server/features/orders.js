@@ -1749,7 +1749,7 @@ app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
 // ============================================================
 app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { amount, paymentMethod, note } = req.body;
+    const { amount, paymentMethod, note, referenceNumber } = req.body;
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
     if (order.paymentMethod === 'Cash')
@@ -1781,7 +1781,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
 
     await JournalEntry.create({
       reference,
-      description: `A/R settlement: ${order.orderNumber} via ${order.paymentMethod}${note ? ` (${note})` : ''}`,
+      description: `A/R settlement: ${order.orderNumber} via ${order.paymentMethod}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}${note ? ` (${note})` : ''}`,
       lines, totalDebit: amt, totalCredit: amt,
     });
 
@@ -1790,6 +1790,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     order.arSettledAmount = amt;
     order.arSettledMethod = paymentMethod || 'Cash on Hand';
     order.arSettledNote = note || '';
+    order.arSettledReference = referenceNumber || '';
     await order.save();
 
     emitToMgr('erpUpdated');
@@ -2237,6 +2238,439 @@ const refundOnce = async (req, res, mayRetry) => {
   }
   return false;
 };
+
+// ── PARTIAL REFUND (line-item + qty precise) ────────────────────────────────────
+// Body: { items: [{ itemIndex, qty }], reason, inventoryAction: 'Restock'|'Spoilage'|'None' }
+// Unlike /refund (whole-order, amount typed by the operator, terminal), this
+// targets SPECIFIC lines and SPECIFIC quantities within them - "the customer is
+// keeping 3 of the 5, only refund 2" - and can be called more than once on the
+// same order as returns trickle in, as long as no line is ever refunded past
+// what was ordered.
+//
+// Money: rather than re-derive VAT/discount from scratch for an arbitrary subset
+// of lines (order-level discounts and VAT don't prorate cleanly line-by-line),
+// the refund amount is each selected unit's share of the order's already-settled
+// total - i.e. (gross of the units being returned) / (gross of the whole order)
+// × order.total. Whatever discount/VAT treatment the sale actually got is
+// carried through proportionally, never recomputed. Capped against what's
+// already been refunded across prior partial passes so the running total can
+// never exceed the order's collected amount.
+app.post('/api/orders/:id/partial-refund', verifyToken, requireSuperOrAdmin, async (req, res) => {
+  await runWithStatsRetry(partialRefundOnce, req, res);
+});
+
+const partialRefundOnce = async (req, res, mayRetry) => {
+  const session = await mongoose.startSession();
+  // Aborts the transaction/session before responding - every validation
+  // early-return below goes through this so a rejected request never leaves a
+  // dangling started-but-never-resolved session.
+  const fail = async (status, error) => {
+    await session.abortTransaction(); session.endSession();
+    res.status(status).json({ success: false, error });
+    return false;
+  };
+  try {
+    session.startTransaction();
+    const { items: reqItems, reason, inventoryAction } = req.body || {};
+    if (!reason?.trim()) return await fail(400, 'Reason required.');
+    if (!Array.isArray(reqItems) || reqItems.length === 0) return await fail(400, 'Select at least one item to refund.');
+    const order = await Order.findById(req.params.id).session(session);
+    if (!order) return await fail(404, 'Order not found.');
+    if (order.status !== 'Completed') return await fail(400, 'Can only refund Completed orders.');
+
+    // Validate every requested line BEFORE mutating anything.
+    const seenIdx = new Set();
+    const validatedItems = [];
+    for (const r of reqItems) {
+      const idx = Number(r.itemIndex);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= order.items.length) return await fail(400, `Invalid item index ${r.itemIndex}.`);
+      if (seenIdx.has(idx)) return await fail(400, 'Duplicate item in the same refund - combine into one qty instead.');
+      seenIdx.add(idx);
+      const item = order.items[idx];
+      const qty = Number(r.qty);
+      const already = Number(item.refundedQty || 0);
+      const maxQty = (Number(item.quantity) || 0) - already;
+      if (!Number.isFinite(qty) || qty <= 0) return await fail(400, `Invalid qty for "${item.name}".`);
+      if (qty > maxQty + 1e-6) return await fail(400, `Only ${maxQty} of "${item.name}" can still be refunded.`);
+      validatedItems.push({ itemIndex: idx, qty, item });
+    }
+
+    // Proportional revenue share (see comment above) - never re-derives VAT/discount.
+    const addOnTotal = (it) => (it.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
+    const orderGross = order.items.reduce((s, it) => s + ((Number(it.price) || 0) + addOnTotal(it)) * (Number(it.quantity) || 0), 0);
+    const refundGross = validatedItems.reduce((s, { qty, item }) => s + ((Number(item.price) || 0) + addOnTotal(item)) * qty, 0);
+    const fraction = orderGross > 0 ? refundGross / orderGross : 0;
+    const baseForRefund = order.isComplimentary ? (order.subtotal || 0) : (order.total || 0);
+    const alreadyRefunded = (order.refundHistory || []).reduce((s, r) => s + (r.amount || 0), 0);
+    const remainingRefundable = +(baseForRefund - alreadyRefunded).toFixed(2);
+    if (remainingRefundable <= 0.005) return await fail(400, 'This order has already been fully refunded.');
+    const refundAmount = Math.max(0, Math.min(+(baseForRefund * fraction).toFixed(2), remainingRefundable));
+
+    const reference = await mkSeqRef('PARTIAL-REFUND');
+    const lines = [];
+    if (refundAmount > 0.005) {
+      if (order.isComplimentary) {
+        lines.push({ accountCode: '410000', accountName: 'Sales Revenue', debit: refundAmount, credit: 0 });
+        lines.push({ accountCode: '540000', accountName: 'Complimentary Expense', debit: 0, credit: refundAmount });
+      } else {
+        const creditAcct = debitAccountFor(order.paymentMethod);
+        lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: refundAmount, credit: 0 });
+        lines.push({ accountCode: creditAcct.code, accountName: creditAcct.name, debit: 0, credit: refundAmount });
+      }
+    }
+
+    // --- INVENTORY / COGS REVERSAL - scoped to the selected lines/qty only ---
+    const invAction = inventoryAction === 'Restock' || inventoryAction === 'Spoilage' ? inventoryAction : 'None';
+    let totalCogs = 0;
+    const refundedItemsLog = [];
+    for (const { itemIndex, qty, item } of validatedItems) {
+      refundedItemsLog.push({ itemIndex, name: item.name, qty });
+      item.refundedQty = +((Number(item.refundedQty) || 0) + qty).toFixed(6);
+      if (invAction === 'None') continue;
+
+      const product = await Product.findById(item.productId).populate('modifierGroups').session(session);
+      if (!product) continue;
+      let recipeToUse = product.baseRecipe || [];
+      const sizeMatch = item.name.match(/\(([^)]+)\)$/);
+      if (sizeMatch) {
+        const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+        if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
+      }
+
+      // A returned batch gets no expiry/production date - it's undated stock
+      // coming back, not a fresh delivery. Restocking via addBatch (not a flat
+      // $inc) keeps expiryBatches in sync with stockQty either way.
+      const restock = async (invId, qtyUsed, label) => {
+        const invDoc = await Inventory.findById(invId).session(session);
+        if (!invDoc) return;
+        invDoc.expiryBatches = addBatch(invDoc.expiryBatches || [], {
+          qty: qtyUsed, expiryDate: null, productionDate: null,
+          receivedAt: new Date(), reference, unitCost: invDoc.unitCost || 0,
+        });
+        invDoc.expiryDate = soonestExpiry(invDoc.expiryBatches);
+        invDoc.stockQty = +((invDoc.stockQty || 0) + qtyUsed).toFixed(6);
+        await invDoc.save({ session });
+        totalCogs += (invDoc.unitCost || 0) * qtyUsed;
+        await StockCard.create([{
+          inventoryId: invDoc._id, itemName: invDoc.itemName, type: 'Adjustment',
+          reference, qtyChange: qtyUsed, balanceAfter: invDoc.stockQty,
+          remarks: `Partial refund (Restock): ${label}`,
+        }], { session });
+      };
+
+      // LOGISTICS 1:1 fallback - product has no recipe, reverse the linked stocked good.
+      if (!recipeToUse.some(r => r.invId)) {
+        const linkInv = await resolveLinkedInventory(product, item.productCode, session);
+        if (linkInv) {
+          const qtyUsed = qty * baseUnitsPerSale(product, linkInv);
+          if (invAction === 'Restock') await restock(linkInv._id, qtyUsed, item.name);
+          else totalCogs += (linkInv.unitCost || 0) * qtyUsed;
+        }
+      }
+
+      // Base recipe + every selected add-on/modifier-option recipe.
+      const recipes = [{ recipe: recipeToUse, label: item.name }];
+      for (const selectedAddOn of (item.selectedAddOns || [])) {
+        let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
+        if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
+          const [grpName, optName] = selectedAddOn.name.split(': ');
+          const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
+          resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
+        }
+        if (resolvedRecipe?.length) recipes.push({ recipe: resolvedRecipe, label: `Add-on (${selectedAddOn.name})` });
+      }
+      for (const { recipe, label } of recipes) {
+        for (const ing of recipe) {
+          if (!ing.invId) continue;
+          const qtyUsed = ing.qty * qty;
+          if (invAction === 'Restock') {
+            await restock(ing.invId, qtyUsed, label);
+          } else {
+            const invItem = await Inventory.findById(ing.invId).session(session);
+            if (invItem) totalCogs += (invItem.unitCost || 0) * qtyUsed;
+          }
+        }
+      }
+    }
+
+    if (totalCogs > 0 && !order.isComplimentary) {
+      if (invAction === 'Restock') {
+        lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: totalCogs, credit: 0 });
+        lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: 0, credit: totalCogs });
+      } else if (invAction === 'Spoilage') {
+        lines.push({ accountCode: '535000', accountName: 'Spoilage, Variance & Waste Expense', debit: totalCogs, credit: 0 });
+        lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: 0, credit: totalCogs });
+      }
+    }
+
+    const totalDebit = lines.reduce((s, l) => s + l.debit, 0);
+    const totalCredit = lines.reduce((s, l) => s + l.credit, 0);
+    if (totalDebit > 0.005) {
+      assertBalanced(lines, reference);
+      await JournalEntry.create([{ date: new Date(), reference, description: `Partial refund for order ${order.orderNumber}: ${reason}`, lines, totalDebit, totalCredit }], { session });
+    }
+
+    // Only once every unit of every line has been refunded does the order
+    // become terminally 'Refunded' - same stats treatment as a full refund.
+    const nowFullyRefunded = order.items.every(it => (Number(it.refundedQty) || 0) >= (Number(it.quantity) || 0) - 1e-6);
+    if (nowFullyRefunded) {
+      await applyStatsDelta(order, -1, session);
+      order.transactionType = 'REFUND';
+      order.status = 'Refunded';
+    }
+    order.refundHistory.push({
+      reference, at: new Date(), by: req.user?.name || '', reason,
+      inventoryAction: invAction, items: refundedItemsLog, amount: refundAmount,
+    });
+    await order.save({ session });
+    await AuditLog.create({
+      userId: req.user?.name, action: 'ORDER_PARTIAL_REFUNDED', targetReference: order.orderNumber,
+      details: { reason, refundAmount, items: refundedItemsLog, inventoryAction: invAction, fullyRefunded: nowFullyRefunded, refundedBy: req.user?.name },
+    });
+    await session.commitTransaction(); session.endSession();
+    emitToOps('orderUpdated', order); emitToMgr('erpUpdated');
+    res.json({ success: true, order, refundAmount, fullyRefunded: nowFullyRefunded });
+  } catch (err) {
+    await session.abortTransaction(); session.endSession();
+    if (isTransientTxnError(err) && mayRetry && !res.headersSent) return true;
+    log.error({ err }, 'POST /api/orders/:id/partial-refund failed');
+    if (!res.headersSent) (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+  return false;
+};
+
+// ── EXCHANGE (return some line(s)/qty, add a replacement item, net-settle) ──────
+// Body: { returnItems: [{ itemIndex, qty }], newItems: [{ productId, quantity }],
+//         reason, inventoryAction: 'Restock'|'Spoilage'|'None' }
+// The replacement becomes a NEW line on this SAME order (addedViaExchange: true) -
+// one receipt tells the whole story. Money nets to a single cash movement: the
+// returned items' value (same proportional-of-order.total method as partial
+// refund) against the new items' charge (plain price × qty, a real new sale, not
+// prorated against anything). Whichever is bigger, the customer pays the
+// difference or gets it back - never both a refund AND a separate charge.
+// v1 scope: replacement items are base-product only (no size/add-on picker).
+app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (req, res) => {
+  const session = await mongoose.startSession();
+  const fail = async (status, error) => {
+    await session.abortTransaction(); session.endSession();
+    res.status(status).json({ success: false, error });
+  };
+  try {
+    session.startTransaction();
+    const { returnItems = [], newItems = [], reason, inventoryAction } = req.body || {};
+    if (!reason?.trim()) return await fail(400, 'Reason required.');
+    if (!Array.isArray(newItems) || newItems.length === 0) return await fail(400, 'An exchange needs at least one replacement item - use partial-refund for a plain return.');
+    const order = await Order.findById(req.params.id).session(session);
+    if (!order) return await fail(404, 'Order not found.');
+    if (order.status !== 'Completed') return await fail(400, 'Can only exchange on Completed orders.');
+
+    // --- Validate the return side (same rules as partial-refund) ---
+    const seenIdx = new Set();
+    const validatedReturns = [];
+    for (const r of (Array.isArray(returnItems) ? returnItems : [])) {
+      const idx = Number(r.itemIndex);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= order.items.length) return await fail(400, `Invalid item index ${r.itemIndex}.`);
+      if (seenIdx.has(idx)) return await fail(400, 'Duplicate item in the returned items.');
+      seenIdx.add(idx);
+      const item = order.items[idx];
+      const qty = Number(r.qty);
+      const already = Number(item.refundedQty || 0);
+      const maxQty = (Number(item.quantity) || 0) - already;
+      if (!Number.isFinite(qty) || qty <= 0) return await fail(400, `Invalid qty for "${item.name}".`);
+      if (qty > maxQty + 1e-6) return await fail(400, `Only ${maxQty} of "${item.name}" can still be returned.`);
+      validatedReturns.push({ itemIndex: idx, qty, item });
+    }
+
+    // --- Validate the replacement side + resolve each product ---
+    const validatedNew = [];
+    for (const n of newItems) {
+      const qty = Number(n.quantity);
+      if (!Number.isFinite(qty) || qty <= 0) return await fail(400, 'Replacement quantity must be greater than zero.');
+      const product = await Product.findById(n.productId).populate('modifierGroups').session(session);
+      if (!product) return await fail(400, `Replacement product ${n.productId} not found.`);
+      validatedNew.push({ product, qty });
+    }
+
+    // --- Money: returned value (proportional, same as partial-refund) ---
+    const addOnTotal = (it) => (it.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
+    const orderGross = order.items.reduce((s, it) => s + ((Number(it.price) || 0) + addOnTotal(it)) * (Number(it.quantity) || 0), 0);
+    const returnGross = validatedReturns.reduce((s, { qty, item }) => s + ((Number(item.price) || 0) + addOnTotal(item)) * qty, 0);
+    const returnFraction = orderGross > 0 ? returnGross / orderGross : 0;
+    const baseForRefund = order.isComplimentary ? (order.subtotal || 0) : (order.total || 0);
+    const alreadyRefunded = (order.refundHistory || []).reduce((s, r) => s + (r.amount || 0), 0);
+    const remainingRefundable = Math.max(0, +(baseForRefund - alreadyRefunded).toFixed(2));
+    const returnValue = Math.max(0, Math.min(+(baseForRefund * returnFraction).toFixed(2), remainingRefundable));
+
+    // --- Money: replacement charge - a real new sale, not prorated ---
+    const newCharge = +validatedNew.reduce((s, { product, qty }) => s + (Number(product.basePrice) || 0) * qty, 0).toFixed(2);
+    const netDelta = +(newCharge - returnValue).toFixed(2); // >0 customer owes more, <0 customer gets money back
+
+    const reference = await mkSeqRef('EXCHANGE');
+    const lines = [];
+    const creditAcct = debitAccountFor(order.paymentMethod);
+    if (Math.abs(netDelta) > 0.005) {
+      if (netDelta > 0) {
+        lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: netDelta });
+        lines.push({ accountCode: creditAcct.code, accountName: creditAcct.name, debit: netDelta, credit: 0 });
+      } else {
+        lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: -netDelta, credit: 0 });
+        lines.push({ accountCode: creditAcct.code, accountName: creditAcct.name, debit: 0, credit: -netDelta });
+      }
+    }
+
+    // --- Inventory / COGS - return side (reuses the exact restock mechanism partial-refund uses) ---
+    const invAction = inventoryAction === 'Restock' || inventoryAction === 'Spoilage' ? inventoryAction : 'None';
+    let returnCogs = 0;
+    const returnedItemsLog = [];
+    const restock = async (invId, qtyUsed, label) => {
+      const invDoc = await Inventory.findById(invId).session(session);
+      if (!invDoc) return;
+      invDoc.expiryBatches = addBatch(invDoc.expiryBatches || [], {
+        qty: qtyUsed, expiryDate: null, productionDate: null,
+        receivedAt: new Date(), reference, unitCost: invDoc.unitCost || 0,
+      });
+      invDoc.expiryDate = soonestExpiry(invDoc.expiryBatches);
+      invDoc.stockQty = +((invDoc.stockQty || 0) + qtyUsed).toFixed(6);
+      await invDoc.save({ session });
+      returnCogs += (invDoc.unitCost || 0) * qtyUsed;
+      await StockCard.create([{
+        inventoryId: invDoc._id, itemName: invDoc.itemName, type: 'Adjustment',
+        reference, qtyChange: qtyUsed, balanceAfter: invDoc.stockQty,
+        remarks: `Exchange return (${invAction}): ${label}`,
+      }], { session });
+    };
+    for (const { itemIndex, qty, item } of validatedReturns) {
+      returnedItemsLog.push({ itemIndex, name: item.name, qty });
+      item.refundedQty = +((Number(item.refundedQty) || 0) + qty).toFixed(6);
+      if (invAction === 'None') continue;
+      const product = await Product.findById(item.productId).populate('modifierGroups').session(session);
+      if (!product) continue;
+      let recipeToUse = product.baseRecipe || [];
+      const sizeMatch = item.name.match(/\(([^)]+)\)$/);
+      if (sizeMatch) {
+        const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+        if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
+      }
+      if (!recipeToUse.some(r => r.invId)) {
+        const linkInv = await resolveLinkedInventory(product, item.productCode, session);
+        if (linkInv) {
+          const qtyUsed = qty * baseUnitsPerSale(product, linkInv);
+          if (invAction === 'Restock') await restock(linkInv._id, qtyUsed, item.name);
+          else returnCogs += (linkInv.unitCost || 0) * qtyUsed;
+        }
+      }
+      const recipes = [{ recipe: recipeToUse, label: item.name }];
+      for (const selectedAddOn of (item.selectedAddOns || [])) {
+        let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
+        if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
+          const [grpName, optName] = selectedAddOn.name.split(': ');
+          const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
+          resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
+        }
+        if (resolvedRecipe?.length) recipes.push({ recipe: resolvedRecipe, label: `Add-on (${selectedAddOn.name})` });
+      }
+      for (const { recipe, label } of recipes) {
+        for (const ing of recipe) {
+          if (!ing.invId) continue;
+          const qtyUsed = ing.qty * qty;
+          if (invAction === 'Restock') await restock(ing.invId, qtyUsed, label);
+          else {
+            const invItem = await Inventory.findById(ing.invId).session(session);
+            if (invItem) returnCogs += (invItem.unitCost || 0) * qtyUsed;
+          }
+        }
+      }
+    }
+
+    // --- Inventory / COGS - replacement side: a REAL deduction, like a normal sale ---
+    let newCogs = 0;
+    const newItemsLog = [];
+    const deduct = async (invId, qtyUsed, label) => {
+      const updated = await Inventory.findOneAndUpdate(
+        { _id: invId, stockQty: { $gte: qtyUsed } },
+        { $inc: { stockQty: -qtyUsed } },
+        { session, returnDocument: 'after' }
+      );
+      if (!updated) throw Object.assign(new Error(`Insufficient stock for "${label}".`), { httpStatus: 400 });
+      if (updated.expiryBatches?.length > 0) {
+        const r = consumeBatches(updated.expiryBatches, qtyUsed);
+        updated.expiryBatches = r.batches; updated.expiryDate = soonestExpiry(r.batches);
+        await updated.save({ session });
+      }
+      newCogs += (updated.unitCost || 0) * qtyUsed;
+      await StockCard.create([{
+        inventoryId: updated._id, itemName: updated.itemName, type: 'Sale',
+        reference, qtyChange: -qtyUsed, balanceAfter: updated.stockQty,
+        remarks: `Exchange replacement: ${label}`,
+      }], { session });
+    };
+    // Department resolution mirrors order-creation's category → department lookup.
+    const defaultDept = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
+    const cats = await Category.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }, { name: 1, department: 1 }).session(session);
+    const deptOf = (categoryName) => cats.find(c => c.name === categoryName)?.department || defaultDept;
+    for (const { product, qty } of validatedNew) {
+      let recipeToUse = product.baseRecipe || [];
+      if (!recipeToUse.some(r => r.invId)) {
+        const linkInv = await resolveLinkedInventory(product, product.productCode, session);
+        if (linkInv) {
+          const qtyUsed = qty * baseUnitsPerSale(product, linkInv);
+          await deduct(linkInv._id, qtyUsed, product.name);
+        }
+      }
+      for (const ing of recipeToUse) {
+        if (!ing.invId) continue;
+        await deduct(ing.invId, ing.qty * qty, `${product.name} (${ing.name || ing.invId})`);
+      }
+      order.items.push({
+        productId: String(product._id), productCode: product.productCode || '', name: product.name,
+        price: Number(product.basePrice) || 0, quantity: qty, refundedQty: 0,
+        addedViaExchange: true, department: deptOf(product.category) || defaultDept,
+        itemStatus: 'Received', selectedAddOns: [],
+      });
+      newItemsLog.push({ productId: String(product._id), name: product.name, qty });
+    }
+
+    if (returnCogs > 0.005 || newCogs > 0.005) {
+      const netCogs = +(newCogs - returnCogs).toFixed(2);
+      if (Math.abs(netCogs) > 0.005) {
+        if (netCogs > 0) lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: netCogs, credit: 0 });
+        else lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: 0, credit: -netCogs });
+      }
+      if (newCogs > 0.005) lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: newCogs });
+      if (returnCogs > 0.005) {
+        if (invAction === 'Restock') lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: returnCogs, credit: 0 });
+        else if (invAction === 'Spoilage') lines.push({ accountCode: '535000', accountName: 'Spoilage, Variance & Waste Expense', debit: returnCogs, credit: 0 });
+      }
+    }
+
+    const totalDebit = lines.reduce((s, l) => s + l.debit, 0);
+    const totalCredit = lines.reduce((s, l) => s + l.credit, 0);
+    if (totalDebit > 0.005) {
+      assertBalanced(lines, reference);
+      await JournalEntry.create([{ date: new Date(), reference, description: `Exchange on order ${order.orderNumber}: ${reason}`, lines, totalDebit, totalCredit }], { session });
+    }
+
+    order.subtotal = +((order.subtotal || 0) + netDelta).toFixed(2);
+    order.total = +((order.total || 0) + netDelta).toFixed(2);
+    order.refundHistory.push({
+      reference, at: new Date(), by: req.user?.name || '', reason: `EXCHANGE: ${reason}`,
+      inventoryAction: invAction, items: returnedItemsLog, amount: returnValue,
+    });
+    await order.save({ session });
+    await AuditLog.create({
+      userId: req.user?.name, action: 'ORDER_EXCHANGED', targetReference: order.orderNumber,
+      details: { reason, returnedItems: returnedItemsLog, newItems: newItemsLog, returnValue, newCharge, netDelta, inventoryAction: invAction, exchangedBy: req.user?.name },
+    });
+    await session.commitTransaction(); session.endSession();
+    emitToOps('orderUpdated', order); emitToMgr('erpUpdated');
+    res.json({ success: true, order, returnValue, newCharge, netDelta });
+  } catch (err) {
+    await session.abortTransaction(); session.endSession();
+    if (err?.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.message });
+    log.error({ err }, 'POST /api/orders/:id/exchange failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
 
 // --- DISPATCH STATUS UPDATE ---
 app.patch('/api/orders/:id/dispatch', verifyToken, requireStaff, async (req, res) => {

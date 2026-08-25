@@ -86,7 +86,7 @@ export default function LedgerTab({ ctx }) {
     bills, billsFilter, setBillsFilter, fetchBills, billBusy,
     billCreate, setBillCreate, submitCreateBill,
     approveBill, rejectBill, scheduleBill,
-    billPayModal, setBillPayModal, billPayFrom, setBillPayFrom, submitBillPay, expenseAccounts,
+    billPayModal, setBillPayModal, billPayFrom, setBillPayFrom, billPayReference, setBillPayReference, submitBillPay, expenseAccounts,
     profitByCategory, fetchProfitByCategory,
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
@@ -1355,6 +1355,12 @@ export default function LedgerTab({ ctx }) {
                           onChange={e => setApPayForm(p => ({...p, description: e.target.value}))}
                           className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 placeholder-white/20" />
                       </div>
+                      <div>
+                        <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Reference No. (optional)</label>
+                        <input type="text" placeholder="Bank txn ID, check no., GCash ref..." value={apPayForm.referenceNumber}
+                          onChange={e => setApPayForm(p => ({...p, referenceNumber: e.target.value}))}
+                          className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 placeholder-white/20" />
+                      </div>
                     </div>
                     <div className="px-5 py-4 border-t border-white/10 flex gap-3">
                       <button onClick={() => setApPayModal(false)} className="flex-1 bg-white/5 text-fg/60 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
@@ -1831,7 +1837,7 @@ export default function LedgerTab({ ctx }) {
                               {b.status === 'Approved' && (
                                 <div className="flex gap-1.5 justify-end">
                                   <button disabled={billBusy} onClick={() => scheduleBill(b)} className="px-2.5 py-1 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 text-[11px] font-bold transition disabled:opacity-50">Schedule</button>
-                                  <button disabled={billBusy} onClick={() => { setBillPayModal(b); setBillPayFrom('111000'); }} className="px-2.5 py-1 rounded-lg bg-brand/20 text-brand hover:bg-brand/30 text-[11px] font-bold transition disabled:opacity-50">Pay</button>
+                                  <button disabled={billBusy} onClick={() => { setBillPayModal(b); setBillPayFrom('111000'); setBillPayReference(''); }} className="px-2.5 py-1 rounded-lg bg-brand/20 text-brand hover:bg-brand/30 text-[11px] font-bold transition disabled:opacity-50">Pay</button>
                                 </div>
                               )}
                               {(b.status === 'Paid' || b.status === 'Rejected') && (
@@ -1856,9 +1862,12 @@ export default function LedgerTab({ ctx }) {
                     <p className="text-fg/50 text-sm mb-4">{billPayModal.supplierName} · {peso(billPayModal.amount)}</p>
                     <p className="text-[11px] text-fg/40 mb-3">Posts DR Accounts Payable / CR the account you pay from.</p>
                     <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Pay from</label>
-                    <select value={billPayFrom} onChange={e => setBillPayFrom(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-5">
+                    <select value={billPayFrom} onChange={e => setBillPayFrom(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-3">
                       {(cashAndBankAccounts||[]).map(a => <option key={a.code} value={a.code}>{a.code} - {a.name}</option>)}
                     </select>
+                    <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Reference No. (optional)</label>
+                    <input type="text" placeholder="Bank txn ID, check no., GCash ref..." value={billPayReference} onChange={e => setBillPayReference(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-5" />
                     <div className="flex gap-3">
                       <button onClick={() => setBillPayModal(null)} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">Cancel</button>
                       <button onClick={submitBillPay} disabled={billBusy} className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">{billBusy ? 'Recording…' : 'Record payment'}</button>

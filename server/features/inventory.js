@@ -551,9 +551,11 @@ app.get('/api/stock-analytics/by-location', verifyToken, requireStaff, async (re
 });
 
 // Request a transfer (staff). Validates both items exist and qty > 0.
-// Optional expiryDate pins the transfer to one specific expiry lot on the source
-// item (an ISO date matching one of its expiryBatches); omitted/null = FEFO
-// (oldest expiry first) at release time - the default and recommended choice.
+// Optional expiryDate pins the transfer to one specific lot on the source item
+// (an ISO date matching one of its expiryBatches' rotation date - the batch's
+// expiryDate, or its productionDate for goods with no real expiry, e.g. beans);
+// omitted/null = FEFO/FPFO (oldest first) at release time - the default and
+// recommended choice.
 app.post('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => {
   try {
     const { fromItemId, toItemId, qtyBase, note, expiryDate } = req.body || {};
@@ -569,10 +571,13 @@ app.post('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => 
     let pinnedExpiry = null;
     if (expiryDate) {
       const targetTime = new Date(expiryDate).getTime();
-      const batch = (from.expiryBatches || []).find(b => b.expiryDate && new Date(b.expiryDate).getTime() === targetTime);
+      const batch = (from.expiryBatches || []).find(b => {
+        const d = b.expiryDate ?? b.productionDate;
+        return d && new Date(d).getTime() === targetTime;
+      });
       if (!batch) return res.status(400).json({ success: false, error: 'Selected batch not found on the source item.' });
       if (qty > (batch.qty || 0) + 1e-6) return res.status(400).json({ success: false, error: `Only ${batch.qty} ${from.unit || ''} in the selected batch.` });
-      pinnedExpiry = batch.expiryDate;
+      pinnedExpiry = batch.expiryDate ?? batch.productionDate;
     }
     const reference = await mkSeqRef('XFER');
     const transfer = await StockTransfer.create({
@@ -651,7 +656,7 @@ app.post('/api/stock-transfers/:id/release', verifyToken, requireStaff, async (r
           from.expiryDate = soonestExpiry(from.expiryBatches);
           for (const c of r.consumedDetail) {
             to.expiryBatches = addBatch(to.expiryBatches || [], {
-              qty: c.qty, expiryDate: c.expiryDate, receivedAt: new Date(),
+              qty: c.qty, expiryDate: c.expiryDate, productionDate: c.productionDate, receivedAt: new Date(),
               reference: t.reference, unitCost: from.unitCost,
             });
           }
@@ -734,12 +739,15 @@ app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
       }
       req.body.itemCode = code || await generateNextSequence(Inventory, 'RML', 'itemCode');
     }
-    // Seed expiryBatches with the initial batch if expiry is provided
+    // Seed expiryBatches with the initial batch if an expiry OR production date is
+    // provided - goods with no real expiry (roasted beans, etc.) date freshness by
+    // production date instead.
     const purchRef = await mkSeqRef('INV-PURCH');
-    if (req.body.expiryDate && req.body.stockQty > 0) {
+    if ((req.body.expiryDate || req.body.productionDate) && req.body.stockQty > 0) {
       req.body.expiryBatches = [{
         qty: req.body.stockQty,
-        expiryDate: new Date(req.body.expiryDate),
+        expiryDate: req.body.expiryDate ? new Date(req.body.expiryDate) : null,
+        productionDate: req.body.productionDate ? new Date(req.body.productionDate) : null,
         receivedAt: new Date(),
         reference: purchRef,
         unitCost: req.body.unitCost || 0
@@ -815,7 +823,7 @@ app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, r
 // inventory document instead of racing the WAC math. Retries on transient
 // transient errors (WriteConflict / TransientTransactionError).
 app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, res) => {
-  const { addedStock, totalCost, expiryDate, creditAccount: rawCreditCode } = req.body;
+  const { addedStock, totalCost, expiryDate, productionDate, creditAccount: rawCreditCode } = req.body;
   const isAllowedParent = (c) => /^(111|112|113|220)/.test(String(c || ''));
   const resolved = acctMeta(rawCreditCode);
   const creditCode = (resolved && isAllowedParent(rawCreditCode)) ? rawCreditCode : '111000';
@@ -842,10 +850,11 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
 
         const rstRef = await mkSeqRef('INV-RST');
 
-        if (expiryDate && addedStock > 0) {
+        if ((expiryDate || productionDate) && addedStock > 0) {
           item.expiryBatches = addBatch(item.expiryBatches || [], {
             qty: addedStock,
-            expiryDate: new Date(expiryDate),
+            expiryDate: expiryDate ? new Date(expiryDate) : null,
+            productionDate: productionDate ? new Date(productionDate) : null,
             receivedAt: new Date(),
             reference: rstRef,
             unitCost: newUnitCost
@@ -908,8 +917,8 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
           item.stockQty = newStockQty;
           item.unitCost = newUnitCost;
           const rstRef = await mkSeqRef('INV-RST');
-          if (expiryDate && addedStock > 0) {
-            item.expiryBatches = addBatch(item.expiryBatches || [], { qty: addedStock, expiryDate: new Date(expiryDate), receivedAt: new Date(), reference: rstRef, unitCost: newUnitCost });
+          if ((expiryDate || productionDate) && addedStock > 0) {
+            item.expiryBatches = addBatch(item.expiryBatches || [], { qty: addedStock, expiryDate: expiryDate ? new Date(expiryDate) : null, productionDate: productionDate ? new Date(productionDate) : null, receivedAt: new Date(), reference: rstRef, unitCost: newUnitCost });
             item.expiryDate = soonestExpiry(item.expiryBatches);
           }
           await item.save();
@@ -1060,20 +1069,23 @@ app.get('/api/inventory/expiring', verifyToken, requireStaff, async (req, res) =
   }
 });
 
-// --- BATCH MANAGEMENT: add a new expiry batch manually ---
+// --- BATCH MANAGEMENT: add a new expiry (or production-date) batch manually ---
 app.post('/api/inventory/:id/batches', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { qty, expiryDate, reference } = req.body;
+    const { qty, expiryDate, productionDate, reference } = req.body;
     const n = parseFloat(qty);
     if (!n || n <= 0) return res.status(400).json({ success: false, error: 'qty must be > 0' });
-    if (!expiryDate) return res.status(400).json({ success: false, error: 'expiryDate required' });
+    // At least one date is required - goods with no real expiry (roasted beans,
+    // etc.) date freshness by production date instead.
+    if (!expiryDate && !productionDate) return res.status(400).json({ success: false, error: 'expiryDate or productionDate required' });
     const item = await Inventory.findById(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Item not found' });
     const batchRef = await mkSeqRef('INV-BATCH');
     const unitCost = item.unitCost || 0;
     item.expiryBatches = addBatch(item.expiryBatches || [], {
       qty: n,
-      expiryDate: new Date(expiryDate),
+      expiryDate: expiryDate ? new Date(expiryDate) : null,
+      productionDate: productionDate ? new Date(productionDate) : null,
       receivedAt: new Date(),
       reference: batchRef,
       unitCost
@@ -1240,6 +1252,9 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       const qty = parseFloat(row.qty);
       const unitCostFromExcel = row.unitCost !== undefined && row.unitCost !== '' ? parseFloat(row.unitCost) : null;
       const expiryFromExcel = row.expiryDate || row.expiry || null;
+      // Goods with no real expiry (roasted beans, etc.) date freshness by
+      // production date instead - only meaningful when there's no expiry on the row.
+      const productionFromExcel = !expiryFromExcel ? (row.productionDate || row.production || null) : null;
       // Per-qty (pack) size in displayUnit, e.g. "Milk 1L" → itemName "Milk", unit L,
       // packSize 1. The client pre-parses the size out of the product name and sends
       // it here; if a caller sends the raw unparsed name instead, fall back to
@@ -1312,6 +1327,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         existing.expiryBatches = addBatch(existing.expiryBatches || [], {
           qty: newBaseQty,
           expiryDate: expiryFromExcel ? new Date(expiryFromExcel) : null,
+          productionDate: productionFromExcel ? new Date(productionFromExcel) : null,
           receivedAt: new Date(),
           reference: impRef,
           unitCost: unitCostForThisLot,
@@ -1327,7 +1343,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           qtyChange: newBaseQty,
           balanceAfter: existing.stockQty,
           unitCost: existing.unitCost,
-          remarks: `Bulk import: +${newBaseQty} ${baseUnit} (new batch${expiryFromExcel ? `, exp ${expiryFromExcel}` : ''})`
+          remarks: `Bulk import: +${newBaseQty} ${baseUnit} (new batch${expiryFromExcel ? `, exp ${expiryFromExcel}` : (productionFromExcel ? `, prod ${productionFromExcel}` : '')})`
         }], { session });
 
         if (Math.abs(valueImpact) > 0.001) {
@@ -1381,16 +1397,18 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
 
         // Expiry batches:
-        //  - If Excel row carries an expiry: append it as a new batch with the +diff qty (only if diff > 0).
-        //  - If diff < 0: FEFO-consume the absolute diff from existing batches.
-        //  - If diff > 0 and no expiry on Excel row: leave batches untouched (caller assumes existing batch still applies).
+        //  - If Excel row carries an expiry OR production date: append it as a new
+        //    batch with the +diff qty (only if diff > 0).
+        //  - If diff < 0: FEFO/FPFO-consume the absolute diff from existing batches.
+        //  - If diff > 0 and no date on Excel row: leave batches untouched (caller assumes existing batch still applies).
         if (diff < 0) {
           const r = consumeBatches(existing.expiryBatches || [], Math.abs(diff));
           existing.expiryBatches = r.batches;
-        } else if (diff > 0 && expiryFromExcel) {
+        } else if (diff > 0 && (expiryFromExcel || productionFromExcel)) {
           existing.expiryBatches = addBatch(existing.expiryBatches || [], {
             qty: diff,
-            expiryDate: new Date(expiryFromExcel),
+            expiryDate: expiryFromExcel ? new Date(expiryFromExcel) : null,
+            productionDate: productionFromExcel ? new Date(productionFromExcel) : null,
             receivedAt: new Date(),
             reference: impRef,
             unitCost: unitCostForValuation
@@ -1435,43 +1453,56 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         if (diff < 0) { summary.decreased++; summary.lossValue += valueImpact; }
 
         // Sync the linked Product (log only - the product IS the stocked good).
+        // Raw materials (unit-cost only, no SRP - e.g. an "RM1xxx" category) never
+        // get a shop/POS listing: a row with no SRP does NOT create one. An item
+        // that's already listed (SRP was set on some earlier import) keeps being
+        // maintained regardless of THIS row's SRP - we only gate creation, never
+        // retroactively pull an existing listing because a later row omits it.
+        const hasSrp = srp != null && !isNaN(srp) && srp > 0;
         if (syncProduct) {
-          const cat = await Category.findOneAndUpdate(
-            { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }, businessType: BUSINESS_TYPE },
-            { $setOnInsert: { name: productCategory, department: 'Logistics', businessType: BUSINESS_TYPE } },
-            { upsert: true, returnDocument: 'after', session }
-          );
-          // Base recipe links the product to its OWN stock item (1:1).
-          const baseRecipe = [{ invId: existing._id, name: existing.itemName, qty: existing.unitMultiplier || mult, cost: existing.unitCost || 0, unit: existing.unit || baseUnit }];
-          // basePrice must never appear in both $set and $setOnInsert - Mongo
-          // rejects an update that targets the same path from two operators.
-          // A valid SRP always wins (goes in $set); only fall back to
-          // $setOnInsert (default 0 on first creation) when there's no SRP.
-          const hasSrp = srp != null && !isNaN(srp);
-          const prod = await Product.findOneAndUpdate(
-            { productCode: existing.itemCode, businessType: BUSINESS_TYPE },
-            {
-              $set: {
-                name: existing.itemName,
-                category: cat.name,
-                isAvailable: existing.stockQty > 0,
-                ...(hasSrp ? { basePrice: srp } : {}),
+          const productExists = await Product.findOne({ productCode: existing.itemCode, businessType: BUSINESS_TYPE }).session(session);
+          if (hasSrp || productExists) {
+            const cat = await Category.findOneAndUpdate(
+              { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }, businessType: BUSINESS_TYPE },
+              { $setOnInsert: { name: productCategory, department: 'Logistics', businessType: BUSINESS_TYPE } },
+              { upsert: true, returnDocument: 'after', session }
+            );
+            // Base recipe links the product to its OWN stock item (1:1).
+            const baseRecipe = [{ invId: existing._id, name: existing.itemName, qty: existing.unitMultiplier || mult, cost: existing.unitCost || 0, unit: existing.unit || baseUnit }];
+            // basePrice must never appear in both $set and $setOnInsert - Mongo
+            // rejects an update that targets the same path from two operators.
+            // A valid SRP always wins (goes in $set); only fall back to
+            // $setOnInsert (default 0 on first creation) when there's no SRP.
+            const prod = await Product.findOneAndUpdate(
+              { productCode: existing.itemCode, businessType: BUSINESS_TYPE },
+              {
+                $set: {
+                  name: existing.itemName,
+                  category: cat.name,
+                  isAvailable: existing.stockQty > 0,
+                  ...(hasSrp ? { basePrice: srp } : {}),
+                },
+                $setOnInsert: { businessType: BUSINESS_TYPE, baseRecipe, ...(hasSrp ? {} : { basePrice: 0 }) },
               },
-              $setOnInsert: { businessType: BUSINESS_TYPE, baseRecipe, ...(hasSrp ? {} : { basePrice: 0 }) },
-            },
-            { upsert: true, returnDocument: 'after', session }
-          );
-          // Backfill the stock link on a pre-existing menu entry that never had one.
-          if (prod && !(prod.baseRecipe || []).some(r => r.invId)) {
-            prod.baseRecipe = baseRecipe;
-            await prod.save({ session });
+              { upsert: true, returnDocument: 'after', session }
+            );
+            // Backfill the stock link on a pre-existing menu entry that never had one.
+            if (prod && !(prod.baseRecipe || []).some(r => r.invId)) {
+              prod.baseRecipe = baseRecipe;
+              await prod.save({ session });
+            }
           }
         }
       } else {
         // New item - onboard via Inventory Adjustment Gain (DR 1500 / CR 4200)
         const newCode = itemCode || await generateNextSequence(Inventory, 'RML', 'itemCode');
-        const initialBatches = (expiryFromExcel && newBaseQty > 0)
-          ? [{ qty: newBaseQty, expiryDate: new Date(expiryFromExcel), receivedAt: new Date(), reference: impRef, unitCost: newCostPerBase || 0 }]
+        const initialBatches = ((expiryFromExcel || productionFromExcel) && newBaseQty > 0)
+          ? [{
+              qty: newBaseQty,
+              expiryDate: expiryFromExcel ? new Date(expiryFromExcel) : null,
+              productionDate: productionFromExcel ? new Date(productionFromExcel) : null,
+              receivedAt: new Date(), reference: impRef, unitCost: newCostPerBase || 0,
+            }]
           : [];
         const created = await Inventory.create([{
           itemCode: newCode,
@@ -1520,30 +1551,35 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         summary.gainValue += valueImpact;
 
         // Create the linked Product (log only - the product IS the stocked good).
+        // Raw materials (no SRP - e.g. an "RM1xxx" category, unit-cost only) never
+        // get a shop/POS listing: skip entirely unless a Product with this code
+        // already exists independently (then just backfill its stock link).
         if (syncProduct) {
-          const cat = await Category.findOneAndUpdate(
-            { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }, businessType: BUSINESS_TYPE },
-            { $setOnInsert: { name: productCategory, department: 'Logistics', businessType: BUSINESS_TYPE } },
-            { upsert: true, returnDocument: 'after', session }
-          );
-          // Explicitly link the product's base recipe to its OWN stock item (1:1),
-          // so the menu shows the stock item as the base material and each sale
-          // deducts it directly - no reliance on the code/name fallback.
-          const baseRecipe = [{ invId: item._id, name: item.itemName, qty: mult, cost: item.unitCost || 0, unit: baseUnit }];
+          const hasSrp = srp != null && !isNaN(srp) && srp > 0;
           const productExists = await Product.findOne({ productCode: item.itemCode, businessType: BUSINESS_TYPE }).session(session);
-          if (!productExists) {
+          if (!productExists && hasSrp) {
+            const cat = await Category.findOneAndUpdate(
+              { name: { $regex: new RegExp(`^${productCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }, businessType: BUSINESS_TYPE },
+              { $setOnInsert: { name: productCategory, department: 'Logistics', businessType: BUSINESS_TYPE } },
+              { upsert: true, returnDocument: 'after', session }
+            );
+            // Explicitly link the product's base recipe to its OWN stock item (1:1),
+            // so the menu shows the stock item as the base material and each sale
+            // deducts it directly - no reliance on the code/name fallback.
+            const baseRecipe = [{ invId: item._id, name: item.itemName, qty: mult, cost: item.unitCost || 0, unit: baseUnit }];
             await Product.create([{
               productCode: item.itemCode,
               name: item.itemName,
               category: cat.name,
-              basePrice: srp != null && !isNaN(srp) ? srp : 0,
+              basePrice: srp,
               baseSize: displayUnit,
               baseRecipe,
               isAvailable: newBaseQty > 0,
               businessType: BUSINESS_TYPE,
             }], { session });
-          } else if (!(productExists.baseRecipe || []).some(r => r.invId)) {
+          } else if (productExists && !(productExists.baseRecipe || []).some(r => r.invId)) {
             // Existing menu entry with no linked stock - backfill the link.
+            const baseRecipe = [{ invId: item._id, name: item.itemName, qty: mult, cost: item.unitCost || 0, unit: baseUnit }];
             productExists.baseRecipe = baseRecipe;
             await productExists.save({ session });
           }

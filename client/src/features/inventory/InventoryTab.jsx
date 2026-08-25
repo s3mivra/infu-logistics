@@ -292,6 +292,12 @@ export default function InventoryTab({ ctx }) {
                     {currentInventory.map(item => {
                       const effThreshold = item.effectiveThreshold != null ? item.effectiveThreshold : (item.lowStockThreshold || 0);
                       const isLow = effThreshold > 0 && item.stockQty <= effThreshold;
+                      // Phase Out: out of stock AND no longer worth restocking (it costs more
+                      // than its SRP). Compares like-for-like - cost per display unit vs SRP,
+                      // which is also stored per display unit. Guarded on srp > 0: a raw
+                      // material (no SRP) has nothing to compare against, so it never qualifies.
+                      const costPerDisplay = (item.unitCost || 0) * (effectiveDisplay(item).mult || 1);
+                      const isPhaseOut = (item.stockQty || 0) <= 0 && (item.srp || 0) > 0 && costPerDisplay > item.srp;
                       // Expiry classification
                       let expBadge = null;
                       let rowExpiredTint = '';
@@ -322,6 +328,7 @@ export default function InventoryTab({ ctx }) {
                         <td className="py-3 font-bold text-fg">
                           {item.itemName}
                           {isLow && <span className="ml-2 text-[9px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase animate-pulse">LOW</span>}
+                          {isPhaseOut && <span title="Out of stock and costs more than its SRP - not worth restocking" className="ml-2 text-[9px] font-black bg-gray-500 text-white px-1.5 py-0.5 rounded uppercase">PHASE OUT</span>}
                           {!itemDisplay(item).isPacked && (
                             <span title="No pack size in the name - add e.g. 250G / 1L / 500ML so cost shows per package" className="ml-2 text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1.5 py-0.5 rounded uppercase">SET SIZE</span>
                           )}
@@ -404,7 +411,7 @@ export default function InventoryTab({ ctx }) {
                                   <tr className="text-fg/30 text-[10px] uppercase tracking-widest">
                                     <th className="text-left pb-1.5">#</th>
                                     <th className="text-right pb-1.5">Qty</th>
-                                    <th className="text-left pb-1.5 pl-3">Expiry</th>
+                                    <th className="text-left pb-1.5 pl-3">Expiry / Prod</th>
                                     <th className="text-left pb-1.5 pl-3">Received</th>
                                     <th className="text-right pb-1.5 pl-3">Unit Cost</th>
                                     <th className="text-left pb-1.5 pl-3">Ref</th>
@@ -414,12 +421,19 @@ export default function InventoryTab({ ctx }) {
                                 <tbody>
                                   {[...item.expiryBatches]
                                     .map((b, originalIdx) => ({ ...b, _originalIdx: originalIdx }))
-                                    .sort((a, b) => (a.expiryDate ? new Date(a.expiryDate) : Infinity) - (b.expiryDate ? new Date(b.expiryDate) : Infinity))
+                                    .sort((a, b) => {
+                                      // Rotation date: expiryDate when known, else productionDate (goods
+                                      // with no real expiry - beans, etc. - date freshness by roast/production date).
+                                      const ad = a.expiryDate || a.productionDate;
+                                      const bd = b.expiryDate || b.productionDate;
+                                      return (ad ? new Date(ad) : Infinity) - (bd ? new Date(bd) : Infinity);
+                                    })
                                     .map((b, displayIdx) => {
                                       const bPackBase = packInfo(item).packBase || 1;
                                       const dispQty = (b.qty || 0) / bPackBase;
                                       const bUnit = itemDisplay(item).isPacked ? 'pcs' : itemDisplay(item).unit;
                                       const exp = b.expiryDate ? new Date(b.expiryDate) : null;
+                                      const prod = !exp && b.productionDate ? new Date(b.productionDate) : null;
                                       const today = new Date(); today.setHours(0,0,0,0);
                                       const diffDays = exp ? Math.ceil((exp - today) / 86400000) : null;
                                       let badge = '';
@@ -437,8 +451,13 @@ export default function InventoryTab({ ctx }) {
                                           </td>
                                           <td className="py-1.5 text-right text-fg font-bold tabular-nums">{dispQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {bUnit}</td>
                                           <td className={`py-1.5 pl-3 tabular-nums ${badge}`}>
-                                            {exp ? exp.toLocaleDateString() : '-'}
-                                            {diffDays !== null && <span className="ml-1.5 text-[10px] opacity-70">({diffDays < 0 ? `${Math.abs(diffDays)}d ago` : diffDays === 0 ? 'today' : `in ${diffDays}d`})</span>}
+                                            {exp ? (
+                                              <>{exp.toLocaleDateString()}
+                                                {diffDays !== null && <span className="ml-1.5 text-[10px] opacity-70">({diffDays < 0 ? `${Math.abs(diffDays)}d ago` : diffDays === 0 ? 'today' : `in ${diffDays}d`})</span>}
+                                              </>
+                                            ) : prod ? (
+                                              <><span className="text-fg/40 text-[9px] uppercase font-bold mr-1">Prod</span>{prod.toLocaleDateString()}</>
+                                            ) : '-'}
                                           </td>
                                           <td className="py-1.5 pl-3 text-fg/40 text-[10px] tabular-nums">{b.receivedAt ? new Date(b.receivedAt).toLocaleDateString() : '-'}</td>
                                           <td className="py-1.5 pl-3 text-right text-fg/60 text-[10px] tabular-nums">{b.unitCost ? peso(b.unitCost * bPackBase) : '-'}<span className="text-fg/30">/{bUnit}</span></td>
@@ -983,11 +1002,17 @@ export default function InventoryTab({ ctx }) {
                       <input type="date" value={invForm.expiryDate || ''} onChange={e => setInvForm({...invForm, expiryDate: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 transition" />
                     </div>
                   </div>
-                  {invForm.expiryDate && (
+                  {invForm.expiryDate ? (
                     <div>
                       <label className="text-[10px] text-fg/40 font-bold uppercase tracking-wider block mb-1">Warn days before expiry</label>
                       <input type="number" min="1" max="365" value={invForm.expiryWarnDays} onChange={e => setInvForm({...invForm, expiryWarnDays: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 transition" />
                       <p className="text-[9px] text-fg/25 mt-1">FEFO: oldest expiry consumed first.</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="text-[10px] text-fg/40 font-bold uppercase tracking-wider block mb-1">Production Date <span className="text-fg/25 font-normal normal-case">(goods with no real expiry, e.g. beans)</span></label>
+                      <input type="date" value={invForm.productionDate || ''} onChange={e => setInvForm({...invForm, productionDate: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 transition" />
+                      <p className="text-[9px] text-fg/25 mt-1">FPFO: oldest produced consumed first.</p>
                     </div>
                   )}
                 </div>

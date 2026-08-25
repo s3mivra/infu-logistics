@@ -171,3 +171,52 @@ describe('#8 stock transfer - FEFO by default, or pin a specific batch', () => {
     expect(a.stockQty).toBe(before.stockQty - 50);
   });
 });
+
+describe('#8 stock transfer - FPFO fallback for goods with no real expiry (e.g. beans)', () => {
+  const Inventory = () => mongoose.model('Inventory');
+  const dstr = (d) => new Date(d).toISOString().slice(0, 10);
+
+  const makeProductionDatedPair = async (fromName, toName) => {
+    const fromR = await auth('post', '/api/inventory', superTok).send({ itemName: fromName, unit: 'g', unitCost: 0.2, stockQty: 0, stockLocation: 'Warehouse' });
+    const toR = await auth('post', '/api/inventory', superTok).send({ itemName: toName, unit: 'g', unitCost: 0.2, stockQty: 0, stockLocation: 'Store Front' });
+    const from = fromR.body.item, to = toR.body.item;
+    // Neither batch has an expiryDate - only a production/roast date, like beans.
+    await auth('post', `/api/inventory/${from._id}/batches`, superTok).send({ qty: 300, productionDate: '2026-06-01' });
+    await auth('post', `/api/inventory/${from._id}/batches`, superTok).send({ qty: 400, productionDate: '2026-07-01' });
+    return { from, to };
+  };
+
+  it('FPFO (default): release with no pin draws from the oldest-PRODUCED batch and carries its production date to the destination', async () => {
+    const { from, to } = await makeProductionDatedPair('Beans FPFO Src', 'Beans FPFO Dst');
+    const req1 = await auth('post', '/api/stock-transfers', staffTok).send({ fromItemId: from._id, toItemId: to._id, qtyBase: 200 });
+    expect(req1.status).toBe(200);
+    const id = req1.body.transfer._id;
+    await auth('post', `/api/stock-transfers/${id}/approve`, superTok);
+    const rel = await auth('post', `/api/stock-transfers/${id}/release`, staffTok);
+    expect(rel.status).toBe(200);
+
+    const a = await Inventory().findById(from._id).lean();
+    const b = await Inventory().findById(to._id).lean();
+    expect(a.expiryBatches.find(x => dstr(x.productionDate) === '2026-06-01').qty).toBe(100); // 300 - 200, drawn first (oldest produced)
+    expect(a.expiryBatches.find(x => dstr(x.productionDate) === '2026-07-01').qty).toBe(400); // untouched
+
+    expect(b.expiryBatches).toHaveLength(1);
+    expect(b.expiryBatches[0].expiryDate).toBeFalsy();
+    expect(dstr(b.expiryBatches[0].productionDate)).toBe('2026-06-01');
+    expect(b.expiryBatches[0].qty).toBe(200);
+  });
+
+  it('pinned batch by production date: release draws only from the chosen lot, even when it is not the oldest', async () => {
+    const { from, to } = await makeProductionDatedPair('Beans Pin Src', 'Beans Pin Dst');
+    const req1 = await auth('post', '/api/stock-transfers', staffTok).send({ fromItemId: from._id, toItemId: to._id, qtyBase: 100, expiryDate: '2026-07-01' });
+    expect(req1.status).toBe(200);
+    const id = req1.body.transfer._id;
+    await auth('post', `/api/stock-transfers/${id}/approve`, superTok);
+    const rel = await auth('post', `/api/stock-transfers/${id}/release`, staffTok);
+    expect(rel.status).toBe(200);
+
+    const a = await Inventory().findById(from._id).lean();
+    expect(a.expiryBatches.find(x => dstr(x.productionDate) === '2026-06-01').qty).toBe(300); // untouched
+    expect(a.expiryBatches.find(x => dstr(x.productionDate) === '2026-07-01').qty).toBe(300); // 400 - 100
+  });
+});

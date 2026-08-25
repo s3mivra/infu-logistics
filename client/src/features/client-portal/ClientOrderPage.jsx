@@ -496,7 +496,8 @@ export default function ClientOrderPage() {
   const cartCount = useMemo(() => cart.reduce((s, i) => s + i.quantity, 0), [cart]);
 
   const visibleProducts = useMemo(() => {
-    let active = products.filter(p => !p.isArchived);
+    // Raw material, no SRP (basePrice <= 0) - stock the admin tracks but never sells.
+    let active = products.filter(p => !p.isArchived && (p.basePrice || 0) > 0);
     if (activeCategory === 'Bulk') active = active.filter(p => p.isBulk);
     else if (activeCategory !== 'All') active = active.filter(p => p.category === activeCategory);
     const q = productSearch.trim().toLowerCase();

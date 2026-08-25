@@ -299,8 +299,11 @@ app.get('/api/products', async (req, res) => {
     // Removed products (isAvailable=false): visible to admin/staff for management,
     // hidden from customer-facing menu. OOS products: visible to everyone (UI
     // surfaces the OOS badge).
+    // basePrice<=0: a raw material with no SRP - stock the admin tracks but never
+    // sells. Same visibility split as isAvailable: admin/staff still see it (so
+    // they can find it and give it a real price), customer-facing menu/portal never do.
     const productQuery = { isArchived: { $ne: true }, businessType: BUSINESS_TYPE };
-    if (!isAdminCaller) productQuery.isAvailable = { $ne: false };
+    if (!isAdminCaller) { productQuery.isAvailable = { $ne: false }; productQuery.basePrice = { $gt: 0 }; }
     const products = await Product.find(productQuery).populate('modifierGroups').lean();
     // Product images can be globally disabled via the superadmin "Product Images" setting.
     // Customers then receive no image (the menu shows a placeholder); staff/admin keep the
