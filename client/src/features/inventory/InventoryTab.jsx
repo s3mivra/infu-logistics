@@ -124,7 +124,7 @@ export default function InventoryTab({ ctx }) {
         <div className="flex flex-col gap-6">
 
           {/* FULL-WIDTH: Main Tables */}
-          <div className="bg-surface border border-white/10 rounded-xl p-6 flex flex-col h-fit">
+          <div className="bg-accent border border-accentShadow rounded-xl p-6 flex flex-col h-fit">
             
             {/* Header & Sub-Tabs */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 border-b border-white/10 pb-4">
