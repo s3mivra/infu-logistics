@@ -12,6 +12,10 @@ export default function StockTaxonomyPanel({
   const [catName, setCatName] = useState('');
   const [catPrefix, setCatPrefix] = useState('');
   const [busy, setBusy] = useState(false);
+  // Inline edit - { id, name, note } for a location or { id, name, prefix } for
+  // a category. Only one row editable at a time.
+  const [editLoc, setEditLoc] = useState(null);
+  const [editCat, setEditCat] = useState(null);
 
   const addLoc = async () => {
     if (!locName.trim() || busy) return;
@@ -26,6 +30,20 @@ export default function StockTaxonomyPanel({
     const ok = await saveStockCategory({ name: catName.trim(), prefix: catPrefix.trim() });
     setBusy(false);
     if (ok) { setCatName(''); setCatPrefix(''); }
+  };
+  const saveEditLoc = async () => {
+    if (!editLoc?.name?.trim() || busy) return;
+    setBusy(true);
+    const ok = await saveStockLocation({ name: editLoc.name.trim(), note: (editLoc.note || '').trim() }, editLoc.id);
+    setBusy(false);
+    if (ok) setEditLoc(null);
+  };
+  const saveEditCat = async () => {
+    if (!editCat?.name?.trim() || busy) return;
+    setBusy(true);
+    const ok = await saveStockCategory({ name: editCat.name.trim(), prefix: (editCat.prefix || '').trim() }, editCat.id);
+    setBusy(false);
+    if (ok) setEditCat(null);
   };
 
   const card = 'bg-card-bg border border-white/10 rounded-xl p-4';
@@ -47,16 +65,28 @@ export default function StockTaxonomyPanel({
         ) : (
           <ul className="divide-y divide-white/5">
             {stockLocations.map(l => (
-              <li key={l._id} className="flex items-center justify-between py-2.5 gap-2">
-                <div className="min-w-0">
-                  <p className="text-white font-bold text-sm truncate">{l.name}{l.isActive === false && <span className="ml-2 text-[9px] text-red-400 uppercase">inactive</span>}</p>
-                  {l.note && <p className="text-white/50 text-[11px] truncate">{l.note}</p>}
-                </div>
-                <div className="flex gap-1.5 shrink-0">
-                  <button onClick={() => saveStockLocation({ isActive: l.isActive === false }, l._id)} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>{l.isActive === false ? 'Enable' : 'Disable'}</button>
-                  <button onClick={() => deleteStockLocation(l._id)} className={`${rowBtn} bg-red-500/10 text-red-400 hover:bg-red-500/20`}>Del</button>
-                </div>
-              </li>
+              editLoc?.id === l._id ? (
+                <li key={l._id} className="py-2.5 flex flex-col sm:flex-row gap-2">
+                  <input autoFocus value={editLoc.name} onChange={e => setEditLoc(s => ({ ...s, name: e.target.value }))} placeholder="Location name" className={input} />
+                  <input value={editLoc.note} onChange={e => setEditLoc(s => ({ ...s, note: e.target.value }))} placeholder="Note (optional)" className={input} />
+                  <div className="flex gap-1.5 shrink-0">
+                    <button onClick={saveEditLoc} disabled={busy || !editLoc.name.trim()} className={`${rowBtn} bg-accent text-white disabled:opacity-40`}>Save</button>
+                    <button onClick={() => setEditLoc(null)} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>Cancel</button>
+                  </div>
+                </li>
+              ) : (
+                <li key={l._id} className="flex items-center justify-between py-2.5 gap-2">
+                  <div className="min-w-0">
+                    <p className="text-white font-bold text-sm truncate">{l.name}{l.isActive === false && <span className="ml-2 text-[9px] text-red-400 uppercase">inactive</span>}</p>
+                    {l.note && <p className="text-white/50 text-[11px] truncate">{l.note}</p>}
+                  </div>
+                  <div className="flex gap-1.5 shrink-0">
+                    <button onClick={() => setEditLoc({ id: l._id, name: l.name, note: l.note || '' })} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>Edit</button>
+                    <button onClick={() => saveStockLocation({ isActive: l.isActive === false }, l._id)} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>{l.isActive === false ? 'Enable' : 'Disable'}</button>
+                    <button onClick={() => deleteStockLocation(l._id)} className={`${rowBtn} bg-red-500/10 text-red-400 hover:bg-red-500/20`}>Del</button>
+                  </div>
+                </li>
+              )
             ))}
           </ul>
         )}
@@ -76,20 +106,32 @@ export default function StockTaxonomyPanel({
         ) : (
           <ul className="divide-y divide-white/5">
             {stockCategories.map(c => (
-              <li key={c._id} className="flex items-center justify-between py-2.5 gap-2">
-                <div className="min-w-0">
-                  <p className="text-white font-bold text-sm truncate">
-                    {c.name}
-                    {c.prefix && <span className="ml-2 text-[10px] font-mono bg-brand/20 text-brand px-1.5 py-0.5 rounded">{c.prefix}</span>}
-                    {c.isActive === false && <span className="ml-2 text-[9px] text-red-400 uppercase">inactive</span>}
-                  </p>
-                  {c.note && <p className="text-white/50 text-[11px] truncate">{c.note}</p>}
-                </div>
-                <div className="flex gap-1.5 shrink-0">
-                  <button onClick={() => saveStockCategory({ isActive: c.isActive === false }, c._id)} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>{c.isActive === false ? 'Enable' : 'Disable'}</button>
-                  <button onClick={() => deleteStockCategory(c._id)} className={`${rowBtn} bg-red-500/10 text-red-400 hover:bg-red-500/20`}>Del</button>
-                </div>
-              </li>
+              editCat?.id === c._id ? (
+                <li key={c._id} className="py-2.5 flex flex-col sm:flex-row gap-2">
+                  <input autoFocus value={editCat.name} onChange={e => setEditCat(s => ({ ...s, name: e.target.value }))} placeholder="Category name" className={input} />
+                  <input value={editCat.prefix} onChange={e => setEditCat(s => ({ ...s, prefix: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) }))} placeholder="Prefix" className={`${input} sm:max-w-[110px] uppercase font-mono`} maxLength={4} />
+                  <div className="flex gap-1.5 shrink-0">
+                    <button onClick={saveEditCat} disabled={busy || !editCat.name.trim()} className={`${rowBtn} bg-accent text-white disabled:opacity-40`}>Save</button>
+                    <button onClick={() => setEditCat(null)} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>Cancel</button>
+                  </div>
+                </li>
+              ) : (
+                <li key={c._id} className="flex items-center justify-between py-2.5 gap-2">
+                  <div className="min-w-0">
+                    <p className="text-white font-bold text-sm truncate">
+                      {c.name}
+                      {c.prefix && <span className="ml-2 text-[10px] font-mono bg-brand/20 text-brand px-1.5 py-0.5 rounded">{c.prefix}</span>}
+                      {c.isActive === false && <span className="ml-2 text-[9px] text-red-400 uppercase">inactive</span>}
+                    </p>
+                    {c.note && <p className="text-white/50 text-[11px] truncate">{c.note}</p>}
+                  </div>
+                  <div className="flex gap-1.5 shrink-0">
+                    <button onClick={() => setEditCat({ id: c._id, name: c.name, prefix: c.prefix || '' })} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>Edit</button>
+                    <button onClick={() => saveStockCategory({ isActive: c.isActive === false }, c._id)} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>{c.isActive === false ? 'Enable' : 'Disable'}</button>
+                    <button onClick={() => deleteStockCategory(c._id)} className={`${rowBtn} bg-red-500/10 text-red-400 hover:bg-red-500/20`}>Del</button>
+                  </div>
+                </li>
+              )
             ))}
           </ul>
         )}

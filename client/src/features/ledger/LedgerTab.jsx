@@ -195,6 +195,7 @@ export default function LedgerTab({ ctx }) {
   // Workbooks with more than one tab pause here so the user can pick which
   // sheet(s) to pull sales from, instead of silently only reading the first.
   const [bdSheetPicker, setBdSheetPicker] = useState(null); // { wb, sheetNames, selected: Set<string> }
+  const [bdParseProgress, setBdParseProgress] = useState(null); // { done, total } while reading selected sheets
 
   const bdNumify = (v) => { const n = parseFloat(String(v ?? '').replace(/[₱,\s]/g, '')); return Number.isFinite(n) ? n : 0; };
   const bdNorm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -338,15 +339,26 @@ export default function LedgerTab({ ctx }) {
   // instead of the ready-to-import preview - we don't know how it was paid.
   const finishBackdateImport = async (wb, sheetNames) => {
     let allGroups = [], totalSkipped = 0, anyHeaderFound = false;
+    setBdParseProgress({ done: 0, total: sheetNames.length });
+    let i = 0;
     for (const name of sheetNames) {
       const sheet = wb.Sheets[name];
-      if (!sheet) continue;
-      const grid = XLSX_sheetToGrid(wb, name);
-      const { groups, skipped, noHeader } = parseBackdateGrid(grid, name);
-      if (!noHeader) anyHeaderFound = true;
-      allGroups = allGroups.concat(groups);
-      totalSkipped += skipped;
+      if (sheet) {
+        const grid = XLSX_sheetToGrid(wb, name);
+        const { groups, skipped, noHeader } = parseBackdateGrid(grid, name);
+        if (!noHeader) anyHeaderFound = true;
+        allGroups = allGroups.concat(groups);
+        totalSkipped += skipped;
+      }
+      i++;
+      // Yield every few sheets so the progress bar actually paints instead of
+      // the whole parse running as one blocking synchronous loop.
+      if (i % 5 === 0 || i === sheetNames.length) {
+        setBdParseProgress({ done: i, total: sheetNames.length });
+        await new Promise(r => setTimeout(r, 0));
+      }
     }
+    setBdParseProgress(null);
     if (!anyHeaderFound) { ui.alert('Could not find the header row (needs at least a Description and Qty column) in the selected sheet(s).'); return; }
     if (allGroups.length === 0) { ui.alert('No sale rows found under the header in the selected sheet(s).'); return; }
 
@@ -3328,10 +3340,22 @@ export default function LedgerTab({ ctx }) {
                   </button>
                 </div>
 
+                {bdParseProgress && (
+                  <div className="px-5 pt-4">
+                    <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-fg/50 mb-1.5">
+                      <span>Reading sheets…</span>
+                      <span className="tabular-nums">{bdParseProgress.done} / {bdParseProgress.total}</span>
+                    </div>
+                    <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                      <div className="h-full bg-brand transition-all duration-200 ease-out rounded-full"
+                        style={{ width: `${Math.round((bdParseProgress.done / (bdParseProgress.total || 1)) * 100)}%` }} />
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
-                  <button onClick={() => !bdImporting && setBdSheetPicker(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
+                  <button onClick={() => !bdImporting && setBdSheetPicker(null)} disabled={bdImporting} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition disabled:opacity-30">Cancel</button>
                   <button onClick={confirmBdSheetPicker} disabled={bdImporting || bdSheetPicker.selected.size === 0} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
-                    {bdImporting ? 'Reading…' : bdSheetPicker.sheetNames.length > 1 ? `Continue (${bdSheetPicker.selected.size} sheet${bdSheetPicker.selected.size === 1 ? '' : 's'})` : 'Continue'}
+                    {bdImporting ? (bdParseProgress ? `Reading ${bdParseProgress.done}/${bdParseProgress.total}` : 'Reading…') : bdSheetPicker.sheetNames.length > 1 ? `Continue (${bdSheetPicker.selected.size} sheet${bdSheetPicker.selected.size === 1 ? '' : 's'})` : 'Continue'}
                   </button>
                 </div>
               </div>
