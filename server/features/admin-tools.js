@@ -111,6 +111,9 @@ export default function registerAdminTools(ctx) {
     TenantStats,
     STATS_SHARDS,
     ProductStats,
+    StockTransfer,
+    PurchaseOrder,
+    Bill,
     JournalEntrySchema,
     JournalEntry,
     InventoryMovementSchema,
@@ -664,6 +667,83 @@ app.post('/api/admin/backdate-sale/backfill-ledger', verifyToken, requireSuperAd
     res.json({ success: true, ...results });
   } catch (err) {
     log.error?.({ err }, 'POST /api/admin/backdate-sale/backfill-ledger failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ── PURGE DATA (superadmin only) ─────────────────────────────────────────────
+// Wipes every transactional record for this deployment - sales/orders, the
+// general ledger, inventory + its stock history, shifts/time clock, revolving
+// funds, and procurement (POs/bills) - while leaving staff accounts, roles,
+// client (customer) accounts, the menu (products/combos/categories/add-ons),
+// pricing, the Chart of Accounts, and Settings untouched, exactly as scoped
+// with the user. Irreversible; gated on an exact-match confirmation phrase
+// checked server-side (never trust a client-side-only confirm for this).
+//
+// NOTE ON "PER TENANT": this codebase's multi-tenancy is Phase 1 - `tenantId`
+// is backfilled on some collections (Order, Inventory, PurchaseOrder, Bill,
+// StockTransfer...) but core ledger collections like JournalEntry, Shift,
+// ClockEntry, RevolvingFund(Tx), ClosedPeriod and BankDeposit carry NO
+// tenantId at all, and no query in the app actually enforces tenant scoping
+// yet (`tenantScope()` is a no-op). There is therefore no way to honestly
+// purge "just one tenant's ledger" today - this purges everything for the
+// current BUSINESS_TYPE deployment, which is the only scope boundary that
+// actually exists end-to-end right now.
+const PURGE_CONFIRM_PHRASE = 'PURGE';
+app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const phrase = String(req.body.confirmPhrase || '').trim();
+    if (phrase !== PURGE_CONFIRM_PHRASE) {
+      return res.status(400).json({ success: false, error: `Type ${PURGE_CONFIRM_PHRASE} exactly (all caps) to confirm.` });
+    }
+    const bizScope = { businessType: BUSINESS_TYPE };
+    const deleted = {};
+    const del = async (label, Model) => { deleted[label] = (await Model.deleteMany(bizScope)).deletedCount; };
+
+    // Sales / orders
+    await del('orders', Order);
+    // Ledger (journal entries, period locks, bank deposits, expenses - expenses
+    // are just JournalEntry rows with an expense account code, no separate model)
+    await del('journalEntries', JournalEntry);
+    await del('closedPeriods', ClosedPeriod);
+    await del('bankDeposits', BankDeposit);
+    // Inventory + its history
+    await del('inventory', Inventory);
+    await del('stockCards', StockCard);
+    await del('inventoryMovements', InventoryMovement);
+    await del('stockTransfers', StockTransfer);
+    await del('backdateQueue', BackdateQueueItem);
+    // Shifts / time clock
+    await del('shifts', Shift);
+    await del('clockEntries', ClockEntry);
+    // Revolving funds
+    await del('revolvingFunds', RevolvingFund);
+    await del('revolvingFundTx', RevolvingFundTx);
+    // Procurement
+    await del('purchaseOrders', PurchaseOrder);
+    await del('bills', Bill);
+    // End-of-day archives
+    await del('eodRecords', EODRecord);
+    // Cached analytics counters - MUST reset alongside Order/whatever fed them,
+    // or Analytics keeps showing pre-purge totals forever (they're not derived
+    // live, see reports.js).
+    await del('tenantStats', TenantStats);
+    await del('productStats', ProductStats);
+
+    // Deliberately untouched: User, Role, ClientAccount (staff + client
+    // logins), Product/Combo/Category/AddOn/ModifierGroup/PriceTier (menu),
+    // Account/Settings/PaymentMethodMap (Chart of Accounts + config),
+    // Discount/DiscountRule (promo definitions), StorageLocation/
+    // StockCategory (inventory taxonomy), Supplier (vendor master data),
+    // ScheduledShift (future planning), Tenant, Counter (sequence numbers -
+    // left as-is so new records don't reuse old reference/order numbers),
+    // and AuditLog (this action itself is written there below).
+
+    await logAudit(req, { action: 'purge-data', entity: 'Tenant', entityId: BUSINESS_TYPE, after: deleted });
+    emitToMgr('erpUpdated');
+    res.json({ success: true, deleted });
+  } catch (err) {
+    log.error?.({ err }, 'POST /api/admin/purge-data failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });

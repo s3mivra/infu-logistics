@@ -1502,7 +1502,17 @@ export default function AdminDashboard() {
   // API rate limiter (429s on /api/notifications and the import itself).
   // Debounce: collapse a burst into one refetch shortly after it settles.
   const erpRefreshTimerRef = useRef(null);
+  // Belt-and-suspenders on top of the debounce: a long-running bulk op (the
+  // backdate-sale Excel importer, 100+ sequential POSTs) sets this while it
+  // runs so the socket handlers below skip scheduling ANY refetch during it -
+  // the importer already does its own fetchERPData() once at the end. Without
+  // this, every single completed row keeps re-arming the 800ms debounce timer
+  // back-to-back for the importer's whole run, so the "settle" point never
+  // actually arrives until the import finishes anyway - the debounce alone
+  // wasn't enough to stop /api/notifications and friends from still piling up.
+  const suppressERPRefreshRef = useRef(false);
   const scheduleERPRefresh = (alsoEOD) => {
+    if (suppressERPRefreshRef.current) return;
     clearTimeout(erpRefreshTimerRef.current);
     erpRefreshTimerRef.current = setTimeout(() => {
       fetchERPData();
@@ -5600,6 +5610,9 @@ const updateStatus = async (orderId, newStatus) => {
     users, activeAdmin, isSuperAdmin, canVoidRefund, can,
     // ── Core helpers ────────────────────────────────────────────────────────
     fetchOrders, fetchData, fetchERPData, fetchEODData,
+    // Pause socket-triggered auto-refreshes during a long sequential bulk op
+    // (e.g. the backdate-sale Excel importer) - see suppressERPRefreshRef above.
+    setBulkOpInProgress: (v) => { suppressERPRefreshRef.current = !!v; },
     apiFetch, updateStatus, printOrderSlip, printBillingStatement, printDeliveryReceipt, handleVoidOrder,
     peso, BIZ_NAME, COMP_REASON_LABELS, API_URL, FRONTEND_URL,
     // ── Analytics ───────────────────────────────────────────────────────────

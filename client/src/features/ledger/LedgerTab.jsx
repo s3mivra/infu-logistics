@@ -36,7 +36,7 @@ export default function LedgerTab({ ctx }) {
     effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
     exportDayToPDF, exportInventoryToPDF, exportLedgerToPDF, fetchAnalytics, fetchArOutstanding,
-    fetchBalanceSheet, fetchData, fetchEODData, fetchERPData, fetchExpenseCategories,
+    fetchBalanceSheet, fetchData, fetchEODData, fetchERPData, fetchExpenseCategories, setBulkOpInProgress,
     fetchOrders, fetchPnl, fetchRfFunds, fetchRfTxs, fetchShiftHistory,
     fetchStockHistory, filteredOrders, formData, getEstimatedStock, globalAddOns,
     groupedArchives, handleImageUpload, handleInlinePriceUpdate, handleRestockSubmit, handleSaveAddOn,
@@ -402,6 +402,13 @@ export default function LedgerTab({ ctx }) {
 
   const parseBackdateExcel = async (file) => {
     if (!file) return;
+    // Defensive reset - a leftover preview/queue-resolve modal from a prior
+    // run must never still be mounted while a fresh file is being read (it
+    // would fight the new sheet-picker for the same overlay slot and could
+    // flash the OLD popup back up mid-read).
+    setBdImportPreview(null);
+    setBdQueueResolve(null);
+    setBdParseProgress(null);
     setBdImporting(true);
     try {
       const XLSX = await import('xlsx');
@@ -439,38 +446,48 @@ export default function LedgerTab({ ctx }) {
     setBdImporting(true);
     const total = bdImportPreview.groups.length;
     setBdImportProgress({ done: 0, total });
+    // Each successful row broadcasts a socket event the dashboard reacts to
+    // with a full data refetch - fine for one sale, but a storm of them (plus
+    // this loop's own POSTs) is what was tripping the API rate limiter on a
+    // 180-row import. Pause that auto-refresh for the run; one manual
+    // fetchERPData() below covers it once the whole import is done.
+    setBulkOpInProgress?.(true);
     let ok = 0, fail = 0;
     const errors = [];
-    for (const g of bdImportPreview.groups) {
-      const label = g.client || g.transNo || 'row';
-      if (!g.date) { fail++; errors.push(`${label}: missing/unreadable date`); setBdImportProgress(p => ({ ...p, done: p.done + 1 })); continue; }
-      try {
-        // A bulk run posts one sale per request, in sequence, but a few
-        // hundred rows can still trip the API rate limiter (each success also
-        // fans out a socket-triggered dashboard refresh). Back off and retry
-        // on 429 instead of counting a throttled row as a hard failure.
-        let res, attempt = 0;
-        for (;;) {
-          res = await apiFetch('/api/admin/backdate-sale', {
-            method: 'POST',
-            body: JSON.stringify({
-              date: g.date, customerName: g.client, paymentMethod: g.paymentMethod || bdImportSettings.paymentMethod,
-              notes: g.transNo ? `Imported - ${g.transNo}` : 'Imported from Excel',
-              affectInventory: bdImportSettings.affectInventory, isComplimentary: false, discountPercent: 0,
-              items: g.items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity, productId: it.productId, productCode: it.productCode })),
-            }),
-          });
-          if (res.status !== 429 || attempt >= 4) break;
-          attempt++;
-          await new Promise(r => setTimeout(r, 1500 * attempt));
-        }
-        const d = await res.json();
-        if (d.success) ok++; else { fail++; errors.push(`${label}: ${d.error}`); }
-      } catch { fail++; errors.push(`${label}: network error`); }
-      setBdImportProgress(p => ({ ...p, done: p.done + 1 }));
-      // Small pace between rows so a fast/local server doesn't out-race the
-      // rate limiter even before any 429 shows up.
-      await new Promise(r => setTimeout(r, 120));
+    try {
+      for (const g of bdImportPreview.groups) {
+        const label = g.client || g.transNo || 'row';
+        if (!g.date) { fail++; errors.push(`${label}: missing/unreadable date`); setBdImportProgress(p => ({ ...p, done: p.done + 1 })); continue; }
+        try {
+          // A bulk run posts one sale per request, in sequence, but a few
+          // hundred rows can still trip the API rate limiter (each success also
+          // fans out a socket-triggered dashboard refresh). Back off and retry
+          // on 429 instead of counting a throttled row as a hard failure.
+          let res, attempt = 0;
+          for (;;) {
+            res = await apiFetch('/api/admin/backdate-sale', {
+              method: 'POST',
+              body: JSON.stringify({
+                date: g.date, customerName: g.client, paymentMethod: g.paymentMethod || bdImportSettings.paymentMethod,
+                notes: g.transNo ? `Imported - ${g.transNo}` : 'Imported from Excel',
+                affectInventory: bdImportSettings.affectInventory, isComplimentary: false, discountPercent: 0,
+                items: g.items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity, productId: it.productId, productCode: it.productCode })),
+              }),
+            });
+            if (res.status !== 429 || attempt >= 4) break;
+            attempt++;
+            await new Promise(r => setTimeout(r, 1500 * attempt));
+          }
+          const d = await res.json();
+          if (d.success) ok++; else { fail++; errors.push(`${label}: ${d.error}`); }
+        } catch { fail++; errors.push(`${label}: network error`); }
+        setBdImportProgress(p => ({ ...p, done: p.done + 1 }));
+        // Small pace between rows so a fast/local server doesn't out-race the
+        // rate limiter even before any 429 shows up.
+        await new Promise(r => setTimeout(r, 120));
+      }
+    } finally {
+      setBulkOpInProgress?.(false);
     }
     setBdImporting(false);
     setBdImportProgress(null);
@@ -3239,7 +3256,7 @@ export default function LedgerTab({ ctx }) {
           )}
 
           {/* ── BACKDATE QUEUE — COMPLETE ── supply the missing payment method, then post */}
-          {bdQueueResolve && (
+          {bdQueueResolve && !bdSheetPicker && !bdImportPreview && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !bdQueueSaving && setBdQueueResolve(null)}>
               <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
@@ -3291,7 +3308,7 @@ export default function LedgerTab({ ctx }) {
           )}
 
           {/* ── BACKDATE IMPORT — OPTIONS (sheet selection + the same settings the manual entry form asks for) ── */}
-          {bdSheetPicker && (
+          {bdSheetPicker && !bdImportPreview && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !bdImporting && setBdSheetPicker(null)}>
               <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
