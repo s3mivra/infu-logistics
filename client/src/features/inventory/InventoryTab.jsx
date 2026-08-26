@@ -337,7 +337,7 @@ export default function InventoryTab({ ctx }) {
                         <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-fg'}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
                         <td className="py-3 text-right text-fg text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(effThreshold / (d.packBase || 1)).toLocaleString(undefined, { maximumFractionDigits: 3 })}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
                         <td className="py-3 text-fg pl-2 font-bold">{d.isPacked ? 'pcs' : d.unit}</td>
-                        <td className="py-3 text-right text-fg font-bold font-mono text-xs tabular-nums"><>{peso(d.packCost)}<span className="text-fg/60">/{d.packLabel}</span></></td>
+                        <td className="py-3 text-right text-fg font-bold font-mono text-xs tabular-nums"><>{peso(d.packCost)}<span className="text-fg font-bold">/{d.packLabel}</span></></td>
                         <td className="py-3 text-right text-fg font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
                         </>); })()}
                         <td className="py-3 text-center">
@@ -404,11 +404,11 @@ export default function InventoryTab({ ctx }) {
                       {expandedBatchRows[item._id] && (item.expiryBatches?.length || 0) > 0 && (
                         <tr className="bg-white/5">
                           <td colSpan={8} className="px-6 py-3">
-                            <p className="text-[10px] uppercase tracking-widest font-black text-fg/40 mb-2">Batches (FEFO - oldest used first)</p>
+                            <p className="text-[10px] uppercase tracking-widest font-black text-fg mb-2">Batches (FEFO - oldest used first)</p>
                             <div className="overflow-x-auto">
                               <table className="w-full text-xs">
                                 <thead>
-                                  <tr className="text-fg/30 text-[10px] uppercase tracking-widest">
+                                  <tr className="text-fg text-[10px] uppercase tracking-widest">
                                     <th className="text-left pb-1.5">#</th>
                                     <th className="text-right pb-1.5">Qty</th>
                                     <th className="text-left pb-1.5 pl-3">Expiry / Prod</th>
@@ -441,27 +441,27 @@ export default function InventoryTab({ ctx }) {
                                         if (diffDays < 0) badge = 'text-red-400 font-black';
                                         else if (diffDays === 0) badge = 'text-red-400 font-black';
                                         else if (diffDays <= (item.expiryWarnDays || 7)) badge = 'text-yellow-300 font-bold';
-                                        else badge = 'text-fg/70';
+                                        else badge = 'text-fg font-bold';
                                       }
                                       const isOldest = displayIdx === 0;
                                       return (
-                                        <tr key={b._originalIdx} className="border-t border-white/5">
-                                          <td className="py-1.5 text-fg/40 font-bold">
+                                        <tr key={b._originalIdx} className="border-t border-white/10">
+                                          <td className="py-1.5 text-fg font-bold">
                                             {isOldest ? <span className="text-[9px] bg-brand text-white px-1.5 py-0.5 rounded font-black uppercase tracking-wider shadow-sm">NEXT</span> : `#${displayIdx + 1}`}
                                           </td>
                                           <td className="py-1.5 text-right text-fg font-bold tabular-nums">{dispQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {bUnit}</td>
-                                          <td className={`py-1.5 pl-3 tabular-nums ${badge}`}>
+                                          <td className={`py-1.5 pl-3 tabular-nums font-bold ${badge}`}>
                                             {exp ? (
                                               <>{exp.toLocaleDateString()}
-                                                {diffDays !== null && <span className="ml-1.5 text-[10px] opacity-70">({diffDays < 0 ? `${Math.abs(diffDays)}d ago` : diffDays === 0 ? 'today' : `in ${diffDays}d`})</span>}
+                                                {diffDays !== null && <span className="ml-1.5 text-[10px] text-fg font-bold">({diffDays < 0 ? `${Math.abs(diffDays)}d ago` : diffDays === 0 ? 'today' : `in ${diffDays}d`})</span>}
                                               </>
                                             ) : prod ? (
-                                              <><span className="text-fg/40 text-[9px] uppercase font-bold mr-1">Prod</span>{prod.toLocaleDateString()}</>
+                                              <><span className="text-fg text-[9px] uppercase font-black mr-1">Prod</span>{prod.toLocaleDateString()}</>
                                             ) : '-'}
                                           </td>
-                                          <td className="py-1.5 pl-3 text-fg/40 text-[10px] tabular-nums">{b.receivedAt ? new Date(b.receivedAt).toLocaleDateString() : '-'}</td>
-                                          <td className="py-1.5 pl-3 text-right text-fg/60 text-[10px] tabular-nums">{b.unitCost ? peso(b.unitCost * bPackBase) : '-'}<span className="text-fg/30">/{bUnit}</span></td>
-                                          <td className="py-1.5 pl-3 text-fg/40 text-[10px]">{b.reference || '-'}</td>
+                                          <td className="py-1.5 pl-3 text-fg text-[10px] font-bold tabular-nums">{b.receivedAt ? new Date(b.receivedAt).toLocaleDateString() : '-'}</td>
+                                          <td className="py-1.5 pl-3 text-right text-fg text-[10px] font-bold tabular-nums">{b.unitCost ? peso(b.unitCost * bPackBase) : '-'}<span className="text-fg font-bold">/{bUnit}</span></td>
+                                          <td className="py-1.5 pl-3 text-fg text-[10px] font-bold">{b.reference || '-'}</td>
                                           <td className="py-1.5 text-right">
                                             <button onClick={async () => {
                                               if (!(await ui.confirm(`Remove this batch (${dispQty} ${bUnit}, expires ${exp ? exp.toLocaleDateString() : 'n/a'})? This will NOT change stockQty - only the batch record.`))) return;
@@ -478,8 +478,8 @@ export default function InventoryTab({ ctx }) {
                                 </tbody>
                               </table>
                             </div>
-                            <p className="text-[10px] text-fg/40 mt-2">
-                              Item unit cost <span className="text-fg/70 font-bold tabular-nums">{peso((item.unitCost || 0) * (packInfo(item).packBase || 1))}/{itemDisplay(item).isPacked ? 'pcs' : itemDisplay(item).unit}</span> is the weighted average across all batches (updated on each restock).
+                            <p className="text-[10px] text-fg font-bold mt-2">
+                              Item unit cost <span className="text-fg font-black tabular-nums">{peso((item.unitCost || 0) * (packInfo(item).packBase || 1))}/{itemDisplay(item).isPacked ? 'pcs' : itemDisplay(item).unit}</span> is the weighted average across all batches (updated on each restock).
                             </p>
                           </td>
                         </tr>
