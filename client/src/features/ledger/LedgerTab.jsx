@@ -118,6 +118,11 @@ export default function LedgerTab({ ctx }) {
   // own search whenever the ledger search box has a term, so the lookup isn't
   // bounded by that recent-500 window. Debounced so it doesn't fire per keystroke.
   const journalSearchMounted = useRef(false);
+  // Module import result needs to survive across renders (a plain `let` here
+  // gets re-initialized to null on every re-render, which threw "XLSX not
+  // loaded" the moment the sheet-picker's setState triggered a re-render
+  // between the dynamic import and the later parse).
+  const xlsxRef = useRef(null);
   useEffect(() => {
     if (!journalSearchMounted.current) { journalSearchMounted.current = true; return; }
     const q = journalSearch.trim();
@@ -390,10 +395,9 @@ export default function LedgerTab({ ctx }) {
     setBdImportPreview({ groups: readyGroups, skipped: totalSkipped, multiSheet: sheetNames.length > 1, queuedCount });
   };
 
-  let _XLSX_cached = null;
   const XLSX_sheetToGrid = (wb, name) => {
-    if (!_XLSX_cached) throw new Error('XLSX not loaded');
-    return _XLSX_cached.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' });
+    if (!xlsxRef.current) throw new Error('XLSX not loaded');
+    return xlsxRef.current.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' });
   };
 
   const parseBackdateExcel = async (file) => {
@@ -401,7 +405,7 @@ export default function LedgerTab({ ctx }) {
     setBdImporting(true);
     try {
       const XLSX = await import('xlsx');
-      _XLSX_cached = XLSX;
+      xlsxRef.current = XLSX;
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheetNames = wb.SheetNames || [];
       // Always pause here first - even a single-sheet file - so Payment Method
