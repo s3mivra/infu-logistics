@@ -110,9 +110,9 @@ export default function StockTransferPanel({
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           {locationAnalytics.map(l => (
             <div key={l.location} className={card}>
-              <p className="text-[10px] uppercase tracking-widest text-fg/40 font-bold truncate">{l.location}</p>
-              <p className="text-lg font-black text-fg tabular-nums">{peso ? peso(l.totalValue) : l.totalValue}</p>
-              <p className="text-[10px] text-fg/50">{l.itemCount} item(s){l.lowStockCount > 0 && <span className="text-red-400"> · {l.lowStockCount} low</span>}</p>
+              <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold truncate">{l.location}</p>
+              <p className="text-lg font-black text-white tabular-nums">{peso ? peso(l.totalValue) : l.totalValue}</p>
+              <p className="text-[10px] text-white/50">{l.itemCount} item(s){l.lowStockCount > 0 && <span className="text-red-400"> · {l.lowStockCount} low</span>}</p>
             </div>
           ))}
         </div>
@@ -120,17 +120,17 @@ export default function StockTransferPanel({
 
       {/* New transfer request */}
       <div className={card}>
-        <h3 className="text-fg font-black uppercase tracking-wider text-sm mb-3">New Transfer Request</h3>
+        <h3 className="text-white font-black uppercase tracking-wider text-sm mb-3">New Transfer Request</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
           <div>
-            <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">From (source)</label>
+            <label className="text-[10px] text-white/40 uppercase font-bold block mb-1">From (source)</label>
             <select value={fromItemId} onChange={e => setFromItemId(e.target.value)} className={input}>
               <option value="">- Select item -</option>
               {inventory.map(i => <option key={i._id} value={i._id}>{label(i)} ({i.stockQty} {i.unit})</option>)}
             </select>
             {fromBatches.length > 0 && (
               <div className="mt-1.5">
-                <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">Batch / Expiry</label>
+                <label className="text-[10px] text-white/40 uppercase font-bold block mb-1">Batch / Expiry</label>
                 <select value={expiryChoice} onChange={e => setExpiryChoice(e.target.value)} className={input}>
                   <option value="">FEFO/FPFO - oldest first (recommended)</option>
                   {fromBatches.map((b, i) => {
@@ -146,7 +146,7 @@ export default function StockTransferPanel({
             )}
           </div>
           <div>
-            <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">To (destination)</label>
+            <label className="text-[10px] text-white/40 uppercase font-bold block mb-1">To (destination)</label>
             <select value={toValue} onChange={e => setToValue(e.target.value)} className={input}>
               <option value="">- Select item -</option>
               <optgroup label="My Locations">
@@ -167,11 +167,11 @@ export default function StockTransferPanel({
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
           <div>
-            <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">Quantity{fromItem ? ` (${fromItem.unit})` : ''}</label>
+            <label className="text-[10px] text-white/40 uppercase font-bold block mb-1">Quantity{fromItem ? ` (${fromItem.unit})` : ''}</label>
             <input type="number" min="0" value={qty} onChange={e => setQty(e.target.value)} placeholder="Base units" className={input} />
           </div>
           <div>
-            <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">Note (optional)</label>
+            <label className="text-[10px] text-white/40 uppercase font-bold block mb-1">Note (optional)</label>
             <input value={note} onChange={e => setNote(e.target.value)} placeholder="Reason / reference" className={input} />
           </div>
         </div>
@@ -182,14 +182,14 @@ export default function StockTransferPanel({
 
       {/* Transfer list */}
       <div className={card}>
-        <h3 className="text-fg font-black uppercase tracking-wider text-sm mb-3">Transfers</h3>
+        <h3 className="text-white font-black uppercase tracking-wider text-sm mb-3">Transfers</h3>
         {stockTransfers.length === 0 ? (
-          <p className="text-fg/40 text-xs py-6 text-center uppercase tracking-widest">No transfers yet</p>
+          <p className="text-white/40 text-xs py-6 text-center uppercase tracking-widest">No transfers yet</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
+                <tr className="text-white/40 text-[10px] uppercase tracking-widest border-b border-white/10">
                   <th className="text-left py-2">Ref</th>
                   <th className="text-left py-2">Item</th>
                   <th className="text-left py-2">Route</th>
@@ -201,16 +201,16 @@ export default function StockTransferPanel({
               <tbody>
                 {stockTransfers.map(t => (
                   <tr key={t._id} className="border-b border-white/5">
-                    <td className="py-2 text-fg/60 text-xs font-mono">{t.reference}</td>
-                    <td className="py-2 text-fg font-bold">{t.itemName}</td>
-                    <td className="py-2 text-fg/60 text-xs">{t.fromLocation || '?'} → {t.toLocation || '?'}</td>
-                    <td className="py-2 text-right text-fg tabular-nums font-bold">
+                    <td className="py-2 text-white/60 text-xs font-mono">{t.reference}</td>
+                    <td className="py-2 text-white font-bold">{t.itemName}</td>
+                    <td className="py-2 text-white/60 text-xs">{t.fromLocation || '?'} → {t.toLocation || '?'}</td>
+                    <td className="py-2 text-right text-white tabular-nums font-bold">
                       {t.qtyBase} {t.unit}
                       {/* t.expiryDate holds whichever rotation date the pinned batch used - a
                           real expiry, or a production date for goods with no real expiry. */}
-                      {t.expiryDate && <span className="block text-[10px] font-normal text-fg/40">batch {fmtExpiry(t.expiryDate)}</span>}
+                      {t.expiryDate && <span className="block text-[10px] font-normal text-white/40">batch {fmtExpiry(t.expiryDate)}</span>}
                     </td>
-                    <td className="py-2 pl-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${statusColor[t.status] || 'bg-white/10 text-fg/50'}`}>{t.status}</span></td>
+                    <td className="py-2 pl-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${statusColor[t.status] || 'bg-white/10 text-white/50'}`}>{t.status}</span></td>
                     <td className="py-2 text-right">
                       <div className="flex gap-1.5 justify-end">
                         {t.status === 'Requested' && isSuperAdmin && (
@@ -241,16 +241,16 @@ export default function StockTransferPanel({
       {hubLinks.length > 0 && (
         <div className={card}>
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-fg font-black uppercase tracking-wider text-sm">Hub Shipments (to connected businesses)</h3>
-            <span className="text-[10px] text-fg/30">Incoming shipments · use the Hub tab to accept</span>
+            <h3 className="text-white font-black uppercase tracking-wider text-sm">Hub Shipments (to connected businesses)</h3>
+            <span className="text-[10px] text-white/30">Incoming shipments · use the Hub tab to accept</span>
           </div>
           {hubTransfers.length === 0 ? (
-            <p className="text-fg/40 text-xs py-6 text-center uppercase tracking-widest">No hub shipments yet</p>
+            <p className="text-white/40 text-xs py-6 text-center uppercase tracking-widest">No hub shipments yet</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
+                  <tr className="text-white/40 text-[10px] uppercase tracking-widest border-b border-white/10">
                     <th className="text-left py-2">Ref</th>
                     <th className="text-left py-2">Item</th>
                     <th className="text-left py-2">To Partner</th>
@@ -261,11 +261,11 @@ export default function StockTransferPanel({
                 <tbody>
                   {hubTransfers.map(t => (
                     <tr key={t._id} className="border-b border-white/5">
-                      <td className="py-2 text-fg/60 text-xs font-mono">{t.reference}</td>
-                      <td className="py-2 text-fg font-bold">{t.itemName}</td>
-                      <td className="py-2 text-fg/60 text-xs">{t.partnerName || t.partnerSlug}</td>
-                      <td className="py-2 text-right text-fg tabular-nums font-bold">{t.qtyBase} {t.unit}</td>
-                      <td className="py-2 pl-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${hubStatusColor[t.status] || 'bg-white/10 text-fg/50'}`}>{t.status}</span></td>
+                      <td className="py-2 text-white/60 text-xs font-mono">{t.reference}</td>
+                      <td className="py-2 text-white font-bold">{t.itemName}</td>
+                      <td className="py-2 text-white/60 text-xs">{t.partnerName || t.partnerSlug}</td>
+                      <td className="py-2 text-right text-white tabular-nums font-bold">{t.qtyBase} {t.unit}</td>
+                      <td className="py-2 pl-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${hubStatusColor[t.status] || 'bg-white/10 text-white/50'}`}>{t.status}</span></td>
                     </tr>
                   ))}
                 </tbody>

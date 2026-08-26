@@ -128,7 +128,7 @@ export default function InventoryTab({ ctx }) {
             
             {/* Header & Sub-Tabs */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 border-b border-white/10 pb-4">
-              <h3 className="text-xl font-bold text-fg">Inventory Hub</h3>
+              <h3 className="text-xl font-bold text-white">Inventory Hub</h3>
               
               {/* --- NEW: THE SUB-TAB TOGGLE --- */}
               <div className="flex bg-page-bg p-1 rounded-lg shadow-inner">
@@ -268,7 +268,7 @@ export default function InventoryTab({ ctx }) {
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
-                    <tr className="text-fg border-b border-white/20">
+                    <tr className="text-white border-b border-white/20">
                       <th className="pb-3">Item Name</th>
                       <th className="pb-3 text-right">Live Qty</th>
                       <th className="pb-3 text-right">Threshold</th>
@@ -284,8 +284,8 @@ export default function InventoryTab({ ctx }) {
                       <tr>
                         <td colSpan={8} className="py-14 text-center">
                           <Package size={26} className="mx-auto mb-3 text-brand/50" />
-                          <p className="text-fg font-black uppercase tracking-widest text-xs mb-1">No stock items yet</p>
-                          <p className="text-fg/70 text-xs">Receive your first delivery with the Procurement form to start tracking inventory.</p>
+                          <p className="text-white font-black uppercase tracking-widest text-xs mb-1">No stock items yet</p>
+                          <p className="text-white text-xs">Receive your first delivery with the Procurement form to start tracking inventory.</p>
                         </td>
                       </tr>
                     )}
@@ -325,7 +325,7 @@ export default function InventoryTab({ ctx }) {
                       {/* data-notif-id is the jump target for the notification
                           bell - clicking a low-stock/expiry alert scrolls here. */}
                       <tr data-notif-id={item._id} className={`border-b border-white/30 hover:bg-page-bg/30 transition ${rowExpiredTint || (isLow ? 'bg-red-900/10' : '')}`}>
-                        <td className="py-3 font-bold text-fg uppercase">
+                        <td className="py-3 font-bold text-white uppercase">
                           {item.itemName}
                           {isLow && <span className="ml-2 text-[9px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase animate-pulse">LOW</span>}
                           {isPhaseOut && <span title="Out of stock and costs more than its SRP - not worth restocking" className="ml-2 text-[9px] font-black bg-gray-500 text-white px-1.5 py-0.5 rounded uppercase">PHASE OUT</span>}
@@ -334,11 +334,11 @@ export default function InventoryTab({ ctx }) {
                           )}
                         </td>
                         {(() => { const d = itemDisplay(item); return (<>
-                        <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-fg'}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
-                        <td className="py-3 text-right text-fg text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(effThreshold / (d.packBase || 1)).toLocaleString(undefined, { maximumFractionDigits: 3 })}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
-                        <td className="py-3 text-fg pl-2 font-bold">{d.isPacked ? 'pcs' : d.unit}</td>
-                        <td className="py-3 text-right text-fg font-bold font-mono text-xs tabular-nums"><>{peso(d.packCost)}<span className="text-fg/60">/{d.packLabel}</span></></td>
-                        <td className="py-3 text-right text-fg font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
+                        <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-white'}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
+                        <td className="py-3 text-right text-white text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(effThreshold / (d.packBase || 1)).toLocaleString(undefined, { maximumFractionDigits: 3 })}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
+                        <td className="py-3 text-white pl-2 font-bold">{d.isPacked ? 'pcs' : d.unit}</td>
+                        <td className="py-3 text-right text-white font-bold font-mono text-xs tabular-nums"><>{peso(d.packCost)}<span className="text-white/60">/{d.packLabel}</span></></td>
+                        <td className="py-3 text-right text-white font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
                         </>); })()}
                         <td className="py-3 text-center">
                           {expBadge ? (
@@ -792,7 +792,7 @@ export default function InventoryTab({ ctx }) {
             return (
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
                 {lowItems.length > 0 && (
-                  <div className="bg-red-900/20 border border-red-500/30 rounded-xl p-4">
+                  <div className="bg-red-900/10 border border-red-500/30 rounded-xl p-4">
                     <h4 className="text-red-400 font-black uppercase tracking-wider text-xs mb-2 flex items-center gap-1.5"><AlertTriangle size={13} /> Low Stock Alerts</h4>
                     <div className="space-y-1">
                       {lowItems.map(i => {
@@ -811,7 +811,7 @@ export default function InventoryTab({ ctx }) {
                   </div>
                 )}
                 {watch.length > 0 && (
-                  <div className="bg-orange-900/15 border border-orange-500/30 rounded-xl p-4 space-y-2">
+                  <div className="bg-orange-900/10 border border-orange-500/30 rounded-xl p-4 space-y-2">
                     <h4 className="text-orange-300 font-black uppercase tracking-wider text-xs flex items-center gap-1.5">
                       <Clock size={13} /> Expiry Watch
                       <span className="ml-auto text-[9px] bg-orange-500/30 text-orange-200 px-1.5 py-0.5 rounded">{watch.length}</span>
