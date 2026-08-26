@@ -1,7 +1,7 @@
 ﻿// inventory routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { title } from '../lib/normalize.js';
+import { title, upper } from '../lib/normalize.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { captureError } from '../lib/errorLog.js';
 
@@ -720,10 +720,10 @@ app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
 
 app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   try {
-    // Canonicalize first so the stored name is stable ("test milk" → "Test Milk")
-    // and the existing case-insensitive dup check compares like with like.
-    // title() leaves digit-bearing tokens uppercase, so pack labels survive: "1L".
-    req.body.itemName = title(req.body.itemName);
+    // Canonicalize first so the stored name is stable ("test milk" → "TEST MILK")
+    // and the existing case-insensitive dup check compares like with like. Stock
+    // item names are always ALL CAPS, matching the billing statement convention.
+    req.body.itemName = upper(req.body.itemName);
     if (!req.body.itemName) return res.status(400).json({ success: false, error: 'Item name required.' });
     const existing = await Inventory.findOne({ itemName: { $regex: new RegExp(`^${escapeRegex(req.body.itemName)}$`, 'i') } });
     if (existing) return res.status(400).json({ success: false, error: 'Item already exists.' });
@@ -983,7 +983,7 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
       }
       // Same canonical form as create, so an edit can't reintroduce a variant
       // spelling that the create path would have collapsed.
-      update.itemName = title(update.itemName);
+      update.itemName = upper(update.itemName);
       // Prevent duplicate-name collisions (case-insensitive)
       const dupe = await Inventory.findOne({
         _id: { $ne: req.params.id },
@@ -1230,7 +1230,9 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
     for (let i = 0; i < items.length; i++) {
       const row = items[i] || {};
       const itemCode = String(row.itemCode || row.code || '').trim();
-      const itemName = String(row.itemName || row.product || row.name || '').trim();
+      // Stock item names are always ALL CAPS, matching the billing statement
+      // convention - normalize here so a mixed-case sheet still comes in consistent.
+      const itemName = upper(row.itemName || row.product || row.name || '');
       // Category (and the linked Product/menu-setup sync it triggers below) is a
       // logistics-only concept - an fb import brings in raw inventory data (stock,
       // cost, expiry) only, and never touches menu setup even if the sheet has one.

@@ -24,7 +24,7 @@ export default function EditInventoryModal() {
   const set = (patch) => setEditInvForm({ ...editInvForm, ...patch });
 
   return (
-    <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in" onClick={e => { if (e.target === e.currentTarget) setEditInvModal(null); }} role="dialog" aria-modal="true" aria-label="Edit inventory item">
+    <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in" role="dialog" aria-modal="true" aria-label="Edit inventory item">
       <div className="bg-surface border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden animate-scale-in">
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
           <div>
@@ -50,8 +50,8 @@ export default function EditInventoryModal() {
           </div>
           <div>
             <label className="text-[10px] text-fg/60 font-bold uppercase block mb-1">Item Name *</label>
-            <input type="text" value={editInvForm.itemName} onChange={e => set({ itemName: e.target.value })}
-              className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60 transition" />
+            <input type="text" value={editInvForm.itemName} onChange={e => set({ itemName: e.target.value.toUpperCase() })}
+              className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold uppercase outline-none focus:border-brand/60 transition" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -77,6 +77,12 @@ export default function EditInventoryModal() {
             <input type="number" min="0" step="any" placeholder="e.g. 1 for a 1L pack" value={editInvForm.packSize} onChange={e => set({ packSize: e.target.value })}
               className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold tabular-nums outline-none focus:border-brand/60" />
             <p className="text-[10px] text-fg/60 mt-1">How much one purchased pack/unit holds, e.g. "Milk 1L" → 1. Leave blank if not tracked.</p>
+          </div>
+          <div>
+            <label className="text-[10px] text-fg/60 font-bold uppercase block mb-1">SRP <span className="text-fg/40 font-normal normal-case">(suggested retail price, optional)</span></label>
+            <input type="number" min="0" step="0.01" placeholder="0" value={editInvForm.srp} onChange={e => set({ srp: e.target.value })}
+              className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold tabular-nums outline-none focus:border-brand/60 transition" />
+            <p className="text-[10px] text-fg/60 mt-1">No SRP = treated as a raw material, kept out of the shop/POS.</p>
           </div>
           <div>
             <label className="text-[10px] text-fg/60 font-bold uppercase block mb-1">Low Stock Threshold ({thresholdUnit})</label>

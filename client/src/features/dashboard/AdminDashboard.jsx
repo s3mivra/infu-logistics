@@ -222,7 +222,7 @@ export default function AdminDashboard() {
   const [invForm, setInvForm] = useState({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000', stockLocation: '', stockCategory: '' });
   // --- INVENTORY EDIT MODAL ---
   const [editInvModal, setEditInvModal] = useState(null);   // { item } | null
-  const [editInvForm, setEditInvForm] = useState({ itemCode: '', itemName: '', unit: '', unitCost: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, displayUnit: '', packSize: '', stockLocation: '', stockCategory: '' });
+  const [editInvForm, setEditInvForm] = useState({ itemCode: '', itemName: '', unit: '', unitCost: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, displayUnit: '', packSize: '', stockLocation: '', stockCategory: '', srp: '' });
   const [editInvSubmitting, setEditInvSubmitting] = useState(false);
   // --- BULK EXCEL IMPORT ---
   const [importModal, setImportModal] = useState(false);
@@ -2860,17 +2860,20 @@ const updateStatus = async (orderId, newStatus) => {
     //   Unit Cost = price per package. The importer multiplies the count by the
     //   pack size and stores cost per base unit automatically.
     // FB: Qty carries a unit (kg/L/pcs); Unit Cost = cost per display unit.
+    // Production date: for goods with no real expiry (roasted beans, etc.) -
+    // only fill this in when Expiry date is left blank on that row; the importer
+    // ignores it otherwise, same rule as receiving/import elsewhere in the app.
     const csv = BUSINESS_TYPE === 'log'
-      ? 'Code,Product,Qty Unit,SRP,Unit Cost,Expiry date\n' +
-        ',ALASKA CONDENSED MILK 377G,100,77,50,\n' +
-        ',ALASKA BARISTA MILK 1L,100,89,50,\n' +
-        ',COMMERCIAL BLEND 1KG,100,950,200,\n' +
-        ',FILTER ETHIOPIA - LIMU G2 250G,100,900,200,2026-12-31\n'
-      : 'Code,Product,Qty Unit,Unit Cost,Expiry date\n' +
-        ',Milk 1L,10 L,70,2026-12-31\n' +
-        ',Sugar 1kg,5 kg,100,\n' +
-        ',Coffee Beans 1kg,1 kg,800,2026-09-15\n' +
-        ',Cups (12oz),200 pcs,8,\n';
+      ? 'Code,Product,Qty Unit,SRP,Unit Cost,Expiry date,Production date\n' +
+        ',ALASKA CONDENSED MILK 377G,100,77,50,2027-03-15,\n' +
+        ',ALASKA BARISTA MILK 1L,100,89,50,,\n' +
+        ',COMMERCIAL BLEND 1KG,100,950,200,,2026-08-01\n' +
+        ',FILTER ETHIOPIA - LIMU G2 250G,100,900,200,2026-12-31,\n'
+      : 'Code,Product,Qty Unit,Unit Cost,Expiry date,Production date\n' +
+        ',Milk 1L,10 L,70,2026-12-31,\n' +
+        ',Sugar 1kg,5 kg,100,,\n' +
+        ',Coffee Beans 1kg,1 kg,800,,2026-08-01\n' +
+        ',Cups (12oz),200 pcs,8,,\n';
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -3158,6 +3161,7 @@ const updateStatus = async (orderId, newStatus) => {
       packSize: item.packSize != null ? String(item.packSize) : '',
       stockLocation: item.stockLocation || '',
       stockCategory: item.stockCategory || '',
+      srp: item.srp != null && item.srp !== 0 ? String(item.srp) : '',
     });
     setEditInvModal({ item });
   };
@@ -3185,7 +3189,7 @@ const updateStatus = async (orderId, newStatus) => {
         // so we don't want to trigger that on every unrelated edit.
         ...(editInvForm.itemCode?.trim() && editInvForm.itemCode.trim() !== editInvModal.item.itemCode
           ? { itemCode: editInvForm.itemCode.trim() } : {}),
-        itemName: editInvForm.itemName.trim(),
+        itemName: editInvForm.itemName.trim().toUpperCase(),
         unit: resolved.base,                            // base storage unit (g/ml/pcs)
         unitCost: unitCostNum / costBasis,              // per-pack (log) / per-display (fb) → ₱/baseUnit
         lowStockThreshold: Math.max(0, parseFloat(editInvForm.lowStockThreshold) || 0) * costBasis, // packages (log) / display (fb) → base
@@ -3196,6 +3200,7 @@ const updateStatus = async (orderId, newStatus) => {
         packSize: editInvForm.packSize === '' ? null : parseFloat(editInvForm.packSize),
         stockLocation: editInvForm.stockLocation || null,
         stockCategory: editInvForm.stockCategory || null,
+        srp: editInvForm.srp === '' || editInvForm.srp == null ? 0 : Math.max(0, parseFloat(editInvForm.srp) || 0),
       };
       const res = await apiFetch(`/api/inventory/${editInvModal.item._id}`, {
         method: 'PUT',

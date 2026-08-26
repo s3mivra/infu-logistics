@@ -186,7 +186,7 @@ describe('log inventory import creates the linked product', () => {
 
     const product = await mongoose.model('Product').findOne({ productCode: 'LOGSYNC-1' });
     expect(product).toBeTruthy();           // product created despite no category on the row
-    expect(product.name).toBe('Log Sync Good');
+    expect(product.name).toBe('LOG SYNC GOOD'); // inventory item names are always ALL CAPS
     expect(product.basePrice).toBe(40);     // srp carried through
     expect(product.category).toBe('General'); // fallback bucket
     expect(product.isAvailable).toBe(true); // stock > 0
@@ -353,7 +353,7 @@ describe('import never merges two different-itemCode SKUs by cleaned name', () =
       items: [{ itemName: 'No Code Good', qty: 15, unit: 'kg', unitCost: 55 }],
     });
     expect(r2.body.summary.updated).toBe(1); // matched by name, as before
-    const items = await Inventory.find({ itemName: 'No Code Good' }).lean();
+    const items = await Inventory.find({ itemName: 'NO CODE GOOD' }).lean(); // inventory item names are always ALL CAPS
     expect(items.length).toBe(1);
     expect(items[0].stockQty).toBe(15000); // 15kg in grams - the update won
   });

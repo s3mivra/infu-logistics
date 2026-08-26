@@ -99,10 +99,10 @@ describe('inventory item name canonicalization', () => {
     stockQty: 10000, unitCost: 0.08, creditAccount: '220000',
   });
 
-  it('title-cases the name but leaves the pack label uppercase', async () => {
+  it('upper-cases the name (matches the billing statement convention) and squishes whitespace', async () => {
     const res = await mk('  test   milk 1l ');
     expect(res.status).toBe(200);
-    expect(res.body.item.itemName).toBe('Test Milk 1L');
+    expect(res.body.item.itemName).toBe('TEST MILK 1L');
   });
 
   it('rejects the same item typed in another case as a duplicate', async () => {

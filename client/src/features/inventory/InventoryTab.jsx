@@ -325,7 +325,7 @@ export default function InventoryTab({ ctx }) {
                       {/* data-notif-id is the jump target for the notification
                           bell - clicking a low-stock/expiry alert scrolls here. */}
                       <tr data-notif-id={item._id} className={`border-b border-white/30 hover:bg-page-bg/30 transition ${rowExpiredTint || (isLow ? 'bg-red-900/10' : '')}`}>
-                        <td className="py-3 font-bold text-fg">
+                        <td className="py-3 font-bold text-fg uppercase">
                           {item.itemName}
                           {isLow && <span className="ml-2 text-[9px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase animate-pulse">LOW</span>}
                           {isPhaseOut && <span title="Out of stock and costs more than its SRP - not worth restocking" className="ml-2 text-[9px] font-black bg-gray-500 text-white px-1.5 py-0.5 rounded uppercase">PHASE OUT</span>}
@@ -864,11 +864,11 @@ export default function InventoryTab({ ctx }) {
                       placeholder="e.g., Condensed Milk"
                       value={invForm.itemName}
                       onChange={e => {
-                        const typed = e.target.value;
+                        const typed = e.target.value.toUpperCase();
                         const match = inventory.find(i => i.itemName.toLowerCase() === typed.toLowerCase());
                         setInvForm({...invForm, itemName: typed, unit: match ? match.unit : invForm.unit});
                       }}
-                      className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/15 transition placeholder:text-fg/15"
+                      className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm uppercase outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/15 transition placeholder:text-fg/15"
                     />
                     <datalist id="inventory-names">
                       {inventory.map(inv => <option key={inv._id} value={inv.itemName} />)}
