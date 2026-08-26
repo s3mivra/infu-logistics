@@ -5252,12 +5252,12 @@ const updateStatus = async (orderId, newStatus) => {
       if (f.image === 'without' && hasImage) return false;
 
       if (f.stock !== 'all') {
-        // null = no recipe linked, so stock isn't tracked for this product.
-        const est = getEstimatedStock(p.baseRecipe);
-        if (f.stock === 'untracked' && est !== null) return false;
-        if (f.stock === 'out'  && !(est !== null && est <= 0)) return false;
-        if (f.stock === 'low'  && !(est !== null && est > 0 && est <= 5)) return false;
-        if (f.stock === 'in'   && !(est !== null && est > 5)) return false;
+        // Check actual inventory stock, not recipe-based estimation
+        const matchedInvItem = inventory.find(inv => inv.itemCode === p.productCode || inv.itemName?.toLowerCase() === p.name?.toLowerCase());
+        const actualStock = matchedInvItem ? (matchedInvItem.stockQty || 0) : 0;
+        if (f.stock === 'out'  && !(actualStock <= 0)) return false;
+        if (f.stock === 'low'  && !(actualStock > 0 && actualStock <= 5)) return false;
+        if (f.stock === 'in'   && !(actualStock > 5)) return false;
       }
 
       const disc = Number(p.discountPercent || 0) > 0 || (p.clientDiscounts || []).length > 0;
