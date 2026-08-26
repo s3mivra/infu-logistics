@@ -2057,6 +2057,195 @@ const updateStatus = async (orderId, newStatus) => {
     }
     doc.save(`BalanceSheet-${bsmRange.start}_to_${bsmRange.end}.pdf`);
   };
+
+  // ── Reports that previously had no export - same jsPDF/autoTable/addLogoToPDF
+  // pattern as every export above, just matching each report's own on-screen columns.
+  // (Trial Balance and Percentage Tax export locally in LedgerTab.jsx instead -
+  // their source state (tb/ptax/ptaxRange) lives there, not here.)
+  const exportArPDF = async () => {
+    if (!arOutstanding?.orders) return ui.alert('Load AR first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('ACCOUNTS RECEIVABLE', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(`Total outstanding: ${pdfMoney(arOutstanding.totalOutstanding)}`, 105, 28, { align: 'center' });
+    let y = 34;
+    if (arAgeing?.clients?.length) {
+      autoTable(doc, {
+        startY: y,
+        head: [['Client', 'Current', '31-60', '61-90', '91+', 'Total', 'Committed']],
+        body: arAgeing.clients.map(r => [r.client, pdfMoney(r.current), pdfMoney(r.d31_60), pdfMoney(r.d61_90), pdfMoney(r.d90_plus), pdfMoney(r.total), pdfMoney(r.exposure)]),
+        styles: { fontSize: 7 }, headStyles: { fillColor: [111, 135, 77] },
+        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
+      });
+      y = doc.lastAutoTable.finalY + 6;
+    }
+    autoTable(doc, {
+      startY: y,
+      head: [['Order #', 'Customer', 'Channel', 'Date', 'Due', 'Amount']],
+      body: arOutstanding.orders.map(o => [o.orderNumber, o.customerName, o.paymentMethod, new Date(o.createdAt).toLocaleDateString(), o.arDueDate ? new Date(o.arDueDate).toLocaleDateString() : '-', pdfMoney(o.total)]),
+      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 5: { halign: 'right' } },
+    });
+    doc.save(`AR-Outstanding-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportApPDF = async () => {
+    if (!apData) return ui.alert('Load AP first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('ACCOUNTS PAYABLE', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(`Outstanding: ${pdfMoney(apData.outstandingBalance)}  ·  Purchased on credit: ${pdfMoney(apData.totalCredit)}  ·  Paid: ${pdfMoney(apData.totalDebit)}`, 105, 28, { align: 'center' });
+    let y = 34;
+    if ((apData.bySupplier || []).length) {
+      autoTable(doc, {
+        startY: y,
+        head: [['Supplier', 'Purchased', 'Paid', 'Balance']],
+        body: apData.bySupplier.map(s => [s.supplier, pdfMoney(s.incurred), pdfMoney(s.paid), pdfMoney(s.balance)]),
+        styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] },
+        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+      });
+      y = doc.lastAutoTable.finalY + 6;
+    }
+    autoTable(doc, {
+      startY: y,
+      head: [['Date', 'Reference', 'Supplier', 'Description', 'Incurred', 'Paid']],
+      body: (apData.recent || []).map(e => [new Date(e.date).toLocaleDateString(), e.reference, e.supplierName || '-', e.description, e.credit ? pdfMoney(e.credit) : '', e.debit ? pdfMoney(e.debit) : '']),
+      styles: { fontSize: 7 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' } },
+    });
+    doc.save(`AP-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportPaymentsPDF = async () => {
+    if (!salesByPayment) return ui.alert('Load the Payments report first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('SALES BY PAYMENT METHOD', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${sbpRange.start} to ${sbpRange.end}  ·  Total: ${pdfMoney(salesByPayment.grandTotal)}`, 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Payment Method', 'Orders', 'Amount', '% Share']],
+      body: (salesByPayment.breakdown || []).map(r => [r.method || 'Unknown', r.count, pdfMoney(r.total), `${(r.pct || 0).toFixed(1)}%`]),
+      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+    });
+    doc.save(`Sales-By-Payment-${sbpRange.start}_to_${sbpRange.end}.pdf`);
+  };
+
+  const exportProfitByCategoryPDF = async () => {
+    if (!profitByCategory) return ui.alert('Refresh Profit by Category first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('PROFIT BY CATEGORY', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Category', 'Revenue', 'Est. COGS', 'Gross Profit', 'Margin']],
+      body: (profitByCategory.categories || profitByCategory || []).map(c => [c.category, pdfMoney(c.revenue), pdfMoney(c.estimatedCOGS), pdfMoney(c.grossProfit), `${c.margin.toFixed(1)}%`]),
+      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
+    });
+    doc.save(`Profit-By-Category-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportMenuEngineeringPDF = async () => {
+    if (!menuEngineering) return ui.alert('Refresh Menu Engineering first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('MENU ENGINEERING', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Item', 'Qty', 'Revenue', 'Margin', 'Class']],
+      body: (menuEngineering.items || menuEngineering || []).map(r => [r.name, r.qty, pdfMoney(r.revenue), `${r.margin.toFixed(1)}%`, r.quadrant]),
+      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+    });
+    doc.save(`Menu-Engineering-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportVariancePDF = async () => {
+    if (!cashierVariance) return ui.alert('Refresh Cashier Variance first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('CASHIER VARIANCE', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Cashier', 'Shifts', 'Avg Variance', 'Times Short', 'Worst']],
+      body: (cashierVariance.cashiers || []).map(c => [c.cashierName, c.shifts, pdfMoney(c.avgVariance), c.shortCount, pdfMoney(c.worstShort)]),
+      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
+    });
+    doc.save(`Cashier-Variance-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportCommissionsPDF = async () => {
+    if (!commissions) return ui.alert('Refresh Commissions first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('COMMISSIONS', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Cashier', 'Orders', 'Sales', 'Rate', 'Commission']],
+      body: (commissions.sellers || []).map(c => [c.name, c.orderCount, pdfMoney(c.salesTotal), `${c.commissionRate}%`, pdfMoney(c.commissionEarned)]),
+      foot: [[{ content: 'Total', colSpan: 4 }, pdfMoney(commissions.totalCommission)]],
+      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, footStyles: { fillColor: [61, 74, 42], fontStyle: 'bold' },
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 4: { halign: 'right' } },
+    });
+    doc.save(`Commissions-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportBillsPDF = async () => {
+    if (!bills || bills.length === 0) return ui.alert('No bills to export.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('BILLS (ACCOUNTS PAYABLE)', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(`Filter: ${billsFilter}  ·  ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Bill #', 'Supplier', 'Source', 'Description', 'Amount', 'Status']],
+      body: bills.map(b => [b.billNumber, b.supplierName || '-', b.source, b.description || b.poNumber || '-', pdfMoney(b.amount), b.status]),
+      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 4: { halign: 'right' } },
+    });
+    doc.save(`Bills-${billsFilter}-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportAuditLogPDF = async () => {
+    if (!auditLogEntries || auditLogEntries.length === 0) return ui.alert('No audit entries loaded - run a query first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 148, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('AUDIT LOG', 148, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(new Date().toLocaleString(), 148, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['When', 'Actor', 'Action', 'Reference', 'Details']],
+      body: auditLogEntries.map(e => [new Date(e.timestamp).toLocaleString(), e.userId, e.action, e.targetReference, e.details ? JSON.stringify(e.details).slice(0, 120) : '-']),
+      styles: { fontSize: 7 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 4: { cellWidth: 120 } },
+    });
+    doc.save(`Audit-Log-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportExpensesPDF = async () => {
+    if (!expenseList || (expenseList.expenses || []).length === 0) return ui.alert('No expenses to export.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('EXPENSES', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(`Total: ${pdfMoney(expenseList.total)}`, 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Date', 'Reference', 'Category', 'Description', 'Amount']],
+      body: expenseList.expenses.map(e => [new Date(e.date).toLocaleDateString(), e.reference, e.categoryName, e.description, pdfMoney(e.amount)]),
+      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 4: { halign: 'right' } },
+    });
+    doc.save(`Expenses-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
   const fetchBalanceSheet = async () => {
     if (activeAdmin?.role !== 'superadmin') return;
     try {
@@ -3243,7 +3432,13 @@ const updateStatus = async (orderId, newStatus) => {
       canvas.getContext('2d').drawImage(img, 0, 0);
       const pngData = canvas.toDataURL('image/png');
       const pw = doc.internal.pageSize.getWidth();
-      const logoW = 30, logoH = 18;
+      // Fit the logo INSIDE a 30×18 box, preserving its real aspect ratio -
+      // passing mismatched w/h straight to addImage stretches/squishes it to
+      // fill that exact box instead.
+      const maxW = 30, maxH = 18;
+      const ratio = img.naturalWidth / img.naturalHeight;
+      let logoW = maxW, logoH = maxW / ratio;
+      if (logoH > maxH) { logoH = maxH; logoW = maxH * ratio; }
       doc.addImage(pngData, 'PNG', pw - logoW - 8, 4, logoW, logoH);
     } catch { /* unsupported image - skip */ }
   };
@@ -5407,7 +5602,7 @@ const updateStatus = async (orderId, newStatus) => {
     handleEndShift, handleBankDeposit, performLogout, startingCash,
     depositAmount, setDepositAmount, depositError, setDepositError, depositLoading,
     // ── Stock history / import / partial fulfil modals ──────────────────────
-    submitImport, loadPdfLibs,
+    submitImport, loadPdfLibs, addLogoToPDF, pdfMoney,
     // ── Ledger sub-tabs ─────────────────────────────────────────────────────
     ledgerSubTab, setLedgerSubTab, jeForm, setJeForm, cashOnHand, standardAccounts,
     // ── Chart of Accounts CRUD ──
@@ -5526,6 +5721,9 @@ const updateStatus = async (orderId, newStatus) => {
     // ── Additional handlers ──────────────────────────────────────────────────
     archiveDay, addInventory,
     downloadImportTemplate, downloadJournalCsv,
+    exportArPDF, exportApPDF, exportPaymentsPDF,
+    exportProfitByCategoryPDF, exportMenuEngineeringPDF, exportVariancePDF, exportCommissionsPDF,
+    exportBillsPDF, exportAuditLogPDF, exportExpensesPDF,
     exportInventoryToPDF, exportLedgerToPDF, exportAllToPDF,
     handleSaveProduct, handleSaveCategory, toggleProductAvailability, toggleProductOOS,
     // ── Change Password ──────────────────────────────────────────────────────

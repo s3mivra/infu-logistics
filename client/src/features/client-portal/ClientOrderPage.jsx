@@ -1359,7 +1359,9 @@ export default function ClientOrderPage() {
 
       {/* Category filter */}
       <div className="flex gap-2 px-3 sm:px-4 py-3 overflow-x-auto scrollbar-hide border-b border-white/5 flex-shrink-0">
-        {['All', ...(products.some(p => p.isBulk) ? ['Bulk'] : []), ...categories.map(c => c.name)].map(cat => (
+        {/* A category with nothing sellable in it (e.g. raw materials only - no
+            SRP) never gets its own pill - there'd be nothing to show anyway. */}
+        {['All', ...(products.some(p => p.isBulk) ? ['Bulk'] : []), ...categories.filter(c => products.some(p => p.category === c.name && !p.isArchived && (p.basePrice || 0) > 0)).map(c => c.name)].map(cat => (
           <button
             key={cat}
             onClick={() => setActiveCategory(cat)}

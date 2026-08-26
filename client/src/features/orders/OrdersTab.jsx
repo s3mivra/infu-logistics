@@ -179,7 +179,10 @@ export default function OrdersTab({ ctx }) {
                       />
                     </div>
                     <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
-                      {[{ _id: '__all', name: 'All' }, ...(products.some(p => p.isBulk) ? [{ _id: '__bulk', name: 'Bulk' }] : []), ...categories].map(c => (
+                      {/* A category with nothing sellable in it (e.g. raw materials
+                          only - no SRP) never gets its own pill, same rule as the
+                          product grid below - there'd be nothing to show anyway. */}
+                      {[{ _id: '__all', name: 'All' }, ...(products.some(p => p.isBulk) ? [{ _id: '__bulk', name: 'Bulk' }] : []), ...categories.filter(c => products.some(p => p.category === c.name && p.isAvailable !== false && (p.basePrice || 0) > 0))].map(c => (
                         <button
                           key={c._id}
                           onClick={() => { setPosCategory(c.name === 'All' ? 'All' : c.name); setPosPage(1); }}

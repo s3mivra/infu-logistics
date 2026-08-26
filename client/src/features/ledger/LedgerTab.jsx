@@ -94,6 +94,9 @@ export default function LedgerTab({ ctx }) {
     menuEngineering, fetchMenuEngineering, cashierVariance, fetchCashierVariance, purchaseOrder, fetchPurchaseOrder,
     commissions, fetchCommissions,
     exportPnlPDF, exportBalanceSheetPDF, exportPurchaseOrderPDF, reconcileInventory,
+    exportArPDF, exportApPDF, exportPaymentsPDF,
+    exportProfitByCategoryPDF, exportMenuEngineeringPDF, exportVariancePDF, exportCommissionsPDF,
+    exportBillsPDF, exportAuditLogPDF, loadPdfLibs, addLogoToPDF, pdfMoney,
     coaAccounts, fetchCoa, coaParent, setCoaParent, coaNewName, setCoaNewName,
     coaEditId, setCoaEditId, coaEditName, setCoaEditName, coaBusy,
     addCoaChild, renameCoaChild, deleteCoaChild, seedPaymentSubaccounts,
@@ -349,6 +352,38 @@ export default function LedgerTab({ ctx }) {
     } catch { setPtax({ error: 'Network error' }); }
     finally { setPtaxLoading(false); }
   };
+  const exportTrialBalancePDF = async () => {
+    if (!tb || tb.error) return ui.alert('Load the Trial Balance first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('TRIAL BALANCE', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Code', 'Account', 'Debit', 'Credit']],
+      body: tb.rows.map(r => [r.code, r.name, r.debit ? pdfMoney(r.debit) : '', r.credit ? pdfMoney(r.credit) : '']),
+      foot: [[{ content: `Totals ${tb.balanced ? '(Balanced)' : '(OUT OF BALANCE)'}`, colSpan: 2 }, pdfMoney(tb.totalDebit), pdfMoney(tb.totalCredit)]],
+      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, footStyles: { fillColor: [61, 74, 42], fontStyle: 'bold' },
+      columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' } },
+    });
+    doc.save(`Trial-Balance-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+  const exportPercentageTaxPDF = async () => {
+    if (!ptax || ptax.error) return ui.alert('Compute the Percentage Tax report first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('PERCENTAGE TAX', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${ptaxRange.start} to ${ptaxRange.end}  ·  ${ptax.orders} order(s)`, 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Line', 'Amount']],
+      body: (ptax.lines || []).map(l => [l.label, pdfMoney(l.amount)]),
+      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 1: { halign: 'right' } },
+    });
+    doc.save(`Percentage-Tax-${ptaxRange.start}_to_${ptaxRange.end}.pdf`);
+  };
   // Auto-load the active view's data on entry (nav landing or sub-tab click).
   useEffect(() => {
     if (ledgerSubTab === 'trial') loadTrial();
@@ -500,9 +535,12 @@ export default function LedgerTab({ ctx }) {
                   <h3 className="text-lg font-black text-fg">Trial Balance</h3>
                   <p className="text-fg/60 text-xs">All accounts with their net debit / credit balance.</p>
                 </div>
-                <button onClick={loadTrial} disabled={tbLoading} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition">
-                  <RefreshCw size={12} className={tbLoading ? 'animate-spin' : ''} /> Refresh
-                </button>
+                <div className="flex items-center gap-2">
+                  <button onClick={loadTrial} disabled={tbLoading} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition">
+                    <RefreshCw size={12} className={tbLoading ? 'animate-spin' : ''} /> Refresh
+                  </button>
+                  {tb && !tb.error && <button onClick={exportTrialBalancePDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
+                </div>
               </div>
               {tb?.error ? (
                 <p className="text-red-300 text-sm font-bold">{tb.error}</p>
@@ -687,6 +725,7 @@ export default function LedgerTab({ ctx }) {
                   <input type="date" value={ptaxRange.end} onChange={(e) => setPtaxRange((r) => ({ ...r, end: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
                 </label>
                 <button onClick={loadPtax} disabled={ptaxLoading} className="bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2 rounded-lg transition">{ptaxLoading ? 'Loading…' : 'Compute'}</button>
+                {ptax && !ptax.error && <button onClick={exportPercentageTaxPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
               </div>
               {ptax?.error ? (
                 <p className="text-red-300 text-sm font-bold">{ptax.error}</p>
@@ -1245,9 +1284,12 @@ export default function LedgerTab({ ctx }) {
                   <h3 className="text-2xl font-black text-fg">Accounts Receivable</h3>
                   <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Non-Cash sales awaiting settlement (E-Wallet · Bank · Delivery)</p>
                 </div>
-                <div className="text-right">
-                  <p className="text-fg/60 text-[10px] font-bold uppercase">Total Outstanding</p>
-                  <p className="text-3xl text-brand font-black tabular-nums">₱{arOutstanding.totalOutstanding.toFixed(2)}</p>
+                <div className="flex items-start gap-3">
+                  <div className="text-right">
+                    <p className="text-fg/60 text-[10px] font-bold uppercase">Total Outstanding</p>
+                    <p className="text-3xl text-brand font-black tabular-nums">₱{arOutstanding.totalOutstanding.toFixed(2)}</p>
+                  </div>
+                  {arOutstanding.orders.length > 0 && <button onClick={exportArPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
                 </div>
               </div>
 
@@ -1416,14 +1458,15 @@ export default function LedgerTab({ ctx }) {
               </div>
 
               {/* Pay AP button */}
-              {apData?.outstandingBalance > 0 && (
-                <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                {apData && <button onClick={exportApPDF} className="flex items-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
+                {apData?.outstandingBalance > 0 && (
                   <button onClick={() => setApPayModal(true)}
                     className="flex items-center gap-2 px-5 py-2.5 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition shadow-elev-1">
                     <CreditCard size={15}/> Record Supplier Payment
                   </button>
-                </div>
-              )}
+                )}
+              </div>
 
               {/* Pay AP modal */}
               {apPayModal && (
@@ -1674,6 +1717,7 @@ export default function LedgerTab({ ctx }) {
                 <input type="date" value={sbpRange.end} onChange={e => setSbpRange(p=>({...p,end:e.target.value}))}
                   className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
                 <button onClick={fetchSalesByPayment} className="px-5 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition">Load</button>
+                {salesByPayment && <button onClick={exportPaymentsPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
               </div>
               {!salesByPayment ? (
                 <p className="text-fg/60 text-sm text-center p-6 font-bold">Select a date range and click Load.</p>
@@ -1726,7 +1770,8 @@ export default function LedgerTab({ ctx }) {
           {/* ===== PROFIT BY CATEGORY ===== */}
           {ledgerSubTab === 'profitcat' && (
             <div className="space-y-4 animate-fade-in">
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                {profitByCategory && <button onClick={exportProfitByCategoryPDF} className="flex items-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
                 <button onClick={fetchProfitByCategory} className="flex items-center gap-2 px-5 py-2.5 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition">
                   <RefreshCw size={14}/> Refresh
                 </button>
@@ -1773,7 +1818,10 @@ export default function LedgerTab({ ctx }) {
             <div className="space-y-4 animate-fade-in">
               <div className="flex justify-between items-center">
                 <p className="text-xs text-fg/60">Stars (sell + profit), Plowhorses (sell, low margin), Puzzles (high margin, low sell), Dogs (neither).</p>
-                <button onClick={fetchMenuEngineering} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+                <div className="flex gap-2">
+                  {menuEngineering && <button onClick={exportMenuEngineeringPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
+                  <button onClick={fetchMenuEngineering} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+                </div>
               </div>
               {!menuEngineering ? (
                 <p className="text-fg/60 text-sm text-center p-6 font-bold">Click Refresh to analyse the menu.</p>
@@ -1809,7 +1857,10 @@ export default function LedgerTab({ ctx }) {
             <div className="space-y-4 animate-fade-in">
               <div className="flex justify-between items-center">
                 <p className="text-xs text-fg/60">Average cash drawer variance per cashier across closed shifts. Negative = consistently short.</p>
-                <button onClick={fetchCashierVariance} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+                <div className="flex gap-2">
+                  {cashierVariance && <button onClick={exportVariancePDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
+                  <button onClick={fetchCashierVariance} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+                </div>
               </div>
               {!cashierVariance ? (
                 <p className="text-fg/60 text-sm text-center p-6 font-bold">Click Refresh to load cashier variance.</p>
@@ -1844,7 +1895,10 @@ export default function LedgerTab({ ctx }) {
             <div className="space-y-4 animate-fade-in">
               <div className="flex justify-between items-center">
                 <p className="text-xs text-fg/60">Sales attributed by cashier, at each staff member's commission rate (set in User Control). Complimentary and unattributed sales earn no commission.</p>
-                <button onClick={fetchCommissions} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+                <div className="flex gap-2">
+                  {commissions && <button onClick={exportCommissionsPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
+                  <button onClick={fetchCommissions} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+                </div>
               </div>
               {!commissions ? (
                 <p className="text-fg/60 text-sm text-center p-6 font-bold">Click Refresh to compute commissions.</p>
@@ -1896,6 +1950,7 @@ export default function LedgerTab({ ctx }) {
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => setBillCreate(c => ({ ...c, open: !c.open }))} className="flex items-center gap-2 px-4 py-2 bg-white/5 text-fg/70 rounded-xl font-bold text-sm hover:bg-white/10 transition"><Plus size={14}/> Manual bill</button>
+                  {bills && bills.length > 0 && <button onClick={exportBillsPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
                   <button onClick={() => fetchBills()} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
                 </div>
               </div>
@@ -2609,6 +2664,9 @@ export default function LedgerTab({ ctx }) {
                   <button onClick={() => fetchAuditLog(1)} className="bg-brand text-white font-black px-4 py-2 rounded-lg uppercase tracking-widest text-xs hover:bg-brand/90 transition">
                     Query
                   </button>
+                  {auditLogEntries && auditLogEntries.length > 0 && (
+                    <button onClick={exportAuditLogPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-4 py-2 rounded-lg font-black uppercase tracking-widest text-xs transition"><Download size={12}/> PDF</button>
+                  )}
                 </div>
               </div>
 

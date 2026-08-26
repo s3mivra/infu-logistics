@@ -447,7 +447,7 @@ export default function InventoryTab({ ctx }) {
                                       return (
                                         <tr key={b._originalIdx} className="border-t border-white/5">
                                           <td className="py-1.5 text-fg/40 font-bold">
-                                            {isOldest ? <span className="text-[9px] bg-brand/30 text-brand px-1.5 py-0.5 rounded font-black uppercase tracking-wider">NEXT</span> : `#${displayIdx + 1}`}
+                                            {isOldest ? <span className="text-[9px] bg-brand text-white px-1.5 py-0.5 rounded font-black uppercase tracking-wider shadow-sm">NEXT</span> : `#${displayIdx + 1}`}
                                           </td>
                                           <td className="py-1.5 text-right text-fg font-bold tabular-nums">{dispQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {bUnit}</td>
                                           <td className={`py-1.5 pl-3 tabular-nums ${badge}`}>

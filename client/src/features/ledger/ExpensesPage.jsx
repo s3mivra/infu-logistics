@@ -1,5 +1,5 @@
 ﻿import { useEffect } from 'react';
-import { Check, Plus, Receipt } from 'lucide-react';
+import { Check, Plus, Receipt, Download } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
 
 // Expenses as a full page rather than a popup.
@@ -12,7 +12,7 @@ import { useDashboard } from '../dashboard/DashboardContext';
 export default function ExpensesPage() {
   const {
     expenseCategories, expenseForm, setExpenseForm, expenseSubmitting, submitExpense,
-    expenseList, fetchExpenses, fetchExpenseCategories,
+    expenseList, fetchExpenses, fetchExpenseCategories, exportExpensesPDF,
   } = useDashboard();
 
   useEffect(() => {
@@ -117,6 +117,9 @@ export default function ExpensesPage() {
         <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
           <Receipt size={14} className="text-fg/50" />
           <h3 className="text-sm font-black text-fg uppercase tracking-wider">Recent Expenses</h3>
+          {(expenseList?.expenses || []).length > 0 && (
+            <button onClick={exportExpensesPDF} className="ml-auto flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition"><Download size={11}/> PDF</button>
+          )}
         </div>
         {(expenseList?.expenses || []).length === 0 ? (
           <p className="text-fg/60 text-sm p-8 text-center font-bold">
