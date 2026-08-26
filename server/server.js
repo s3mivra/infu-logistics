@@ -1285,6 +1285,32 @@ const StockTransferSchema = new mongoose.Schema({
 StockTransferSchema.index({ businessType: 1, status: 1, createdAt: -1 });
 const StockTransfer = mongoose.model('StockTransfer', StockTransferSchema);
 
+// ── Backdate Sale Queue ────────────────────────────────────────────────────
+// A billing-statement row that's missing something the sale needs to post
+// (today: only "Terms of Payment" left blank, i.e. no payment method) lands
+// here instead of being silently defaulted or dropped during bulk Excel
+// import. An operator opens the queue, supplies the missing piece, and
+// "Save" turns it into a real backdated sale through the same posting path
+// as every other one.
+const BackdateQueueItemSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  transNo: { type: String, default: '' },
+  client: { type: String, default: '' },
+  date: { type: String, default: '' }, // YYYY-MM-DD, as parsed from the sheet
+  sheet: { type: String, default: '' }, // originating Excel tab, for traceability
+  items: [{
+    code: String, name: String, quantity: Number, price: Number,
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', default: null },
+    productCode: String,
+  }],
+  missingFields: [{ type: String }], // e.g. ['paymentMethod']
+  status: { type: String, enum: ['pending', 'resolved', 'discarded'], default: 'pending', index: true },
+  resolvedOrderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null },
+}, { timestamps: true });
+BackdateQueueItemSchema.index({ businessType: 1, status: 1, createdAt: -1 });
+const BackdateQueueItem = mongoose.model('BackdateQueueItem', BackdateQueueItemSchema);
+
 // ── Hub: inter-business connections & cross-tenant transfers ─────────────────
 const LinkedBusinessSchema = new mongoose.Schema({
   businessType: { type: String, required: true, index: true },
@@ -2676,6 +2702,8 @@ const ctx = {
   StockTransferSchema,
   StockTransfer,
   STOCK_TRANSFER_STATUSES,
+  BackdateQueueItemSchema,
+  BackdateQueueItem,
   LinkedBusinessSchema, LinkedBusiness,
   HubInviteSchema, HubInvite,
   CrossTransferSchema, CrossTransfer,

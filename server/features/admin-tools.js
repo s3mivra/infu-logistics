@@ -106,6 +106,8 @@ export default function registerAdminTools(ctx) {
     QRSession,
     InventorySchema,
     Inventory,
+    BackdateQueueItemSchema,
+    BackdateQueueItem,
     JournalEntrySchema,
     JournalEntry,
     InventoryMovementSchema,
@@ -288,23 +290,22 @@ app.post('/api/admin/seed-payment-subaccounts', verifyToken, requireSuperAdmin, 
 // The revenue journal entry is DATED TO THE CHOSEN DAY, so that period's books
 // are right. Respects period locks. Always audited. (Non-VAT posting, matching
 // the live completion path for these businesses.)
-app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req, res) => {
+// Core creation logic, shared by the direct route below and by the queue's
+// "Save" action once the missing piece (payment method, today) is supplied.
+// Throws an Error with `.httpStatus` set for anything that should reach the
+// client as a 400/423 rather than a 500.
+async function createBackdatedSale(payload, actorName) {
+  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, isComplimentary = false } = payload;
+  const comp = !!isComplimentary;
+  const fail = (httpStatus, message) => Object.assign(new Error(message), { httpStatus });
+
+  const dt = new Date(date);
+  if (!date || isNaN(dt.getTime())) throw fail(400, 'A valid date is required.');
+  if (dt.getTime() > Date.now()) throw fail(400, 'A backdated sale must be in the past, not the future.');
+
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
-    const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, isComplimentary = false } = req.body;
-    const comp = !!isComplimentary;
-
-    const dt = new Date(date);
-    if (!date || isNaN(dt.getTime())) {
-      await session.abortTransaction(); session.endSession();
-      return res.status(400).json({ success: false, error: 'A valid date is required.' });
-    }
-    if (dt.getTime() > Date.now()) {
-      await session.abortTransaction(); session.endSession();
-      return res.status(400).json({ success: false, error: 'A backdated sale must be in the past, not the future.' });
-    }
-
     // Build the line items - itemized when provided, else a single lump line.
     const itemized = Array.isArray(items) && items.length > 0;
     let orderItems = [];
@@ -312,17 +313,13 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
       for (const it of items) {
         const price = Number(it.price), qty = Number(it.quantity);
         if (!it.name || !Number.isFinite(price) || price < 0 || !Number.isFinite(qty) || qty <= 0) {
-          await session.abortTransaction(); session.endSession();
-          return res.status(400).json({ success: false, error: 'Each item needs a name, a non-negative price, and a positive quantity.' });
+          throw fail(400, 'Each item needs a name, a non-negative price, and a positive quantity.');
         }
         orderItems.push({ name: String(it.name), price, quantity: qty, productId: it.productId || undefined, productCode: it.productCode || undefined, productDiscountPercent: 0, itemStatus: 'Served' });
       }
     } else {
       const amt = Number(amount);
-      if (isNaN(amt) || amt <= 0) {
-        await session.abortTransaction(); session.endSession();
-        return res.status(400).json({ success: false, error: 'Provide either items[] or a positive amount.' });
-      }
+      if (isNaN(amt) || amt <= 0) throw fail(400, 'Provide either items[] or a positive amount.');
       orderItems = [{ name: 'Historical Sale', price: amt, quantity: 1, productDiscountPercent: 0 }];
     }
 
@@ -335,10 +332,7 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
 
     // Period-lock guard.
     const lock = await periodLockFor(dt);
-    if (lock) {
-      await session.abortTransaction(); session.endSession();
-      return res.status(423).json({ success: false, error: `Period ${lock.year}-${String(lock.month).padStart(2,'0')} is closed.` });
-    }
+    if (lock) throw fail(423, `Period ${lock.year}-${String(lock.month).padStart(2,'0')} is closed.`);
 
     const method = paymentMethod || 'Cash';
     const acct = accountForPaymentMethod(method);
@@ -361,10 +355,7 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
           { $inc: { stockQty: -deductQty } },
           { session, returnDocument: 'after' }
         );
-        if (!updated) {
-          await session.abortTransaction(); session.endSession();
-          return res.status(400).json({ success: false, error: `Not enough stock of "${linkInv.itemName}" to reduce for this backdated sale. Turn off "reduce inventory" or receive stock first.` });
-        }
+        if (!updated) throw fail(400, `Not enough stock of "${linkInv.itemName}" to reduce for this backdated sale. Turn off "reduce inventory" or receive stock first.`);
         stockCards.push({ inventoryId: updated._id, itemName: updated.itemName, type: 'Sale', reference: mkRef('BACK', orderNumber), qtyChange: -deductQty, balanceAfter: updated.stockQty, remarks: `Backdated sale (${item.name})` });
         totalCogs += linkInv.unitCost * deductQty;
       }
@@ -377,7 +368,7 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
       table: 'Backdated',
       status: 'Completed',
       createdAt: dt,
-      cashier: req.user?.name || 'Backdated Entry',
+      cashier: actorName || 'Backdated Entry',
       customerName: customerName || 'Walk-in (backdated)',
       paymentMethod: method,
       items: orderItems,
@@ -422,12 +413,21 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
 
     await session.commitTransaction();
     session.endSession();
-
-    await logAudit(req, { action: 'backdate-sale', entity: 'Order', entityId: order._id, after: { orderNumber, date: dt, total, paymentMethod: method, itemized, affectInventory: !!(itemized && affectInventory) } });
-    emitToMgr('erpUpdated');
-    res.json({ success: true, order, journalReference: reference });
+    return { order, journalReference: reference, itemized, affectInventory: !!(itemized && affectInventory), method, total, dt };
   } catch (err) {
     await session.abortTransaction(); session.endSession();
+    throw err;
+  }
+}
+
+app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const result = await createBackdatedSale(req.body, req.user?.name);
+    await logAudit(req, { action: 'backdate-sale', entity: 'Order', entityId: result.order._id, after: { orderNumber: result.order.orderNumber, date: result.dt, total: result.total, paymentMethod: result.method, itemized: result.itemized, affectInventory: result.affectInventory } });
+    emitToMgr('erpUpdated');
+    res.json({ success: true, order: result.order, journalReference: result.journalReference });
+  } catch (err) {
+    if (err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.message });
     log.error?.({ err }, 'POST /api/admin/backdate-sale failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -449,6 +449,84 @@ app.get('/api/admin/backdate-sale/history', verifyToken, requireSuperAdmin, asyn
     res.json({ success: true, orders, total, page, pages: Math.max(1, Math.ceil(total / limit)) });
   } catch (err) {
     log.error?.({ err }, 'GET /api/admin/backdate-sale/history failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ── BACKDATE SALE QUEUE ───────────────────────────────────────────────────────
+// Rows from a bulk Excel import that are missing something the sale needs -
+// today, a blank "Terms of Payment" (no payment method) - land here instead
+// of being silently defaulted to Cash or dropped. `/queue/:id/save` supplies
+// the missing piece and posts it through the exact same path as a direct
+// backdated sale.
+app.post('/api/admin/backdate-sale/queue', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body.items) ? req.body.items : [];
+    if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to queue.' });
+    const docs = rows.map(r => ({
+      transNo: String(r.transNo || ''), client: String(r.client || ''), date: String(r.date || ''), sheet: String(r.sheet || ''),
+      items: (Array.isArray(r.items) ? r.items : []).map(it => ({ code: it.code || '', name: it.name, quantity: it.quantity, price: it.price, productId: it.productId || null, productCode: it.productCode || null })),
+      missingFields: Array.isArray(r.missingFields) ? r.missingFields : ['paymentMethod'],
+      status: 'pending',
+    }));
+    const created = await BackdateQueueItem.insertMany(docs);
+    await logAudit(req, { action: 'backdate-sale-queue', entity: 'BackdateQueueItem', entityId: 'bulk', after: { queued: created.length } });
+    res.json({ success: true, queued: created.length });
+  } catch (err) {
+    log.error?.({ err }, 'POST /api/admin/backdate-sale/queue failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.get('/api/admin/backdate-sale/queue', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 25));
+    const filter = { status: 'pending' };
+    const [rows, total] = await Promise.all([
+      BackdateQueueItem.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      BackdateQueueItem.countDocuments(filter),
+    ]);
+    res.json({ success: true, rows, total, page, pages: Math.max(1, Math.ceil(total / limit)) });
+  } catch (err) {
+    log.error?.({ err }, 'GET /api/admin/backdate-sale/queue failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.post('/api/admin/backdate-sale/queue/:id/save', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const q = await BackdateQueueItem.findById(req.params.id);
+    if (!q || q.status !== 'pending') return res.status(404).json({ success: false, error: 'Queue item not found or already resolved.' });
+    const { paymentMethod, affectInventory = false, discountPercent = 0, isComplimentary = false, notes } = req.body;
+    if (!paymentMethod) return res.status(400).json({ success: false, error: 'A payment method is required to resolve this queue item.' });
+    const result = await createBackdatedSale({
+      date: q.date, customerName: q.client, paymentMethod, affectInventory, discountPercent, isComplimentary,
+      notes: notes || (q.transNo ? `Imported (queued) - ${q.transNo}` : 'Imported from Excel (queued)'),
+      items: q.items,
+    }, req.user?.name);
+    q.status = 'resolved';
+    q.resolvedOrderId = result.order._id;
+    await q.save();
+    await logAudit(req, { action: 'backdate-sale-queue-resolve', entity: 'Order', entityId: result.order._id, after: { queueId: q._id, orderNumber: result.order.orderNumber, paymentMethod: result.method } });
+    emitToMgr('erpUpdated');
+    res.json({ success: true, order: result.order, journalReference: result.journalReference });
+  } catch (err) {
+    if (err.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.message });
+    log.error?.({ err }, 'POST /api/admin/backdate-sale/queue/:id/save failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.delete('/api/admin/backdate-sale/queue/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const q = await BackdateQueueItem.findById(req.params.id);
+    if (!q || q.status !== 'pending') return res.status(404).json({ success: false, error: 'Queue item not found or already resolved.' });
+    q.status = 'discarded';
+    await q.save();
+    res.json({ success: true });
+  } catch (err) {
+    log.error?.({ err }, 'DELETE /api/admin/backdate-sale/queue/:id failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });

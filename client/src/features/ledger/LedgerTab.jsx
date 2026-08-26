@@ -222,6 +222,37 @@ export default function LedgerTab({ ctx }) {
     XLSX.writeFile(wb, 'backdate_sale_import_template.xlsx');
   };
 
+  // Finds a "LABEL ... VALUE" pair anywhere in the sheet's top rows - the shape
+  // used by the real BILLING STATEMENT template (one transaction per sheet,
+  // with "INVOICE FOR" / "PAYABLE TO" / "TRANSACTION NO." / "Submitted date"
+  // written as labels ABOVE the item table, not as table columns). The value
+  // sits either later in the same row (e.g. "Submitted date", "", "", 46259)
+  // or directly below the label in the same column (e.g. "TRANSACTION NO."
+  // on one row, the actual number on the next).
+  const BD_ALL_LABEL_WORDS = ['transactionno', 'transno', 'invoiceno', 'payableto', 'invoicefor', 'submitteddate', 'termsofpayment', 'description', 'itemcode', 'unitprice', 'totalprice'];
+  const bdFindLabelValue = (grid, aliases) => {
+    for (let r = 0; r < Math.min(grid.length, 60); r++) {
+      const row = grid[r] || [];
+      for (let c = 0; c < row.length; c++) {
+        const cell = bdNorm(row[c]);
+        if (!cell || !aliases.some(a => cell.includes(a))) continue;
+        // Prefer directly below the label (the layout most of these fields
+        // use) before scanning right, so a blank field (e.g. an unused
+        // "PAYABLE TO") doesn't grab the NEXT label sitting further along the
+        // same row as if it were its value.
+        const below = (grid[r + 1] || [])[c];
+        if (below !== '' && below != null) return below;
+        for (let c2 = c + 1; c2 < row.length; c2++) {
+          const v = row[c2];
+          if (v === '' || v == null) continue;
+          if (BD_ALL_LABEL_WORDS.some(w => bdNorm(v).includes(w))) break; // hit another label, not a value
+          return v;
+        }
+      }
+    }
+    return '';
+  };
+
   // Parses ONE sheet's grid (array-of-arrays) into { groups, skipped }. Used
   // for both the single-sheet fast path and each sheet picked in the
   // multi-sheet picker below.
@@ -246,12 +277,29 @@ export default function LedgerTab({ ctx }) {
     };
     if (idx.desc < 0) idx.desc = header.findIndex(c => c === 'item' || c === 'product');
 
+    // The real template writes transaction no. / client / date as labels
+    // ABOVE the item table (once per sheet) rather than as table columns, so
+    // look for them there first - "PAYABLE TO" is usually left blank in
+    // practice, with the actual client name under "INVOICE FOR" instead.
+    const sheetTrans = idx.transNo < 0 ? String(bdFindLabelValue(grid, ['transactionno', 'transno', 'invoiceno']) ?? '').trim() : '';
+    const sheetClient = idx.client < 0
+      ? (String(bdFindLabelValue(grid, ['payableto']) ?? '').trim() || String(bdFindLabelValue(grid, ['invoicefor']) ?? '').trim())
+      : '';
+    const sheetDate = idx.date < 0 ? bdFindLabelValue(grid, ['submitteddate', 'date']) : '';
+    // If the sheet leaves "Terms of Payment" blank, we don't know how this
+    // sale was actually paid - don't silently default it to Cash. Flag the
+    // sheet's group(s) so finishBackdateImport routes them to the review
+    // queue instead of the ready-to-import preview.
+    const needsPaymentMethod = !String(bdFindLabelValue(grid, ['termsofpayment']) ?? '').trim();
+
     // Transaction/client/date usually only repeat on the FIRST row of a sale
-    // (exactly how the billing statement template lays them out) - carry the
-    // last-seen value forward onto the item-only rows that follow.
+    // (exactly how a flat-columns import lays them out) - carry the
+    // last-seen value forward onto the item-only rows that follow. Sheet-level
+    // label values (above) seed the default so the label/value template works
+    // even though nothing repeats per-row there.
     const byTrans = new Map();
     let skipped = 0;
-    let curTrans = '', curClient = '', curDate = '';
+    let curTrans = sheetTrans, curClient = sheetClient, curDate = sheetDate;
     for (let i = hIdx + 1; i < grid.length; i++) {
       const row = grid[i] || [];
       const desc = idx.desc >= 0 ? String(row[idx.desc] ?? '').trim() : '';
@@ -278,15 +326,17 @@ export default function LedgerTab({ ctx }) {
         const match = (products || []).find(p => (it.code && p.productCode === it.code) || p.name.toLowerCase() === it.name.toLowerCase());
         return { ...it, productId: match?._id || null, productCode: match?.productCode || it.code || null, matched: !!match };
       });
-      return { ...g, items, total: items.reduce((s, x) => s + x.price * x.quantity, 0) };
+      return { ...g, items, total: items.reduce((s, x) => s + x.price * x.quantity, 0), needsPaymentMethod };
     });
     return { groups, skipped, noHeader: false };
   };
 
   // Runs the parser across every selected sheet and merges the results into
   // one preview. Sheets are kept independent (no cross-sheet grouping) so a
-  // repeated transaction no. across two tabs never silently merges.
-  const finishBackdateImport = (wb, sheetNames) => {
+  // repeated transaction no. across two tabs never silently merges. Any group
+  // whose sheet left "Terms of Payment" blank is routed to the review queue
+  // instead of the ready-to-import preview - we don't know how it was paid.
+  const finishBackdateImport = async (wb, sheetNames) => {
     let allGroups = [], totalSkipped = 0, anyHeaderFound = false;
     for (const name of sheetNames) {
       const sheet = wb.Sheets[name];
@@ -299,7 +349,33 @@ export default function LedgerTab({ ctx }) {
     }
     if (!anyHeaderFound) { ui.alert('Could not find the header row (needs at least a Description and Qty column) in the selected sheet(s).'); return; }
     if (allGroups.length === 0) { ui.alert('No sale rows found under the header in the selected sheet(s).'); return; }
-    setBdImportPreview({ groups: allGroups, skipped: totalSkipped, multiSheet: sheetNames.length > 1 });
+
+    const readyGroups = allGroups.filter(g => !g.needsPaymentMethod);
+    const queueGroups = allGroups.filter(g => g.needsPaymentMethod);
+
+    let queuedCount = 0;
+    if (queueGroups.length > 0) {
+      try {
+        const r = await apiFetch('/api/admin/backdate-sale/queue', {
+          method: 'POST',
+          body: JSON.stringify({ items: queueGroups.map(g => ({
+            transNo: g.transNo, client: g.client, date: g.date, sheet: g.sheet,
+            items: g.items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity, code: it.code, productId: it.productId, productCode: it.productCode })),
+            missingFields: ['paymentMethod'],
+          })) }),
+        });
+        const d = await r.json();
+        if (d.success) { queuedCount = d.queued; fetchBdQueue(1); }
+      } catch { /* queueing is best-effort - the rest of the import still proceeds */ }
+    }
+
+    if (readyGroups.length === 0) {
+      ui.alert(queuedCount > 0
+        ? `No "Terms of Payment" found on ${queuedCount} sale(s) - sent to the Backdate Queue for review instead of importing blind.`
+        : 'No sale rows found under the header in the selected sheet(s).');
+      return;
+    }
+    setBdImportPreview({ groups: readyGroups, skipped: totalSkipped, multiSheet: sheetNames.length > 1, queuedCount });
   };
 
   let _XLSX_cached = null;
@@ -316,22 +392,27 @@ export default function LedgerTab({ ctx }) {
       _XLSX_cached = XLSX;
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheetNames = wb.SheetNames || [];
-      if (sheetNames.length <= 1) {
-        finishBackdateImport(wb, sheetNames);
-      } else {
-        setBdSheetPicker({ wb, sheetNames, selected: new Set(sheetNames) });
-      }
+      // Always pause here first - even a single-sheet file - so Payment Method
+      // and Reduce Inventory are chosen BEFORE the sale preview is built, same
+      // as the manual entry form asks for them up front.
+      // Real workbooks like this carry template/reference/archive tabs
+      // alongside the actual per-transaction sheets - pre-uncheck the obvious
+      // non-sales ones so the user isn't pruning a hundred boxes by hand; they
+      // can still tick any of them back on.
+      const looksNonSale = (name) => /\b(template|cheat\s*code|archive|copy of)\b/i.test(name);
+      const preselected = sheetNames.filter(n => !looksNonSale(n));
+      setBdSheetPicker({ wb, sheetNames, selected: new Set(preselected) });
     } catch {
       ui.alert('Could not read the file. Make sure it is a valid .xlsx / .csv.');
     } finally { setBdImporting(false); }
   };
 
-  const confirmBdSheetPicker = () => {
+  const confirmBdSheetPicker = async () => {
     if (!bdSheetPicker) return;
     const chosen = bdSheetPicker.sheetNames.filter(n => bdSheetPicker.selected.has(n));
     if (chosen.length === 0) { ui.alert('Pick at least one sheet.'); return; }
     setBdImporting(true);
-    try { finishBackdateImport(bdSheetPicker.wb, chosen); }
+    try { await finishBackdateImport(bdSheetPicker.wb, chosen); }
     finally { setBdImporting(false); setBdSheetPicker(null); }
   };
 
@@ -382,6 +463,52 @@ export default function LedgerTab({ ctx }) {
       if (d.success) { setBdHistory(d); setBdHistoryPage(d.page); }
     } catch { /* silent - history is supplementary, not blocking */ }
     finally { setBdHistoryLoading(false); }
+  };
+
+  // ── Backdate Sale - review queue (rows a bulk import couldn't post blind,
+  // e.g. no Terms of Payment on the sheet) ────────────────────────────────────
+  const [bdQueue, setBdQueue] = useState(null); // { rows, total, page, pages }
+  const [bdQueueLoading, setBdQueueLoading] = useState(false);
+  const [bdQueuePage, setBdQueuePage] = useState(1);
+  const fetchBdQueue = async (page = bdQueuePage) => {
+    setBdQueueLoading(true);
+    try {
+      const r = await apiFetch(`/api/admin/backdate-sale/queue?page=${page}&limit=20`);
+      const d = await r.json();
+      if (d.success) { setBdQueue(d); setBdQueuePage(d.page); }
+    } catch { /* silent - queue count is supplementary, not blocking */ }
+    finally { setBdQueueLoading(false); }
+  };
+
+  const [bdQueueResolve, setBdQueueResolve] = useState(null); // { row, paymentMethod, affectInventory }
+  const [bdQueueSaving, setBdQueueSaving] = useState(false);
+  const saveBdQueueItem = async () => {
+    if (!bdQueueResolve) return;
+    if (!bdQueueResolve.paymentMethod) { ui.alert('Pick a payment method.'); return; }
+    setBdQueueSaving(true);
+    try {
+      const row = bdQueueResolve.row;
+      const r = await apiFetch(`/api/admin/backdate-sale/queue/${row._id}/save`, {
+        method: 'POST',
+        body: JSON.stringify({ paymentMethod: bdQueueResolve.paymentMethod, affectInventory: !!bdQueueResolve.affectInventory }),
+      });
+      const d = await r.json();
+      if (d.success) {
+        ui.alert(`Backdated sale recorded: ${d.order.orderNumber}\nJournal ref: ${d.journalReference}`);
+        setBdQueueResolve(null);
+        fetchBdQueue(1);
+        fetchBdHistory(1);
+        fetchERPData();
+      } else ui.alert(d.error || 'Failed to record this backdated sale.');
+    } catch { ui.alert('Network error.'); }
+    finally { setBdQueueSaving(false); }
+  };
+  const discardBdQueueItem = async (row) => {
+    if (!(await ui.confirm(`Discard the queued sale for "${row.client || 'this row'}"? It will not be posted.`))) return;
+    try {
+      await apiFetch(`/api/admin/backdate-sale/queue/${row._id}`, { method: 'DELETE' });
+      fetchBdQueue(1);
+    } catch { ui.alert('Network error.'); }
   };
 
   const [backfillBusy, setBackfillBusy] = useState(false);
@@ -457,6 +584,7 @@ export default function LedgerTab({ ctx }) {
     if (ledgerSubTab === 'salessummary' && !salesSummary) fetchSalesSummary();
     if (ledgerSubTab === 'salesline' && !salesLineItems) fetchSalesLineItems();
     if (ledgerSubTab === 'backdate' && !bdHistory) fetchBdHistory(1);
+    if (ledgerSubTab === 'backdate' && !bdQueue) fetchBdQueue(1);
   }, [ledgerSubTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Which Payment Routing parent groups (111000 / 112000 / etc.) are expanded.
@@ -2958,6 +3086,67 @@ export default function LedgerTab({ ctx }) {
                 </div>
               )}
 
+              {/* ── BACKDATE SALE QUEUE ── rows a bulk import couldn't post blind (no Terms of Payment on the sheet) */}
+              {isSuperAdmin && bdQueue?.total > 0 && (
+                <div className="bg-surface border border-amber-500/30 rounded-xl overflow-hidden mt-2">
+                  <div className="px-5 py-3 border-b border-amber-500/20 bg-amber-500/5 flex items-center gap-2 flex-wrap">
+                    <AlertTriangle size={14} className="text-amber-400" />
+                    <h3 className="text-sm font-black text-fg uppercase tracking-wider">Backdate Queue</h3>
+                    <span className="text-[10px] text-amber-400 font-bold">{bdQueue.total} needs a payment method</span>
+                    <button onClick={() => fetchBdQueue(bdQueuePage)} disabled={bdQueueLoading}
+                      className="ml-auto flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition disabled:opacity-50">
+                      <RefreshCw size={11} className={bdQueueLoading ? 'animate-spin' : ''}/> Refresh
+                    </button>
+                  </div>
+                  <p className="text-fg/40 text-[11px] px-5 pt-3">
+                    These sheets left "Terms of Payment" blank, so we didn't guess how they were paid. Supply it and Save to post them as backdated sales.
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs min-w-[560px]">
+                      <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                        <tr>
+                          <th className="px-5 py-2.5">Date</th>
+                          <th className="px-5 py-2.5">Sheet</th>
+                          <th className="px-5 py-2.5">Client</th>
+                          <th className="px-5 py-2.5">Items</th>
+                          <th className="px-5 py-2.5 text-right">Total</th>
+                          <th className="px-5 py-2.5 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {bdQueue.rows.map((row, i) => {
+                          const total = (row.items || []).reduce((s, it) => s + (it.price || 0) * (it.quantity || 0), 0);
+                          return (
+                            <tr key={row._id} className={`border-b border-white/5 hover:bg-white/3 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'}`}>
+                              <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap font-bold">{row.date || <span className="text-red-400">no date</span>}</td>
+                              <td className="px-5 py-2.5 text-fg/40 truncate max-w-[140px]">{row.sheet || '-'}</td>
+                              <td className="px-5 py-2.5 text-fg/80 font-bold truncate max-w-[160px]">{row.client || 'Walk-in'}</td>
+                              <td className="px-5 py-2.5 text-fg/60 truncate max-w-[220px]">{(row.items || []).map(it => it.name).join(', ')}</td>
+                              <td className="px-5 py-2.5 text-right text-fg font-mono tabular-nums font-bold">{peso(total)}</td>
+                              <td className="px-5 py-2.5 text-right whitespace-nowrap">
+                                <button onClick={() => setBdQueueResolve({ row, paymentMethod: 'Cash', affectInventory: false })}
+                                  className="text-[10px] font-black uppercase tracking-wider text-brand hover:underline mr-3">Complete</button>
+                                <button onClick={() => discardBdQueueItem(row)}
+                                  className="text-[10px] font-black uppercase tracking-wider text-red-400/70 hover:text-red-400 hover:underline">Discard</button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {bdQueue.pages > 1 && (
+                    <div className="flex items-center justify-between px-5 py-3 border-t border-white/10">
+                      <button onClick={() => fetchBdQueue(bdQueuePage - 1)} disabled={bdQueuePage <= 1 || bdQueueLoading}
+                        className="text-[10px] font-black uppercase tracking-widest text-fg/50 hover:text-fg disabled:opacity-30 transition">← Prev</button>
+                      <span className="text-[10px] text-fg/40 font-bold">Page {bdQueue.page} of {bdQueue.pages}</span>
+                      <button onClick={() => fetchBdQueue(bdQueuePage + 1)} disabled={bdQueuePage >= bdQueue.pages || bdQueueLoading}
+                        className="text-[10px] font-black uppercase tracking-widest text-fg/50 hover:text-fg disabled:opacity-30 transition">Next →</button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* ── BACKDATE SALE HISTORY ── every entry made through this tool, manual or bulk-imported */}
               {isSuperAdmin && (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-hidden mt-2">
@@ -3020,43 +3209,129 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
-          {/* ── BACKDATE IMPORT — SHEET PICKER (workbooks with 2+ tabs) ── */}
+          {/* ── BACKDATE QUEUE — COMPLETE ── supply the missing payment method, then post */}
+          {bdQueueResolve && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !bdQueueSaving && setBdQueueResolve(null)}>
+              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+                  <div>
+                    <h2 className="font-black text-fg text-base">Complete Queued Sale</h2>
+                    <p className="text-fg/40 text-xs mt-0.5">{bdQueueResolve.row.client || 'Walk-in'} · {bdQueueResolve.row.date || 'no date'}</p>
+                  </div>
+                  <button onClick={() => !bdQueueSaving && setBdQueueResolve(null)} className="text-fg/40 hover:text-fg transition"><X size={18} /></button>
+                </div>
+                <div className="px-5 py-4 space-y-2 max-h-[30vh] overflow-y-auto border-b border-white/10">
+                  {(bdQueueResolve.row.items || []).map((it, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs text-fg/70">
+                      <span className="truncate pr-2">{it.code ? `${it.code} · ` : ''}{it.name}</span>
+                      <span className="whitespace-nowrap font-mono">{it.quantity} × {peso(it.price)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="px-5 py-4 space-y-3">
+                  <div>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Payment Method *</label>
+                    <select value={bdQueueResolve.paymentMethod} onChange={e => setBdQueueResolve(s => ({ ...s, paymentMethod: e.target.value }))}
+                      className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
+                      <option value="Cash">Cash</option>
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="GCash">GCash</option>
+                      <option value="Maya">Maya</option>
+                      <option value="On Account">On Account (A/R)</option>
+                    </select>
+                  </div>
+                  <button onClick={() => setBdQueueResolve(s => ({ ...s, affectInventory: !s.affectInventory }))}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition ${bdQueueResolve.affectInventory ? 'bg-amber-500/10 border-amber-500/40' : 'bg-page-bg border-white/10'}`}>
+                    <span className="text-left">
+                      <span className="text-xs font-bold text-fg block">Reduce current inventory</span>
+                      <span className="text-[10px] text-fg/40">{bdQueueResolve.affectInventory ? 'Stock WILL be deducted' : 'Off - won’t touch today’s stock (default)'}</span>
+                    </span>
+                    <span className={`w-10 h-5 rounded-full shrink-0 relative transition ${bdQueueResolve.affectInventory ? 'bg-amber-500' : 'bg-white/15'}`}>
+                      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bdQueueResolve.affectInventory ? 'left-[22px]' : 'left-0.5'}`}/>
+                    </span>
+                  </button>
+                </div>
+                <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
+                  <button onClick={() => !bdQueueSaving && setBdQueueResolve(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
+                  <button onClick={saveBdQueueItem} disabled={bdQueueSaving} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+                    {bdQueueSaving ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── BACKDATE IMPORT — OPTIONS (sheet selection + the same settings the manual entry form asks for) ── */}
           {bdSheetPicker && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !bdImporting && setBdSheetPicker(null)}>
               <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                   <div>
-                    <h2 className="font-black text-fg text-base">Select Sheet(s)</h2>
-                    <p className="text-fg/40 text-xs mt-0.5">This file has {bdSheetPicker.sheetNames.length} tabs. Pick which to import.</p>
+                    <h2 className="font-black text-fg text-base">Import Options</h2>
+                    <p className="text-fg/40 text-xs mt-0.5">
+                      {bdSheetPicker.sheetNames.length > 1
+                        ? `This file has ${bdSheetPicker.sheetNames.length} tabs. Pick which to import.`
+                        : 'Set how this sale should post before previewing it.'}
+                    </p>
                   </div>
                   <button onClick={() => !bdImporting && setBdSheetPicker(null)} className="text-fg/40 hover:text-fg transition"><X size={18} /></button>
                 </div>
-                <div className="px-5 py-3 flex items-center gap-2 border-b border-white/10">
-                  <button onClick={() => setBdSheetPicker(s => ({ ...s, selected: new Set(s.sheetNames) }))}
-                    className="text-[10px] font-black uppercase tracking-widest text-brand hover:underline">Select All</button>
-                  <span className="text-fg/20">·</span>
-                  <button onClick={() => setBdSheetPicker(s => ({ ...s, selected: new Set() }))}
-                    className="text-[10px] font-black uppercase tracking-widest text-fg/40 hover:underline">Select None</button>
+
+                {bdSheetPicker.sheetNames.length > 1 && (
+                  <>
+                    <div className="px-5 py-3 flex items-center gap-2 border-b border-white/10">
+                      <button onClick={() => setBdSheetPicker(s => ({ ...s, selected: new Set(s.sheetNames) }))}
+                        className="text-[10px] font-black uppercase tracking-widest text-brand hover:underline">Select All</button>
+                      <span className="text-fg/20">·</span>
+                      <button onClick={() => setBdSheetPicker(s => ({ ...s, selected: new Set() }))}
+                        className="text-[10px] font-black uppercase tracking-widest text-fg/40 hover:underline">Select None</button>
+                    </div>
+                    <div className="px-5 py-3 space-y-1.5 max-h-[35vh] overflow-y-auto border-b border-white/10">
+                      {bdSheetPicker.sheetNames.map(name => {
+                        const checked = bdSheetPicker.selected.has(name);
+                        return (
+                          <label key={name} className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition ${checked ? 'bg-brand/10 border-brand/40' : 'bg-page-bg border-white/10'}`}>
+                            <input type="checkbox" checked={checked} onChange={() => setBdSheetPicker(s => {
+                              const next = new Set(s.selected);
+                              next.has(name) ? next.delete(name) : next.add(name);
+                              return { ...s, selected: next };
+                            })} className="accent-brand w-4 h-4" />
+                            <span className="text-sm font-bold text-fg truncate">{name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+
+                <div className="px-5 py-4 space-y-3">
+                  <div>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Payment Method (applies to all)</label>
+                    <select value={bdImportSettings.paymentMethod} onChange={e => setBdImportSettings(s => ({ ...s, paymentMethod: e.target.value }))}
+                      className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
+                      <option value="Cash">Cash</option>
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="GCash">GCash</option>
+                      <option value="Maya">Maya</option>
+                      <option value="On Account">On Account (A/R)</option>
+                    </select>
+                  </div>
+                  <button onClick={() => setBdImportSettings(s => ({ ...s, affectInventory: !s.affectInventory }))}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition ${bdImportSettings.affectInventory ? 'bg-amber-500/10 border-amber-500/40' : 'bg-page-bg border-white/10'}`}>
+                    <span className="text-left">
+                      <span className="text-xs font-bold text-fg block">Reduce current inventory</span>
+                      <span className="text-[10px] text-fg/40">{bdImportSettings.affectInventory ? 'Stock WILL be deducted for every item matched' : 'Off - these sales won’t touch today’s stock (default)'}</span>
+                    </span>
+                    <span className={`w-10 h-5 rounded-full shrink-0 relative transition ${bdImportSettings.affectInventory ? 'bg-amber-500' : 'bg-white/15'}`}>
+                      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bdImportSettings.affectInventory ? 'left-[22px]' : 'left-0.5'}`}/>
+                    </span>
+                  </button>
                 </div>
-                <div className="px-5 py-3 space-y-1.5 max-h-[50vh] overflow-y-auto">
-                  {bdSheetPicker.sheetNames.map(name => {
-                    const checked = bdSheetPicker.selected.has(name);
-                    return (
-                      <label key={name} className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition ${checked ? 'bg-brand/10 border-brand/40' : 'bg-page-bg border-white/10'}`}>
-                        <input type="checkbox" checked={checked} onChange={() => setBdSheetPicker(s => {
-                          const next = new Set(s.selected);
-                          next.has(name) ? next.delete(name) : next.add(name);
-                          return { ...s, selected: next };
-                        })} className="accent-brand w-4 h-4" />
-                        <span className="text-sm font-bold text-fg truncate">{name}</span>
-                      </label>
-                    );
-                  })}
-                </div>
+
                 <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
                   <button onClick={() => !bdImporting && setBdSheetPicker(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
-                  <button onClick={confirmBdSheetPicker} disabled={bdImporting} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
-                    {bdImporting ? 'Reading…' : `Continue (${bdSheetPicker.selected.size} sheet${bdSheetPicker.selected.size === 1 ? '' : 's'})`}
+                  <button onClick={confirmBdSheetPicker} disabled={bdImporting || bdSheetPicker.selected.size === 0} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+                    {bdImporting ? 'Reading…' : bdSheetPicker.sheetNames.length > 1 ? `Continue (${bdSheetPicker.selected.size} sheet${bdSheetPicker.selected.size === 1 ? '' : 's'})` : 'Continue'}
                   </button>
                 </div>
               </div>

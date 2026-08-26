@@ -265,7 +265,9 @@ export default function OrdersTab({ ctx }) {
                                   </span>
                                 </div>
                               )}
-                              <span className="font-bold text-xs text-fg/80 line-clamp-2 leading-tight w-full min-h-[2.4em] flex items-center justify-center">{p.name}</span>
+                              <div className="w-full min-h-[2.4em] flex items-center justify-center">
+                                <span className="font-bold text-xs text-fg/80 line-clamp-2 leading-tight">{p.name}</span>
+                              </div>
                               {p.activeSalePrice != null ? (
                                 <div className="mt-auto pt-1 flex flex-col items-center gap-0.5">
                                   <span className="text-orange-400 font-black text-sm tabular-nums">₱{Number(p.activeSalePrice).toFixed(2)}</span>
@@ -490,16 +492,21 @@ export default function OrdersTab({ ctx }) {
                       <button
                         onClick={submitManualOrder}
                         disabled={posSubmitting}
-                        className="flex-1 py-4 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active:scale-98 transition shadow-lg shadow-brand/20 flex items-center justify-center gap-2 min-h-[56px] disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
+                        className="flex-1 py-3 bg-brand text-white font-black rounded-xl hover:bg-brand/90 active:scale-98 transition shadow-lg shadow-brand/20 flex items-center justify-center gap-2 min-h-[56px] disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
                       >
-                        <ShoppingCart size={18}/>
+                        <ShoppingCart size={18} className="shrink-0"/>
                         {posSubmitting ? (
-                          'Placing…'
+                          <span className="uppercase tracking-widest text-sm">Placing…</span>
                         ) : (() => {
                           const itemCount = posCart.reduce((s, c) => s + (c.quantity || 0), 0);
-                          if (itemCount === 0) return 'Cart Empty';
+                          if (itemCount === 0) return <span className="uppercase tracking-widest text-sm">Cart Empty</span>;
                           const label = itemCount === 1 ? '1 Item' : `${itemCount} Items`;
-                          return (<>Place Order · {label} · ₱<span className="tabular-nums">{posGrandTotal.toFixed(2)}</span></>);
+                          return (
+                            <span className="flex flex-col items-center leading-tight">
+                              <span className="text-[10px] uppercase tracking-widest opacity-80">Place Order · {label}</span>
+                              <span className="text-lg tabular-nums">₱{posGrandTotal.toFixed(2)}</span>
+                            </span>
+                          );
                         })()}
                       </button>
                     </div>
