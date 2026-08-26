@@ -277,6 +277,28 @@ async function applyStatsDelta(order, sign, session) {
   if (ops.length) await ProductStats.bulkWrite(ops, { session });
 }
 
+// Recipe ingredients snapshot an Inventory _id at build time (baseRecipe/
+// sizes.recipe/addOns.recipe - see the ProductSchema comment in server.js).
+// That reference goes dangling the instant the linked inventory doc is
+// deleted and recreated (Purge Data, or just re-adding the item) even though
+// an item with the exact same name now exists - the product would then look
+// "in stock" (products.js already falls back to name matching for that) but
+// every deduction/restock site below was still querying the dead _id
+// directly and silently doing nothing. Every one of those sites now resolves
+// through here first instead of trusting ing.invId - falls back to a live
+// name match, returns null (same as "unresolvable" today) if neither hits.
+async function resolveIngInvId(ing, session) {
+  if (ing?.invId) {
+    const byId = await Inventory.findById(ing.invId, { _id: 1 }).session(session);
+    if (byId) return ing.invId;
+  }
+  if (ing?.name) {
+    const byName = await Inventory.findOne({ itemName: ing.name }, { _id: 1 }).session(session);
+    if (byName) return String(byName._id);
+  }
+  return null;
+}
+
 // The business's VAT registration, read fresh per order. Deliberately not cached:
 // flipping the toggle must take effect on the very next sale, and one extra
 // indexed lookup is nothing next to the writes an order already performs.
@@ -1120,16 +1142,17 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               continue; // component handled via 1:1 fallback
             }
             for (const ing of compRecipe) {
-              if (!ing.invId) continue;
+              const invId = await resolveIngInvId(ing, session);
+              if (!invId) continue;
               const deductQty = (ing.qty * (comp.quantity || 1) * item.quantity);
               const invItem = await Inventory.findOneAndUpdate(
-                { _id: ing.invId, stockQty: { $gte: deductQty } },
+                { _id: invId, stockQty: { $gte: deductQty } },
                 { $inc: { stockQty: -deductQty } },
                 { session, returnDocument: 'after' }
               );
               if (!invItem) {
                 await session.abortTransaction(); session.endSession();
-                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for combo "${item.name}": [${ing.name || ing.invId}] would drop below zero.` });
+                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for combo "${item.name}": [${ing.name || invId}] would drop below zero.` });
               }
               if (invItem.expiryBatches?.length > 0) {
                 const r = consumeBatches(invItem.expiryBatches, deductQty);
@@ -1142,7 +1165,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
                 remarks: `Sold via Combo (${item.name} → ${comp.name})`
               });
               totalCogs += (invItem.unitCost * deductQty);
-              if (invItem.stockQty <= 0) depletedInvIds.add(String(ing.invId));
+              if (invItem.stockQty <= 0) depletedInvIds.add(String(invId));
             }
           }
           continue; // combo fully handled
@@ -1193,10 +1216,11 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         }
 
         for (const ing of recipeToUse) {
-          if (!ing.invId) continue;
+          const invId = await resolveIngInvId(ing, session);
+          if (!invId) continue;
           const deductQty = (ing.qty * item.quantity);
           const invItem = await Inventory.findOneAndUpdate(
-            { _id: ing.invId, stockQty: { $gte: deductQty } },
+            { _id: invId, stockQty: { $gte: deductQty } },
             { $inc: { stockQty: -deductQty } },
             { session, returnDocument: 'after' }
           );
@@ -1208,7 +1232,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
             await invItem.save({ session });
           }
           if (!invItem) {
-            const missing = await Inventory.findById(ing.invId).lean();
+            const missing = await Inventory.findById(invId).lean();
             await session.abortTransaction();
             session.endSession();
             return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Cannot fulfill order. [${missing?.itemName || ing.name}] would drop below zero. Please receive stock in the Procurement tab first.` });
@@ -1223,7 +1247,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
             remarks: `Sold via ${item.name}`
           });
           totalCogs += (invItem.unitCost * deductQty);
-          if (invItem.stockQty <= 0) depletedInvIds.add(String(ing.invId));
+          if (invItem.stockQty <= 0) depletedInvIds.add(String(invId));
         }
         // DEDUCT ADD-ONS + MODIFIER-OPTION INVENTORY
         for (const selectedAddOn of (item.selectedAddOns || [])) {
@@ -1237,10 +1261,11 @@ const completeOrderOnce = async (req, res, mayRetry) => {
           }
           if (resolvedRecipe && resolvedRecipe.length) {
             for (const ing of resolvedRecipe) {
-              if (!ing.invId) continue;
+              const invId = await resolveIngInvId(ing, session);
+              if (!invId) continue;
               const deductQty = (ing.qty * item.quantity);
               const invItem = await Inventory.findOneAndUpdate(
-                { _id: ing.invId, stockQty: { $gte: deductQty } },
+                { _id: invId, stockQty: { $gte: deductQty } },
                 { $inc: { stockQty: -deductQty } },
                 { session, returnDocument: 'after' }
               );
@@ -1253,7 +1278,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               if (!invItem) {
                 await session.abortTransaction();
                 session.endSession();
-                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Add-on [${ing.name || ing.invId}] drops below zero.` });
+                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Add-on [${ing.name || invId}] drops below zero.` });
               }
               stockCardBatch.push({
                 inventoryId: invItem._id, itemName: invItem.itemName, type: 'Sale',
@@ -1261,7 +1286,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
                 remarks: `Sold via Add-on (${selectedAddOn.name})`
               });
               totalCogs += (invItem.unitCost * deductQty);
-              if (invItem.stockQty <= 0) depletedInvIds.add(String(ing.invId));
+              if (invItem.stockQty <= 0) depletedInvIds.add(String(invId));
             }
           }
         }
@@ -1600,12 +1625,13 @@ const voidOrderOnce = async (req, res, mayRetry) => {
       }
 
       for (const ing of recipeToUse) {
-        if (!ing.invId) continue;
+        const invId = await resolveIngInvId(ing, session);
+        if (!invId) continue;
         const qtyUsed = ing.qty * item.quantity;
 
         if (reason === 'Restock') {
           const restored = await Inventory.findOneAndUpdate(
-            { _id: ing.invId },
+            { _id: invId },
             { $inc: { stockQty: qtyUsed } },
             { session, returnDocument: 'after' }
           );
@@ -1616,7 +1642,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
             reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty, remarks: `Voided (${reason})`
           }], { session });
         } else {
-          const invItem = await Inventory.findById(ing.invId).session(session);
+          const invItem = await Inventory.findById(invId).session(session);
           if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
         }
       }
@@ -1631,11 +1657,12 @@ const voidOrderOnce = async (req, res, mayRetry) => {
         }
         if (!resolvedRecipe?.length) continue;
         for (const ing of resolvedRecipe) {
-          if (!ing.invId) continue;
+          const invId = await resolveIngInvId(ing, session);
+          if (!invId) continue;
           const qtyUsed = ing.qty * item.quantity;
           if (reason === 'Restock') {
             const restored = await Inventory.findOneAndUpdate(
-              { _id: ing.invId },
+              { _id: invId },
               { $inc: { stockQty: qtyUsed } },
               { session, returnDocument: 'after' }
             );
@@ -1647,7 +1674,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
               remarks: `Voided Add-on (${selectedAddOn.name}) (${reason})`
             }], { session });
           } else {
-            const invItem = await Inventory.findById(ing.invId).session(session);
+            const invItem = await Inventory.findById(invId).session(session);
             if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
           }
         }
@@ -1912,9 +1939,10 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
             continue;
           }
           for (const ing of compRecipe) {
-            if (!ing.invId) continue;
+            const invId = await resolveIngInvId(ing, session);
+            if (!invId) continue;
             const deduct = ing.qty * (comp.quantity || 1) * want;
-            if (!(await deductInv(ing.invId, deduct, `Partial fulfillment combo (${it.name} → ${comp.name})`))) return;
+            if (!(await deductInv(invId, deduct, `Partial fulfillment combo (${it.name} → ${comp.name})`))) return;
           }
         }
         continue;
@@ -2178,11 +2206,12 @@ const refundOnce = async (req, res, mayRetry) => {
 
         for (const { recipe, label } of recipes) {
           for (const ing of recipe) {
-            if (!ing.invId) continue;
+            const invId = await resolveIngInvId(ing, session);
+            if (!invId) continue;
             const qtyUsed = ing.qty * item.quantity;
             if (invAction === 'Restock') {
               const restored = await Inventory.findOneAndUpdate(
-                { _id: ing.invId },
+                { _id: invId },
                 { $inc: { stockQty: qtyUsed } },
                 { session, returnDocument: 'after' }
               );
@@ -2194,7 +2223,7 @@ const refundOnce = async (req, res, mayRetry) => {
                 remarks: `Refunded (Restock): ${label}`
               }], { session });
             } else {
-              const invItem = await Inventory.findById(ing.invId).session(session);
+              const invItem = await Inventory.findById(invId).session(session);
               if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
             }
           }
@@ -2381,12 +2410,13 @@ const partialRefundOnce = async (req, res, mayRetry) => {
       }
       for (const { recipe, label } of recipes) {
         for (const ing of recipe) {
-          if (!ing.invId) continue;
+          const invId = await resolveIngInvId(ing, session);
+          if (!invId) continue;
           const qtyUsed = ing.qty * qty;
           if (invAction === 'Restock') {
-            await restock(ing.invId, qtyUsed, label);
+            await restock(invId, qtyUsed, label);
           } else {
-            const invItem = await Inventory.findById(ing.invId).session(session);
+            const invItem = await Inventory.findById(invId).session(session);
             if (invItem) totalCogs += (invItem.unitCost || 0) * qtyUsed;
           }
         }
@@ -2571,11 +2601,12 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
       }
       for (const { recipe, label } of recipes) {
         for (const ing of recipe) {
-          if (!ing.invId) continue;
+          const invId = await resolveIngInvId(ing, session);
+          if (!invId) continue;
           const qtyUsed = ing.qty * qty;
-          if (invAction === 'Restock') await restock(ing.invId, qtyUsed, label);
+          if (invAction === 'Restock') await restock(invId, qtyUsed, label);
           else {
-            const invItem = await Inventory.findById(ing.invId).session(session);
+            const invItem = await Inventory.findById(invId).session(session);
             if (invItem) returnCogs += (invItem.unitCost || 0) * qtyUsed;
           }
         }
@@ -2618,8 +2649,9 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
         }
       }
       for (const ing of recipeToUse) {
-        if (!ing.invId) continue;
-        await deduct(ing.invId, ing.qty * qty, `${product.name} (${ing.name || ing.invId})`);
+        const invId = await resolveIngInvId(ing, session);
+        if (!invId) continue;
+        await deduct(invId, ing.qty * qty, `${product.name} (${ing.name || invId})`);
       }
       order.items.push({
         productId: String(product._id), productCode: product.productCode || '', name: product.name,

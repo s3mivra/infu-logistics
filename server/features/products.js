@@ -420,7 +420,14 @@ app.get('/api/products', async (req, res) => {
       if (recipe.some(r => r.invId)) {
         p.stockAvailable = recipe.every(ing => {
           if (!ing.invId) return true;                  // unlinked - don't block the product
-          const inv = invById[ing.invId];
+          // ing.invId is a snapshot of an Inventory _id, not a live foreign key -
+          // it goes dangling the moment that inventory doc is deleted and
+          // recreated (e.g. Purge Data, or just re-adding the item), even though
+          // an inventory item with the exact same name now exists. Fall back to
+          // matching by ing.name (the ingredient's own recipe-time snapshot),
+          // mirroring the 1:1 logistics-good lookup a few lines below - a stale
+          // ID must never permanently strand an otherwise-in-stock product.
+          const inv = invById[ing.invId] || (ing.name ? invByName[ing.name] : null);
           const need = Number(ing.qty) || 0;
           return inv && inv.stockQty > 0 && inv.stockQty >= need;
         });
