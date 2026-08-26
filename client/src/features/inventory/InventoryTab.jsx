@@ -811,7 +811,7 @@ export default function InventoryTab({ ctx }) {
                   </div>
                 )}
                 {watch.length > 0 && (
-                  <div className="bg-orange-900/50 border border-orange-500/30 rounded-xl p-4 space-y-2">
+                  <div className="bg-orange-900/5 border border-orange-500/30 rounded-xl p-4 space-y-2">
                     <h4 className="text-orange-300 font-black uppercase tracking-wider text-xs flex items-center gap-1.5">
                       <Clock size={13} /> Expiry Watch
                       <span className="ml-auto text-[9px] bg-orange-500 text-white px-1.5 py-0.5 rounded">{watch.length}</span>
