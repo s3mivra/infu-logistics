@@ -191,6 +191,9 @@ export default function LedgerTab({ ctx }) {
   const [bdImportPreview, setBdImportPreview] = useState(null); // { groups: [...], skipped }
   const [bdImporting, setBdImporting] = useState(false);
   const [bdImportSettings, setBdImportSettings] = useState({ paymentMethod: 'Cash', affectInventory: false });
+  // Workbooks with more than one tab pause here so the user can pick which
+  // sheet(s) to pull sales from, instead of silently only reading the first.
+  const [bdSheetPicker, setBdSheetPicker] = useState(null); // { wb, sheetNames, selected: Set<string> }
 
   const bdNumify = (v) => { const n = parseFloat(String(v ?? '').replace(/[₱,\s]/g, '')); return Number.isFinite(n) ? n : 0; };
   const bdNorm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -218,75 +221,117 @@ export default function LedgerTab({ ctx }) {
     XLSX.writeFile(wb, 'backdate_sale_import_template.xlsx');
   };
 
+  // Parses ONE sheet's grid (array-of-arrays) into { groups, skipped }. Used
+  // for both the single-sheet fast path and each sheet picked in the
+  // multi-sheet picker below.
+  const parseBackdateGrid = (grid, sheetName) => {
+    let hIdx = -1;
+    for (let i = 0; i < Math.min(grid.length, 40); i++) {
+      const cells = (grid[i] || []).map(bdNorm);
+      if (cells.some(c => c.includes('description') || c === 'item') && cells.some(c => c === 'qty' || c.includes('quantity'))) { hIdx = i; break; }
+    }
+    if (hIdx === -1) return { groups: [], skipped: 0, noHeader: true };
+
+    const header = (grid[hIdx] || []).map(bdNorm);
+    const col = (aliases) => header.findIndex(c => aliases.some(a => c.includes(a)));
+    const idx = {
+      transNo: col(['transactionno', 'transno', 'invoiceno', 'transactionnumber']),
+      client:  col(['payableto', 'client', 'customer', 'invoicefor']),
+      date:    col(['submitteddate', 'date']),
+      code:    col(['code', 'itemcode']),
+      desc:    col(['description']),
+      qty:     header.findIndex(c => c === 'qty' || c.includes('quantity')),
+      price:   col(['unitprice', 'price']),
+    };
+    if (idx.desc < 0) idx.desc = header.findIndex(c => c === 'item' || c === 'product');
+
+    // Transaction/client/date usually only repeat on the FIRST row of a sale
+    // (exactly how the billing statement template lays them out) - carry the
+    // last-seen value forward onto the item-only rows that follow.
+    const byTrans = new Map();
+    let skipped = 0;
+    let curTrans = '', curClient = '', curDate = '';
+    for (let i = hIdx + 1; i < grid.length; i++) {
+      const row = grid[i] || [];
+      const desc = idx.desc >= 0 ? String(row[idx.desc] ?? '').trim() : '';
+      const qty = idx.qty >= 0 ? bdNumify(row[idx.qty]) : 0;
+      const rowTrans = idx.transNo >= 0 ? String(row[idx.transNo] ?? '').trim() : '';
+      const rowClient = idx.client >= 0 ? String(row[idx.client] ?? '').trim() : '';
+      const rowDate = idx.date >= 0 ? row[idx.date] : '';
+      if (rowTrans) curTrans = rowTrans;
+      if (rowClient) curClient = rowClient;
+      if (rowDate) curDate = rowDate;
+      if (!desc || qty <= 0) { if (desc || qty) skipped++; continue; }
+
+      const key = curTrans || (curClient && curDate ? `${curClient}|${curDate}` : `row-${sheetName}-${i}`);
+      if (!byTrans.has(key)) byTrans.set(key, { transNo: curTrans, client: curClient, date: bdParseDate(curDate), sheet: sheetName, items: [] });
+      byTrans.get(key).items.push({
+        code: idx.code >= 0 ? String(row[idx.code] ?? '').trim() : '',
+        name: desc, quantity: qty,
+        price: idx.price >= 0 ? bdNumify(row[idx.price]) : 0,
+      });
+    }
+
+    const groups = [...byTrans.values()].filter(g => g.items.length).map(g => {
+      const items = g.items.map(it => {
+        const match = (products || []).find(p => (it.code && p.productCode === it.code) || p.name.toLowerCase() === it.name.toLowerCase());
+        return { ...it, productId: match?._id || null, productCode: match?.productCode || it.code || null, matched: !!match };
+      });
+      return { ...g, items, total: items.reduce((s, x) => s + x.price * x.quantity, 0) };
+    });
+    return { groups, skipped, noHeader: false };
+  };
+
+  // Runs the parser across every selected sheet and merges the results into
+  // one preview. Sheets are kept independent (no cross-sheet grouping) so a
+  // repeated transaction no. across two tabs never silently merges.
+  const finishBackdateImport = (wb, sheetNames) => {
+    let allGroups = [], totalSkipped = 0, anyHeaderFound = false;
+    for (const name of sheetNames) {
+      const sheet = wb.Sheets[name];
+      if (!sheet) continue;
+      const grid = XLSX_sheetToGrid(wb, name);
+      const { groups, skipped, noHeader } = parseBackdateGrid(grid, name);
+      if (!noHeader) anyHeaderFound = true;
+      allGroups = allGroups.concat(groups);
+      totalSkipped += skipped;
+    }
+    if (!anyHeaderFound) { ui.alert('Could not find the header row (needs at least a Description and Qty column) in the selected sheet(s).'); return; }
+    if (allGroups.length === 0) { ui.alert('No sale rows found under the header in the selected sheet(s).'); return; }
+    setBdImportPreview({ groups: allGroups, skipped: totalSkipped, multiSheet: sheetNames.length > 1 });
+  };
+
+  let _XLSX_cached = null;
+  const XLSX_sheetToGrid = (wb, name) => {
+    if (!_XLSX_cached) throw new Error('XLSX not loaded');
+    return _XLSX_cached.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' });
+  };
+
   const parseBackdateExcel = async (file) => {
     if (!file) return;
     setBdImporting(true);
     try {
       const XLSX = await import('xlsx');
+      _XLSX_cached = XLSX;
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-
-      let hIdx = -1;
-      for (let i = 0; i < Math.min(grid.length, 40); i++) {
-        const cells = (grid[i] || []).map(bdNorm);
-        if (cells.some(c => c.includes('description') || c === 'item') && cells.some(c => c === 'qty' || c.includes('quantity'))) { hIdx = i; break; }
+      const sheetNames = wb.SheetNames || [];
+      if (sheetNames.length <= 1) {
+        finishBackdateImport(wb, sheetNames);
+      } else {
+        setBdSheetPicker({ wb, sheetNames, selected: new Set(sheetNames) });
       }
-      if (hIdx === -1) { ui.alert('Could not find the header row (needs at least a Description and Qty column).'); return; }
-
-      const header = (grid[hIdx] || []).map(bdNorm);
-      const col = (aliases) => header.findIndex(c => aliases.some(a => c.includes(a)));
-      const idx = {
-        transNo: col(['transactionno', 'transno', 'invoiceno', 'transactionnumber']),
-        client:  col(['payableto', 'client', 'customer', 'invoicefor']),
-        date:    col(['submitteddate', 'date']),
-        code:    col(['code', 'itemcode']),
-        desc:    col(['description']),
-        qty:     header.findIndex(c => c === 'qty' || c.includes('quantity')),
-        price:   col(['unitprice', 'price']),
-      };
-      if (idx.desc < 0) idx.desc = header.findIndex(c => c === 'item' || c === 'product');
-
-      // Transaction/client/date usually only repeat on the FIRST row of a sale
-      // (exactly how the billing statement template lays them out) - carry the
-      // last-seen value forward onto the item-only rows that follow.
-      const byTrans = new Map();
-      let skipped = 0;
-      let curTrans = '', curClient = '', curDate = '';
-      for (let i = hIdx + 1; i < grid.length; i++) {
-        const row = grid[i] || [];
-        const desc = idx.desc >= 0 ? String(row[idx.desc] ?? '').trim() : '';
-        const qty = idx.qty >= 0 ? bdNumify(row[idx.qty]) : 0;
-        const rowTrans = idx.transNo >= 0 ? String(row[idx.transNo] ?? '').trim() : '';
-        const rowClient = idx.client >= 0 ? String(row[idx.client] ?? '').trim() : '';
-        const rowDate = idx.date >= 0 ? row[idx.date] : '';
-        if (rowTrans) curTrans = rowTrans;
-        if (rowClient) curClient = rowClient;
-        if (rowDate) curDate = rowDate;
-        if (!desc || qty <= 0) { if (desc || qty) skipped++; continue; }
-
-        const key = curTrans || (curClient && curDate ? `${curClient}|${curDate}` : `row-${i}`);
-        if (!byTrans.has(key)) byTrans.set(key, { transNo: curTrans, client: curClient, date: bdParseDate(curDate), items: [] });
-        byTrans.get(key).items.push({
-          code: idx.code >= 0 ? String(row[idx.code] ?? '').trim() : '',
-          name: desc, quantity: qty,
-          price: idx.price >= 0 ? bdNumify(row[idx.price]) : 0,
-        });
-      }
-
-      const groups = [...byTrans.values()].filter(g => g.items.length).map(g => {
-        const items = g.items.map(it => {
-          const match = (products || []).find(p => (it.code && p.productCode === it.code) || p.name.toLowerCase() === it.name.toLowerCase());
-          return { ...it, productId: match?._id || null, productCode: match?.productCode || it.code || null, matched: !!match };
-        });
-        return { ...g, items, total: items.reduce((s, x) => s + x.price * x.quantity, 0) };
-      });
-
-      if (groups.length === 0) { ui.alert('No sale rows found under the header.'); return; }
-      setBdImportPreview({ groups, skipped });
     } catch {
       ui.alert('Could not read the file. Make sure it is a valid .xlsx / .csv.');
     } finally { setBdImporting(false); }
+  };
+
+  const confirmBdSheetPicker = () => {
+    if (!bdSheetPicker) return;
+    const chosen = bdSheetPicker.sheetNames.filter(n => bdSheetPicker.selected.has(n));
+    if (chosen.length === 0) { ui.alert('Pick at least one sheet.'); return; }
+    setBdImporting(true);
+    try { finishBackdateImport(bdSheetPicker.wb, chosen); }
+    finally { setBdImporting(false); setBdSheetPicker(null); }
   };
 
   const confirmBdImport = async () => {
@@ -2892,6 +2937,49 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
+          {/* ── BACKDATE IMPORT — SHEET PICKER (workbooks with 2+ tabs) ── */}
+          {bdSheetPicker && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !bdImporting && setBdSheetPicker(null)}>
+              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+                  <div>
+                    <h2 className="font-black text-fg text-base">Select Sheet(s)</h2>
+                    <p className="text-fg/40 text-xs mt-0.5">This file has {bdSheetPicker.sheetNames.length} tabs. Pick which to import.</p>
+                  </div>
+                  <button onClick={() => !bdImporting && setBdSheetPicker(null)} className="text-fg/40 hover:text-fg transition"><X size={18} /></button>
+                </div>
+                <div className="px-5 py-3 flex items-center gap-2 border-b border-white/10">
+                  <button onClick={() => setBdSheetPicker(s => ({ ...s, selected: new Set(s.sheetNames) }))}
+                    className="text-[10px] font-black uppercase tracking-widest text-brand hover:underline">Select All</button>
+                  <span className="text-fg/20">·</span>
+                  <button onClick={() => setBdSheetPicker(s => ({ ...s, selected: new Set() }))}
+                    className="text-[10px] font-black uppercase tracking-widest text-fg/40 hover:underline">Select None</button>
+                </div>
+                <div className="px-5 py-3 space-y-1.5 max-h-[50vh] overflow-y-auto">
+                  {bdSheetPicker.sheetNames.map(name => {
+                    const checked = bdSheetPicker.selected.has(name);
+                    return (
+                      <label key={name} className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition ${checked ? 'bg-brand/10 border-brand/40' : 'bg-page-bg border-white/10'}`}>
+                        <input type="checkbox" checked={checked} onChange={() => setBdSheetPicker(s => {
+                          const next = new Set(s.selected);
+                          next.has(name) ? next.delete(name) : next.add(name);
+                          return { ...s, selected: next };
+                        })} className="accent-brand w-4 h-4" />
+                        <span className="text-sm font-bold text-fg truncate">{name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
+                  <button onClick={() => !bdImporting && setBdSheetPicker(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
+                  <button onClick={confirmBdSheetPicker} disabled={bdImporting} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+                    {bdImporting ? 'Reading…' : `Continue (${bdSheetPicker.selected.size} sheet${bdSheetPicker.selected.size === 1 ? '' : 's'})`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* ── BACKDATE IMPORT PREVIEW ── */}
           {bdImportPreview && (
             <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !bdImporting && setBdImportPreview(null)}>
@@ -2934,6 +3022,7 @@ export default function LedgerTab({ ctx }) {
                       <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
                         <span className="font-black text-fg text-sm">{g.client || 'Walk-in'}</span>
                         <div className="flex items-center gap-2 text-[11px] text-fg/40 font-bold">
+                          {bdImportPreview.multiSheet && g.sheet && <span className="text-[9px] bg-white/10 text-fg/50 px-1.5 py-0.5 rounded uppercase tracking-wider">{g.sheet}</span>}
                           {g.transNo && <span>{g.transNo}</span>}
                           <span>{g.date || <span className="text-red-400">no date</span>}</span>
                           <span className="text-brand">{peso(g.total)}</span>

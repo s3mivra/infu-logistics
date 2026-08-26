@@ -239,7 +239,7 @@ export default function OrdersTab({ ctx }) {
                               key={p._id}
                               onClick={() => { if (!unavailable) openProductModal(p); }}
                               aria-label={`${p.name} - ₱${Number(p.basePrice || p.price || 0).toFixed(2)}${unavailable ? ' (unavailable)' : ''}`}
-                              className={`relative bg-page-bg/60 border rounded-2xl p-3 flex flex-col items-center text-center shadow-elev-1 group min-h-[120px] transition-colors duration-180
+                              className={`relative bg-page-bg/60 border rounded-2xl p-3 flex flex-col items-center text-center shadow-elev-1 group min-h-[144px] transition-colors duration-180
                                 ${unavailable
                                   ? 'border-white/5 opacity-50 cursor-not-allowed'
                                   : 'border-white/10 hover:border-brand/60 hover:bg-brand/5 active-press hover:shadow-elev-2 focus-visible:border-brand cursor-pointer'
@@ -265,7 +265,7 @@ export default function OrdersTab({ ctx }) {
                                   </span>
                                 </div>
                               )}
-                              <span className="font-bold text-xs text-fg/80 line-clamp-2 leading-tight w-full">{p.name}</span>
+                              <span className="font-bold text-xs text-fg/80 line-clamp-2 leading-tight w-full min-h-[2.4em] flex items-center justify-center">{p.name}</span>
                               {p.activeSalePrice != null ? (
                                 <div className="mt-auto pt-1 flex flex-col items-center gap-0.5">
                                   <span className="text-orange-400 font-black text-sm tabular-nums">₱{Number(p.activeSalePrice).toFixed(2)}</span>
