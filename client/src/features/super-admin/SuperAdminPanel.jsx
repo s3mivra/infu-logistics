@@ -5,7 +5,7 @@ import {
   Users, Shield, Menu, X, LogOut, Plus, Edit2, Trash2,
   Search, Eye, EyeOff, AlertCircle, Tag, Loader2, Lock,
   ChevronRight, UserCheck, Monitor, Check, Package, ToggleLeft, ToggleRight,
-  KeyRound, Copy, AlertTriangle
+  KeyRound, Copy, AlertTriangle, RefreshCw
 } from 'lucide-react';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
@@ -263,6 +263,9 @@ export default function SuperAdminPanel() {
   const [clientForm, setClientForm]     = useState({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '' });
   const [clientFormLoading, setClientFormLoading] = useState(false);
   const [clientFormError, setClientFormError] = useState('');
+  const [purgeModal, setPurgeModal] = useState({ open: false, phrase: '', busy: false, error: '', result: null });
+  const [rewireModal, setRewireModal] = useState({ open: false, busy: false, error: '', result: null });
+
   // -------------------------------------------------------------------------
   const showToast = useCallback((message, type = 'success') => {
     setToast({ show: true, message, type });
@@ -511,6 +514,32 @@ export default function SuperAdminPanel() {
   // -------------------------------------------------------------------------
   // Danger zone: purge data. Confirmation phrase is checked again server-side
   // (never trust a client-side-only confirm for something this destructive).
+  const handlePurgeData = async () => {
+    if (purgeModal.phrase.trim() !== 'PURGE') return;
+    setPurgeModal(m => ({ ...m, busy: true, error: '' }));
+    try {
+      const res = await apiFetch('/api/admin/purge-data', { method: 'POST', body: JSON.stringify({ confirmPhrase: purgeModal.phrase.trim() }) });
+      const d = await res.json();
+      if (d.success) setPurgeModal(m => ({ ...m, busy: false, result: d.deleted }));
+      else setPurgeModal(m => ({ ...m, busy: false, error: d.error || 'Purge failed.' }));
+    } catch { setPurgeModal(m => ({ ...m, busy: false, error: 'Network error.' })); }
+  };
+
+  // "Just in case" repair: re-links any recipe ingredient (Product.baseRecipe/
+  // sizes[].recipe/addOns[].recipe, ModifierGroup.options[].recipe) whose
+  // invId snapshot no longer points to a real Inventory doc - e.g. right
+  // after Purge Data + recreating inventory. Safe to run anytime, including
+  // when there's nothing to fix.
+  const handleRewireRecipes = async () => {
+    setRewireModal(m => ({ ...m, busy: true, error: '' }));
+    try {
+      const res = await apiFetch('/api/admin/rewire-recipes', { method: 'POST' });
+      const d = await res.json();
+      if (d.success) setRewireModal(m => ({ ...m, busy: false, result: d }));
+      else setRewireModal(m => ({ ...m, busy: false, error: d.error || 'Rewire failed.' }));
+    } catch { setRewireModal(m => ({ ...m, busy: false, error: 'Network error.' })); }
+  };
+
   // -------------------------------------------------------------------------
   // Role management
   const resetRoleForm = () => setRoleForm({ id: null, name: '', permissions: [] });
@@ -1405,6 +1434,147 @@ export default function SuperAdminPanel() {
         </div>
       )}
 
+      {/* =================================================================== */}
+      {/* DANGER ZONE - PURGE DATA + REWIRE RECIPES                            */}
+      {/* =================================================================== */}
+      <div className="bg-red-500/5 border border-red-500/30 rounded-xl p-5 mt-6">
+        <div className="flex items-center gap-2 mb-1">
+          <AlertTriangle size={16} className="text-red-400" />
+          <h3 className="font-black text-red-400 text-sm uppercase tracking-widest">Danger Zone</h3>
+        </div>
+        <p className="text-fg/50 text-xs mb-3 max-w-2xl">
+          Purge Data permanently deletes every sale/order, ledger entry, inventory item and stock history,
+          shift/time-clock record, revolving fund, and purchase order/bill for this business. Staff accounts,
+          roles, client accounts, the menu (products/combos/categories), pricing, the Chart of Accounts, and
+          Settings are kept. This cannot be undone.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => setPurgeModal({ open: true, phrase: '', busy: false, error: '', result: null })}
+            className="flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/40 text-red-400 font-bold text-sm px-4 py-2.5 rounded-lg transition">
+            <Trash2 size={14} /> Purge Data
+          </button>
+          <button onClick={() => { setRewireModal({ open: true, busy: false, error: '', result: null }); }}
+            title="Re-link any recipe ingredient whose linked inventory item was deleted and recreated (e.g. after a purge) - safe to run anytime"
+            className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/20 text-fg/70 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-lg transition">
+            <RefreshCw size={14} /> Rewire Recipe Links
+          </button>
+        </div>
+      </div>
+
+      {/* =================================================================== */}
+      {/* PURGE DATA MODAL                                                     */}
+      {/* =================================================================== */}
+      {purgeModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !purgeModal.busy && setPurgeModal({ open: false, phrase: '', busy: false, error: '', result: null })}>
+          <div className="bg-sidebar-bg border border-red-500/40 rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
+              <div className="flex items-center gap-2">
+                <AlertTriangle size={18} className="text-red-400" />
+                <h2 className="font-black text-fg text-lg">Purge Data</h2>
+              </div>
+              <button onClick={() => !purgeModal.busy && setPurgeModal({ open: false, phrase: '', busy: false, error: '', result: null })} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+            </div>
+            {purgeModal.result ? (
+              <div className="p-6 space-y-3">
+                <p className="text-brand font-bold text-sm">Purge complete.</p>
+                <div className="bg-page-bg border border-white/10 rounded-lg p-3 max-h-[40vh] overflow-y-auto space-y-1">
+                  {Object.entries(purgeModal.result).map(([k, v]) => (
+                    <div key={k} className="flex justify-between text-xs">
+                      <span className="text-fg/50">{k}</span>
+                      <span className="text-fg font-mono font-bold">{v}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-fg/40 text-xs">
+                  If you're re-adding inventory under the same item names, use <span className="text-fg font-bold">Rewire Recipe Links</span> below
+                  afterward so recipe-based products re-link to the new items instead of relying on the runtime fallback.
+                </p>
+                <p className="text-fg/40 text-xs">Reloading clears every screen's cached data (P&L, Trial Balance, Balance Sheet, Transfers, Analytics, etc.) so they show the fresh, purged state instead of what was loaded before the purge ran.</p>
+                <button onClick={() => window.location.reload()}
+                  className="w-full bg-brand hover:bg-brand/90 text-white font-bold text-sm py-2.5 rounded-lg transition">Done - Reload App</button>
+              </div>
+            ) : (
+              <div className="p-6 space-y-4">
+                <p className="text-fg/70 text-sm">
+                  This deletes <span className="font-bold text-fg">all sales/orders, ledger entries, inventory, shifts, revolving funds, and purchase orders/bills</span> for
+                  this business. Staff, roles, client accounts, menu/products, pricing, Chart of Accounts, and Settings are kept. <span className="text-red-400 font-bold">This cannot be undone.</span>
+                </p>
+                <div>
+                  <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Type PURGE to confirm</label>
+                  <input autoFocus type="text" value={purgeModal.phrase} onChange={e => setPurgeModal(m => ({ ...m, phrase: e.target.value, error: '' }))}
+                    className="w-full bg-page-bg border border-red-500/30 rounded-lg px-3 py-2.5 text-fg font-mono font-bold outline-none focus:border-red-500/60 tracking-widest"
+                    placeholder="PURGE" />
+                  {purgeModal.error && <p className="text-red-400 text-xs mt-1.5 font-bold">{purgeModal.error}</p>}
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setPurgeModal({ open: false, phrase: '', busy: false, error: '', result: null })} disabled={purgeModal.busy}
+                    className="text-sm font-bold px-4 py-2 rounded-lg text-fg/50 hover:text-fg transition disabled:opacity-40">Cancel</button>
+                  <button onClick={handlePurgeData} disabled={purgeModal.busy || purgeModal.phrase.trim() !== 'PURGE'}
+                    className="flex items-center gap-2 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-lg transition">
+                    {purgeModal.busy ? 'Purging…' : 'Purge Everything'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* REWIRE RECIPE LINKS MODAL                                            */}
+      {/* =================================================================== */}
+      {rewireModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !rewireModal.busy && setRewireModal({ open: false, busy: false, error: '', result: null })}>
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
+              <div className="flex items-center gap-2">
+                <RefreshCw size={18} className="text-brand" />
+                <h2 className="font-black text-fg text-lg">Rewire Recipe Links</h2>
+              </div>
+              <button onClick={() => !rewireModal.busy && setRewireModal({ open: false, busy: false, error: '', result: null })} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+            </div>
+            {rewireModal.result ? (
+              <div className="p-6 space-y-3">
+                <p className="text-brand font-bold text-sm">
+                  {rewireModal.result.ingredientsFixed > 0 ? 'Rewire complete.' : 'Nothing to fix - all recipe links are already live.'}
+                </p>
+                <div className="bg-page-bg border border-white/10 rounded-lg p-3 space-y-1">
+                  <div className="flex justify-between text-xs"><span className="text-fg/50">Products checked</span><span className="text-fg font-mono font-bold">{rewireModal.result.productsChecked}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-fg/50">Products fixed</span><span className="text-fg font-mono font-bold">{rewireModal.result.productsFixed}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-fg/50">Modifier groups fixed</span><span className="text-fg font-mono font-bold">{rewireModal.result.groupsFixed}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-fg/50">Ingredients re-linked</span><span className="text-fg font-mono font-bold">{rewireModal.result.ingredientsFixed}</span></div>
+                </div>
+                {rewireModal.result.unresolved?.length > 0 && (
+                  <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                    <p className="text-[10px] text-amber-400 font-bold uppercase tracking-widest mb-1.5">Couldn't resolve (no matching inventory item by name)</p>
+                    <p className="text-fg/70 text-xs">{rewireModal.result.unresolved.join(', ')}</p>
+                  </div>
+                )}
+                <button onClick={() => setRewireModal({ open: false, busy: false, error: '', result: null })}
+                  className="w-full bg-brand hover:bg-brand/90 text-white font-bold text-sm py-2.5 rounded-lg transition">Done</button>
+              </div>
+            ) : (
+              <div className="p-6 space-y-4">
+                <p className="text-fg/70 text-sm">
+                  Scans every product's recipe (base recipe, size variants, add-ons) and every modifier group's
+                  options for an ingredient whose linked inventory item no longer exists, and re-links it to a
+                  current inventory item with the same name. Only fixes broken links - leaves everything else
+                  untouched. Safe to run anytime.
+                </p>
+                {rewireModal.error && <p className="text-red-400 text-xs font-bold">{rewireModal.error}</p>}
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setRewireModal({ open: false, busy: false, error: '', result: null })} disabled={rewireModal.busy}
+                    className="text-sm font-bold px-4 py-2 rounded-lg text-fg/50 hover:text-fg transition disabled:opacity-40">Cancel</button>
+                  <button onClick={handleRewireRecipes} disabled={rewireModal.busy}
+                    className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-lg transition">
+                    {rewireModal.busy ? 'Scanning…' : 'Run Rewire'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* =================================================================== */}
       {/* CREATE / EDIT MODAL                                                  */}

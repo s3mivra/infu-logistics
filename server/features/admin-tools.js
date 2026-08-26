@@ -765,4 +765,68 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
+
+// ── REWIRE RECIPE LINKS (superadmin only) ────────────────────────────────────
+// Every order-processing route already resolves a dangling recipe invId at
+// deduction time (see resolveIngInvId in orders.js), so a stale link no
+// longer breaks a sale - but it never gets fixed IN the stored recipe either,
+// so every single completion pays for another lookup-by-name forever, and any
+// tool that reads baseRecipe directly (reports, exports, future features)
+// still sees the dead id. This does the same name-match repair, once, and
+// actually writes the corrected invId back onto the product/modifier-group,
+// covering Product.baseRecipe, Product.sizes[].recipe, Product.addOns[].recipe,
+// and ModifierGroup.options[].recipe. Safe to run anytime, including with
+// nothing to fix - matches only ingredients whose invId is dead AND whose
+// saved name matches a current inventory item; anything unresolvable is left
+// alone and reported back instead of guessed at.
+app.post('/api/admin/rewire-recipes', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const invItems = await Inventory.find({ businessType: BUSINESS_TYPE }, { itemName: 1 }).lean();
+    const liveIds = new Set(invItems.map(i => String(i._id)));
+    const byName = new Map(invItems.map(i => [i.itemName, String(i._id)]));
+
+    let ingredientsFixed = 0;
+    const unresolved = [];
+    const fixList = (list) => {
+      let changed = false;
+      for (const ing of (list || [])) {
+        if (!ing.invId) continue;
+        if (liveIds.has(String(ing.invId))) continue; // still valid - leave it
+        const match = ing.name && byName.get(ing.name);
+        if (match) { ing.invId = match; changed = true; ingredientsFixed++; }
+        else unresolved.push(ing.name || '(unnamed ingredient)');
+      }
+      return changed;
+    };
+
+    const products = await Product.find({ businessType: BUSINESS_TYPE });
+    let productsFixed = 0;
+    for (const p of products) {
+      let changed = fixList(p.baseRecipe);
+      for (const sz of (p.sizes || [])) { if (fixList(sz.recipe)) changed = true; }
+      for (const ao of (p.addOns || [])) { if (fixList(ao.recipe)) changed = true; }
+      if (changed) {
+        p.markModified('baseRecipe'); p.markModified('sizes'); p.markModified('addOns');
+        await p.save();
+        productsFixed++;
+      }
+    }
+
+    const groups = await ModifierGroup.find({});
+    let groupsFixed = 0;
+    for (const g of groups) {
+      let changed = false;
+      for (const opt of (g.options || [])) { if (fixList(opt.recipe)) changed = true; }
+      if (changed) { g.markModified('options'); await g.save(); groupsFixed++; }
+    }
+
+    const result = { productsChecked: products.length, productsFixed, groupsFixed, ingredientsFixed, unresolved: [...new Set(unresolved)].slice(0, 50) };
+    await logAudit(req, { action: 'rewire-recipes', entity: 'Product', entityId: 'bulk', after: result });
+    if (productsFixed || groupsFixed) emitToAll('menuUpdated');
+    res.json({ success: true, ...result });
+  } catch (err) {
+    log.error?.({ err }, 'POST /api/admin/rewire-recipes failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
 }
