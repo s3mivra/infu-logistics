@@ -65,7 +65,7 @@ export default function StockTaxonomyPanel({
       {/* Stock categories */}
       <div className={card}>
         <h3 className="text-white font-black uppercase tracking-wider text-sm mb-1">Stock Categories</h3>
-        <p className="text-white/50 text-[11px] mb-3">A prefix auto-numbers new item codes, e.g. prefix <span className="font-bold text-white/70">P1</span> → P10001, P10002.</p>
+        <p className="text-white text-[11px] mb-3">A prefix auto-numbers new item codes, e.g. prefix <span className="font-bold text-white/70">P1</span> → P10001, P10002.</p>
         <div className="flex flex-col sm:flex-row gap-2 mb-3">
           <input value={catName} onChange={e => setCatName(e.target.value)} placeholder="Category name (e.g. Beans)" className={input} />
           <input value={catPrefix} onChange={e => setCatPrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))} placeholder="Prefix" className={`${input} sm:max-w-[110px] uppercase font-mono`} maxLength={4} />
