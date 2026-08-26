@@ -128,7 +128,7 @@ export default function InventoryTab({ ctx }) {
             
             {/* Header & Sub-Tabs */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 border-b border-white/10 pb-4">
-              <h3 className="text-xl font-bold text-fg">Inventory Hub</h3>
+              <h3 className="text-xl font-bold text-white">Inventory Hub</h3>
               
               {/* --- NEW: THE SUB-TAB TOGGLE --- */}
               <div className="flex bg-page-bg p-1 rounded-lg shadow-inner">
@@ -495,7 +495,7 @@ export default function InventoryTab({ ctx }) {
                   <button 
                     onClick={() => setInvPage(prev => Math.max(prev - 1, 1))}
                     disabled={invPage === 1}
-                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === 1 ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === 1 ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-white hover:border-accent hover:text-accent'}`}
                   >
                     <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                   </button>
@@ -505,7 +505,7 @@ export default function InventoryTab({ ctx }) {
                   <button 
                     onClick={() => setInvPage(prev => Math.min(prev + 1, totalInvPages))}
                     disabled={invPage === totalInvPages}
-                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === totalInvPages ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === totalInvPages ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-white hover:border-accent hover:text-accent'}`}
                   >
                     <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                   </button>
@@ -544,14 +544,14 @@ export default function InventoryTab({ ctx }) {
                   {/* --- INTELLIGENT EOD HEADER --- */}
                   <div className={`flex justify-between items-center p-4 rounded-lg border mb-4 shadow-inner ${isLocked ? 'bg-green-900/10 border-green-900/30' : 'bg-page-bg border-accent'}`}>
                     <div>
-                      <h4 className="text-fg font-black uppercase tracking-wider text-sm flex items-center gap-2">
+                      <h4 className="text-white font-black uppercase tracking-wider text-sm flex items-center gap-2">
                         {isLocked ? (
                           <>EOD Locked</>
                         ) : (
                           <><span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span> EOD Audit (Open)</>
                         )}
                       </h4>
-                      <p className={`text-xs mt-1 ${isLocked ? 'text-fg font-bold' : 'text-fg'}`}>
+                      <p className={`text-xs mt-1 ${isLocked ? 'text-white font-bold' : 'text-white'}`}>
                         {isLocked 
                           ? `Daily inventory was securely locked on ${new Date(eodLockedAt).toLocaleTimeString()}`
                           : `Audit physical stock, assign variance reasons, and lock daily financial impact.`}
@@ -567,7 +567,7 @@ export default function InventoryTab({ ctx }) {
                             fetchEODData(); // Refresh the tab
                           }
                         }}
-                        className="bg-page-bg border border-gray-600 text-accent hover:text-fg hover:border-red-500 px-4 py-2 rounded text-xs font-bold uppercase transition"
+                        className="bg-page-bg border border-gray-600 text-accent hover:text-white hover:border-red-500 px-4 py-2 rounded text-xs font-bold uppercase transition"
                       >
                         Reopen Register
                       </button>
@@ -628,7 +628,7 @@ export default function InventoryTab({ ctx }) {
                                             setVarianceNoteMode({...varianceNoteMode, [item._id]: false});
                                             setVarianceReasons({...varianceReasons, [item._id]: ''});
                                           }}
-                                          className="text-[9px] text-white hover:text-fg ml-auto"
+                                          className="text-[9px] text-white hover:text-white ml-auto"
                                         >← back</button>
                                       </div>
                                       <textarea
@@ -636,7 +636,7 @@ export default function InventoryTab({ ctx }) {
                                         placeholder="Describe reason..."
                                         value={varianceReasons[item._id] || ''}
                                         onChange={(e) => setVarianceReasons({...varianceReasons, [item._id]: e.target.value})}
-                                        className="w-full max-w-[220px] bg-page-bg border border-gray-600 text-fg text-[10px] rounded p-1.5 outline-none focus:border-accent resize-none"
+                                        className="w-full max-w-[220px] bg-page-bg border border-gray-600 text-white text-[10px] rounded p-1.5 outline-none focus:border-accent resize-none"
                                       />
                                     </div>
                                   ) : (
@@ -686,10 +686,10 @@ export default function InventoryTab({ ctx }) {
                                   disabled={isLocked}
                                   className={`w-24 bg-page-bg border rounded p-1.5 outline-none text-center text-sm font-mono tabular-nums transition
                                     ${isLocked ? 'border-white/10 text-gray-600 bg-gray-900/20' :
-                                      hasInput && variance < 0 ? 'border-red-500 text-fg shadow-[0_0_10px_rgba(239,68,68,0.1)]' :
-                                      hasInput && variance > 0 ? 'border-green-500 text-fg' :
-                                      hasInput && variance === 0 ? 'border-gray-600 text-fg' :
-                                      'border-white/10 text-fg focus:border-accent'}`
+                                      hasInput && variance < 0 ? 'border-red-500 text-white shadow-[0_0_10px_rgba(239,68,68,0.1)]' :
+                                      hasInput && variance > 0 ? 'border-green-500 text-white' :
+                                      hasInput && variance === 0 ? 'border-gray-600 text-white' :
+                                      'border-white/10 text-white focus:border-accent'}`
                                   }
                                   value={hasInput ? actualInputDisplay : ''}
                                   onChange={(e) => setPhysicalCounts({...physicalCounts, [item._id]: e.target.value})}
@@ -716,7 +716,7 @@ export default function InventoryTab({ ctx }) {
                       <button 
                         onClick={() => setInvPage(prev => Math.max(prev - 1, 1))}
                         disabled={invPage === 1}
-                        className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === 1 ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                        className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === 1 ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-white hover:border-accent hover:text-accent'}`}
                       >
                         <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                       </button>
@@ -726,7 +726,7 @@ export default function InventoryTab({ ctx }) {
                       <button 
                         onClick={() => setInvPage(prev => Math.min(prev + 1, totalInvPages))}
                         disabled={invPage === totalInvPages}
-                        className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === totalInvPages ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                        className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === totalInvPages ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-white hover:border-accent hover:text-accent'}`}
                       >
                         <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                       </button>
