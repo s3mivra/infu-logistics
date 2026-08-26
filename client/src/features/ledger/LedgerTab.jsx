@@ -432,7 +432,7 @@ export default function LedgerTab({ ctx }) {
         const res = await apiFetch('/api/admin/backdate-sale', {
           method: 'POST',
           body: JSON.stringify({
-            date: g.date, customerName: g.client, paymentMethod: bdImportSettings.paymentMethod,
+            date: g.date, customerName: g.client, paymentMethod: g.paymentMethod || bdImportSettings.paymentMethod,
             notes: g.transNo ? `Imported - ${g.transNo}` : 'Imported from Excel',
             affectInventory: bdImportSettings.affectInventory, isComplimentary: false, discountPercent: 0,
             items: g.items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity, productId: it.productId, productCode: it.productCode })),
@@ -3354,7 +3354,7 @@ export default function LedgerTab({ ctx }) {
                 </div>
                 <div className="px-5 py-4 border-b border-white/10 grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Payment Method (applies to all)</label>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Payment Method (default - override any sale below)</label>
                     <select value={bdImportSettings.paymentMethod} onChange={e => setBdImportSettings(s => ({ ...s, paymentMethod: e.target.value }))}
                       className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
                       <option value="Cash">Cash</option>
@@ -3385,6 +3385,21 @@ export default function LedgerTab({ ctx }) {
                           <span>{g.date || <span className="text-red-400">no date</span>}</span>
                           <span className="text-brand">{peso(g.total)}</span>
                         </div>
+                      </div>
+                      <div className="flex items-center gap-2 mb-2">
+                        <select value={g.paymentMethod || bdImportSettings.paymentMethod}
+                          onChange={e => { const v = e.target.value; setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, paymentMethod: v } : x) })); }}
+                          className={`text-[10px] font-bold uppercase tracking-wider rounded-lg px-2 py-1 outline-none border ${g.paymentMethod ? 'bg-brand/10 border-brand/40 text-brand' : 'bg-page-bg border-white/10 text-fg/60'}`}>
+                          <option value="Cash">Cash</option>
+                          <option value="Bank Transfer">Bank Transfer</option>
+                          <option value="GCash">GCash</option>
+                          <option value="Maya">Maya</option>
+                          <option value="On Account">On Account (A/R)</option>
+                        </select>
+                        {g.paymentMethod && (
+                          <button onClick={() => setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, paymentMethod: null } : x) }))}
+                            className="text-[9px] font-bold uppercase tracking-wider text-fg/30 hover:text-fg/60 transition">reset to default</button>
+                        )}
                       </div>
                       <div className="space-y-0.5">
                         {g.items.map((it, li) => (
