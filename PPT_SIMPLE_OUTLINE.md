@@ -90,79 +90,43 @@ A unified management software that connects all operations in one digital platfo
 
 ---
 
-## SLIDE 6: LOGISTICS FEATURES - DETAILED
+## SLIDE 6: LOGISTICS FEATURES
 
-**Title:** Logistics Module - How It Works
+**Title:** Logistics Module Features
 
-**FEATURE 1: REAL-TIME ORDER TRACKING**
-- What: GPS tracking of every delivery
-- Why: Customers know exactly where their order is
-- How: Driver's location updates every minute, customer gets live map
-- Benefit: Fewer "Where's my order?" calls
+**CURRENT FEATURES (Already in App):**
+✅ Order Management
+✅ Basic Delivery Tracking
+✅ Driver Management
+✅ Invoice Generation
 
-**FEATURE 2: AUTOMATIC DRIVER ASSIGNMENT**
-- What: App automatically picks the best driver for each order
-- Why: No more manual phone calls or guessing
-- How: App considers driver location, capacity, delivery area
-- Benefit: Faster response time, more efficient routes
+**NEW FEATURES (Being Added):**
+🔧 Real-Time GPS Tracking - Live customer updates
+🔧 Auto Driver Assignment - Smart routing, no manual calls
+🔧 Customer Notifications - SMS/Email alerts at each step
+🔧 Performance Dashboard - See daily metrics & trends
 
-**FEATURE 3: CUSTOMER NOTIFICATIONS**
-- What: Auto-sends SMS/Email updates to customer
-- Why: Customers stay informed, reduces anxiety
-- How: Updates sent when order confirmed, driver on way, delivered
-- Benefit: Professional service, fewer complaints
-
-**FEATURE 4: INVOICE & PAYMENT MANAGEMENT**
-- What: Automatic billing and payment tracking
-- Why: No manual invoicing, faster payment collection
-- How: Bill generated automatically, customer gets receipt via email
-- Benefit: Faster cash flow, reduced accounting errors
-
-**FEATURE 5: PERFORMANCE DASHBOARD**
-- What: See all delivery metrics in one place
-- Why: Know how business is performing daily
-- How: Shows on-time rate, revenue, customer satisfaction
-- Benefit: Make quick decisions, spot problems early
-
-**RESULT:** Logistics runs like a well-oiled machine
+**BOTTOM LINE:** Orders delivered faster, customers happier, costs lower
 
 ---
 
-## SLIDE 7: BAR FEATURES - DETAILED
+## SLIDE 7: BAR FEATURES
 
-**Title:** Bar Module - How It Works
+**Title:** Bar Module Features
 
-**FEATURE 1: ONLINE TABLE RESERVATIONS**
-- What: Customers book tables from website or app
-- Why: Never lose a booking, manage seating automatically
-- How: Customer selects date/time, app confirms availability, sends confirmation
-- Benefit: More bookings, no double-booking, professional image
+**CURRENT FEATURES (Already in App):**
+✅ Inventory Management
+✅ Staff Scheduling
+✅ Basic Sales Tracking
+✅ POS Integration
 
-**FEATURE 2: INVENTORY MANAGEMENT**
-- What: Track all drinks, supplies, and stock levels
-- Why: Know what you have, avoid running out
-- How: Staff scans items when used, app updates stock in real-time
-- Benefit: Reduce waste, avoid shortages, lower costs
+**NEW FEATURES (Being Added):**
+🔧 Online Reservations - Customers book tables 24/7
+🔧 Private Event Booking - Manage parties & group bookings
+🔧 Real-Time Inventory - Track stock automatically
+🔧 Sales Analytics - See profits, trends, best-sellers
 
-**FEATURE 3: STAFF SCHEDULING**
-- What: Create and manage staff shifts
-- Why: Never have scheduling conflicts, ensure adequate staffing
-- How: Manager creates schedule in app, staff sees shifts on their phone
-- Benefit: Better coordination, fewer no-shows, happier staff
-
-**FEATURE 4: PRIVATE EVENT BOOKING**
-- What: Customers book the bar for parties/events
-- Why: Generate extra revenue, better event management
-- How: Customer requests date/time, manager approves, sends contract
-- Benefit: Predictable revenue, professional event handling
-
-**FEATURE 5: SALES & PROFIT TRACKING**
-- What: See how much money was made daily/weekly/monthly
-- Why: Know profitability, identify best-selling items
-- How: All sales recorded automatically, analytics show trends
-- Benefit: Data-driven decisions, spot trends early, maximize profits
-
-**RESULT:** Bar runs smoothly with better service and higher profits
+**BOTTOM LINE:** More bookings, better operations, higher profits
 
 ---
 

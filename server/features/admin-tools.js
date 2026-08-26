@@ -698,37 +698,50 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
     }
     const bizScope = { businessType: BUSINESS_TYPE };
     const deleted = {};
-    const del = async (label, Model) => { deleted[label] = (await Model.deleteMany(bizScope)).deletedCount; };
+    // hasBizField=false means the model has NO businessType field at all - a
+    // deleteMany(bizScope) against one of those silently matches nothing,
+    // which is exactly why the first version of this route left the ledger,
+    // shifts, revolving funds, bank deposits, closed periods, and POs
+    // completely untouched. Those get an unscoped deleteMany({}) instead -
+    // safe because a whole deployment IS one business right now (see the note
+    // above on why real per-tenant scoping doesn't exist yet).
+    const del = async (label, Model, hasBizField = true) => {
+      deleted[label] = (await Model.deleteMany(hasBizField ? bizScope : {})).deletedCount;
+    };
 
     // Sales / orders
     await del('orders', Order);
     // Ledger (journal entries, period locks, bank deposits, expenses - expenses
     // are just JournalEntry rows with an expense account code, no separate model)
-    await del('journalEntries', JournalEntry);
-    await del('closedPeriods', ClosedPeriod);
-    await del('bankDeposits', BankDeposit);
+    await del('journalEntries', JournalEntry, false);
+    await del('closedPeriods', ClosedPeriod, false);
+    await del('bankDeposits', BankDeposit, false);
     // Inventory + its history
     await del('inventory', Inventory);
-    await del('stockCards', StockCard);
-    await del('inventoryMovements', InventoryMovement);
+    await del('stockCards', StockCard, false);
+    await del('inventoryMovements', InventoryMovement, false);
     await del('stockTransfers', StockTransfer);
     await del('backdateQueue', BackdateQueueItem);
     // Shifts / time clock
-    await del('shifts', Shift);
+    await del('shifts', Shift, false);
     await del('clockEntries', ClockEntry);
     // Revolving funds
-    await del('revolvingFunds', RevolvingFund);
-    await del('revolvingFundTx', RevolvingFundTx);
+    await del('revolvingFunds', RevolvingFund, false);
+    await del('revolvingFundTx', RevolvingFundTx, false);
     // Procurement
-    await del('purchaseOrders', PurchaseOrder);
+    await del('purchaseOrders', PurchaseOrder, false);
     await del('bills', Bill);
     // End-of-day archives
-    await del('eodRecords', EODRecord);
+    await del('eodRecords', EODRecord, false);
     // Cached analytics counters - MUST reset alongside Order/whatever fed them,
     // or Analytics keeps showing pre-purge totals forever (they're not derived
     // live, see reports.js).
     await del('tenantStats', TenantStats);
     await del('productStats', ProductStats);
+    // Audit log - the user explicitly wants a genuinely fresh app, this
+    // included. The purge action itself is logged fresh right after, below,
+    // so the trail isn't lost - it just starts clean.
+    await del('auditLog', AuditLog, false);
 
     // Deliberately untouched: User, Role, ClientAccount (staff + client
     // logins), Product/Combo/Category/AddOn/ModifierGroup/PriceTier (menu),
@@ -736,8 +749,7 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
     // Discount/DiscountRule (promo definitions), StorageLocation/
     // StockCategory (inventory taxonomy), Supplier (vendor master data),
     // ScheduledShift (future planning), Tenant, Counter (sequence numbers -
-    // left as-is so new records don't reuse old reference/order numbers),
-    // and AuditLog (this action itself is written there below).
+    // left as-is so new records don't reuse old reference/order numbers).
 
     await logAudit(req, { action: 'purge-data', entity: 'Tenant', entityId: BUSINESS_TYPE, after: deleted });
     emitToMgr('erpUpdated');

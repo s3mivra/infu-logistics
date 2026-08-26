@@ -1462,8 +1462,9 @@ export default function SuperAdminPanel() {
                     </div>
                   ))}
                 </div>
-                <button onClick={() => setPurgeModal({ open: false, phrase: '', busy: false, error: '', result: null })}
-                  className="w-full bg-brand hover:bg-brand/90 text-white font-bold text-sm py-2.5 rounded-lg transition">Done</button>
+                <p className="text-fg/40 text-xs">Reloading clears every screen's cached data (P&L, Trial Balance, Balance Sheet, Transfers, Analytics, etc.) so they show the fresh, purged state instead of what was loaded before the purge ran.</p>
+                <button onClick={() => window.location.reload()}
+                  className="w-full bg-brand hover:bg-brand/90 text-white font-bold text-sm py-2.5 rounded-lg transition">Done - Reload App</button>
               </div>
             ) : (
               <div className="p-6 space-y-4">
