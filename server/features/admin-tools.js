@@ -108,6 +108,9 @@ export default function registerAdminTools(ctx) {
     Inventory,
     BackdateQueueItemSchema,
     BackdateQueueItem,
+    TenantStats,
+    STATS_SHARDS,
+    ProductStats,
     JournalEntrySchema,
     JournalEntry,
     InventoryMovementSchema,
@@ -279,6 +282,49 @@ app.post('/api/admin/seed-payment-subaccounts', verifyToken, requireSuperAdmin, 
   }
 });
 
+// Mirrors orders.js's maybePromoteWalkInClient (repeat walk-in name → its own
+// ClientAccount after 3 Completed orders) for the backdate path, which never
+// goes through /api/orders and so never triggered that promotion - hundreds
+// of named backdated sales otherwise stay invisible on the Clients page.
+// Fire-and-forget: never let a Clients-page nicety fail or delay the sale.
+async function maybePromoteBackdateClient(customerName) {
+  try {
+    const name = (customerName || '').trim();
+    if (!name || name.toLowerCase() === 'guest' || name.toLowerCase().startsWith('walk-in')) return;
+    const nameRegex = new RegExp(`^${escapeRegex(name)}$`, 'i');
+
+    let account = await ClientAccount.findOne({ name: nameRegex, source: 'pos' });
+    if (!account) {
+      const count = await Order.countDocuments({
+        businessType: BUSINESS_TYPE,
+        customerName: nameRegex,
+        status: 'Completed',
+        clientAccountId: { $in: [null, ''] },
+      });
+      if (count < 3) return;
+
+      const clientCode = await generateNextSequence(ClientAccount, 'CUS-1000', 'clientCode');
+      const placeholderUsername = `_pos_${clientCode.toLowerCase()}`;
+      const placeholderPassword = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
+      account = await ClientAccount.create({
+        clientCode, name, username: placeholderUsername, password: placeholderPassword,
+        isActive: true, source: 'pos',
+      });
+      await Order.updateMany(
+        { businessType: BUSINESS_TYPE, customerName: nameRegex, clientAccountId: { $in: [null, ''] } },
+        { $set: { clientAccountId: String(account._id) } }
+      );
+    } else {
+      await Order.updateMany(
+        { businessType: BUSINESS_TYPE, customerName: nameRegex, clientAccountId: { $in: [null, ''] } },
+        { $set: { clientAccountId: String(account._id) } }
+      );
+    }
+  } catch (err) {
+    log.error({ err }, 'Backdated-sale client auto-promotion failed');
+  }
+}
+
 // ── BACKDATED SALE (superadmin only) ─────────────────────────────────────────
 // Records a Completed order for a chosen historical date so analytics / P&L
 // include sales made before the POS was in place. Two shapes accepted:
@@ -383,6 +429,11 @@ async function createBackdatedSale(payload, actorName) {
       transactionType: 'NORMAL',
       orderNotes: (notes || '').trim().slice(0, 300),
       isBackdated: true,
+      // A backdated sale is never "today's" register - default isArchived:false
+      // was leaving these permanently mixed into the live Active Register
+      // totals (GET /api/orders' isArchived:false query has no date scoping)
+      // while simultaneously never showing up in Sales History (isArchived:true).
+      isArchived: true,
     }], { session });
 
     // Balanced revenue entry, DATED to the backdate. Same transaction as the
@@ -411,8 +462,41 @@ async function createBackdatedSale(payload, actorName) {
       lines,
     }], { session });
 
+    // Analytics' "all-time" KPIs and per-product top-sellers read from these
+    // running counters (see reports.js), not a live scan of Order - a
+    // backdated sale skipped the normal /api/orders completion path that
+    // keeps them in sync, so without this it posts a real journal entry yet
+    // never shows up in Net Revenue (All-Time) or Top Sellers.
+    const tenantShard = Math.floor(Math.random() * STATS_SHARDS);
+    await TenantStats.findOneAndUpdate(
+      { businessType: BUSINESS_TYPE, shard: tenantShard },
+      { $inc: {
+          cumulativeRevenue: comp ? 0 : total,
+          cumulativeComp: comp ? gross : 0,
+          cumulativeOrderCount: 1,
+          cumulativeNonCompCount: comp ? 0 : 1,
+        } },
+      { session, upsert: true }
+    );
+    if (!comp && orderItems.length) {
+      const byName = new Map();
+      for (const it of orderItems) {
+        const prev = byName.get(it.name) || { qty: 0, rev: 0 };
+        byName.set(it.name, { qty: prev.qty + it.quantity, rev: prev.rev + it.price * it.quantity });
+      }
+      const ops = [...byName].map(([name, { qty, rev }]) => ({
+        updateOne: {
+          filter: { businessType: BUSINESS_TYPE, productName: name, shard: Math.floor(Math.random() * STATS_SHARDS) },
+          update: { $inc: { cumulativeQty: qty, cumulativeRevenue: rev } },
+          upsert: true,
+        },
+      }));
+      await ProductStats.bulkWrite(ops, { session });
+    }
+
     await session.commitTransaction();
     session.endSession();
+    maybePromoteBackdateClient(customerName); // fire-and-forget, outside the transaction
     return { order, journalReference: reference, itemized, affectInventory: !!(itemized && affectInventory), method, total, dt };
   } catch (err) {
     await session.abortTransaction(); session.endSession();
