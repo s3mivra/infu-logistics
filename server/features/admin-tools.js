@@ -742,6 +742,12 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
     // included. The purge action itself is logged fresh right after, below,
     // so the trail isn't lost - it just starts clean.
     await del('auditLog', AuditLog, false);
+    // Products/menu are deliberately KEPT, but "Out of Stock" is a manual
+    // per-product flag independent of Inventory (see products.js) - it isn't
+    // deleted or derived, so it silently survived a purge and kept showing
+    // stale "OUT OF STOCK" badges on a menu that's otherwise fresh. Reset it
+    // without touching anything else about the product.
+    deleted.productsMarkedBackInStock = (await Product.updateMany({ ...bizScope, isOutOfStock: true }, { $set: { isOutOfStock: false } })).modifiedCount;
 
     // Deliberately untouched: User, Role, ClientAccount (staff + client
     // logins), Product/Combo/Category/AddOn/ModifierGroup/PriceTier (menu),
