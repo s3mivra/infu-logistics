@@ -1496,12 +1496,23 @@ export default function AdminDashboard() {
   useEffect(() => { if (isAuthenticated) { fetchSettings(); fetchClockStatus(); fetchParked(); } }, [isAuthenticated]);
 
   // --- REAL-TIME AUTO REFRESH ---
+  // A burst of socket events (e.g. a 180-sale bulk backdate import, each one
+  // emitting erpUpdated) used to trigger a full fetchERPData() per event, per
+  // listener - hundreds of refetches in a few seconds, enough to trip the
+  // API rate limiter (429s on /api/notifications and the import itself).
+  // Debounce: collapse a burst into one refetch shortly after it settles.
+  const erpRefreshTimerRef = useRef(null);
+  const scheduleERPRefresh = (alsoEOD) => {
+    clearTimeout(erpRefreshTimerRef.current);
+    erpRefreshTimerRef.current = setTimeout(() => {
+      fetchERPData();
+      if (alsoEOD && invSubTab === 'eod') fetchEODData();
+    }, 800);
+  };
+
   // Effect 1: ERP/EOD sub-tab listeners - uses named callbacks so .off() is scoped
   useEffect(() => {
-    const handleERPForEOD = () => {
-      fetchERPData();
-      if (invSubTab === 'eod') fetchEODData();
-    };
+    const handleERPForEOD = () => scheduleERPRefresh(true);
     socket.on('erpUpdated', handleERPForEOD);
     socket.on('orderUpdated', handleERPForEOD);
     return () => {
@@ -1538,7 +1549,7 @@ export default function AdminDashboard() {
     const handleOrderUpdate = (updated) => setOrders(prev => prev.map(o => o._id === updated._id ? updated : o));
     const handleMenuUpdate  = () => fetchData();
     const handleArchived    = () => fetchOrders();
-    const handleERPUpdate   = () => fetchERPData();
+    const handleERPUpdate   = () => scheduleERPRefresh(false);
     const handleMgrAlert    = (a) => {
       const id = Date.now() + Math.random();
       setMgrAlerts(prev => [...prev.slice(-4), { id, message: a?.message || 'Accounting alert' }]);

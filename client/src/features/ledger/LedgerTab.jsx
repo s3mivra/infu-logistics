@@ -445,19 +445,32 @@ export default function LedgerTab({ ctx }) {
       const label = g.client || g.transNo || 'row';
       if (!g.date) { fail++; errors.push(`${label}: missing/unreadable date`); setBdImportProgress(p => ({ ...p, done: p.done + 1 })); continue; }
       try {
-        const res = await apiFetch('/api/admin/backdate-sale', {
-          method: 'POST',
-          body: JSON.stringify({
-            date: g.date, customerName: g.client, paymentMethod: g.paymentMethod || bdImportSettings.paymentMethod,
-            notes: g.transNo ? `Imported - ${g.transNo}` : 'Imported from Excel',
-            affectInventory: bdImportSettings.affectInventory, isComplimentary: false, discountPercent: 0,
-            items: g.items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity, productId: it.productId, productCode: it.productCode })),
-          }),
-        });
+        // A bulk run posts one sale per request, in sequence, but a few
+        // hundred rows can still trip the API rate limiter (each success also
+        // fans out a socket-triggered dashboard refresh). Back off and retry
+        // on 429 instead of counting a throttled row as a hard failure.
+        let res, attempt = 0;
+        for (;;) {
+          res = await apiFetch('/api/admin/backdate-sale', {
+            method: 'POST',
+            body: JSON.stringify({
+              date: g.date, customerName: g.client, paymentMethod: g.paymentMethod || bdImportSettings.paymentMethod,
+              notes: g.transNo ? `Imported - ${g.transNo}` : 'Imported from Excel',
+              affectInventory: bdImportSettings.affectInventory, isComplimentary: false, discountPercent: 0,
+              items: g.items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity, productId: it.productId, productCode: it.productCode })),
+            }),
+          });
+          if (res.status !== 429 || attempt >= 4) break;
+          attempt++;
+          await new Promise(r => setTimeout(r, 1500 * attempt));
+        }
         const d = await res.json();
         if (d.success) ok++; else { fail++; errors.push(`${label}: ${d.error}`); }
       } catch { fail++; errors.push(`${label}: network error`); }
       setBdImportProgress(p => ({ ...p, done: p.done + 1 }));
+      // Small pace between rows so a fast/local server doesn't out-race the
+      // rate limiter even before any 429 shows up.
+      await new Promise(r => setTimeout(r, 120));
     }
     setBdImporting(false);
     setBdImportProgress(null);
