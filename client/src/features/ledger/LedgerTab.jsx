@@ -424,10 +424,12 @@ export default function LedgerTab({ ctx }) {
       // can still tick any of them back on.
       const looksNonSale = (name) => /\b(template|cheat\s*code|archive|copy of)\b/i.test(name);
       const preselected = sheetNames.filter(n => !looksNonSale(n));
+      setBdImporting(false);
       setBdSheetPicker({ wb, sheetNames, selected: new Set(preselected) });
     } catch {
+      setBdImporting(false);
       ui.alert('Could not read the file. Make sure it is a valid .xlsx / .csv.');
-    } finally { setBdImporting(false); }
+    }
   };
 
   const confirmBdSheetPicker = async () => {
