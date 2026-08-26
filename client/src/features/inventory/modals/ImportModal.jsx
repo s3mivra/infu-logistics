@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { Check, X } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
 
@@ -64,8 +65,34 @@ export default function ImportModal() {
                   const isBatch = !isNew && !!r._newBatch;
                   const diff = Number(r._diff || 0);
                   const valueDiff = (isNew || isBatch ? r.qty : diff) * (r.unitCost === '' ? (r._existing?.unitCost ? r._existing.unitCost * (r._existing.unitMultiplier || 1) : 0) : Number(r.unitCost || 0));
+
+                  // A real pack size (e.g. "…377G" parsed from the name) means the
+                  // sheet's own Qty column was a PACK COUNT, not a weight - show it
+                  // back in those same terms (pcs) instead of the kg/L it got
+                  // converted to internally, so it reads like what was actually typed.
+                  const packSize = Number(r.packSize) || 0;
+                  const isPacked = packSize > 0;
+                  const fmtQty = (qtyDisplay) => isPacked
+                    ? `${(qtyDisplay / packSize).toLocaleString(undefined, { maximumFractionDigits: 2 })} pcs`
+                    : `${qtyDisplay.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`;
+
+                  // Multi-batch groups (repeated code/name, one row per lot) get a
+                  // rolled-up TOTAL row right after the last one - Current + this
+                  // row's own qty already IS the true final total, no need to
+                  // manually add up every batch row by eye.
+                  const key = r.itemCode || (r.itemName || '').toLowerCase();
+                  const next = importRows[i + 1];
+                  const prev = importRows[i - 1];
+                  const nextKey = next && !next._isCategory && !next._error ? (next.itemCode || (next.itemName || '').toLowerCase()) : null;
+                  const prevKey = prev && !prev._isCategory && !prev._error ? (prev.itemCode || (prev.itemName || '').toLowerCase()) : null;
+                  const isLastOfGroup = key !== nextKey;
+                  const wasGrouped = isBatch || key === prevKey;
+                  const showTotal = !isErr && !isNew && isLastOfGroup && wasGrouped;
+                  const finalTotalDisplay = showTotal ? (r._oldDisplay?.qty || 0) + Number(r.qty || 0) : 0;
+
                   return (
-                    <tr key={i} className={`border-b border-white/5 ${isErr ? 'bg-red-500/10' : isBatch ? 'bg-purple-500/5' : ''}`}>
+                    <Fragment key={i}>
+                    <tr className={`border-b border-white/5 ${isErr ? 'bg-red-500/10' : isBatch ? 'bg-purple-500/5' : ''}`}>
                       <td className="px-4 py-2.5 text-fg font-bold">
                         {r.itemCode && <span className="text-fg/30 font-mono text-[10px] mr-1.5">{r.itemCode}</span>}
                         {r.itemName || <span className="text-red-300">(missing)</span>}
@@ -83,14 +110,22 @@ export default function ImportModal() {
                         {!isErr && !isNew && !isBatch && diff < 0 && <span className="text-[10px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">↓ DEC</span>}
                         {!isErr && !isNew && !isBatch && diff === 0 && <span className="text-[10px] font-black bg-white/10 text-fg/60 px-1.5 py-0.5 rounded uppercase">SAME</span>}
                       </td>
-                      <td className="px-2 py-2.5 text-right text-fg/60 tabular-nums">{isNew || isErr ? '-' : `${r._oldDisplay.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r._oldDisplay.unit}`}</td>
-                      <td className="px-2 py-2.5 text-right text-fg font-bold tabular-nums">{isErr ? '-' : `${Number(r.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`}</td>
+                      <td className="px-2 py-2.5 text-right text-fg/60 tabular-nums">{isNew || isErr ? '-' : fmtQty(r._oldDisplay.qty)}</td>
+                      <td className="px-2 py-2.5 text-right text-fg font-bold tabular-nums">{isErr ? '-' : fmtQty(Number(r.qty))}</td>
                       <td className={`px-2 py-2.5 text-right tabular-nums font-bold ${diff > 0 ? 'text-green-400' : diff < 0 ? 'text-red-400' : 'text-fg/40'}`}>
-                        {isErr || isNew ? '-' : (diff > 0 ? '+' : '') + diff.toLocaleString(undefined, { maximumFractionDigits: 3 })}
+                        {isErr || isNew ? '-' : (diff > 0 ? '+' : '') + (isPacked ? (diff / packSize).toLocaleString(undefined, { maximumFractionDigits: 2 }) : diff.toLocaleString(undefined, { maximumFractionDigits: 3 }))}
                       </td>
                       <td className="px-2 py-2.5 text-right text-fg/70 tabular-nums">{isErr || r.unitCost === '' ? '-' : peso(r.unitCost)}</td>
                       <td className={`px-4 py-2.5 text-right tabular-nums font-bold ${valueDiff > 0 ? 'text-green-400' : valueDiff < 0 ? 'text-red-400' : 'text-fg/40'}`}>{isErr ? '-' : peso(Math.abs(valueDiff)) + (valueDiff < 0 ? ' loss' : valueDiff > 0 ? ' gain' : '')}</td>
                     </tr>
+                    {showTotal && (
+                      <tr className="border-b border-white/10 bg-brand/10">
+                        <td colSpan={3} className="px-4 py-2 text-fg/60 font-black text-[10px] uppercase tracking-widest text-right">Total after import</td>
+                        <td className="px-2 py-2 text-right text-brand font-black tabular-nums">{fmtQty(finalTotalDisplay)}</td>
+                        <td colSpan={3}></td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -124,17 +159,37 @@ export default function ImportModal() {
               const doc = new jsPDF('landscape');
               doc.setFontSize(16); doc.text(`${BIZ_NAME} - Bulk Import Preview`, 14, 14);
               doc.setFontSize(9); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 21);
-              const body = importRows.map(r => {
+              const body = [];
+              importRows.forEach((r, i) => {
                 const isErr = !!r._error;
                 const isNew = r._newItem;
                 const isBatch = !isNew && !!r._newBatch;
                 const diff = Number(r._diff || 0);
                 const status = isErr ? r._error : isNew ? 'NEW' : isBatch ? 'NEW BATCH' : diff > 0 ? '↑ INC' : diff < 0 ? '↓ DEC' : 'SAME';
-                const current = isNew || isErr ? '-' : `${r._oldDisplay.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r._oldDisplay.unit}`;
-                const next = isErr ? '-' : `${Number(r.qty).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`;
-                const delta = isErr || isNew ? '-' : (diff > 0 ? '+' : '') + diff.toLocaleString(undefined, { maximumFractionDigits: 3 });
+                // Same pack-count convention as the on-screen preview: a real pack
+                // size means the sheet's Qty column was a count, not a weight.
+                const packSize = Number(r.packSize) || 0;
+                const isPacked = packSize > 0;
+                const fmtQty = (qtyDisplay) => isPacked
+                  ? `${(qtyDisplay / packSize).toLocaleString(undefined, { maximumFractionDigits: 2 })} pcs`
+                  : `${qtyDisplay.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`;
+                const current = isNew || isErr ? '-' : fmtQty(r._oldDisplay.qty);
+                const next = isErr ? '-' : fmtQty(Number(r.qty));
+                const delta = isErr || isNew ? '-' : (diff > 0 ? '+' : '') + (isPacked ? (diff / packSize).toLocaleString(undefined, { maximumFractionDigits: 2 }) : diff.toLocaleString(undefined, { maximumFractionDigits: 3 }));
                 const cost = isErr || r.unitCost === '' ? '-' : `P${Number(r.unitCost).toFixed(2)}`;
-                return [r.itemCode || '-', r.itemName || '(missing)', status, current, next, delta, cost];
+                body.push([r.itemCode || '-', r.itemName || '(missing)', status, current, next, delta, cost]);
+
+                const key = r.itemCode || (r.itemName || '').toLowerCase();
+                const next2 = importRows[i + 1];
+                const prev2 = importRows[i - 1];
+                const nextKey = next2 && !next2._isCategory && !next2._error ? (next2.itemCode || (next2.itemName || '').toLowerCase()) : null;
+                const prevKey = prev2 && !prev2._isCategory && !prev2._error ? (prev2.itemCode || (prev2.itemName || '').toLowerCase()) : null;
+                const isLastOfGroup = key !== nextKey;
+                const wasGrouped = isBatch || key === prevKey;
+                if (!isErr && !isNew && isLastOfGroup && wasGrouped) {
+                  const finalTotal = (r._oldDisplay?.qty || 0) + Number(r.qty || 0);
+                  body.push(['', '', '', '', `TOTAL: ${fmtQty(finalTotal)}`, '', '']);
+                }
               });
               autoTable(doc, {
                 startY: 26,
