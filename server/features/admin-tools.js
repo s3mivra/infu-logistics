@@ -433,6 +433,26 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
   }
 });
 
+// History of every sale entered through the backdate tool (manual entries and
+// bulk Excel imports alike - both hit the route above), newest-posted first so
+// an operator can confirm a batch went through without hunting the main Orders
+// list. Paginated; `page`/`limit` optional.
+app.get('/api/admin/backdate-sale/history', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 25));
+    const filter = { isBackdated: true };
+    const [orders, total] = await Promise.all([
+      Order.find(filter).sort({ createdAt: -1, _id: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      Order.countDocuments(filter),
+    ]);
+    res.json({ success: true, orders, total, page, pages: Math.max(1, Math.ceil(total / limit)) });
+  } catch (err) {
+    log.error?.({ err }, 'GET /api/admin/backdate-sale/history failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 // One-off repair for orders created by the old (pre-transaction) backdate-sale
 // route: the Order write could succeed while the JournalEntry write failed or
 // was never reached, leaving a sale that shows in reports but has no ledger

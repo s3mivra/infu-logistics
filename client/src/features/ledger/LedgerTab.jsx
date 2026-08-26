@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Receipt } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Receipt, History } from 'lucide-react';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
 import ExpensesPage from './ExpensesPage';
@@ -175,6 +175,7 @@ export default function LedgerTab({ ctx }) {
         setBdCart([]);
         setBd(b => ({ ...b, customerName: '', notes: '', discountPercent: 0, isComplimentary: false }));
         fetchERPData();
+        fetchBdHistory(1);
       } else ui.alert(d.error || 'Failed to record backdated sale.');
     } catch { ui.alert('Network error.'); }
     finally { setBdBusy(false); }
@@ -334,14 +335,18 @@ export default function LedgerTab({ ctx }) {
     finally { setBdImporting(false); setBdSheetPicker(null); }
   };
 
+  const [bdImportProgress, setBdImportProgress] = useState(null); // { done, total }
+
   const confirmBdImport = async () => {
     if (!bdImportPreview) return;
     setBdImporting(true);
+    const total = bdImportPreview.groups.length;
+    setBdImportProgress({ done: 0, total });
     let ok = 0, fail = 0;
     const errors = [];
     for (const g of bdImportPreview.groups) {
       const label = g.client || g.transNo || 'row';
-      if (!g.date) { fail++; errors.push(`${label}: missing/unreadable date`); continue; }
+      if (!g.date) { fail++; errors.push(`${label}: missing/unreadable date`); setBdImportProgress(p => ({ ...p, done: p.done + 1 })); continue; }
       try {
         const res = await apiFetch('/api/admin/backdate-sale', {
           method: 'POST',
@@ -355,11 +360,28 @@ export default function LedgerTab({ ctx }) {
         const d = await res.json();
         if (d.success) ok++; else { fail++; errors.push(`${label}: ${d.error}`); }
       } catch { fail++; errors.push(`${label}: network error`); }
+      setBdImportProgress(p => ({ ...p, done: p.done + 1 }));
     }
     setBdImporting(false);
+    setBdImportProgress(null);
     setBdImportPreview(null);
     fetchERPData();
+    fetchBdHistory();
     ui.alert(`Imported ${ok} sale(s).${fail ? `\n\n${fail} failed:\n${errors.slice(0, 10).join('\n')}` : ''}`);
+  };
+
+  // ── Backdate Sale - history (both manual entries and bulk imports) ──────────
+  const [bdHistory, setBdHistory] = useState(null); // { orders, total, page, pages }
+  const [bdHistoryLoading, setBdHistoryLoading] = useState(false);
+  const [bdHistoryPage, setBdHistoryPage] = useState(1);
+  const fetchBdHistory = async (page = bdHistoryPage) => {
+    setBdHistoryLoading(true);
+    try {
+      const r = await apiFetch(`/api/admin/backdate-sale/history?page=${page}&limit=20`);
+      const d = await r.json();
+      if (d.success) { setBdHistory(d); setBdHistoryPage(d.page); }
+    } catch { /* silent - history is supplementary, not blocking */ }
+    finally { setBdHistoryLoading(false); }
   };
 
   const [backfillBusy, setBackfillBusy] = useState(false);
@@ -434,6 +456,7 @@ export default function LedgerTab({ ctx }) {
     if (ledgerSubTab === 'trial') loadTrial();
     if (ledgerSubTab === 'salessummary' && !salesSummary) fetchSalesSummary();
     if (ledgerSubTab === 'salesline' && !salesLineItems) fetchSalesLineItems();
+    if (ledgerSubTab === 'backdate' && !bdHistory) fetchBdHistory(1);
   }, [ledgerSubTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Which Payment Routing parent groups (111000 / 112000 / etc.) are expanded.
@@ -2934,6 +2957,66 @@ export default function LedgerTab({ ctx }) {
                   </div>
                 </div>
               )}
+
+              {/* ── BACKDATE SALE HISTORY ── every entry made through this tool, manual or bulk-imported */}
+              {isSuperAdmin && (
+                <div className="bg-surface border border-white/10 rounded-xl overflow-hidden mt-2">
+                  <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2 flex-wrap">
+                    <History size={14} className="text-fg/50" />
+                    <h3 className="text-sm font-black text-fg uppercase tracking-wider">Backdate History</h3>
+                    {bdHistory?.total > 0 && <span className="text-[10px] text-fg/40 font-bold">{bdHistory.total} total</span>}
+                    <button onClick={() => fetchBdHistory(bdHistoryPage)} disabled={bdHistoryLoading}
+                      className="ml-auto flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition disabled:opacity-50">
+                      <RefreshCw size={11} className={bdHistoryLoading ? 'animate-spin' : ''}/> Refresh
+                    </button>
+                  </div>
+                  {bdHistoryLoading && !bdHistory ? (
+                    <p className="text-fg/40 text-sm p-6 text-center font-bold">Loading…</p>
+                  ) : !bdHistory || bdHistory.orders.length === 0 ? (
+                    <p className="text-fg/60 text-sm p-8 text-center font-bold">No backdated sales recorded yet.</p>
+                  ) : (
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs min-w-[560px]">
+                          <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                            <tr>
+                              <th className="px-5 py-2.5">Date</th>
+                              <th className="px-5 py-2.5">Order No.</th>
+                              <th className="px-5 py-2.5">Customer</th>
+                              <th className="px-5 py-2.5">Payment</th>
+                              <th className="px-5 py-2.5">Notes</th>
+                              <th className="px-5 py-2.5 text-right">Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {bdHistory.orders.map((o, i) => (
+                              <tr key={o._id} className={`border-b border-white/5 hover:bg-white/3 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'}`}>
+                                <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap font-bold">
+                                  {new Date(o.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                </td>
+                                <td className="px-5 py-2.5 font-mono text-fg/60 whitespace-nowrap">{o.orderNumber}</td>
+                                <td className="px-5 py-2.5 text-fg/80 font-bold truncate max-w-[160px]">{o.customerName || 'Walk-in'}</td>
+                                <td className="px-5 py-2.5 text-fg/60 whitespace-nowrap">{o.paymentMethod}</td>
+                                <td className="px-5 py-2.5 text-fg/40 truncate max-w-[220px]">{o.orderNotes || '-'}</td>
+                                <td className="px-5 py-2.5 text-right text-fg font-mono tabular-nums font-bold">{peso(o.total)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {bdHistory.pages > 1 && (
+                        <div className="flex items-center justify-between px-5 py-3 border-t border-white/10">
+                          <button onClick={() => fetchBdHistory(bdHistoryPage - 1)} disabled={bdHistoryPage <= 1 || bdHistoryLoading}
+                            className="text-[10px] font-black uppercase tracking-widest text-fg/50 hover:text-fg disabled:opacity-30 transition">← Prev</button>
+                          <span className="text-[10px] text-fg/40 font-bold">Page {bdHistory.page} of {bdHistory.pages}</span>
+                          <button onClick={() => fetchBdHistory(bdHistoryPage + 1)} disabled={bdHistoryPage >= bdHistory.pages || bdHistoryLoading}
+                            className="text-[10px] font-black uppercase tracking-widest text-fg/50 hover:text-fg disabled:opacity-30 transition">Next →</button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -3042,10 +3125,22 @@ export default function LedgerTab({ ctx }) {
                     </div>
                   ))}
                 </div>
+                {bdImportProgress && (
+                  <div className="px-5 pt-4">
+                    <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-fg/50 mb-1.5">
+                      <span>Importing…</span>
+                      <span className="tabular-nums">{bdImportProgress.done} / {bdImportProgress.total}</span>
+                    </div>
+                    <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                      <div className="h-full bg-brand transition-all duration-200 ease-out rounded-full"
+                        style={{ width: `${Math.round((bdImportProgress.done / (bdImportProgress.total || 1)) * 100)}%` }} />
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
-                  <button onClick={() => !bdImporting && setBdImportPreview(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
+                  <button onClick={() => !bdImporting && setBdImportPreview(null)} disabled={bdImporting} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition disabled:opacity-30">Cancel</button>
                   <button onClick={confirmBdImport} disabled={bdImporting} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
-                    {bdImporting ? 'Importing…' : `Import ${bdImportPreview.groups.length} Sale(s)`}
+                    {bdImporting ? `Importing ${bdImportProgress ? `${bdImportProgress.done}/${bdImportProgress.total}` : '…'}` : `Import ${bdImportPreview.groups.length} Sale(s)`}
                   </button>
                 </div>
               </div>
