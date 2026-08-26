@@ -408,7 +408,7 @@ export default function InventoryTab({ ctx }) {
                             <div className="overflow-x-auto">
                               <table className="w-full text-xs">
                                 <thead>
-                                  <tr className="text-white/30 text-[10px] uppercase tracking-widest">
+                                  <tr className="text-white text-[10px] uppercase tracking-widest">
                                     <th className="text-left pb-1.5">#</th>
                                     <th className="text-right pb-1.5">Qty</th>
                                     <th className="text-left pb-1.5 pl-3">Expiry / Prod</th>
@@ -441,7 +441,7 @@ export default function InventoryTab({ ctx }) {
                                         if (diffDays < 0) badge = 'text-red-400 font-black';
                                         else if (diffDays === 0) badge = 'text-red-400 font-black';
                                         else if (diffDays <= (item.expiryWarnDays || 7)) badge = 'text-yellow-300 font-bold';
-                                        else badge = 'text-fg/70';
+                                        else badge = 'text-white';
                                       }
                                       const isOldest = displayIdx === 0;
                                       return (
@@ -467,7 +467,7 @@ export default function InventoryTab({ ctx }) {
                                               if (!(await ui.confirm(`Remove this batch (${dispQty} ${bUnit}, expires ${exp ? exp.toLocaleDateString() : 'n/a'})? This will NOT change stockQty - only the batch record.`))) return;
                                               await apiFetch(`/api/inventory/${item._id}/batches/${b._originalIdx}`, { method: 'DELETE' });
                                               fetchERPData();
-                                            }} className="text-red-400/60 hover:text-red-400 hover:bg-red-500/10 px-2 py-0.5 rounded transition text-[10px] font-black uppercase tracking-wider">
+                                            }} className="text-red-400 hover:text-red-400 hover:bg-red-500/10 px-2 py-0.5 rounded transition text-[10px] font-black uppercase tracking-wider">
                                               Remove
                                             </button>
                                           </td>
@@ -792,7 +792,7 @@ export default function InventoryTab({ ctx }) {
             return (
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
                 {lowItems.length > 0 && (
-                  <div className="bg-red-900/10 border border-red-500/30 rounded-xl p-4">
+                  <div className="bg-red-900/5 border border-red-500/30 rounded-xl p-4">
                     <h4 className="text-red-400 font-black uppercase tracking-wider text-xs mb-2 flex items-center gap-1.5"><AlertTriangle size={13} /> Low Stock Alerts</h4>
                     <div className="space-y-1">
                       {lowItems.map(i => {
@@ -811,12 +811,12 @@ export default function InventoryTab({ ctx }) {
                   </div>
                 )}
                 {watch.length > 0 && (
-                  <div className="bg-orange-900/10 border border-orange-500/30 rounded-xl p-4 space-y-2">
+                  <div className="bg-orange-900/50 border border-orange-500/30 rounded-xl p-4 space-y-2">
                     <h4 className="text-orange-300 font-black uppercase tracking-wider text-xs flex items-center gap-1.5">
                       <Clock size={13} /> Expiry Watch
-                      <span className="ml-auto text-[9px] bg-orange-500/30 text-orange-200 px-1.5 py-0.5 rounded">{watch.length}</span>
+                      <span className="ml-auto text-[9px] bg-orange-500 text-white px-1.5 py-0.5 rounded">{watch.length}</span>
                     </h4>
-                    {watch.filter(i => i._days < 0).length > 0 && <p className="text-[10px] text-red-300 font-black uppercase tracking-wider">{watch.filter(i => i._days < 0).length} Expired — log spoilage</p>}
+                    {watch.filter(i => i._days < 0).length > 0 && <p className="text-[10px] text-red-300 font-black uppercase tracking-wider">{watch.filter(i => i._days < 0).length} Expired - log spoilage</p>}
                     <div className="space-y-1 max-h-36 overflow-y-auto custom-scrollbar">
                       {watch.map(i => {
                         const txt = i._days < 0 ? `${Math.abs(i._days)}d ago` : i._days === 0 ? 'today' : `in ${i._days}d`;

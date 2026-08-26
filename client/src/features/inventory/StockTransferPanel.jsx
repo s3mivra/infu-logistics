@@ -242,7 +242,7 @@ export default function StockTransferPanel({
         <div className={card}>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-white font-black uppercase tracking-wider text-sm">Hub Shipments (to connected businesses)</h3>
-            <span className="text-[10px] text-white/30">Incoming shipments · use the Hub tab to accept</span>
+            <span className="text-[10px] text-white">Incoming shipments · use the Hub tab to accept</span>
           </div>
           {hubTransfers.length === 0 ? (
             <p className="text-white text-xs py-6 text-center uppercase tracking-widest">No hub shipments yet</p>
@@ -261,9 +261,9 @@ export default function StockTransferPanel({
                 <tbody>
                   {hubTransfers.map(t => (
                     <tr key={t._id} className="border-b border-white/5">
-                      <td className="py-2 text-white/60 text-xs font-mono">{t.reference}</td>
+                      <td className="py-2 text-white text-xs font-mono">{t.reference}</td>
                       <td className="py-2 text-white font-bold">{t.itemName}</td>
-                      <td className="py-2 text-white/60 text-xs">{t.partnerName || t.partnerSlug}</td>
+                      <td className="py-2 text-white text-xs">{t.partnerName || t.partnerSlug}</td>
                       <td className="py-2 text-right text-white tabular-nums font-bold">{t.qtyBase} {t.unit}</td>
                       <td className="py-2 pl-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${hubStatusColor[t.status] || 'bg-white/10 text-white/50'}`}>{t.status}</span></td>
                     </tr>

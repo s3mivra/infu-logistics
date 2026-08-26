@@ -46,7 +46,7 @@ export default function EditInventoryModal() {
             <label className="text-[10px] text-fg/60 font-bold uppercase block mb-1">Item Code *</label>
             <input type="text" value={editInvForm.itemCode ?? ''} onChange={e => set({ itemCode: e.target.value.toUpperCase() })}
               className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold font-mono outline-none focus:border-brand/60 transition" />
-            <p className="text-[10px] text-yellow-400/70 mt-1">⚠ Changing this also updates the linked product code. Must stay unique.</p>
+            <p className="text-[10px] text-yellow-400 mt-1">⚠ Changing this also updates the linked product code. Must stay unique.</p>
           </div>
           <div>
             <label className="text-[10px] text-fg/60 font-bold uppercase block mb-1">Item Name *</label>
@@ -69,7 +69,7 @@ export default function EditInventoryModal() {
               <label className="text-[10px] text-fg/60 font-bold uppercase block mb-1">Unit Cost (₱/{costUnit})</label>
               <input type="number" min="0" step="0.01" value={editInvForm.unitCost} onChange={e => set({ unitCost: e.target.value })}
                 className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold tabular-nums outline-none focus:border-brand/60" />
-              <p className="text-[9px] text-yellow-400/70 mt-1">⚠ Will not retro-update existing COGS.</p>
+              <p className="text-[9px] text-yellow-400 mt-1">⚠ Will not retro-update existing COGS.</p>
             </div>
           </div>
           <div>
