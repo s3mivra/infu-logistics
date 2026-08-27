@@ -1304,6 +1304,38 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
     // below. Scoped to this one request, so re-importing the same single-row
     // sheet on a later day still does a plain stock-take replace, unaffected.
     const seenThisImport = new Set();
+    // A sheet's section headers ("BEANS", "TEA", ...) already imply a code
+    // prefix (P10001, P20001, ...) - StockCategory.prefix (#9) is what drives
+    // BOTH the "next code" auto-numbering on the manual Add form AND what shows
+    // pre-filled when a category is opened for editing, but nothing populated
+    // it for a category the import itself creates. Cache resolved
+    // category-name -> StockCategory doc for this run so repeated rows in the
+    // same section don't re-query it every time.
+    const stockCategoryCache = new Map();
+    const resolveStockCategory = async (name, itemCode) => {
+      if (!name) return;
+      if (stockCategoryCache.has(name)) return stockCategoryCache.get(name);
+      // Strip the trailing 4-digit sequence to get the prefix, e.g.
+      // "P10001" -> "P1", "G10001" -> "G1" - the exact convention
+      // nextCategoryCode (above) itself uses to generate the NEXT code, so a
+      // prefix derived here keeps future manually-added items numbered right
+      // behind whatever this import just brought in.
+      const code = String(itemCode || '').toUpperCase().trim();
+      const derivedPrefix = code.length > 4 && /^\d{4}$/.test(code.slice(-4)) ? code.slice(0, -4) : '';
+      let cat = await StockCategory.findOne({ businessType: BUSINESS_TYPE, name: { $regex: new RegExp(`^${escapeRegex(name)}$`, 'i') } }).session(session);
+      if (!cat) {
+        cat = derivedPrefix
+          ? await StockCategory.create([{ businessType: BUSINESS_TYPE, name, prefix: derivedPrefix }], { session }).then(r => r[0])
+          : null;
+      } else if (!cat.prefix && derivedPrefix) {
+        // Never overwrite a prefix someone already set on this category by
+        // hand - only fill it in when it was genuinely blank.
+        cat.prefix = derivedPrefix;
+        await cat.save({ session });
+      }
+      stockCategoryCache.set(name, cat);
+      return cat;
+    };
 
     for (let i = 0; i < items.length; i++) {
       const row = items[i] || {};
@@ -1315,6 +1347,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       // logistics-only concept - an fb import brings in raw inventory data (stock,
       // cost, expiry) only, and never touches menu setup even if the sheet has one.
       const categoryName = BUSINESS_TYPE === 'log' ? String(row.category || '').trim() : '';
+      if (categoryName) await resolveStockCategory(categoryName, itemCode);
       const srp = row.srp !== undefined && row.srp !== '' ? parseFloat(row.srp) : null;
       // In log mode the product IS the stocked good, so EVERY imported item gets a
       // linked Product (menu entry), with or without a category on the sheet - a
@@ -1429,6 +1462,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         existing.unitMultiplier = mult;
         if (baseUnit) existing.unit = baseUnit;
         if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
+        if (categoryName && !existing.stockCategory) existing.stockCategory = categoryName;
 
         existing.expiryBatches = addBatch(existing.expiryBatches || [], {
           qty: newBaseQty,
@@ -1501,6 +1535,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         existing.unitMultiplier = mult;
         if (baseUnit) existing.unit = baseUnit;
         if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
+        if (categoryName && !existing.stockCategory) existing.stockCategory = categoryName;
 
         // Expiry batches:
         //  - If Excel row carries an expiry OR production date: append it as a new
@@ -1623,6 +1658,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           expiryBatches: initialBatches,
           expiryDate: soonestExpiry(initialBatches),
           businessType: BUSINESS_TYPE,
+          stockCategory: categoryName || '',
         }], { session });
         const item = created[0];
         const valueImpact = newBaseQty * (item.unitCost || 0);
