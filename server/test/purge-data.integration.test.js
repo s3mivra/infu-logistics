@@ -57,6 +57,27 @@ describe('purge data', () => {
     expect(list.body.products.some(p => p._id === productId)).toBe(true);
   });
 
+  it('purging the inventory category also clears stock transfers', async () => {
+    const invA = await request(app).post('/api/inventory').set(auth(superToken))
+      .send({ itemName: 'Purge Transfer Source', unit: 'pcs', stockQty: 20, unitCost: 5 });
+    const invB = await request(app).post('/api/inventory').set(auth(superToken))
+      .send({ itemName: 'Purge Transfer Dest', unit: 'pcs', stockQty: 0, unitCost: 5 });
+    const t = await request(app).post('/api/stock-transfers').set(auth(superToken))
+      .send({ fromItemId: invA.body.item._id, toItemId: invB.body.item._id, qtyBase: 5 });
+    expect(t.body.success).toBe(true);
+
+    const before = await request(app).get('/api/stock-transfers').set(auth(superToken));
+    expect(before.body.transfers.some(x => String(x._id) === String(t.body.transfer._id))).toBe(true);
+
+    const res = await request(app).post('/api/admin/purge-data').set(auth(superToken))
+      .send({ confirmPhrase: 'PURGE', categories: ['inventory'] });
+    expect(res.body.success).toBe(true);
+    expect(res.body.deleted.stockTransfers).toBeGreaterThanOrEqual(1);
+
+    const after = await request(app).get('/api/stock-transfers').set(auth(superToken));
+    expect(after.body.transfers.length).toBe(0);
+  });
+
   it('purges the menu only when explicitly selected', async () => {
     const prod = await request(app).post('/api/products').set(auth(superToken))
       .send({ name: 'Purge Menu Test Product', basePrice: 50, category: 'Test' });

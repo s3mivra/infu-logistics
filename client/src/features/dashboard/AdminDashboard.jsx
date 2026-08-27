@@ -3323,7 +3323,10 @@ const updateStatus = async (orderId, newStatus) => {
     try {
       const XLSX = await import('xlsx');
       const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: 'array' });
+      // cellDates: true - without it a real Excel date cell (like Expiry date) comes
+      // back as its raw serial number (e.g. 46033), which then gets stringified and
+      // parsed as if it were a literal year ("1/1/46033") instead of the actual date.
+      const wb = XLSX.read(buf, { type: 'array', cellDates: true });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
       if (rows.length === 0) return ui.alert('No rows found in the file.');
@@ -3407,13 +3410,32 @@ const updateStatus = async (orderId, newStatus) => {
         const needsSize = !unit;
         if (needsSize) unit = 'pcs';
 
+        // Excel date cells arrive here in one of three shapes:
+        //  - a JS Date (cellDates:true recognized the cell's own date number-format)
+        //  - a raw serial day-number (Excel's 1899-12-30 epoch) when the cell holds a
+        //    date-looking value but ISN'T tagged with a date format - cellDates:true
+        //    can't convert what the file itself doesn't mark as a date, so this still
+        //    shows up as a bare number like 46572 and must be converted by hand
+        //  - plain text, when the cell was typed/formatted as text
+        // Stringifying a raw serial without this conversion is exactly what produced
+        // "1/1/46572" instead of 4/7/2027 - the number was read as a literal year.
+        const toDateStr = (v) => {
+          if (v === '' || v == null) return '';
+          if (v instanceof Date) return isNaN(v.getTime()) ? '' : v.toISOString().slice(0, 10);
+          if (typeof v === 'number') {
+            const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+            return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+          }
+          return String(v).trim();
+        };
+
         const exp = lower['expiry date'] || lower['expiry'] || lower['expirydate'] || '';
-        const expStr = exp === '' || exp == null ? '' : String(exp).trim();
+        const expStr = toDateStr(exp);
 
         // Production date - for goods with no real expiry (roasted beans, etc.).
         // Only meaningful when there's no expiry on the row.
         const prod = lower['production date'] || lower['production'] || lower['prod date'] || lower['proddate'] || lower['roast date'] || lower['roastdate'] || '';
-        const prodStr = expStr ? '' : (prod === '' || prod == null ? '' : String(prod).trim());
+        const prodStr = expStr ? '' : toDateStr(prod);
 
         // SRP - strip ₱ symbol and commas
         const rawSrp = String(lower.srp || lower['selling price'] || lower['retail price'] || '').replace(/[₱,\s]/g, '');

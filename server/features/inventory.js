@@ -1160,6 +1160,45 @@ app.post('/api/inventory/:id/batches', verifyToken, requireSuperAdmin, async (re
   }
 });
 
+// --- BATCH MANAGEMENT: correct a batch's expiry/production date by index
+// (use when an import or manual entry recorded the wrong date - e.g. a
+// misparsed Excel serial number). Pure metadata fix: no stock/ledger impact,
+// since the physical quantity and cost aren't changing, only which date it's
+// tagged with. Setting expiryDate clears productionDate and vice versa - a
+// batch is dated one way or the other, never both (mirrors every other
+// expiry/production entry point in the app).
+app.patch('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const item = await Inventory.findById(req.params.id);
+    if (!item) return res.status(404).json({ success: false, error: 'Item not found' });
+    const idx = parseInt(req.params.batchIdx, 10);
+    if (Number.isNaN(idx) || idx < 0 || idx >= (item.expiryBatches || []).length) {
+      return res.status(400).json({ success: false, error: 'Invalid batch index.' });
+    }
+    const { expiryDate, productionDate } = req.body || {};
+    if (!expiryDate && !productionDate) {
+      return res.status(400).json({ success: false, error: 'Provide an expiryDate or productionDate.' });
+    }
+    if (expiryDate) {
+      const d = new Date(expiryDate);
+      if (isNaN(d.getTime())) return res.status(400).json({ success: false, error: 'Invalid expiry date.' });
+      item.expiryBatches[idx].expiryDate = d;
+      item.expiryBatches[idx].productionDate = null;
+    } else {
+      const d = new Date(productionDate);
+      if (isNaN(d.getTime())) return res.status(400).json({ success: false, error: 'Invalid production date.' });
+      item.expiryBatches[idx].productionDate = d;
+      item.expiryBatches[idx].expiryDate = null;
+    }
+    item.expiryDate = soonestExpiry(item.expiryBatches);
+    await item.save();
+    emitToMgr('erpUpdated');
+    res.json({ success: true, item });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 // --- BATCH MANAGEMENT: delete a specific batch by index (use when physical stock no longer matches) ---
 app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmin, async (req, res) => {
   try {

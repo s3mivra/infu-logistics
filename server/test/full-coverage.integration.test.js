@@ -126,9 +126,14 @@ describe('inventory: list, create, restock, batches, expiry, revalue, edit, hist
     ids.sugarId = r.body.item?._id || r.body._id;
   });
   it('POST restock', async () => ran(await req('post', `/api/inventory/restock/${ids.invId}`, T.staff).send({ addedStock: 1000, totalCost: 70, expiryDate: '2027-03-01', creditAccount: '111000' })));
-  it('POST add batch + DELETE batch', async () => {
+  it('POST add batch + PATCH batch date + DELETE batch', async () => {
     const b = await req('post', `/api/inventory/${ids.invId}/batches`, T.super).send({ qty: 500, expiryDate: '2027-01-01', unitCost: 0.07 });
     ran(b);
+    // Correct a wrong batch date (e.g. an import misread the cell) - pure
+    // metadata fix, no stock/ledger impact.
+    const patched = await req('patch', `/api/inventory/${ids.invId}/batches/0`, T.super).send({ expiryDate: '2027-03-15' });
+    ran(patched);
+    expect(new Date(patched.body.item.expiryBatches[0].expiryDate).toISOString().slice(0, 10)).toBe('2027-03-15');
     ran(await req('delete', `/api/inventory/${ids.invId}/batches/0`, T.super));
   });
   it('PATCH expiry', async () => ran(await req('patch', `/api/inventory/${ids.invId}/expiry`, T.staff).send({ expiryDate: '2027-06-01' })));

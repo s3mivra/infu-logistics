@@ -91,6 +91,28 @@ export default function InventoryTab({ ctx }) {
   const [openActionMenu, setOpenActionMenu] = useState(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
 
+  // ── Batch expiry/production date correction (e.g. an import misread the
+  // cell and stored the wrong date) - editingBatch = { itemId, batchIdx, value } ──
+  const [editingBatch, setEditingBatch] = useState(null);
+  const [savingBatch, setSavingBatch] = useState(false);
+  const saveBatchDate = async () => {
+    if (!editingBatch || !editingBatch.value) return;
+    setSavingBatch(true);
+    try {
+      const body = editingBatch.mode === 'production'
+        ? { productionDate: editingBatch.value }
+        : { expiryDate: editingBatch.value };
+      const r = await apiFetch(`/api/inventory/${editingBatch.itemId}/batches/${editingBatch.batchIdx}`, {
+        method: 'PATCH', body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (!d.success) return ui.alert(d.error || 'Failed to update batch date.');
+      setEditingBatch(null);
+      fetchERPData();
+    } catch { ui.alert('Failed to update batch date.'); }
+    finally { setSavingBatch(false); }
+  };
+
   // ── EOD Variance report (locked days) ──────────────────────────────────────
   // EODRecord itself only ever stored the lock flag, never the variance
   // detail - reconstructed from the StockCard 'Adjustment' entries that
@@ -503,19 +525,51 @@ export default function InventoryTab({ ctx }) {
                                             {isOldest ? <span className="text-[9px] bg-brand text-white px-1.5 py-0.5 rounded font-black uppercase tracking-wider shadow-sm">NEXT</span> : `#${displayIdx + 1}`}
                                           </td>
                                           <td className="py-1.5 text-right text-white font-bold tabular-nums">{dispQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {bUnit}</td>
-                                          <td className={`py-1.5 pl-3 tabular-nums ${badge}`}>
-                                            {exp ? (
-                                              <>{exp.toLocaleDateString()}
-                                                {diffDays !== null && <span className="ml-1.5 text-[10px] opacity-70">({diffDays < 0 ? `${Math.abs(diffDays)}d ago` : diffDays === 0 ? 'today' : `in ${diffDays}d`})</span>}
-                                              </>
-                                            ) : prod ? (
-                                              <><span className="text-white text-[9px] uppercase font-bold mr-1">Prod</span>{prod.toLocaleDateString()}</>
-                                            ) : '-'}
-                                          </td>
-                                          <td className="py-1.5 pl-3 text-white text-[10px] tabular-nums">{b.receivedAt ? new Date(b.receivedAt).toLocaleDateString() : '-'}</td>
-                                          <td className="py-1.5 pl-3 text-right text-white text-[10px] tabular-nums">{b.unitCost ? peso(b.unitCost * bPackBase) : '-'}<span className="text-white">/{bUnit}</span></td>
+                                          {(() => {
+                                            const isEditingThis = editingBatch?.itemId === item._id && editingBatch?.batchIdx === b._originalIdx;
+                                            if (isEditingThis) {
+                                              return (
+                                                <td className="py-1.5 pl-3" colSpan={3}>
+                                                  <div className="flex items-center gap-1.5">
+                                                    <select value={editingBatch.mode} onChange={e => setEditingBatch(s => ({ ...s, mode: e.target.value }))}
+                                                      className="bg-page-bg border border-white/20 rounded px-1.5 py-1 text-[10px] text-white outline-none">
+                                                      <option value="expiry">Expiry</option>
+                                                      <option value="production">Prod</option>
+                                                    </select>
+                                                    <input autoFocus type="date" value={editingBatch.value}
+                                                      onChange={e => setEditingBatch(s => ({ ...s, value: e.target.value }))}
+                                                      onKeyDown={e => { if (e.key === 'Enter') saveBatchDate(); if (e.key === 'Escape') setEditingBatch(null); }}
+                                                      className="bg-page-bg border border-brand/50 rounded px-1.5 py-1 text-[10px] text-white outline-none" />
+                                                    <button onClick={saveBatchDate} disabled={savingBatch} className="text-green-400 hover:text-green-300 text-[10px] font-black uppercase disabled:opacity-50">Save</button>
+                                                    <button onClick={() => setEditingBatch(null)} className="text-white/50 hover:text-white text-[10px] font-black uppercase">Cancel</button>
+                                                  </div>
+                                                </td>
+                                              );
+                                            }
+                                            return (<>
+                                              <td className={`py-1.5 pl-3 tabular-nums ${badge}`}>
+                                                {exp ? (
+                                                  <>{exp.toLocaleDateString()}
+                                                    {diffDays !== null && <span className="ml-1.5 text-[10px] opacity-70">({diffDays < 0 ? `${Math.abs(diffDays)}d ago` : diffDays === 0 ? 'today' : `in ${diffDays}d`})</span>}
+                                                  </>
+                                                ) : prod ? (
+                                                  <><span className="text-white text-[9px] uppercase font-bold mr-1">Prod</span>{prod.toLocaleDateString()}</>
+                                                ) : '-'}
+                                              </td>
+                                              <td className="py-1.5 pl-3 text-white text-[10px] tabular-nums">{b.receivedAt ? new Date(b.receivedAt).toLocaleDateString() : '-'}</td>
+                                              <td className="py-1.5 pl-3 text-right text-white text-[10px] tabular-nums">{b.unitCost ? peso(b.unitCost * bPackBase) : '-'}<span className="text-white">/{bUnit}</span></td>
+                                            </>);
+                                          })()}
                                           <td className="py-1.5 pl-3 text-white text-[10px]">{b.reference || '-'}</td>
-                                          <td className="py-1.5 text-right">
+                                          <td className="py-1.5 text-right whitespace-nowrap">
+                                            <button onClick={() => setEditingBatch({
+                                              itemId: item._id, batchIdx: b._originalIdx,
+                                              mode: prod ? 'production' : 'expiry',
+                                              value: (exp || prod) ? (exp || prod).toISOString().slice(0, 10) : '',
+                                            })} title="Correct this batch's expiry/production date"
+                                              className="text-blue-300/80 hover:text-blue-300 hover:bg-blue-500/10 px-2 py-0.5 rounded transition text-[10px] font-black uppercase tracking-wider mr-1">
+                                              Edit
+                                            </button>
                                             <button onClick={async () => {
                                               if (!(await ui.confirm(`Remove this batch (${dispQty} ${bUnit}, expires ${exp ? exp.toLocaleDateString() : 'n/a'})? This will NOT change stockQty - only the batch record.`))) return;
                                               await apiFetch(`/api/inventory/${item._id}/batches/${b._originalIdx}`, { method: 'DELETE' });

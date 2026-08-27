@@ -701,7 +701,7 @@ const PURGE_CONFIRM_PHRASE = 'PURGE';
 const PURGE_CATEGORIES = {
   orders:          { label: 'Sales & Orders', defaultOn: true },
   ledger:          { label: 'Ledger / Journal Entries', defaultOn: true },
-  inventory:       { label: 'Inventory & Stock History', defaultOn: true },
+  inventory:       { label: 'Inventory, Stock History & Transfers', defaultOn: true },
   shifts:          { label: 'Shifts & Time Clock', defaultOn: true },
   revolvingFunds:  { label: 'Revolving Funds', defaultOn: true },
   procurement:     { label: 'Procurement (POs & Bills)', defaultOn: true },
