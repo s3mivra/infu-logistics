@@ -30,7 +30,7 @@ const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase()
 
 export default function ProcurementTab({ ctx }) {
   const { apiFetch, peso, inventory = [], isSuperAdmin, packInfo, effectiveDisplay, systemSettings = {}, loadPdfLibs,
-    stockLocations = [], stockCategories = [], procurementCreditAccounts = [] } = ctx;
+    stockLocations = [], stockCategories = [], procurementCreditAccounts = [], activeAdmin } = ctx;
   const money = peso || ((n) => `₱${(Number(n) || 0).toFixed(2)}`);
 
   // Print a PO on the SAME A4 document template the Orders billing statement /
@@ -76,7 +76,9 @@ export default function ProcurementTab({ ctx }) {
         '3. Substitutions or backorders must be confirmed before dispatch.',
       ],
       signatures: [
-        'PREPARED BY: Signature over Printed Name / Date',
+        // preparedBy the PO was actually created under, falling back to
+        // whoever's printing it now (legacy POs from before createdBy existed).
+        `PREPARED BY${(po.createdBy || activeAdmin?.name) ? `: ${po.createdBy || activeAdmin?.name}` : ''} - Signature over Printed Name / Date`,
         'APPROVED BY: Signature over Printed Name / Date',
         'RECEIVED BY (Supplier): Signature over Printed Name / Date',
       ],

@@ -3440,8 +3440,23 @@ const updateStatus = async (orderId, newStatus) => {
         // "1/1/46572" instead of 4/7/2027 - the number was read as a literal year.
         const toDateStr = (v) => {
           if (v === '' || v == null) return '';
-          if (v instanceof Date) return isNaN(v.getTime()) ? '' : v.toISOString().slice(0, 10);
+          if (v instanceof Date) {
+            // cellDates:true builds this Date from a LOCAL wall-clock construction
+            // (verified empirically against this exact xlsx version - NOT the UTC
+            // construction some docs describe), so reading it back with
+            // .toISOString() (UTC getters) silently rolls the date back a day for
+            // any timezone ahead of UTC - e.g. Nov 1 (Philippines, UTC+8) became
+            // Oct 31. Local getters undo exactly what was baked in, correctly,
+            // regardless of the viewer's own timezone.
+            if (isNaN(v.getTime())) return '';
+            const yr = v.getFullYear(), mo = String(v.getMonth() + 1).padStart(2, '0'), da = String(v.getDate()).padStart(2, '0');
+            return `${yr}-${mo}-${da}`;
+          }
           if (typeof v === 'number') {
+            // Pure UTC day-count arithmetic (Excel's serial has no timezone concept
+            // at all) - self-consistent with .toISOString() below regardless of
+            // viewer timezone, unlike the Date-object branch above. Do not "fix"
+            // this one the same way; it isn't broken.
             const d = new Date(Math.round((v - 25569) * 86400 * 1000));
             return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
           }
@@ -4828,6 +4843,15 @@ const updateStatus = async (orderId, newStatus) => {
         { label: 'Delivery Fee', value: order.deliveryFee || 0 },
         { label: 'TOTAL', value: order.total || 0, grand: true },
       ],
+      // Prepared By pre-filled with whoever rang up the sale (falls back to the
+      // current user printing it, for legacy orders with no cashier on record).
+      // Checked/Received By stay blank ruled lines - those really do get signed
+      // by someone else after the fact.
+      signatures: [
+        `PREPARED BY${(order.cashier || activeAdmin?.name) ? `: ${order.cashier || activeAdmin?.name}` : ''} - Signature over Printed Name / Date`,
+        'CHECKED BY: Signature over Printed Name / Date',
+        'RECEIVED BY: Signature over Printed Name / Date',
+      ],
     }));
   };
 
@@ -4907,7 +4931,7 @@ const updateStatus = async (orderId, newStatus) => {
         ${order.orderNotes ? `<div class="notes"><b>Notes:</b> ${esc(order.orderNotes)}</div>` : ''}
 
         <div class="sigs">
-          <div class="sig"><div class="line"></div><div class="cap">Prepared By</div></div>
+          <div class="sig"><div class="line"></div><div class="cap">Prepared By${(order.cashier || activeAdmin?.name) ? `: ${esc(order.cashier || activeAdmin?.name)}` : ''}</div></div>
           <div class="sig"><div class="line"></div><div class="cap">Driver / Plate No.</div></div>
           <div class="sig"><div class="line"></div><div class="cap">Received By (Signature over Printed Name)</div></div>
           <div class="sig narrow"><div class="line"></div><div class="cap">Date Received</div></div>

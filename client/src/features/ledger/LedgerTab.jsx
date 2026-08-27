@@ -209,7 +209,14 @@ export default function LedgerTab({ ctx }) {
   // serial day-number (Excel's own epoch, 1899-12-30), or plain text.
   const bdParseDate = (v) => {
     if (!v) return '';
-    if (v instanceof Date) return isNaN(v) ? '' : v.toISOString().slice(0, 10);
+    if (v instanceof Date) {
+      // cellDates:true builds this from a LOCAL wall-clock construction (verified
+      // empirically against this xlsx version), so .toISOString() (UTC getters)
+      // silently rolls the date back a day for any timezone ahead of UTC. Local
+      // getters undo exactly what was baked in, correctly, for any timezone.
+      if (isNaN(v.getTime())) return '';
+      return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`;
+    }
     if (typeof v === 'number') { const d = new Date(Math.round((v - 25569) * 86400 * 1000)); return isNaN(d) ? '' : d.toISOString().slice(0, 10); }
     let s = String(v).trim();
     // Every date column in these sheets is MM/DD/YYYY (not DD/MM) - convert
