@@ -161,6 +161,29 @@ describe('bulk renumber a stock category', () => {
     expect(res.body.unchanged).toBe(2);
   });
 
+  it('finds items via the linked Product category when Inventory.stockCategory was never populated (pre-existing data)', async () => {
+    const StockCategory = mongoose.model('StockCategory');
+    const Inventory = mongoose.model('Inventory');
+    const Product = mongoose.model('Product');
+
+    const cat = await StockCategory.create({ businessType: 'log', name: 'LEGACY TEA', prefix: 'P9' });
+    // Deliberately no stockCategory on the Inventory doc - simulates an item
+    // imported before that field existed, same as the real bug report.
+    const item = await Inventory.create({ businessType: 'log', itemCode: 'P20004', itemName: 'Butterfly Pea', unit: 'kg', stockQty: 11, unitCost: 130 });
+    await Product.create({ businessType: 'log', name: 'Butterfly Pea', category: 'LEGACY TEA', basePrice: 250, productCode: 'P20004' });
+
+    const res = await request(app).post(`/api/stock-categories/${cat._id}/renumber`).set(auth(superToken));
+    expect(res.body.success).toBe(true);
+    expect(res.body.renamed).toEqual([{ itemName: 'Butterfly Pea', from: 'P20004', to: 'P90001' }]);
+
+    const fresh = await Inventory.findById(item._id).lean();
+    expect(fresh.itemCode).toBe('P90001');
+    expect(fresh.stockCategory).toBe('LEGACY TEA'); // backfilled along the way
+
+    const prod = await Product.findOne({ name: 'Butterfly Pea' }).lean();
+    expect(prod.productCode).toBe('P90001');
+  });
+
   it('does not touch historical order lines already booked under the old code', async () => {
     // Sanity check on the documented guarantee: Order is a separate collection
     // keyed by its own snapshot fields, never touched by this route at all.

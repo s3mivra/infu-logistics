@@ -494,6 +494,70 @@ app.post('/api/client-accounts/:id/reset-password', verifyToken, requireSuperAdm
   }
 });
 
+// ── Self-service onboarding link (#10) ────────────────────────────────────────
+// Generate: superadmin-only, from the Command Center. The client then opens
+// the link with NO auth at all (that's the point - they don't have a login
+// yet), fills in their own details, and sets their own username/password.
+app.post('/api/client-accounts/:id/onboard-link', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const client = await ClientAccount.findById(req.params.id);
+    if (!client) return res.status(404).json({ success: false, error: 'Client account not found.' });
+    const token = crypto.randomBytes(24).toString('hex');
+    client.onboardingToken = token;
+    client.onboardingTokenExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    await client.save();
+    await logAudit(req, { action: 'onboard_link_created', entity: 'ClientAccount', entityId: client._id, after: { clientCode: client.clientCode } });
+    res.json({ success: true, token, expiresAt: client.onboardingTokenExpiresAt });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// Public - no auth. The token itself IS the proof of authorization (mailed/
+// handed to the client directly), same trust model as a password-reset link.
+app.get('/api/client-onboard/:token', async (req, res) => {
+  try {
+    const client = await ClientAccount.findOne({ onboardingToken: req.params.token }, { name: 1, clientCode: 1, phone: 1, email: 1, onboardingTokenExpiresAt: 1 });
+    if (!client || !client.onboardingTokenExpiresAt || client.onboardingTokenExpiresAt < new Date()) {
+      return res.status(404).json({ success: false, error: 'This link is invalid or has expired. Ask the shop to send you a new one.' });
+    }
+    res.json({ success: true, client: { name: client.name, clientCode: client.clientCode, phone: client.phone, email: client.email } });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.post('/api/client-onboard/:token', async (req, res) => {
+  try {
+    const client = await ClientAccount.findOne({ onboardingToken: req.params.token });
+    if (!client || !client.onboardingTokenExpiresAt || client.onboardingTokenExpiresAt < new Date()) {
+      return res.status(404).json({ success: false, error: 'This link is invalid or has expired. Ask the shop to send you a new one.' });
+    }
+    const { name, phone, email, username, password } = req.body || {};
+    const cleanUsername = lower(username);
+    if (!cleanUsername || !password) return res.status(400).json({ success: false, error: 'Username and password are required.' });
+    if (String(password).length < 6) return res.status(400).json({ success: false, error: 'Password must be at least 6 characters.' });
+    const clash = await ClientAccount.findOne({ username: cleanUsername, _id: { $ne: client._id } });
+    if (clash) return res.status(409).json({ success: false, error: 'That username is already taken - pick another.' });
+    const emailVal = cleanEmail(email);
+    if (emailVal === null) return res.status(400).json({ success: false, error: 'Email is not a valid address.' });
+
+    if (name && title(name)) client.name = title(name);
+    if (phone !== undefined) client.phone = cleanPhone(phone);
+    client.email = emailVal;
+    client.username = cleanUsername;
+    client.password = await bcrypt.hash(String(password), BCRYPT_ROUNDS);
+    client.source = 'portal'; // now has a real, usable login
+    client.onboardingToken = null;
+    client.onboardingTokenExpiresAt = null;
+    await client.save();
+
+    res.json({ success: true, client: { clientCode: client.clientCode, username: client.username, name: client.name } });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 app.delete('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     await ClientAccount.findByIdAndDelete(req.params.id);

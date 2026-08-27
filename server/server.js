@@ -1835,6 +1835,13 @@ const ClientAccountSchema = new mongoose.Schema({
   // (per-device localStorage): a shop changing its POS theme must not restyle
   // its customers' portals. null = follow the shipped default.
   theme:         { type: String, enum: ['default', 'light', 'yellow', 'ocean', null], default: null },
+  // Self-service onboarding link (#10): superadmin generates a one-time token
+  // from the Command Center for an auto-promoted (source:'pos') account that
+  // has no real login yet - the client opens the link, confirms/fills their
+  // own contact details, and sets their own username/password. Single-use:
+  // cleared the moment onboarding completes. null = no link outstanding.
+  onboardingToken:          { type: String, default: null, index: true },
+  onboardingTokenExpiresAt: { type: Date, default: null },
 }, { timestamps: true });
 const ClientAccount = mongoose.model('ClientAccount', ClientAccountSchema);
 

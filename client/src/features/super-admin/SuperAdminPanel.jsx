@@ -5,7 +5,7 @@ import {
   Users, Shield, Menu, X, LogOut, Plus, Edit2, Trash2,
   Search, Eye, EyeOff, AlertCircle, Tag, Loader2, Lock,
   ChevronRight, UserCheck, Monitor, Check, Package, ToggleLeft, ToggleRight,
-  KeyRound, Copy, AlertTriangle, RefreshCw
+  KeyRound, Copy, AlertTriangle, RefreshCw, Settings
 } from 'lucide-react';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
@@ -120,6 +120,11 @@ const NAV_ITEMS = [
     { id: 'clients', label: 'Client Accounts', icon: Package },
     { id: 'tiers', label: 'Price Tiers', icon: Tag },
   ] : []),
+  // Purge Data / Rewire Recipe Links used to sit permanently visible at the
+  // bottom of every other section (Client Accounts, Roles, ...) - a
+  // one-shot-irreversible action shouldn't be one scroll away from wherever
+  // an admin happens to be. Its own tab, nothing else in it.
+  { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
 function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }) {
@@ -793,6 +798,20 @@ export default function SuperAdminPanel() {
     } catch { showToast('Failed to update status.', 'error'); }
   };
 
+  // Auto-promoted (source:'pos') accounts have a placeholder login only staff
+  // could ever use - this generates a one-time self-service link the client
+  // opens themselves to confirm their details and set their own credentials.
+  const copyOnboardLink = async (client) => {
+    try {
+      const res = await apiFetch(`/api/client-accounts/${client._id}/onboard-link`, { method: 'POST' });
+      const d = await res.json();
+      if (!d.success) return showToast(d.error || 'Failed to create link.', 'error');
+      const url = `${window.location.origin}/client-onboard/${d.token}`;
+      await navigator.clipboard.writeText(url);
+      showToast('Onboarding link copied - valid for 7 days.');
+    } catch { showToast('Failed to create/copy link.', 'error'); }
+  };
+
   const openResetPassword = (client) => setResetPwModal({ open: true, client, confirmPassword: '', loading: false, error: '', result: null });
   const closeResetPassword = () => setResetPwModal({ open: false, client: null, confirmPassword: '', loading: false, error: '', result: null });
 
@@ -1276,7 +1295,11 @@ export default function SuperAdminPanel() {
                       <button onClick={() => openClientEdit(client)} className="p-2 rounded-lg text-fg/40 hover:text-fg hover:bg-white/10 transition" aria-label="Edit">
                         <Edit2 size={14} />
                       </button>
-                      {client.source !== 'pos' && (
+                      {client.source === 'pos' ? (
+                        <button onClick={() => copyOnboardLink(client)} className="p-2 rounded-lg text-brand/70 hover:text-brand hover:bg-brand/10 transition" aria-label="Copy onboarding link" title="Copy a self-service onboarding link for this client to set up their own login">
+                          <Copy size={14} />
+                        </button>
+                      ) : (
                         <button onClick={() => openResetPassword(client)} className="p-2 rounded-lg text-fg/40 hover:text-fg hover:bg-white/10 transition" aria-label="Reset password" title="Reset password">
                           <KeyRound size={14} />
                         </button>
@@ -1456,31 +1479,38 @@ export default function SuperAdminPanel() {
       )}
 
       {/* =================================================================== */}
-      {/* DANGER ZONE - PURGE DATA + REWIRE RECIPES                            */}
+      {/* SETTINGS SECTION - DANGER ZONE (PURGE DATA + REWIRE RECIPES)          */}
+      {/* Its own tab, not permanently visible on every other section - a      */}
+      {/* one-shot-irreversible action shouldn't be one scroll away no matter  */}
+      {/* what an admin is actually looking at.                                */}
       {/* =================================================================== */}
-      <div className="bg-red-500/5 border border-red-500/30 rounded-xl p-5 mt-6">
-        <div className="flex items-center gap-2 mb-1">
-          <AlertTriangle size={16} className="text-red-400" />
-          <h3 className="font-black text-red-400 text-sm uppercase tracking-widest">Danger Zone</h3>
+      {activeSection === 'settings' && (
+        <div className="flex-1 p-6 max-w-2xl">
+          <div className="bg-red-500/5 border border-red-500/30 rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-1">
+              <AlertTriangle size={16} className="text-red-400" />
+              <h3 className="font-black text-red-400 text-sm uppercase tracking-widest">Danger Zone</h3>
+            </div>
+            <p className="text-fg/50 text-xs mb-3 max-w-2xl">
+              Purge Data permanently deletes every sale/order, ledger entry, inventory item and stock history,
+              shift/time-clock record, revolving fund, and purchase order/bill for this business. Staff accounts,
+              roles, client accounts, the menu (products/combos/categories), pricing, the Chart of Accounts, and
+              Settings are kept. This cannot be undone.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={openPurgeModal}
+                className="flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/40 text-red-400 font-bold text-sm px-4 py-2.5 rounded-lg transition">
+                <Trash2 size={14} /> Purge Data
+              </button>
+              <button onClick={() => { setRewireModal({ open: true, busy: false, error: '', result: null }); }}
+                title="Re-link any recipe ingredient whose linked inventory item was deleted and recreated (e.g. after a purge) - safe to run anytime"
+                className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/20 text-fg/70 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-lg transition">
+                <RefreshCw size={14} /> Rewire Recipe Links
+              </button>
+            </div>
+          </div>
         </div>
-        <p className="text-fg/50 text-xs mb-3 max-w-2xl">
-          Purge Data permanently deletes every sale/order, ledger entry, inventory item and stock history,
-          shift/time-clock record, revolving fund, and purchase order/bill for this business. Staff accounts,
-          roles, client accounts, the menu (products/combos/categories), pricing, the Chart of Accounts, and
-          Settings are kept. This cannot be undone.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <button onClick={openPurgeModal}
-            className="flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/40 text-red-400 font-bold text-sm px-4 py-2.5 rounded-lg transition">
-            <Trash2 size={14} /> Purge Data
-          </button>
-          <button onClick={() => { setRewireModal({ open: true, busy: false, error: '', result: null }); }}
-            title="Re-link any recipe ingredient whose linked inventory item was deleted and recreated (e.g. after a purge) - safe to run anytime"
-            className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/20 text-fg/70 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-lg transition">
-            <RefreshCw size={14} /> Rewire Recipe Links
-          </button>
-        </div>
-      </div>
+      )}
 
       {/* =================================================================== */}
       {/* PURGE DATA MODAL                                                     */}

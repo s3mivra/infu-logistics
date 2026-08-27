@@ -617,8 +617,23 @@ app.post('/api/stock-categories/:id/renumber', verifyToken, requireSuperAdmin, a
     if (!cat) { await session.abortTransaction(); session.endSession(); return res.status(404).json({ success: false, error: 'Category not found.' }); }
     if (!cat.prefix) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Set a prefix for this category first.' }); }
 
-    const items = await Inventory.find({ businessType: BUSINESS_TYPE, stockCategory: cat.name })
+    let items = await Inventory.find({ businessType: BUSINESS_TYPE, stockCategory: cat.name })
       .sort({ itemCode: 1 }).session(session);
+    if (items.length === 0) {
+      // Same fallback as the prefix backfill above: older items never got
+      // Inventory.stockCategory populated at all (it didn't exist as a field
+      // yet when they were imported) - the category only shows on their
+      // linked Product. Find them that way instead, and backfill the field
+      // while we're here so this fallback isn't needed again next time.
+      const prods = await Product.find({ businessType: BUSINESS_TYPE, category: cat.name }, { productCode: 1 }).session(session).lean();
+      const codes = prods.map(p => p.productCode).filter(Boolean);
+      if (codes.length) {
+        items = await Inventory.find({ businessType: BUSINESS_TYPE, itemCode: { $in: codes } }).sort({ itemCode: 1 }).session(session);
+        if (items.length) {
+          await Inventory.updateMany({ _id: { $in: items.map(i => i._id) } }, { $set: { stockCategory: cat.name } }, { session });
+        }
+      }
+    }
     if (items.length === 0) { await session.abortTransaction(); session.endSession(); return res.json({ success: true, renamed: [], unchanged: 0 }); }
     if (items.length > 9999) {
       await session.abortTransaction(); session.endSession();
