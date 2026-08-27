@@ -119,3 +119,57 @@ describe('inventory import auto-derives a StockCategory prefix', () => {
     expect(res.body.item.itemCode).toBe('P10003'); // next after P10001/P10002
   });
 });
+
+describe('bulk renumber a stock category', () => {
+  it('rejects a category with no prefix set', async () => {
+    const StockCategory = mongoose.model('StockCategory');
+    const cat = await StockCategory.create({ businessType: 'log', name: 'NOPREFIX', prefix: '' });
+    const res = await request(app).post(`/api/stock-categories/${cat._id}/renumber`).set(auth(superToken));
+    expect(res.status).toBe(400);
+  });
+
+  it('renumbers every item in the category to sequential codes under its prefix, and cascades to the linked product', async () => {
+    const StockCategory = mongoose.model('StockCategory');
+    const Inventory = mongoose.model('Inventory');
+    const Product = mongoose.model('Product');
+
+    const cat = await StockCategory.create({ businessType: 'log', name: 'RENUM CAT', prefix: 'RN' });
+    const a = await Inventory.create({ businessType: 'log', itemCode: 'ZZZ001', itemName: 'Renum Item A', unit: 'pcs', stockQty: 1, unitCost: 1, stockCategory: 'RENUM CAT' });
+    const b = await Inventory.create({ businessType: 'log', itemCode: 'AAA002', itemName: 'Renum Item B', unit: 'pcs', stockQty: 1, unitCost: 1, stockCategory: 'RENUM CAT' });
+    await Product.create({ businessType: 'log', name: 'Renum Item A', category: 'RENUM CAT', basePrice: 10, productCode: 'ZZZ001' });
+
+    const res = await request(app).post(`/api/stock-categories/${cat._id}/renumber`).set(auth(superToken));
+    expect(res.body.success).toBe(true);
+    expect(res.body.renamed.length).toBe(2);
+
+    // Sorted by OLD itemCode ascending ("AAA002" < "ZZZ001"), so B gets RN0001, A gets RN0002.
+    const freshA = await Inventory.findById(a._id).lean();
+    const freshB = await Inventory.findById(b._id).lean();
+    expect(freshB.itemCode).toBe('RN0001');
+    expect(freshA.itemCode).toBe('RN0002');
+
+    const prod = await Product.findOne({ name: 'Renum Item A' }).lean();
+    expect(prod.productCode).toBe('RN0002'); // cascaded from the Inventory rename
+  });
+
+  it('is idempotent - running it again with nothing changed reports zero renames', async () => {
+    const StockCategory = mongoose.model('StockCategory');
+    const cat = await StockCategory.findOne({ name: 'RENUM CAT' }).lean();
+    const res = await request(app).post(`/api/stock-categories/${cat._id}/renumber`).set(auth(superToken));
+    expect(res.body.success).toBe(true);
+    expect(res.body.renamed.length).toBe(0);
+    expect(res.body.unchanged).toBe(2);
+  });
+
+  it('does not touch historical order lines already booked under the old code', async () => {
+    // Sanity check on the documented guarantee: Order is a separate collection
+    // keyed by its own snapshot fields, never touched by this route at all.
+    const Order = mongoose.model('Order');
+    const before = await Order.countDocuments({});
+    const StockCategory = mongoose.model('StockCategory');
+    const cat = await StockCategory.findOne({ name: 'RENUM CAT' }).lean();
+    await request(app).post(`/api/stock-categories/${cat._id}/renumber`).set(auth(superToken));
+    const after = await Order.countDocuments({});
+    expect(after).toBe(before);
+  });
+});

@@ -6,9 +6,10 @@
 export default function StockTaxonomyPanel({
   stockLocations = [], stockCategories = [],
   saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory,
-  backfillStockCategoryPrefixes,
+  backfillStockCategoryPrefixes, renumberStockCategory,
 }) {
   const [backfilling, setBackfilling] = useState(false);
+  const [renumberingId, setRenumberingId] = useState(null);
   const [locName, setLocName] = useState('');
   const [locNote, setLocNote] = useState('');
   const [catName, setCatName] = useState('');
@@ -143,6 +144,16 @@ export default function StockTaxonomyPanel({
                   </div>
                   <div className="flex gap-1.5 shrink-0">
                     <button onClick={() => setEditCat({ id: c._id, name: c.name, prefix: c.prefix || '' })} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>Edit</button>
+                    {renumberStockCategory && (
+                      <button
+                        onClick={async () => { setRenumberingId(c._id); try { await renumberStockCategory(c); } finally { setRenumberingId(null); } }}
+                        disabled={renumberingId === c._id}
+                        title="Rewrite EVERY existing item in this category to a fresh sequential code under its prefix. Permanent - a separate, deliberate action from just editing the prefix."
+                        className={`${rowBtn} bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 disabled:opacity-50`}
+                      >
+                        {renumberingId === c._id ? 'Renumbering…' : 'Renumber'}
+                      </button>
+                    )}
                     <button onClick={() => saveStockCategory({ isActive: c.isActive === false }, c._id)} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>{c.isActive === false ? 'Enable' : 'Disable'}</button>
                     <button onClick={() => deleteStockCategory(c._id)} className={`${rowBtn} bg-red-500/10 text-red-400 hover:bg-red-500/20`}>Del</button>
                   </div>

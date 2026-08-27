@@ -2590,6 +2590,28 @@ const updateStatus = async (orderId, newStatus) => {
     ].filter(Boolean);
     ui.alert(lines.length ? lines.join('\n\n') : 'No blank-prefix categories found - nothing to do.');
   };
+  // Deliberately separate from saving the prefix itself - THIS is the one that
+  // actually touches every existing item's code, so it needs its own explicit,
+  // scarier confirmation naming exactly what's about to change.
+  const renumberStockCategory = async (cat) => {
+    if (!cat.prefix) return ui.alert('Set a prefix for this category first - Edit it and save one before renumbering.');
+    const ok = await ui.confirm({
+      title: `Renumber every item in "${cat.name}"?`,
+      message: `Every item currently in "${cat.name}" gets a brand-new code under prefix "${cat.prefix}" (${cat.prefix}0001, ${cat.prefix}0002, ...).`,
+      detail: `This rewrites each item's Item Code and its linked product code - permanently. Past orders, recipes, and ledger entries keep whatever code was true when they happened, untouched.`,
+      confirmLabel: 'Renumber',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    const res = await apiFetch(`/api/stock-categories/${cat._id}/renumber`, { method: 'POST' });
+    const d = await res.json();
+    if (!d.success) { ui.alert(d.error || 'Renumber failed.'); return; }
+    fetchStockTaxonomy(); fetchERPData();
+    if (d.renamed.length === 0) { ui.alert(`Nothing to renumber - all ${d.unchanged} item(s) already match the ${cat.prefix}xxxx sequence.`); return; }
+    ui.alert(`Renumbered ${d.renamed.length} item(s)${d.unchanged ? `, ${d.unchanged} already matched` : ''}:\n\n` +
+      d.renamed.slice(0, 15).map(r => `${r.from} → ${r.to}  (${r.itemName})`).join('\n') +
+      (d.renamed.length > 15 ? `\n...and ${d.renamed.length - 15} more` : ''));
+  };
   const fetchStockTransfers = async () => {
     try {
       const [tr, ar] = await Promise.all([apiFetch('/api/stock-transfers'), apiFetch('/api/stock-analytics/by-location')]);
@@ -6083,7 +6105,7 @@ const updateStatus = async (orderId, newStatus) => {
     pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF,
     bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF,
     arOutstanding, fetchArOutstanding, arAgeing, fetchArAgeing, suppliers, fetchSuppliers,
-    stockLocations, stockCategories, fetchStockTaxonomy, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory, backfillStockCategoryPrefixes,
+    stockLocations, stockCategories, fetchStockTaxonomy, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory, backfillStockCategoryPrefixes, renumberStockCategory,
     stockTransfers, locationAnalytics, fetchStockTransfers, requestStockTransfer, actOnStockTransfer,
     expenseModal, setExpenseModal, expenseCategories, fetchExpenseCategories,
     expenseForm, setExpenseForm, expenseSubmitting, submitExpense, expenseList, fetchExpenses,

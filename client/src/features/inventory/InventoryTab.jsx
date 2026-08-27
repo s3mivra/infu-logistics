@@ -57,7 +57,7 @@ export default function InventoryTab({ ctx }) {
     invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter,
     inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, itemDisplay, packInfo,
     procurementCreditAccounts,
-    stockLocations, stockCategories, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory, backfillStockCategoryPrefixes,
+    stockLocations, stockCategories, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory, backfillStockCategoryPrefixes, renumberStockCategory,
     stockTransfers, locationAnalytics, fetchStockTransfers, requestStockTransfer, actOnStockTransfer,
     itemsPerPage, jeForm, journalEntries, ledgerSubTab, navMode,
     newDiscount, openEditInventory, openProductModal, orderFilter, orders,
@@ -264,6 +264,7 @@ export default function InventoryTab({ ctx }) {
                 saveStockCategory={saveStockCategory}
                 deleteStockCategory={deleteStockCategory}
                 backfillStockCategoryPrefixes={backfillStockCategoryPrefixes}
+                renumberStockCategory={renumberStockCategory}
               />
             )}
 

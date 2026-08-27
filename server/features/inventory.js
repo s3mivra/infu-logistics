@@ -598,6 +598,72 @@ app.post('/api/stock-categories/backfill-prefixes', verifyToken, requireSuperAdm
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
+// Explicit, opt-in bulk renumber - every item currently in this category gets
+// a fresh sequential code under the category's CURRENT prefix (P90001,
+// P90002, ...), ordered by their existing code. This is a separate action
+// from saving the prefix itself (which never touches existing codes - see the
+// PUT route above) precisely because renumbering is the disruptive one:
+// mirrors that same single-item cascade (rename the Inventory item, then the
+// linked resale Product's productCode) but for every item in the category at
+// once. Historical Orders/StockCards/JournalEntries are untouched by design -
+// StockCards key off inventoryId (unaffected) and a past order line is a
+// booked record of what was sold under the code THAT DAY, which must stay
+// exactly as it was for the books to still reconcile.
+app.post('/api/stock-categories/:id/renumber', verifyToken, requireSuperAdmin, async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const cat = await StockCategory.findById(req.params.id).session(session);
+    if (!cat) { await session.abortTransaction(); session.endSession(); return res.status(404).json({ success: false, error: 'Category not found.' }); }
+    if (!cat.prefix) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Set a prefix for this category first.' }); }
+
+    const items = await Inventory.find({ businessType: BUSINESS_TYPE, stockCategory: cat.name })
+      .sort({ itemCode: 1 }).session(session);
+    if (items.length === 0) { await session.abortTransaction(); session.endSession(); return res.json({ success: true, renamed: [], unchanged: 0 }); }
+    if (items.length > 9999) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'Too many items for a 4-digit sequence (max 9999).' });
+    }
+
+    // Two-phase: if the prefix is unchanged (this is a "close the gaps"
+    // renumber, not a prefix switch), a straight in-place reassignment can
+    // collide mid-loop with another item in this same batch that hasn't been
+    // renamed yet (itemCode has a uniqueness constraint). Stage everything
+    // through a scratch code first so no intermediate state can ever collide
+    // with either an old or a final code.
+    const plan = items.map((item, i) => ({
+      item, oldCode: item.itemCode, newCode: `${cat.prefix}${String(i + 1).padStart(4, '0')}`,
+    })).filter(p => p.newCode !== p.oldCode);
+    const unchanged = items.length - plan.length;
+
+    for (const p of plan) {
+      p.item.itemCode = `__RENUM__${p.item._id}`;
+      await p.item.save({ session });
+    }
+    const renamed = [];
+    for (const p of plan) {
+      p.item.itemCode = p.newCode;
+      await p.item.save({ session });
+      await Product.updateMany(
+        { productCode: p.oldCode, businessType: BUSINESS_TYPE },
+        { $set: { productCode: p.newCode } },
+        { session },
+      );
+      renamed.push({ itemName: p.item.itemName, from: p.oldCode, to: p.newCode });
+    }
+
+    await logAudit(req, { action: 'stock-category-renumber', entity: 'StockCategory', entityId: cat._id, after: { category: cat.name, prefix: cat.prefix, renamed: renamed.length, unchanged } });
+    await session.commitTransaction();
+    session.endSession();
+    emitToMgr('erpUpdated');
+    res.json({ success: true, renamed, unchanged });
+  } catch (err) {
+    await session.abortTransaction(); session.endSession();
+    log.error({ err }, 'POST /api/stock-categories/:id/renumber failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 app.delete('/api/stock-categories/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const cat = await StockCategory.findById(req.params.id);
