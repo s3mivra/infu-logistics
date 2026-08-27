@@ -6,6 +6,18 @@ import StockTransferPanel from './StockTransferPanel';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
+// Zero-padded MM/DD/YYYY - `.toLocaleDateString()` on its own drops the
+// leading zero ("1/26/2027", "9/1/2026"), which reads ambiguously next to
+// the app's imports/exports that are always explicit MM/DD/YYYY. This keeps
+// on-screen dates in the same unambiguous shape.
+const fmtMDY = (d) => {
+  const dt = d instanceof Date ? d : new Date(d);
+  if (isNaN(dt.getTime())) return '';
+  const mo = String(dt.getMonth() + 1).padStart(2, '0');
+  const da = String(dt.getDate()).padStart(2, '0');
+  return `${mo}/${da}/${dt.getFullYear()}`;
+};
+
 // ── InventoryTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function InventoryTab({ ctx }) {
@@ -418,7 +430,7 @@ export default function InventoryTab({ ctx }) {
                         <td className="py-3 text-center">
                           {expBadge ? (
                             <div className="inline-flex items-center gap-1.5">
-                              <span title={item.expiryDate ? new Date(item.expiryDate).toLocaleDateString() : ''} className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide ${expBadge.cls}`}>{expBadge.text}</span>
+                              <span title={item.expiryDate ? fmtMDY(item.expiryDate) : ''} className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide ${expBadge.cls}`}>{expBadge.text}</span>
                               {(item.expiryBatches?.length || 0) > 1 && (
                                 <button onClick={() => setExpandedBatchRows(s => ({ ...s, [item._id]: !s[item._id] }))}
                                   title={`${item.expiryBatches.length} batches`}
@@ -460,7 +472,7 @@ export default function InventoryTab({ ctx }) {
                                   <button onClick={() => {
                                     const isExpired = expBadge && (expBadge.text.startsWith('EXPIRED') || expBadge.text === 'TODAY');
                                     setSpoilageModal({ item });
-                                    setSpoilageForm({ qty: isExpired ? itemDisplay(item).packQty.toString() : '', reason: isExpired ? 'Spoilage' : '', note: isExpired ? `Auto-flagged expired (${new Date(item.expiryDate).toLocaleDateString()})` : '' });
+                                    setSpoilageForm({ qty: isExpired ? itemDisplay(item).packQty.toString() : '', reason: isExpired ? 'Spoilage' : '', note: isExpired ? `Auto-flagged expired (${fmtMDY(item.expiryDate)})` : '' });
                                     setOpenActionMenu(null);
                                   }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-orange-400 transition">
                                     Waste
@@ -549,14 +561,14 @@ export default function InventoryTab({ ctx }) {
                                             return (<>
                                               <td className={`py-1.5 pl-3 tabular-nums ${badge}`}>
                                                 {exp ? (
-                                                  <>{exp.toLocaleDateString()}
+                                                  <>{fmtMDY(exp)}
                                                     {diffDays !== null && <span className="ml-1.5 text-[10px] opacity-70">({diffDays < 0 ? `${Math.abs(diffDays)}d ago` : diffDays === 0 ? 'today' : `in ${diffDays}d`})</span>}
                                                   </>
                                                 ) : prod ? (
-                                                  <><span className="text-white text-[9px] uppercase font-bold mr-1">Prod</span>{prod.toLocaleDateString()}</>
+                                                  <><span className="text-white text-[9px] uppercase font-bold mr-1">Prod</span>{fmtMDY(prod)}</>
                                                 ) : '-'}
                                               </td>
-                                              <td className="py-1.5 pl-3 text-white text-[10px] tabular-nums">{b.receivedAt ? new Date(b.receivedAt).toLocaleDateString() : '-'}</td>
+                                              <td className="py-1.5 pl-3 text-white text-[10px] tabular-nums">{b.receivedAt ? fmtMDY(b.receivedAt) : '-'}</td>
                                               <td className="py-1.5 pl-3 text-right text-white text-[10px] tabular-nums">{b.unitCost ? peso(b.unitCost * bPackBase) : '-'}<span className="text-white">/{bUnit}</span></td>
                                             </>);
                                           })()}
@@ -571,7 +583,7 @@ export default function InventoryTab({ ctx }) {
                                               Edit
                                             </button>
                                             <button onClick={async () => {
-                                              if (!(await ui.confirm(`Remove this batch (${dispQty} ${bUnit}, expires ${exp ? exp.toLocaleDateString() : 'n/a'})? This will NOT change stockQty - only the batch record.`))) return;
+                                              if (!(await ui.confirm(`Remove this batch (${dispQty} ${bUnit}, expires ${exp ? fmtMDY(exp) : 'n/a'})? This will NOT change stockQty - only the batch record.`))) return;
                                               await apiFetch(`/api/inventory/${item._id}/batches/${b._originalIdx}`, { method: 'DELETE' });
                                               fetchERPData();
                                             }} className="text-red-400 hover:text-red-400 hover:bg-red-500/10 px-2 py-0.5 rounded transition text-[10px] font-black uppercase tracking-wider">

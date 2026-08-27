@@ -710,7 +710,18 @@ export default function AdminDashboard() {
   // Delegates to the shared auth helper: attaches the in-memory access token,
   // auto-injects JSON content-type, and silently refreshes + retries once on 401.
   // A persistent 401 (refresh also failed) tears down the local session.
-  const apiFetch = async (endpoint, options = {}) => {
+  // Stable identity is load-bearing, not just an optimization: every tab
+  // builds its own fetchX = useCallback(..., [apiFetch]) and then
+  // useEffect(() => fetchX(), [fetchX]). Before this was memoized, apiFetch
+  // got a brand-new function reference on every AdminDashboard render (this
+  // component re-renders constantly - socket events, any state update
+  // anywhere in the ctx object), which cascaded into every one of those
+  // effects re-firing on every render too - a fetch storm hammering
+  // purchase-orders/suppliers/notifications/etc. repeatedly in seconds and
+  // blowing straight through the API rate limiter (429 spam). Nothing this
+  // closes over is reactive (API_URL/auth are module-level, the setters are
+  // React-guaranteed stable), so an empty dep array is correct, not a lie.
+  const apiFetch = useCallback(async (endpoint, options = {}) => {
     const response = await auth.apiFetch(API_URL, endpoint, options);
     if (response.status === 401) {
       setIsAuthenticated(false);
@@ -718,7 +729,7 @@ export default function AdminDashboard() {
       auth.clearToken();
     }
     return response;
-  };
+  }, []);
 
   const handleSystemLogin = async (e) => {
     e.preventDefault();
