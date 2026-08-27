@@ -3337,10 +3337,78 @@ const updateStatus = async (orderId, newStatus) => {
       // cellDates: true - without it a real Excel date cell (like Expiry date) comes
       // back as its raw serial number (e.g. 46033), which then gets stringified and
       // parsed as if it were a literal year ("1/1/46033") instead of the actual date.
-      const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+      // cellNF:true is required for the day-first-format detection below - without
+      // it xlsx never populates cell.z (the cell's own number-format code) at all,
+      // silently disabling that check (verified: it comes back completely absent,
+      // not just unhelpful, unless this flag is set).
+      const wb = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: true });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
       if (rows.length === 0) return ui.alert('No rows found in the file.');
+
+      // A genuine Excel date cell carries its own number-format code (e.g.
+      // "m/d/yyyy" vs "d/m/yyyy") - that's per-CELL, not per-file, so one rogue
+      // day-first cell can sit right next to normal month-first ones in the same
+      // column with no visual difference once Excel renders it (11/1/2026 reads
+      // the same either way - only the underlying serial differs).
+      //
+      // It IS recoverable though: every business using this importer enters
+      // dates MM/DD/YYYY (confirmed - not a per-file guess). A day-first cell's
+      // cached display string (cell.w, e.g. "11/1/2026") was rendered FROM the
+      // wrongly-parsed serial USING that day-first format - so its first token is
+      // actually that serial's day, second is its month. Reading those same two
+      // tokens back in MM/DD order instead (ignoring the format that produced
+      // them) undoes exactly the day/month transposition and recovers the
+      // originally-intended date - e.g. "11/1/2026" → month 11, day 1 → Nov 1,
+      // exactly what was typed, not the Jan 11 the corrupted serial encodes.
+      // Only correctable when both tokens are valid the other way around (day
+      // ≤ 12) - if not, the true date is genuinely unrecoverable and the row is
+      // just flagged instead, unfixed.
+      // Map: 0-indexed data-row -> { field: 'expiryDate'|'productionDate', display, corrected }
+      const dayFirstDateRows = new Map();
+      try {
+        const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
+        // Header is the first row of the sheet range - find which column(s) hold
+        // the date fields by matching header text, same names normalise() reads.
+        const dateColIdx = [];
+        for (let c = range.s.c; c <= range.e.c; c++) {
+          const hCell = sheet[XLSX.utils.encode_cell({ r: range.s.r, c })];
+          const h = String(hCell?.v ?? '').toLowerCase().trim();
+          const isExpiry = ['expiry date', 'expiry', 'expirydate'].includes(h);
+          const isProd = ['production date', 'production', 'prod date', 'proddate', 'roast date', 'roastdate'].includes(h);
+          if (isExpiry || isProd) dateColIdx.push({ c, field: isExpiry ? 'expiryDate' : 'productionDate' });
+        }
+        if (dateColIdx.length) {
+          for (let r = range.s.r + 1; r <= range.e.r; r++) {
+            for (const { c, field } of dateColIdx) {
+              const cell = sheet[XLSX.utils.encode_cell({ r, c })];
+              // t:'d' (or a numeric cell XLSX recognized as a date, now converted
+              // to a JS Date by cellDates:true) with a format code starting 'd'
+              // before any 'm' is a day-first cell - the exact shape that produced
+              // "d/m/yyyy" on the real file this was built against.
+              if (cell && (cell.t === 'd' || cell.v instanceof Date) && typeof cell.z === 'string') {
+                const z = cell.z.toLowerCase();
+                const dPos = z.indexOf('d'), mPos = z.indexOf('m');
+                if (dPos !== -1 && mPos !== -1 && dPos < mPos) {
+                  const display = cell.w || String(cell.v);
+                  let corrected = null;
+                  const m = display.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+                  if (m) {
+                    // Ignore what the d/m/yyyy format claims these tokens mean -
+                    // parse them exactly like any other typed date in this file:
+                    // MM/DD/YYYY, first token is the month, second is the day.
+                    const mo = parseInt(m[1], 10), da = parseInt(m[2], 10), yr = parseInt(m[3], 10);
+                    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) {
+                      corrected = `${yr}-${String(mo).padStart(2, '0')}-${String(da).padStart(2, '0')}`;
+                    }
+                  }
+                  dayFirstDateRows.set(r - range.s.r - 1, { field, display, corrected });
+                }
+              }
+            }
+          }
+        }
+      } catch { /* best-effort correction/warning only - never block the import over it */ }
 
       // Normalise column names (case-insensitive). Standard header:
       //   Code, Product, Qty Unit, Unit Cost, Expiry date
@@ -3541,8 +3609,17 @@ const updateStatus = async (orderId, newStatus) => {
       // so the preview's numbers match what actually gets posted. `qty` here is
       // the running projected total (base units) after each row for that item.
       const projected = new Map(); // importKey -> { existing: itemOrNull, qty }
-      const previewed = rows.map(raw => {
+      const previewed = rows.map((raw, rowIdx) => {
         const r = normalise(raw);
+        // Apply the recovered MM/DD date in place of a day-first-corrupted one
+        // BEFORE anything below diffs r.expiryDate against the existing item -
+        // doing this after that comparison (as a later .map pass) would let the
+        // new-batch detection run against the still-wrong date.
+        const dateWarn = dayFirstDateRows.get(rowIdx);
+        if (dateWarn) {
+          if (dateWarn.corrected) r[dateWarn.field] = dateWarn.corrected;
+          r._dateFormatWarn = dateWarn;
+        }
         // Category header row: no itemName but code column has a plain word (not a product code)
         if (!r.itemName) {
           const looksLikeCategoryHeader = r.itemCode && !/^[A-Z]\d+$/i.test(r.itemCode);

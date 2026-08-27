@@ -28,6 +28,9 @@ export default function ImportModal() {
             const downCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff < 0).length;
             const sameCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff === 0).length;
             const errCount = importRows.filter(r => r._error).length;
+            const dateWarnRows = importRows.filter(r => r._dateFormatWarn);
+            const dateFixedCount = dateWarnRows.filter(r => r._dateFormatWarn.corrected).length;
+            const dateUnfixedCount = dateWarnRows.length - dateFixedCount;
             return (
               <div className="px-5 py-3 flex flex-wrap gap-2 border-b border-white/10 shrink-0">
                 <span className="text-[10px] font-black uppercase tracking-widest bg-blue-500 text-white px-2.5 py-1.5 rounded">NEW · {newCount}</span>
@@ -36,6 +39,8 @@ export default function ImportModal() {
                 <span className="text-[10px] font-black uppercase tracking-widest bg-red-500 text-white px-2.5 py-1.5 rounded">↓ DECREASE · {downCount}</span>
                 <span className="text-[10px] font-black uppercase tracking-widest bg-white/5 text-fg/60 px-2.5 py-1.5 rounded">UNCHANGED · {sameCount}</span>
                 {errCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-red-500/40 text-red-200 px-2.5 py-1.5 rounded">ERRORS · {errCount}</span>}
+                {dateFixedCount > 0 && <span title="These date cells were formatted day-first (d/m/yyyy) in the source file instead of MM/DD/YYYY - the date has been auto-corrected for this import. Fix the cell's format in the source file so it stops happening." className="text-[10px] font-black uppercase tracking-widest bg-amber-500 text-black px-2.5 py-1.5 rounded">✓ DATE AUTO-FIXED · {dateFixedCount}</span>}
+                {dateUnfixedCount > 0 && <span title="These date cells were formatted day-first (d/m/yyyy) but couldn't be safely auto-corrected (the day value is over 12, so it can't also be a valid month). Verify these dates manually." className="text-[10px] font-black uppercase tracking-widest bg-red-500/40 text-red-200 px-2.5 py-1.5 rounded">⚠ CHECK DATE · {dateUnfixedCount}</span>}
               </div>
             );
           })()}
@@ -98,6 +103,12 @@ export default function ImportModal() {
                         {r.itemName || <span className="text-red-300">(missing)</span>}
                         {r._needsSize && (
                           <span title="No unit/size found in the name or a Unit column - imported as pcs. Edit the item afterward to set its real size." className="ml-1.5 text-[9px] font-black bg-amber-500 text-white border border-amber-500/40 px-1.5 py-0.5 rounded uppercase align-middle">SET SIZE</span>
+                        )}
+                        {r._dateFormatWarn && r._dateFormatWarn.corrected && (
+                          <span title={`This cell's Excel format is day-first (d/m/yyyy), not MM/DD/YYYY like the rest of the file - it displayed as "${r._dateFormatWarn.display}". Auto-corrected to ${r.expiryDate || r.productionDate} for this import. Fix the cell's format in the source file so this stops happening.`} className="ml-1.5 text-[9px] font-black bg-amber-500 text-black border border-amber-600/40 px-1.5 py-0.5 rounded uppercase align-middle">✓ Date auto-fixed</span>
+                        )}
+                        {r._dateFormatWarn && !r._dateFormatWarn.corrected && (
+                          <span title={`This cell's Excel format is day-first (d/m/yyyy) and displayed as "${r._dateFormatWarn.display}" - it couldn't be safely auto-corrected (its day is over 12, so it can't also be read as a month). Verify this date manually and fix the cell's format in the source file.`} className="ml-1.5 text-[9px] font-black bg-red-500 text-white border border-red-600/40 px-1.5 py-0.5 rounded uppercase align-middle">⚠ Check date</span>
                         )}
                         {isBatch && r.expiryDate && <span className="ml-1.5 text-purple-300/60 text-[10px]">exp {r.expiryDate}</span>}
                         {isBatch && !r.expiryDate && r.productionDate && <span className="ml-1.5 text-purple-300/60 text-[10px]">prod {r.productionDate}</span>}
