@@ -637,7 +637,7 @@ export default function LedgerTab({ ctx }) {
       head: [['Code', 'Account', 'Debit', 'Credit']],
       body: tb.rows.map(r => [r.code, r.name, r.debit ? pdfMoney(r.debit) : '', r.credit ? pdfMoney(r.credit) : '']),
       foot: [[{ content: `Totals ${tb.balanced ? '(Balanced)' : '(OUT OF BALANCE)'}`, colSpan: 2 }, pdfMoney(tb.totalDebit), pdfMoney(tb.totalCredit)]],
-      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, footStyles: { fillColor: [61, 74, 42], fontStyle: 'bold' },
+      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], fontStyle: 'bold', textColor: 255 },
       columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' } },
     });
     doc.save(`Trial-Balance-${new Date().toISOString().slice(0, 10)}.pdf`);
@@ -653,7 +653,7 @@ export default function LedgerTab({ ctx }) {
       startY: 34,
       head: [['Line', 'Amount']],
       body: (ptax.lines || []).map(l => [l.label, pdfMoney(l.amount)]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 1: { halign: 'right' } },
+      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' } },
     });
     doc.save(`Percentage-Tax-${ptaxRange.start}_to_${ptaxRange.end}.pdf`);
   };
@@ -723,7 +723,7 @@ export default function LedgerTab({ ctx }) {
         pdfMoney(s.type === 'petty-cash' ? s.amount : s.estTotal),
         s.preparedBy || '-', s.status, s.approvedBy || s.rejectedBy || '-',
       ]),
-      styles: { fontSize: 7.5 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 3: { halign: 'right' } },
+      styles: { fontSize: 7.5 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' } },
     });
     doc.save(`Requisition-Slips-${new Date().toISOString().slice(0, 10)}.pdf`);
   };

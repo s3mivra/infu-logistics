@@ -2062,11 +2062,11 @@ const updateStatus = async (orderId, newStatus) => {
       const head = ['Account', ...m.months, 'Total'];
       const body = [];
       for (const [sec, label] of SECTIONS) {
-        body.push([{ content: label, colSpan: head.length, styles: { fontStyle: 'bold', fillColor: [236,241,227] } }]);
+        body.push([{ content: label, colSpan: head.length, styles: { fontStyle: 'bold', fillColor: [235,235,235] } }]);
         m.accounts.filter(a => a.section === sec).forEach(a => body.push([`  ${a.code} ${a.name}`, ...m.months.map(mm => pdfMoney(a.byMonth[mm] || 0)), pdfMoney(a.total)]));
       }
       body.push(['NET INCOME', ...m.months.map(mm => pdfMoney(m.monthTotals.netIncome[mm] || 0)), pdfMoney(m.grandTotals.netIncome)]);
-      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 6 }, headStyles: { fillColor: [111,135,77] } });
+      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 6 }, headStyles: { fillColor: [30,30,30] } });
     } else {
       const head = ['Account', 'Amount', '% Rev', '% Parent'];
       const parentTotals = {};
@@ -2075,11 +2075,11 @@ const updateStatus = async (orderId, newStatus) => {
       for (const [sec, label] of SECTIONS) {
         const rows = m.accounts.filter(a => a.section === sec);
         if (!rows.length) continue;
-        body.push([{ content: label, colSpan: 4, styles: { fontStyle: 'bold', fillColor: [236,241,227] } }]);
+        body.push([{ content: label, colSpan: 4, styles: { fontStyle: 'bold', fillColor: [235,235,235] } }]);
         rows.forEach(a => body.push([`  ${a.code} ${a.name}`, pdfMoney(a.total), nr ? `${(a.total/nr*100).toFixed(1)}%` : '-', parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '-']));
       }
       body.push(['NET INCOME', pdfMoney(m.grandTotals.netIncome), nr ? `${(m.grandTotals.netIncome/nr*100).toFixed(1)}%` : '-', '']);
-      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 8 }, headStyles: { fillColor: [111,135,77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } } });
+      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 8 }, headStyles: { fillColor: [30,30,30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } } });
     }
     doc.save(`PnL-${pnlmRange.start}_to_${pnlmRange.end}.pdf`);
   };
@@ -2105,22 +2105,22 @@ const updateStatus = async (orderId, newStatus) => {
       const head = ['Account', ...b.months];
       const body = [];
       for (const [sec, label] of SECTIONS) {
-        body.push([{ content: label, colSpan: head.length, styles: { fontStyle: 'bold', fillColor: [236,241,227] } }]);
+        body.push([{ content: label, colSpan: head.length, styles: { fontStyle: 'bold', fillColor: [235,235,235] } }]);
         b[sec].forEach(a => body.push([`  ${a.code} ${a.name}`, ...b.months.map(mm => pdfMoney(a.byMonth[mm] || 0))]));
         body.push([`  Total ${label}`, ...b.months.map(mm => pdfMoney(b.monthTotals[sec][mm] || 0))]);
       }
-      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 6 }, headStyles: { fillColor: [111,135,77] } });
+      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 6 }, headStyles: { fillColor: [30,30,30] } });
     } else {
       const head = ['Account', 'Amount', '% Assets', '% Parent'];
       const parentTotals = {};
       [...b.assets, ...b.liabilities, ...b.equity].forEach(a => { parentTotals[a.parentCode] = (parentTotals[a.parentCode] || 0) + a.total; });
       const body = [];
       for (const [sec, label] of SECTIONS) {
-        body.push([{ content: label, colSpan: 4, styles: { fontStyle: 'bold', fillColor: [236,241,227] } }]);
+        body.push([{ content: label, colSpan: 4, styles: { fontStyle: 'bold', fillColor: [235,235,235] } }]);
         b[sec].forEach(a => body.push([`  ${a.code} ${a.name}`, pdfMoney(a.total), totalAssets ? `${(a.total/totalAssets*100).toFixed(1)}%` : '-', parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '-']));
         body.push([`  Total ${label}`, pdfMoney(b.monthTotals[sec][b.asOf] || 0), '', '']);
       }
-      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 8 }, headStyles: { fillColor: [111,135,77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } } });
+      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 8 }, headStyles: { fillColor: [30,30,30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } } });
     }
     doc.save(`BalanceSheet-${bsmRange.start}_to_${bsmRange.end}.pdf`);
   };
@@ -2142,7 +2142,7 @@ const updateStatus = async (orderId, newStatus) => {
         startY: y,
         head: [['Client', 'Current', '31-60', '61-90', '91+', 'Total', 'Committed']],
         body: arAgeing.clients.map(r => [r.client, pdfMoney(r.current), pdfMoney(r.d31_60), pdfMoney(r.d61_90), pdfMoney(r.d90_plus), pdfMoney(r.total), pdfMoney(r.exposure)]),
-        styles: { fontSize: 7 }, headStyles: { fillColor: [111, 135, 77] },
+        styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] },
         columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
       });
       y = doc.lastAutoTable.finalY + 6;
@@ -2151,7 +2151,7 @@ const updateStatus = async (orderId, newStatus) => {
       startY: y,
       head: [['Order #', 'Customer', 'Channel', 'Date', 'Due', 'Amount']],
       body: arOutstanding.orders.map(o => [o.orderNumber, o.customerName, o.paymentMethod, new Date(o.createdAt).toLocaleDateString(), o.arDueDate ? new Date(o.arDueDate).toLocaleDateString() : '-', pdfMoney(o.total)]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 5: { halign: 'right' } },
+      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 5: { halign: 'right' } },
     });
     doc.save(`AR-Outstanding-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2169,7 +2169,7 @@ const updateStatus = async (orderId, newStatus) => {
         startY: y,
         head: [['Supplier', 'Purchased', 'Paid', 'Balance']],
         body: apData.bySupplier.map(s => [s.supplier, pdfMoney(s.incurred), pdfMoney(s.paid), pdfMoney(s.balance)]),
-        styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] },
+        styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
         columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
       });
       y = doc.lastAutoTable.finalY + 6;
@@ -2178,7 +2178,7 @@ const updateStatus = async (orderId, newStatus) => {
       startY: y,
       head: [['Date', 'Reference', 'Supplier', 'Description', 'Incurred', 'Paid']],
       body: (apData.recent || []).map(e => [new Date(e.date).toLocaleDateString(), e.reference, e.supplierName || '-', e.description, e.credit ? pdfMoney(e.credit) : '', e.debit ? pdfMoney(e.debit) : '']),
-      styles: { fontSize: 7 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' } },
+      styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' } },
     });
     doc.save(`AP-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2194,7 +2194,7 @@ const updateStatus = async (orderId, newStatus) => {
       startY: 34,
       head: [['Payment Method', 'Orders', 'Amount', '% Share']],
       body: (salesByPayment.breakdown || []).map(r => [r.method || 'Unknown', r.count, pdfMoney(r.total), `${(r.pct || 0).toFixed(1)}%`]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
     });
     doc.save(`Sales-By-Payment-${sbpRange.start}_to_${sbpRange.end}.pdf`);
   };
@@ -2210,7 +2210,7 @@ const updateStatus = async (orderId, newStatus) => {
       startY: 34,
       head: [['Category', 'Revenue', 'Est. COGS', 'Gross Profit', 'Margin']],
       body: (profitByCategory.categories || profitByCategory || []).map(c => [c.category, pdfMoney(c.revenue), pdfMoney(c.estimatedCOGS), pdfMoney(c.grossProfit), `${c.margin.toFixed(1)}%`]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
+      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
     });
     doc.save(`Profit-By-Category-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2226,7 +2226,7 @@ const updateStatus = async (orderId, newStatus) => {
       startY: 34,
       head: [['Item', 'Qty', 'Revenue', 'Margin', 'Class']],
       body: (menuEngineering.items || menuEngineering || []).map(r => [r.name, r.qty, pdfMoney(r.revenue), `${r.margin.toFixed(1)}%`, r.quadrant]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
     });
     doc.save(`Menu-Engineering-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2242,7 +2242,7 @@ const updateStatus = async (orderId, newStatus) => {
       startY: 34,
       head: [['Cashier', 'Shifts', 'Avg Variance', 'Times Short', 'Worst']],
       body: (cashierVariance.cashiers || []).map(c => [c.cashierName, c.shifts, pdfMoney(c.avgVariance), c.shortCount, pdfMoney(c.worstShort)]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
+      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
     });
     doc.save(`Cashier-Variance-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2259,7 +2259,7 @@ const updateStatus = async (orderId, newStatus) => {
       head: [['Cashier', 'Orders', 'Sales', 'Rate', 'Commission']],
       body: (commissions.sellers || []).map(c => [c.name, c.orderCount, pdfMoney(c.salesTotal), `${c.commissionRate}%`, pdfMoney(c.commissionEarned)]),
       foot: [[{ content: 'Total', colSpan: 4 }, pdfMoney(commissions.totalCommission)]],
-      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, footStyles: { fillColor: [61, 74, 42], fontStyle: 'bold' },
+      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], fontStyle: 'bold', textColor: 255 },
       columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 4: { halign: 'right' } },
     });
     doc.save(`Commissions-${new Date().toISOString().slice(0, 10)}.pdf`);
@@ -2276,7 +2276,7 @@ const updateStatus = async (orderId, newStatus) => {
       startY: 34,
       head: [['Bill #', 'Supplier', 'Source', 'Description', 'Amount', 'Status']],
       body: bills.map(b => [b.billNumber, b.supplierName || '-', b.source, b.description || b.poNumber || '-', pdfMoney(b.amount), b.status]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 4: { halign: 'right' } },
+      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { halign: 'right' } },
     });
     doc.save(`Bills-${billsFilter}-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2292,7 +2292,7 @@ const updateStatus = async (orderId, newStatus) => {
       startY: 34,
       head: [['When', 'Actor', 'Action', 'Reference', 'Details']],
       body: auditLogEntries.map(e => [new Date(e.timestamp).toLocaleString(), e.userId, e.action, e.targetReference, e.details ? JSON.stringify(e.details).slice(0, 120) : '-']),
-      styles: { fontSize: 7 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 4: { cellWidth: 120 } },
+      styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { cellWidth: 120 } },
     });
     doc.save(`Audit-Log-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2308,7 +2308,7 @@ const updateStatus = async (orderId, newStatus) => {
       startY: 34,
       head: [['Date', 'Reference', 'Category', 'Description', 'Amount']],
       body: expenseList.expenses.map(e => [new Date(e.date).toLocaleDateString(), e.reference, e.categoryName, e.description, pdfMoney(e.amount)]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 4: { halign: 'right' } },
+      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { halign: 'right' } },
     });
     doc.save(`Expenses-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2330,7 +2330,7 @@ const updateStatus = async (orderId, newStatus) => {
         t.fromLocation || '-', t.toLocation || '-', `${t.qtyBase ?? 0} ${t.unit || ''}`.trim(),
         t.status, t.releasedBy || t.approvedBy || t.requestedBy || '-',
       ]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] },
+      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
     });
     doc.save(`Stock-Transfer-History-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2357,7 +2357,7 @@ const updateStatus = async (orderId, newStatus) => {
       startY: 34,
       head: [['Production Date', 'Item', 'Qty', 'Received', 'Reference']],
       body: rows.map(r => [new Date(r.date).toLocaleDateString(), r.item, `${r.qty} ${r.unit}`, r.received ? new Date(r.received).toLocaleDateString() : '-', r.ref]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] },
+      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
     });
     doc.save(`Production-History-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2377,7 +2377,7 @@ const updateStatus = async (orderId, newStatus) => {
         p.isAvailable === false ? 'Removed' : (p.isOutOfStock ? 'Out of Stock' : 'Yes'),
         (p.sizes || []).map(s => s.name).join(', ') || '-',
       ]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 3: { halign: 'right' } },
+      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' } },
     });
     doc.save(`Menu-Items-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2393,7 +2393,7 @@ const updateStatus = async (orderId, newStatus) => {
       startY: 34,
       head: [['Fund', 'Initial Amount', 'Current Balance', 'Used', 'Status']],
       body: rfFunds.map(f => [f.name, pdfMoney(f.initialAmount), pdfMoney(f.currentBalance), pdfMoney(f.initialAmount - f.currentBalance), f.isActive === false ? 'Closed' : 'Active']),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
     });
     // If one fund's transactions happen to be loaded (drilled into), append them.
     if (rfTxs && rfTxs.length > 0 && rfActiveFund) {
@@ -2403,7 +2403,7 @@ const updateStatus = async (orderId, newStatus) => {
         startY: 22,
         head: [['Date', 'Type', 'Description', 'Amount', 'Balance After', 'By']],
         body: rfTxs.map(t => [new Date(t.date).toLocaleDateString(), t.type, t.description, pdfMoney(t.amount), pdfMoney(t.balanceAfter), t.performedBy || '-']),
-        styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' } },
+        styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' } },
       });
     }
     doc.save(`Revolving-Funds-${new Date().toISOString().slice(0, 10)}.pdf`);
@@ -2424,7 +2424,7 @@ const updateStatus = async (orderId, newStatus) => {
         const margin = p.basePrice > 0 ? ((p.basePrice - cost) / p.basePrice) * 100 : 0;
         return [p.name, p.category || '-', pdfMoney(p.basePrice), pdfMoney(cost), `${margin.toFixed(1)}%`];
       }),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
+      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
     });
     doc.save(`Pricing-Masterlist-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2443,7 +2443,7 @@ const updateStatus = async (orderId, newStatus) => {
         p.name, pdfMoney(p.basePrice),
         ...pricingTable.tiers.map(t => pdfMoney(t.prices?.[String(p._id)] ?? p.basePrice)),
       ]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] },
+      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
     });
     doc.save(`Market-Segment-Pricing-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2464,7 +2464,7 @@ const updateStatus = async (orderId, newStatus) => {
         pdfMoney(sh.startingCash), pdfMoney(sh.salesTotal), pdfMoney(sh.expectedCash), pdfMoney(sh.actualCash),
         pdfMoney(sh.variance), sh.isLive || sh.status === 'Open' ? 'Open' : (sh.status || 'Closed'),
       ]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } },
+      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } },
     });
     doc.save(`Shift-History-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2485,7 +2485,7 @@ const updateStatus = async (orderId, newStatus) => {
         e.clockOut ? new Date(e.clockOut).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' }) : 'Still in',
         e.durationMinutes != null ? `${Math.floor(e.durationMinutes / 60)}h ${e.durationMinutes % 60}m` : '-',
       ]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 5: { halign: 'right' } },
+      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 5: { halign: 'right' } },
     });
     doc.save(`Timesheets-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -2791,7 +2791,7 @@ const updateStatus = async (orderId, newStatus) => {
         ['Orders Completed', `${todayOrds.length}`],
       ],
       styles: { fontSize: 9 },
-      headStyles: { fillColor: [111, 135, 77] },
+      headStyles: { fillColor: [30, 30, 30] },
     });
     doc.save(`X-Reading-${today.replace(/\//g, '-')}.pdf`);
   };
@@ -3267,16 +3267,20 @@ const updateStatus = async (orderId, newStatus) => {
       isPacked: pack.label !== unit,
     };
   };
-  // Analytics display: for logistics, show pack-count (pcs) instead of kg/L.
-  // Uses packInfo which already handles the pack-size → base conversion correctly.
+  // Analytics display: for logistics, show pack-count (pcs) instead of kg/L -
+  // but ONLY when a real pack size is actually known (packSize field, or a
+  // size embedded in the item name like "250G"/"1L"). Without one, packInfo()
+  // silently falls back to effectiveDisplay's raw unit-conversion multiplier,
+  // which is NOT a piece count - labelling that number "pcs" prints the raw
+  // base-unit quantity (e.g. 59920 ml of milk) as if it were 59920 pieces.
+  // So an unconfigured item shows its real unit (kg/L/ml/g) instead, same as
+  // non-log businesses, until someone sets a pack size for it.
   const analyticsDisplay = (item) => {
     if (BUSINESS_TYPE === 'log') {
-      // For logistics every quantity is a piece count.
-      // packInfo gives the right base→pack multiplier when packSize is set;
-      // it falls back to effectiveDisplay.mult otherwise (kg/L items show the
-      // same numeric value but labelled "pcs" until packSize is configured).
-      const packBase = packInfo(item).packBase || 1;
-      return { unit: 'pcs', mult: packBase };
+      const pack = packInfo(item);
+      const { unit: rawUnit } = effectiveDisplay(item);
+      const isRealPack = pack.label !== rawUnit;
+      if (isRealPack) return { unit: 'pcs', mult: pack.packBase || 1 };
     }
     return effectiveDisplay(item);
   };
@@ -3727,7 +3731,7 @@ const updateStatus = async (orderId, newStatus) => {
       autoTable(doc, {
         startY: 30,
         head: [['Item Name', 'Unit', 'Beginning Bal.', 'Purchases (In)', 'Sales (Out)', 'Adjustments', 'Ending Bal.']],
-        body: stockBody, theme: 'grid', headStyles: { fillColor: [204, 163, 0], textColor: [0,0,0] }
+        body: stockBody, theme: 'grid', headStyles: { fillColor: [30, 30, 30], textColor: [255,255,255] }
       });
       doc.save(`Inventory_Movement_${new Date().toISOString().split('T')[0]}.pdf`);
     } catch (err) { ui.alert("Failed to generate PDF: " + err.message); }
@@ -3801,7 +3805,7 @@ const updateStatus = async (orderId, newStatus) => {
     // INDIVIDUAL DAILY BREAKDOWN TABLES
     Object.keys(grouped).forEach(date => {
       if (currentY > doc.internal.pageSize.getHeight() - 40) { doc.addPage(); currentY = 20; }
-      doc.setFontSize(14); doc.setTextColor(204, 163, 0); doc.text(`Sales Breakdown: ${date}`, 14, currentY); doc.setTextColor(0, 0, 0);
+      doc.setFontSize(14); doc.setTextColor(0, 0, 0); doc.text(`Sales Breakdown: ${date}`, 14, currentY);
       
       const dayRows = [];
       let dayTotals = { cash: 0, bank: 0, ewallet: 0, grand: 0 };
@@ -3859,7 +3863,7 @@ const updateStatus = async (orderId, newStatus) => {
         head: [['Time', 'Order #', 'Status', 'Item', 'Gross', 'VAT', 'Discount', 'Type', 'Cash', 'Bank', 'E-Wallet', 'Delivery', 'Total']],
         body: dayRows, theme: 'striped', styles: { fontSize: 7 }, columnStyles: { 3: { cellWidth: 40 } },
         willDrawCell: function(data) {
-          if (data.row.index === dayRows.length - 1) { doc.setFont(undefined, 'bold'); doc.setTextColor(204, 163, 0); }
+          if (data.row.index === dayRows.length - 1) { doc.setFont(undefined, 'bold'); doc.setTextColor(0, 0, 0); }
         }
       });
       currentY = doc.lastAutoTable.finalY + 15;
@@ -3929,7 +3933,7 @@ const updateStatus = async (orderId, newStatus) => {
         head: [['Time', 'Order #', 'Status', 'Item', 'Gross', 'VAT', 'Discount', 'Type', 'Cash', 'Bank', 'E-Wallet', 'Delivery', 'Total']],
         body: dayRows, theme: 'striped', styles: { fontSize: 7 }, columnStyles: { 3: { cellWidth: 40 } },
         willDrawCell: function(data) {
-          if (data.row.index === dayRows.length - 1) { doc.setFont(undefined, 'bold'); doc.setTextColor(204, 163, 0); }
+          if (data.row.index === dayRows.length - 1) { doc.setFont(undefined, 'bold'); doc.setTextColor(0, 0, 0); }
         }
       });
     doc.save(`Sales_${dateString.replace(/,/g, '').replace(/ /g, '_')}.pdf`);
@@ -3989,14 +3993,14 @@ const updateStatus = async (orderId, newStatus) => {
         `${((i.weeklyNeed||0)/d.mult).toFixed(2)} ${d.unit}`,
         `${((i.monthlyNeed||0)/d.mult).toFixed(2)} ${d.unit}`,
         `${i.trend > 0.1 ? 'rising' : i.trend < -0.1 ? 'easing' : 'stable'} ${Math.abs((i.trend||0)*100).toFixed(0)}%`,
-      ]; }), [180, 130, 30]);
+      ]; }), [50, 50, 50]);
 
     // Low Stock (Risk)
     sect('Low Stock (Risk)', ['Item', 'On Hand', 'Days of Supply'],
       (ad.lowestStock || []).map(i => { const d = du(i); return [
         i.itemName, `${(Number(i.stockQty||0)/d.mult).toFixed(2)} ${d.unit}`,
         (i.daysOfSupply <= 0 ? 'OUT' : `~${Math.floor(i.daysOfSupply)}d`),
-      ]; }), [180, 50, 50]);
+      ]; }), [30, 30, 30]);
 
     // Overstock Watch
     sect('Overstock Watch', ['Item', 'On Hand', 'Days of Supply', 'Tied-up Capital (PHP)'],
@@ -4317,7 +4321,7 @@ const updateStatus = async (orderId, newStatus) => {
         `${l.suggestedOrder} ${l.displayUnit}`,
       ]),
       styles: { fontSize: 10 },
-      headStyles: { fillColor: [111, 135, 77] },
+      headStyles: { fillColor: [30, 30, 30] },
       columnStyles: { 1: { halign: 'right' } },
     });
     const y = doc.lastAutoTable.finalY + 8;
@@ -4340,7 +4344,7 @@ const updateStatus = async (orderId, newStatus) => {
         startY,
         head: [[title, 'Amount (PHP)']],
         body: rows.length ? rows.map(r => [r.accountName || r.name || r.label || '', pdfMoney(r.amount ?? r.total)]) : [['-', pdfMoney(0)]],
-        styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] },
+        styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] },
         columnStyles: { 1: { halign: 'right' } },
       });
       return doc.lastAutoTable.finalY + 4;
@@ -4359,7 +4363,7 @@ const updateStatus = async (orderId, newStatus) => {
         ['Net Income', pdfMoney(t.netIncome)],
         ...(t.netMargin !== undefined ? [['Net Margin', `${Number(t.netMargin).toFixed(1)}%`]] : []),
       ],
-      styles: { fontSize: 10, fontStyle: 'bold' }, headStyles: { fillColor: [61, 74, 42] },
+      styles: { fontSize: 10, fontStyle: 'bold' }, headStyles: { fillColor: [70, 70, 70], textColor: 255 },
       columnStyles: { 1: { halign: 'right' } },
     });
     doc.save(`Profit-Loss-${pnlRange.start}_to_${pnlRange.end}.pdf`);
@@ -4383,7 +4387,7 @@ const updateStatus = async (orderId, newStatus) => {
           ...(rows && rows.length ? rows.map(r => [rowName(r), rowAmt(r)]) : [['-', pdfMoney(0)]]),
           [`Total ${title}`, pdfMoney(total ?? 0)],
         ],
-        styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] },
+        styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] },
         columnStyles: { 1: { halign: 'right' } },
         didParseCell: (d) => { if (d.row.index === (rows?.length || 1)) d.cell.styles.fontStyle = 'bold'; },
       });
@@ -4403,7 +4407,7 @@ const updateStatus = async (orderId, newStatus) => {
         ['Liabilities + Equity', pdfMoney((t.liabilities || 0) + (t.equity || 0))],
         ['Status', balanced ? 'BALANCED' : 'OUT OF BALANCE'],
       ],
-      styles: { fontSize: 10, fontStyle: 'bold' }, headStyles: { fillColor: [61, 74, 42] },
+      styles: { fontSize: 10, fontStyle: 'bold' }, headStyles: { fillColor: [70, 70, 70], textColor: 255 },
       columnStyles: { 1: { halign: 'right' } },
     });
     doc.save(`Balance-Sheet-${asOf.replace(/\//g, '-')}.pdf`);
@@ -4513,7 +4517,7 @@ const updateStatus = async (orderId, newStatus) => {
     autoTable(doc, {
       startY: 24, head: [head], body,
       foot: [[ 'TOTALS', '', '', '', ...COLS.map(([, ms]) => pdfMoney(ms.reduce((s, m) => s + (tm[m] || 0), 0))), pdfMoney(t.total) ]],
-      styles: { fontSize: 7 }, headStyles: { fillColor: [111,135,77] }, footStyles: { fillColor: [61,74,42], textColor: 255 },
+      styles: { fontSize: 7 }, headStyles: { fillColor: [30,30,30] }, footStyles: { fillColor: [70,70,70], textColor: 255 },
     });
     doc.save(`Sales-Summary_${sssRange.start}_to_${sssRange.end}.pdf`);
   };
@@ -4540,7 +4544,7 @@ const updateStatus = async (orderId, newStatus) => {
     autoTable(doc, {
       startY: 24, head: [head], body,
       foot: [[ 'TOTAL', '', '', '', '', '', '', '', pdfMoney(salesLineItems.grandTotal) ]],
-      styles: { fontSize: 7 }, headStyles: { fillColor: [111,135,77] }, footStyles: { fillColor: [61,74,42], textColor: 255 },
+      styles: { fontSize: 7 }, headStyles: { fillColor: [30,30,30] }, footStyles: { fillColor: [70,70,70], textColor: 255 },
     });
     doc.save(`Sales-Line-Items_${sliRange.start}_to_${sliRange.end}.pdf`);
   };
@@ -4955,14 +4959,14 @@ const updateStatus = async (orderId, newStatus) => {
         ['Orders Voided',    String(voided.length)],
         ['Orders Cancelled', String(cancelled.length)],
       ],
-      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] },
+      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] },
       columnStyles: { 1: { halign: 'right' } },
     });
     autoTable(doc, {
       startY: doc.lastAutoTable.finalY + 6,
       head: [['Payment Method', 'Orders', 'Amount (PHP)']],
       body: Object.entries(payMethods).map(([m, d]) => [m, String(d.count), pdfMoney(d.total)]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] },
+      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] },
       columnStyles: { 1: { halign: 'center' }, 2: { halign: 'right' } },
     });
     doc.save(`Z-Reading-${today.replace(/\//g,'-')}.pdf`);

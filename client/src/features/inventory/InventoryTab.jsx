@@ -124,7 +124,7 @@ export default function InventoryTab({ ctx }) {
           head: [['Item', 'Qty Change', 'Balance After', 'Unit Cost', 'Value Impact', 'Reason']],
           body: d.rows.map(r => [r.itemName, r.qtyChange > 0 ? `+${r.qtyChange}` : r.qtyChange, r.balanceAfter, pdfMoney(r.unitCost), pdfMoney(r.valueImpact), r.reason]),
           foot: [[{ content: 'Total Value Impact', colSpan: 4 }, pdfMoney(d.totalValueImpact), '']],
-          styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, footStyles: { fillColor: [61, 74, 42], fontStyle: 'bold' },
+          styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], fontStyle: 'bold', textColor: 255 },
           columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
         });
       }
@@ -382,7 +382,13 @@ export default function InventoryTab({ ctx }) {
                         </td>
                         {(() => { const d = itemDisplay(item); return (<>
                         <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-red-400' : 'text-white'}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
-                        <td className="py-3 text-right text-white text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(effThreshold / (d.packBase || 1)).toLocaleString(undefined, { maximumFractionDigits: 3 })}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
+                        <td className="py-3 text-right text-white text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(() => {
+                          const raw = effThreshold / (d.packBase || 1);
+                          // pcs are indivisible - round a fractional auto-threshold UP
+                          // (never down, or the alert would fire a piece too late) instead
+                          // of printing e.g. "11.867 pcs".
+                          return d.isPacked ? Math.ceil(raw).toLocaleString() : raw.toLocaleString(undefined, { maximumFractionDigits: 3 });
+                        })()}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
                         <td className="py-3 text-white pl-2 font-bold">{d.isPacked ? 'pcs' : d.unit}</td>
                         <td className="py-3 text-right text-white font-bold font-mono text-xs tabular-nums"><>{peso(d.packCost)}<span className="text-white/60">/{d.packLabel}</span></></td>
                         <td className="py-3 text-right text-white font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
@@ -866,9 +872,12 @@ export default function InventoryTab({ ctx }) {
                     <div className="space-y-1">
                       {lowItems.map(i => {
                         const d = itemDisplay(i);
-                        const mult = effectiveDisplay(i).mult;
                         const eff = i.effectiveThreshold != null ? i.effectiveThreshold : (i.lowStockThreshold || 0);
-                        const minDisp = (eff / mult).toLocaleString(undefined, { maximumFractionDigits: 3 });
+                        // Same pack-count basis as the qty beside it (packBase, not the
+                        // raw unit mult) - pcs are indivisible, so round a fractional
+                        // auto-threshold UP instead of printing e.g. "min: 11.867".
+                        const rawMin = eff / (d.packBase || 1);
+                        const minDisp = d.isPacked ? Math.ceil(rawMin).toLocaleString() : rawMin.toLocaleString(undefined, { maximumFractionDigits: 3 });
                         return (
                           <div key={i._id} className="flex justify-between text-xs">
                             <span className="text-red-300 font-bold">{i.itemName}</span>

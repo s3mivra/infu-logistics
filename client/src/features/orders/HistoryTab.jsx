@@ -107,7 +107,7 @@ export default function HistoryTab({ ctx }) {
       head: [['Date', 'Reference', 'Deposited By', 'Amount']],
       body: deposits.map(d => [d.createdAt ? new Date(d.createdAt).toLocaleDateString() : '-', d.reference, d.depositedBy, pdfMoney(d.amount)]),
       foot: [[{ content: 'Total', colSpan: 3 }, pdfMoney(total)]],
-      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, footStyles: { fillColor: [61, 74, 42], fontStyle: 'bold' }, columnStyles: { 3: { halign: 'right' } },
+      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], fontStyle: 'bold', textColor: 255 }, columnStyles: { 3: { halign: 'right' } },
     });
     doc.save(`Bank-Deposits-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
