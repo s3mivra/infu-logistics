@@ -514,6 +514,36 @@ export default function LedgerTab({ ctx }) {
     finally { setBdHistoryLoading(false); }
   };
 
+  const [bdExporting, setBdExporting] = useState(false);
+  const exportBackdateHistoryPDF = async () => {
+    if (!bdHistory || bdHistory.total === 0) return ui.alert('No backdated sales to export.');
+    setBdExporting(true);
+    try {
+      // The on-screen list is paginated 20 at a time - pull every record in
+      // one shot for the export instead of only exporting whatever page is showing.
+      const r = await apiFetch(`/api/admin/backdate-sale/history?page=1&limit=${bdHistory.total}`);
+      const d = await r.json();
+      if (!d.success) return ui.alert(d.error || 'Failed to load backdated sales for export.');
+      const { jsPDF, autoTable } = await loadPdfLibs();
+      const doc = new jsPDF();
+      await addLogoToPDF(doc);
+      doc.setFontSize(14); doc.text('Backdate Sale History', 14, 16);
+      doc.setFontSize(9); doc.text(`${d.orders.length} sale(s) · ${new Date().toLocaleDateString()}`, 14, 22);
+      autoTable(doc, {
+        startY: 28,
+        head: [['Date', 'Order No.', 'Customer', 'Payment', 'Notes', 'Total']],
+        body: d.orders.map(o => [
+          new Date(o.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }),
+          o.orderNumber, o.customerName || 'Walk-in', o.paymentMethod, o.orderNotes || '-', pdfMoney(o.total),
+        ]),
+        foot: [[{ content: 'Total', colSpan: 5 }, pdfMoney(d.orders.reduce((s, o) => s + (o.total || 0), 0))]],
+        styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 5: { halign: 'right' } },
+      });
+      doc.save(`Backdate-Sale-History-${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch { ui.alert('Failed to export backdated sales.'); }
+    finally { setBdExporting(false); }
+  };
+
   // ── Backdate Sale - review queue (rows a bulk import couldn't post blind,
   // e.g. no Terms of Payment on the sheet) ────────────────────────────────────
   const [bdQueue, setBdQueue] = useState(null); // { rows, total, page, pages }
@@ -1070,17 +1100,15 @@ export default function LedgerTab({ ctx }) {
             <div className={`space-y-4${ledgerSubTab === 'accperiods' ? ' lg:row-span-2' : ''}`}>
               {/* Add child account */}
               <div className="bg-surface border border-white/10 rounded-2xl p-5">
-                <div className="flex items-start justify-between gap-3 mb-1">
-                  <h3 className="text-lg font-black text-fg">Add Sub-Account</h3>
-                  {isSuperAdmin && (
-                    <button onClick={seedPaymentSubaccounts}
-                      title="Auto-create standard payment-method sub-accounts (GCash, Maya, Foodpanda, Lalamove, etc.). Idempotent - existing accounts are skipped."
-                      className="text-[10px] uppercase tracking-widest font-black bg-accent hover:bg-brand/60 text-white border border-brand/30 px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 shrink-0">
-                      <Zap size={11}/> Seed payment methods
-                    </button>
-                  )}
-                </div>
+                <h3 className="text-lg font-black text-fg mb-1">Add Sub-Account</h3>
                 <p className="text-xs text-fg/60 mb-4">Create a custom child account under any parent. It inherits the parent's classification and becomes usable in journal entries and reports.</p>
+                {isSuperAdmin && (
+                  <button onClick={seedPaymentSubaccounts}
+                    title="Auto-create standard payment-method sub-accounts (GCash, Maya, Foodpanda, Lalamove, etc.). Idempotent - existing accounts are skipped."
+                    className="w-full sm:w-auto text-[10px] uppercase tracking-widest font-black bg-white/5 hover:bg-white/10 text-brand border border-brand/20 px-3 py-2 rounded-lg transition flex items-center justify-center gap-1.5 mb-4">
+                    <Zap size={11}/> Seed payment methods
+                  </button>
+                )}
                 <div className="flex flex-col sm:flex-row gap-2">
                   <select value={coaParent} onChange={e => setCoaParent(e.target.value)}
                     className="flex-1 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm font-bold outline-none focus:border-brand/60">
@@ -3364,8 +3392,12 @@ export default function LedgerTab({ ctx }) {
                     <History size={14} className="text-fg/50" />
                     <h3 className="text-sm font-black text-fg uppercase tracking-wider">Backdate History</h3>
                     {bdHistory?.total > 0 && <span className="text-[10px] text-fg/40 font-bold">{bdHistory.total} total</span>}
-                    <button onClick={() => fetchBdHistory(bdHistoryPage)} disabled={bdHistoryLoading}
+                    <button onClick={exportBackdateHistoryPDF} disabled={bdExporting || !bdHistory?.total}
                       className="ml-auto flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition disabled:opacity-50">
+                      <Download size={11}/> {bdExporting ? 'Exporting…' : 'Export PDF'}
+                    </button>
+                    <button onClick={() => fetchBdHistory(bdHistoryPage)} disabled={bdHistoryLoading}
+                      className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition disabled:opacity-50">
                       <RefreshCw size={11} className={bdHistoryLoading ? 'animate-spin' : ''}/> Refresh
                     </button>
                   </div>
