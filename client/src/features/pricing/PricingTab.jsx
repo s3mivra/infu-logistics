@@ -1,5 +1,5 @@
 ﻿import React, { useState, useMemo } from 'react';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, History } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
@@ -36,6 +36,7 @@ export default function PricingTab({ ctx }) {
     fetchOrders, fetchPnl, fetchRfFunds, fetchRfTxs, fetchShiftHistory,
     fetchStockHistory, filteredOrders, formData, getEstimatedStock, globalAddOns,
     groupedArchives, handleImageUpload, handleInlinePriceUpdate, handleInlineCostUpdate, handleRestockSubmit, handleSaveAddOn,
+    fetchPriceHistory, exportPricingMasterlistPDF, exportPriceTiersPDF,
     handleSaveCategory, handleSaveProduct, handleVoidOrder, historyItemName, historyModalOpen,
     historyPage, historySubTab, importModal, importRows, importSubmitting,
     invBadgeCount, invForm, invItemsPerPage, invPage, invSubTab,
@@ -132,7 +133,10 @@ export default function PricingTab({ ctx }) {
 
           {/* LEFT COLUMN: Read-Only Pricing Table */}
           <div className="flex-1 bg-surface border border-white/10 rounded-xl p-6 overflow-y-auto custom-scrollbar min-h-[400px] lg:min-h-0 lg:h-full">
-            <h3 className="text-xl font-bold mb-4 text-accent border-b border-white/10 pb-2">Product Pricing Masterlist</h3>
+            <div className="flex items-center justify-between mb-4 border-b border-white/10 pb-2">
+              <h3 className="text-xl font-bold text-accent">Product Pricing Masterlist</h3>
+              <button onClick={exportPricingMasterlistPDF} className="text-[10px] bg-accent/10 hover:bg-accent/20 text-accent px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">Export PDF</button>
+            </div>
 
             {/* Filter bar */}
             <div className="flex flex-wrap gap-2 mb-4">
@@ -239,12 +243,20 @@ export default function PricingTab({ ctx }) {
                             <button onClick={() => setEditPriceId(null)} className="text-red-400 hover:text-red-300">✕</button>
                           </div>
                         ) : (
-                          <div
-                            className="cursor-pointer hover:bg-white/10 px-2 py-1 rounded inline-flex items-center gap-2 transition group"
-                            onClick={() => { setEditPriceId(row.id); setEditPriceVal(row.price); }}
-                          >
-                            P{Number(row.price).toFixed(2)}
-                            <span className="text-[10px] text-gray-500 group-hover:text-accent">✎</span>
+                          <div className="inline-flex items-center gap-1.5">
+                            <div
+                              className="cursor-pointer hover:bg-white/10 px-2 py-1 rounded inline-flex items-center gap-2 transition group"
+                              onClick={() => { setEditPriceId(row.id); setEditPriceVal(row.price); }}
+                            >
+                              P{Number(row.price).toFixed(2)}
+                              <span className="text-[10px] text-gray-500 group-hover:text-accent">✎</span>
+                            </div>
+                            {row.isBase && (
+                              <button onClick={() => fetchPriceHistory(row.product)} title="Price history"
+                                className="text-gray-600 hover:text-accent p-1 rounded hover:bg-white/10 transition">
+                                <History size={12} />
+                              </button>
+                            )}
                           </div>
                         )}
                       </td>
@@ -434,6 +446,8 @@ export default function PricingTab({ ctx }) {
               <h3 className="text-xl font-bold text-accent flex items-center gap-2">
                 <Tag size={18} /> Market Segment Pricing
               </h3>
+              <div className="flex items-center gap-2">
+              <button onClick={exportPriceTiersPDF} className="text-[10px] bg-accent/10 hover:bg-accent/20 text-accent px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition shrink-0">Export PDF</button>
               <div className="relative">
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
                 <input
@@ -443,6 +457,7 @@ export default function PricingTab({ ctx }) {
                   onChange={e => handleTierSearchChange(e.target.value)}
                   className="bg-page-bg border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-xs text-fg outline-none focus:border-accent w-56"
                 />
+              </div>
               </div>
             </div>
             <p className="text-[11px] text-fg/40 mb-4 leading-relaxed">

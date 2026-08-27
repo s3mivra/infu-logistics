@@ -17,6 +17,7 @@ import * as ui from '../../shared/ui';
 export default function StockTransferPanel({
   inventory = [], stockTransfers = [], locationAnalytics = [],
   requestStockTransfer, actOnStockTransfer, isSuperAdmin, peso, apiFetch,
+  exportStockTransfersPDF,
 }) {
   const [fromItemId, setFromItemId] = useState('');
   const [toValue, setToValue] = useState(''); // an inventory _id, or `hub:<partnerSlug>`
@@ -182,7 +183,12 @@ export default function StockTransferPanel({
 
       {/* Transfer list */}
       <div className={card}>
-        <h3 className="text-white font-black uppercase tracking-wider text-sm mb-3">Transfers</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-white font-black uppercase tracking-wider text-sm">Transfers</h3>
+          {exportStockTransfersPDF && stockTransfers.length > 0 && (
+            <button onClick={exportStockTransfersPDF} className="text-[10px] bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded font-bold uppercase tracking-wider transition">Export PDF</button>
+          )}
+        </div>
         {stockTransfers.length === 0 ? (
           <p className="text-white text-xs py-6 text-center uppercase tracking-widest">No transfers yet</p>
         ) : (

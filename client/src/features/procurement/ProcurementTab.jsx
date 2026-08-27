@@ -381,6 +381,26 @@ export default function ProcurementTab({ ctx }) {
   };
   const closeStatement = () => { setStatementSupplier(null); setStatement(null); };
 
+  // Full procurement history - every PO ever drafted, not just one supplier's
+  // statement (that's exportStatementToPDF above).
+  const exportProcurementHistoryPDF = async () => {
+    if (!pos || pos.length === 0) return ui.alert('No purchase orders to export.');
+    const { jsPDF, autoTable } = await loadPdfLibs();
+    const doc = new jsPDF();
+    doc.setFontSize(14); doc.text('Procurement History', 14, 16);
+    doc.setFontSize(9); doc.text(`${pos.length} PO(s) · ${new Date().toLocaleDateString()}`, 14, 22);
+    autoTable(doc, {
+      startY: 28,
+      head: [['PO #', 'Date', 'Supplier', 'Status', 'Lines', 'Est. Total', 'Actual Total']],
+      body: pos.map(p => [
+        p.poNumber, new Date(p.createdAt).toLocaleDateString(), p.supplier || '-', p.status,
+        (p.lines || []).length, money(p.estTotal), money(p.actualTotal),
+      ]),
+      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 5: { halign: 'right' }, 6: { halign: 'right' } },
+    });
+    doc.save(`Procurement-History-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
   const exportStatementToPDF = async () => {
     if (!statement || !statementSupplier) return;
     const { jsPDF, autoTable } = await loadPdfLibs();
@@ -730,6 +750,9 @@ export default function ProcurementTab({ ctx }) {
           <div className="flex flex-wrap items-center gap-2">
             <button onClick={downloadPoTemplate} title="Download a blank template with the expected headers" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition">
               <FileText size={15} /> Template
+            </button>
+            <button onClick={exportProcurementHistoryPDF} title="Export all purchase orders to PDF" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition">
+              <Download size={15} /> Export PDF
             </button>
             <label className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition cursor-pointer">
               <Download size={15} className="rotate-180" /> Import Excel

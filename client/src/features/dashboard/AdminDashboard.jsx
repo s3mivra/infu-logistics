@@ -23,6 +23,7 @@ import NotificationBell from '../notifications/NotificationBell';
 import CommandPalette from './CommandPalette';
 import ShiftEndModal from '../shifts/modals/ShiftEndModal';
 import StockHistoryModal from '../inventory/modals/StockHistoryModal';
+import PriceHistoryModal from '../pricing/modals/PriceHistoryModal';
 import ImportModal from '../inventory/modals/ImportModal';
 import PartialFulfillModal from '../orders/modals/PartialFulfillModal';
 import ClockModal from './modals/ClockModal';
@@ -98,6 +99,18 @@ const socket = io(API_URL, {
     catch { cb({ token: '' }); }
   },
 });
+// A live WebSocket blocks the page from qualifying for the browser's
+// back-forward cache - Chrome can't freeze it with an open socket, so
+// navigating away and back (or opening/closing this tab's history entry)
+// just kills the connection mid-air, logging "Page entered Back-Forward
+// Cache" to the console instead of a clean close. Disconnect proactively
+// right before the page would be frozen, and reconnect if it's restored
+// from bfcache (pageshow fires with persisted:true) - same recovery the
+// existing 'connect' handler below already does after any other drop.
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => { try { socket.disconnect(); } catch { /* already gone */ } });
+  window.addEventListener('pageshow', (e) => { if (e.persisted) { try { socket.connect(); } catch { /* ignore */ } } });
+}
 
 // New order arrives at kitchen - single sharp ding
 const playKitchenDing = () => {
@@ -1126,6 +1139,32 @@ export default function AdminDashboard() {
     });
     fetchERPData();
     ui.alert(`₱${amount.toFixed(2)} injected into Cash on Hand.`);
+  };
+
+  // Pricing Control's "History" button - same idea as Inventory's Stock Card,
+  // but reads the price-change audit trail (see PUT /api/products/:id) rather
+  // than a movement ledger. "as of [date]: price" comes straight from that.
+  const [priceHistory, setPriceHistory] = useState([]);
+  const [priceHistoryOpen, setPriceHistoryOpen] = useState(false);
+  const [priceHistoryProduct, setPriceHistoryProduct] = useState(null);
+  const [priceHistoryLoading, setPriceHistoryLoading] = useState(false);
+  const fetchPriceHistory = async (product) => {
+    setPriceHistoryLoading(true);
+    try {
+      const res = await apiFetch(`/api/products/${product._id}/price-history`);
+      const data = await res.json();
+      if (data.success) {
+        setPriceHistory(data.history);
+        setPriceHistoryProduct({ ...product, ...data.product });
+        setPriceHistoryOpen(true);
+      } else {
+        ui.alert(data.error || 'Could not load price history.');
+      }
+    } catch (err) {
+      ui.alert('Failed to load price history. Check your connection.');
+    } finally {
+      setPriceHistoryLoading(false);
+    }
   };
 
   const fetchStockHistory = async (item) => {
@@ -2272,6 +2311,183 @@ const updateStatus = async (orderId, newStatus) => {
       styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 4: { halign: 'right' } },
     });
     doc.save(`Expenses-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  // ── Newly-added report exports ─────────────────────────────────────────────
+
+  const exportStockTransfersPDF = async () => {
+    if (!stockTransfers || stockTransfers.length === 0) return ui.alert('No transfers to export - load Inventory → Transfers first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('STOCK TRANSFER HISTORY', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(new Date().toLocaleString(), 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Date', 'Reference', 'Item', 'From', 'To', 'Qty', 'Status', 'By']],
+      body: stockTransfers.map(t => [
+        new Date(t.createdAt).toLocaleDateString(), t.reference || '-', t.itemName || '-',
+        t.fromLocation || '-', t.toLocation || '-', `${t.qtyBase ?? 0} ${t.unit || ''}`.trim(),
+        t.status, t.releasedBy || t.approvedBy || t.requestedBy || '-',
+      ]),
+      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] },
+    });
+    doc.save(`Stock-Transfer-History-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  // Batches dated by production (goods with no real expiry - beans, etc, FPFO
+  // instead of FEFO) flattened out of every inventory item's expiryBatches -
+  // a full roast/production log across the whole catalogue, not just one item.
+  const exportProductionHistoryPDF = async () => {
+    const rows = [];
+    for (const item of (inventory || [])) {
+      for (const b of (item.expiryBatches || [])) {
+        if (!b.productionDate) continue;
+        rows.push({ item: item.itemName, date: b.productionDate, qty: b.qty, unit: item.unit, ref: b.reference || '-', received: b.receivedAt });
+      }
+    }
+    if (rows.length === 0) return ui.alert('No batches with a production date recorded yet.');
+    rows.sort((a, b) => new Date(b.date) - new Date(a.date));
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('PRODUCTION HISTORY', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${rows.length} batch(es) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Production Date', 'Item', 'Qty', 'Received', 'Reference']],
+      body: rows.map(r => [new Date(r.date).toLocaleDateString(), r.item, `${r.qty} ${r.unit}`, r.received ? new Date(r.received).toLocaleDateString() : '-', r.ref]),
+      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] },
+    });
+    doc.save(`Production-History-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportMenuItemsPDF = async () => {
+    if (!products || products.length === 0) return ui.alert('No menu items to export.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('MENU ITEMS', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${products.length} item(s) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Name', 'Category', 'Code', 'Price', 'Available', 'Sizes']],
+      body: products.map(p => [
+        p.name, p.category || '-', p.productCode || '-', pdfMoney(p.basePrice),
+        p.isAvailable === false ? 'Removed' : (p.isOutOfStock ? 'Out of Stock' : 'Yes'),
+        (p.sizes || []).map(s => s.name).join(', ') || '-',
+      ]),
+      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 3: { halign: 'right' } },
+    });
+    doc.save(`Menu-Items-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportRevolvingFundsPDF = async () => {
+    if (!rfFunds || rfFunds.length === 0) return ui.alert('No revolving funds to export.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('REVOLVING FUNDS', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(new Date().toLocaleString(), 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Fund', 'Initial Amount', 'Current Balance', 'Used', 'Status']],
+      body: rfFunds.map(f => [f.name, pdfMoney(f.initialAmount), pdfMoney(f.currentBalance), pdfMoney(f.initialAmount - f.currentBalance), f.isActive === false ? 'Closed' : 'Active']),
+      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+    });
+    // If one fund's transactions happen to be loaded (drilled into), append them.
+    if (rfTxs && rfTxs.length > 0 && rfActiveFund) {
+      doc.addPage();
+      doc.setFontSize(12); doc.text(`${rfActiveFund.name} - Transactions`, 105, 15, { align: 'center' });
+      autoTable(doc, {
+        startY: 22,
+        head: [['Date', 'Type', 'Description', 'Amount', 'Balance After', 'By']],
+        body: rfTxs.map(t => [new Date(t.date).toLocaleDateString(), t.type, t.description, pdfMoney(t.amount), pdfMoney(t.balanceAfter), t.performedBy || '-']),
+        styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' } },
+      });
+    }
+    doc.save(`Revolving-Funds-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportPricingMasterlistPDF = async () => {
+    if (!products || products.length === 0) return ui.alert('No products to export.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('PRODUCT PRICING MASTERLIST', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${products.length} item(s) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Name', 'Category', 'Price', 'Cost', 'Margin']],
+      body: products.map(p => {
+        const cost = p.costOverride != null ? p.costOverride : (calcRecipeCost(p.baseRecipe) || 0);
+        const margin = p.basePrice > 0 ? ((p.basePrice - cost) / p.basePrice) * 100 : 0;
+        return [p.name, p.category || '-', pdfMoney(p.basePrice), pdfMoney(cost), `${margin.toFixed(1)}%`];
+      }),
+      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
+    });
+    doc.save(`Pricing-Masterlist-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportPriceTiersPDF = async () => {
+    if (!pricingTable.tiers || pricingTable.tiers.length === 0) return ui.alert('No price tiers set up yet - open Pricing Control first (or Super Admin → Price Tiers) so this can load.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 148, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('MARKET SEGMENT PRICING', 148, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${pricingTable.tiers.length} tier(s) · ${new Date().toLocaleDateString()}`, 148, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Product', 'List Price', ...pricingTable.tiers.map(t => t.name)]],
+      body: (pricingTable.products || []).map(p => [
+        p.name, pdfMoney(p.basePrice),
+        ...pricingTable.tiers.map(t => pdfMoney(t.prices?.[String(p._id)] ?? p.basePrice)),
+      ]),
+      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] },
+    });
+    doc.save(`Market-Segment-Pricing-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportShiftHistoryPDF = async () => {
+    if (!shiftHistory || shiftHistory.length === 0) return ui.alert('No shift history loaded - open History → Shift History first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 148, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('SHIFT HISTORY', 148, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${shiftHistory.length} shift(s) · ${new Date().toLocaleDateString()}`, 148, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Cashier', 'Shift Start', 'Shift End', 'Opening', 'Cash Sales', 'Expected', 'Actual', 'Variance', 'Status']],
+      body: shiftHistory.map(sh => [
+        sh.cashierName || '-', new Date(sh.shiftStart).toLocaleString(),
+        sh.shiftEnd ? new Date(sh.shiftEnd).toLocaleString() : '- (ongoing)',
+        pdfMoney(sh.startingCash), pdfMoney(sh.salesTotal), pdfMoney(sh.expectedCash), pdfMoney(sh.actualCash),
+        pdfMoney(sh.variance), sh.isLive || sh.status === 'Open' ? 'Open' : (sh.status || 'Closed'),
+      ]),
+      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } },
+    });
+    doc.save(`Shift-History-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportTimesheetsPDF = async () => {
+    if (!clockEntries || clockEntries.length === 0) return ui.alert('No timesheet entries loaded - open History → Timesheets and click Load first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('TIMESHEETS', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${clockEntries.length} record(s) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Date', 'Staff', 'Role', 'Clock In', 'Clock Out', 'Duration']],
+      body: clockEntries.map(e => [
+        e.date, e.staffName, e.staffRole || '-',
+        e.clockIn ? new Date(e.clockIn).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' }) : '-',
+        e.clockOut ? new Date(e.clockOut).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' }) : 'Still in',
+        e.durationMinutes != null ? `${Math.floor(e.durationMinutes / 60)}h ${e.durationMinutes % 60}m` : '-',
+      ]),
+      styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 5: { halign: 'right' } },
+    });
+    doc.save(`Timesheets-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
   const fetchBalanceSheet = async () => {
@@ -5703,6 +5919,7 @@ const updateStatus = async (orderId, newStatus) => {
     importProgress,
     activeInventoryItem, setActiveInventoryItem, restockData, setRestockData,
     stockHistory, setStockHistory, historyModalOpen, setHistoryModalOpen, historyItemName, setHistoryItemName, historyItem, historyLoading,
+    priceHistory, priceHistoryOpen, setPriceHistoryOpen, priceHistoryProduct, priceHistoryLoading, fetchPriceHistory,
     physicalCounts, setPhysicalCounts, varianceReasons, setVarianceReasons,
     varianceNoteMode, setVarianceNoteMode,
     eodStatus, eodLockedAt, dailyMovement,
@@ -5755,6 +5972,8 @@ const updateStatus = async (orderId, newStatus) => {
     exportArPDF, exportApPDF, exportPaymentsPDF,
     exportProfitByCategoryPDF, exportMenuEngineeringPDF, exportVariancePDF, exportCommissionsPDF,
     exportBillsPDF, exportAuditLogPDF, exportExpensesPDF,
+    exportStockTransfersPDF, exportProductionHistoryPDF, exportMenuItemsPDF, exportRevolvingFundsPDF,
+    exportPricingMasterlistPDF, exportPriceTiersPDF, exportShiftHistoryPDF, exportTimesheetsPDF,
     exportInventoryToPDF, exportLedgerToPDF, exportAllToPDF,
     handleSaveProduct, handleSaveCategory, toggleProductAvailability, toggleProductOOS,
     // ── Change Password ──────────────────────────────────────────────────────
@@ -6051,6 +6270,9 @@ const updateStatus = async (orderId, newStatus) => {
 
       {/* --- STOCK MOVEMENT HISTORY MODAL --- */}
       <StockHistoryModal />
+
+      {/* --- PRICE HISTORY MODAL (Pricing Control) --- */}
+      <PriceHistoryModal />
 
       {/* ============================================================
           WASTE / SPOILAGE LOGGING MODAL

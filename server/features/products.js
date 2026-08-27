@@ -562,6 +562,41 @@ app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
+// ── PRICE HISTORY ─────────────────────────────────────────────────────────────
+// Every base-price and recipe-cost change already gets logged to AuditLog
+// (PRODUCT_PRICE_CHANGED / PRODUCT_RECIPE_COST_CHANGED, see PUT above) - this
+// just reads that trail back for one product, newest first, mirroring the
+// Inventory tab's "History" button so Pricing Control gets the same "as of
+// [date]: price" view. `targetReference` is stamped as productCode when the
+// product has one, else falls back to the Mongo _id - check both so a
+// product that only got its code assigned after its first price change still
+// shows its full history.
+app.get('/api/products/:id/price-history', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id).lean();
+    if (!product) return res.status(404).json({ success: false, error: 'Product not found.' });
+    const refs = [String(req.params.id)];
+    if (product.productCode) refs.push(product.productCode);
+
+    const rows = await AuditLog.find({
+      action: { $in: ['PRODUCT_PRICE_CHANGED', 'PRODUCT_RECIPE_COST_CHANGED'] },
+      targetReference: { $in: refs },
+    }).sort({ timestamp: -1 }).limit(200).lean();
+
+    const history = rows.map(r => ({
+      date: r.timestamp,
+      type: r.action === 'PRODUCT_PRICE_CHANGED' ? 'price' : 'cost',
+      oldValue: r.action === 'PRODUCT_PRICE_CHANGED' ? r.details?.oldPrice : r.details?.oldCost,
+      newValue: r.action === 'PRODUCT_PRICE_CHANGED' ? r.details?.newPrice : r.details?.newCost,
+      reason: r.details?.reason || '',
+      changedBy: r.userId || '',
+    }));
+    res.json({ success: true, product: { name: product.name, basePrice: product.basePrice, costOverride: product.costOverride }, history });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 // PATCH /api/products/:id/availability - superadmin toggle. Permanently REMOVES
 // the product from menu + POS. Reporting still surfaces it while stock remains.
 app.patch('/api/products/:id/availability', verifyToken, requireSuperAdmin, async (req, res) => {

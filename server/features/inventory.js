@@ -247,6 +247,7 @@ app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => 
         await StockCard.create([{
           inventoryId: item._id, itemName: item.itemName, type: 'Adjustment',
           reference: eodAdjRef, qtyChange: variance, balanceAfter: actualCount,
+          unitCost: item.unitCost || 0,
           remarks: `EOD Audit: ${specificReason}`
         }], { session });
 
@@ -318,6 +319,44 @@ app.post('/api/inventory/eod/reopen', verifyToken, requireStaff, async (req, res
   } catch(err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
+});
+
+// List every locked day, newest first - the export report picker reads this.
+app.get('/api/inventory/eod-history', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const records = await EODRecord.find({ status: 'LOCKED' }).sort({ dateString: -1 }).limit(365).lean();
+    res.json({ success: true, records });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// Reconstructs one locked day's variance report. EODRecord itself only ever
+// stored the lock flag, never the variance detail - but every item that had a
+// variance on lock got a StockCard 'Adjustment' entry tagged "EOD Audit: …"
+// (see POST /api/inventory/count above), with its own unitCost snapshot, so
+// the report is fully recoverable from that instead of needing a schema change.
+app.get('/api/inventory/eod-history/:dateString/variance', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const { dateString } = req.params;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return res.status(400).json({ success: false, error: 'Invalid date.' });
+    // dateString is a Manila calendar day (see toLocaleDateString(...,
+    // {timeZone:'Asia/Manila'}) in POST /api/inventory/count above) - an
+    // explicit +08:00 offset here keeps the boundary correct regardless of
+    // what timezone the server process itself runs in (naive T00:00:00
+    // parsing used the SERVER's local zone, which silently missed every
+    // entry whenever that didn't happen to be Manila).
+    const dayStart = new Date(`${dateString}T00:00:00+08:00`);
+    const dayEnd = new Date(`${dateString}T23:59:59.999+08:00`);
+    const cards = await StockCard.find({
+      type: 'Adjustment', remarks: /^EOD Audit:/, date: { $gte: dayStart, $lte: dayEnd },
+    }).sort({ itemName: 1 }).lean();
+    const rows = cards.map(c => ({
+      itemName: c.itemName, qtyChange: c.qtyChange, balanceAfter: c.balanceAfter,
+      unitCost: c.unitCost || 0, valueImpact: +((c.qtyChange || 0) * (c.unitCost || 0)).toFixed(2),
+      reason: (c.remarks || '').replace(/^EOD Audit:\s*/, ''), reference: c.reference,
+    }));
+    const totalValueImpact = +rows.reduce((s, r) => s + r.valueImpact, 0).toFixed(2);
+    res.json({ success: true, dateString, rows, totalValueImpact });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 app.get('/api/inventory/history/:id', verifyToken, requireStaff, async (req, res) => {

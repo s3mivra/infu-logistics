@@ -250,6 +250,7 @@ export default function ProductsTab({ ctx }) {
     packInfo, effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
     exportDayToPDF, exportInventoryToPDF, exportLedgerToPDF, fetchAnalytics, fetchArOutstanding,
+    exportMenuItemsPDF,
     fetchBalanceSheet, fetchData, fetchEODData, fetchERPData, fetchExpenseCategories,
     fetchOrders, fetchPnl, fetchRfFunds, fetchRfTxs, fetchShiftHistory,
     fetchStockHistory, filteredOrders, formData, getEstimatedStock, globalAddOns,
@@ -319,9 +320,12 @@ export default function ProductsTab({ ctx }) {
             {/* 1. Menu Items List */}
             <div className="flex items-baseline justify-between gap-3 mb-4 border-b border-white/10 pb-2">
               <h3 className="text-xl font-bold text-fg">Menu Items</h3>
-              <span className="text-xs font-bold text-fg/40 shrink-0">
-                {prodFiltersActive ? `${filteredProducts.length} of ${products.length}` : `${products.length} item${products.length === 1 ? '' : 's'}`}
-              </span>
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="text-xs font-bold text-fg/40">
+                  {prodFiltersActive ? `${filteredProducts.length} of ${products.length}` : `${products.length} item${products.length === 1 ? '' : 's'}`}
+                </span>
+                <button onClick={exportMenuItemsPDF} className="text-[10px] bg-brand/10 hover:bg-brand/20 text-brand px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">Export PDF</button>
+              </div>
             </div>
 
             {/* Search + filters - a shop with a few hundred SKUs can't page 8-at-a-time

@@ -2,6 +2,7 @@
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
+import * as ui from '../../shared/ui';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
@@ -33,6 +34,7 @@ export default function HistoryTab({ ctx }) {
     effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
     exportDayToPDF, exportInventoryToPDF, exportLedgerToPDF, fetchAnalytics, fetchArOutstanding,
+    loadPdfLibs, addLogoToPDF, pdfMoney, exportShiftHistoryPDF, exportTimesheetsPDF,
     fetchBalanceSheet, fetchData, fetchEODData, fetchERPData, fetchExpenseCategories,
     fetchOrders, fetchPnl, fetchRfFunds, fetchRfTxs, fetchShiftHistory,
     fetchStockHistory, filteredOrders, formData, getEstimatedStock, globalAddOns,
@@ -92,6 +94,24 @@ export default function HistoryTab({ ctx }) {
   };
   useEffect(() => { if (historySubTab === 'deposits' && deposits === null) loadDeposits(); }, [historySubTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const exportBankDepositsPDF = async () => {
+    if (!deposits || deposits.length === 0) return ui.alert('No bank deposits to export.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('BANK DEPOSITS', 105, 22, { align: 'center' });
+    const total = deposits.reduce((s, d) => s + Number(d.amount || 0), 0);
+    doc.setFontSize(9); doc.text(`${deposits.length} deposit(s) · Total ${pdfMoney(total)}`, 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Date', 'Reference', 'Deposited By', 'Amount']],
+      body: deposits.map(d => [d.createdAt ? new Date(d.createdAt).toLocaleDateString() : '-', d.reference, d.depositedBy, pdfMoney(d.amount)]),
+      foot: [[{ content: 'Total', colSpan: 3 }, pdfMoney(total)]],
+      styles: { fontSize: 9 }, headStyles: { fillColor: [111, 135, 77] }, footStyles: { fillColor: [61, 74, 42], fontStyle: 'bold' }, columnStyles: { 3: { halign: 'right' } },
+    });
+    doc.save(`Bank-Deposits-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
   const sssPage = usePagination(sssRows, 15);
   // Fixed Summary-Sales columns (always shown), each summing one or more raw methods.
   const SSS_COLS = [
@@ -142,7 +162,10 @@ export default function HistoryTab({ ctx }) {
                   <h3 className="text-lg font-black text-fg">Bank Deposits</h3>
                   <p className="text-fg/60 text-xs">Cash-to-bank deposits (posted when a shift is closed &amp; reconciled).</p>
                 </div>
-                <button onClick={loadDeposits} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
+                <div className="flex items-center gap-2">
+                  <button onClick={exportBankDepositsPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition">Export PDF</button>
+                  <button onClick={loadDeposits} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
+                </div>
               </div>
               {deposits === null ? (
                 <p className="text-fg/40 text-sm">Loading…</p>
@@ -256,7 +279,8 @@ export default function HistoryTab({ ctx }) {
               <div className="px-5 py-3 border-b border-white/10 flex items-center gap-3">
                 <h3 className="text-fg font-black uppercase tracking-wider text-sm">Staff Hours</h3>
                 <span className="text-[10px] text-gray-500 font-bold">{clockEntriesTotal} records</span>
-                <button onClick={() => fetchClockEntries(1)} className="ml-auto flex items-center gap-1.5 text-[10px] bg-white/5 text-fg/50 hover:text-fg px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">
+                <button onClick={exportTimesheetsPDF} className="ml-auto text-[10px] bg-white/5 text-fg/50 hover:text-fg px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">Export PDF</button>
+                <button onClick={() => fetchClockEntries(1)} className="flex items-center gap-1.5 text-[10px] bg-white/5 text-fg/50 hover:text-fg px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">
                   <RefreshCw size={11} /> Load
                 </button>
               </div>
@@ -301,7 +325,10 @@ export default function HistoryTab({ ctx }) {
             <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
               <div className="p-4 border-b border-white/10 flex justify-between items-center">
                 <h3 className="text-fg font-black uppercase tracking-wider text-sm">Shift History Archive</h3>
-                <div className="flex gap-2 text-[10px] text-gray-500 font-bold uppercase">{shiftHistoryTotal} records</div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] text-gray-500 font-bold uppercase">{shiftHistoryTotal} records</span>
+                  <button onClick={exportShiftHistoryPDF} className="text-[10px] bg-white/5 text-fg/50 hover:text-fg px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">Export PDF</button>
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">

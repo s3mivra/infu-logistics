@@ -34,6 +34,7 @@ export default function InventoryTab({ ctx }) {
     effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
     exportDayToPDF, exportInventoryToPDF, exportLedgerToPDF, fetchAnalytics, fetchArOutstanding,
+    exportStockTransfersPDF, exportProductionHistoryPDF, loadPdfLibs, addLogoToPDF, pdfMoney,
     fetchBalanceSheet, fetchData, fetchEODData, fetchERPData, fetchExpenseCategories,
     fetchOrders, fetchPnl, fetchRfFunds, fetchRfTxs, fetchShiftHistory,
     fetchStockHistory, filteredOrders, formData, getEstimatedStock, globalAddOns,
@@ -89,6 +90,48 @@ export default function InventoryTab({ ctx }) {
   // Which row's action menu is open (by item._id), null = all closed
   const [openActionMenu, setOpenActionMenu] = useState(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
+
+  // ── EOD Variance report (locked days) ──────────────────────────────────────
+  // EODRecord itself only ever stored the lock flag, never the variance
+  // detail - reconstructed from the StockCard 'Adjustment' entries that
+  // locking creates for every item that had a variance (see the
+  // /api/inventory/eod-history* routes for how).
+  const [eodHistory, setEodHistory] = useState(null); // [{dateString, lockedAt, lockedBy}]
+  const [eodHistoryOpen, setEodHistoryOpen] = useState(false);
+  const [eodExporting, setEodExporting] = useState(false);
+  const loadEodHistory = async () => {
+    setEodHistoryOpen(o => !o);
+    if (eodHistory) return;
+    try { const r = await apiFetch('/api/inventory/eod-history'); const d = await r.json(); if (d.success) setEodHistory(d.records); }
+    catch { setEodHistory([]); }
+  };
+  const exportEodVariancePDF = async (dateString) => {
+    setEodExporting(true);
+    try {
+      const r = await apiFetch(`/api/inventory/eod-history/${dateString}/variance`);
+      const d = await r.json();
+      if (!d.success) return ui.alert(d.error || 'Could not load that day\'s variance.');
+      const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+      await addLogoToPDF(doc);
+      doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+      doc.setFontSize(10); doc.text('EOD VARIANCE REPORT', 105, 22, { align: 'center' });
+      doc.setFontSize(9); doc.text(`Locked day: ${dateString}`, 105, 28, { align: 'center' });
+      if (d.rows.length === 0) {
+        doc.setFontSize(10); doc.text('No variance that day - every item counted matched system stock.', 105, 40, { align: 'center' });
+      } else {
+        autoTable(doc, {
+          startY: 34,
+          head: [['Item', 'Qty Change', 'Balance After', 'Unit Cost', 'Value Impact', 'Reason']],
+          body: d.rows.map(r => [r.itemName, r.qtyChange > 0 ? `+${r.qtyChange}` : r.qtyChange, r.balanceAfter, pdfMoney(r.unitCost), pdfMoney(r.valueImpact), r.reason]),
+          foot: [[{ content: 'Total Value Impact', colSpan: 4 }, pdfMoney(d.totalValueImpact), '']],
+          styles: { fontSize: 8 }, headStyles: { fillColor: [111, 135, 77] }, footStyles: { fillColor: [61, 74, 42], fontStyle: 'bold' },
+          columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
+        });
+      }
+      doc.save(`EOD-Variance-${dateString}.pdf`);
+    } catch { ui.alert('Network error.'); }
+    finally { setEodExporting(false); }
+  };
   useEffect(() => {
     if (!openActionMenu) return;
     const close = () => setOpenActionMenu(null);
@@ -172,6 +215,9 @@ export default function InventoryTab({ ctx }) {
                 <button onClick={exportInventoryToPDF} className="text-[10px] bg-accent border border-white text-white px-3 py-1.5 rounded hover:bg-brand-dark transition font-bold uppercase tracking-wider min-h-[32px]">
                   Export PDF
                 </button>
+                <button onClick={exportProductionHistoryPDF} title="Every batch dated by production instead of expiry (beans, etc.), across the whole catalogue" className="text-[10px] bg-accent border border-white text-white px-3 py-1.5 rounded hover:bg-brand-dark transition font-bold uppercase tracking-wider min-h-[32px]">
+                  Production History
+                </button>
               </div>
             </div>
 
@@ -196,6 +242,7 @@ export default function InventoryTab({ ctx }) {
                 isSuperAdmin={isSuperAdmin}
                 peso={peso}
                 apiFetch={apiFetch}
+                exportStockTransfersPDF={exportStockTransfersPDF}
               />
             )}
 
@@ -540,7 +587,29 @@ export default function InventoryTab({ ctx }) {
 
               return (
                 <div className="overflow-x-auto flex flex-col h-full animate-in fade-in duration-300 relative pb-24">
-                  
+
+                  {/* --- LOCKED DAY VARIANCE EXPORT --- reconstructed from StockCard, since
+                      EODRecord itself never stored the detail (see loadEodHistory above) --- */}
+                  <div className="mb-4 relative">
+                    <button onClick={loadEodHistory} className="text-[10px] bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition flex items-center gap-1.5">
+                      Export Variance for a Locked Day {eodHistoryOpen ? '▲' : '▼'}
+                    </button>
+                    {eodHistoryOpen && (
+                      <div className="absolute z-20 mt-1 bg-surface border border-white/10 rounded-lg shadow-2xl w-72 max-h-64 overflow-y-auto">
+                        {eodHistory === null ? (
+                          <p className="text-fg/40 text-xs p-4 text-center">Loading…</p>
+                        ) : eodHistory.length === 0 ? (
+                          <p className="text-fg/40 text-xs p-4 text-center">No locked days yet.</p>
+                        ) : eodHistory.map(r => (
+                          <button key={r.dateString} disabled={eodExporting} onClick={() => exportEodVariancePDF(r.dateString)}
+                            className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/80 hover:bg-white/5 hover:text-accent transition disabled:opacity-40 border-b border-white/5 last:border-0">
+                            {r.dateString} <span className="text-fg/30 font-normal">· locked by {r.lockedBy || '-'}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   {/* --- INTELLIGENT EOD HEADER --- */}
                   <div className={`flex justify-between items-center p-4 rounded-lg border mb-4 shadow-inner ${isLocked ? 'bg-green-900/10 border-green-900/30' : 'bg-page-bg border-accent'}`}>
                     <div>

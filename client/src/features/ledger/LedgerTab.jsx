@@ -37,6 +37,7 @@ export default function LedgerTab({ ctx }) {
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
     exportDayToPDF, exportInventoryToPDF, exportLedgerToPDF, fetchAnalytics, fetchArOutstanding,
     fetchBalanceSheet, fetchData, fetchEODData, fetchERPData, fetchExpenseCategories, setBulkOpInProgress,
+    exportRevolvingFundsPDF,
     fetchOrders, fetchPnl, fetchRfFunds, fetchRfTxs, fetchShiftHistory,
     fetchStockHistory, filteredOrders, formData, getEstimatedStock, globalAddOns,
     groupedArchives, handleImageUpload, handleInlinePriceUpdate, handleRestockSubmit, handleSaveAddOn,
@@ -674,6 +675,27 @@ export default function LedgerTab({ ctx }) {
       else ui.alert(d.error || 'Failed to reject.');
     } catch { ui.alert('Network error.'); }
     finally { setReqSlipBusy(false); }
+  };
+
+  const exportRequisitionSlipsPDF = async () => {
+    if (!reqSlips || reqSlips.length === 0) return ui.alert('No requisition slips to export.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(10); doc.text('REQUISITION SLIPS / APPROVALS', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${reqSlips.length} slip(s) · ${reqSlipView === 'pending' ? 'Pending only' : 'All statuses'} · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+    autoTable(doc, {
+      startY: 34,
+      head: [['Slip #', 'Type', 'Summary', 'Amount', 'Prepared By', 'Status', 'Approved/Rejected By']],
+      body: reqSlips.map(s => [
+        s.slipNumber, s.type === 'petty-cash' ? 'Petty Cash' : 'Procurement',
+        s.type === 'petty-cash' ? `${s.fundName} — ${s.description}` : `${s.supplier || 'No supplier'} (${(s.lines || []).length} item(s))`,
+        pdfMoney(s.type === 'petty-cash' ? s.amount : s.estTotal),
+        s.preparedBy || '-', s.status, s.approvedBy || s.rejectedBy || '-',
+      ]),
+      styles: { fontSize: 7.5 }, headStyles: { fillColor: [111, 135, 77] }, columnStyles: { 3: { halign: 'right' } },
+    });
+    doc.save(`Requisition-Slips-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
   // Auto-load the active view's data on entry (nav landing or sub-tab click).
@@ -2103,7 +2125,11 @@ export default function LedgerTab({ ctx }) {
                     </tbody>
                   </table>
                   <div className="px-3"><Pager {...pbcPage} label="categories" /></div>
-                  <p className="text-[10px] text-fg/60 p-3 text-center">COGS is estimated from recipe ingredient costs. Items without recipes show ₱0 COGS.</p>
+                  <p className="text-[10px] text-fg/60 p-3 text-center">
+                    COGS is estimated using <span className="text-fg/80 font-bold">today's</span> ingredient costs, not the cost at the time each sale happened - a negative
+                    margin here usually means a recipe's ingredient cost has risen since past sales, or a recipe cost was only just set. That's why this can
+                    disagree with Pricing Control, which compares today's price against today's cost. Items without a recipe show ₱0 COGS.
+                  </p>
                 </div>
               )}
             </div>
@@ -2429,6 +2455,9 @@ export default function LedgerTab({ ctx }) {
                     Slips
                   </button>
                 </div>
+                <button onClick={exportRequisitionSlipsPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[44px]">
+                  Export PDF
+                </button>
               </div>
 
               <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
@@ -2496,12 +2525,17 @@ export default function LedgerTab({ ctx }) {
                   <h3 className="text-2xl font-black text-fg">Revolving Funds</h3>
                   <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-1">Petty cash pools - track disbursements and replenishments</p>
                 </div>
-                <button
-                  onClick={() => setRfNewModal(true)}
-                  className="flex items-center gap-2 bg-brand text-white px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[44px] shrink-0"
-                >
-                  <Plus size={14}/> New Fund
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button onClick={exportRevolvingFundsPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[44px]">
+                    Export PDF
+                  </button>
+                  <button
+                    onClick={() => setRfNewModal(true)}
+                    className="flex items-center gap-2 bg-brand text-white px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[44px]"
+                  >
+                    <Plus size={14}/> New Fund
+                  </button>
+                </div>
               </div>
 
               {rfLoading && <div className="py-12 text-center text-fg/60 font-bold uppercase text-sm tracking-widest">Loading…</div>}

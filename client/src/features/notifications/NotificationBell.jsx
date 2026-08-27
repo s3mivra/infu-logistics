@@ -55,10 +55,18 @@ export default function NotificationBell({ align = 'right', full = false }) {
     return () => { window.removeEventListener('resize', on); window.removeEventListener('scroll', on, true); };
   }, [open, measure]);
 
+  // A dead/expired session used to mean this poll kept firing every 2 minutes
+  // forever (401 after 401 after 401 in the console), because apiFetch's own
+  // 401 handling clears auth state asynchronously - there's a window where
+  // this component is still mounted and the interval is still armed. Once a
+  // poll comes back 401, stop scheduling more instead of retrying blind.
+  const deadSessionRef = useRef(false);
   const load = useCallback(async () => {
+    if (deadSessionRef.current) return;
     setLoading(true);
     try {
       const res = await apiFetch('/api/notifications');
+      if (res.status === 401) { deadSessionRef.current = true; return; }
       const d = await res.json();
       if (d?.success) setData({ items: d.items || [], count: d.count || 0, criticalCount: d.criticalCount || 0 });
     } catch {
@@ -68,6 +76,7 @@ export default function NotificationBell({ align = 'right', full = false }) {
   }, [apiFetch]);
 
   useEffect(() => {
+    deadSessionRef.current = false; // a fresh mount means a fresh (or renewed) session
     load();
     const t = setInterval(load, POLL_MS);
     return () => clearInterval(t);

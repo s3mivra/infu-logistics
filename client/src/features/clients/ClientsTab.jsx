@@ -5,6 +5,12 @@ import { useDashboard } from '../dashboard/DashboardContext';
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
 const socket = io(API_URL, { transports: ['websocket'], upgrade: false });
+// See AdminDashboard.jsx for why: an open socket blocks bfcache, so
+// disconnect before the page would be frozen and reconnect if restored from it.
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => { try { socket.disconnect(); } catch { /* already gone */ } });
+  window.addEventListener('pageshow', (e) => { if (e.persisted) { try { socket.connect(); } catch { /* ignore */ } } });
+}
 
 // Clients - who we sell to, what they owe, and how close they are to their limit.
 //
