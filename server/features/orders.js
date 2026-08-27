@@ -495,7 +495,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       if (existingOrder) return res.status(200).json({ success: true, order: existingOrder, message: "Duplicate prevented." });
     }
 
-    let { items, discountPercent = 0, discountFlat = 0, table, customerName, sessionId, isComplimentary = false, employeeName = '', orderNotes = '', guestCount = 1, payments: paymentsInput, paymentMethod: bodyPaymentMethod, termsOfPayment, reserveOnly = false } = req.body;
+    let { items, discountPercent = 0, discountFlat = 0, table, customerName, sessionId, isComplimentary = false, employeeName = '', orderNotes = '', guestCount = 1, payments: paymentsInput, paymentMethod: bodyPaymentMethod, termsOfPayment, reserveOnly = false, location = '' } = req.body;
 
     // Canonicalize the buyer's name. It is printed on receipts, billing
     // statements and delivery receipts, and it is the key that repeat walk-ins
@@ -785,6 +785,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
 
     const newOrder = await Order.create({
       orderNumber, table, items: validatedItems,
+      location: String(location || '').trim().slice(0, 100),
       subtotal: totalGross,
       vatRate: vatRate,
       vatAmount: totalVat,

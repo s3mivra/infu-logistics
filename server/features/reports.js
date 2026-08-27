@@ -837,6 +837,60 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
   }
 });
 
+// ── REPORT: COMPARE BRANCHES/LOCATIONS ────────────────────────────────────────
+// Groups Completed orders by Order.location (set by the device at ring-up -
+// see client localStorage 'posBranch') for today and all-time, so multiple
+// branches sharing this one deployment can be compared side by side. An
+// order with no location tag (every order made before this existed, or a
+// single-location shop that never set one) lands in "(Unassigned)" - never
+// silently dropped. Also folds in each location's live inventory value from
+// the existing per-location stock report, since "unified inventory across
+// locations" and "compare branches" are the same screen in the UI.
+app.get('/api/analytics/by-location', verifyToken, ...canViewAnalytics, async (req, res) => {
+  try {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+
+    const groupStage = {
+      _id: { $ifNull: [{ $cond: [{ $eq: ['$location', ''] }, null, '$location'] }, '(Unassigned)'] },
+      revenue: { $sum: { $cond: ['$isComplimentary', 0, '$total'] } },
+      orderCount: { $sum: 1 },
+    };
+
+    const [allTime, today, inventoryItems] = await Promise.all([
+      Order.aggregate([
+        { $match: { ...bizScope, status: 'Completed' } },
+        { $group: groupStage },
+      ]),
+      Order.aggregate([
+        { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: todayStart } } },
+        { $group: groupStage },
+      ]),
+      Inventory.find(bizScope, { stockQty: 1, unitCost: 1, stockLocation: 1 }).lean(),
+    ]);
+
+    const byLoc = {};
+    const get = (name) => byLoc[name] || (byLoc[name] = { location: name, allTimeRevenue: 0, allTimeOrders: 0, todayRevenue: 0, todayOrders: 0, inventoryValue: 0, itemCount: 0 });
+    for (const row of allTime) { const b = get(row._id); b.allTimeRevenue = +row.revenue.toFixed(2); b.allTimeOrders = row.orderCount; }
+    for (const row of today) { const b = get(row._id); b.todayRevenue = +row.revenue.toFixed(2); b.todayOrders = row.orderCount; }
+    for (const item of inventoryItems) {
+      const b = get(item.stockLocation || '(Unassigned)');
+      b.inventoryValue += (item.stockQty || 0) * (item.unitCost || 0);
+      b.itemCount += 1;
+    }
+
+    const locations = Object.values(byLoc)
+      .map(b => ({ ...b, inventoryValue: +b.inventoryValue.toFixed(2), avgTicket: b.allTimeOrders > 0 ? +(b.allTimeRevenue / b.allTimeOrders).toFixed(2) : 0 }))
+      .sort((a, b) => b.allTimeRevenue - a.allTimeRevenue);
+
+    res.json({ success: true, locations, hasLocationData: locations.some(l => l.location !== '(Unassigned)') });
+  } catch (err) {
+    log.error({ err }, 'analytics/by-location error');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 // ── REPORT: MENU ENGINEERING (Stars / Plowhorses / Puzzles / Dogs) ───────────
 app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (req, res) => {
   try {

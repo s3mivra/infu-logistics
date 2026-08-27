@@ -114,6 +114,8 @@ export default function registerAdminTools(ctx) {
     StockTransfer,
     PurchaseOrder,
     Bill,
+    PriceTier,
+    RequisitionSlip,
     JournalEntrySchema,
     JournalEntry,
     InventoryMovementSchema,
@@ -690,12 +692,45 @@ app.post('/api/admin/backdate-sale/backfill-ledger', verifyToken, requireSuperAd
 // current BUSINESS_TYPE deployment, which is the only scope boundary that
 // actually exists end-to-end right now.
 const PURGE_CONFIRM_PHRASE = 'PURGE';
+// Every purgeable slice, as an explicit opt-in checklist - the client sends
+// exactly which categories to wipe. `menu` defaults OFF everywhere it's
+// pre-filled (products/categories/etc. used to be permanently protected;
+// now it's just another checkbox, off by default so nothing changes for
+// anyone who doesn't touch it). Every other category defaults ON, matching
+// the original always-delete-everything-except-menu behavior.
+const PURGE_CATEGORIES = {
+  orders:          { label: 'Sales & Orders', defaultOn: true },
+  ledger:          { label: 'Ledger / Journal Entries', defaultOn: true },
+  inventory:       { label: 'Inventory & Stock History', defaultOn: true },
+  shifts:          { label: 'Shifts & Time Clock', defaultOn: true },
+  revolvingFunds:  { label: 'Revolving Funds', defaultOn: true },
+  procurement:     { label: 'Procurement (POs & Bills)', defaultOn: true },
+  requisitions:    { label: 'Requisition Slips', defaultOn: true },
+  eod:             { label: 'End-of-Day Records', defaultOn: true },
+  auditLog:        { label: 'Audit Log', defaultOn: true },
+  menu:            { label: 'Menu Setup (Products, Categories, Combos, Add-ons, Modifiers, Price Tiers)', defaultOn: false },
+};
+app.get('/api/admin/purge-data/categories', verifyToken, requireSuperAdmin, async (req, res) => {
+  res.json({ success: true, categories: Object.entries(PURGE_CATEGORIES).map(([key, v]) => ({ key, ...v })) });
+});
+
 app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const phrase = String(req.body.confirmPhrase || '').trim();
     if (phrase !== PURGE_CONFIRM_PHRASE) {
       return res.status(400).json({ success: false, error: `Type ${PURGE_CONFIRM_PHRASE} exactly (all caps) to confirm.` });
     }
+    // Explicit selection wins; omitting `categories` entirely falls back to
+    // "everything except menu" (the original behavior) rather than nothing,
+    // so an older client that never sends the field still purges as before.
+    const requested = Array.isArray(req.body.categories) ? req.body.categories : null;
+    const selected = new Set(
+      requested
+        ? requested.filter(k => PURGE_CATEGORIES[k])
+        : Object.keys(PURGE_CATEGORIES).filter(k => PURGE_CATEGORIES[k].defaultOn)
+    );
+    if (selected.size === 0) return res.status(400).json({ success: false, error: 'Select at least one category to purge.' });
+
     const bizScope = { businessType: BUSINESS_TYPE };
     const deleted = {};
     // hasBizField=false means the model has NO businessType field at all - a
@@ -709,57 +744,74 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
       deleted[label] = (await Model.deleteMany(hasBizField ? bizScope : {})).deletedCount;
     };
 
-    // Sales / orders
-    await del('orders', Order);
+    if (selected.has('orders')) await del('orders', Order);
     // Ledger (journal entries, period locks, bank deposits, expenses - expenses
     // are just JournalEntry rows with an expense account code, no separate model)
-    await del('journalEntries', JournalEntry, false);
-    await del('closedPeriods', ClosedPeriod, false);
-    await del('bankDeposits', BankDeposit, false);
-    // Inventory + its history
-    await del('inventory', Inventory);
-    await del('stockCards', StockCard, false);
-    await del('inventoryMovements', InventoryMovement, false);
-    await del('stockTransfers', StockTransfer);
-    await del('backdateQueue', BackdateQueueItem);
-    // Shifts / time clock
-    await del('shifts', Shift, false);
-    await del('clockEntries', ClockEntry);
-    // Revolving funds
-    await del('revolvingFunds', RevolvingFund, false);
-    await del('revolvingFundTx', RevolvingFundTx, false);
-    // Procurement
-    await del('purchaseOrders', PurchaseOrder, false);
-    await del('bills', Bill);
-    // End-of-day archives
-    await del('eodRecords', EODRecord, false);
-    // Cached analytics counters - MUST reset alongside Order/whatever fed them,
-    // or Analytics keeps showing pre-purge totals forever (they're not derived
-    // live, see reports.js).
-    await del('tenantStats', TenantStats);
-    await del('productStats', ProductStats);
-    // Audit log - the user explicitly wants a genuinely fresh app, this
-    // included. The purge action itself is logged fresh right after, below,
-    // so the trail isn't lost - it just starts clean.
-    await del('auditLog', AuditLog, false);
-    // Products/menu are deliberately KEPT, but "Out of Stock" is a manual
-    // per-product flag independent of Inventory (see products.js) - it isn't
-    // deleted or derived, so it silently survived a purge and kept showing
-    // stale "OUT OF STOCK" badges on a menu that's otherwise fresh. Reset it
-    // without touching anything else about the product.
-    deleted.productsMarkedBackInStock = (await Product.updateMany({ ...bizScope, isOutOfStock: true }, { $set: { isOutOfStock: false } })).modifiedCount;
+    if (selected.has('ledger')) {
+      await del('journalEntries', JournalEntry, false);
+      await del('closedPeriods', ClosedPeriod, false);
+      await del('bankDeposits', BankDeposit, false);
+    }
+    if (selected.has('inventory')) {
+      await del('inventory', Inventory);
+      await del('stockCards', StockCard, false);
+      await del('inventoryMovements', InventoryMovement, false);
+      await del('stockTransfers', StockTransfer);
+      await del('backdateQueue', BackdateQueueItem);
+    }
+    if (selected.has('shifts')) {
+      await del('shifts', Shift, false);
+      await del('clockEntries', ClockEntry);
+    }
+    if (selected.has('revolvingFunds')) {
+      await del('revolvingFunds', RevolvingFund, false);
+      await del('revolvingFundTx', RevolvingFundTx, false);
+    }
+    if (selected.has('procurement')) {
+      await del('purchaseOrders', PurchaseOrder, false);
+      await del('bills', Bill);
+    }
+    if (selected.has('requisitions')) await del('requisitionSlips', RequisitionSlip);
+    if (selected.has('eod')) await del('eodRecords', EODRecord, false);
+    if (selected.has('auditLog')) await del('auditLog', AuditLog, false);
 
-    // Deliberately untouched: User, Role, ClientAccount (staff + client
-    // logins), Product/Combo/Category/AddOn/ModifierGroup/PriceTier (menu),
-    // Account/Settings/PaymentMethodMap (Chart of Accounts + config),
-    // Discount/DiscountRule (promo definitions), StorageLocation/
-    // StockCategory (inventory taxonomy), Supplier (vendor master data),
-    // ScheduledShift (future planning), Tenant, Counter (sequence numbers -
-    // left as-is so new records don't reuse old reference/order numbers).
+    if (selected.has('menu')) {
+      // No businessType field on these (see hasBizField note above).
+      await del('products', Product, false);
+      await del('categories', Category, false);
+      await del('combos', Combo, false);
+      await del('addOns', AddOn, false);
+      await del('modifierGroups', ModifierGroup, false);
+      await del('priceTiers', PriceTier);
+    } else {
+      // Products are KEPT, but "Out of Stock" is a manual per-product flag
+      // independent of Inventory (see products.js) - it isn't deleted or
+      // derived, so it silently survives a purge and keeps showing stale
+      // "OUT OF STOCK" badges on a menu that's otherwise fresh. Reset it
+      // without touching anything else about the product.
+      deleted.productsMarkedBackInStock = (await Product.updateMany({ ...bizScope, isOutOfStock: true }, { $set: { isOutOfStock: false } })).modifiedCount;
+    }
 
-    await logAudit(req, { action: 'purge-data', entity: 'Tenant', entityId: BUSINESS_TYPE, after: deleted });
+    // Cached analytics counters - MUST reset alongside Order/Product,
+    // whatever fed them, or Analytics keeps showing pre-purge totals forever
+    // (they're not derived live, see reports.js).
+    if (selected.has('orders') || selected.has('menu')) {
+      await del('tenantStats', TenantStats);
+      await del('productStats', ProductStats);
+    }
+
+    // Always untouched regardless of selection: User, Role, ClientAccount
+    // (staff + client logins), Account/Settings/PaymentMethodMap (Chart of
+    // Accounts + config), Discount/DiscountRule (promo definitions),
+    // StorageLocation/StockCategory (inventory taxonomy), Supplier (vendor
+    // master data), ScheduledShift (future planning), Tenant, Counter
+    // (sequence numbers - left as-is so new records don't reuse old
+    // reference/order numbers).
+
+    await logAudit(req, { action: 'purge-data', entity: 'Tenant', entityId: BUSINESS_TYPE, after: { categories: [...selected], ...deleted } });
     emitToMgr('erpUpdated');
-    res.json({ success: true, deleted });
+    if (selected.has('menu')) emitToAll('menuUpdated');
+    res.json({ success: true, categories: [...selected], deleted });
   } catch (err) {
     log.error?.({ err }, 'POST /api/admin/purge-data failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));

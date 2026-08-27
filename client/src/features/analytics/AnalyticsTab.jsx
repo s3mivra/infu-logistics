@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
@@ -84,6 +84,20 @@ export default function AnalyticsTab({ ctx }) {
   // Layout switch: A = KPI Grid (current), B = Ledger-style (Stage 2).
   const [analyticsLayout, setAnalyticsLayout] = useState('a');
 
+  // Compare Branches - only meaningful once a device has been set to a branch
+  // (see the "Branch" picker in the POS cart) and has rung up sales tagged
+  // with one; unified inventory value per location shows either way.
+  const [byLocation, setByLocation] = useState(null);
+  const [byLocationLoading, setByLocationLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setByLocationLoading(true);
+    apiFetch('/api/analytics/by-location').then(r => r.json()).then(d => {
+      if (!cancelled && d.success) setByLocation(d);
+    }).catch(() => {}).finally(() => { if (!cancelled) setByLocationLoading(false); });
+    return () => { cancelled = true; };
+  }, [apiFetch]);
+
   // Compute local values before rendering
   const ad = analyticsData;
   const totalInvValue = inventory.reduce((s, i) => s + i.stockQty * (i.unitCost || 0), 0);
@@ -138,6 +152,50 @@ export default function AnalyticsTab({ ctx }) {
               <RefreshCw size={12} className={analyticsLoading ? 'animate-spin' : ''}/> Refresh
             </button>
           </div>
+
+          {/* Compare Branches - unified inventory value per location always shows;
+              revenue comparison only fills in once orders start carrying a
+              branch tag (set via the "Branch" picker in the POS cart). */}
+          {byLocation && byLocation.locations.length > 0 && (byLocation.locations.length > 1 || byLocation.hasLocationData) && (
+            <div className="bg-surface border border-white/10 rounded-2xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
+                <Building2 size={14} className="text-brand"/>
+                <h3 className="text-fg font-bold text-sm">Compare Branches</h3>
+                {!byLocation.hasLocationData && (
+                  <span className="ml-auto text-[10px] text-fg/40 font-bold uppercase tracking-widest">No sales tagged with a branch yet - showing inventory only</span>
+                )}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs min-w-[640px]">
+                  <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                    <tr>
+                      <th className="px-5 py-2.5">Branch</th>
+                      <th className="px-5 py-2.5 text-right">Today's Revenue</th>
+                      <th className="px-5 py-2.5 text-right">All-Time Revenue</th>
+                      <th className="px-5 py-2.5 text-right">All-Time Orders</th>
+                      <th className="px-5 py-2.5 text-right">Avg Ticket</th>
+                      <th className="px-5 py-2.5 text-right">Inventory Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {byLocation.locations.map((l, i) => (
+                      <tr key={l.location} className={`border-b border-white/5 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'} ${i === 0 && byLocation.hasLocationData ? 'bg-brand/5' : ''}`}>
+                        <td className="px-5 py-2.5 font-bold text-fg whitespace-nowrap">
+                          {i === 0 && byLocation.hasLocationData && <span className="text-[9px] bg-brand text-white px-1.5 py-0.5 rounded font-black uppercase mr-1.5">TOP</span>}
+                          {l.location}
+                        </td>
+                        <td className="px-5 py-2.5 text-right font-mono tabular-nums text-fg">{peso(l.todayRevenue)}</td>
+                        <td className="px-5 py-2.5 text-right font-mono tabular-nums font-bold text-brand">{peso(l.allTimeRevenue)}</td>
+                        <td className="px-5 py-2.5 text-right font-mono tabular-nums text-fg/70">{l.allTimeOrders.toLocaleString()}</td>
+                        <td className="px-5 py-2.5 text-right font-mono tabular-nums text-fg/70">{peso(l.avgTicket)}</td>
+                        <td className="px-5 py-2.5 text-right font-mono tabular-nums text-fg/70">{peso(l.inventoryValue)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {analyticsLayout === 'b' ? (
             <div className="bg-surface border border-white/10 rounded-2xl overflow-hidden">

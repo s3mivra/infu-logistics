@@ -45,6 +45,7 @@ import registerAudit from './features/audit.js';
 import registerSettings from './features/settings.js';
 import registerPurchaseOrders from './features/purchase-orders.js';
 import registerBills from './features/bills.js';
+import registerRequisitions from './features/requisitions.js';
 import registerCollections from './features/collections.js';
 import registerNotifications from './features/notifications.js';
 import registerClients from './features/clients.js';
@@ -999,6 +1000,12 @@ const OrderSchema = new mongoose.Schema({
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   orderNumber: String,
   table: String,
+  // Which branch/location rang this up - a StorageLocation name snapshot, set
+  // by the device (see client localStorage 'posBranch'), same convention as
+  // Inventory.stockLocation. Blank means single-location or unset - every
+  // existing order predates this and is untagged, which is fine (reports
+  // treat blank as its own "(Unassigned)" bucket, never dropped).
+  location: { type: String, default: '', index: true },
   isArchived: { type: Boolean, default: false, index: true },
   status: { type: String, default: 'Pending' },
   // Parked / held tabs: saved but not yet sent to the kitchen or completed.
@@ -2567,6 +2574,70 @@ const RevolvingFundTxSchema = new mongoose.Schema({
 
 const RevolvingFundTx = mongoose.model('RevolvingFundTx', RevolvingFundTxSchema);
 
+// ── REQUISITION SLIPS ─────────────────────────────────────────────────────────
+// A gate in front of two kinds of money/stock movement that used to happen
+// immediately: a petty-cash disbursement and a new purchase order. Staff files
+// a slip (Pending); only once someone with accounting.manage approves it does
+// the actual movement happen (fund balance drops / a real PurchaseOrder is
+// created) - mirrors the existing Bill approve/reject shape (BillSchema above)
+// so the pattern stays consistent across the app. `preparedBy` is the
+// requester's name for the printed slip's "Prepared By" line; `approvedBy` -
+// once set - is the "Approved By" line beneath it.
+const REQ_SLIP_STATUSES = ['Pending', 'Approved', 'Rejected'];
+const RequisitionSlipSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  slipNumber: { type: String, index: true },              // REQ-2026-000001
+  type: { type: String, enum: ['petty-cash', 'procurement'], required: true, index: true },
+  status: { type: String, default: 'Pending', enum: REQ_SLIP_STATUSES, index: true },
+
+  // petty-cash fields
+  fundId: { type: mongoose.Schema.Types.ObjectId, ref: 'RevolvingFund', default: null },
+  fundName: { type: String, default: '' },
+  amount: { type: Number, default: 0 },
+  description: { type: String, default: '' },
+  categoryCode: { type: String, default: '' },
+
+  // procurement fields
+  supplier: { type: String, default: '' },
+  supplierId: { type: mongoose.Schema.Types.ObjectId, ref: 'Supplier', default: null },
+  expectedDate: { type: Date, default: null },
+  lines: [{
+    invId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
+    itemName: { type: String, default: '' },
+    itemCode: { type: String, default: '' },
+    unit: { type: String, default: '' },
+    packSize: { type: Number, default: null },
+    orderedQty: { type: Number, default: 0 },
+    unitCost: { type: Number, default: 0 },
+    expiryDate: { type: Date, default: null },
+    productionDate: { type: Date, default: null },
+    // Carried through unchanged to the PurchaseOrder line on approval - only
+    // meaningful for a brand-new item (no invId), where receiving needs to
+    // know how to create the Inventory doc it becomes.
+    expiryWarnDays: { type: Number, default: null },
+    lowStockThreshold: { type: Number, default: null },
+    stockLocation: { type: String, default: null },
+    stockCategory: { type: String, default: null },
+    creditAccount: { type: String, default: null },
+  }],
+  estTotal: { type: Number, default: 0 },
+
+  notes: { type: String, default: '' },
+  preparedBy: { type: String, default: '' },               // requester's name - the slip's "Prepared By" line
+  approvedBy: { type: String, default: '' },                // the slip's "Approved By" line, once set
+  approvedAt: { type: Date, default: null },
+  rejectedBy: { type: String, default: '' },
+  rejectedAt: { type: Date, default: null },
+  rejectionReason: { type: String, default: '' },
+  // What approval actually created - a RevolvingFundTx id or a PurchaseOrder
+  // id/number, so the slip links straight through to the real record.
+  resultRefId: { type: String, default: '' },
+  resultRefLabel: { type: String, default: '' },
+}, { timestamps: true });
+RequisitionSlipSchema.index({ businessType: 1, status: 1, createdAt: -1 });
+const RequisitionSlip = mongoose.model('RequisitionSlip', RequisitionSlipSchema);
+
 // ── REVOLVING FUND ROUTES ─────────────────────────────────────────────────────
 
 
@@ -2790,6 +2861,9 @@ const ctx = {
   RevolvingFund,
   RevolvingFundTxSchema,
   RevolvingFundTx,
+  RequisitionSlipSchema,
+  RequisitionSlip,
+  REQ_SLIP_STATUSES,
   verifyToken,
   verifyClientToken,
   requireSuperAdmin,
@@ -2825,6 +2899,7 @@ registerAudit(ctx);
 registerSettings(ctx);
 registerPurchaseOrders(ctx);
 registerBills(ctx);
+registerRequisitions(ctx);
 registerCollections(ctx);
 registerNotifications(ctx);
 registerClients(ctx);

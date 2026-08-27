@@ -457,6 +457,12 @@ export default function AdminDashboard() {
   // Cashier later promotes Reserved → Pending (pay later) or Preparing (pay now).
   const [posReserveOnly, setPosReserveOnly] = useState(false);
   const [posTable, setPosTable] = useState(BUSINESS_TYPE === 'log' ? 'Pickup' : 'Dine-In');
+  // Which branch/location THIS DEVICE rings sales up as - a StorageLocation
+  // name, persisted per-device (not per-user) since a POS tablet physically
+  // lives at one branch. Stamped onto every order so Analytics can compare
+  // branches; blank is fine (single-location shops never need to touch this).
+  const [posBranch, setPosBranchState] = useState(() => { try { return localStorage.getItem('posBranch') || ''; } catch { return ''; } });
+  const setPosBranch = (name) => { setPosBranchState(name); try { localStorage.setItem('posBranch', name || ''); } catch { /* private mode, etc. - just won't persist across reloads */ } };
   const [posPayment, setPosPayment] = useState('Cash');
   const [posSelectedProduct, setPosSelectedProduct] = useState(null);
   const [posActiveSize, setPosActiveSize] = useState(null);
@@ -1719,6 +1725,7 @@ export default function AdminDashboard() {
       dispatchStatus: (isDelivery || isPickup) ? 'Preparing' : '',
       orderNotes: posNotes.trim(),
       guestCount: Math.max(1, parseInt(posGuestCount) || 1),
+      location: posBranch || '',
     };
 
     // Reset the POS form back to a clean slate after a successful (or queued) order.
@@ -2410,6 +2417,8 @@ const updateStatus = async (orderId, newStatus) => {
     finally { setRfNewSubmitting(false); }
   };
 
+  // Files a Requisition Slip instead of disbursing directly - nothing moves
+  // until it's approved on Ledger → Approvals (see requisitions.js).
   const submitRfDisb = async () => {
     if (rfDisbSubmitting || !rfActiveFund) return;
     const amt = parseFloat(rfDisbForm.amount);
@@ -2417,19 +2426,16 @@ const updateStatus = async (orderId, newStatus) => {
     if (!rfDisbForm.description.trim()) return ui.alert('Description is required.');
     setRfDisbSubmitting(true);
     try {
-      const res = await apiFetch(`/api/revolving-funds/${rfActiveFund._id}/disburse`, {
+      const res = await apiFetch('/api/requisition-slips', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: amt, description: rfDisbForm.description.trim(), categoryCode: rfDisbForm.categoryCode }),
+        body: JSON.stringify({ type: 'petty-cash', fundId: rfActiveFund._id, amount: amt, description: rfDisbForm.description.trim(), categoryCode: rfDisbForm.categoryCode }),
       });
       const data = await res.json();
-      if (!data.success) return ui.alert(data.error || 'Disbursement failed.');
+      if (!data.success) return ui.alert(data.error || 'Failed to file requisition slip.');
       setRfDisbModal(false);
       setRfDisbForm({ amount: '', description: '', categoryCode: '760000' });
-      // Update local fund balance without full refetch
-      setRfFunds(prev => prev.map(f => f._id === data.fund._id ? data.fund : f));
-      setRfActiveFund(data.fund);
-      await fetchRfTxs(rfActiveFund._id, 1);
+      ui.alert(`Requisition Slip ${data.slip.slipNumber} filed. Awaiting approval - the fund balance won't change until then.`);
     } catch (err) { ui.alert('Network error.'); }
     finally { setRfDisbSubmitting(false); }
   };
@@ -5678,6 +5684,7 @@ const updateStatus = async (orderId, newStatus) => {
     collapsedOrders, setCollapsedOrders, updatingOrders, cashTendered, setCashTendered,
     isPosOpen, setIsPosOpen, posCart, setPosCart, posCategory, setPosCategory, posPage, setPosPage,
     posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posBuyerDiscounts, posReserveOnly, setPosReserveOnly, posTable, setPosTable,
+    posBranch, setPosBranch,
     posPayment, setPosPayment, posSelectedProduct, setPosSelectedProduct,
     posActiveSize, setPosActiveSize, posActiveAddOns, setPosActiveAddOns, posItemQty, setPosItemQty,
     posDiscountType, setPosDiscountType, posDiscountValue, setPosDiscountValue,

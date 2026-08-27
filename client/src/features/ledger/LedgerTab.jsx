@@ -626,6 +626,56 @@ export default function LedgerTab({ ctx }) {
     });
     doc.save(`Percentage-Tax-${ptaxRange.start}_to_${ptaxRange.end}.pdf`);
   };
+  // ── Requisition Slips / Approvals ────────────────────────────────────────────
+  // A petty-cash disbursement or a new purchase order files a Pending slip
+  // instead of moving anything directly - approving it here is what actually
+  // triggers the movement (see requisitions.js on the server).
+  const [reqSlips, setReqSlips] = useState([]);
+  const [reqSlipsLoading, setReqSlipsLoading] = useState(false);
+  const [reqSlipStatusFilter, setReqSlipStatusFilter] = useState('Pending');
+  const [reqSlipView, setReqSlipView] = useState('pending'); // 'pending' | 'all'
+  const [reqSlipPreview, setReqSlipPreview] = useState(null);
+  const [reqSlipRejecting, setReqSlipRejecting] = useState(null); // slip being rejected (reason prompt)
+  const [reqSlipRejectReason, setReqSlipRejectReason] = useState('');
+  const [reqSlipBusy, setReqSlipBusy] = useState(false);
+
+  const fetchRequisitionSlips = async (status) => {
+    setReqSlipsLoading(true);
+    try {
+      const s = status !== undefined ? status : (reqSlipView === 'pending' ? 'Pending' : '');
+      const qs = s ? `?status=${s}` : '';
+      const r = await apiFetch(`/api/requisition-slips${qs}`);
+      const d = await r.json();
+      if (d.success) setReqSlips(d.slips);
+    } catch { /* silent - approvals list is supplementary, not blocking */ }
+    finally { setReqSlipsLoading(false); }
+  };
+
+  const approveReqSlip = async (slip) => {
+    const label = slip.type === 'petty-cash' ? `₱${slip.amount.toFixed(2)} from ${slip.fundName}` : `PO to ${slip.supplier || 'supplier'} (est. ₱${slip.estTotal.toFixed(2)})`;
+    if (!(await ui.confirm(`Approve ${slip.slipNumber}: ${label}?`))) return;
+    setReqSlipBusy(true);
+    try {
+      const r = await apiFetch(`/api/requisition-slips/${slip._id}/approve`, { method: 'POST', body: JSON.stringify({}) });
+      const d = await r.json();
+      if (d.success) { fetchRequisitionSlips(); fetchERPData(); ui.alert(`${slip.slipNumber} approved.`); }
+      else ui.alert(d.error || 'Failed to approve.');
+    } catch { ui.alert('Network error.'); }
+    finally { setReqSlipBusy(false); }
+  };
+
+  const submitRejectReqSlip = async () => {
+    if (!reqSlipRejecting || !reqSlipRejectReason.trim()) return;
+    setReqSlipBusy(true);
+    try {
+      const r = await apiFetch(`/api/requisition-slips/${reqSlipRejecting._id}/reject`, { method: 'POST', body: JSON.stringify({ reason: reqSlipRejectReason.trim() }) });
+      const d = await r.json();
+      if (d.success) { setReqSlipRejecting(null); setReqSlipRejectReason(''); fetchRequisitionSlips(); }
+      else ui.alert(d.error || 'Failed to reject.');
+    } catch { ui.alert('Network error.'); }
+    finally { setReqSlipBusy(false); }
+  };
+
   // Auto-load the active view's data on entry (nav landing or sub-tab click).
   useEffect(() => {
     if (ledgerSubTab === 'trial') loadTrial();
@@ -730,6 +780,7 @@ export default function LedgerTab({ ctx }) {
                   ['backdate',   'Backdate Sale',       Clock],
                   ['revolving',  'Revolving Funds',     RefreshCw],
                   ['expenses',   'Expenses',            Receipt],
+                  ['approvals',  'Approvals',           ShieldCheck],
                 ]
             ).map(([id, label, Icon]) => (
               <button
@@ -756,6 +807,7 @@ export default function LedgerTab({ ctx }) {
                   if (id === 'commissions') fetchCommissions();
                   if (id === 'revolving') { fetchRfFunds(); setRfActiveFund(null); setRfTxs([]); }
                   if (id === 'expenses') { fetchExpenseCategories(); fetchExpenses(); }
+                  if (id === 'approvals') fetchRequisitionSlips();
                 }}
                 className={`shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[44px] ${ledgerSubTab === id ? 'bg-brand text-white shadow-elev-1' : 'bg-transparent text-fg/50 hover:text-fg hover:bg-white/5'}`}
               >
@@ -2359,6 +2411,82 @@ export default function LedgerTab({ ctx }) {
           {/* ===== REVOLVING FUNDS SUB-TAB ===== */}
           {ledgerSubTab === 'expenses' && <ExpensesPage />}
 
+          {/* ===== APPROVALS SUB-TAB (Requisition Slips) ===== */}
+          {ledgerSubTab === 'approvals' && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                  <h3 className="text-xl font-black text-fg flex items-center gap-2"><ShieldCheck size={18} className="text-brand"/> Approvals</h3>
+                  <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-1">Requisition slips - petty cash disbursements and new purchase orders wait here until approved</p>
+                </div>
+                <div className="flex bg-page-bg p-1 rounded-lg shadow-inner">
+                  <button onClick={() => { setReqSlipView('pending'); fetchRequisitionSlips('Pending'); }}
+                    className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${reqSlipView === 'pending' ? 'bg-brand text-white shadow-md' : 'text-fg/40 hover:text-fg'}`}>
+                    Pending
+                  </button>
+                  <button onClick={() => { setReqSlipView('all'); fetchRequisitionSlips(''); }}
+                    className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${reqSlipView === 'all' ? 'bg-brand text-white shadow-md' : 'text-fg/40 hover:text-fg'}`}>
+                    Slips
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
+                {reqSlipsLoading && reqSlips.length === 0 ? (
+                  <p className="text-fg/40 text-sm p-8 text-center font-bold">Loading…</p>
+                ) : reqSlips.length === 0 ? (
+                  <p className="text-fg/60 text-sm p-10 text-center font-bold">
+                    {reqSlipView === 'pending' ? 'Nothing waiting on approval.' : 'No requisition slips yet.'}
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs min-w-[720px]">
+                      <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                        <tr>
+                          <th className="px-5 py-2.5">Slip #</th>
+                          <th className="px-5 py-2.5">Type</th>
+                          <th className="px-5 py-2.5">Summary</th>
+                          <th className="px-5 py-2.5">Prepared By</th>
+                          <th className="px-5 py-2.5">Status</th>
+                          <th className="px-5 py-2.5 text-right">Amount</th>
+                          <th className="px-5 py-2.5 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reqSlips.map((s, i) => (
+                          <tr key={s._id} className={`border-b border-white/5 hover:bg-white/3 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'}`}>
+                            <td className="px-5 py-2.5 font-mono text-fg/70 whitespace-nowrap">
+                              <button onClick={() => setReqSlipPreview(s)} className="hover:text-brand hover:underline">{s.slipNumber}</button>
+                            </td>
+                            <td className="px-5 py-2.5 text-fg/60 whitespace-nowrap">{s.type === 'petty-cash' ? 'Petty Cash' : 'Procurement'}</td>
+                            <td className="px-5 py-2.5 text-fg/70 truncate max-w-[260px]">
+                              {s.type === 'petty-cash' ? `${s.fundName} — ${s.description}` : `${s.supplier || 'No supplier'} — ${(s.lines || []).length} item(s)`}
+                            </td>
+                            <td className="px-5 py-2.5 text-fg/60 whitespace-nowrap">{s.preparedBy || '-'}</td>
+                            <td className="px-5 py-2.5">
+                              <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-full ${s.status === 'Pending' ? 'bg-amber-500/20 text-amber-400' : s.status === 'Approved' ? 'bg-brand/20 text-brand' : 'bg-red-500/20 text-red-400'}`}>{s.status}</span>
+                            </td>
+                            <td className="px-5 py-2.5 text-right font-mono tabular-nums font-bold text-fg">{peso(s.type === 'petty-cash' ? s.amount : s.estTotal)}</td>
+                            <td className="px-5 py-2.5 text-right whitespace-nowrap">
+                              {s.status === 'Pending' ? (
+                                <div className="flex items-center justify-end gap-3">
+                                  <button onClick={() => approveReqSlip(s)} disabled={reqSlipBusy} className="text-[10px] font-black uppercase tracking-wider text-brand hover:underline disabled:opacity-40">Approve</button>
+                                  <button onClick={() => { setReqSlipRejecting(s); setReqSlipRejectReason(''); }} disabled={reqSlipBusy} className="text-[10px] font-black uppercase tracking-wider text-red-400/70 hover:text-red-400 hover:underline disabled:opacity-40">Reject</button>
+                                </div>
+                              ) : (
+                                <button onClick={() => setReqSlipPreview(s)} className="text-[10px] font-black uppercase tracking-wider text-fg/40 hover:text-fg hover:underline">View</button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {ledgerSubTab === 'revolving' && (
             <div className="space-y-6 animate-fade-in">
 
@@ -3493,6 +3621,113 @@ export default function LedgerTab({ ctx }) {
                     {bdImporting ? `Importing ${bdImportProgress ? `${bdImportProgress.done}/${bdImportProgress.total}` : '…'}` : `Import ${bdImportPreview.groups.length} Sale(s)`}
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── REQUISITION SLIP - REJECT REASON ── */}
+          {reqSlipRejecting && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !reqSlipBusy && setReqSlipRejecting(null)}>
+              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+                  <h2 className="font-black text-fg text-base">Reject {reqSlipRejecting.slipNumber}</h2>
+                  <button onClick={() => !reqSlipBusy && setReqSlipRejecting(null)} className="text-fg/40 hover:text-fg transition"><X size={18} /></button>
+                </div>
+                <div className="p-5 space-y-3">
+                  <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Reason *</label>
+                  <textarea autoFocus rows={3} value={reqSlipRejectReason} onChange={e => setReqSlipRejectReason(e.target.value)}
+                    placeholder="Why is this being rejected?"
+                    className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-red-500/60 resize-none" />
+                </div>
+                <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
+                  <button onClick={() => setReqSlipRejecting(null)} disabled={reqSlipBusy} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition disabled:opacity-40">Cancel</button>
+                  <button onClick={submitRejectReqSlip} disabled={reqSlipBusy || !reqSlipRejectReason.trim()} className="flex items-center gap-2 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+                    {reqSlipBusy ? 'Rejecting…' : 'Reject Slip'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── REQUISITION SLIP PREVIEW ── every slip: Prepared By, then Approved By below it once set ── */}
+          {reqSlipPreview && (
+            <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => setReqSlipPreview(null)}>
+              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-lg my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+                  <div>
+                    <h2 className="font-black text-fg text-lg">{reqSlipPreview.slipNumber}</h2>
+                    <p className="text-fg/40 text-xs mt-0.5">{reqSlipPreview.type === 'petty-cash' ? 'Petty Cash / Revolving Fund Requisition' : 'Procurement Requisition'}</p>
+                  </div>
+                  <button onClick={() => setReqSlipPreview(null)} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+                </div>
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${reqSlipPreview.status === 'Pending' ? 'bg-amber-500/20 text-amber-400' : reqSlipPreview.status === 'Approved' ? 'bg-brand/20 text-brand' : 'bg-red-500/20 text-red-400'}`}>{reqSlipPreview.status}</span>
+                    <span className="text-fg/40 text-[10px] font-bold">{new Date(reqSlipPreview.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                  </div>
+
+                  {reqSlipPreview.type === 'petty-cash' ? (
+                    <div className="bg-page-bg border border-white/10 rounded-lg p-4 space-y-2 text-sm">
+                      <div className="flex justify-between"><span className="text-fg/50">Fund</span><span className="text-fg font-bold">{reqSlipPreview.fundName}</span></div>
+                      <div className="flex justify-between"><span className="text-fg/50">Description</span><span className="text-fg font-bold text-right max-w-[60%]">{reqSlipPreview.description}</span></div>
+                      <div className="flex justify-between border-t border-white/10 pt-2 mt-1"><span className="text-fg/50">Amount</span><span className="text-brand font-black text-lg tabular-nums">{peso(reqSlipPreview.amount)}</span></div>
+                    </div>
+                  ) : (
+                    <div className="bg-page-bg border border-white/10 rounded-lg p-4 space-y-3 text-sm">
+                      <div className="flex justify-between"><span className="text-fg/50">Supplier</span><span className="text-fg font-bold">{reqSlipPreview.supplier || 'Unassigned'}</span></div>
+                      <div className="space-y-1">
+                        {(reqSlipPreview.lines || []).map((l, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs text-fg/70">
+                            <span className="truncate pr-2">{l.itemCode ? `${l.itemCode} · ` : ''}{l.itemName}</span>
+                            <span className="whitespace-nowrap font-mono">{l.orderedQty} × {peso(l.unitCost)}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex justify-between border-t border-white/10 pt-2"><span className="text-fg/50">Est. Total</span><span className="text-brand font-black text-lg tabular-nums">{peso(reqSlipPreview.estTotal)}</span></div>
+                      {reqSlipPreview.notes && <p className="text-fg/40 text-xs italic">{reqSlipPreview.notes}</p>}
+                    </div>
+                  )}
+
+                  {reqSlipPreview.status === 'Rejected' && reqSlipPreview.rejectionReason && (
+                    <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                      <p className="text-[10px] text-red-400 font-black uppercase tracking-widest mb-1">Rejection Reason</p>
+                      <p className="text-fg/70 text-xs">{reqSlipPreview.rejectionReason}</p>
+                    </div>
+                  )}
+
+                  {reqSlipPreview.status === 'Approved' && reqSlipPreview.resultRefLabel && (
+                    <p className="text-fg/40 text-xs">Posted as <span className="text-fg font-bold font-mono">{reqSlipPreview.resultRefLabel}</span></p>
+                  )}
+
+                  {/* Signature block - Prepared By, then Approved By beneath it once set */}
+                  <div className="border-t border-white/10 pt-4 space-y-4">
+                    <div>
+                      <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-1">Prepared By</p>
+                      <p className="text-fg font-black text-sm border-b border-white/20 pb-1.5">{reqSlipPreview.preparedBy || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-1">Approved By</p>
+                      {reqSlipPreview.approvedBy ? (
+                        <p className="text-fg font-black text-sm border-b border-white/20 pb-1.5">
+                          {reqSlipPreview.approvedBy}
+                          <span className="text-fg/40 font-bold text-[10px] ml-2">{new Date(reqSlipPreview.approvedAt).toLocaleDateString()}</span>
+                        </p>
+                      ) : reqSlipPreview.status === 'Rejected' ? (
+                        <p className="text-red-400/70 font-bold text-sm border-b border-white/20 pb-1.5">Rejected by {reqSlipPreview.rejectedBy}</p>
+                      ) : (
+                        <p className="text-fg/25 font-bold text-sm border-b border-white/10 pb-1.5 italic">Pending approval</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {reqSlipPreview.status === 'Pending' && (
+                  <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
+                    <button onClick={() => { setReqSlipRejecting(reqSlipPreview); setReqSlipRejectReason(''); setReqSlipPreview(null); }} disabled={reqSlipBusy}
+                      className="text-sm font-bold px-4 py-2 rounded-xl text-red-400/70 hover:text-red-400 transition disabled:opacity-40">Reject</button>
+                    <button onClick={() => { approveReqSlip(reqSlipPreview); setReqSlipPreview(null); }} disabled={reqSlipBusy}
+                      className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">Approve</button>
+                  </div>
+                )}
               </div>
             </div>
           )}

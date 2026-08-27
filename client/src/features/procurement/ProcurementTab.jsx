@@ -227,9 +227,9 @@ export default function ProcurementTab({ ctx }) {
       const match = suppliers.find(s => (p.supplierCode && s.supplierCode === p.supplierCode) || (p.supplier && s.name.toLowerCase() === p.supplier.toLowerCase()));
       const noteBits = [p.poNo && `Supplier PO ${p.poNo}`, p.drsi && `DR/SI ${p.drsi}`, p.leadTime && `Lead time ${p.leadTime}d`].filter(Boolean);
       try {
-        const res = await apiFetch('/api/purchase-orders', {
+        const res = await apiFetch('/api/requisition-slips', {
           method: 'POST',
-          body: JSON.stringify({ supplier: p.supplier, supplierId: match?._id || null, notes: noteBits.join(' · '), lines: p.lines }),
+          body: JSON.stringify({ type: 'procurement', supplier: p.supplier, supplierId: match?._id || null, notes: noteBits.join(' · '), lines: p.lines }),
         });
         const d = await res.json();
         if (d.success) ok++; else fail++;
@@ -238,7 +238,7 @@ export default function ProcurementTab({ ctx }) {
     setImporting(false);
     setImportPreview(null);
     await fetchPOs();
-    setError(fail ? `Imported ${ok} PO(s); ${fail} failed.` : '');
+    setError(fail ? `Filed ${ok} Requisition Slip(s); ${fail} failed. Approve them under Ledger → Approvals to create the real POs.` : `Filed ${ok} Requisition Slip(s) - approve them under Ledger → Approvals to create the real POs.`);
   };
 
   // ── Draft form state ────────────────────────────────────────────────────────
@@ -601,13 +601,18 @@ export default function ProcurementTab({ ctx }) {
     if (cleanLines.length === 0) { setError('Add at least one line with an item name and quantity.'); return; }
     setSaving(true); setError('');
     try {
-      const url = editId ? `/api/purchase-orders/${editId}` : '/api/purchase-orders';
-      const res = await apiFetch(url, {
-        method: editId ? 'PATCH' : 'POST',
-        body: JSON.stringify({ supplier: form.supplier, supplierId: form.supplierId || null, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines }),
-      });
+      // Editing an existing draft PO stays a direct PATCH - it isn't a new
+      // release. Creating a NEW one now files a Requisition Slip instead of
+      // creating the PO outright; the real PO only exists once someone
+      // approves the slip (Ledger → Approvals).
+      const url = editId ? `/api/purchase-orders/${editId}` : '/api/requisition-slips';
+      const body = editId
+        ? { supplier: form.supplier, supplierId: form.supplierId || null, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines }
+        : { type: 'procurement', supplier: form.supplier, supplierId: form.supplierId || null, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines };
+      const res = await apiFetch(url, { method: editId ? 'PATCH' : 'POST', body: JSON.stringify(body) });
       const d = await res.json();
       if (d.success) {
+        if (!editId) ui.alert(`Requisition Slip ${d.slip.slipNumber} filed. It becomes a real PO once approved (Ledger → Approvals).`);
         await fetchPOs();
         if (suggestedQueue.length > 0) {
           const [next, ...rest] = suggestedQueue;
@@ -619,8 +624,8 @@ export default function ProcurementTab({ ctx }) {
           setSuggestedQueueTotal(0);
         }
       }
-      else setError(d.error || 'Failed to save purchase order.');
-    } catch (e) { setError('Network error saving purchase order.'); }
+      else setError(d.error || 'Failed to save.');
+    } catch (e) { setError('Network error saving.'); }
     finally { setSaving(false); }
   };
 

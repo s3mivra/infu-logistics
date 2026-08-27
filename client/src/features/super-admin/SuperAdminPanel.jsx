@@ -264,6 +264,8 @@ export default function SuperAdminPanel() {
   const [clientFormLoading, setClientFormLoading] = useState(false);
   const [clientFormError, setClientFormError] = useState('');
   const [purgeModal, setPurgeModal] = useState({ open: false, phrase: '', busy: false, error: '', result: null });
+  const [purgeCategories, setPurgeCategories] = useState([]); // [{key, label, defaultOn}]
+  const [purgeSelected, setPurgeSelected] = useState(new Set());
   const [rewireModal, setRewireModal] = useState({ open: false, busy: false, error: '', result: null });
 
   // -------------------------------------------------------------------------
@@ -514,11 +516,30 @@ export default function SuperAdminPanel() {
   // -------------------------------------------------------------------------
   // Danger zone: purge data. Confirmation phrase is checked again server-side
   // (never trust a client-side-only confirm for something this destructive).
+  // Categories (what to delete) are fetched fresh each time the modal opens
+  // so the checklist and its defaults always match what the server supports.
+  const openPurgeModal = async () => {
+    setPurgeModal({ open: true, phrase: '', busy: false, error: '', result: null });
+    try {
+      const res = await apiFetch('/api/admin/purge-data/categories');
+      const d = await res.json();
+      if (d.success) {
+        setPurgeCategories(d.categories);
+        setPurgeSelected(new Set(d.categories.filter(c => c.defaultOn).map(c => c.key)));
+      }
+    } catch { /* checklist is supplementary - a plain confirm still works via the server's own default */ }
+  };
+  const togglePurgeCategory = (key) => setPurgeSelected(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
   const handlePurgeData = async () => {
     if (purgeModal.phrase.trim() !== 'PURGE') return;
+    if (purgeSelected.size === 0) { setPurgeModal(m => ({ ...m, error: 'Select at least one category to purge.' })); return; }
     setPurgeModal(m => ({ ...m, busy: true, error: '' }));
     try {
-      const res = await apiFetch('/api/admin/purge-data', { method: 'POST', body: JSON.stringify({ confirmPhrase: purgeModal.phrase.trim() }) });
+      const res = await apiFetch('/api/admin/purge-data', { method: 'POST', body: JSON.stringify({ confirmPhrase: purgeModal.phrase.trim(), categories: [...purgeSelected] }) });
       const d = await res.json();
       if (d.success) setPurgeModal(m => ({ ...m, busy: false, result: d.deleted }));
       else setPurgeModal(m => ({ ...m, busy: false, error: d.error || 'Purge failed.' }));
@@ -1449,7 +1470,7 @@ export default function SuperAdminPanel() {
           Settings are kept. This cannot be undone.
         </p>
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => setPurgeModal({ open: true, phrase: '', busy: false, error: '', result: null })}
+          <button onClick={openPurgeModal}
             className="flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/40 text-red-400 font-bold text-sm px-4 py-2.5 rounded-lg transition">
             <Trash2 size={14} /> Purge Data
           </button>
@@ -1496,9 +1517,26 @@ export default function SuperAdminPanel() {
             ) : (
               <div className="p-6 space-y-4">
                 <p className="text-fg/70 text-sm">
-                  This deletes <span className="font-bold text-fg">all sales/orders, ledger entries, inventory, shifts, revolving funds, and purchase orders/bills</span> for
-                  this business. Staff, roles, client accounts, menu/products, pricing, Chart of Accounts, and Settings are kept. <span className="text-red-400 font-bold">This cannot be undone.</span>
+                  Pick exactly what to delete. Staff, roles, client accounts, the Chart of Accounts, and Settings are
+                  never touched here regardless of what's selected below. <span className="text-red-400 font-bold">This cannot be undone.</span>
                 </p>
+                <div>
+                  <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1.5">What to delete</label>
+                  <div className="space-y-1.5 max-h-[36vh] overflow-y-auto pr-1">
+                    {purgeCategories.map(c => {
+                      const checked = purgeSelected.has(c.key);
+                      return (
+                        <label key={c.key} className={`flex items-start gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition ${checked ? (c.key === 'menu' ? 'bg-amber-500/10 border-amber-500/40' : 'bg-red-500/10 border-red-500/30') : 'bg-page-bg border-white/10'}`}>
+                          <input type="checkbox" checked={checked} onChange={() => togglePurgeCategory(c.key)} className="accent-red-500 w-4 h-4 mt-0.5 shrink-0" />
+                          <span className="text-sm font-bold text-fg">
+                            {c.label}
+                            {c.key === 'menu' && <span className="block text-[10px] font-bold text-amber-400 normal-case mt-0.5">Off by default - only check this if you really want to wipe the menu itself, not just its sales history.</span>}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
                 <div>
                   <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Type PURGE to confirm</label>
                   <input autoFocus type="text" value={purgeModal.phrase} onChange={e => setPurgeModal(m => ({ ...m, phrase: e.target.value, error: '' }))}
@@ -1509,9 +1547,9 @@ export default function SuperAdminPanel() {
                 <div className="flex justify-end gap-2">
                   <button onClick={() => setPurgeModal({ open: false, phrase: '', busy: false, error: '', result: null })} disabled={purgeModal.busy}
                     className="text-sm font-bold px-4 py-2 rounded-lg text-fg/50 hover:text-fg transition disabled:opacity-40">Cancel</button>
-                  <button onClick={handlePurgeData} disabled={purgeModal.busy || purgeModal.phrase.trim() !== 'PURGE'}
+                  <button onClick={handlePurgeData} disabled={purgeModal.busy || purgeModal.phrase.trim() !== 'PURGE' || purgeSelected.size === 0}
                     className="flex items-center gap-2 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-lg transition">
-                    {purgeModal.busy ? 'Purging…' : 'Purge Everything'}
+                    {purgeModal.busy ? 'Purging…' : `Purge ${purgeSelected.size ? `${purgeSelected.size} Selected` : 'Selected'}`}
                   </button>
                 </div>
               </div>

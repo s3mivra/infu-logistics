@@ -85,6 +85,7 @@ export default function OrdersTab({ ctx }) {
     posCustomerPhone, posDeliveryAddress, posDeliveryFee, posDeliveryFeeNum, posDiscountAmt,
     posDiscountType, posDiscountValue, posItemDiscountAmt, posGrandTotal, posSubmitting, posPage, posPayment,
     posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable, saleThresholds,
+    posBranch, setPosBranch, stockLocations,
     pricingItemsPerPage, pricingPage, printOrderSlip, printBillingStatement, printDeliveryReceipt, printXReading, products,
     removeAddOnFromOrder, removeComplimentary, removeMaterial, removeSize, restockData,
     rfActiveFund, rfDisbForm, rfDisbModal, rfDisbSubmitting, rfFunds,
@@ -346,6 +347,18 @@ export default function OrdersTab({ ctx }) {
                         </div>
                       ) : null;
                     })()}
+                    {/* Which branch this device is ringing up as - only shown once there's
+                        more than one location to choose between (Inventory → Places & Categories). */}
+                    {(stockLocations || []).filter(l => l.isActive !== false).length > 1 && (
+                      <select value={posBranch} onChange={e => setPosBranch(e.target.value)}
+                        title="Which branch is this sale for? (Analytics can compare branches once orders are tagged)"
+                        className="w-full bg-brand/10 border border-brand/30 rounded-xl px-3 py-2 text-brand font-bold text-xs uppercase tracking-wider outline-none focus:border-brand/60 transition">
+                        <option value="">No Branch Set</option>
+                        {stockLocations.filter(l => l.isActive !== false).map(l => (
+                          <option key={l._id} value={l.name}>{l.name}</option>
+                        ))}
+                      </select>
+                    )}
                     <input type="text" placeholder="Customer / Driver Name *" value={posCustomerName} onChange={e => setPosCustomerName(e.target.value)}
                       className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60 text-sm transition" />
                     <IconSelect value={posTable} onChange={setPosTable} options={BUSINESS_TYPE === 'log' ? [
