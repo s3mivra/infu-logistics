@@ -677,15 +677,51 @@ export default function SettingsTab({ ctx }) {
                       })}
                     </div>
                   </div>
+                  <div>
+                    <p className="text-xs font-bold text-fg/60 mb-1.5">Thermal paper width</p>
+                    <p className="text-fg/40 text-[11px] mb-1.5 leading-snug">The order slip auto-adjusts and stays centered for whichever roll is loaded.</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[{ v: '58', label: '58mm' }, { v: '80', label: '80mm' }].map(opt => {
+                        const active = String(systemSettings.thermalPaperWidth || 80) === opt.v;
+                        return (
+                          <button key={opt.v} onClick={() => saveSetting?.('thermalPaperWidth', opt.v)}
+                            className={`px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
+                              active ? 'bg-brand text-white border-brand' : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                            }`}>
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : (
-              <SettingRow icon={Printer} title="Duplicate Copy"
-                desc={systemSettings.fbDuplicateReceipt === true
-                  ? 'Each receipt prints twice - an original and a duplicate.'
-                  : 'A single receipt prints per order (typical for fast food, bars & restaurants).'}>
-                <Toggle on={systemSettings.fbDuplicateReceipt === true} onChange={() => saveSetting?.('fbDuplicateReceipt', !(systemSettings.fbDuplicateReceipt === true))} />
-              </SettingRow>
+              <>
+                <SettingRow icon={Printer} title="Duplicate Copy"
+                  desc={systemSettings.fbDuplicateReceipt === true
+                    ? 'Each receipt prints twice - an original and a duplicate.'
+                    : 'A single receipt prints per order (typical for fast food, bars & restaurants).'}>
+                  <Toggle on={systemSettings.fbDuplicateReceipt === true} onChange={() => saveSetting?.('fbDuplicateReceipt', !(systemSettings.fbDuplicateReceipt === true))} />
+                </SettingRow>
+                <div className="px-4 py-4 border-t border-white/5">
+                  <p className="text-xs font-bold text-fg/60 mb-1.5">Thermal paper width</p>
+                  <p className="text-fg/40 text-[11px] mb-1.5 leading-snug">The receipt auto-adjusts and stays centered for whichever roll is loaded.</p>
+                  <div className="grid grid-cols-2 gap-2 max-w-xs">
+                    {[{ v: '58', label: '58mm' }, { v: '80', label: '80mm' }].map(opt => {
+                      const active = String(systemSettings.thermalPaperWidth || 80) === opt.v;
+                      return (
+                        <button key={opt.v} onClick={() => saveSetting?.('thermalPaperWidth', opt.v)}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
+                            active ? 'bg-brand text-white border-brand' : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                          }`}>
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
             )}
             {/* Print Logo — separate logo used on receipts/billing docs. Toggle ON = use uploaded print logo; OFF = use business logo. */}
             <div className="px-4 py-4 border-t border-white/5">

@@ -93,6 +93,16 @@ export function buildReceiptHTML({
   settings = {},
 } = {}) {
   const lh = resolveLetterhead(settings);
+  // Thermal paper width - configurable in Settings → Printer Settings (58mm
+  // rolls are just as common as 80mm; this used to be hardcoded to 80mm, so a
+  // 58mm printer either clipped the right edge or the OS driver rescaled it
+  // off-center). Content width is always paperWidth minus the side margins,
+  // and centered with margin:auto - so even a printer whose actual loaded
+  // roll doesn't match the configured width still prints centered instead of
+  // stuck flush to one edge.
+  const paperWidthMm = Number(settings.thermalPaperWidth) || 80;
+  const marginMm = 4;
+  const contentWidthMm = Math.max(30, paperWidthMm - marginMm * 2);
 
   const metaHTML = [
     ...(docNumber ? [{ label: docNumber.label, value: `<strong>${esc(docNumber.value || '-')}</strong>` }] : []),
@@ -137,9 +147,9 @@ export function buildReceiptHTML({
 <meta charset="utf-8">
 <title>${esc(title)}</title>
 <style>
-  @page { size: 80mm auto; margin: 0 4mm; }
+  @page { size: ${paperWidthMm}mm auto; margin: 0 ${marginMm}mm; }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Courier New', Courier, monospace; font-size: 11px; color: #000; background: #fff; width: 72mm; padding-top: 3mm; }
+  body { font-family: 'Courier New', Courier, monospace; font-size: 11px; color: #000; background: #fff; width: ${contentWidthMm}mm; max-width: 100%; margin: 0 auto; padding-top: 3mm; }
   .center { text-align: center; }
   .logo-row { display: flex; align-items: center; justify-content: center; gap: 6px; }
   .logo-img { max-height: 36px; max-width: 36px; object-fit: contain; border-radius: ${lh.logoRadius}; }
@@ -170,8 +180,8 @@ export function buildReceiptHTML({
   .copy:last-child { page-break-after: auto; }
   .copy-tag { text-align: center; font-size: 10px; font-weight: bold; letter-spacing: 1px; margin-bottom: 2px; }
   @media print {
-    html, body { width: 72mm; background: #fff; }
-    @page { size: 80mm auto; margin: 0 4mm; }
+    html, body { width: ${contentWidthMm}mm; margin: 0 auto; background: #fff; }
+    @page { size: ${paperWidthMm}mm auto; margin: 0 ${marginMm}mm; }
   }
 </style>
 </head>
@@ -217,7 +227,11 @@ export function printReceiptHTML(html) {
 
     const iframe = document.createElement('iframe');
     iframe.id = '__receipt_iframe__';
-    iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:1px;border:0;';
+    // Off-screen container only - the actual print layout comes from the
+    // injected HTML's own @page/body CSS (which sizes to the configured
+    // thermal paper width), not this iframe box. Wide enough to fit any
+    // supported paper width without clipping the reflow before printing.
+    iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:100mm;height:1px;border:0;';
     document.body.appendChild(iframe);
     iframe.contentDocument.open();
     iframe.contentDocument.write(html);

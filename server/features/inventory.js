@@ -1331,10 +1331,21 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
 
       const qty = parseFloat(row.qty);
       const unitCostFromExcel = row.unitCost !== undefined && row.unitCost !== '' ? parseFloat(row.unitCost) : null;
-      const expiryFromExcel = row.expiryDate || row.expiry || null;
+      // A 2-digit year (e.g. "9/21/27") is read by `new Date(...)` as 19xx, not
+      // 20xx - the client already expands this before sending, but the route
+      // is called directly by other callers (tests, future clients) too, so
+      // guard it here as well rather than trusting every caller to pre-expand.
+      const expandTwoDigitYear = (s) => {
+        if (typeof s !== 'string') return s;
+        const m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2})$/);
+        if (!m) return s;
+        const yy = parseInt(m[3], 10);
+        return `${m[1]}/${m[2]}/${yy < 50 ? 2000 + yy : 1900 + yy}`;
+      };
+      const expiryFromExcel = expandTwoDigitYear(row.expiryDate || row.expiry || null);
       // Goods with no real expiry (roasted beans, etc.) date freshness by
       // production date instead - only meaningful when there's no expiry on the row.
-      const productionFromExcel = !expiryFromExcel ? (row.productionDate || row.production || null) : null;
+      const productionFromExcel = !expiryFromExcel ? expandTwoDigitYear(row.productionDate || row.production || null) : null;
       // Per-qty (pack) size in displayUnit, e.g. "Milk 1L" → itemName "Milk", unit L,
       // packSize 1. The client pre-parses the size out of the product name and sends
       // it here; if a caller sends the raw unparsed name instead, fall back to

@@ -5,7 +5,6 @@
 // both now build from. The two transports differ only in how they WRITE these
 // bytes (GATT characteristic vs. serial port), not in what the bytes say.
 
-const SEP    = '--------------------------------\n';
 const INIT   = [0x1b, 0x40];
 const CENTER = [0x1b, 0x61, 0x01];
 const LEFT   = [0x1b, 0x61, 0x00];
@@ -13,13 +12,27 @@ const BOLD1  = [0x1b, 0x45, 0x01];
 const BOLD0  = [0x1b, 0x45, 0x00];
 const LF     = [0x0a];
 
+// Standard Font-A character counts for common thermal roll widths - a 58mm
+// printer fits ~32 columns, an 80mm one ~48. Any extra columns beyond the
+// 32-char baseline go entirely to the item-name field (the part most likely
+// to get truncated), so a wider roll doesn't just leave dead space on the
+// right - the receipt actually uses the paper it has.
+const CHARS_PER_MM = { 58: 32, 80: 48 };
+const charsForPaperWidth = (mm) => CHARS_PER_MM[Number(mm)] || 32;
+
 // order: the completed Order document. opts: { lh (resolveLetterhead result),
-// dupe: boolean, vatRegLabel: string, businessType: 'fb'|'log', compReasonLabels }
-export function buildEscposReceiptBytes(order, { lh, dupe, vatRegLabel, businessType, compReasonLabels }) {
+// dupe: boolean, vatRegLabel: string, businessType: 'fb'|'log', compReasonLabels,
+// paperWidthMm: 58|80 (defaults 80, matching the old hardcoded assumption) }
+export function buildEscposReceiptBytes(order, { lh, dupe, vatRegLabel, businessType, compReasonLabels, paperWidthMm = 80 }) {
   const enc = new TextEncoder();
   const buf = [];
   const b   = (arr) => buf.push(...arr);
   const tx  = (str) => b(Array.from(enc.encode(str)));
+
+  const W = charsForPaperWidth(paperWidthMm);
+  const SEP = '-'.repeat(W) + '\n';
+  const nameColW = 16 + Math.max(0, W - 32);
+  const addonColW = Math.max(10, nameColW - 2);
 
   b(INIT); b(CENTER); b(BOLD1); tx(`${lh.companyName}\n`); b(BOLD0);
   if (lh.address) tx(`${lh.address}\n`);
@@ -43,12 +56,12 @@ export function buildEscposReceiptBytes(order, { lh, dupe, vatRegLabel, business
   order.items.forEach(item => {
     const addOnTotal = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
     const lineTotal  = (item.price + addOnTotal) * item.quantity;
-    const nameCol    = item.name.substring(0, 16).padEnd(16);
+    const nameCol    = item.name.substring(0, nameColW).padEnd(nameColW);
     b(BOLD1);
     tx(`${String(item.quantity).padStart(2)}x ${nameCol} P${lineTotal.toFixed(2).padStart(7)}\n`);
     b(BOLD0);
     (item.selectedAddOns || []).forEach(a => {
-      tx(`   + ${a.name.substring(0, 14).padEnd(14)} P${Number(a.price || 0).toFixed(2).padStart(7)}\n`);
+      tx(`   + ${a.name.substring(0, addonColW).padEnd(addonColW)} P${Number(a.price || 0).toFixed(2).padStart(7)}\n`);
     });
   });
 

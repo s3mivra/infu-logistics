@@ -2931,7 +2931,7 @@ const updateStatus = async (orderId, newStatus) => {
         }
         if (!printChar) throw new Error('No writable characteristic found');
 
-        const data = buildEscposReceiptBytes(order, { lh, dupe, vatRegLabel, businessType: BUSINESS_TYPE, compReasonLabels: COMP_REASON_LABELS });
+        const data = buildEscposReceiptBytes(order, { lh, dupe, vatRegLabel, businessType: BUSINESS_TYPE, compReasonLabels: COMP_REASON_LABELS, paperWidthMm: systemSettings.thermalPaperWidth || 80 });
         for (let i = 0; i < data.length; i += 256) {
           await printChar.writeValue(data.slice(i, i + 256));
           await escposSleep(100);
@@ -3342,6 +3342,14 @@ const updateStatus = async (orderId, newStatus) => {
       // never matched at all (the "(NW)" broke the `$` anchor), silently dropping the
       // row from import (no unit could be inferred → filtered out with zero warning).
       const PACK_SIZE_RE = /\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|L|l|ml|pcs|pc|piece)\b(\s*\([^)]*\))?\s*$/i;
+      // Strips ₱/commas/whitespace before parseFloat, so a currency- or
+      // thousands-formatted cell (e.g. "₱1,800.00") doesn't silently truncate
+      // at the first comma - parseFloat("1,800.00") alone reads as 1.
+      const parseNum = (v) => {
+        if (v === '' || v == null) return NaN;
+        if (typeof v === 'number') return v;
+        return parseFloat(String(v).replace(/[₱,\s]/g, ''));
+      };
       const normalise = (r) => {
         const lower = {};
         for (const [k, v] of Object.entries(r)) lower[String(k).toLowerCase().trim()] = v;
@@ -3377,14 +3385,14 @@ const updateStatus = async (orderId, newStatus) => {
         if (qtyUnitCell) {
           const m = qtyUnitCell.match(/^([0-9.,]+)\s*[|/\s]*\s*([A-Za-z]+)$/);
           if (m) {
-            qty = parseFloat(m[1].replace(/,/g, '')) || 0;
+            qty = parseNum(m[1]) || 0;
             unitFromCol = m[2];
           } else {
-            const numOnly = parseFloat(qtyUnitCell.replace(/,/g, ''));
+            const numOnly = parseNum(qtyUnitCell);
             if (!isNaN(numOnly)) qty = numOnly;
           }
         }
-        if (!qty) qty = parseFloat(lower.qty || lower.quantity || lower.stock || 0) || 0;
+        if (!qty) qty = parseNum(lower.qty ?? lower.quantity ?? lower.stock ?? 0) || 0;
         if (!unitFromCol) unitFromCol = String(lower.unit || lower.displayunit || '').trim();
 
         // Normalise any unit that came directly from the column
@@ -3426,7 +3434,20 @@ const updateStatus = async (orderId, newStatus) => {
             const d = new Date(Math.round((v - 25569) * 86400 * 1000));
             return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
           }
-          return String(v).trim();
+          let s = String(v).trim();
+          // A 2-digit year in a typed/text cell (e.g. "9/21/27") is read by
+          // JS Date parsing as 19xx, not 20xx - new Date("9/21/27") is Sept 1927,
+          // not 2027. Expand it before it ever reaches new Date(...), here or
+          // server-side (the server does its own `new Date(expiryDate)` on
+          // whatever string this function hands it). Pivot at 50, same
+          // convention spreadsheets themselves use for 2-digit years.
+          const m2 = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2})$/);
+          if (m2) {
+            const yy = parseInt(m2[3], 10);
+            const yyyy = yy < 50 ? 2000 + yy : 1900 + yy;
+            s = `${m2[1]}/${m2[2]}/${yyyy}`;
+          }
+          return s;
         };
 
         const exp = lower['expiry date'] || lower['expiry'] || lower['expirydate'] || '';
@@ -3438,14 +3459,15 @@ const updateStatus = async (orderId, newStatus) => {
         const prodStr = expStr ? '' : toDateStr(prod);
 
         // SRP - strip ₱ symbol and commas
-        const rawSrp = String(lower.srp || lower['selling price'] || lower['retail price'] || '').replace(/[₱,\s]/g, '');
-        const srp = rawSrp ? parseFloat(rawSrp) : '';
+        const rawSrpCell = lower.srp ?? lower['selling price'] ?? lower['retail price'] ?? '';
+        const srp = (rawSrpCell === '' || rawSrpCell == null) ? '' : parseNum(rawSrpCell);
 
         // Excel unit cost is per package. Convert to cost per display unit.
         // e.g. 200 per 250g pack → 200 / 0.25 kg = 800 per kg.
-        const rawUnitCost = lower['unit cost'] === '' || lower['unit cost'] == null
-          ? (lower.unitcost === '' || lower.unitcost == null ? '' : parseFloat(lower.unitcost))
-          : parseFloat(lower['unit cost']);
+        const rawUnitCostCell = (lower['unit cost'] === '' || lower['unit cost'] == null)
+          ? (lower.unitcost === '' || lower.unitcost == null ? '' : lower.unitcost)
+          : lower['unit cost'];
+        const rawUnitCost = rawUnitCostCell === '' ? '' : parseNum(rawUnitCostCell);
         const unitCost = (rawUnitCost !== '' && !isNaN(rawUnitCost) && !unitFromCol && hintedUnit && packSizeInDisplay > 0)
           ? rawUnitCost / packSizeInDisplay
           : rawUnitCost;
