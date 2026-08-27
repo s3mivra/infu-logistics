@@ -71,6 +71,46 @@ describe('inventory import auto-derives a StockCategory prefix', () => {
     expect(item.stockCategory).toBe('ODDS');
   });
 
+  it('backfill-prefixes fills in a blank prefix on a category that predates the auto-derive logic', async () => {
+    // Simulate a category created before this feature existed: a StockCategory
+    // with no prefix, plus items whose stockCategory names it but were never
+    // touched by the derive-on-import path.
+    const StockCategory = mongoose.model('StockCategory');
+    const Inventory = mongoose.model('Inventory');
+    await StockCategory.create({ businessType: 'log', name: 'SYRUPS', prefix: '' });
+    await Inventory.create({
+      businessType: 'log', itemCode: 'P40001', itemName: 'Seasalt Syrup', unit: 'L', stockQty: 5, unitCost: 260, stockCategory: 'SYRUPS',
+    });
+
+    const res = await request(app).post('/api/stock-categories/backfill-prefixes').set(auth(superToken));
+    expect(res.body.success).toBe(true);
+    expect(res.body.filled.some(f => f.name === 'SYRUPS' && f.prefix === 'P4')).toBe(true);
+
+    const cat = await StockCategory.findOne({ name: 'SYRUPS' }).lean();
+    expect(cat.prefix).toBe('P4');
+  });
+
+  it('backfill-prefixes skips a category whose derived prefix would collide with another', async () => {
+    const StockCategory = mongoose.model('StockCategory');
+    const Inventory = mongoose.model('Inventory');
+    // BEANS already owns "P1" from the earlier test in this file.
+    await StockCategory.create({ businessType: 'log', name: 'BEANS COPY', prefix: '' });
+    await Inventory.create({
+      businessType: 'log', itemCode: 'P19999', itemName: 'Also Beans-ish', unit: 'kg', stockQty: 1, unitCost: 1, stockCategory: 'BEANS COPY',
+    });
+
+    const res = await request(app).post('/api/stock-categories/backfill-prefixes').set(auth(superToken));
+    expect(res.body.success).toBe(true);
+    expect(res.body.skipped.some(s => s.name === 'BEANS COPY' && /already used/i.test(s.reason))).toBe(true);
+
+    const cat = await StockCategory.findOne({ name: 'BEANS COPY' }).lean();
+    expect(cat.prefix).toBe('');
+
+    // Clean up - P19999 also matches the P1 sequence nextCategoryCode scans,
+    // which would otherwise throw off the "next manual add" test below.
+    await Inventory.deleteOne({ itemCode: 'P19999' });
+  });
+
   it('next manual Add Inventory continues the imported sequence under the derived prefix', async () => {
     const res = await request(app).post('/api/inventory').set(auth(superToken)).send({
       itemName: 'Third Beans Item', unit: 'kg', stockQty: 1, unitCost: 500, stockCategory: 'BEANS',

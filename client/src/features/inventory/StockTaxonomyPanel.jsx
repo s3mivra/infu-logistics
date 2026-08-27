@@ -6,7 +6,9 @@
 export default function StockTaxonomyPanel({
   stockLocations = [], stockCategories = [],
   saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory,
+  backfillStockCategoryPrefixes,
 }) {
+  const [backfilling, setBackfilling] = useState(false);
   const [locName, setLocName] = useState('');
   const [locNote, setLocNote] = useState('');
   const [catName, setCatName] = useState('');
@@ -94,8 +96,22 @@ export default function StockTaxonomyPanel({
 
       {/* Stock categories */}
       <div className={card}>
-        <h3 className="text-white font-black uppercase tracking-wider text-sm mb-1">Stock Categories</h3>
-        <p className="text-white text-[11px] mb-3">A prefix auto-numbers new item codes, e.g. prefix <span className="font-bold text-white/70">P1</span> → P10001, P10002.</p>
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <h3 className="text-white font-black uppercase tracking-wider text-sm">Stock Categories</h3>
+          {backfillStockCategoryPrefixes && (
+            <button
+              onClick={async () => { setBackfilling(true); try { await backfillStockCategoryPrefixes(); } finally { setBackfilling(false); } }}
+              disabled={backfilling}
+              title="Fill in the prefix for any category left blank - derives it from that category's own existing item codes. Never touches an already-set prefix."
+              className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded bg-accent/20 text-accent hover:bg-accent/30 transition disabled:opacity-50 shrink-0"
+            >
+              {backfilling ? 'Filling…' : 'Fill In Prefixes'}
+            </button>
+          )}
+        </div>
+        <p className="text-white text-[11px] mb-3">
+          A prefix only decides the code for the <span className="font-bold text-white/70">next new item</span> added under this category, e.g. prefix <span className="font-bold text-white/70">P1</span> → P10001, P10002. Changing it never renames any item already using this category - existing codes are referenced across orders, recipes, and reports, so they stay exactly as they are.
+        </p>
         <div className="flex flex-col sm:flex-row gap-2 mb-3">
           <input value={catName} onChange={e => setCatName(e.target.value)} placeholder="Category name (e.g. Beans)" className={input} />
           <input value={catPrefix} onChange={e => setCatPrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))} placeholder="Prefix" className={`${input} sm:max-w-[110px] uppercase font-mono`} maxLength={4} />

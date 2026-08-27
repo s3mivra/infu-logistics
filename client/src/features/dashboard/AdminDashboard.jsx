@@ -2380,13 +2380,17 @@ const updateStatus = async (orderId, newStatus) => {
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('MENU ITEMS', 105, 22, { align: 'center' });
     doc.setFontSize(9); doc.text(`${products.length} item(s) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+    // Sizes (small/medium/large) is an fb menu concept - a log item has no
+    // sizes at all (always "-"), it has a unit/pack instead (e.g. "1kg",
+    // "pcs"). Show whichever actually applies to this business type.
+    const lastCol = BUSINESS_TYPE === 'log' ? 'Unit' : 'Sizes';
     autoTable(doc, {
       startY: 34,
-      head: [['Name', 'Category', 'Code', 'Price', 'Available', 'Sizes']],
+      head: [['Name', 'Category', 'Code', 'Price', 'Available', lastCol]],
       body: products.map(p => [
         p.name, p.category || '-', p.productCode || '-', pdfMoney(p.basePrice),
         p.isAvailable === false ? 'Removed' : (p.isOutOfStock ? 'Out of Stock' : 'Yes'),
-        (p.sizes || []).map(s => s.name).join(', ') || '-',
+        BUSINESS_TYPE === 'log' ? (p.baseSize || 'pcs') : ((p.sizes || []).map(s => s.name).join(', ') || '-'),
       ]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' } },
     });
@@ -2570,6 +2574,21 @@ const updateStatus = async (orderId, newStatus) => {
     if (!await ui.confirm('Delete this category?')) return;
     const res = await apiFetch(`/api/stock-categories/${id}`, { method: 'DELETE' });
     const d = await res.json(); if (!d.success) ui.alert(d.error); fetchStockTaxonomy();
+  };
+  // One-time repair for categories an import created before the auto-derive-
+  // prefix logic existed - those were left with a blank prefix forever, since
+  // deriving one only ever happens for a row in a fresh import, never
+  // retroactively for a category that already existed.
+  const backfillStockCategoryPrefixes = async () => {
+    const res = await apiFetch('/api/stock-categories/backfill-prefixes', { method: 'POST' });
+    const d = await res.json();
+    if (!d.success) { ui.alert(d.error || 'Failed to fill in prefixes.'); return; }
+    fetchStockTaxonomy();
+    const lines = [
+      d.filled.length ? `Filled in: ${d.filled.map(f => `${f.name} → ${f.prefix}`).join(', ')}` : null,
+      d.skipped.length ? `Skipped: ${d.skipped.map(s => `${s.name} (${s.reason})`).join(', ')}` : null,
+    ].filter(Boolean);
+    ui.alert(lines.length ? lines.join('\n\n') : 'No blank-prefix categories found - nothing to do.');
   };
   const fetchStockTransfers = async () => {
     try {
@@ -3828,7 +3847,15 @@ const updateStatus = async (orderId, newStatus) => {
   // Stamps the business logo in the top-right corner of any jsPDF doc.
   // Converts via canvas so any format (PNG/JPEG/WebP/etc.) renders crisply.
   const addLogoToPDF = async (doc) => {
-    const logo = systemSettings.businessLogo;
+    // Same priority as the shared receipt/billing-doc letterhead (resolveLetterhead
+    // in shared/receiptTemplate.js): a dedicated Print Logo wins when it's toggled
+    // on, else fall back to the regular business logo. This function was always
+    // using businessLogo unconditionally, so Settings → Printer Settings → Print
+    // Logo had zero effect on any of these tabular PDF exports - the print-specific
+    // logo the user uploaded (usually plain black line art, made to read on white
+    // paper) never showed, only the app's own logo (often styled for a dark UI,
+    // so it can render as a barely-visible wash on a white page).
+    const logo = (systemSettings.printLogoEnabled && systemSettings.printLogo) ? systemSettings.printLogo : systemSettings.businessLogo;
     if (!logo) return;
     try {
       const img = new Image();
@@ -6056,7 +6083,7 @@ const updateStatus = async (orderId, newStatus) => {
     pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF,
     bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF,
     arOutstanding, fetchArOutstanding, arAgeing, fetchArAgeing, suppliers, fetchSuppliers,
-    stockLocations, stockCategories, fetchStockTaxonomy, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory,
+    stockLocations, stockCategories, fetchStockTaxonomy, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory, backfillStockCategoryPrefixes,
     stockTransfers, locationAnalytics, fetchStockTransfers, requestStockTransfer, actOnStockTransfer,
     expenseModal, setExpenseModal, expenseCategories, fetchExpenseCategories,
     expenseForm, setExpenseForm, expenseSubmitting, submitExpense, expenseList, fetchExpenses,

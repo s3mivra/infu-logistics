@@ -547,6 +547,57 @@ app.put('/api/stock-categories/:id', verifyToken, requireSuperAdmin, async (req,
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
+// One-time repair for categories that predate the import's auto-derive-prefix
+// logic (#9 extension) - those got created with a blank prefix and never
+// retroactively got one, since the derive-on-import path only fires for rows
+// in a NEW import, not for categories that already existed. Scans every
+// blank-prefix category's items (falling back through the linked Product's
+// category for older rows that predate `Inventory.stockCategory` existing at
+// all, and backfilling that field while we're at it), derives a prefix from
+// the most common code pattern, and fills it in - same one-shot semantics as
+// the per-row derive (never overwrites a prefix that's already set, and skips
+// a category whose derived prefix would collide with another category's).
+// Purely additive/non-destructive: never touches any item's own itemCode.
+app.post('/api/stock-categories/backfill-prefixes', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const cats = await StockCategory.find({ businessType: BUSINESS_TYPE, $or: [{ prefix: '' }, { prefix: { $exists: false } }] });
+    const results = { checked: cats.length, filled: [], skipped: [] };
+    for (const cat of cats) {
+      let items = await Inventory.find({ businessType: BUSINESS_TYPE, stockCategory: cat.name }, { itemCode: 1 }).lean();
+      if (items.length === 0) {
+        // Older rows never got Inventory.stockCategory set (before that field
+        // was populated on import) - fall back to the linked Product's category.
+        const prods = await Product.find({ businessType: BUSINESS_TYPE, category: cat.name }, { productCode: 1 }).lean();
+        const codes = prods.map(p => p.productCode).filter(Boolean);
+        if (codes.length) {
+          items = await Inventory.find({ businessType: BUSINESS_TYPE, itemCode: { $in: codes } }, { itemCode: 1 }).lean();
+          // Backfill the field itself so this fallback isn't needed again next time.
+          if (items.length) await Inventory.updateMany({ _id: { $in: items.map(i => i._id) } }, { $set: { stockCategory: cat.name } });
+        }
+      }
+      if (items.length === 0) { results.skipped.push({ name: cat.name, reason: 'no items found' }); continue; }
+
+      const counts = {};
+      for (const it of items) {
+        const code = String(it.itemCode || '').toUpperCase().trim();
+        const p = code.length > 4 && /^\d{4}$/.test(code.slice(-4)) ? code.slice(0, -4) : '';
+        if (p) counts[p] = (counts[p] || 0) + 1;
+      }
+      const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+      if (ranked.length === 0) { results.skipped.push({ name: cat.name, reason: 'no derivable code pattern' }); continue; }
+      const [prefix] = ranked[0];
+
+      const conflict = await StockCategory.findOne({ businessType: BUSINESS_TYPE, prefix, _id: { $ne: cat._id } });
+      if (conflict) { results.skipped.push({ name: cat.name, reason: `prefix "${prefix}" already used by "${conflict.name}"` }); continue; }
+
+      cat.prefix = prefix;
+      await cat.save();
+      results.filled.push({ name: cat.name, prefix });
+    }
+    res.json({ success: true, ...results });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 app.delete('/api/stock-categories/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const cat = await StockCategory.findById(req.params.id);
