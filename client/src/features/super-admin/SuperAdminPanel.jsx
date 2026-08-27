@@ -2072,8 +2072,8 @@ export default function SuperAdminPanel() {
       {/* =================================================================== */}
       {clientModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md animate-fade-in">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md max-h-[92vh] overflow-hidden flex flex-col animate-fade-in">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
               <div>
                 <h2 className="font-black text-fg text-lg">
                   {clientModal.mode === 'create' ? 'New Client Account' : 'Edit Client'}
@@ -2087,7 +2087,7 @@ export default function SuperAdminPanel() {
               </button>
             </div>
 
-            <form onSubmit={handleClientSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleClientSubmit} className="p-6 space-y-4 overflow-y-auto custom-scrollbar">
               {clientFormError && (
                 <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl px-4 py-3">
                   <AlertCircle size={13} className="flex-shrink-0 mt-0.5" />

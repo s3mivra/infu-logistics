@@ -99,6 +99,7 @@ export default function ClientOnboarding() {
             <div>
               <label className={label}>Full Name</label>
               <input className={input} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+              <p className="text-fg/30 text-[11px] mt-1">Just how your name shows up - not what you sign in with.</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -111,8 +112,10 @@ export default function ClientOnboarding() {
               </div>
             </div>
             <div className="border-t border-white/10 pt-3">
+              <p className="text-fg/70 text-xs font-bold mb-2">These are your sign-in details - you'll use them every time you log in.</p>
               <label className={label}>Choose a Username *</label>
               <input autoComplete="username" className={input} value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))} />
+              <p className="text-fg/30 text-[11px] mt-1">This is what you'll type to sign in - not your name.</p>
             </div>
             <div>
               <label className={label}>Choose a Password * (min 6 characters)</label>
