@@ -346,13 +346,24 @@ async function maybePromoteBackdateClient(customerName) {
 // Throws an Error with `.httpStatus` set for anything that should reach the
 // client as a 400/423 rather than a 500.
 async function createBackdatedSale(payload, actorName) {
-  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, isComplimentary = false } = payload;
+  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, isComplimentary = false, importRef = '' } = payload;
   const comp = !!isComplimentary;
   const fail = (httpStatus, message) => Object.assign(new Error(message), { httpStatus });
 
   const dt = new Date(date);
   if (!date || isNaN(dt.getTime())) throw fail(400, 'A valid date is required.');
   if (dt.getTime() > Date.now()) throw fail(400, 'A backdated sale must be in the past, not the future.');
+
+  // A bulk Excel import carries the sheet's own transaction/invoice reference
+  // as importRef - re-importing the same (or an overlapping) file must skip
+  // rows already posted under that reference rather than double-recording the
+  // sale. Manual single-entry backdates never set this, so they're never
+  // deduped against each other (nothing to dedupe on).
+  const cleanImportRef = String(importRef || '').trim();
+  if (cleanImportRef) {
+    const dupe = await Order.findOne({ businessType: BUSINESS_TYPE, importRef: cleanImportRef, isBackdated: true }).lean();
+    if (dupe) throw fail(409, `Already imported as ${dupe.orderNumber} (ref: ${cleanImportRef}) - skipped duplicate.`);
+  }
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -434,6 +445,7 @@ async function createBackdatedSale(payload, actorName) {
       transactionType: 'NORMAL',
       orderNotes: (notes || '').trim().slice(0, 300),
       isBackdated: true,
+      importRef: cleanImportRef,
       // A backdated sale is never "today's" register - default isArchived:false
       // was leaving these permanently mixed into the live Active Register
       // totals (GET /api/orders' isArchived:false query has no date scoping)
@@ -552,15 +564,36 @@ app.post('/api/admin/backdate-sale/queue', verifyToken, requireSuperAdmin, async
   try {
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to queue.' });
-    const docs = rows.map(r => ({
-      transNo: String(r.transNo || ''), client: String(r.client || ''), date: String(r.date || ''), sheet: String(r.sheet || ''),
-      items: (Array.isArray(r.items) ? r.items : []).map(it => ({ code: it.code || '', name: it.name, quantity: it.quantity, price: it.price, productId: it.productId || null, productCode: it.productCode || null })),
-      missingFields: Array.isArray(r.missingFields) ? r.missingFields : ['paymentMethod'],
-      status: 'pending',
-    }));
-    const created = await BackdateQueueItem.insertMany(docs);
-    await logAudit(req, { action: 'backdate-sale-queue', entity: 'BackdateQueueItem', entityId: 'bulk', after: { queued: created.length } });
-    res.json({ success: true, queued: created.length });
+
+    // Re-queuing the same (or an overlapping) file must not pile up duplicate
+    // pending entries for a transaction that's already sitting in the queue,
+    // or was already posted as a real sale (createBackdatedSale's own dedupe
+    // only catches it at Save time - by then it's a confusing "already
+    // imported" error on a queue row the user is trying to resolve; better to
+    // never queue the duplicate in the first place).
+    const refs = [...new Set(rows.map(r => String(r.transNo || '').trim()).filter(Boolean))];
+    const [pendingRefs, postedRefs] = refs.length ? await Promise.all([
+      BackdateQueueItem.find({ businessType: BUSINESS_TYPE, status: 'pending', transNo: { $in: refs } }).distinct('transNo'),
+      Order.find({ businessType: BUSINESS_TYPE, isBackdated: true, importRef: { $in: refs } }).distinct('importRef'),
+    ]) : [[], []];
+    const dupeRefs = new Set([...pendingRefs, ...postedRefs]);
+
+    const skipped = [];
+    const docs = [];
+    for (const r of rows) {
+      const transNo = String(r.transNo || '').trim();
+      if (transNo && dupeRefs.has(transNo)) { skipped.push(transNo); continue; }
+      docs.push({
+        transNo: String(r.transNo || ''), client: String(r.client || ''), date: String(r.date || ''), sheet: String(r.sheet || ''),
+        items: (Array.isArray(r.items) ? r.items : []).map(it => ({ code: it.code || '', name: it.name, quantity: it.quantity, price: it.price, productId: it.productId || null, productCode: it.productCode || null })),
+        missingFields: Array.isArray(r.missingFields) ? r.missingFields : ['paymentMethod'],
+        status: 'pending',
+      });
+    }
+
+    const created = docs.length ? await BackdateQueueItem.insertMany(docs) : [];
+    await logAudit(req, { action: 'backdate-sale-queue', entity: 'BackdateQueueItem', entityId: 'bulk', after: { queued: created.length, skippedDuplicates: skipped.length } });
+    res.json({ success: true, queued: created.length, skippedDuplicates: skipped.length });
   } catch (err) {
     log.error?.({ err }, 'POST /api/admin/backdate-sale/queue failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));

@@ -1331,21 +1331,36 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
 
       const qty = parseFloat(row.qty);
       const unitCostFromExcel = row.unitCost !== undefined && row.unitCost !== '' ? parseFloat(row.unitCost) : null;
-      // A 2-digit year (e.g. "9/21/27") is read by `new Date(...)` as 19xx, not
-      // 20xx - the client already expands this before sending, but the route
-      // is called directly by other callers (tests, future clients) too, so
-      // guard it here as well rather than trusting every caller to pre-expand.
-      const expandTwoDigitYear = (s) => {
+      // The client already normalizes date text to unambiguous ISO before
+      // sending, but this route is called directly by other callers (tests,
+      // future clients) too - guard it here rather than trusting every caller
+      // to pre-normalize. Two things a raw "M/D/YY(YY)" string needs fixing:
+      //  - 2-digit year ("9/21/27") is read by `new Date(...)` as 1927, not 2027
+      //  - every date column in these sheets is MM/DD/YYYY (not DD/MM) - once
+      //    converted to explicit ISO here, nothing downstream (`new Date(...)`
+      //    on this same string, elsewhere in this route) can re-parse it under
+      //    a different day/month order and silently flip it.
+      const normalizeDateStr = (s) => {
         if (typeof s !== 'string') return s;
-        const m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2})$/);
-        if (!m) return s;
-        const yy = parseInt(m[3], 10);
-        return `${m[1]}/${m[2]}/${yy < 50 ? 2000 + yy : 1900 + yy}`;
+        let str = s.trim();
+        const m2 = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2})$/);
+        if (m2) {
+          const yy = parseInt(m2[3], 10);
+          str = `${m2[1]}/${m2[2]}/${yy < 50 ? 2000 + yy : 1900 + yy}`;
+        }
+        const m3 = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+        if (m3) {
+          const mo = parseInt(m3[1], 10), da = parseInt(m3[2], 10), yr = parseInt(m3[3], 10);
+          if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) {
+            str = `${yr}-${String(mo).padStart(2, '0')}-${String(da).padStart(2, '0')}`;
+          }
+        }
+        return str;
       };
-      const expiryFromExcel = expandTwoDigitYear(row.expiryDate || row.expiry || null);
+      const expiryFromExcel = normalizeDateStr(row.expiryDate || row.expiry || null);
       // Goods with no real expiry (roasted beans, etc.) date freshness by
       // production date instead - only meaningful when there's no expiry on the row.
-      const productionFromExcel = !expiryFromExcel ? expandTwoDigitYear(row.productionDate || row.production || null) : null;
+      const productionFromExcel = !expiryFromExcel ? normalizeDateStr(row.productionDate || row.production || null) : null;
       // Per-qty (pack) size in displayUnit, e.g. "Milk 1L" → itemName "Milk", unit L,
       // packSize 1. The client pre-parses the size out of the product name and sends
       // it here; if a caller sends the raw unparsed name instead, fall back to

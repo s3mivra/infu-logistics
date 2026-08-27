@@ -126,6 +126,53 @@ describe('backdated sale', () => {
     expect(res.body.order.total).toBe(750);
   });
 
+  it('rejects a second import of the same importRef as a duplicate (409)', async () => {
+    const first = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, paymentMethod: 'Cash', importRef: 'TXN-DUPE-001',
+      items: [{ name: 'Widget', price: 100, quantity: 1, productId: String(prod._id) }],
+    });
+    expect(first.status).toBe(200);
+
+    const second = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, paymentMethod: 'Cash', importRef: 'TXN-DUPE-001',
+      items: [{ name: 'Widget', price: 100, quantity: 1, productId: String(prod._id) }],
+    });
+    expect(second.status).toBe(409);
+    expect(second.body.error).toMatch(/already imported/i);
+
+    const Order = mongoose.model('Order');
+    const count = await Order.countDocuments({ importRef: 'TXN-DUPE-001' });
+    expect(count).toBe(1); // only the first one landed
+  });
+
+  it('blank importRef never dedupes - two manual entries with no reference both post', async () => {
+    const a = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, paymentMethod: 'Cash',
+      items: [{ name: 'Widget', price: 100, quantity: 1, productId: String(prod._id) }],
+    });
+    const b = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, paymentMethod: 'Cash',
+      items: [{ name: 'Widget', price: 100, quantity: 1, productId: String(prod._id) }],
+    });
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+  });
+
+  it('backdate-sale/queue skips duplicate transNo rows and reports the count', async () => {
+    const first = await auth('post', '/api/admin/backdate-sale/queue', superTok).send({
+      items: [{ transNo: 'TXN-Q-001', client: 'Client A', date: LAST_MONTH,
+        items: [{ name: 'Widget', price: 100, quantity: 1 }] }],
+    });
+    expect(first.body.queued).toBe(1);
+
+    const second = await auth('post', '/api/admin/backdate-sale/queue', superTok).send({
+      items: [{ transNo: 'TXN-Q-001', client: 'Client A', date: LAST_MONTH,
+        items: [{ name: 'Widget', price: 100, quantity: 1 }] }],
+    });
+    expect(second.body.queued).toBe(0);
+    expect(second.body.skippedDuplicates).toBe(1);
+  });
+
   it('the whole ledger stays balanced after all the backdated entries', async () => {
     const { debits, credits } = await trialBalance();
     expect(Math.abs(debits - credits)).toBeLessThanOrEqual(0.01);

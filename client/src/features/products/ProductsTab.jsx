@@ -423,7 +423,10 @@ export default function ProductsTab({ ctx }) {
                     )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h4 className="font-bold text-fg truncate w-full sm:w-auto">{p.name} <span className="text-xs text-brand/70 ml-1">({p.category})</span></h4>
+                        {/* No fixed/auto width and no truncate - a longer name just
+                            wraps onto its own line within the flex-wrap row instead
+                            of overflowing past the card or getting clipped. */}
+                        <h4 className="font-bold text-fg break-words min-w-0">{p.name} <span className="text-xs text-brand/70 ml-1 whitespace-nowrap">({p.category})</span></h4>
                         {(() => {
                           const est = getEstimatedStock(p.baseRecipe);
                           if (est === null) return null;

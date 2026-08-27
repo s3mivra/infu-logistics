@@ -3437,15 +3437,29 @@ const updateStatus = async (orderId, newStatus) => {
           let s = String(v).trim();
           // A 2-digit year in a typed/text cell (e.g. "9/21/27") is read by
           // JS Date parsing as 19xx, not 20xx - new Date("9/21/27") is Sept 1927,
-          // not 2027. Expand it before it ever reaches new Date(...), here or
-          // server-side (the server does its own `new Date(expiryDate)` on
-          // whatever string this function hands it). Pivot at 50, same
-          // convention spreadsheets themselves use for 2-digit years.
+          // not 2027. Expand it before anything else touches this string.
+          // Pivot at 50, same convention spreadsheets themselves use.
           const m2 = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2})$/);
           if (m2) {
             const yy = parseInt(m2[3], 10);
-            const yyyy = yy < 50 ? 2000 + yy : 1900 + yy;
-            s = `${m2[1]}/${m2[2]}/${yyyy}`;
+            s = `${m2[1]}/${m2[2]}/${yy < 50 ? 2000 + yy : 1900 + yy}`;
+          }
+          // Every date column in these sheets is MM/DD/YYYY (confirmed - not
+          // DD/MM). Convert straight to an unambiguous ISO YYYY-MM-DD here
+          // instead of handing the raw "M/D/YYYY" text down the pipe for
+          // something else to interpret later: `new Date("9/1/2026")` reads
+          // as MM/DD in most engines, but the app also re-parses this same
+          // string on the server, in preview diffing, and in date-string
+          // comparisons - any one of those going through a differently
+          // configured Date parser silently flips month/day (9/1 → Jan 9
+          // instead of Sept 1). Doing the MM/DD→ISO conversion explicitly,
+          // once, here, removes that ambiguity everywhere downstream.
+          const m3 = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+          if (m3) {
+            const mo = parseInt(m3[1], 10), da = parseInt(m3[2], 10), yr = parseInt(m3[3], 10);
+            if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) {
+              s = `${yr}-${String(mo).padStart(2, '0')}-${String(da).padStart(2, '0')}`;
+            }
           }
           return s;
         };

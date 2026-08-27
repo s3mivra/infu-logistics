@@ -211,7 +211,20 @@ export default function LedgerTab({ ctx }) {
     if (!v) return '';
     if (v instanceof Date) return isNaN(v) ? '' : v.toISOString().slice(0, 10);
     if (typeof v === 'number') { const d = new Date(Math.round((v - 25569) * 86400 * 1000)); return isNaN(d) ? '' : d.toISOString().slice(0, 10); }
-    const d = new Date(String(v).trim());
+    let s = String(v).trim();
+    // Every date column in these sheets is MM/DD/YYYY (not DD/MM) - convert
+    // explicitly instead of handing "M/D/YYYY" text to `new Date(...)`, which
+    // reads it correctly in most engines but isn't guaranteed to everywhere
+    // this string gets re-parsed (same class of bug fixed in the inventory
+    // importer: a 2-digit year read as 19xx, or month/day silently flipped).
+    const m2 = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2})$/);
+    if (m2) { const yy = parseInt(m2[3], 10); s = `${m2[1]}/${m2[2]}/${yy < 50 ? 2000 + yy : 1900 + yy}`; }
+    const m3 = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+    if (m3) {
+      const mo = parseInt(m3[1], 10), da = parseInt(m3[2], 10), yr = parseInt(m3[3], 10);
+      if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) s = `${yr}-${String(mo).padStart(2, '0')}-${String(da).padStart(2, '0')}`;
+    }
+    const d = new Date(s);
     return isNaN(d) ? '' : d.toISOString().slice(0, 10);
   };
 
@@ -371,7 +384,7 @@ export default function LedgerTab({ ctx }) {
     const readyGroups = allGroups.filter(g => !g.needsPaymentMethod);
     const queueGroups = allGroups.filter(g => g.needsPaymentMethod);
 
-    let queuedCount = 0;
+    let queuedCount = 0, queuedDupes = 0;
     if (queueGroups.length > 0) {
       try {
         const r = await apiFetch('/api/admin/backdate-sale/queue', {
@@ -383,17 +396,18 @@ export default function LedgerTab({ ctx }) {
           })) }),
         });
         const d = await r.json();
-        if (d.success) { queuedCount = d.queued; fetchBdQueue(1); }
+        if (d.success) { queuedCount = d.queued; queuedDupes = d.skippedDuplicates || 0; fetchBdQueue(1); }
       } catch { /* queueing is best-effort - the rest of the import still proceeds */ }
     }
 
     if (readyGroups.length === 0) {
       ui.alert(queuedCount > 0
-        ? `No "Terms of Payment" found on ${queuedCount} sale(s) - sent to the Backdate Queue for review instead of importing blind.`
-        : 'No sale rows found under the header in the selected sheet(s).');
+        ? `No "Terms of Payment" found on ${queuedCount} sale(s) - sent to the Backdate Queue for review instead of importing blind.${queuedDupes ? `\n\n${queuedDupes} row(s) skipped - already imported/queued (same reference).` : ''}`
+        : (queuedDupes ? `All ${queuedDupes} row(s) were already imported or queued (same reference) - nothing new to add.`
+          : 'No sale rows found under the header in the selected sheet(s).'));
       return;
     }
-    setBdImportPreview({ groups: readyGroups, skipped: totalSkipped, multiSheet: sheetNames.length > 1, queuedCount });
+    setBdImportPreview({ groups: readyGroups, skipped: totalSkipped, multiSheet: sheetNames.length > 1, queuedCount, queuedDupes });
   };
 
   const XLSX_sheetToGrid = (wb, name) => {
@@ -455,7 +469,7 @@ export default function LedgerTab({ ctx }) {
     // 180-row import. Pause that auto-refresh for the run; one manual
     // fetchERPData() below covers it once the whole import is done.
     setBulkOpInProgress?.(true);
-    let ok = 0, fail = 0;
+    let ok = 0, fail = 0, dupes = 0;
     const errors = [];
     try {
       for (const g of bdImportPreview.groups) {
@@ -473,6 +487,10 @@ export default function LedgerTab({ ctx }) {
               body: JSON.stringify({
                 date: g.date, customerName: g.client, paymentMethod: g.paymentMethod || bdImportSettings.paymentMethod,
                 notes: g.transNo ? `Imported - ${g.transNo}` : 'Imported from Excel',
+                // The sheet's own transaction/invoice number - lets the server skip
+                // this row as a duplicate if it (or an overlapping file) was already
+                // imported under the same reference, instead of posting it twice.
+                importRef: g.transNo || undefined,
                 affectInventory: bdImportSettings.affectInventory, isComplimentary: false, discountPercent: 0,
                 items: g.items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity, productId: it.productId, productCode: it.productCode })),
               }),
@@ -482,7 +500,9 @@ export default function LedgerTab({ ctx }) {
             await new Promise(r => setTimeout(r, 1500 * attempt));
           }
           const d = await res.json();
-          if (d.success) ok++; else { fail++; errors.push(`${label}: ${d.error}`); }
+          if (d.success) ok++;
+          else if (res.status === 409) { dupes++; errors.push(`${label}: ${d.error}`); }
+          else { fail++; errors.push(`${label}: ${d.error}`); }
         } catch { fail++; errors.push(`${label}: network error`); }
         setBdImportProgress(p => ({ ...p, done: p.done + 1 }));
         // Small pace between rows so a fast/local server doesn't out-race the
@@ -497,7 +517,8 @@ export default function LedgerTab({ ctx }) {
     setBdImportPreview(null);
     fetchERPData();
     fetchBdHistory();
-    ui.alert(`Imported ${ok} sale(s).${fail ? `\n\n${fail} failed:\n${errors.slice(0, 10).join('\n')}` : ''}`);
+    const totalDupes = dupes + (bdImportPreview.queuedDupes || 0);
+    ui.alert(`Imported ${ok} sale(s).${totalDupes ? `\n\n${totalDupes} skipped - already imported/queued (same reference).` : ''}${fail ? `\n\n${fail} failed:\n${errors.slice(0, 10).join('\n')}` : ''}`);
   };
 
   // ── Backdate Sale - history (both manual entries and bulk imports) ──────────

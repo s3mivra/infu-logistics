@@ -1131,6 +1131,12 @@ items: [{
   // Marks orders added via the superadmin Backdate Sales tool. Skips inventory
   // deduction and recipe COGS - purely a revenue/finance tally.
   isBackdated:    { type: Boolean, default: false, index: true },
+  // Source transaction/invoice number from a Backdate Sale bulk Excel import
+  // (the sheet's own reference, e.g. "TRANSACTION NO."). Blank for a manually
+  // entered backdated sale, which has no such reference to dedupe against.
+  // Lets re-importing the same (or an overlapping) file skip rows that were
+  // already posted instead of creating a second sale for the same reference.
+  importRef:      { type: String, default: '', index: true },
   amountTendered: { type: Number, default: 0 },
   changeDue: { type: Number, default: 0 },
   // --- DELIVERY / PICKUP FIELDS ---
