@@ -57,7 +57,7 @@ describe('purge data', () => {
     expect(list.body.products.some(p => p._id === productId)).toBe(true);
   });
 
-  it('purging the inventory category also clears stock transfers', async () => {
+  it('"transfers" is its own purge category, independent of "inventory"', async () => {
     const invA = await request(app).post('/api/inventory').set(auth(superToken))
       .send({ itemName: 'Purge Transfer Source', unit: 'pcs', stockQty: 20, unitCost: 5 });
     const invB = await request(app).post('/api/inventory').set(auth(superToken))
@@ -66,16 +66,29 @@ describe('purge data', () => {
       .send({ fromItemId: invA.body.item._id, toItemId: invB.body.item._id, qtyBase: 5 });
     expect(t.body.success).toBe(true);
 
-    const before = await request(app).get('/api/stock-transfers').set(auth(superToken));
-    expect(before.body.transfers.some(x => String(x._id) === String(t.body.transfer._id))).toBe(true);
-
-    const res = await request(app).post('/api/admin/purge-data').set(auth(superToken))
+    // Purging "inventory" alone must NOT touch transfer history.
+    const invOnly = await request(app).post('/api/admin/purge-data').set(auth(superToken))
       .send({ confirmPhrase: 'PURGE', categories: ['inventory'] });
+    expect(invOnly.body.success).toBe(true);
+    expect(invOnly.body.deleted.stockTransfers).toBeUndefined();
+    const stillThere = await request(app).get('/api/stock-transfers').set(auth(superToken));
+    expect(stillThere.body.transfers.some(x => String(x._id) === String(t.body.transfer._id))).toBe(true);
+
+    // Purging "transfers" alone clears it.
+    const res = await request(app).post('/api/admin/purge-data').set(auth(superToken))
+      .send({ confirmPhrase: 'PURGE', categories: ['transfers'] });
     expect(res.body.success).toBe(true);
     expect(res.body.deleted.stockTransfers).toBeGreaterThanOrEqual(1);
 
     const after = await request(app).get('/api/stock-transfers').set(auth(superToken));
     expect(after.body.transfers.length).toBe(0);
+  });
+
+  it('lists "transfers" as its own category, defaulting on', async () => {
+    const res = await request(app).get('/api/admin/purge-data/categories').set(auth(superToken));
+    const transfers = res.body.categories.find(c => c.key === 'transfers');
+    expect(transfers).toBeTruthy();
+    expect(transfers.defaultOn).toBe(true);
   });
 
   it('purges the menu only when explicitly selected', async () => {

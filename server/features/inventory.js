@@ -757,6 +757,7 @@ app.post('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => 
       qtyBase: qty, unit: from.unit || '', status: 'Requested', expiryDate: pinnedExpiry,
       note: String(note || '').trim().slice(0, 500), requestedBy: req.user?.name || '',
     });
+    await logAudit(req, { action: 'create', entity: 'StockTransfer', entityId: transfer._id, after: { reference, itemName: transfer.itemName, qtyBase: qty, fromLocation: transfer.fromLocation, toLocation: transfer.toLocation } });
     emitToMgr('erpUpdated');
     res.json({ success: true, transfer });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
@@ -770,6 +771,7 @@ app.post('/api/stock-transfers/:id/approve', verifyToken, requireSuperAdmin, asy
     if (t.status !== 'Requested') return res.status(400).json({ success: false, error: `Only a Requested transfer can be approved (currently ${t.status}).` });
     t.status = 'Approved'; t.approvedBy = req.user?.name || ''; t.approvedAt = new Date();
     await t.save();
+    await logAudit(req, { action: 'approve', entity: 'StockTransfer', entityId: t._id, after: { reference: t.reference, itemName: t.itemName, qtyBase: t.qtyBase } });
     emitToMgr('erpUpdated');
     res.json({ success: true, transfer: t });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
@@ -785,6 +787,7 @@ app.post('/api/stock-transfers/:id/reject', verifyToken, requireStaff, async (re
     const isSuper = req.user?.role === 'superadmin';
     t.status = isSuper ? 'Rejected' : 'Cancelled';
     await t.save();
+    await logAudit(req, { action: isSuper ? 'reject' : 'cancel', entity: 'StockTransfer', entityId: t._id, after: { reference: t.reference, itemName: t.itemName, qtyBase: t.qtyBase } });
     emitToMgr('erpUpdated');
     res.json({ success: true, transfer: t });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
@@ -852,6 +855,7 @@ app.post('/api/stock-transfers/:id/release', verifyToken, requireStaff, async (r
         released = t;
       });
       await session.endSession();
+      await logAudit(req, { action: 'release', entity: 'StockTransfer', entityId: released._id, after: { reference: released.reference, itemName: released.itemName, qtyBase: released.qtyBase, fromLocation: released.fromLocation, toLocation: released.toLocation } });
       emitToMgr('erpUpdated');
       return res.json({ success: true, transfer: released });
     } catch (err) {

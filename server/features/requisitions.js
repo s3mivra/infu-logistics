@@ -63,11 +63,30 @@ export default function registerRequisitions(ctx) {
   app.post('/api/requisition-slips', verifyToken, requireStaff, async (req, res) => {
     try {
       const { type } = req.body || {};
-      if (!['petty-cash', 'procurement'].includes(type)) return res.status(400).json({ success: false, error: 'type must be "petty-cash" or "procurement".' });
+      if (!['petty-cash', 'procurement', 'new-fund'].includes(type)) return res.status(400).json({ success: false, error: 'type must be "petty-cash", "procurement", or "new-fund".' });
 
       const year = new Date().getFullYear();
       const slipNumber = await generateNextSequence(RequisitionSlip, `REQ-${year}`, 'slipNumber');
       const preparedBy = req.user?.name || '';
+
+      if (type === 'new-fund') {
+        const { fundName, amount, description, sourceAccount } = req.body;
+        const name = String(fundName || '').trim();
+        if (!name) return res.status(400).json({ success: false, error: 'Fund name is required.' });
+        const amt = Number(amount);
+        if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Opening amount must be a positive number.' });
+        const dup = await RevolvingFund.findOne({ name: { $regex: `^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, isActive: true });
+        if (dup) return res.status(400).json({ success: false, error: `A fund named "${name}" already exists.` });
+
+        const slip = await RequisitionSlip.create({
+          slipNumber, type: 'new-fund', status: 'Pending',
+          fundName: name, amount: amt, description: String(description || '').trim(),
+          categoryCode: sourceAccount || '111000', // funding source account
+          preparedBy,
+        });
+        await logAudit(req, { action: 'create', entity: 'RequisitionSlip', entityId: slip._id, after: { slipNumber, type, amount: amt } });
+        return res.json({ success: true, slip });
+      }
 
       if (type === 'petty-cash') {
         const { fundId, amount, description, categoryCode } = req.body;
@@ -134,6 +153,49 @@ export default function registerRequisitions(ctx) {
       const slip = await RequisitionSlip.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
       if (!slip) return res.status(404).json({ success: false, error: 'Not found' });
       if (slip.status !== 'Pending') return res.status(409).json({ success: false, error: `Only a Pending slip can be approved (this one is ${slip.status}).` });
+
+      if (slip.type === 'new-fund') {
+        const dup = await RevolvingFund.findOne({ name: { $regex: `^${slip.fundName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, isActive: true });
+        if (dup) return res.status(400).json({ success: false, error: `A fund named "${slip.fundName}" already exists - reject this slip instead.` });
+
+        // Mirrors POST /api/revolving-funds exactly (finance.js), just gated
+        // behind approval instead of being immediate.
+        const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
+        const srcCode = (acctMeta(slip.categoryCode) && isCashLike(slip.categoryCode)) ? slip.categoryCode : '111000';
+        const srcName = acctMeta(srcCode)?.name || 'Cash on Hand';
+        const amt = slip.amount;
+
+        const fund = await RevolvingFund.create({
+          name: slip.fundName, initialAmount: amt, currentBalance: amt,
+          description: slip.description || '', createdBy: req.user?.name,
+        });
+
+        const reference = await mkSeqRef('RF-OPEN');
+        const je = await JournalEntry.create({
+          date: new Date(), description: `Revolving Fund established: ${slip.fundName} (from ${srcName}) [${slip.slipNumber}]`,
+          lines: [
+            { accountCode: '114000', accountName: 'Petty Cash / Revolving Fund', debit: amt, credit: 0 },
+            { accountCode: srcCode, accountName: srcName, debit: 0, credit: amt },
+          ],
+          totalDebit: amt, totalCredit: amt, reference,
+        });
+        await RevolvingFundTx.create({
+          fundId: fund._id, type: 'replenishment', amount: amt,
+          description: `Fund opened: initial amount [${slip.slipNumber}]`,
+          performedBy: slip.preparedBy, balanceAfter: amt, journalRef: je._id,
+        });
+
+        slip.resultRefId = String(fund._id);
+        slip.resultRefLabel = reference;
+        slip.status = 'Approved';
+        slip.approvedBy = req.user?.name || '';
+        slip.approvedAt = new Date();
+        await slip.save();
+
+        await logAudit(req, { action: 'approve', entity: 'RequisitionSlip', entityId: slip._id, after: { slipNumber: slip.slipNumber, approvedBy: slip.approvedBy, fundId: fund._id } });
+        emitToMgr('erpUpdated');
+        return res.json({ success: true, slip, fund });
+      }
 
       if (slip.type === 'petty-cash') {
         const fund = await RevolvingFund.findById(slip.fundId);

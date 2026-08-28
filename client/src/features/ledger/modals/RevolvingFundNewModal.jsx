@@ -4,7 +4,7 @@ import { useDashboard } from '../../dashboard/DashboardContext';
 // Extracted from AdminDashboard. Reads shared dashboard state via
 // useDashboard() rather than props - see DashboardContext.
 export default function RevolvingFundNewModal() {
-  const { cashAndBankAccounts, rfNewForm, rfNewModal, rfNewSubmitting, setRfNewForm, setRfNewModal, submitRfNew } = useDashboard();
+  const { cashAndBankAccounts, rfNewForm, rfNewModal, rfNewSubmitting, setRfNewForm, setRfNewModal, submitRfNew, isSuperAdmin } = useDashboard();
 
   if (!(rfNewModal)) return null;
 
@@ -14,7 +14,9 @@ export default function RevolvingFundNewModal() {
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
             <div>
               <h2 className="text-fg font-black text-lg">New Revolving Fund</h2>
-              <p className="text-fg/30 text-xs font-bold uppercase tracking-widest mt-0.5">Set up a petty cash pool</p>
+              <p className="text-fg/30 text-xs font-bold uppercase tracking-widest mt-0.5">
+                {isSuperAdmin ? 'Set up a petty cash pool' : 'Files a request - a superadmin approves it before the fund exists'}
+              </p>
             </div>
             <button onClick={() => setRfNewModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/50 flex items-center justify-center transition"><X size={16}/></button>
           </div>
@@ -53,7 +55,9 @@ export default function RevolvingFundNewModal() {
             <button onClick={() => setRfNewModal(false)} className="flex-1 bg-white/5 text-fg/60 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
             <button onClick={submitRfNew} disabled={rfNewSubmitting}
               className="flex-1 bg-brand text-white rounded-xl py-3 font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">
-              {rfNewSubmitting ? 'Creating…' : 'Create Fund'}
+              {isSuperAdmin
+                ? (rfNewSubmitting ? 'Creating…' : 'Create Fund')
+                : (rfNewSubmitting ? 'Filing…' : 'Request Fund')}
             </button>
           </div>
         </div>

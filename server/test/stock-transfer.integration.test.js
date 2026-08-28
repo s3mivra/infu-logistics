@@ -219,4 +219,31 @@ describe('#8 stock transfer - FPFO fallback for goods with no real expiry (e.g. 
     expect(a.expiryBatches.find(x => dstr(x.productionDate) === '2026-06-01').qty).toBe(300); // untouched
     expect(a.expiryBatches.find(x => dstr(x.productionDate) === '2026-07-01').qty).toBe(300); // 400 - 100
   });
+
+  it('every stage of the transfer workflow writes an AuditLog entry', async () => {
+    // logAudit's actual storage shape (server.js): action is
+    // "<entity>_<ACTION>" and the entity id lands in targetReference, not
+    // separate fields.
+    const AuditLog = mongoose.model('AuditLog');
+    const req1 = await auth('post', '/api/stock-transfers', staffTok).send({ fromItemId: itemA._id, toItemId: itemB._id, qtyBase: 10, note: 'audit check' });
+    const id = req1.body.transfer._id;
+
+    const created = await AuditLog.findOne({ action: 'StockTransfer_CREATE', targetReference: String(id) }).lean();
+    expect(created).toBeTruthy();
+
+    await auth('post', `/api/stock-transfers/${id}/approve`, superTok);
+    const approved = await AuditLog.findOne({ action: 'StockTransfer_APPROVE', targetReference: String(id) }).lean();
+    expect(approved).toBeTruthy();
+
+    await auth('post', `/api/stock-transfers/${id}/release`, staffTok);
+    const released = await AuditLog.findOne({ action: 'StockTransfer_RELEASE', targetReference: String(id) }).lean();
+    expect(released).toBeTruthy();
+
+    // Reject/cancel path on a separate transfer.
+    const req2 = await auth('post', '/api/stock-transfers', staffTok).send({ fromItemId: itemA._id, toItemId: itemB._id, qtyBase: 5 });
+    const id2 = req2.body.transfer._id;
+    await auth('post', `/api/stock-transfers/${id2}/reject`, staffTok); // staff -> Cancelled
+    const cancelled = await AuditLog.findOne({ action: 'StockTransfer_CANCEL', targetReference: String(id2) }).lean();
+    expect(cancelled).toBeTruthy();
+  });
 });

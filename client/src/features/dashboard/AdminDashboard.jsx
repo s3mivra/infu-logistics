@@ -2671,16 +2671,32 @@ const updateStatus = async (orderId, newStatus) => {
     if (!amt || amt <= 0) return ui.alert('Enter a valid initial amount.');
     setRfNewSubmitting(true);
     try {
-      const res = await apiFetch('/api/revolving-funds', {
+      // Server-enforced, not just a UI nicety: POST /api/revolving-funds is
+      // superadmin-only now. Anyone else's "New Fund" files a Requisition
+      // Slip instead - same approval gate disbursements already go through.
+      if (isSuperAdmin) {
+        const res = await apiFetch('/api/revolving-funds', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: rfNewForm.name.trim(), initialAmount: amt, description: rfNewForm.description, sourceAccount: rfNewForm.sourceAccount }),
+        });
+        const data = await res.json();
+        if (!data.success) return ui.alert(data.error || 'Failed to create fund.');
+        setRfNewModal(false);
+        setRfNewForm({ name: '', initialAmount: '', description: '', sourceAccount: '111000' });
+        await fetchRfFunds();
+        return;
+      }
+      const res = await apiFetch('/api/requisition-slips', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: rfNewForm.name.trim(), initialAmount: amt, description: rfNewForm.description, sourceAccount: rfNewForm.sourceAccount }),
+        body: JSON.stringify({ type: 'new-fund', fundName: rfNewForm.name.trim(), amount: amt, description: rfNewForm.description, sourceAccount: rfNewForm.sourceAccount }),
       });
       const data = await res.json();
-      if (!data.success) return ui.alert(data.error || 'Failed to create fund.');
+      if (!data.success) return ui.alert(data.error || 'Failed to file requisition slip.');
       setRfNewModal(false);
       setRfNewForm({ name: '', initialAmount: '', description: '', sourceAccount: '111000' });
-      await fetchRfFunds();
+      ui.alert(`Requisition Slip ${data.slip.slipNumber} filed. Awaiting approval - the fund won't exist until then.`);
     } catch (err) { ui.alert('Network error.'); }
     finally { setRfNewSubmitting(false); }
   };

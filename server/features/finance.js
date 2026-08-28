@@ -1048,8 +1048,14 @@ app.get('/api/revolving-funds', verifyToken, ...canViewAcct, async (req, res) =>
   }
 });
 
-// POST create a new fund (superadmin only)
-app.post('/api/revolving-funds', verifyToken, ...canPostAcct, async (req, res) => {
+// POST create a new fund - superadmin only, immediate (no approval needed for
+// superadmin's own action). Everyone else must go through a Requisition Slip
+// (type: 'new-fund' in requisitions.js) so fund creation gets the same
+// approval gate disbursements already have - this route used to be reachable
+// by anyone with accounting.manage despite the comment already saying
+// "superadmin only", which is exactly the gap that let a staff account create
+// a fully-funded fund with no approval step at all.
+app.post('/api/revolving-funds', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const { name, initialAmount, description, sourceAccount } = req.body;
     if (!name || !initialAmount || Number(initialAmount) <= 0)

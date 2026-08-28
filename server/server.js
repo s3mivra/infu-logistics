@@ -2624,10 +2624,16 @@ const RequisitionSlipSchema = new mongoose.Schema({
   businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   slipNumber: { type: String, index: true },              // REQ-2026-000001
-  type: { type: String, enum: ['petty-cash', 'procurement'], required: true, index: true },
+  // 'new-fund' establishes a brand-new RevolvingFund - staff-initiated fund
+  // creation used to be immediate (no approval), same gap this whole slip
+  // system closed for disbursements. Reuses the same petty-cash-shaped
+  // fields below: fundName/amount/description as the fund's name/opening
+  // amount/note, categoryCode as the funding source account (mirrors how
+  // POST /api/revolving-funds itself takes a sourceAccount).
+  type: { type: String, enum: ['petty-cash', 'procurement', 'new-fund'], required: true, index: true },
   status: { type: String, default: 'Pending', enum: REQ_SLIP_STATUSES, index: true },
 
-  // petty-cash fields
+  // petty-cash / new-fund fields
   fundId: { type: mongoose.Schema.Types.ObjectId, ref: 'RevolvingFund', default: null },
   fundName: { type: String, default: '' },
   amount: { type: Number, default: 0 },

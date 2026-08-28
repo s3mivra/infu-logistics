@@ -734,7 +734,10 @@ const PURGE_CONFIRM_PHRASE = 'PURGE';
 const PURGE_CATEGORIES = {
   orders:          { label: 'Sales & Orders', defaultOn: true },
   ledger:          { label: 'Ledger / Journal Entries', defaultOn: true },
-  inventory:       { label: 'Inventory, Stock History & Transfers', defaultOn: true },
+  inventory:       { label: 'Inventory & Stock History', defaultOn: true },
+  // Split out from `inventory` (used to be bundled in silently) - explicit
+  // now so it's obvious this is being purged, and choosable independently.
+  transfers:       { label: 'Transfer History', defaultOn: true },
   shifts:          { label: 'Shifts & Time Clock', defaultOn: true },
   revolvingFunds:  { label: 'Revolving Funds', defaultOn: true },
   procurement:     { label: 'Procurement (POs & Bills)', defaultOn: true },
@@ -789,9 +792,9 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
       await del('inventory', Inventory);
       await del('stockCards', StockCard, false);
       await del('inventoryMovements', InventoryMovement, false);
-      await del('stockTransfers', StockTransfer);
       await del('backdateQueue', BackdateQueueItem);
     }
+    if (selected.has('transfers')) await del('stockTransfers', StockTransfer);
     if (selected.has('shifts')) {
       await del('shifts', Shift, false);
       await del('clockEntries', ClockEntry);
