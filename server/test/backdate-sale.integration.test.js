@@ -173,6 +173,25 @@ describe('backdated sale', () => {
     expect(second.body.skippedDuplicates).toBe(1);
   });
 
+  it('a backdated sale with a delivery fee folds it into total and stays balanced (bulk import reconciliation)', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, paymentMethod: 'Cash', deliveryFee: 60,
+      items: [{ name: 'Widget', price: 100, quantity: 2, productId: String(prod._id) }],
+    });
+    expect(res.status).toBe(200);
+    // subtotal 200, no discount, +60 delivery = 260 - previously this stayed
+    // at 200, which is exactly the "doesn't tally against the source sheet"
+    // gap the bulk backdate importer hits when a billing statement's own
+    // total already includes a delivery/freight fee.
+    expect(res.body.order.total).toBe(260);
+    expect(res.body.order.deliveryFee).toBe(60);
+
+    const JournalEntry = mongoose.model('JournalEntry');
+    const je = await JournalEntry.findOne({ description: new RegExp(res.body.order.orderNumber) }).lean();
+    expect(je.totalDebit).toBeCloseTo(je.totalCredit, 6);
+    expect(je.totalDebit).toBeCloseTo(260, 2);
+  });
+
   it('the whole ledger stays balanced after all the backdated entries', async () => {
     const { debits, credits } = await trialBalance();
     expect(Math.abs(debits - credits)).toBeLessThanOrEqual(0.01);

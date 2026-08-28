@@ -318,6 +318,13 @@ export default function LedgerTab({ ctx }) {
     // sheet's group(s) so finishBackdateImport routes them to the review
     // queue instead of the ready-to-import preview.
     const needsPaymentMethod = !String(bdFindLabelValue(grid, ['termsofpayment']) ?? '').trim();
+    // Some billing statements carry a delivery/freight fee as its own labeled
+    // value alongside Transaction No./Submitted Date, on top of the item
+    // lines. Summing item lines alone and calling that "the total" undercounts
+    // by exactly this amount for those sheets - it needs to ride along and
+    // add onto the total the same way the live POS delivery fee now does
+    // (see POST /api/orders and createBackdatedSale server-side).
+    const sheetDeliveryFee = bdNumify(bdFindLabelValue(grid, ['deliveryfee', 'freight', 'shippingfee', 'deliverycharge']));
 
     // Transaction/client/date usually only repeat on the FIRST row of a sale
     // (exactly how a flat-columns import lays them out) - carry the
@@ -353,7 +360,8 @@ export default function LedgerTab({ ctx }) {
         const match = (products || []).find(p => (it.code && p.productCode === it.code) || p.name.toLowerCase() === it.name.toLowerCase());
         return { ...it, productId: match?._id || null, productCode: match?.productCode || it.code || null, matched: !!match };
       });
-      return { ...g, items, total: items.reduce((s, x) => s + x.price * x.quantity, 0), needsPaymentMethod };
+      const itemsTotal = items.reduce((s, x) => s + x.price * x.quantity, 0);
+      return { ...g, items, deliveryFee: sheetDeliveryFee, total: itemsTotal + sheetDeliveryFee, needsPaymentMethod };
     });
     return { groups, skipped, noHeader: false };
   };
@@ -499,6 +507,7 @@ export default function LedgerTab({ ctx }) {
                 // imported under the same reference, instead of posting it twice.
                 importRef: g.transNo || undefined,
                 affectInventory: bdImportSettings.affectInventory, isComplimentary: false, discountPercent: 0,
+                deliveryFee: g.deliveryFee || undefined,
                 items: g.items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity, productId: it.productId, productCode: it.productCode })),
               }),
             });

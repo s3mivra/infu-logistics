@@ -496,6 +496,17 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     }
 
     let { items, discountPercent = 0, discountFlat = 0, table, customerName, sessionId, isComplimentary = false, employeeName = '', orderNotes = '', guestCount = 1, payments: paymentsInput, paymentMethod: bodyPaymentMethod, termsOfPayment, reserveOnly = false, location = '' } = req.body;
+    // Delivery fields (logistics/delivery orders). These were previously never
+    // read here at all - the client has always sent deliveryFee on every POS
+    // order, but it was silently dropped: never saved on the Order, never
+    // folded into `total`. Every delivery order's recorded total therefore
+    // undercounted by exactly the fee, which is why it never reconciled
+    // against what was actually collected/quoted.
+    const deliveryFee = Math.max(0, Number(req.body.deliveryFee) || 0);
+    const deliveryAddress = String(req.body.deliveryAddress || '').trim().slice(0, 300);
+    const customerPhone = String(req.body.customerPhone || '').trim().slice(0, 40);
+    const scheduledTime = String(req.body.scheduledTime || '').trim().slice(0, 40);
+    const dispatchStatus = String(req.body.dispatchStatus || '').trim().slice(0, 40);
 
     // Canonicalize the buyer's name. It is printed on receipts, billing
     // statements and delivery receipts, and it is the key that repeat walk-ins
@@ -705,7 +716,11 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     totalDiscount = +(totalProductDisc + vatResult.discount).toFixed(2);
     totalVat = vatResult.vatAmount;
     const vatRate = vatResult.rate;
-    const finalTotal = vatResult.total;
+    // Delivery fee is a flat pass-through add-on, not part of the sale being
+    // taxed/discounted - added after VAT/discount resolve, same as every
+    // export/report that already shows it as its own line item below the
+    // subtotal (see printBillingStatement etc. client-side).
+    const finalTotal = +(vatResult.total + deliveryFee).toFixed(2);
 
     const currentYear = new Date().getFullYear();
     const orderNumber = await generateNextSequence(Order, `ORD-${currentYear}`, 'orderNumber');
@@ -809,6 +824,11 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       orderNotes: (orderNotes || '').trim().slice(0, 300),
       guestCount: Math.max(1, parseInt(guestCount) || 1),
       paymentMethod: resolvedPaymentMethod,
+      deliveryFee,
+      ...(deliveryAddress && { deliveryAddress }),
+      ...(customerPhone && { customerPhone }),
+      ...(scheduledTime && { scheduledTime }),
+      ...(dispatchStatus && { dispatchStatus }),
       ...(termsOfPayment && { termsOfPayment }),
       ...(billingNumber && { billingNumber }),
       ...(isClientOrder && { clientId: req.user._id || req.user.clientId || '', clientUsername: req.user.username || '' }),

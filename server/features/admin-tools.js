@@ -346,7 +346,7 @@ async function maybePromoteBackdateClient(customerName) {
 // Throws an Error with `.httpStatus` set for anything that should reach the
 // client as a 400/423 rather than a 500.
 async function createBackdatedSale(payload, actorName) {
-  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, isComplimentary = false, importRef = '' } = payload;
+  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, isComplimentary = false, importRef = '', deliveryFee = 0 } = payload;
   const comp = !!isComplimentary;
   const fail = (httpStatus, message) => Object.assign(new Error(message), { httpStatus });
 
@@ -390,7 +390,14 @@ async function createBackdatedSale(payload, actorName) {
     // is booked as Complimentary Expense against revenue (keeps gross visible).
     const pct = comp ? 0 : Math.max(0, Math.min(100, Number(discountPercent) || 0));
     const discount = +(gross * pct / 100).toFixed(2);
-    const total = comp ? 0 : +(gross - discount).toFixed(2);
+    // Same gap as the live POS path had (see orders.js): a delivery fee is a
+    // flat pass-through add-on, not part of what's discounted/comped, added
+    // after. Bulk Excel imports of a delivery business's historical sales
+    // (see LedgerTab.jsx's backdate importer) carry this from the sheet's own
+    // total, which already includes it - computing gross from item lines
+    // alone and calling that the total is exactly what didn't tally.
+    const delivery = comp ? 0 : Math.max(0, Number(deliveryFee) || 0);
+    const total = comp ? 0 : +(gross - discount + delivery).toFixed(2);
 
     // Period-lock guard.
     const lock = await periodLockFor(dt);
@@ -439,6 +446,7 @@ async function createBackdatedSale(payload, actorName) {
       discountPercent: pct,
       vatAmount: 0, vatRate: 0,
       total,
+      deliveryFee: delivery,
       isVatExempt: true,
       isComplimentary: comp,
       discountType: comp ? 'Complimentary' : (pct > 0 ? 'Promo' : 'None'),
@@ -465,7 +473,11 @@ async function createBackdatedSale(payload, actorName) {
     } else {
       lines.push({ accountCode: acct.code, accountName: acct.name, debit: total, credit: 0 });
       if (discount > 0) lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: discount, credit: 0 });
-      lines.push({ accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: gross });
+      // Delivery fee folds into the same Sales Revenue credit as the rest of
+      // the sale (no separate COA account for it) - it must land on the
+      // credit side too, or this entry stops balancing the moment `total`
+      // includes it but `gross` alone doesn't.
+      lines.push({ accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: gross + delivery });
     }
     if (totalCogs > 0) {
       lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: totalCogs, credit: 0 });
