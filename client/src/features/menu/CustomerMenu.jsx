@@ -8,6 +8,13 @@ import { loadDraft, saveDraft, clearDraft } from '../../shared/draft';
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
+const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+// Order routing station. Every other order-entry surface (AdminDashboard,
+// OrdersTab, ProductsTab) resolves this per BUSINESS_TYPE - this QR-scanned
+// customer menu was the one place still hardcoded to 'Kitchen', so every
+// order placed via QR in a logistics deployment silently routed to a
+// "Kitchen" station that doesn't exist there instead of Logistics/Warehouse.
+const DEFAULT_DEPARTMENT = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
 const socket = io(API_URL, { transports: ['websocket'], upgrade: false });
 // See AdminDashboard.jsx for why: an open socket blocks bfcache, so
 // disconnect before the page would be frozen and reconnect if restored from it.
@@ -419,7 +426,7 @@ export default function CustomerMenu() {
       if (existing) return prev.map(i => i.cartItemId === id ? { ...i, quantity: i.quantity + 1 } : i);
       return [...prev, {
         cartItemId: id, productId: combo._id, name: combo.name, price: combo.price, quantity: 1,
-        department: 'Kitchen', selectedAddOns: [], isCombo: true,
+        department: DEFAULT_DEPARTMENT, selectedAddOns: [], isCombo: true,
         comboItems: (combo.items || []).map(it => ({ productId: it.productId, name: it.name, sizeName: it.sizeName || '', quantity: it.quantity || 1 })),
       }];
     });
@@ -450,7 +457,7 @@ export default function CustomerMenu() {
     const cartItemId = `${product._id}-${sizeName}-${addOnNames}`;
 
     const categoryObject = categories.find(c => c.name === product.category);
-    const dept = categoryObject ? (categoryObject.department || 'Kitchen') : 'Kitchen';
+    const dept = categoryObject ? (categoryObject.department || DEFAULT_DEPARTMENT) : DEFAULT_DEPARTMENT;
 
     setCart(prev => {
       const existing = prev.find(item => item.cartItemId === cartItemId);

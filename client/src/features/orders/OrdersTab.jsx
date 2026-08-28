@@ -934,7 +934,14 @@ export default function OrdersTab({ ctx }) {
                                                         P{lineGross.toFixed(2)}
                                                       </span>
                                                     )}
-                                                    {order.status === 'Pending' && (
+                                                    {/* Pricing edits stay in the general "All" queue only - a
+                                                        department-filtered fulfillment view (Logistics,
+                                                        Warehouse, Kitchen, Bar) is meant to be read-only on
+                                                        price, same as the Promo/Complimentary controls
+                                                        elsewhere in this card. This one input was the odd one
+                                                        out, gated only on order.status - editable even while
+                                                        filtered to a single department. */}
+                                                    {order.status === 'Pending' && departmentFilter === 'All' && (
                                                       <div className="relative mt-0.5">
                                                         <input
                                                           type="number" min="0" max="100" step="1"
