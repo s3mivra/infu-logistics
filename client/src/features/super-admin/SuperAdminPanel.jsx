@@ -272,6 +272,14 @@ export default function SuperAdminPanel() {
   const [purgeCategories, setPurgeCategories] = useState([]); // [{key, label, defaultOn}]
   const [purgeSelected, setPurgeSelected] = useState(new Set());
   const [rewireModal, setRewireModal] = useState({ open: false, busy: false, error: '', result: null });
+  // "Delete" on a product only ever archives it (isArchived:true) - the doc,
+  // including its embedded base64 image, stays in MongoDB forever. This pile
+  // is invisible in the normal menu UI (which only ever shows non-archived
+  // products), so it's easy to never notice it building up. null = not
+  // checked yet this visit; loaded on demand, not auto-fetched on every tab open.
+  const [archivedProducts, setArchivedProducts] = useState(null); // { products, count, totalImageBytes }
+  const [archivedLoading, setArchivedLoading] = useState(false);
+  const [archivedDeleting, setArchivedDeleting] = useState(false);
 
   // -------------------------------------------------------------------------
   const showToast = useCallback((message, type = 'success') => {
@@ -523,6 +531,31 @@ export default function SuperAdminPanel() {
   // (never trust a client-side-only confirm for something this destructive).
   // Categories (what to delete) are fetched fresh each time the modal opens
   // so the checklist and its defaults always match what the server supports.
+  const fmtBytes = (n) => n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} MB` : n >= 1024 ? `${(n / 1024).toFixed(0)} KB` : `${n} B`;
+  const checkArchivedProducts = async () => {
+    setArchivedLoading(true);
+    try {
+      const res = await apiFetch('/api/products/archived');
+      const d = await res.json();
+      if (d.success) setArchivedProducts(d);
+      else showToast(d.error || 'Failed to check archived products.', 'error');
+    } catch { showToast('Network error.', 'error'); }
+    finally { setArchivedLoading(false); }
+  };
+  const deleteArchivedProductsForever = async () => {
+    if (!archivedProducts?.count) return;
+    if (!confirm(`Permanently delete ${archivedProducts.count} archived product(s), freeing ~${fmtBytes(archivedProducts.totalImageBytes)}? This cannot be undone - they will NOT be recoverable, unlike Archive.`)) return;
+    setArchivedDeleting(true);
+    try {
+      const res = await apiFetch('/api/products/archived/permanent', { method: 'DELETE' });
+      const d = await res.json();
+      if (!d.success) return showToast(d.error || 'Failed to delete.', 'error');
+      showToast(`Permanently deleted ${d.deletedCount} archived product(s).`);
+      setArchivedProducts(null);
+    } catch { showToast('Network error.', 'error'); }
+    finally { setArchivedDeleting(false); }
+  };
+
   const openPurgeModal = async () => {
     setPurgeModal({ open: true, phrase: '', busy: false, error: '', result: null });
     try {
@@ -1508,6 +1541,36 @@ export default function SuperAdminPanel() {
                 <RefreshCw size={14} /> Rewire Recipe Links
               </button>
             </div>
+          </div>
+
+          <div className="bg-amber-500/5 border border-amber-500/30 rounded-xl p-5 mt-4">
+            <div className="flex items-center gap-2 mb-1">
+              <Trash2 size={16} className="text-amber-400" />
+              <h3 className="font-black text-amber-400 text-sm uppercase tracking-widest">Archived Products Cleanup</h3>
+            </div>
+            <p className="text-fg/50 text-xs mb-3 max-w-2xl">
+              "Delete" on a product only archives it (hidden from the menu) - the record, including its embedded
+              image, stays in the database forever, invisibly. This checks how much of that is piled up and lets
+              you actually remove it. Permanent - unlike Archive, these cannot be restored afterward.
+            </p>
+            {!archivedProducts ? (
+              <button onClick={checkArchivedProducts} disabled={archivedLoading}
+                className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/20 text-fg/70 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-lg transition disabled:opacity-50">
+                {archivedLoading ? 'Checking…' : 'Check Archived Products'}
+              </button>
+            ) : archivedProducts.count === 0 ? (
+              <p className="text-fg/40 text-sm">No archived products - nothing to clean up.</p>
+            ) : (
+              <div className="flex items-center gap-3 flex-wrap">
+                <p className="text-fg text-sm font-bold">
+                  {archivedProducts.count} archived product(s) · ~{fmtBytes(archivedProducts.totalImageBytes)} of image data
+                </p>
+                <button onClick={deleteArchivedProductsForever} disabled={archivedDeleting}
+                  className="flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/40 text-red-400 font-bold text-sm px-4 py-2.5 rounded-lg transition disabled:opacity-50">
+                  <Trash2 size={14} /> {archivedDeleting ? 'Deleting…' : 'Delete Forever'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

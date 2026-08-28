@@ -4,6 +4,7 @@
 // the real movement happen (fund balance actually drops / a real PurchaseOrder
 // is actually created). Mirrors the existing Bill approve/reject shape.
 import { captureError } from '../lib/errorLog.js';
+import { hasPermission } from '../lib/authz.js';
 
 export default function registerRequisitions(ctx) {
   const {
@@ -38,21 +39,30 @@ export default function registerRequisitions(ctx) {
   const canApproveReq = [requireStaff, requirePermission('requisitions.approve')];
 
   // ── LIST ──────────────────────────────────────────────────────────────────
-  app.get('/api/requisition-slips', verifyToken, ...canViewReq, async (req, res) => {
+  // Any staff can see this - just not everyone's, without requisitions.view.
+  // Someone who files a slip needs to be able to check "is my request still
+  // pending" regardless of whether they're allowed into the full Approvals
+  // queue; requisitions.view widens that to every slip, not just their own.
+  app.get('/api/requisition-slips', verifyToken, requireStaff, async (req, res) => {
     try {
       const filter = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
       if (req.query.status && REQ_SLIP_STATUSES.includes(req.query.status)) filter.status = req.query.status;
-      if (req.query.type && ['petty-cash', 'procurement'].includes(req.query.type)) filter.type = req.query.type;
+      if (req.query.type && ['petty-cash', 'procurement', 'new-fund'].includes(req.query.type)) filter.type = req.query.type;
+      if (!hasPermission(req.user, 'requisitions.view')) filter.preparedBy = req.user?.name || '\0no-name\0';
       const slips = await RequisitionSlip.find(filter).sort({ createdAt: -1 }).limit(500).lean();
       res.json({ success: true, slips });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
-  app.get('/api/requisition-slips/:id', verifyToken, ...canViewReq, async (req, res) => {
+  app.get('/api/requisition-slips/:id', verifyToken, requireStaff, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const slip = await RequisitionSlip.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) }).lean();
       if (!slip) return res.status(404).json({ success: false, error: 'Not found' });
+      // Same self-service scoping as the list above - can always open your own.
+      if (!hasPermission(req.user, 'requisitions.view') && slip.preparedBy !== (req.user?.name || '')) {
+        return res.status(404).json({ success: false, error: 'Not found' });
+      }
       res.json({ success: true, slip });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });

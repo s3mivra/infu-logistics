@@ -671,6 +671,50 @@ app.delete('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
+// ── ARCHIVED PRODUCTS CLEANUP (superadmin only) ──────────────────────────────
+// "Delete" above only ever archives (isArchived:true) - the document, INCLUDING
+// its embedded image (products store images as base64 data URIs directly on
+// the doc, not in separate file storage), stays in MongoDB forever. That's
+// invisible dead weight: the menu UI only ever shows non-archived products, so
+// there was no way to see this pile building up, let alone reclaim it. These
+// routes let a superadmin actually empty it out.
+app.get('/api/products/archived', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const products = await Product.find({ businessType: BUSINESS_TYPE, isArchived: true }, { name: 1, productCode: 1, category: 1, image: 1, updatedAt: 1 }).sort({ updatedAt: -1 }).lean();
+    // Rough on-disk size of each doc's own image field - the single biggest
+    // contributor to how heavy this pile actually is (a base64 image easily
+    // runs tens to hundreds of KB per product).
+    let imageBytes = 0;
+    const rows = products.map(p => {
+      const bytes = p.image ? Buffer.byteLength(p.image, 'utf8') : 0;
+      imageBytes += bytes;
+      return { _id: p._id, name: p.name, productCode: p.productCode, category: p.category, hasImage: !!p.image, imageBytes: bytes, updatedAt: p.updatedAt };
+    });
+    res.json({ success: true, products: rows, count: rows.length, totalImageBytes: imageBytes });
+  } catch (error) {
+    captureError(req, error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/products/archived/permanent', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    // Explicit opt-in list wins (client sends exactly which archived products
+    // to purge, from the list above); omitted entirely = everything archived.
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(id => mongoose.Types.ObjectId.isValid(id)) : null;
+    const filter = { businessType: BUSINESS_TYPE, isArchived: true, ...(ids ? { _id: { $in: ids } } : {}) };
+    const toDelete = await Product.find(filter, { name: 1, productCode: 1 }).lean();
+    if (toDelete.length === 0) return res.json({ success: true, deletedCount: 0 });
+    const result = await Product.deleteMany(filter);
+    await logAudit(req, { action: 'permanent-delete', entity: 'Product', entityId: 'bulk', after: { count: result.deletedCount, products: toDelete.map(p => p.productCode || p.name) } });
+    emitToAll('menuUpdated');
+    res.json({ success: true, deletedCount: result.deletedCount });
+  } catch (error) {
+    captureError(req, error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ── MODIFIER GROUP CRUD ──────────────────────────────────────────────────────
 app.get('/api/modifier-groups', verifyToken, requireStaff, async (req, res) => {
   try { res.json({ success: true, groups: await ModifierGroup.find().lean() }); }

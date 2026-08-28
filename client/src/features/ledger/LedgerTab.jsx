@@ -869,10 +869,12 @@ export default function LedgerTab({ ctx }) {
                   ['backdate',   'Backdate Sale',       Clock],
                   ['revolving',  'Revolving Funds',     RefreshCw],
                   ['expenses',   'Expenses',            Receipt],
-                  // Its own permission (requisitions.view), not accounting.view -
-                  // someone who can see the general ledger shouldn't automatically
-                  // also see the Approvals queue, and vice versa.
-                  ...(can('requisitions.view') ? [['approvals', 'Approvals', ShieldCheck]] : []),
+                  // Always visible to any staff - the server itself scopes what
+                  // comes back: without requisitions.view you only ever see your
+                  // OWN filed slips (so you can check "is my request still
+                  // pending"), not accounting.view or anyone else's. Approve/Reject
+                  // still require requisitions.approve regardless.
+                  ['approvals', 'Approvals', ShieldCheck],
                 ]
             ).map(([id, label, Icon]) => (
               <button
@@ -2506,7 +2508,7 @@ export default function LedgerTab({ ctx }) {
           {ledgerSubTab === 'expenses' && <ExpensesPage />}
 
           {/* ===== APPROVALS SUB-TAB (Requisition Slips) ===== */}
-          {ledgerSubTab === 'approvals' && can('requisitions.view') && (
+          {ledgerSubTab === 'approvals' && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div>
@@ -2563,11 +2565,13 @@ export default function LedgerTab({ ctx }) {
                             </td>
                             <td className="px-5 py-2.5 text-right font-mono tabular-nums font-bold text-fg">{peso(reqAmount(s))}</td>
                             <td className="px-5 py-2.5 text-right whitespace-nowrap">
-                              {s.status === 'Pending' ? (
+                              {s.status === 'Pending' && can('requisitions.approve') ? (
                                 <div className="flex items-center justify-end gap-3">
                                   <button onClick={() => approveReqSlip(s)} disabled={reqSlipBusy} className="text-[10px] font-black uppercase tracking-wider text-brand hover:underline disabled:opacity-40">Approve</button>
                                   <button onClick={() => { setReqSlipRejecting(s); setReqSlipRejectReason(''); }} disabled={reqSlipBusy} className="text-[10px] font-black uppercase tracking-wider text-red-400/70 hover:text-red-400 hover:underline disabled:opacity-40">Reject</button>
                                 </div>
+                              ) : s.status === 'Pending' ? (
+                                <span className="text-[10px] font-black uppercase tracking-wider text-fg/30">Awaiting approval</span>
                               ) : (
                                 <button onClick={() => setReqSlipPreview(s)} className="text-[10px] font-black uppercase tracking-wider text-fg/40 hover:text-fg hover:underline">View</button>
                               )}
