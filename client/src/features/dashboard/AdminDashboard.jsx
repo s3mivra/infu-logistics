@@ -16,6 +16,7 @@ import EditInventoryModal from '../inventory/modals/EditInventoryModal';
 import SpoilageModal from '../inventory/modals/SpoilageModal';
 import SettleArModal from '../ledger/modals/SettleArModal';
 import ArHistoryModal from '../ledger/modals/ArHistoryModal';
+import BounceCheckModal from '../ledger/modals/BounceCheckModal';
 import RevolvingFundNewModal from '../ledger/modals/RevolvingFundNewModal';
 import RevolvingFundDisburseModal from '../ledger/modals/RevolvingFundDisburseModal';
 import RevolvingFundReplenishModal from '../ledger/modals/RevolvingFundReplenishModal';
@@ -310,6 +311,14 @@ export default function AdminDashboard() {
     end: new Date().toISOString().slice(0, 10),
     basis: 'collection',
   });
+  // --- CHECK REGISTER ---
+  // Checks taken in against A/R, tracked On Hand -> Deposited -> Cleared, or
+  // Bounced (which reverses the collection and reopens the invoice).
+  const [checkRegister, setCheckRegister] = useState(null);
+  const [checkFilter, setCheckFilter] = useState('');
+  const [bounceTarget, setBounceTarget] = useState(null);   // the check row being bounced
+  const [bounceForm, setBounceForm] = useState({ reason: '', otherReason: '', bouncedDate: '' });
+  const [bounceSubmitting, setBounceSubmitting] = useState(false);
   // --- SALES BY PAYMENT ---
   const [salesByPayment, setSalesByPayment] = useState(null);
   const [sbpRange, setSbpRange] = useState({
@@ -565,7 +574,8 @@ export default function AdminDashboard() {
   // is when it reached the account being debited. They are routinely different
   // (collected Friday, banked Monday) and the collection report reads either.
   const todayLocal = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-  const [settleForm, setSettleForm] = useState({ amount: '', paymentMethod: 'Cash on Hand', note: '', referenceNumber: '', collectionDate: todayLocal(), depositDate: todayLocal(), collectedBy: '' });
+  const SETTLE_FORM_BLANK = { amount: '', paymentMethod: 'Cash on Hand', note: '', referenceNumber: '', collectionDate: todayLocal(), depositDate: todayLocal(), collectedBy: '', checkNumber: '', checkDate: '', checkBank: '', checkDrawer: '' };
+  const [settleForm, setSettleForm] = useState(SETTLE_FORM_BLANK);
   // A/R payment history for one invoice - { order, payments, totalPaid, balance }.
   const [arHistory, setArHistory] = useState(null);
   const [arHistoryLoading, setArHistoryLoading] = useState(false);
@@ -2836,7 +2846,13 @@ const updateStatus = async (orderId, newStatus) => {
     // on a partly paid invoice may only take what is left.
     const outstanding = settleModal.order.balance ?? settleModal.order.total;
     if (amt > outstanding + 0.01) return ui.alert(`Amount exceeds the ₱${outstanding.toFixed(2)} still outstanding on this invoice.`);
-    if (settleForm.depositDate && settleForm.collectionDate && settleForm.depositDate < settleForm.collectionDate)
+    // A check has no deposit date at collection time - it is booked to Checks
+    // on Hand and only reaches an account when it clears, which the check
+    // register drives. So the deposit-date rule only applies to real deposits.
+    const isCheck = settleForm.paymentMethod === 'Check';
+    if (isCheck && !String(settleForm.checkNumber || '').trim())
+      return ui.alert('Enter the check number.');
+    if (!isCheck && settleForm.depositDate && settleForm.collectionDate && settleForm.depositDate < settleForm.collectionDate)
       return ui.alert('Deposit date cannot be earlier than the collection date.');
     setSettleSubmitting(true);
     try {
@@ -2845,21 +2861,31 @@ const updateStatus = async (orderId, newStatus) => {
         body: JSON.stringify({
           amount: amt, paymentMethod: settleForm.paymentMethod, note: settleForm.note,
           referenceNumber: settleForm.referenceNumber,
-          collectionDate: settleForm.collectionDate, depositDate: settleForm.depositDate,
+          collectionDate: settleForm.collectionDate,
+          depositDate: isCheck ? undefined : settleForm.depositDate,
           collectedBy: settleForm.collectedBy,
+          ...(isCheck ? {
+            checkNumber: settleForm.checkNumber,
+            checkDate: settleForm.checkDate || undefined,
+            checkBank: settleForm.checkBank,
+            checkDrawer: settleForm.checkDrawer,
+          } : {}),
         })
       });
       const data = await res.json();
       if (data.success) {
         setSettleModal(null);
-        setSettleForm({ amount: '', paymentMethod: 'Cash on Hand', note: '', referenceNumber: '', collectionDate: todayLocal(), depositDate: todayLocal(), collectedBy: '' });
+        setSettleForm(SETTLE_FORM_BLANK);
         fetchArOutstanding();
         fetchArAgeing();
         // Say plainly whether the invoice closed or is still carrying a
         // balance - the whole point of partial collections.
-        ui.alert(data.fullySettled
+        // A check settles the invoice on paper, but the money is not real until
+        // it clears - say so rather than letting it read like cash in hand.
+        const tail = isCheck ? ' The check is On Hand until it clears - track it in Collections.' : '';
+        ui.alert((data.fullySettled
           ? 'Collection recorded. Invoice fully settled.'
-          : `Collection recorded. ₱${(data.balance ?? 0).toFixed(2)} still outstanding on this invoice.`);
+          : `Collection recorded. ₱${(data.balance ?? 0).toFixed(2)} still outstanding on this invoice.`) + tail);
       } else {
         ui.alert(data.error || 'Failed to record the collection.');
       }
@@ -4908,6 +4934,61 @@ const updateStatus = async (orderId, newStatus) => {
     } catch (err) { console.error('fetchCollectionReport', err); }
   };
 
+  const fetchChecks = async (status = checkFilter) => {
+    try {
+      const res = await apiFetch(`/api/collections/checks${status ? `?status=${encodeURIComponent(status)}` : ''}`);
+      const d = await res.json();
+      if (d.success) setCheckRegister(d); else ui.alert(d.error || 'Could not load the check register.');
+    } catch (err) { console.error('fetchChecks', err); }
+  };
+
+  // Deposit / clear / bounce one check. Bouncing is destructive to a
+  // collection - it puts the debt back on the client - so it is confirmed and
+  // asks for a reason that lands in the audit trail and on the journal entry.
+  const postCheckAction = async (check, action, body = {}) => {
+    const res = await apiFetch(`/api/collections/checks/${check.orderId}/${check.paymentId}/${action}`, {
+      method: 'POST', body: JSON.stringify(body),
+    });
+    const d = await res.json();
+    if (!d.success) { ui.alert(d.error || `Could not ${action} the check.`); return null; }
+    fetchChecks();
+    return d;
+  };
+
+  const actOnCheck = async (check, action) => {
+    // Bouncing needs a reason, so it goes through its own dialog.
+    if (action === 'bounce') {
+      setBounceForm({ reason: '', otherReason: '', bouncedDate: todayLocal() });
+      setBounceTarget(check);
+      return;
+    }
+    if (action === 'clear' && !await ui.confirm(`Confirm the bank honoured check #${check.checkNumber}?`)) return;
+    try { await postCheckAction(check, action); }
+    catch { ui.alert('Network error.'); }
+  };
+
+  const submitBounceCheck = async () => {
+    if (bounceSubmitting || !bounceTarget) return;
+    const reason = bounceForm.reason === '__other' ? String(bounceForm.otherReason || '').trim() : bounceForm.reason;
+    if (!reason) return ui.alert('Pick a reason.');
+    setBounceSubmitting(true);
+    try {
+      const check = bounceTarget;
+      const d = await postCheckAction(check, 'bounce', { reason, bouncedDate: bounceForm.bouncedDate || undefined });
+      if (d) {
+        setBounceTarget(null);
+        // A bounce moves A/R, so the receivables views must be pulled again -
+        // the invoice is outstanding once more.
+        fetchArOutstanding();
+        fetchArAgeing();
+        ui.alert(d.reopened
+          ? `Check #${check.checkNumber} bounced. ${check.orderNumber} is outstanding again for ₱${(d.balance ?? 0).toFixed(2)}.`
+          : `Check #${check.checkNumber} bounced and the collection was reversed.`);
+      }
+    } catch { ui.alert('Network error.'); }
+    finally { setBounceSubmitting(false); }
+  };
+
   const fetchSalesByPayment = async () => {
     try { const res = await apiFetch(`/api/reports/sales-by-payment?start=${sbpRange.start}&end=${sbpRange.end}`); const d = await res.json(); if (d.success) setSalesByPayment(d); }
     catch (err) { console.error('fetchSalesByPayment', err); }
@@ -6466,6 +6547,8 @@ const updateStatus = async (orderId, newStatus) => {
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     arReport, arReportAsOf, setArReportAsOf, fetchArReport,
     collectionReport, collRange, setCollRange, fetchCollectionReport,
+    checkRegister, checkFilter, setCheckFilter, fetchChecks, actOnCheck,
+    bounceTarget, setBounceTarget, bounceForm, setBounceForm, bounceSubmitting, submitBounceCheck,
     // ── Summary Sales (channel breakdown) ────────────────────────────────────
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
     salesLineItems, sliRange, setSliRange, fetchSalesLineItems, exportSalesLineItemsPDF,
@@ -6712,6 +6795,7 @@ const updateStatus = async (orderId, newStatus) => {
       {/* ===== A/R SETTLEMENT MODAL ===== */}
       <SettleArModal />
       <ArHistoryModal />
+      <BounceCheckModal />
 
       {/* --- PRICING & DISCOUNTS TAB --- */}
       {activeTab === 'pricing' && <Suspense fallback={<TabFallback />}><PricingTab ctx={ctx} /></Suspense>}

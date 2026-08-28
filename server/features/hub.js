@@ -264,6 +264,14 @@ export default function registerHub(ctx) {
         itemName: item.itemName,
         unit: item.unit,
         qtyBase: Number(qty),
+        // Snapshot what the goods are and what they are worth, so the receiving
+        // business books them at real value instead of creating a zero-cost item.
+        unitCost: Number(item.unitCost) || 0,
+        displayUnit: item.displayUnit || '',
+        unitMultiplier: Number(item.unitMultiplier) || 1,
+        packSize: item.packSize ?? null,
+        itemCode: item.itemCode || '',
+        stockCategory: item.stockCategory || '',
         note: String(note || '').trim(),
         reference,
         shipmentRef,
@@ -331,6 +339,15 @@ export default function registerHub(ctx) {
           unit:      t.unit,
           qtyBase:   t.qtyBase,
           note:      t.note,
+          // Descriptors travel with the shipment - see the snapshot comment on
+          // CrossTransferSchema. A partner running an older build simply
+          // ignores the extra fields.
+          unitCost:       t.unitCost,
+          displayUnit:    t.displayUnit,
+          unitMultiplier: t.unitMultiplier,
+          packSize:       t.packSize,
+          itemCode:       t.itemCode,
+          stockCategory:  t.stockCategory,
         })),
       });
     } catch (e) {
@@ -387,6 +404,14 @@ export default function registerHub(ctx) {
         itemName: line.itemName,
         unit: line.unit,
         qtyBase: Number(line.qtyBase),
+        // Defaults keep a partner on an older build (which sends none of these)
+        // working - it just receives at zero cost, exactly as before.
+        unitCost: Number(line.unitCost) || 0,
+        displayUnit: line.displayUnit || '',
+        unitMultiplier: Number(line.unitMultiplier) || 1,
+        packSize: line.packSize ?? null,
+        itemCode: line.itemCode || '',
+        stockCategory: line.stockCategory || '',
         note: String(line.note || '').trim(),
         reference: line.reference,
         shipmentRef,
@@ -404,38 +429,70 @@ export default function registerHub(ctx) {
     if (!transfer) return res.status(404).json({ error: 'Transfer not found or not pending.' });
 
     const { itemId, createNew } = req.body || {};
+    // What the goods were worth when they left the sending business. Falls back
+    // to the receiving item's own cost only when the sender told us nothing
+    // (a partner on an older build), so a shipment is never valued at zero
+    // just because the target item is new.
+    const incomingUnitCost = Number(transfer.unitCost) || 0;
+
     let targetItem;
     if (itemId) {
       targetItem = await Inventory.findOne({ _id: itemId, businessType: BUSINESS_TYPE });
       if (!targetItem) return res.status(404).json({ error: 'Target inventory item not found.' });
     } else if (createNew) {
+      // Carry the sender's descriptors through, so the new item arrives fully
+      // formed - named, priced, and with its display unit and pack size - not
+      // as a zero-cost stub someone has to go and fix by hand.
       targetItem = await Inventory.create({
         businessType: BUSINESS_TYPE,
         itemName: transfer.itemName,
         unit: transfer.unit,
         stockQty: 0,
-        unitCost: 0,
+        unitCost: incomingUnitCost,
+        displayUnit: transfer.displayUnit || transfer.unit || '',
+        unitMultiplier: Number(transfer.unitMultiplier) || 1,
+        ...(transfer.packSize != null ? { packSize: transfer.packSize } : {}),
+        ...(transfer.stockCategory ? { stockCategory: transfer.stockCategory } : {}),
       });
     } else {
       return res.status(400).json({ error: 'Provide itemId to receive into, or set createNew:true to auto-create.' });
     }
 
-    const receivedValue = (targetItem.unitCost || 0) * transfer.qtyBase;
+    // Value the receipt at the incoming cost; only fall back to the target's
+    // own carrying cost if the sender sent none.
+    const costBasis = incomingUnitCost > 0 ? incomingUnitCost : (targetItem.unitCost || 0);
+    const receivedValue = costBasis * transfer.qtyBase;
 
+    // Weighted average cost, the same rule the restock path uses - receiving
+    // 100 units at PHP 12 into 100 units carried at PHP 10 must move the
+    // average to PHP 11, not silently keep the old cost or overwrite it.
+    const priorValue = (targetItem.stockQty || 0) * (targetItem.unitCost || 0);
     targetItem.stockQty += transfer.qtyBase;
+    if (targetItem.stockQty > 0 && costBasis > 0) {
+      targetItem.unitCost = (priorValue + receivedValue) / targetItem.stockQty;
+    }
+    // A brand-new item auto-created above has no display unit of its own yet.
+    if (!targetItem.displayUnit && transfer.displayUnit) {
+      targetItem.displayUnit = transfer.displayUnit;
+      targetItem.unitMultiplier = Number(transfer.unitMultiplier) || 1;
+    }
     await targetItem.save();
 
+    // StockCardSchema fields are inventoryId/type/qtyChange/balanceAfter/remarks.
+    // This used to write itemId/movementType/qty/note, which mongoose's strict
+    // mode silently DROPPED - leaving a card with no item and no quantity, so a
+    // hub transfer never showed up under the item's History action even though
+    // the stock and the ledger had both moved.
     await StockCard.create([{
-      businessType: BUSINESS_TYPE,
-      itemId: targetItem._id,
+      inventoryId: targetItem._id,
       itemName: targetItem.itemName,
-      movementType: 'Transfer In',
-      qty: transfer.qtyBase,
-      unit: targetItem.unit,
+      type: 'Transfer In',
       reference: transfer.reference,
-      note: `Received from ${transfer.partnerName}`,
-      ordered: true,
-    }], { ordered: true });
+      qtyChange: transfer.qtyBase,
+      balanceAfter: targetItem.stockQty,
+      unitCost: costBasis,
+      remarks: `Hub transfer in from ${transfer.partnerName || transfer.partnerSlug}`,
+    }]);
 
     // DR Inventory Asset / CR Hub Transfer Clearing
     await postHubJE({
@@ -472,17 +529,19 @@ export default function registerHub(ctx) {
       item.stockQty = Math.max(0, item.stockQty - transfer.qtyBase);
       await item.save();
 
+      // Same schema fix as the inbound card above - and negative, because
+      // stock is LEAVING. A stock card that doesn't sign its movement makes
+      // the running balance in the item's history meaningless.
       await StockCard.create([{
-        businessType: BUSINESS_TYPE,
-        itemId: item._id,
+        inventoryId: item._id,
         itemName: item.itemName,
-        movementType: 'Transfer Out',
-        qty: transfer.qtyBase,
-        unit: item.unit,
+        type: 'Transfer Out',
         reference: transfer.reference,
-        note: `Sent to ${req.linkedPartner.partnerName || req.linkedPartner.partnerSlug}`,
-        ordered: true,
-      }], { ordered: true });
+        qtyChange: -transfer.qtyBase,
+        balanceAfter: item.stockQty,
+        unitCost: item.unitCost || 0,
+        remarks: `Hub transfer out to ${req.linkedPartner.partnerName || req.linkedPartner.partnerSlug}`,
+      }]);
 
       // DR Hub Transfer Clearing / CR Inventory Asset
       await postHubJE({

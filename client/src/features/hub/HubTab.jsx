@@ -13,7 +13,11 @@ const statusColor = {
 };
 
 export default function HubTab({ ctx }) {
-  const { apiFetch: authFetch, isSuperAdmin, inventory = [], peso } = ctx;
+  // fetchERPData reloads the shared inventory the rest of the dashboard reads.
+  // A transfer moves real stock, so anything that completes one has to pull it
+  // again or the Inventory tab keeps showing pre-transfer quantities until the
+  // user reloads the page.
+  const { apiFetch: authFetch, isSuperAdmin, inventory = [], peso, fetchERPData } = ctx;
 
   const [info, setInfo]           = useState(null);
   const [transfers, setTransfers] = useState([]);
@@ -157,6 +161,9 @@ export default function HubTab({ ctx }) {
       if (!r.ok) { setAcceptErr(d.error); return; }
       setAcceptTarget(null);
       load();
+      // Accepting receives stock into inventory - pull it so the new quantity
+      // (and, for an auto-created item, the item itself) shows up immediately.
+      fetchERPData?.();
     } catch (e) { setAcceptErr(e.message); }
     finally { setAcceptBusy(false); }
   };
@@ -164,6 +171,7 @@ export default function HubTab({ ctx }) {
   const act = async (id, action) => {
     await authFetch(`/api/hub/transfers/${id}/${action}`, { method: 'POST', body: '{}' });
     load();
+    fetchERPData?.();
   };
 
   // Approve/reject act on a whole SHIPMENT (every line filed together), not one
@@ -181,11 +189,14 @@ export default function HubTab({ ctx }) {
       // retries cleanly - say so rather than silently doing nothing.
       if (!r.ok) { setErr(d.error || `Could not ${action} the transfer slip.`); return; }
       load();
+      // An approved shipment is on its way out - refresh so the Inventory tab
+      // reflects it rather than showing stale on-hand figures.
+      fetchERPData?.();
     } catch (e) { setErr(e.message); }
     finally { setSlipBusy(''); }
   };
 
-  const card  = 'bg-card-bg border border-white/10 rounded-xl p-4 mb-4';
+  const card  = 'bg-surface border border-white/10 rounded-xl p-4 mb-4';
   const input = 'w-full bg-page-bg border border-white/10 rounded-lg p-2.5 text-fg text-sm outline-none focus:border-accent';
   const btn   = (v = 'primary') => `px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider min-h-[40px] disabled:opacity-40 transition ${
     v === 'primary' ? 'bg-accent text-white hover:opacity-90' :
@@ -568,7 +579,7 @@ export default function HubTab({ ctx }) {
           <p className="text-fg/40 text-[11px] mb-3">The partner business is only notified once a slip is approved.</p>
           <div className="space-y-3">
             {awaitingApproval.map(slip => (
-              <div key={slip.shipmentRef} className="bg-card-bg rounded-lg p-3">
+              <div key={slip.shipmentRef} className="bg-surface rounded-lg p-3">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="min-w-0">
                     <p className="text-fg font-bold text-sm">
@@ -613,7 +624,7 @@ export default function HubTab({ ctx }) {
           </h3>
           <div className="space-y-3">
             {pendingInbound.map(t => (
-              <div key={t._id} className="flex items-center justify-between gap-3 bg-card-bg rounded-lg p-3">
+              <div key={t._id} className="flex items-center justify-between gap-3 bg-surface rounded-lg p-3">
                 <div>
                   <p className="text-fg font-bold text-sm">{t.itemName}</p>
                   <p className="text-fg/50 text-xs">{t.qtyBase} {t.unit} from <span className="text-fg/80 font-bold">{t.partnerName || t.partnerSlug}</span></p>
@@ -689,8 +700,10 @@ export default function HubTab({ ctx }) {
 
       {/* ── Accept modal ── */}
       {acceptTarget && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-card-bg border border-white/10 rounded-2xl p-6 w-full max-w-md">
+        <div className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={e => { if (e.target === e.currentTarget) setAcceptTarget(null); }}
+          role="dialog" aria-modal="true" aria-label="Accept transfer">
+          <div className="bg-surface border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-elev-3">
             <h3 className="text-fg font-black text-base mb-1">Accept Transfer</h3>
             <p className="text-fg/50 text-sm mb-4">
               Receiving <span className="text-fg font-bold">{acceptTarget.qtyBase} {acceptTarget.unit}</span> of{' '}

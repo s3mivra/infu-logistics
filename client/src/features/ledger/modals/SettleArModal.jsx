@@ -23,7 +23,11 @@ export default function SettleArModal() {
   const remainingAfter = Number.isFinite(entered) ? Math.max(0, +(outstanding - entered).toFixed(2)) : outstanding;
   const isPartial = Number.isFinite(entered) && entered > 0 && entered < outstanding - 0.01;
   const overpaying = Number.isFinite(entered) && entered > outstanding + 0.01;
-  const datesOutOfOrder = settleForm.collectionDate && settleForm.depositDate && settleForm.depositDate < settleForm.collectionDate;
+  const isCheck = settleForm.paymentMethod === 'Check';
+  // A check is not deposited at collection time, so the deposit-date rule
+  // simply doesn't apply to one.
+  const datesOutOfOrder = !isCheck && settleForm.collectionDate && settleForm.depositDate && settleForm.depositDate < settleForm.collectionDate;
+  const missingCheckNo = isCheck && !String(settleForm.checkNumber || '').trim();
 
   const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -87,14 +91,23 @@ export default function SettleArModal() {
                   className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60" />
                 <p className="text-[9px] text-fg/25 mt-1">When the client paid.</p>
               </div>
-              <div>
-                <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Deposit Date *</label>
-                <input type="date" value={settleForm.depositDate || ''} min={settleForm.collectionDate || undefined} onChange={e => setSettleForm({...settleForm, depositDate: e.target.value})}
-                  className={`w-full bg-page-bg border rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60 ${datesOutOfOrder ? 'border-red-500/60' : 'border-white/10'}`} />
-                <p className={`text-[9px] mt-1 ${datesOutOfOrder ? 'text-red-400 font-bold' : 'text-fg/25'}`}>
-                  {datesOutOfOrder ? 'Cannot precede collection.' : 'When it hit the account.'}
-                </p>
-              </div>
+              {isCheck ? (
+                <div>
+                  <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Check Date</label>
+                  <input type="date" value={settleForm.checkDate || ''} onChange={e => setSettleForm({...settleForm, checkDate: e.target.value})}
+                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60" />
+                  <p className="text-[9px] text-fg/25 mt-1">Post-dated? It can't be banked before this.</p>
+                </div>
+              ) : (
+                <div>
+                  <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Deposit Date *</label>
+                  <input type="date" value={settleForm.depositDate || ''} min={settleForm.collectionDate || undefined} onChange={e => setSettleForm({...settleForm, depositDate: e.target.value})}
+                    className={`w-full bg-page-bg border rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60 ${datesOutOfOrder ? 'border-red-500/60' : 'border-white/10'}`} />
+                  <p className={`text-[9px] mt-1 ${datesOutOfOrder ? 'text-red-400 font-bold' : 'text-fg/25'}`}>
+                    {datesOutOfOrder ? 'Cannot precede collection.' : 'When it hit the account.'}
+                  </p>
+                </div>
+              )}
             </div>
             <div>
               <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Deposited To *</label>
@@ -102,11 +115,41 @@ export default function SettleArModal() {
                 className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg font-bold outline-none focus:border-brand/60">
                 <option>Cash on Hand</option>
                 <option>Bank Transfer</option>
+                <option>Check</option>
                 <option>GCash</option>
                 <option>Maya</option>
                 <option>Maribank</option>
               </select>
             </div>
+            {/* A check is a promise of money, not money. It is booked to Checks
+                on Hand and tracked through deposit → clearing in the Collections
+                tab; if it bounces, that tab reverses this collection and the
+                invoice reopens. */}
+            {isCheck && (
+              <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/[0.06] p-3 space-y-2.5">
+                <p className="text-[10px] font-black uppercase tracking-widest text-yellow-400">Check Details</p>
+                <div>
+                  <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Check Number *</label>
+                  <input type="text" placeholder="e.g. 0012345" value={settleForm.checkNumber || ''} onChange={e => setSettleForm({...settleForm, checkNumber: e.target.value})}
+                    className={`w-full bg-page-bg border rounded-xl px-3 py-2.5 text-fg font-bold tabular-nums placeholder-white/25 outline-none focus:border-brand/60 ${missingCheckNo ? 'border-red-500/60' : 'border-white/10'}`} />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Bank</label>
+                    <input type="text" placeholder="BPI, BDO..." value={settleForm.checkBank || ''} onChange={e => setSettleForm({...settleForm, checkBank: e.target.value})}
+                      className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Drawer</label>
+                    <input type="text" placeholder="Whose account" value={settleForm.checkDrawer || ''} onChange={e => setSettleForm({...settleForm, checkDrawer: e.target.value})}
+                      className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+                  </div>
+                </div>
+                <p className="text-[9px] text-fg/40">
+                  Held in Checks on Hand - not counted as bank cash until you clear it in Collections.
+                </p>
+              </div>
+            )}
             <div>
               <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Collected By (optional)</label>
               <input type="text" placeholder="Rider / collector name..." value={settleForm.collectedBy || ''} onChange={e => setSettleForm({...settleForm, collectedBy: e.target.value})}
@@ -126,7 +169,7 @@ export default function SettleArModal() {
             </div>
           </div>
           <div className="px-5 pb-5 pt-3 border-t border-white/10">
-            <button onClick={submitArSettlement} disabled={settleSubmitting || overpaying || datesOutOfOrder}
+            <button onClick={submitArSettlement} disabled={settleSubmitting || overpaying || datesOutOfOrder || missingCheckNo}
               className="w-full py-4 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active-press transition shadow-elev-2 disabled:opacity-50 min-h-[56px] flex items-center justify-center gap-2">
               <Check size={18}/> {settleSubmitting ? 'Recording…' : isPartial ? 'Record Partial Payment' : 'Record Collection'}
             </button>

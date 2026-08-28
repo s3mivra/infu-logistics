@@ -49,7 +49,7 @@ export default function StockTaxonomyPanel({
     if (ok) setEditCat(null);
   };
 
-  const card = 'bg-card-bg border border-white/10 rounded-xl p-4';
+  const card = 'bg-surface border border-white/10 rounded-xl p-4';
   const input = 'w-full bg-page-bg border border-white/10 rounded p-2 text-fg text-sm outline-none focus:border-accent';
   const rowBtn = 'text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded transition min-h-[32px]';
 

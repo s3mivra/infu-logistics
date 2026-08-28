@@ -1810,7 +1810,10 @@ app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
 // ============================================================
 app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { amount, paymentMethod, note, referenceNumber, collectionDate, depositDate, collectedBy } = req.body;
+    const {
+      amount, paymentMethod, note, referenceNumber, collectionDate, depositDate, collectedBy,
+      checkNumber, checkDate, checkBank, checkDrawer,
+    } = req.body;
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
     if (order.paymentMethod === 'Cash')
@@ -1829,13 +1832,43 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
 
     // Dates default to "now" so the existing one-shot flow keeps working
     // unchanged for callers that don't send them.
+    // A check is a promise of money, not money: it is received on the
+    // collection date but only reaches an account when it clears, which is
+    // tracked separately in the check register. So a check collection has NO
+    // deposit date at this point - dating one here would claim the bank moved
+    // when it has not.
+    const isCheck = String(paymentMethod || '').trim().toLowerCase() === 'check';
+    let chequeNo = '';
+    let chequeOn = null;
+    if (isCheck) {
+      chequeNo = String(checkNumber || '').trim();
+      if (!chequeNo) return res.status(400).json({ success: false, error: 'Check number is required for a check collection.' });
+      if (chequeNo.length > 40) return res.status(400).json({ success: false, error: 'Check number is too long.' });
+      if (checkDate) {
+        chequeOn = new Date(checkDate);
+        if (Number.isNaN(chequeOn.getTime())) return res.status(400).json({ success: false, error: 'Invalid check date.' });
+      }
+      // The same check number from the same bank must not be banked twice -
+      // almost always a double-entry, and it would credit a client for money
+      // that only ever arrived once.
+      const dupe = await Order.findOne({
+        businessType: BUSINESS_TYPE, ...tenantScope(req),
+        arPayments: { $elemMatch: {
+          checkNumber: chequeNo,
+          checkStatus: { $nin: ['Bounced'] },
+          ...(checkBank ? { checkBank: String(checkBank).trim() } : {}),
+        } },
+      }, { orderNumber: 1 }).lean();
+      if (dupe) return res.status(409).json({ success: false, error: `Check #${chequeNo} is already recorded against ${dupe.orderNumber}. A bounced check must be re-recorded with its replacement number.` });
+    }
+
     const collectedOn = collectionDate ? new Date(collectionDate) : new Date();
-    const depositedOn = depositDate ? new Date(depositDate) : collectedOn;
+    const depositedOn = isCheck ? null : (depositDate ? new Date(depositDate) : collectedOn);
     if (Number.isNaN(collectedOn.getTime())) return res.status(400).json({ success: false, error: 'Invalid collection date.' });
-    if (Number.isNaN(depositedOn.getTime())) return res.status(400).json({ success: false, error: 'Invalid deposit date.' });
+    if (depositedOn && Number.isNaN(depositedOn.getTime())) return res.status(400).json({ success: false, error: 'Invalid deposit date.' });
     // Money cannot be banked before it was collected - a reversed pair here is
     // almost always a typo, and it would make the collection report nonsense.
-    if (depositedOn.getTime() < dayStart(collectedOn).getTime())
+    if (depositedOn && depositedOn.getTime() < dayStart(collectedOn).getTime())
       return res.status(400).json({ success: false, error: 'Deposit date cannot be earlier than the collection date.' });
 
     // Debit-side account from configurable payment-method map.
@@ -1863,9 +1896,9 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     assertBalanced(lines, reference);
 
     await JournalEntry.create({
-      date: depositedOn,
+      date: depositedOn || collectedOn,
       reference,
-      description: `A/R collection ${seq > 1 ? `#${seq} ` : ''}${fullySettled ? '(final)' : '(partial)'} ${order.orderNumber} via ${order.paymentMethod}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}${note ? ` (${note})` : ''}`,
+      description: `A/R collection ${seq > 1 ? `#${seq} ` : ''}${fullySettled ? '(final)' : '(partial)'} ${order.orderNumber} via ${order.paymentMethod}${isCheck ? ` [check #${chequeNo}${checkBank ? ` / ${String(checkBank).trim()}` : ''}]` : ''}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}${note ? ` (${note})` : ''}`,
       lines, totalDebit: amt, totalCredit: amt,
     });
 
@@ -1879,13 +1912,20 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
       collectedBy: String(collectedBy || '').trim(),
       recordedBy: req.user?.name || '',
       journalRef: reference,
+      ...(isCheck ? {
+        checkNumber: chequeNo,
+        checkDate: chequeOn,
+        checkBank: String(checkBank || '').trim(),
+        checkDrawer: String(checkDrawer || '').trim(),
+        checkStatus: 'On Hand',
+      } : {}),
     });
     order.arPaidAmount = paidAfter;
 
     // The legacy arSettled* fields keep tracking the LATEST collection so
     // existing readers (exports, printed docs) stay correct; arSettled itself
     // now only flips on full payment.
-    order.arSettledAt = depositedOn;
+    order.arSettledAt = depositedOn || collectedOn;
     order.arSettledAmount = paidAfter;
     order.arSettledMethod = paymentMethod || 'Cash on Hand';
     order.arSettledNote = note || '';
@@ -1897,7 +1937,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
       await logAudit(req, {
         action: fullySettled ? 'settle-ar' : 'settle-ar-partial',
         entity: 'Order', entityId: order.orderNumber,
-        after: { amount: amt, paidAfter, balance: arBalance(order), collectionDate: collectedOn, depositDate: depositedOn, reference },
+        after: { amount: amt, paidAfter, balance: arBalance(order), collectionDate: collectedOn, depositDate: depositedOn, reference, ...(isCheck ? { checkNumber: chequeNo } : {}) },
       });
     } catch { /* audit is non-fatal */ }
 

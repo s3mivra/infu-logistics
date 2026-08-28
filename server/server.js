@@ -1229,6 +1229,27 @@ items: [{
     recordedBy:      { type: String, default: '' },
     journalRef:      { type: String, default: '' },
     createdAt:       { type: Date, default: Date.now },
+    // --- CHECK COLLECTIONS ---
+    // A check is a PROMISE of money, not money. It is booked to Checks on Hand
+    // (115000) and only becomes bank cash once it clears, so it carries its own
+    // little lifecycle on top of the collection:
+    //   On Hand -> Deposited -> Cleared      (the money is really ours)
+    //                        -> Bounced      (it never was - the receivable reopens)
+    // checkDate is the date written ON the check: post-dated checks are normal
+    // in PH trade, and one cannot be deposited before that date.
+    checkNumber:     { type: String, default: '' },
+    checkDate:       { type: Date },
+    checkBank:       { type: String, default: '' },
+    // Whose account the check is drawn against - usually but not always the
+    // client themselves (a third-party check is worth flagging).
+    checkDrawer:     { type: String, default: '' },
+    checkStatus:     { type: String, enum: ['', 'On Hand', 'Deposited', 'Cleared', 'Bounced'], default: '' },
+    checkDepositedAt:{ type: Date },
+    checkClearedAt:  { type: Date },
+    checkBouncedAt:  { type: Date },
+    checkBounceReason:{ type: String, default: '' },
+    // Where a cleared check's money landed, so the JE and the register agree.
+    checkClearedTo:  { type: String, default: '' },
   }],
   // Payment-terms snapshot for on-account (non-cash) sales, captured when the
   // order Completes so later changes to the client's default terms don't
@@ -1425,6 +1446,19 @@ const CrossTransferSchema = new mongoose.Schema({
   unit:         String,
   qtyBase:      Number,
   note:         String,
+  // --- ITEM DESCRIPTOR SNAPSHOT ---
+  // Taken from the sending item when the slip is filed and carried across the
+  // wire. Without these the receiving business auto-creates a nameless item at
+  // zero cost, which values the whole shipment at nothing: the inbound journal
+  // entry posts 0 and the stock arrives worthless. The snapshot is frozen on
+  // purpose - it is what the goods were worth when they left, which is what
+  // the receiving side must book them in at.
+  unitCost:       { type: Number, default: 0 },   // per BASE unit, at send time
+  displayUnit:    { type: String, default: '' },  // e.g. 'pcs', 'box'
+  unitMultiplier: { type: Number, default: 1 },   // base units per display unit
+  packSize:       { type: Number, default: null },
+  itemCode:       { type: String, default: '' },
+  stockCategory:  { type: String, default: '' },
   reference:    { type: String, index: true },
   // Groups all line-items sent in the same "send" action.
   shipmentRef:  { type: String, index: true },
@@ -1687,6 +1721,8 @@ const DEFAULT_PAYMENT_ACCOUNT_MAP = {
   'Lalamove':          '111000',
   'Bank Transfer':     '112000',
   'Cash in Bank':      '112000',
+  // Checks land in Checks on Hand, not the bank - see 115000 in chartOfAccounts.js.
+  'Check':             '115000',
   'GCash':             '113000',
   'Maya':              '113000',
   'Maribank':          '113000',
@@ -1735,7 +1771,7 @@ function accountForPaymentMethod(method) {
   //      checkout even though those names aren't in the canonical default map.
   //      Only matches under payment-relevant parents (cash/bank/ewallet/AR/AP)
   //      so a random expense sub-account can't be accidentally targeted.
-  const PAYMENT_PARENTS = new Set(['111000','112000','113000','120000','220000']);
+  const PAYMENT_PARENTS = new Set(['111000','112000','113000','115000','120000','220000']);
   const wanted = String(method || '').trim().toLowerCase();
   for (const [code, meta] of CUSTOM_META.entries()) {
     if (!PAYMENT_PARENTS.has(meta.parent)) continue;

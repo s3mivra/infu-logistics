@@ -84,7 +84,7 @@ export default function StockTransferPanel({
     if (ok) { setQty(''); setNote(''); setExpiryChoice(''); }
   };
 
-  const card = 'bg-card-bg border border-white/10 rounded-xl p-4';
+  const card = 'bg-surface border border-white/10 rounded-xl p-4';
   const input = 'w-full bg-page-bg border border-white/10 rounded p-2 text-fg text-sm outline-none focus:border-accent';
   const statusColor = {
     Requested: 'bg-yellow-500/15 text-yellow-400',

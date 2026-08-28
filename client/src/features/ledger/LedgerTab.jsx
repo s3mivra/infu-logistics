@@ -27,6 +27,7 @@ export default function LedgerTab({ ctx }) {
     openArHistory, todayLocal,
     arReport, arReportAsOf, setArReportAsOf, fetchArReport,
     collectionReport, collRange, setCollRange, fetchCollectionReport,
+    checkRegister, checkFilter, setCheckFilter, fetchChecks, actOnCheck,
     archivedOrders, auditCancelPage, auditCompPage, auditDiscPage, auditFilter,
     auditStaffPage, bsData, calcRecipeCost, cashOnHand, cashTendered,
     catForm, categories, closeRfFund, collapsedOrders, compOverride,
@@ -932,7 +933,7 @@ export default function LedgerTab({ ctx }) {
                   if (id === 'salesline') fetchSalesLineItems();
                   if (id === 'payments') fetchSalesByPayment();
                   if (id === 'arreport' && !arReport) fetchArReport();
-                  if (id === 'collections' && !collectionReport) fetchCollectionReport();
+                  if (id === 'collections') { if (!collectionReport) fetchCollectionReport(); if (!checkRegister) fetchChecks(); }
                   if (id === 'profitcat') fetchProfitByCategory();
                   if (id === 'menueng') fetchMenuEngineering();
                   if (id === 'variance') fetchCashierVariance();
@@ -1820,11 +1821,162 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
-          {/* ===== COLLECTION REPORT SUB-TAB ===== */}
-          {/* What actually came IN against A/R. The A/R report answers "what is
-              still owed"; this answers "what did we collect". */}
+          {/* ===== COLLECTIONS SUB-TAB ===== */}
+          {/* Two halves of one question. The check register is what has been
+              taken in but is not yet money; the collection report is what
+              actually came in over a period. */}
           {ledgerSubTab === 'collections' && (
-            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
+            <div className="space-y-4 animate-fade-in">
+              {/* ── CHECK REGISTER ──────────────────────────────────────────
+                  A check is a promise of money, and the gap between taking one
+                  in and the bank honouring it is where receivables go wrong.
+                  Every check lives here through On Hand → Deposited → Cleared,
+                  or Bounced - which reverses the collection and reopens the
+                  invoice. */}
+              <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4">
+                <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
+                  <div>
+                    <h3 className="text-xl font-black text-fg">Check Register</h3>
+                    <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Checks received against receivables</p>
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <select value={checkFilter} onChange={e => { setCheckFilter(e.target.value); fetchChecks(e.target.value); }}
+                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
+                      <option value="">All statuses</option>
+                      <option value="On Hand">On Hand</option>
+                      <option value="Deposited">Deposited</option>
+                      <option value="Cleared">Cleared</option>
+                      <option value="Bounced">Bounced</option>
+                    </select>
+                    <button onClick={() => fetchChecks(checkFilter)}
+                      className="bg-white/5 hover:bg-white/10 text-fg/60 px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+
+                {!checkRegister ? (
+                  <div className="py-12 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Loading check register…</div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {/* On-hand checks whose date has arrived: money sitting in
+                          a drawer that could be in the bank today. */}
+                      <div className="rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-3">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Ready to Deposit</p>
+                        <p className="text-xl font-black tabular-nums text-green-400">₱{checkRegister.summary.readyToDepositTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                        <p className="text-[9px] text-fg/40 mt-0.5">{checkRegister.summary.readyToDepositCount} check(s)</p>
+                      </div>
+                      <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Post-Dated</p>
+                        <p className="text-xl font-black tabular-nums text-fg/70">₱{checkRegister.summary.postDatedTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                        <p className="text-[9px] text-fg/40 mt-0.5">Not bankable yet</p>
+                      </div>
+                      <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/10 px-4 py-3">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">In Clearing</p>
+                        <p className="text-xl font-black tabular-nums text-yellow-400">₱{checkRegister.summary.inClearingTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                        <p className="text-[9px] text-fg/40 mt-0.5">{checkRegister.summary.inClearingCount} with the bank</p>
+                      </div>
+                      <div className={`rounded-xl border px-4 py-3 ${checkRegister.summary.bouncedCount > 0 ? 'border-red-500/25 bg-red-500/10' : 'border-white/10 bg-white/5'}`}>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Bounced</p>
+                        <p className={`text-xl font-black tabular-nums ${checkRegister.summary.bouncedCount > 0 ? 'text-red-400' : 'text-fg/20'}`}>₱{checkRegister.summary.bouncedTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                        <p className="text-[9px] text-fg/40 mt-0.5">{checkRegister.summary.bouncedCount} reversed</p>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                            <th className="text-left py-2.5">Check No.</th>
+                            <th className="text-left py-2.5">Bank / Drawer</th>
+                            <th className="text-left py-2.5">Client</th>
+                            <th className="text-left py-2.5">Invoice</th>
+                            <th className="text-left py-2.5">Check Date</th>
+                            <th className="text-right py-2.5">Amount</th>
+                            <th className="text-left py-2.5 pl-3">Status</th>
+                            <th className="text-right py-2.5">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {checkRegister.checks.map(c => (
+                            <tr key={c.paymentId} className={`border-b border-white/5 hover:bg-white/5 transition ${c.status === 'Bounced' ? 'bg-red-500/5' : ''}`}>
+                              <td className="py-2.5 font-black text-fg tabular-nums">{c.checkNumber}</td>
+                              <td className="py-2.5 text-fg/60 text-xs">
+                                {c.checkBank || <span className="text-fg/20">—</span>}
+                                {c.checkDrawer && <span className="block text-[9px] text-fg/35">{c.checkDrawer}</span>}
+                              </td>
+                              <td className="py-2.5 text-fg/70 text-xs">{c.client}</td>
+                              <td className="py-2.5 text-fg/50 text-xs">{c.orderNumber}</td>
+                              <td className="py-2.5 text-xs">
+                                {c.checkDate ? (
+                                  <span className={c.postDated ? 'text-yellow-400 font-bold' : 'text-fg/60'}>
+                                    {new Date(c.checkDate).toLocaleDateString()}
+                                  </span>
+                                ) : <span className="text-fg/20">—</span>}
+                                {c.postDated && <span className="block text-[9px] text-yellow-500/70">post-dated</span>}
+                                {/* A check sitting with the bank for a week+ is
+                                    worth chasing. */}
+                                {c.daysInClearing > 6 && <span className="block text-[9px] text-orange-400">{c.daysInClearing}d in clearing</span>}
+                              </td>
+                              <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{c.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                              <td className="py-2.5 pl-3">
+                                <span className={`text-[10px] font-black px-2 py-1 rounded ${
+                                  c.status === 'Cleared' ? 'bg-green-500/15 text-green-500'
+                                  : c.status === 'Bounced' ? 'bg-red-500/15 text-red-400'
+                                  : c.status === 'Deposited' ? 'bg-yellow-500/15 text-yellow-400'
+                                  : 'bg-white/10 text-fg/60'}`}>{c.status}</span>
+                                {c.status === 'Bounced' && c.bounceReason && (
+                                  <span className="block text-[9px] text-red-400/70 italic mt-0.5 max-w-[160px]">{c.bounceReason}</span>
+                                )}
+                              </td>
+                              <td className="py-2.5 text-right">
+                                <div className="flex gap-1 justify-end">
+                                  {c.status === 'On Hand' && (
+                                    <button
+                                      onClick={() => actOnCheck(c, 'deposit')}
+                                      disabled={c.postDated}
+                                      title={c.postDated ? `Cannot be deposited before ${new Date(c.checkDate).toLocaleDateString()}` : 'Mark as handed to the bank'}
+                                      className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/8 text-fg/60 hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed min-h-[28px]">
+                                      Deposit
+                                    </button>
+                                  )}
+                                  {['On Hand', 'Deposited'].includes(c.status) && (
+                                    <>
+                                      <button onClick={() => actOnCheck(c, 'clear')} title="The bank honoured it"
+                                        className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-green-500/15 text-green-400 hover:bg-green-500/25 min-h-[28px]">
+                                        Clear
+                                      </button>
+                                      <button onClick={() => actOnCheck(c, 'bounce')} title="Reverses the collection - the invoice reopens"
+                                        className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 min-h-[28px]">
+                                        Bounce
+                                      </button>
+                                    </>
+                                  )}
+                                  {c.status === 'Cleared' && (
+                                    <button onClick={() => actOnCheck(c, 'bounce')} title="Bank reversed a cleared check"
+                                      className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/5 text-fg/40 hover:bg-red-500/15 hover:text-red-400 min-h-[28px]">
+                                      Reverse
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {!checkRegister.checks.length && (
+                        <div className="py-12 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">
+                          {checkFilter ? `No ${checkFilter.toLowerCase()} checks` : 'No checks received yet'}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+
+
+            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4">
               <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
                 <div>
                   <h3 className="text-2xl font-black text-fg">Collection Report</h3>
@@ -1945,6 +2097,7 @@ export default function LedgerTab({ ctx }) {
                   </div>
                 </>
               )}
+            </div>
             </div>
           )}
 
