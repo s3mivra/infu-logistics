@@ -34,6 +34,7 @@ export default function registerProducts(ctx) {
     resolveUnit,
     displayToBase,
     effectiveDisplay,
+    unitTypeOf,
     addBatch,
     consumeBatches,
     soonestExpiry,
@@ -487,6 +488,101 @@ app.post('/api/products', verifyToken, requireStaff, validate(productSchema), as
   const newProduct = await Product.create(req.body);
   emitToAll('menuUpdated');
   res.json({ success: true, product: newProduct });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// Bulk menu import (fb-style businesses): one upload creates/updates several
+// Products at once, each with its recipe wired to existing Inventory items -
+// the menu-side counterpart to the Inventory bulk import (which only ever
+// touches raw ingredients). Client resolves the sheet into
+// { rows: [{ category, name, srp, ingredients: [{ name, qty, unit }] }] } -
+// this route re-matches ingredients against the CURRENT Inventory (never
+// trusts a client-supplied invId/cost) and does the actual create/update.
+app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to import.' });
+
+    const invItems = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).lean();
+    // Exact case-insensitive name → item, for the common case; a normalized
+    // (spaces/punctuation stripped) index backs the fallback "contains" match.
+    const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const byExactName = new Map(invItems.map(i => [String(i.itemName || '').toLowerCase().trim(), i]));
+
+    const matchIngredient = (ingName, unit) => {
+      const key = String(ingName || '').toLowerCase().trim();
+      if (!key) return null;
+      let item = byExactName.get(key);
+      if (!item) {
+        const nk = norm(key);
+        item = invItems.find(i => norm(i.itemName).includes(nk) || nk.includes(norm(i.itemName)));
+      }
+      if (!item) return null;
+      // Refuse a cross-dimension match (e.g. a "10 ml" ingredient line landing
+      // on a pcs-tracked item) - that would silently corrupt the recipe cost.
+      if (unit && unitTypeOf(unit) !== unitTypeOf(item.unit)) return null;
+      return item;
+    };
+
+    const results = [];
+    let created = 0, updated = 0;
+
+    for (const row of rows) {
+      const name = String(row?.name || '').trim();
+      const srp = Number(row?.srp);
+      if (!name || !(srp >= 0)) {
+        results.push({ name: name || '(missing)', ok: false, error: 'Missing product name or SRP.' });
+        continue;
+      }
+      try {
+        const recipe = [];
+        const unmatched = [];
+        for (const ing of (Array.isArray(row.ingredients) ? row.ingredients : [])) {
+          const ingName = String(ing?.name || '').trim();
+          if (!ingName) continue;
+          const item = matchIngredient(ingName, ing.unit);
+          if (!item) { unmatched.push(ingName); continue; }
+          const baseQty = displayToBase(Number(ing.qty) || 0, ing.unit || item.unit);
+          if (!(baseQty > 0)) continue;
+          recipe.push({
+            invId: String(item._id), name: item.itemName, qty: baseQty,
+            cost: item.unitCost || 0, unit: effectiveDisplay(item).displayUnit,
+          });
+        }
+
+        const category = String(row.category || 'Uncategorized').trim();
+        const existing = await Product.findOne({
+          businessType: BUSINESS_TYPE, ...tenantScope(req),
+          name: new RegExp(`^${escapeRegex(name)}$`, 'i'), isArchived: { $ne: true },
+        });
+
+        if (existing) {
+          existing.basePrice = srp;
+          existing.category = category;
+          existing.baseRecipe = recipe;
+          await existing.save();
+          updated++;
+          results.push({ name, ok: true, action: 'updated', matched: recipe.length, unmatched });
+        } else {
+          const catPrefix = getCategoryPrefix(category);
+          const productCode = await generateNextSequence(Product, catPrefix, 'productCode');
+          await Product.create({
+            businessType: BUSINESS_TYPE, ...tenantScope(req),
+            productCode, name, category, basePrice: srp, baseRecipe: recipe,
+          });
+          created++;
+          results.push({ name, ok: true, action: 'created', matched: recipe.length, unmatched });
+        }
+      } catch (rowErr) {
+        results.push({ name, ok: false, error: rowErr.message });
+      }
+    }
+
+    await logAudit(req, { action: 'import-menu', entity: 'Product', entityId: 'bulk', after: { created, updated, rows: results.length } });
+    emitToAll('menuUpdated');
+    res.json({ success: true, created, updated, results });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

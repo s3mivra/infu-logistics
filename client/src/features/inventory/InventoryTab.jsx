@@ -930,7 +930,23 @@ export default function InventoryTab({ ctx }) {
           {(() => {
             const lowItems = inventory.filter(i => { const t = i.effectiveThreshold != null ? i.effectiveThreshold : (i.lowStockThreshold || 0); return t > 0 && i.stockQty <= t; });
             const today = new Date(); today.setHours(0,0,0,0);
-            const watch = inventory.filter(i => i.expiryDate && i.stockQty > 0).map(i => ({ ...i, _days: Math.ceil((new Date(i.expiryDate) - today) / 86400000) })).filter(i => i._days <= 30).sort((a, b) => a._days - b._days);
+            // One row per EXPIRING BATCH, not per item - an item can hold several
+            // lots at once (e.g. Gunpowder Green Tea: 6 pcs expiring in 5 days,
+            // 11 pcs from a fresher lot not due for weeks). Rolling those up to
+            // the item's total stockQty against just its soonest expiryDate used
+            // to show "17 pcs · in 5d", implying the WHOLE 17 was about to turn -
+            // only 6 actually are.
+            const watch = inventory.flatMap(i => {
+              const liveBatches = (i.expiryBatches || []).filter(b => (b.qty || 0) > 0 && b.expiryDate);
+              if (liveBatches.length > 0) {
+                return liveBatches.map(b => ({ ...i, stockQty: b.qty, expiryDate: b.expiryDate, _days: Math.ceil((new Date(b.expiryDate) - today) / 86400000) }));
+              }
+              // Legacy / non-batched item: fall back to its own single expiryDate + total stockQty.
+              if (i.expiryDate && i.stockQty > 0) {
+                return [{ ...i, _days: Math.ceil((new Date(i.expiryDate) - today) / 86400000) }];
+              }
+              return [];
+            }).filter(i => i._days <= 30).sort((a, b) => a._days - b._days);
             if (lowItems.length === 0 && watch.length === 0) return null;
             return (
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
@@ -964,12 +980,12 @@ export default function InventoryTab({ ctx }) {
                     </h4>
                     {watch.filter(i => i._days < 0).length > 0 && <p className="text-[10px] text-red-300 font-black uppercase tracking-wider">{watch.filter(i => i._days < 0).length} Expired - log spoilage</p>}
                     <div className="space-y-1 max-h-36 overflow-y-auto custom-scrollbar">
-                      {watch.map(i => {
+                      {watch.map((i, wi) => {
                         const txt = i._days < 0 ? `${Math.abs(i._days)}d ago` : i._days === 0 ? 'today' : `in ${i._days}d`;
                         const color = i._days < 0 ? 'text-red-300' : i._days <= (i.expiryWarnDays || 7) ? 'text-yellow-300' : 'text-orange-300/80';
                         const d = itemDisplay(i);
                         return (
-                          <div key={i._id} className="flex justify-between text-xs items-center">
+                          <div key={`${i._id}-${i.expiryDate}-${wi}`} className="flex justify-between text-xs items-center">
                             <span className={`font-bold ${color}`}>{i.itemName}</span>
                             <span className={`tabular-nums ${color}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? 'pcs' : d.unit} · <span className="font-black">{txt}</span></span>
                           </div>

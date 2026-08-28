@@ -25,6 +25,7 @@ import ShiftEndModal from '../shifts/modals/ShiftEndModal';
 import StockHistoryModal from '../inventory/modals/StockHistoryModal';
 import PriceHistoryModal from '../pricing/modals/PriceHistoryModal';
 import ImportModal from '../inventory/modals/ImportModal';
+import MenuImportModal from '../products/modals/MenuImportModal';
 import PartialFulfillModal from '../orders/modals/PartialFulfillModal';
 import ClockModal from './modals/ClockModal';
 import ChangePasswordModal from './modals/ChangePasswordModal';
@@ -241,6 +242,10 @@ export default function AdminDashboard() {
   const [importModal, setImportModal] = useState(false);
   const [importRows, setImportRows] = useState([]);       // [{ itemName, displayUnit, qty, unitCost, _diff, _newItem, _existing }]
   const [importSubmitting, setImportSubmitting] = useState(false);
+  // --- BULK MENU IMPORT (fb-style: drinks + linked recipe, not raw stock) ---
+  const [menuImportModal, setMenuImportModal] = useState(false);
+  const [menuImportRows, setMenuImportRows] = useState([]); // [{ category, name, srp, ingredients: [{name, qty, unit, _matched}] }]
+  const [menuImportSubmitting, setMenuImportSubmitting] = useState(false);
   // --- EXPIRY BATCHES EXPAND STATE ---
   const [expandedBatchRows, setExpandedBatchRows] = useState({}); // { [itemId]: bool }
 
@@ -3799,6 +3804,131 @@ const updateStatus = async (orderId, newStatus) => {
     }
   };
 
+  // --- BULK MENU IMPORT ---
+  // Template shape: one row per (Product, Ingredient) pair - a repeated Product
+  // name adds another recipe line, same convention the Inventory importer uses
+  // for repeated item codes (see LedgerTab's backdate-sale grid parsing).
+  const downloadMenuImportTemplate = () => {
+    const csv = 'Category,Product,SRP,Ingredient,Qty,Unit\n' +
+      'Signature Coffee,INFU COFFEE,160,Salted Caramel Syrup,10,ml\n' +
+      'Signature Coffee,INFU COFFEE,160,Breve Milk,130,ml\n' +
+      'Signature Coffee,INFU COFFEE,160,Rocksalted Cheese,15,g\n' +
+      'Non Coffee,HORCHATA,150,Horchata Powder,45,g\n' +
+      'Non Coffee,HORCHATA,150,Full Milk,170,ml\n';
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'semivra-menu-template.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  // Same mass/volume/count split as lib/units.js's unitTypeOf, so the preview
+  // won't offer a match that the server would refuse anyway (e.g. a "10 ml"
+  // line landing on a pcs-tracked item).
+  const menuUnitType = (u) => {
+    const s = String(u || '').trim().toLowerCase();
+    if (['mg', 'g', 'kg', 'gram', 'grams'].includes(s)) return 'mass';
+    if (['ml', 'cl', 'l', 'milliliter', 'millilitre', 'liter', 'litre'].includes(s)) return 'volume';
+    return 'count';
+  };
+  const menuNorm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const matchMenuIngredient = (ingName, unit) => {
+    const key = String(ingName || '').toLowerCase().trim();
+    if (!key) return null;
+    let item = inventory.find(i => String(i.itemName || '').toLowerCase().trim() === key);
+    if (!item) {
+      const nk = menuNorm(key);
+      item = inventory.find(i => menuNorm(i.itemName).includes(nk) || nk.includes(menuNorm(i.itemName)));
+    }
+    if (!item) return null;
+    if (unit && menuUnitType(unit) !== menuUnitType(item.unit)) return null;
+    return item;
+  };
+
+  const parseMenuImportFile = async (file) => {
+    if (!file) return;
+    try {
+      const XLSX = await import('xlsx');
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      if (rawRows.length === 0) return ui.alert('No rows found in the file.');
+
+      // Group consecutive/matching rows by Product name into one entry per drink.
+      const byName = new Map(); // lowercased name -> row
+      const order = [];
+      for (const r of rawRows) {
+        const name = String(r.Product || r.product || '').trim();
+        if (!name) continue;
+        const key = name.toLowerCase();
+        const srp = Number(r.SRP ?? r.srp ?? '');
+        const ingName = String(r.Ingredient || r.ingredient || '').trim();
+        const qty = Number(r.Qty ?? r.qty ?? 0);
+        const unit = String(r.Unit || r.unit || '').trim();
+        if (!byName.has(key)) {
+          byName.set(key, { category: String(r.Category || r.category || 'Uncategorized').trim(), name, srp: isNaN(srp) ? 0 : srp, ingredients: [] });
+          order.push(key);
+        }
+        const entry = byName.get(key);
+        if (!isNaN(srp) && srp > 0) entry.srp = srp; // last non-empty SRP on the group wins
+        if (ingName) {
+          const matched = matchMenuIngredient(ingName, unit);
+          entry.ingredients.push({ name: ingName, qty, unit, _matched: !!matched, _matchName: matched?.itemName || null });
+        }
+      }
+      const rows = order.map(k => byName.get(k));
+      setMenuImportRows(rows);
+      setMenuImportModal(true);
+    } catch (err) {
+      console.error('parseMenuImportFile', err);
+      ui.alert('Failed to parse file. Make sure it is a valid .xlsx, .xls, or .csv with columns: Category, Product, SRP, Ingredient, Qty, Unit');
+    }
+  };
+
+  const submitMenuImport = async () => {
+    if (menuImportSubmitting) return;
+    const validRows = menuImportRows.filter(r => r.name && r.srp >= 0);
+    if (validRows.length === 0) return ui.alert('No valid rows to import.');
+    if (!(await ui.confirm({
+      title: 'Import menu?',
+      message: `This will create/update ${validRows.length} product(s).`,
+      detail: 'Matched ingredients wire into each product\'s recipe automatically; unmatched ones are skipped (add them manually afterward).',
+      confirmLabel: 'Import',
+    }))) return;
+    setMenuImportSubmitting(true);
+    try {
+      const payload = {
+        rows: validRows.map(r => ({
+          category: r.category, name: r.name, srp: r.srp,
+          ingredients: r.ingredients.map(i => ({ name: i.name, qty: i.qty, unit: i.unit })),
+        })),
+      };
+      const res = await apiFetch('/api/products/import-menu', { method: 'POST', body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (data.success) {
+        const failed = (data.results || []).filter(r => !r.ok);
+        const unmatched = (data.results || []).flatMap(r => (r.unmatched || []).map(u => `${r.name}: ${u}`));
+        ui.alert(
+          `Menu import complete.\n\nCreated: ${data.created}\nUpdated: ${data.updated}` +
+          (failed.length ? `\n\nRows failed:\n- ${failed.map(f => `${f.name}: ${f.error}`).join('\n- ')}` : '') +
+          (unmatched.length ? `\n\nIngredients not matched to Inventory (recipe line skipped):\n- ${unmatched.join('\n- ')}` : '')
+        );
+        setMenuImportModal(false);
+        setMenuImportRows([]);
+        fetchERPData();
+      } else {
+        ui.alert(data.error || 'Import failed.');
+      }
+    } catch (err) {
+      console.error('submitMenuImport', err);
+      ui.alert('Network error during import.');
+    } finally {
+      setMenuImportSubmitting(false);
+    }
+  };
+
   const openEditInventory = (item) => {
     const eff = effectiveDisplay(item);
     // LOG: cost & threshold are per package (₱200/250G, N pcs); FB: per display unit.
@@ -6165,6 +6295,8 @@ const updateStatus = async (orderId, newStatus) => {
     invBadgeCount, expandedBatchRows, setExpandedBatchRows,
     editInvModal, setEditInvModal, editInvForm, setEditInvForm, editInvSubmitting,
     importModal, setImportModal, importRows, setImportRows, importSubmitting,
+    menuImportModal, setMenuImportModal, menuImportRows, setMenuImportRows, menuImportSubmitting,
+    downloadMenuImportTemplate, parseMenuImportFile, submitMenuImport,
     spoilageModal, setSpoilageModal, spoilageForm, setSpoilageForm, spoilageLoading, setSpoilageLoading,
     handleRestockSubmit, submitPhysicalCounts,
     // ── Inventory helpers ────────────────────────────────────────────────────
@@ -6518,6 +6650,9 @@ const updateStatus = async (orderId, newStatus) => {
           ============================================================ */}
       {/* ===== BULK INVENTORY IMPORT MODAL ===== */}
       <ImportModal />
+
+      {/* ===== BULK MENU IMPORT MODAL ===== */}
+      <MenuImportModal />
 
       {/* ===== EDIT INVENTORY ITEM MODAL ===== */}
       <EditInventoryModal />
