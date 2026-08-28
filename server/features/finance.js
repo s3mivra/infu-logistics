@@ -1038,8 +1038,12 @@ app.delete('/api/payment-method-map/:method', verifyToken, ...canPostAcct, async
   }
 });
 
-// GET all funds (superadmin only)
-app.get('/api/revolving-funds', verifyToken, ...canViewAcct, async (req, res) => {
+// GET all active funds - any clocked-in staff, not just accounting.view. This
+// is name/balance only (no journal detail), and staff need to see a fund
+// exists to request a disbursement against it or to see one they had approved
+// - gating it behind accounting.view meant an approved fund was invisible to
+// the very staff it was created for.
+app.get('/api/revolving-funds', verifyToken, requireStaff, async (req, res) => {
   try {
     const funds = await RevolvingFund.find({ isActive: true }).sort({ createdAt: -1 });
     res.json({ success: true, funds });

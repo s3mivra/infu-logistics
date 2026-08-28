@@ -125,7 +125,7 @@ export default function HubTab({ ctx }) {
       for (const line of sendCart) {
         const r = await authFetch('/api/hub/transfers/send', {
           method: 'POST',
-          body: JSON.stringify({ partnerSlug: sendPartner, itemId: line.itemId, qtyBase: line.qty, note: line.note }),
+          body: JSON.stringify({ partnerSlug: sendPartner, items: [{ itemId: line.itemId, qty: line.qty, note: line.note }] }),
         });
         const d = await r.json();
         if (!r.ok) { setSendErr(d.error); return; }

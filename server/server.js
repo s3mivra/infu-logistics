@@ -468,11 +468,32 @@ const orderLimiter = rateLimit({
 
 // Baseline throttle for the whole API surface (scraping / brute / cheap-DoS guard).
 // The stricter loginLimiter / orderLimiter stack on top of this for their routes.
+//
+// Keyed per logged-in user (decoded from the JWT), not per IP: a physical
+// location typically runs several tablets - POS, Logistics, Warehouse, an
+// office desktop - all going out through the SAME router/public IP. Keying by
+// IP alone meant every device at that location shared ONE 300-req/min bucket,
+// so ordinary multi-tablet traffic (notification polls, clock status, order
+// syncs) could exhaust it and start 429-ing devices that individually did
+// nothing wrong. Decoding is best-effort and unverified (jwt.verify already
+// runs downstream in each route's own auth middleware) - this key only needs
+// to be a stable per-device bucket, not a trust boundary.
+const rateLimitKey = (req) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    try {
+      const decoded = jwt.decode(authHeader.slice(7));
+      if (decoded?._id) return String(decoded._id);
+    } catch { /* fall through to IP */ }
+  }
+  return req.ip;
+};
 const generalApiLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 300,            // generous for a busy POS tablet; well above normal burst
+  max: 300,            // generous per device; no longer shared across a whole location
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKey,
   message: { success: false, error: 'Too many requests. Please slow down.' }
 });
 app.use('/api', generalApiLimiter);
