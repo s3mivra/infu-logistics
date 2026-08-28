@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
-import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus } from 'lucide-react';
+import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus, LayoutGrid, BarChart3, ExternalLink, Boxes } from 'lucide-react';
 
 const statusColor = {
   Pending:  'bg-yellow-500/15 text-yellow-400',
@@ -17,6 +17,13 @@ export default function HubTab({ ctx }) {
   const [busy, setBusy]           = useState(false);
   const [err, setErr]             = useState('');
   const [copied, setCopied]       = useState(false);
+
+  // Network Overview (#12): unified inventory + branch comparison + central
+  // reporting, pulled live from every linked partner's own API. Loaded on
+  // demand (not on every Hub visit) - it fans out a network call per partner.
+  const [network, setNetwork]           = useState(null); // { own, partners }
+  const [networkLoading, setNetworkLoading] = useState(false);
+  const [networkView, setNetworkView]   = useState('inventory'); // 'inventory' | 'compare' | 'switch'
 
   // invite / redeem
   const [inviteCode, setInviteCode]   = useState('');
@@ -54,6 +61,16 @@ export default function HubTab({ ctx }) {
   }, [authFetch]);
 
   useEffect(() => { load(); }, [load]);
+
+  const loadNetwork = useCallback(async () => {
+    setNetworkLoading(true);
+    try {
+      const r = await authFetch('/api/hub/network-summary');
+      const d = await r.json();
+      if (r.ok) setNetwork(d);
+    } catch {}
+    finally { setNetworkLoading(false); }
+  }, [authFetch]);
 
   const generateInvite = async () => {
     setBusy(true); setErr('');
@@ -208,6 +225,144 @@ export default function HubTab({ ctx }) {
           </div>
         )}
       </div>
+
+      {/* ── Network Overview: unified inventory, branch comparison, central
+          reporting, and a switcher to each linked business's own dashboard.
+          Only meaningful once at least one partner is linked. ── */}
+      {partners.length > 0 && (
+        <div className={card}>
+          <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+            <h3 className="text-fg font-black uppercase tracking-wider text-sm flex items-center gap-2">
+              <LayoutGrid size={15} className="text-accent" /> Network Overview
+            </h3>
+            <button onClick={loadNetwork} disabled={networkLoading} className={btn('ghost')}>
+              {networkLoading ? 'Loading…' : network ? <RefreshCw size={13} /> : 'Load Network Data'}
+            </button>
+          </div>
+
+          {network && (
+            <>
+              <div className="flex bg-page-bg p-1 rounded-xl mb-4 gap-1">
+                {[
+                  ['inventory', 'Unified Inventory', Boxes],
+                  ['compare', 'Compare Branches', BarChart3],
+                  ['switch', 'Switch Branch', ExternalLink],
+                ].map(([id, label, Icon]) => (
+                  <button key={id} onClick={() => setNetworkView(id)}
+                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition ${networkView === id ? 'bg-accent text-white' : 'text-fg/50 hover:text-fg'}`}>
+                    <Icon size={13} /> {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Unified Inventory - same item name, summed across every branch */}
+              {networkView === 'inventory' && (() => {
+                const branches = [{ label: 'This Business', tenant: network.own.tenant, inv: network.own.inventory }, ...network.partners.filter(p => p.ok).map(p => ({ label: p.partnerName || p.partnerSlug, tenant: p.tenant, inv: p.inventory || [] }))];
+                const merged = new Map(); // itemName -> { unit, perBranch: {label: qty} }
+                for (const b of branches) {
+                  for (const item of b.inv) {
+                    const key = item.itemName.toLowerCase();
+                    if (!merged.has(key)) merged.set(key, { itemName: item.itemName, unit: item.unit, perBranch: {} });
+                    merged.get(key).perBranch[b.label] = item.stockQty;
+                  }
+                }
+                const rows = [...merged.values()].sort((a, b) => a.itemName.localeCompare(b.itemName));
+                return rows.length === 0 ? (
+                  <p className="text-fg/40 text-xs py-6 text-center uppercase tracking-widest">No inventory to show</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
+                          <th className="text-left py-2">Item</th>
+                          {branches.map(b => <th key={b.label} className="text-right py-2 pl-3">{b.label}</th>)}
+                          <th className="text-right py-2 pl-3 text-fg/70">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map(r => {
+                          const total = branches.reduce((s, b) => s + (r.perBranch[b.label] || 0), 0);
+                          return (
+                            <tr key={r.itemName} className="border-b border-white/5">
+                              <td className="py-2 font-bold text-fg">{r.itemName}</td>
+                              {branches.map(b => (
+                                <td key={b.label} className="py-2 pl-3 text-right tabular-nums text-fg/70">
+                                  {r.perBranch[b.label] != null ? `${r.perBranch[b.label]} ${r.unit}` : '-'}
+                                </td>
+                              ))}
+                              <td className="py-2 pl-3 text-right tabular-nums font-black text-accent">{total} {r.unit}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+
+              {/* Compare Branches - today's + this month's revenue/orders side by side */}
+              {networkView === 'compare' && (() => {
+                const branches = [{ label: 'This Business', today: network.own.today, month: network.own.month }, ...network.partners.map(p => ({ label: p.partnerName || p.partnerSlug, today: p.today, month: p.month, ok: p.ok, error: p.error }))];
+                const best = Math.max(...branches.filter(b => b.today).map(b => b.today.revenue));
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
+                          <th className="text-left py-2">Branch</th>
+                          <th className="text-right py-2 pl-3">Today Revenue</th>
+                          <th className="text-right py-2 pl-3">Today Orders</th>
+                          <th className="text-right py-2 pl-3">This Month Revenue</th>
+                          <th className="text-right py-2 pl-3">This Month Orders</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {branches.map(b => (
+                          <tr key={b.label} className="border-b border-white/5">
+                            <td className="py-2 font-bold text-fg flex items-center gap-1.5">
+                              {b.label}
+                              {b.today && b.today.revenue === best && best > 0 && <span className="text-[9px] font-black bg-green-500/15 text-green-400 px-1.5 py-0.5 rounded uppercase">Top</span>}
+                            </td>
+                            {b.today ? (
+                              <>
+                                <td className="py-2 pl-3 text-right tabular-nums font-bold text-fg">{peso(b.today.revenue)}</td>
+                                <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{b.today.orders}</td>
+                                <td className="py-2 pl-3 text-right tabular-nums font-bold text-fg">{peso(b.month.revenue)}</td>
+                                <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{b.month.orders}</td>
+                              </>
+                            ) : (
+                              <td colSpan={4} className="py-2 pl-3 text-right text-red-400/70 italic">{b.error || 'Unreachable'}</td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+
+              {/* Switch Branch - each linked business is its own separate deployment/
+                  login (see partnerUrl), so this opens its own dashboard in a new
+                  tab rather than pretending to be one merged session. */}
+              {networkView === 'switch' && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between py-2 px-3 bg-page-bg border border-white/8 rounded-lg">
+                    <span className="text-fg font-bold text-sm">This Business ({network.own.tenant})</span>
+                    <span className="text-[10px] font-black bg-accent/15 text-accent px-2 py-0.5 rounded uppercase">Current</span>
+                  </div>
+                  {network.partners.map(p => (
+                    <a key={p.partnerSlug} href={p.dashboardUrl} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center justify-between py-2 px-3 bg-page-bg border border-white/8 rounded-lg hover:border-accent/40 transition">
+                      <span className="text-fg font-bold text-sm">{p.partnerName || p.partnerSlug}</span>
+                      <span className="flex items-center gap-1.5 text-accent text-xs font-bold">Open <ExternalLink size={12} /></span>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* ── Connect ── */}
       {isSuperAdmin && (

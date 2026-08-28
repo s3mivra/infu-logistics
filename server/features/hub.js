@@ -18,7 +18,7 @@ export default function registerHub(ctx) {
   const {
     app, BUSINESS_TYPE,
     LinkedBusiness, HubInvite, CrossTransfer,
-    Inventory, StockCard, JournalEntry,
+    Inventory, StockCard, JournalEntry, Order,
     verifyToken,
     requireStaff: requireAuth, requireSuperAdmin,
   } = ctx;
@@ -65,6 +65,68 @@ export default function registerHub(ctx) {
   app.get('/api/hub/info', verifyToken, requireAuth, async (req, res) => {
     const links = await LinkedBusiness.find({ businessType: BUSINESS_TYPE }).sort({ createdAt: -1 }).lean();
     res.json({ tenant: TENANT, selfUrl: SELF_URL, links });
+  });
+
+  // ── Network Overview (#12): unified inventory + branch comparison + central
+  // reporting across every linked business. Each business is a fully separate
+  // deployment/database (see partnerUrl/HUB_URL_PATTERN above) - there is no
+  // shared DB to query, so this works the same way transfers do: call each
+  // active partner's own API for a read-only snapshot, using the same
+  // link-token trust already established for transfers, and merge the results
+  // here. Best-effort per partner - one unreachable partner doesn't blank out
+  // the rest of the network.
+  const ownSnapshot = async () => {
+    const [items, todayAgg, monthAgg] = await Promise.all([
+      Inventory.find({ businessType: BUSINESS_TYPE }, { itemName: 1, stockQty: 1, unit: 1 }).lean(),
+      Order.aggregate([
+        { $match: { businessType: BUSINESS_TYPE, status: 'Completed', createdAt: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) } } },
+        { $group: { _id: null, revenue: { $sum: '$total' }, orders: { $sum: 1 } } },
+      ]),
+      Order.aggregate([
+        { $match: { businessType: BUSINESS_TYPE, status: 'Completed', createdAt: { $gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) } } },
+        { $group: { _id: null, revenue: { $sum: '$total' }, orders: { $sum: 1 } } },
+      ]),
+    ]);
+    return {
+      tenant: TENANT,
+      inventory: items.map(i => ({ itemName: i.itemName, stockQty: i.stockQty, unit: i.unit })),
+      today: { revenue: todayAgg[0]?.revenue || 0, orders: todayAgg[0]?.orders || 0 },
+      month: { revenue: monthAgg[0]?.revenue || 0, orders: monthAgg[0]?.orders || 0 },
+    };
+  };
+
+  // What a linked partner calls to pull OUR snapshot for THEIR network view.
+  app.get('/api/hub/internal/summary', requireLinkToken, async (req, res) => {
+    try {
+      res.json(await ownSnapshot());
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // What the current business's own dashboard calls to build the unified view:
+  // its own snapshot plus every active partner's (pulled live, in parallel).
+  app.get('/api/hub/network-summary', verifyToken, requireAuth, async (req, res) => {
+    try {
+      const links = await LinkedBusiness.find({ businessType: BUSINESS_TYPE, status: 'active' }).lean();
+      const own = await ownSnapshot();
+      const partners = await Promise.all(links.map(async (link) => {
+        try {
+          const r = await fetch(`${link.partnerUrl}/api/hub/internal/summary`, {
+            headers: { 'x-link-token': link.linkToken },
+            signal: AbortSignal.timeout(8_000),
+          });
+          const data = await r.json();
+          if (!r.ok) throw new Error(data.error || `Partner returned ${r.status}`);
+          return { partnerSlug: link.partnerSlug, partnerName: link.partnerName, dashboardUrl: link.partnerUrl, ok: true, ...data };
+        } catch (err) {
+          return { partnerSlug: link.partnerSlug, partnerName: link.partnerName, dashboardUrl: link.partnerUrl, ok: false, error: err.message };
+        }
+      }));
+      res.json({ own, partners });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Generate invite code (superadmin only)
