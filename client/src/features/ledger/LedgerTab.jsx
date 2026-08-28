@@ -280,6 +280,28 @@ export default function LedgerTab({ ctx }) {
     return '';
   };
 
+  // Same-row-only lookup, for fields whose label and value sit side by side
+  // (e.g. "DELIVERY FEE | ₱0.00") on a template that also has a large MERGED
+  // Grand Total cell sitting just below that row. bdFindLabelValue's
+  // check-below-first behavior would grab that merged total instead of the
+  // real (often zero) value beside the label, doubling the imported total -
+  // so fields like this must never look below, only rightward on their own row.
+  const bdFindLabelValueSameRow = (grid, aliases) => {
+    for (let r = 0; r < Math.min(grid.length, 80); r++) {
+      const row = grid[r] || [];
+      for (let c = 0; c < row.length; c++) {
+        const cell = bdNorm(row[c]);
+        if (!cell || !aliases.some(a => cell.includes(a))) continue;
+        for (let c2 = c + 1; c2 < row.length; c2++) {
+          const v = row[c2];
+          if (v === '' || v == null) continue;
+          return v;
+        }
+      }
+    }
+    return '';
+  };
+
   // Parses ONE sheet's grid (array-of-arrays) into { groups, skipped }. Used
   // for both the single-sheet fast path and each sheet picked in the
   // multi-sheet picker below.
@@ -324,7 +346,7 @@ export default function LedgerTab({ ctx }) {
     // by exactly this amount for those sheets - it needs to ride along and
     // add onto the total the same way the live POS delivery fee now does
     // (see POST /api/orders and createBackdatedSale server-side).
-    const sheetDeliveryFee = bdNumify(bdFindLabelValue(grid, ['deliveryfee', 'freight', 'shippingfee', 'deliverycharge']));
+    const sheetDeliveryFee = bdNumify(bdFindLabelValueSameRow(grid, ['deliveryfee', 'freight', 'shippingfee', 'deliverycharge']));
 
     // Transaction/client/date usually only repeat on the FIRST row of a sale
     // (exactly how a flat-columns import lays them out) - carry the
