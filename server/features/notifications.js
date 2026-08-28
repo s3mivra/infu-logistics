@@ -9,6 +9,7 @@
 // them something is wrong.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
+import { withArBalance } from '../lib/credit.js';
 
 export default function registerNotifications(ctx) {
   const {
@@ -80,7 +81,9 @@ export default function registerNotifications(ctx) {
           ? Order.find({
               ...scope, status: 'Completed', paymentMethod: { $ne: 'Cash' },
               isComplimentary: { $ne: true }, arSettled: { $ne: true },
-            }, { orderNumber: 1, customerName: 1, total: 1, createdAt: 1, paymentMethod: 1 }).sort({ createdAt: 1 }).limit(500).lean()
+            }, { orderNumber: 1, customerName: 1, total: 1, createdAt: 1, paymentMethod: 1, arPaidAmount: 1 }).sort({ createdAt: 1 }).limit(500).lean()
+              // Alert on the unpaid remainder, not the original invoice value.
+              .then(withArBalance)
           : [],
         may('procurement.view')
           ? PurchaseOrder.find({ ...scope, status: { $in: ['Ordered', 'Processing', 'Incomplete'] } },
@@ -153,7 +156,10 @@ export default function registerNotifications(ctx) {
           kind: 'ar_overdue',
           severity: age >= 60 ? CRIT : WARN,
           title: `Unsettled ${o.paymentMethod} · #${o.orderNumber}`,
-          detail: `${o.customerName || 'No name'} · ₱${(o.total || 0).toFixed(2)} · ${age} days outstanding`,
+          // withArBalance already restated `total` as the unpaid remainder;
+          // faceTotal is the original invoice, worth showing once part of it
+          // has been collected so the figure reconciles against the sale.
+          detail: `${o.customerName || 'No name'} · ₱${(o.total || 0).toFixed(2)}${o.arPaidAmount > 0 ? ` left of ₱${(o.faceTotal || 0).toFixed(2)}` : ''} · ${age} days outstanding`,
           tab: 'ledger', sub: 'arap', focusId: String(o._id),
         });
       }

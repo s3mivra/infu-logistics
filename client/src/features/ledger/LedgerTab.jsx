@@ -24,6 +24,9 @@ export default function LedgerTab({ ctx }) {
     activeAdmin, activeInventoryItem, activeTab, addInventory, addMaterialToRecipe, can,
     addOnForm, addSize, analyticsData, analyticsLoading, apiFetch,
     applyComplimentary, applyDiscount, applyItemDiscount, arOutstanding, arAgeing, fetchArAgeing, archiveDay, fetchExpenses,
+    openArHistory, todayLocal,
+    arReport, arReportAsOf, setArReportAsOf, fetchArReport,
+    collectionReport, collRange, setCollRange, fetchCollectionReport,
     archivedOrders, auditCancelPage, auditCompPage, auditDiscPage, auditFilter,
     auditStaffPage, bsData, calcRecipeCost, cashOnHand, cashTendered,
     catForm, categories, closeRfFund, collapsedOrders, compOverride,
@@ -881,6 +884,8 @@ export default function LedgerTab({ ctx }) {
                   ['salessummary',  'Sales Summary',          BarChart3],
                   ['salesline',     'Sales Line Items',       FileText],
                   ['payments',      'By Payment',             Banknote],
+                  ['arreport',      'A/R Report',             Truck],
+                  ['collections',   'Collections',            Banknote],
                   ['profitcat',     'By Category',            BarChart2],
                   ['pnlmonthly',    'Monthly P&L',            BarChart3],
                   ['bsmonthly',     'Monthly Balance Sheet',  BarChart3],
@@ -926,6 +931,8 @@ export default function LedgerTab({ ctx }) {
                   if (id === 'salessummary') fetchSalesSummary();
                   if (id === 'salesline') fetchSalesLineItems();
                   if (id === 'payments') fetchSalesByPayment();
+                  if (id === 'arreport' && !arReport) fetchArReport();
+                  if (id === 'collections' && !collectionReport) fetchCollectionReport();
                   if (id === 'profitcat') fetchProfitByCategory();
                   if (id === 'menueng') fetchMenuEngineering();
                   if (id === 'variance') fetchCashierVariance();
@@ -1695,6 +1702,252 @@ export default function LedgerTab({ ctx }) {
             );
           })()}
 
+          {/* ===== A/R REPORT SUB-TAB ===== */}
+          {/* The printable receivables schedule: one line per open invoice.
+              Read as-of a date, so re-running last month's report reproduces
+              last month's numbers instead of restating them with collections
+              that have happened since. */}
+          {ledgerSubTab === 'arreport' && (
+            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
+              <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
+                <div>
+                  <h3 className="text-2xl font-black text-fg">A/R Report</h3>
+                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Aged receivables schedule · invoice level</p>
+                </div>
+                <div className="flex items-end gap-2">
+                  <div>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">As Of</label>
+                    <input type="date" value={arReportAsOf} onChange={e => setArReportAsOf(e.target.value)}
+                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
+                  </div>
+                  <button onClick={fetchArReport}
+                    className="bg-brand text-white px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
+                    Run
+                  </button>
+                </div>
+              </div>
+
+              {!arReport ? (
+                <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Pick a date and run the report</div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    {[
+                      { label: 'Current', sub: '0–30d', amt: arReport.totals.current, cls: 'text-green-400 bg-green-500/10 border-green-500/20' },
+                      { label: '31–60',   sub: 'days',  amt: arReport.totals.d31_60,  cls: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' },
+                      { label: '61–90',   sub: 'days',  amt: arReport.totals.d61_90,  cls: 'text-orange-400 bg-orange-500/10 border-orange-500/20' },
+                      { label: '91+',     sub: 'days',  amt: arReport.totals.d90_plus,cls: 'text-red-400 bg-red-500/10 border-red-500/20' },
+                      { label: 'Total',   sub: `${arReport.totals.count} invoice(s)`, amt: arReport.totals.total, cls: 'text-brand bg-brand/10 border-brand/25' },
+                    ].map(b => (
+                      <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.cls.split(' ').slice(1).join(' ')}`}>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
+                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.cls.split(' ')[0] : 'text-fg/20'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {arReport.overdueTotal > 0 && (
+                    <div className="bg-red-500/10 border border-red-500/25 rounded-xl px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-red-400">Past Their Agreed Due Date</p>
+                      <p className="text-xl font-black tabular-nums text-red-400">₱{arReport.overdueTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                    </div>
+                  )}
+
+                  {/* Per-client roll-up first - the question is almost always
+                      "who owes me" before "which invoice". */}
+                  <div className="bg-page-bg/40 border border-white/10 rounded-xl overflow-x-auto">
+                    <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 px-4 py-3 border-b border-white/10">By Client</p>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                          <th className="text-left py-2.5 px-4">Client</th>
+                          <th className="text-right py-2.5">Current</th>
+                          <th className="text-right py-2.5">31–60</th>
+                          <th className="text-right py-2.5">61–90</th>
+                          <th className="text-right py-2.5">91+</th>
+                          <th className="text-right py-2.5 px-4">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {arReport.byClient.map(c => (
+                          <tr key={c.client} className="border-b border-white/5">
+                            <td className="py-2.5 px-4 font-bold text-fg">{c.client}{c.clientCode && <span className="ml-2 text-[9px] text-fg/30">{c.clientCode}</span>}</td>
+                            <td className="py-2.5 text-right tabular-nums text-fg/70">{c.current ? `₱${c.current.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                            <td className="py-2.5 text-right tabular-nums text-yellow-500/80">{c.d31_60 ? `₱${c.d31_60.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                            <td className="py-2.5 text-right tabular-nums text-orange-500/80">{c.d61_90 ? `₱${c.d61_90.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                            <td className="py-2.5 text-right tabular-nums text-red-500/80">{c.d90_plus ? `₱${c.d90_plus.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                            <td className="py-2.5 px-4 text-right tabular-nums font-black text-fg">₱{c.total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 mb-2">Open Invoices</p>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                          <th className="text-left py-2.5">Invoice</th>
+                          <th className="text-left py-2.5">Client</th>
+                          <th className="text-left py-2.5">Date</th>
+                          <th className="text-left py-2.5">Due</th>
+                          <th className="text-left py-2.5">Age</th>
+                          <th className="text-right py-2.5">Invoiced</th>
+                          <th className="text-right py-2.5">Collected</th>
+                          <th className="text-right py-2.5">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {arReport.invoices.map(i => (
+                          <tr key={i._id} className={`border-b border-white/5 ${i.overdue ? 'bg-red-500/5' : ''}`}>
+                            <td className="py-2.5 font-bold text-fg">{i.orderNumber}</td>
+                            <td className="py-2.5 text-fg/70">{i.client}</td>
+                            <td className="py-2.5 text-fg/50 text-xs">{new Date(i.invoiceDate).toLocaleDateString()}</td>
+                            <td className="py-2.5 text-xs">{i.dueDate ? <span className={i.overdue ? 'text-red-400 font-bold' : 'text-fg/60'}>{new Date(i.dueDate).toLocaleDateString()}</span> : <span className="text-fg/20">-</span>}</td>
+                            <td className="py-2.5"><span className={`text-[10px] font-black px-2 py-1 rounded ${i.bucket === 'current' ? 'bg-green-400/15 text-green-500' : i.bucket === 'd31_60' ? 'bg-yellow-500/15 text-yellow-400' : i.bucket === 'd61_90' ? 'bg-orange-500/15 text-orange-400' : 'bg-red-500/15 text-red-400'}`}>{i.ageDays}d</span></td>
+                            <td className="py-2.5 text-right tabular-nums text-fg/50">₱{i.faceTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                            <td className="py-2.5 text-right tabular-nums text-green-400">{i.paid ? `₱${i.paid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : <span className="text-fg/20">-</span>}</td>
+                            <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{i.balance.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {!arReport.invoices.length && <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Nothing outstanding as of this date</div>}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ===== COLLECTION REPORT SUB-TAB ===== */}
+          {/* What actually came IN against A/R. The A/R report answers "what is
+              still owed"; this answers "what did we collect". */}
+          {ledgerSubTab === 'collections' && (
+            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
+              <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
+                <div>
+                  <h3 className="text-2xl font-black text-fg">Collection Report</h3>
+                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Payments received against receivables</p>
+                </div>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">From</label>
+                    <input type="date" value={collRange.start} onChange={e => setCollRange({ ...collRange, start: e.target.value })}
+                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">To</label>
+                    <input type="date" value={collRange.end} onChange={e => setCollRange({ ...collRange, end: e.target.value })}
+                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
+                  </div>
+                  {/* Which date the range is read on. Collection basis = what
+                      the collectors took in; deposit basis = what reached the
+                      bank, i.e. the figure that ties to a bank statement. */}
+                  <div>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Date Basis</label>
+                    <select value={collRange.basis} onChange={e => setCollRange({ ...collRange, basis: e.target.value })}
+                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
+                      <option value="collection">Collection date</option>
+                      <option value="deposit">Deposit date</option>
+                    </select>
+                  </div>
+                  <button onClick={fetchCollectionReport}
+                    className="bg-brand text-white px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
+                    Run
+                  </button>
+                </div>
+              </div>
+
+              {!collectionReport ? (
+                <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Pick a range and run the report</div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="bg-green-500/10 border border-green-500/20 rounded-xl px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Total Collected</p>
+                      <p className="text-2xl font-black tabular-nums text-green-400">₱{collectionReport.totalCollected.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                    </div>
+                    <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Collections</p>
+                      <p className="text-2xl font-black tabular-nums text-fg">{collectionReport.count}</p>
+                    </div>
+                    {/* Money taken in but not yet banked. This gap is exactly
+                        where cash goes missing, so it gets its own tile. */}
+                    <div className={`rounded-xl px-4 py-3 border ${collectionReport.undepositedTotal > 0 ? 'bg-yellow-500/10 border-yellow-500/25' : 'bg-white/5 border-white/10'}`}>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Not Yet Deposited</p>
+                      <p className={`text-2xl font-black tabular-nums ${collectionReport.undepositedTotal > 0 ? 'text-yellow-400' : 'text-fg/20'}`}>₱{collectionReport.undepositedTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid md:grid-cols-3 gap-3">
+                    {[
+                      ['By Client', collectionReport.byClient, 'client'],
+                      ['By Account', collectionReport.byMethod, 'method'],
+                      ['By Collector', collectionReport.byCollector, 'collector'],
+                    ].map(([label, list, key]) => (
+                      <div key={label} className="bg-page-bg/40 border border-white/10 rounded-xl overflow-hidden">
+                        <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 px-4 py-2.5 border-b border-white/10">{label}</p>
+                        <table className="w-full text-sm">
+                          <tbody>
+                            {list.slice(0, 8).map(r => (
+                              <tr key={r[key]} className="border-b border-white/5">
+                                <td className="py-2 px-4 text-fg/70 truncate max-w-[140px]">{r[key]}</td>
+                                <td className="py-2 px-4 text-right tabular-nums font-bold text-fg">₱{r.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                              </tr>
+                            ))}
+                            {!list.length && <tr><td className="py-4 px-4 text-fg/30 text-xs">None</td></tr>}
+                          </tbody>
+                        </table>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                          <th className="text-left py-2.5">Collected</th>
+                          <th className="text-left py-2.5">Deposited</th>
+                          <th className="text-left py-2.5">Invoice</th>
+                          <th className="text-left py-2.5">Client</th>
+                          <th className="text-left py-2.5">To</th>
+                          <th className="text-left py-2.5">Reference</th>
+                          <th className="text-right py-2.5">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {collectionReport.collections.map((r, idx) => (
+                          <tr key={`${r.orderId}-${idx}`} className="border-b border-white/5 hover:bg-white/5 transition">
+                            <td className="py-2.5 text-fg/70 text-xs">
+                              {new Date(r.collectionDate).toLocaleDateString()}
+                              {r.collectedBy && <span className="block text-[9px] text-fg/35">by {r.collectedBy}</span>}
+                            </td>
+                            <td className="py-2.5 text-xs">
+                              {r.depositDate
+                                ? <span className="text-fg/70">{new Date(r.depositDate).toLocaleDateString()}</span>
+                                : <span className="text-[10px] font-black px-2 py-1 rounded bg-yellow-500/15 text-yellow-400">IN TRANSIT</span>}
+                              {r.floatDays > 0 && <span className="block text-[9px] text-yellow-500/70">+{r.floatDays}d float</span>}
+                            </td>
+                            <td className="py-2.5 text-fg font-bold">{r.orderNumber}</td>
+                            <td className="py-2.5 text-fg/70">{r.client}</td>
+                            <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand px-2 py-1 rounded">{r.depositedTo || '—'}</span></td>
+                            <td className="py-2.5 text-fg/50 text-xs">
+                              {r.referenceNumber || <span className="text-fg/20">—</span>}
+                              {r.note && <span className="block text-[9px] text-fg/30 italic">{r.note}</span>}
+                            </td>
+                            <td className="py-2.5 text-right tabular-nums font-black text-green-400">₱{r.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {!collectionReport.collections.length && <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">No collections in this range</div>}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {/* ===== A/R OUTSTANDING SUB-TAB ===== */}
           {(ledgerSubTab === 'ar' || ledgerSubTab === 'araap') && (
             <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
@@ -1714,7 +1967,9 @@ export default function LedgerTab({ ctx }) {
 
               {/* AR Aging Summary */}
               {arOutstanding.orders.length > 0 && (() => {
-                const ab = agingBuckets(arOutstanding.orders, o => o.createdAt, o => o.total);
+                // Age on the unpaid remainder - a partly collected invoice
+                // must not keep sitting in a bucket at its original value.
+                const ab = agingBuckets(arOutstanding.orders, o => o.createdAt, o => (o.balance ?? o.total));
                 const buckets = [
                   { label: 'Current', sub: '0–30 days', amt: ab.c,    color: 'text-green-400',  bg: 'bg-green-500/10 border-green-500/20' },
                   { label: '31–60',   sub: 'days',       amt: ab.d60,  color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' },
@@ -1803,7 +2058,9 @@ export default function LedgerTab({ ctx }) {
                         <th className="text-left py-3">Date</th>
                         <th className="text-left py-3">Age</th>
                         <th className="text-left py-3">Due</th>
-                        <th className="text-right py-3">Amount</th>
+                        <th className="text-right py-3">Invoiced</th>
+                        <th className="text-right py-3">Collected</th>
+                        <th className="text-right py-3">Balance</th>
                         <th className="text-right py-3">Action</th>
                       </tr>
                     </thead>
@@ -1829,7 +2086,19 @@ export default function LedgerTab({ ctx }) {
                                   : <span className="text-fg/60">{new Date(o.arDueDate).toLocaleDateString()}</span>
                               ) : <span className="text-fg/25">-</span>}
                             </td>
-                            <td className="py-3 text-right text-fg tabular-nums font-bold">₱{o.total.toFixed(2)}</td>
+                            {/* Invoiced is the face value and never moves;
+                                balance is what is still owed after any partial
+                                collections. Both are shown because a client
+                                asking "what do I owe on invoice X" needs the
+                                second, and reconciling against the sale needs
+                                the first. */}
+                            <td className="py-3 text-right text-fg/50 tabular-nums">₱{o.total.toFixed(2)}</td>
+                            <td className="py-3 text-right tabular-nums">
+                              {o.paid > 0
+                                ? <button onClick={() => openArHistory(o)} className="text-green-400 font-bold hover:underline" title="View payment history">₱{o.paid.toFixed(2)}{o.paymentCount > 1 ? ` (${o.paymentCount})` : ''}</button>
+                                : <span className="text-fg/20">-</span>}
+                            </td>
+                            <td className="py-3 text-right text-fg tabular-nums font-black">₱{(o.balance ?? o.total).toFixed(2)}</td>
                             <td className="py-3 text-right">
                               <button onClick={() => {
                                 let defaultMethod = 'Cash on Hand';
@@ -1837,10 +2106,17 @@ export default function LedgerTab({ ctx }) {
                                 else if (['GCash','Maya','Maribank','E-Wallet','Other E-Wallet'].includes(o.paymentMethod)) defaultMethod = o.paymentMethod === 'Other E-Wallet' ? 'GCash' : o.paymentMethod;
                                 else if (['Grab Delivery','Foodpanda','Manual Delivery'].includes(o.paymentMethod)) defaultMethod = 'Bank Transfer';
                                 setSettleModal({ order: o });
-                                setSettleForm({ amount: o.total.toFixed(2), paymentMethod: defaultMethod, note: '' });
+                                // Default to collecting the REMAINDER, not the
+                                // invoice face value - on a partly paid invoice
+                                // the face value would be rejected as an overpayment.
+                                setSettleForm({
+                                  amount: (o.balance ?? o.total).toFixed(2), paymentMethod: defaultMethod,
+                                  note: '', referenceNumber: '', collectedBy: '',
+                                  collectionDate: todayLocal(), depositDate: todayLocal(),
+                                });
                               }}
                                 className="bg-brand text-white px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
-                                Settle
+                                {o.paid > 0 ? 'Collect' : 'Settle'}
                               </button>
                             </td>
                           </tr>

@@ -1,7 +1,7 @@
 ﻿// collections routes - AR collection reminders (contact log + follow-up
 // worklist over the existing aging data). See the CollectionReminderSchema
 // comment in server.js: this logs manual contact, it never sends anything.
-import { ageingByClient, resolveClientKey } from '../lib/credit.js';
+import { ageingByClient, resolveClientKey, withArBalance } from '../lib/credit.js';
 import { captureError } from '../lib/errorLog.js';
 
 export default function registerCollections(ctx) {
@@ -42,7 +42,10 @@ export default function registerCollections(ctx) {
       businessType: BUSINESS_TYPE, ...tenantScope(req),
       status: 'Completed', paymentMethod: { $ne: 'Cash' },
       isComplimentary: { $ne: true }, arSettled: { $ne: true },
-    }, { customerName: 1, total: 1, createdAt: 1, clientAccountId: 1, clientId: 1 }).lean();
+      // withArBalance restates `total` as the unpaid remainder, so a client who
+      // has partly paid an aged invoice is chased for what is actually left.
+    }, { customerName: 1, total: 1, createdAt: 1, clientAccountId: 1, clientId: 1, arPaidAmount: 1 }).lean()
+      .then(withArBalance);
   }
 
   // ── OVERDUE WORKLIST ─────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { dayStart, dayEnd } from '../lib/reportRange.js';
+import { bucketFor, resolveClientKey } from '../lib/credit.js';
 import { captureError } from '../lib/errorLog.js';
 
 export default function registerReports(ctx) {
@@ -1400,6 +1401,211 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (re
     });
   } catch (err) {
     log.error({ err }, 'Percentage-tax report failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+// ============================================================
+// A/R REPORT - every open receivable as of a date, aged, with what has
+// already been collected against it.
+//
+// Distinct from /api/finance/ar-ageing (a live per-client summary for the
+// ledger tab): this is the printable invoice-level schedule an owner or an
+// auditor asks for - one line per invoice, face value, collected to date,
+// balance, age bucket - plus per-client and per-bucket subtotals.
+//
+// `asOf` (default today) ages the invoices and, importantly, excludes
+// collections deposited AFTER that date, so re-running last month's report
+// still reproduces last month's numbers instead of silently restating them.
+// ============================================================
+app.get('/api/reports/ar-aging', verifyToken, ...canViewReports, async (req, res) => {
+  try {
+    const asOf = req.query.asOf ? dayEnd(req.query.asOf) : new Date();
+    if (Number.isNaN(asOf.getTime())) return res.status(400).json({ success: false, error: 'Invalid asOf date.' });
+
+    // Anything completed on or before asOf that was ever a receivable. Orders
+    // fully settled by asOf are dropped further down - they can't be dropped
+    // here, because an invoice settled LAST week was still outstanding as of a
+    // report date two weeks ago.
+    const rows = await Order.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
+      status: 'Completed',
+      paymentMethod: { $ne: 'Cash' },
+      isComplimentary: { $ne: true },
+      createdAt: { $lte: asOf },
+    }, {
+      orderNumber: 1, customerName: 1, total: 1, paymentMethod: 1, createdAt: 1,
+      arDueDate: 1, arTermsDays: 1, arPaidAmount: 1, arPayments: 1,
+      clientAccountId: 1, clientId: 1,
+    }).sort({ createdAt: 1 }).lean();
+
+    const clients = await ClientAccount.find({}, { name: 1, clientCode: 1, creditLimit: 1 }).lean();
+    const { keyOf } = resolveClientKey(clients);
+    const codeByName = new Map(clients.map(c => [c.name, c.clientCode || '']));
+
+    const invoices = [];
+    for (const o of rows) {
+      // Only collections DEPOSITED on or before asOf count toward the
+      // as-of balance - that is what makes the report reproducible.
+      const paidAsOf = (o.arPayments || [])
+        .filter(p => new Date(p.depositDate || p.collectionDate || p.createdAt) <= asOf)
+        .reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      const face = Number(o.total) || 0;
+      const balance = Math.round((face - paidAsOf) * 100) / 100;
+      if (balance <= 0.01) continue;                       // settled as of the report date
+
+      const ageDays = Math.floor((asOf - new Date(o.createdAt)) / 86400000);
+      invoices.push({
+        _id: o._id,
+        orderNumber: o.orderNumber,
+        client: keyOf(o),
+        clientCode: codeByName.get(keyOf(o)) || '',
+        paymentMethod: o.paymentMethod,
+        invoiceDate: o.createdAt,
+        dueDate: o.arDueDate || null,
+        termsDays: o.arTermsDays ?? null,
+        faceTotal: Math.round(face * 100) / 100,
+        paid: Math.round(paidAsOf * 100) / 100,
+        balance,
+        ageDays,
+        bucket: bucketFor(ageDays),
+        overdue: o.arDueDate ? new Date(o.arDueDate) < asOf : false,
+        lastCollection: (o.arPayments || []).length
+          ? (o.arPayments || []).reduce((a, b) =>
+              new Date(a.collectionDate || a.createdAt) > new Date(b.collectionDate || b.createdAt) ? a : b).collectionDate || null
+          : null,
+      });
+    }
+
+    const blank = () => ({ current: 0, d31_60: 0, d61_90: 0, d90_plus: 0, total: 0, count: 0 });
+    const totals = blank();
+    const byClientMap = new Map();
+    for (const inv of invoices) {
+      totals[inv.bucket] += inv.balance; totals.total += inv.balance; totals.count += 1;
+      if (!byClientMap.has(inv.client)) byClientMap.set(inv.client, { client: inv.client, clientCode: inv.clientCode, ...blank() });
+      const c = byClientMap.get(inv.client);
+      c[inv.bucket] += inv.balance; c.total += inv.balance; c.count += 1;
+    }
+    const round = (o) => { for (const k of ['current', 'd31_60', 'd61_90', 'd90_plus', 'total']) o[k] = Math.round(o[k] * 100) / 100; return o; };
+
+    res.json({
+      success: true,
+      asOf,
+      invoices: invoices.sort((a, b) => b.ageDays - a.ageDays),
+      byClient: [...byClientMap.values()].map(round).sort((a, b) => b.total - a.total),
+      totals: round(totals),
+      overdueTotal: Math.round(invoices.filter(i => i.overdue).reduce((s, i) => s + i.balance, 0) * 100) / 100,
+    });
+  } catch (err) {
+    log.error({ err }, 'A/R report failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ============================================================
+// COLLECTION REPORT - money actually collected against A/R in a date range.
+//
+// The A/R report answers "what is still owed"; this answers "what came in".
+// Every collection posted through settle-ar is one line, and the range can be
+// read on either date, because the two answer different questions:
+//   basis=collection (default) - what the collectors brought in that week
+//   basis=deposit              - what actually hit the bank that week, which
+//                                is the figure that ties to a bank statement
+// Undeposited collections (collected in range, deposited after it, or not yet)
+// are called out separately - that gap is exactly where cash goes missing.
+// ============================================================
+app.get('/api/reports/collections', verifyToken, ...canViewReports, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    const basis = req.query.basis === 'deposit' ? 'deposit' : 'collection';
+    const from = start ? dayStart(start) : dayStart(new Date(Date.now() - 30 * 86400000));
+    const to = end ? dayEnd(end) : dayEnd(new Date());
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()))
+      return res.status(400).json({ success: false, error: 'Invalid date range.' });
+    if (from > to) return res.status(400).json({ success: false, error: 'Start date must be on or before the end date.' });
+
+    // Any order carrying at least one collection - the date filter is applied
+    // per payment below, since one invoice can be collected across months.
+    const orders = await Order.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
+      'arPayments.0': { $exists: true },
+    }, {
+      orderNumber: 1, customerName: 1, total: 1, paymentMethod: 1, createdAt: 1,
+      arPaidAmount: 1, arPayments: 1, arSettled: 1, clientAccountId: 1, clientId: 1,
+    }).lean();
+
+    const clients = await ClientAccount.find({}, { name: 1, clientCode: 1 }).lean();
+    const { keyOf } = resolveClientKey(clients);
+
+    const rows = [];
+    let undepositedTotal = 0;
+    for (const o of orders) {
+      for (const p of (o.arPayments || [])) {
+        const collectedOn = p.collectionDate ? new Date(p.collectionDate) : new Date(p.createdAt);
+        const depositedOn = p.depositDate ? new Date(p.depositDate) : null;
+        const basisDate = basis === 'deposit' ? depositedOn : collectedOn;
+        if (!basisDate || basisDate < from || basisDate > to) continue;
+        const amt = Math.round((Number(p.amount) || 0) * 100) / 100;
+        // "In transit": collected inside the window but not yet banked, or
+        // banked only after the window closed.
+        const inTransit = !depositedOn || depositedOn > to;
+        if (basis === 'collection' && inTransit) undepositedTotal += amt;
+        rows.push({
+          orderId: o._id,
+          orderNumber: o.orderNumber,
+          client: keyOf(o),
+          invoiceTotal: Math.round((Number(o.total) || 0) * 100) / 100,
+          amount: amt,
+          collectionDate: collectedOn,
+          depositDate: depositedOn,
+          // Days the money sat with the collector before it was banked.
+          floatDays: depositedOn ? Math.max(0, Math.floor((dayStart(depositedOn) - dayStart(collectedOn)) / 86400000)) : null,
+          depositedTo: p.paymentMethod || '',
+          referenceNumber: p.referenceNumber || '',
+          note: p.note || '',
+          collectedBy: p.collectedBy || '',
+          recordedBy: p.recordedBy || '',
+          journalRef: p.journalRef || '',
+          settledInvoice: !!o.arSettled,
+        });
+      }
+    }
+
+    const sum = (list) => Math.round(list.reduce((s, r) => s + r.amount, 0) * 100) / 100;
+    const groupBy = (key, label) => {
+      const m = new Map();
+      for (const r of rows) {
+        const k = r[key] || '(none)';
+        if (!m.has(k)) m.set(k, { [label]: k, amount: 0, count: 0 });
+        const g = m.get(k); g.amount += r.amount; g.count += 1;
+      }
+      return [...m.values()].map(g => ({ ...g, amount: Math.round(g.amount * 100) / 100 })).sort((a, b) => b.amount - a.amount);
+    };
+
+    // Daily series on whichever date basis was asked for - the shape the UI
+    // charts and the one that ties to a bank statement when basis=deposit.
+    const dailyMap = new Map();
+    for (const r of rows) {
+      const d = (basis === 'deposit' ? r.depositDate : r.collectionDate);
+      const k = new Date(d).toISOString().slice(0, 10);
+      dailyMap.set(k, Math.round(((dailyMap.get(k) || 0) + r.amount) * 100) / 100);
+    }
+
+    res.json({
+      success: true,
+      period: { start: from, end: to, basis },
+      collections: rows.sort((a, b) => new Date(b[basis === 'deposit' ? 'depositDate' : 'collectionDate']) - new Date(a[basis === 'deposit' ? 'depositDate' : 'collectionDate'])),
+      totalCollected: sum(rows),
+      count: rows.length,
+      // Only meaningful on the collection basis - on a deposit basis every row
+      // is by definition already banked.
+      undepositedTotal: Math.round(undepositedTotal * 100) / 100,
+      byClient: groupBy('client', 'client'),
+      byMethod: groupBy('depositedTo', 'method'),
+      byCollector: groupBy('collectedBy', 'collector'),
+      daily: [...dailyMap.entries()].map(([date, amount]) => ({ date, amount })).sort((a, b) => a.date.localeCompare(b.date)),
+    });
+  } catch (err) {
+    log.error({ err }, 'Collection report failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });

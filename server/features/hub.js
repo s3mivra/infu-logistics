@@ -21,6 +21,7 @@ export default function registerHub(ctx) {
     Inventory, StockCard, JournalEntry, Order,
     verifyToken,
     requireStaff: requireAuth, requireSuperAdmin,
+    logAudit,
   } = ctx;
 
   // Internal auth: partner calls use a shared linkToken
@@ -209,7 +210,19 @@ export default function registerHub(ctx) {
     res.json({ transfers });
   });
 
-  // Send transfer - multi-item shipment.
+  // Request an outbound shipment - multi-item stock transfer slip.
+  //
+  // This is NOT the same thing as the Transfer tab inside Inventory. That one
+  // shuffles stock between two locations of the SAME business (one set of
+  // books, one inventory - see /api/stock-transfers). This one moves stock to
+  // a DIFFERENT business in the hub network, so it leaves our books entirely
+  // and lands on theirs.
+  //
+  // Because of that, it goes through the same gate as an internal stock
+  // transfer or a requisition: the slip is filed here as 'Requested', and the
+  // partner is only notified once it has been approved. Nothing crosses a
+  // business boundary on one person's say-so.
+  //
   // Body: { partnerSlug, items: [{itemId, qty, batchIdx?, note?}] }
   app.post('/api/hub/transfers/send', verifyToken, requireAuth, async (req, res) => {
     const { partnerSlug, items } = req.body || {};
@@ -255,20 +268,64 @@ export default function registerHub(ctx) {
         reference,
         shipmentRef,
         batchInfo,
-        status: 'Pending',
+        status: 'Requested',
+        requestedBy: req.user?.name || '',
       });
       created.push(transfer);
     }
 
     if (created.length === 0) return res.status(400).json({ error: errors.join('; ') });
 
-    let warning;
+    try {
+      await logAudit?.(req, {
+        action: 'create', entity: 'CrossTransfer', entityId: shipmentRef,
+        after: { partnerSlug, lines: created.length, status: 'Requested' },
+      });
+    } catch { /* audit is non-fatal */ }
+
+    res.json({
+      ok: true, shipmentRef, transfers: created,
+      status: 'Requested',
+      message: 'Transfer slip filed - awaiting approval before the partner is notified.',
+      errors: errors.length ? errors : undefined,
+    });
+  });
+
+  // ── APPROVE an outbound transfer slip ──────────────────────────────────────
+  // Approving is what actually sends: stock availability is re-checked here
+  // (it can have been sold or transferred away since the slip was filed), the
+  // lines flip to 'Pending', and only then is the partner told to expect them.
+  // If the partner can't be reached the slip stays 'Requested' so approving
+  // again retries cleanly - a half-sent shipment is worse than an unsent one.
+  app.post('/api/hub/transfers/approve', verifyToken, requireAuth, requireSuperAdmin, async (req, res) => {
+    const { shipmentRef } = req.body || {};
+    if (!shipmentRef) return res.status(400).json({ error: 'shipmentRef is required.' });
+
+    const lines = await CrossTransfer.find({
+      businessType: BUSINESS_TYPE, shipmentRef, direction: 'outbound', status: 'Requested',
+    });
+    if (!lines.length) return res.status(404).json({ error: 'No pending transfer request found for that slip.' });
+
+    const link = await LinkedBusiness.findOne({
+      businessType: BUSINESS_TYPE, partnerSlug: lines[0].partnerSlug, status: 'active',
+    }).lean();
+    if (!link) return res.status(404).json({ error: 'No active link with that partner.' });
+
+    // Re-validate stock at approval time, not just at request time.
+    const shortages = [];
+    for (const t of lines) {
+      const item = await Inventory.findOne({ _id: t.itemId, businessType: BUSINESS_TYPE }, { itemName: 1, stockQty: 1, unit: 1 }).lean();
+      if (!item) { shortages.push(`${t.itemName}: item no longer exists.`); continue; }
+      if (item.stockQty < t.qtyBase) shortages.push(`${item.itemName}: need ${t.qtyBase}${t.unit}, only ${item.stockQty}${item.unit} on hand.`);
+    }
+    if (shortages.length) return res.status(409).json({ error: `Cannot approve - stock changed since this slip was filed. ${shortages.join(' ')}` });
+
     try {
       await partnerCall(link, '/api/hub/internal/transfer-notify', {
         shipmentRef,
         fromSlug: TENANT,
         fromName: TENANT,
-        items: created.map(t => ({
+        items: lines.map(t => ({
           reference: t.reference,
           itemName:  t.itemName,
           unit:      t.unit,
@@ -277,10 +334,44 @@ export default function registerHub(ctx) {
         })),
       });
     } catch (e) {
-      warning = `Transfers saved but could not notify partner: ${e.message}`;
+      return res.status(502).json({ error: `Approved nothing - could not notify partner: ${e.message}. The slip is still awaiting approval; try again.` });
     }
 
-    res.json({ ok: true, shipmentRef, transfers: created, errors: errors.length ? errors : undefined, ...(warning ? { warning } : {}) });
+    const approvedAt = new Date();
+    await CrossTransfer.updateMany(
+      { businessType: BUSINESS_TYPE, shipmentRef, direction: 'outbound', status: 'Requested' },
+      { $set: { status: 'Pending', approvedBy: req.user?.name || '', approvedAt } },
+    );
+
+    try {
+      await logAudit?.(req, {
+        action: 'approve', entity: 'CrossTransfer', entityId: shipmentRef,
+        after: { partnerSlug: lines[0].partnerSlug, lines: lines.length, approvedAt },
+      });
+    } catch { /* audit is non-fatal */ }
+
+    const transfers = await CrossTransfer.find({ businessType: BUSINESS_TYPE, shipmentRef, direction: 'outbound' }).lean();
+    res.json({ ok: true, shipmentRef, transfers });
+  });
+
+  // ── REJECT an outbound transfer slip (before it is sent) ───────────────────
+  // No stock or ledger movement has happened yet at 'Requested', so this only
+  // closes the slip. The partner was never told about it, so nobody to notify.
+  app.post('/api/hub/transfers/reject', verifyToken, requireAuth, requireSuperAdmin, async (req, res) => {
+    const { shipmentRef, reason } = req.body || {};
+    if (!shipmentRef) return res.status(400).json({ error: 'shipmentRef is required.' });
+
+    const result = await CrossTransfer.updateMany(
+      { businessType: BUSINESS_TYPE, shipmentRef, direction: 'outbound', status: 'Requested' },
+      { $set: { status: 'Rejected', rejectedBy: req.user?.name || '', rejectionReason: String(reason || '').trim().slice(0, 500) } },
+    );
+    if (!result.modifiedCount) return res.status(404).json({ error: 'No pending transfer request found for that slip.' });
+
+    try {
+      await logAudit?.(req, { action: 'reject', entity: 'CrossTransfer', entityId: shipmentRef, after: { lines: result.modifiedCount, reason: reason || '' } });
+    } catch { /* audit is non-fatal */ }
+
+    res.json({ ok: true, shipmentRef, rejected: result.modifiedCount });
   });
 
   // Internal: partner notifies us of inbound transfers
@@ -426,19 +517,27 @@ export default function registerHub(ctx) {
     res.json({ ok: true, transfer });
   });
 
-  // Cancel outbound transfer (before partner accepts)
+  // Cancel outbound transfer - either withdrawing a slip that was never
+  // approved, or pulling back an approved one before the partner accepts.
   app.post('/api/hub/transfers/:id/cancel', verifyToken, requireAuth, async (req, res) => {
     const transfer = await CrossTransfer.findOne({
-      _id: req.params.id, businessType: BUSINESS_TYPE, direction: 'outbound', status: 'Pending',
+      _id: req.params.id, businessType: BUSINESS_TYPE, direction: 'outbound',
+      status: { $in: ['Requested', 'Pending'] },
     });
     if (!transfer) return res.status(404).json({ error: 'Transfer not found or already processed.' });
 
-    transfer.status = 'Rejected';
+    // A slip still awaiting approval was never announced to the partner, so
+    // there is nothing on their side to retract.
+    const wasAnnounced = transfer.status === 'Pending';
+    transfer.status = 'Cancelled';
+    transfer.rejectedBy = req.user?.name || '';
     await transfer.save();
 
-    const link = await LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug: transfer.partnerSlug, status: 'active' }).lean();
-    if (link) {
-      try { await partnerCall(link, '/api/hub/internal/transfer-status', { reference: transfer.reference, status: 'Rejected' }); } catch {}
+    if (wasAnnounced) {
+      const link = await LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug: transfer.partnerSlug, status: 'active' }).lean();
+      if (link) {
+        try { await partnerCall(link, '/api/hub/internal/transfer-status', { reference: transfer.reference, status: 'Rejected' }); } catch {}
+      }
     }
 
     res.json({ ok: true, transfer });

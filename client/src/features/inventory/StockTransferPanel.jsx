@@ -121,7 +121,15 @@ export default function StockTransferPanel({
 
       {/* New transfer request */}
       <div className={card}>
-        <h3 className="text-white font-black uppercase tracking-wider text-sm mb-3">New Transfer Request</h3>
+        <h3 className="text-white font-black uppercase tracking-wider text-sm mb-1">New Transfer Request</h3>
+        {/* Spell out the boundary this tab works within - the Hub tab's
+            transfer moves stock to a DIFFERENT business, which is a different
+            money path entirely. Users conflate the two constantly. */}
+        <p className="text-fg/40 text-[11px] mb-3">
+          Moves stock between locations of <span className="text-fg/70 font-bold">this</span> business - same inventory, same books.
+          To ship stock to another business in your network, use the Hub tab.
+          Either way the slip needs approval before stock moves.
+        </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
           <div>
             <label className="text-[10px] text-white uppercase font-bold block mb-1">From (source)</label>

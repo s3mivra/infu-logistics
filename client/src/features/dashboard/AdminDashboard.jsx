@@ -15,6 +15,7 @@ import { DashboardProvider } from './DashboardContext';
 import EditInventoryModal from '../inventory/modals/EditInventoryModal';
 import SpoilageModal from '../inventory/modals/SpoilageModal';
 import SettleArModal from '../ledger/modals/SettleArModal';
+import ArHistoryModal from '../ledger/modals/ArHistoryModal';
 import RevolvingFundNewModal from '../ledger/modals/RevolvingFundNewModal';
 import RevolvingFundDisburseModal from '../ledger/modals/RevolvingFundDisburseModal';
 import RevolvingFundReplenishModal from '../ledger/modals/RevolvingFundReplenishModal';
@@ -233,7 +234,11 @@ export default function AdminDashboard() {
 
   const [inventory, setInventory] = useState([]);
   const [journalEntries, setJournalEntries] = useState([]);
-  const [invForm, setInvForm] = useState({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000', stockLocation: '', stockCategory: '' });
+  // `revolvingFundId` set means the goods are paid out of that fund - the
+  // fund's own balance moves, not just the COA account. `supplierId` /
+  // `supplierName` only matter when the credit account is A/P, where they
+  // attribute the liability to a supplier.
+  const [invForm, setInvForm] = useState({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, creditAccount: '111000', revolvingFundId: '', supplierId: '', supplierName: '', stockLocation: '', stockCategory: '' });
   // --- INVENTORY EDIT MODAL ---
   const [editInvModal, setEditInvModal] = useState(null);   // { item } | null
   const [editInvForm, setEditInvForm] = useState({ itemCode: '', itemName: '', unit: '', unitCost: '', lowStockThreshold: '', expiryDate: '', expiryWarnDays: 7, displayUnit: '', packSize: '', stockLocation: '', stockCategory: '', srp: '' });
@@ -287,6 +292,24 @@ export default function AdminDashboard() {
   const vatRegistered = systemSettings.vatEnabled === true;
   const vatRegLabel = vatRegistered ? 'VAT REGISTERED' : 'NON-VAT REGISTERED';
   const vatStmtSuffix = vatRegistered ? '(VAT)' : '(Non-VAT)';
+  // --- A/R REPORT (invoice-level aged schedule) ---
+  // Distinct from the ledger's live A/R tab: this is the printable schedule,
+  // one line per open invoice, reproducible for a past `asOf` date.
+  const [arReport, setArReport] = useState(null);
+  const [arReportAsOf, setArReportAsOf] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+  // --- COLLECTION REPORT (money actually received against A/R) ---
+  // `basis` picks which date the range is read on: 'collection' (what the
+  // collectors brought in) or 'deposit' (what reached the bank, which is the
+  // figure that ties to a bank statement).
+  const [collectionReport, setCollectionReport] = useState(null);
+  const [collRange, setCollRange] = useState({
+    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
+    end: new Date().toISOString().slice(0, 10),
+    basis: 'collection',
+  });
   // --- SALES BY PAYMENT ---
   const [salesByPayment, setSalesByPayment] = useState(null);
   const [sbpRange, setSbpRange] = useState({
@@ -538,7 +561,14 @@ export default function AdminDashboard() {
   const [expenseForm, setExpenseForm] = useState({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', date: new Date().toISOString().slice(0,10) });
   const [expenseSubmitting, setExpenseSubmitting] = useState(false);
   const [settleModal, setSettleModal] = useState(null); // { order }
-  const [settleForm, setSettleForm] = useState({ amount: '', paymentMethod: 'Cash on Hand', note: '', referenceNumber: '' });
+  // `collectionDate` is when the money left the client's hands; `depositDate`
+  // is when it reached the account being debited. They are routinely different
+  // (collected Friday, banked Monday) and the collection report reads either.
+  const todayLocal = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const [settleForm, setSettleForm] = useState({ amount: '', paymentMethod: 'Cash on Hand', note: '', referenceNumber: '', collectionDate: todayLocal(), depositDate: todayLocal(), collectedBy: '' });
+  // A/R payment history for one invoice - { order, payments, totalPaid, balance }.
+  const [arHistory, setArHistory] = useState(null);
+  const [arHistoryLoading, setArHistoryLoading] = useState(false);
   const [settleSubmitting, setSettleSubmitting] = useState(false);
 
   // --- SERVER-SIDE ANALYTICS ---
@@ -2802,27 +2832,56 @@ const updateStatus = async (orderId, newStatus) => {
     if (settleSubmitting || !settleModal?.order) return;
     const amt = parseFloat(settleForm.amount);
     if (!amt || amt <= 0) return ui.alert('Enter a valid amount.');
+    // The remaining balance, not the invoice face value - a second collection
+    // on a partly paid invoice may only take what is left.
+    const outstanding = settleModal.order.balance ?? settleModal.order.total;
+    if (amt > outstanding + 0.01) return ui.alert(`Amount exceeds the ₱${outstanding.toFixed(2)} still outstanding on this invoice.`);
+    if (settleForm.depositDate && settleForm.collectionDate && settleForm.depositDate < settleForm.collectionDate)
+      return ui.alert('Deposit date cannot be earlier than the collection date.');
     setSettleSubmitting(true);
     try {
       const res = await apiFetch(`/api/orders/${settleModal.order._id}/settle-ar`, {
         method: 'POST',
-        body: JSON.stringify({ amount: amt, paymentMethod: settleForm.paymentMethod, note: settleForm.note, referenceNumber: settleForm.referenceNumber })
+        body: JSON.stringify({
+          amount: amt, paymentMethod: settleForm.paymentMethod, note: settleForm.note,
+          referenceNumber: settleForm.referenceNumber,
+          collectionDate: settleForm.collectionDate, depositDate: settleForm.depositDate,
+          collectedBy: settleForm.collectedBy,
+        })
       });
       const data = await res.json();
       if (data.success) {
         setSettleModal(null);
-        setSettleForm({ amount: '', paymentMethod: 'Cash on Hand', note: '', referenceNumber: '' });
+        setSettleForm({ amount: '', paymentMethod: 'Cash on Hand', note: '', referenceNumber: '', collectionDate: todayLocal(), depositDate: todayLocal(), collectedBy: '' });
         fetchArOutstanding();
         fetchArAgeing();
-        ui.alert('A/R settled successfully.');
+        // Say plainly whether the invoice closed or is still carrying a
+        // balance - the whole point of partial collections.
+        ui.alert(data.fullySettled
+          ? 'Collection recorded. Invoice fully settled.'
+          : `Collection recorded. ₱${(data.balance ?? 0).toFixed(2)} still outstanding on this invoice.`);
       } else {
-        ui.alert(data.error || 'Failed to settle A/R.');
+        ui.alert(data.error || 'Failed to record the collection.');
       }
     } catch (err) {
       ui.alert('Network error.');
     } finally {
       setSettleSubmitting(false);
     }
+  };
+
+  // Open the payment history for one receivable - every collection posted
+  // against it with the running balance after each.
+  const openArHistory = async (order) => {
+    setArHistory({ order, payments: [], totalPaid: 0, balance: order.balance ?? order.total });
+    setArHistoryLoading(true);
+    try {
+      const res = await apiFetch(`/api/orders/${order._id}/ar-payments`);
+      const data = await res.json();
+      if (data.success) setArHistory({ order: { ...order, ...data.order }, payments: data.payments, totalPaid: data.totalPaid, balance: data.balance });
+      else { setArHistory(null); ui.alert(data.error || 'Could not load payment history.'); }
+    } catch { setArHistory(null); ui.alert('Network error.'); }
+    finally { setArHistoryLoading(false); }
   };
   const downloadJournalCsv = async () => {
     if (activeAdmin?.role !== 'superadmin') return;
@@ -3115,6 +3174,9 @@ const updateStatus = async (orderId, newStatus) => {
           addedStock: Number(restockData.addedStock),
           totalCost: Number(restockData.totalCost),
           creditAccount: restockData.creditAccount || '111000',
+          revolvingFundId: restockData.revolvingFundId || undefined,
+          supplierId: restockData.supplierId || undefined,
+          supplierName: restockData.supplierName || undefined,
         })
       });
       if (res.ok) {
@@ -3212,7 +3274,14 @@ const updateStatus = async (orderId, newStatus) => {
       if (!(await ui.confirm(`Restock "${existingItem.itemName}"?\n\nQty: +${qtyBought} pcs\nCost per pack: ₱${costPerPack.toFixed(2)}\nTotal cost: ₱${totalCost.toFixed(2)}`))) return;
       await apiFetch(`/api/inventory/restock/${existingItem._id}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ addedStock: restockBase, totalCost, expiryDate: invFormEff.expiryDate || null, productionDate: invFormEff.productionDate || null, creditAccount: invFormEff.creditAccount || '111000' })
+        body: JSON.stringify({
+          addedStock: restockBase, totalCost,
+          expiryDate: invFormEff.expiryDate || null, productionDate: invFormEff.productionDate || null,
+          creditAccount: invFormEff.creditAccount || '111000',
+          revolvingFundId: invFormEff.revolvingFundId || undefined,
+          supplierId: invFormEff.supplierId || undefined,
+          supplierName: invFormEff.supplierName || undefined,
+        })
       });
     } else {
       // ADD BRAND NEW ITEM
@@ -3233,12 +3302,15 @@ const updateStatus = async (orderId, newStatus) => {
       };
 
       payload.creditAccount = invForm.creditAccount || '111000';
+      if (invForm.revolvingFundId) payload.revolvingFundId = invForm.revolvingFundId;
+      if (invForm.supplierId) payload.supplierId = invForm.supplierId;
+      if (invForm.supplierName) payload.supplierName = invForm.supplierName;
       const res = await apiFetch(`/api/inventory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await res.json();
       if (!data.success) return ui.alert(data.error);
     }
 
-    setInvForm({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', productionDate: '', expiryWarnDays: 7, creditAccount: '111000', stockLocation: '', stockCategory: '' });
+    setInvForm({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', productionDate: '', expiryWarnDays: 7, creditAccount: '111000', revolvingFundId: '', supplierId: '', supplierName: '', stockLocation: '', stockCategory: '' });
     fetchERPData();
   };
   const deleteInventory = async (id) => { if(await ui.confirm('Delete inventory item?')) { await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' }); fetchERPData(); } };
@@ -4820,6 +4892,22 @@ const updateStatus = async (orderId, newStatus) => {
   };
 
   // ── Sales by payment ─────────────────────────────────────────────────────────
+  const fetchArReport = async () => {
+    try {
+      const res = await apiFetch(`/api/reports/ar-aging?asOf=${arReportAsOf}`);
+      const d = await res.json();
+      if (d.success) setArReport(d); else ui.alert(d.error || 'Could not load the A/R report.');
+    } catch (err) { console.error('fetchArReport', err); }
+  };
+
+  const fetchCollectionReport = async () => {
+    try {
+      const res = await apiFetch(`/api/reports/collections?start=${collRange.start}&end=${collRange.end}&basis=${collRange.basis}`);
+      const d = await res.json();
+      if (d.success) setCollectionReport(d); else ui.alert(d.error || 'Could not load the collection report.');
+    } catch (err) { console.error('fetchCollectionReport', err); }
+  };
+
   const fetchSalesByPayment = async () => {
     try { const res = await apiFetch(`/api/reports/sales-by-payment?start=${sbpRange.start}&end=${sbpRange.end}`); const d = await res.json(); if (d.success) setSalesByPayment(d); }
     catch (err) { console.error('fetchSalesByPayment', err); }
@@ -6256,6 +6344,7 @@ const updateStatus = async (orderId, newStatus) => {
     expenseModal, setExpenseModal, expenseCategories, fetchExpenseCategories,
     expenseForm, setExpenseForm, expenseSubmitting, submitExpense, expenseList, fetchExpenses,
     settleModal, setSettleModal, settleForm, setSettleForm, settleSubmitting, setSettleSubmitting,
+    arHistory, setArHistory, arHistoryLoading, openArHistory, todayLocal,
     submitArSettlement,
     // ── Revolving funds ─────────────────────────────────────────────────────
     rfFunds, rfLoading, rfActiveFund, setRfActiveFund, rfTxs, rfTxTotal, rfTxPage, rfTxPages,
@@ -6375,6 +6464,8 @@ const updateStatus = async (orderId, newStatus) => {
     systemSettings, toggleQROrders, toggleAutoClose, toggleImages, saveSetting,
     // ── Sales by Payment ─────────────────────────────────────────────────────
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
+    arReport, arReportAsOf, setArReportAsOf, fetchArReport,
+    collectionReport, collRange, setCollRange, fetchCollectionReport,
     // ── Summary Sales (channel breakdown) ────────────────────────────────────
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
     salesLineItems, sliRange, setSliRange, fetchSalesLineItems, exportSalesLineItemsPDF,
@@ -6620,6 +6711,7 @@ const updateStatus = async (orderId, newStatus) => {
 
       {/* ===== A/R SETTLEMENT MODAL ===== */}
       <SettleArModal />
+      <ArHistoryModal />
 
       {/* --- PRICING & DISCOUNTS TAB --- */}
       {activeTab === 'pricing' && <Suspense fallback={<TabFallback />}><PricingTab ctx={ctx} /></Suspense>}

@@ -1,32 +1,100 @@
-﻿import { Check, X } from 'lucide-react';
+import { Check, X, History } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
 
-// Extracted from AdminDashboard. Reads shared dashboard state via
-// useDashboard() rather than props - see DashboardContext.
+// Record ONE collection against a receivable. Collections are partial by
+// design: paying ₱1,500 against a ₱1,700 invoice leaves ₱200 outstanding and
+// the invoice stays open, so the form works off the remaining balance rather
+// than the invoice face value.
+//
+// Reads shared dashboard state via useDashboard() rather than props - see
+// DashboardContext.
 export default function SettleArModal() {
-  const { setSettleForm, setSettleModal, settleForm, settleModal, settleSubmitting, submitArSettlement } = useDashboard();
+  const { setSettleForm, setSettleModal, settleForm, settleModal, settleSubmitting, submitArSettlement, openArHistory } = useDashboard();
 
   if (!(settleModal)) return null;
 
+  const order = settleModal.order;
+  const face = Number(order.total) || 0;
+  const paid = Number(order.paid ?? order.arPaidAmount) || 0;
+  // Older rows (and any caller that hasn't been updated) carry no `balance` -
+  // fall back to the face value, which is correct when nothing is paid yet.
+  const outstanding = Number(order.balance ?? face) || 0;
+  const entered = parseFloat(settleForm.amount);
+  const remainingAfter = Number.isFinite(entered) ? Math.max(0, +(outstanding - entered).toFixed(2)) : outstanding;
+  const isPartial = Number.isFinite(entered) && entered > 0 && entered < outstanding - 0.01;
+  const overpaying = Number.isFinite(entered) && entered > outstanding + 0.01;
+  const datesOutOfOrder = settleForm.collectionDate && settleForm.depositDate && settleForm.depositDate < settleForm.collectionDate;
+
+  const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
   return (
-      <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in" onClick={e => { if (e.target === e.currentTarget) setSettleModal(null); }} role="dialog" aria-modal="true" aria-label="Settle A/R">
-        <div className="bg-surface border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col animate-scale-in">
+      <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in" onClick={e => { if (e.target === e.currentTarget) setSettleModal(null); }} role="dialog" aria-modal="true" aria-label="Record A/R collection">
+        <div className="bg-surface border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col max-h-[92vh] animate-scale-in">
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
             <div>
-              <h2 className="text-fg font-black text-lg">Settle A/R</h2>
-              <p className="text-fg/40 text-xs mt-0.5">{settleModal.order.orderNumber} · {settleModal.order.paymentMethod}</p>
+              <h2 className="text-fg font-black text-lg">Record Collection</h2>
+              <p className="text-fg/40 text-xs mt-0.5">{order.orderNumber} · {order.paymentMethod}</p>
             </div>
-            <button onClick={() => setSettleModal(null)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/50 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
+            <div className="flex items-center gap-2">
+              {paid > 0 && (
+                <button onClick={() => { setSettleModal(null); openArHistory(order); }} title="Payment history"
+                  className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/50 flex items-center justify-center transition" aria-label="Payment history"><History size={16}/></button>
+              )}
+              <button onClick={() => setSettleModal(null)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/50 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
+            </div>
           </div>
-          <div className="px-5 py-4 space-y-3">
+          <div className="px-5 py-4 space-y-3 overflow-y-auto">
+            {/* Outstanding is what is STILL owed. When part of the invoice has
+                already been collected, the face value is shown alongside so the
+                figure reconciles against the original sale. */}
             <div className="bg-white/5 rounded-xl p-3 border border-white/10">
-              <p className="text-fg/40 text-[10px] font-bold uppercase">Outstanding</p>
-              <p className="text-3xl text-brand font-black tabular-nums">₱{settleModal.order.total.toFixed(2)}</p>
+              <p className="text-fg/40 text-[10px] font-bold uppercase">Still Outstanding</p>
+              <p className="text-3xl text-brand font-black tabular-nums">{peso(outstanding)}</p>
+              {paid > 0 && (
+                <p className="text-[10px] text-fg/40 mt-1 tabular-nums">
+                  {peso(paid)} already collected of {peso(face)} invoiced
+                </p>
+              )}
             </div>
             <div>
               <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Amount Received *</label>
               <input type="number" min="0" step="0.01" value={settleForm.amount} onChange={e => setSettleForm({...settleForm, amount: e.target.value})}
-                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg text-xl font-black tabular-nums outline-none focus:border-brand/60" />
+                className={`w-full bg-page-bg border rounded-xl px-3 py-3 text-fg text-xl font-black tabular-nums outline-none focus:border-brand/60 ${overpaying ? 'border-red-500/60' : 'border-white/10'}`} />
+              <div className="flex items-center justify-between mt-1.5 gap-2">
+                {/* Partial payment is normal, not an error - say what will be
+                    left rather than blocking the user. */}
+                {overpaying ? (
+                  <p className="text-[10px] text-red-400 font-bold">Exceeds the {peso(outstanding)} outstanding.</p>
+                ) : isPartial ? (
+                  <p className="text-[10px] text-yellow-400 font-bold tabular-nums">Partial · {peso(remainingAfter)} will remain outstanding.</p>
+                ) : (
+                  <p className="text-[10px] text-fg/25">Enter less than the full amount to record a partial collection.</p>
+                )}
+                <button type="button" onClick={() => setSettleForm({ ...settleForm, amount: outstanding.toFixed(2) })}
+                  className="shrink-0 text-[10px] font-black uppercase tracking-wider bg-white/5 hover:bg-white/10 text-fg/60 px-2 py-1 rounded-lg transition">
+                  Full
+                </button>
+              </div>
+            </div>
+            {/* The two dates answer different questions and are routinely
+                days apart: cash collected on a Friday round is often only
+                banked the following Monday. The journal entry is booked on
+                the deposit date, because that is when the account moved. */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Collection Date *</label>
+                <input type="date" value={settleForm.collectionDate || ''} onChange={e => setSettleForm({...settleForm, collectionDate: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60" />
+                <p className="text-[9px] text-fg/25 mt-1">When the client paid.</p>
+              </div>
+              <div>
+                <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Deposit Date *</label>
+                <input type="date" value={settleForm.depositDate || ''} min={settleForm.collectionDate || undefined} onChange={e => setSettleForm({...settleForm, depositDate: e.target.value})}
+                  className={`w-full bg-page-bg border rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60 ${datesOutOfOrder ? 'border-red-500/60' : 'border-white/10'}`} />
+                <p className={`text-[9px] mt-1 ${datesOutOfOrder ? 'text-red-400 font-bold' : 'text-fg/25'}`}>
+                  {datesOutOfOrder ? 'Cannot precede collection.' : 'When it hit the account.'}
+                </p>
+              </div>
             </div>
             <div>
               <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Deposited To *</label>
@@ -38,6 +106,12 @@ export default function SettleArModal() {
                 <option>Maya</option>
                 <option>Maribank</option>
               </select>
+            </div>
+            <div>
+              <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Collected By (optional)</label>
+              <input type="text" placeholder="Rider / collector name..." value={settleForm.collectedBy || ''} onChange={e => setSettleForm({...settleForm, collectedBy: e.target.value})}
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+              <p className="text-[9px] text-fg/25 mt-1">Who physically took the money in - the collection report groups by this.</p>
             </div>
             <div>
               <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Reference No. (optional)</label>
@@ -52,9 +126,9 @@ export default function SettleArModal() {
             </div>
           </div>
           <div className="px-5 pb-5 pt-3 border-t border-white/10">
-            <button onClick={submitArSettlement} disabled={settleSubmitting}
+            <button onClick={submitArSettlement} disabled={settleSubmitting || overpaying || datesOutOfOrder}
               className="w-full py-4 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active-press transition shadow-elev-2 disabled:opacity-50 min-h-[56px] flex items-center justify-center gap-2">
-              <Check size={18}/> {settleSubmitting ? 'Settling…' : 'Confirm Settlement'}
+              <Check size={18}/> {settleSubmitting ? 'Recording…' : isPartial ? 'Record Partial Payment' : 'Record Collection'}
             </button>
           </div>
         </div>

@@ -932,13 +932,57 @@ app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
     // parents: 111 (Cash), 112 (Bank), 113 (E-Wallet), 220 (AP). Any sub-account
     // under those parents works too - so users can route to specific cash drawers,
     // bank accounts, or supplier-specific AP sub-ledgers added in the COA UI.
-    const { creditAccount: rawCreditCode } = req.body;
+    const { creditAccount: rawCreditCode, supplierId, supplierName, revolvingFundId } = req.body;
     const isAllowedParent = (c) => /^(111|112|113|220)/.test(String(c || ''));
     const resolved = acctMeta(rawCreditCode);
-    const creditCode = (resolved && isAllowedParent(rawCreditCode)) ? rawCreditCode : '111000';
-    const creditName = acctMeta(creditCode)?.name || 'Cash on Hand';
+    let creditCode = (resolved && isAllowedParent(rawCreditCode)) ? rawCreditCode : '111000';
+    let creditName = acctMeta(creditCode)?.name || 'Cash on Hand';
+    const isOnCredit = String(creditCode).startsWith('220');
 
-    const newItem = await Inventory.create(req.body);
+    // Cost has to be known before the item is created, because a fund-funded
+    // receipt must reserve the money first - creating stock we then can't pay
+    // for would leave the two books disagreeing.
+    const plannedCost = (Number(req.body.stockQty) || 0) * (Number(req.body.unitCost) || 0);
+
+    // Revolving-fund funding: the fund is a real pot of money with its own
+    // running balance, so crediting 114000 alone would let the ledger and the
+    // fund's own book drift apart. Reserve conditionally so two simultaneous
+    // receipts can't both spend the same last peso.
+    let fund = null;
+    if (revolvingFundId) {
+      if (!mongoose.Types.ObjectId.isValid(revolvingFundId))
+        return res.status(400).json({ success: false, error: 'Invalid revolving fund.' });
+      fund = await RevolvingFund.findOne({ _id: revolvingFundId, isActive: true });
+      if (!fund) return res.status(404).json({ success: false, error: 'Revolving fund not found or closed.' });
+      if (plannedCost > fund.currentBalance)
+        return res.status(400).json({ success: false, error: `Insufficient fund balance in ${fund.name}. Available: PHP ${fund.currentBalance.toFixed(2)}, needed: PHP ${plannedCost.toFixed(2)}.` });
+      if (plannedCost > 0) {
+        const reserved = await RevolvingFund.updateOne(
+          { _id: fund._id, isActive: true, currentBalance: { $gte: plannedCost } },
+          { $inc: { currentBalance: -plannedCost } },
+        );
+        if (!reserved.modifiedCount)
+          return res.status(409).json({ success: false, error: `Fund balance changed while receiving - ${fund.name} no longer covers PHP ${plannedCost.toFixed(2)}. Try again.` });
+      }
+      creditCode = '114000';
+      creditName = 'Petty Cash / Revolving Fund';
+    }
+
+    const supplierAttr = isOnCredit
+      ? { supplierId: supplierId ? String(supplierId) : null, supplierName: String(supplierName || '').trim() }
+      : {};
+
+    let newItem;
+    try {
+      newItem = await Inventory.create(req.body);
+    } catch (createErr) {
+      // Hand the reserved money back - no stock was created, so no money left.
+      if (fund && plannedCost > 0) {
+        try { await RevolvingFund.updateOne({ _id: fund._id }, { $inc: { currentBalance: plannedCost } }); }
+        catch (e) { log?.error?.({ err: e, fundId: String(fund._id) }, 'Failed to release revolving-fund hold after item creation failed'); }
+      }
+      throw createErr;
+    }
 
     // --- AUTO-JOURNAL FOR PURCHASING INVENTORY ---
     const totalCost = newItem.stockQty * newItem.unitCost;
@@ -948,11 +992,32 @@ app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
         { accountCode: '130000', accountName: 'Inventory Asset', debit: totalCost, credit: 0 },
         { accountCode: creditCode, accountName: creditName,   debit: 0, credit: totalCost }
       ];
-      await JournalEntry.create({ reference, description: `Purchased ${newItem.stockQty}${newItem.unit} of ${newItem.itemName}`, lines, totalDebit: totalCost, totalCredit: totalCost });
+      await JournalEntry.create({
+        reference,
+        description: `Purchased ${newItem.stockQty}${newItem.unit} of ${newItem.itemName}${isOnCredit ? ` on credit${supplierAttr.supplierName ? ` from ${supplierAttr.supplierName}` : ''}` : ''}${fund ? ` from ${fund.name}` : ''}`,
+        lines, totalDebit: totalCost, totalCredit: totalCost, ...supplierAttr,
+      });
+    }
+
+    // Record the draw on the fund's own ledger. Non-fatal: stock and money have
+    // both already moved, and failing here would report nothing happened.
+    if (fund && plannedCost > 0) {
+      try {
+        const after = await RevolvingFund.findById(fund._id, { currentBalance: 1 }).lean();
+        await RevolvingFundTx.create({
+          fundId: fund._id, type: 'disbursement', amount: plannedCost,
+          description: `Inventory received: ${newItem.itemName} (${purchRef})`,
+          // Debit side is Inventory Asset, not an expense - stock bought from
+          // the fund is capitalised and expensed as COGS when it sells.
+          categoryCode: '130000',
+          performedBy: req.user?.name || '',
+          balanceAfter: after?.currentBalance ?? fund.currentBalance,
+        });
+      } catch (e) { log?.error?.({ err: e }, 'Revolving-fund receipt tx log failed'); }
     }
 
     emitToMgr('erpUpdated');
-    res.json({ success: true, item: newItem });
+    res.json({ success: true, item: newItem, fundedBy: fund ? { fundId: String(fund._id), name: fund.name } : null, onCredit: isOnCredit });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -998,17 +1063,93 @@ app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, r
 // inventory document instead of racing the WAC math. Retries on transient
 // transient errors (WriteConflict / TransientTransactionError).
 app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, res) => {
-  const { addedStock, totalCost, expiryDate, productionDate, creditAccount: rawCreditCode } = req.body;
+  const {
+    addedStock, totalCost, expiryDate, productionDate,
+    creditAccount: rawCreditCode,
+    // Funding source extras:
+    //   supplierId/supplierName - attribution when receiving on credit (A/P),
+    //     so "how much do we owe this supplier" stays answerable without
+    //     reading journal descriptions.
+    //   revolvingFundId         - receive out of a petty-cash/revolving fund;
+    //     the fund's balance is actually drawn down, not just the COA account.
+    supplierId, supplierName, revolvingFundId,
+  } = req.body;
   const isAllowedParent = (c) => /^(111|112|113|220)/.test(String(c || ''));
   const resolved = acctMeta(rawCreditCode);
-  const creditCode = (resolved && isAllowedParent(rawCreditCode)) ? rawCreditCode : '111000';
-  const creditName = acctMeta(creditCode)?.name || 'Cash on Hand';
+  let creditCode = (resolved && isAllowedParent(rawCreditCode)) ? rawCreditCode : '111000';
+  let creditName = acctMeta(creditCode)?.name || 'Cash on Hand';
+
+  const cost = Number(totalCost) || 0;
+  const isOnCredit = String(creditCode).startsWith('220');
+
+  // ── Revolving-fund funding ────────────────────────────────────────────────
+  // The fund is a real pot of money with its own running balance, so a receipt
+  // paid out of it has to move that balance - crediting 114000 alone would let
+  // the ledger and the fund's own book drift apart. The balance is reserved
+  // BEFORE any stock posts, with a conditional update so two simultaneous
+  // receipts can't both spend the same last peso; if the restock then fails,
+  // the reservation is handed back below.
+  let fund = null;
+  if (revolvingFundId) {
+    if (!mongoose.Types.ObjectId.isValid(revolvingFundId))
+      return res.status(400).json({ success: false, error: 'Invalid revolving fund.' });
+    fund = await RevolvingFund.findOne({ _id: revolvingFundId, isActive: true });
+    if (!fund) return res.status(404).json({ success: false, error: 'Revolving fund not found or closed.' });
+    if (cost > fund.currentBalance)
+      return res.status(400).json({ success: false, error: `Insufficient fund balance in ${fund.name}. Available: PHP ${fund.currentBalance.toFixed(2)}, needed: PHP ${cost.toFixed(2)}.` });
+    if (cost > 0) {
+      const reserved = await RevolvingFund.updateOne(
+        { _id: fund._id, isActive: true, currentBalance: { $gte: cost } },
+        { $inc: { currentBalance: -cost } },
+      );
+      if (!reserved.modifiedCount)
+        return res.status(409).json({ success: false, error: `Fund balance changed while receiving - ${fund.name} no longer covers PHP ${cost.toFixed(2)}. Try again.` });
+    }
+    // Petty Cash / Revolving Fund is the asset the money leaves, whatever the
+    // caller passed as creditAccount.
+    creditCode = '114000';
+    creditName = 'Petty Cash / Revolving Fund';
+  }
+
+  // Hand the reserved money back when the receipt itself never posted, so a
+  // failed restock doesn't quietly shrink the fund.
+  const releaseFundHold = async () => {
+    if (fund && cost > 0) {
+      try { await RevolvingFund.updateOne({ _id: fund._id }, { $inc: { currentBalance: cost } }); }
+      catch (e) { log?.error?.({ err: e, fundId: String(fund._id) }, 'Failed to release revolving-fund hold after restock failure'); }
+    }
+  };
+
+  // Record the draw on the fund's own ledger once the stock has actually
+  // posted. Non-fatal: the money and the stock have both already moved, and
+  // failing the request here would tell the user nothing happened when it did.
+  const recordFundDraw = async (item, reference) => {
+    if (!fund || cost <= 0) return;
+    try {
+      const after = await RevolvingFund.findById(fund._id, { currentBalance: 1 }).lean();
+      await RevolvingFundTx.create({
+        fundId: fund._id, type: 'disbursement', amount: cost,
+        description: `Inventory received: ${addedStock} x ${item.itemName}${reference ? ` (${reference})` : ''}`,
+        // The debit side is Inventory Asset, not an expense - stock bought from
+        // the fund is capitalised, and expensed later as COGS when it sells.
+        categoryCode: '130000',
+        performedBy: req.user?.name || '',
+        balanceAfter: after?.currentBalance ?? fund.currentBalance,
+      });
+    } catch (e) { log?.error?.({ err: e }, 'Revolving-fund receipt tx log failed'); }
+  };
+
+  // Supplier attribution only means anything on the A/P side.
+  const supplierAttr = isOnCredit
+    ? { supplierId: supplierId ? String(supplierId) : null, supplierName: String(supplierName || '').trim() }
+    : {};
 
   const MAX_TXN_ATTEMPTS = 3;
   for (let attempt = 1; attempt <= MAX_TXN_ATTEMPTS; attempt++) {
     const session = await mongoose.startSession();
     try {
       let savedItem = null;
+      let savedRef = null;
       await session.withTransaction(async () => {
         const item = await Inventory.findById(req.params.id).session(session);
         if (!item) throw Object.assign(new Error('Item not found'), { httpStatus: 404 });
@@ -1024,6 +1165,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
         item.unitCost = newUnitCost;
 
         const rstRef = await mkSeqRef('INV-RST');
+        savedRef = rstRef;
 
         if ((expiryDate || productionDate) && addedStock > 0) {
           item.expiryBatches = addBatch(item.expiryBatches || [], {
@@ -1058,15 +1200,18 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
             { accountCode: creditCode, accountName: creditName,      debit: 0, credit: totalCost }
           ];
           await JournalEntry.create([{
-            reference: rstRef, description: `Restocked ${addedStock}${item.unit} of ${item.itemName}`,
-            lines, totalDebit: totalCost, totalCredit: totalCost
+            reference: rstRef,
+            description: `Restocked ${addedStock}${item.unit} of ${item.itemName}${isOnCredit ? ` on credit${supplierAttr.supplierName ? ` from ${supplierAttr.supplierName}` : ''}` : ''}${fund ? ` from ${fund.name}` : ''}`,
+            lines, totalDebit: totalCost, totalCredit: totalCost,
+            ...supplierAttr,
           }], { session });
         }
       });
 
+      await recordFundDraw(savedItem, savedRef);
       emitToMgr('erpUpdated');
-      await logAudit(req, { action: 'restock', entity: 'Inventory', entityId: req.params.id, after: { addedStock, totalCost } });
-      return res.json({ success: true, item: savedItem });
+      await logAudit(req, { action: 'restock', entity: 'Inventory', entityId: req.params.id, after: { addedStock, totalCost, creditCode, fund: fund?.name || null, supplier: supplierAttr.supplierName || null } });
+      return res.json({ success: true, item: savedItem, fundedBy: fund ? { fundId: String(fund._id), name: fund.name } : null, onCredit: isOnCredit });
     } catch (error) {
       // Standalone MongoDB without a replica set throws this - fall through to
       // the legacy non-transactional path so dev environments still work.
@@ -1076,6 +1221,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
         continue; // retry
       }
       if (error?.httpStatus === 404) {
+        await releaseFundHold();
         return res.status(404).json({ success: false, error: 'Item not found' });
       }
       const isUnsupported = /Transaction numbers are only allowed|Transactions are not supported/i.test(msg);
@@ -1084,7 +1230,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
         log?.warn?.('Restock txn unsupported, falling back to non-transactional path.');
         try {
           const item = await Inventory.findById(req.params.id);
-          if (!item) return res.status(404).json({ success: false, error: 'Item not found' });
+          if (!item) { await releaseFundHold(); return res.status(404).json({ success: false, error: 'Item not found' }); }
           const currentTotalValue = item.stockQty * item.unitCost;
           const newTotalValue = currentTotalValue + totalCost;
           const newStockQty = item.stockQty + addedStock;
@@ -1104,16 +1250,19 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
               { accountCode: '130000', accountName: 'Inventory Asset', debit: totalCost, credit: 0 },
               { accountCode: creditCode, accountName: creditName, debit: 0, credit: totalCost },
             ];
-            await JournalEntry.create({ reference: rstRef, description: `Restocked ${addedStock}${item.unit} of ${item.itemName}`, lines, totalDebit: totalCost, totalCredit: totalCost });
+            await JournalEntry.create({ reference: rstRef, description: `Restocked ${addedStock}${item.unit} of ${item.itemName}${isOnCredit ? ` on credit${supplierAttr.supplierName ? ` from ${supplierAttr.supplierName}` : ''}` : ''}${fund ? ` from ${fund.name}` : ''}`, lines, totalDebit: totalCost, totalCredit: totalCost, ...supplierAttr });
           }
+          await recordFundDraw(item, rstRef);
           emitToMgr('erpUpdated');
-          await logAudit(req, { action: 'restock', entity: 'Inventory', entityId: req.params.id, after: { addedStock, totalCost, fallback: true } });
-          return res.json({ success: true, item });
+          await logAudit(req, { action: 'restock', entity: 'Inventory', entityId: req.params.id, after: { addedStock, totalCost, fallback: true, creditCode, fund: fund?.name || null, supplier: supplierAttr.supplierName || null } });
+          return res.json({ success: true, item, fundedBy: fund ? { fundId: String(fund._id), name: fund.name } : null, onCredit: isOnCredit });
         } catch (fallbackErr) {
+          await releaseFundHold();
           captureError(req, fallbackErr);
           return res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : fallbackErr.message });
         }
       }
+      await releaseFundHold();
       captureError(req, error);
       return res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : error.message });
     } finally {

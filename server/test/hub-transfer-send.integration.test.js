@@ -50,16 +50,94 @@ describe('POST /api/hub/transfers/send', () => {
     expect(res.body.ok).toBe(true);
     expect(res.body.transfers).toHaveLength(1);
     expect(res.body.transfers[0].qtyBase).toBe(4000);
-    // Unreachable partner URL - shipment still lands locally, just warns.
-    expect(res.body.warning).toMatch(/could not notify partner/);
+    // Sending only FILES the slip now - the partner is not told about a
+    // cross-business shipment until it has been approved.
+    expect(res.body.status).toBe('Requested');
 
     const CrossTransfer = mongoose.model('CrossTransfer');
     const saved = await CrossTransfer.findOne({ partnerSlug: 'real-shape-partner', itemId }).lean();
     expect(saved).toBeTruthy();
-    expect(saved.status).toBe('Pending');
+    expect(saved.status).toBe('Requested');
+    expect(saved.requestedBy).toBe('SendBoss');
 
     const invAfter = await mongoose.model('Inventory').findById(itemId).lean();
-    // Outbound stock isn't deducted until the partner accepts - stays on hand as Pending.
+    // Outbound stock isn't deducted until the partner accepts - stays on hand.
     expect(invAfter.stockQty).toBe(5000);
+  });
+
+  it('approval is what notifies the partner - an unreachable partner leaves the slip awaiting approval', async () => {
+    const invRes = await request(app).post('/api/inventory').set(auth(superToken))
+      .send({ itemName: 'Hub Approve Widget', unit: 'ml', stockQty: 900, unitCost: 1 });
+    const itemId = invRes.body.item._id;
+
+    await mongoose.model('LinkedBusiness').create({
+      businessType: 'log', role: 'client', partnerSlug: 'approve-partner', partnerName: 'Approve Partner',
+      partnerUrl: 'http://unreachable.invalid', linkToken: 'approve-token', status: 'active',
+    });
+
+    const filed = await request(app).post('/api/hub/transfers/send').set(auth(superToken))
+      .send({ partnerSlug: 'approve-partner', items: [{ itemId, qty: 100 }] });
+    const { shipmentRef } = filed.body;
+
+    // Partner is unreachable, so approval must fail LOUDLY and leave the slip
+    // untouched - a half-sent cross-business shipment is worse than an unsent one.
+    const approve = await request(app).post('/api/hub/transfers/approve').set(auth(superToken))
+      .send({ shipmentRef });
+    expect(approve.status).toBe(502);
+
+    const CrossTransfer = mongoose.model('CrossTransfer');
+    const still = await CrossTransfer.findOne({ shipmentRef }).lean();
+    expect(still.status).toBe('Requested');
+    expect(still.approvedBy).toBe('');
+  });
+
+  it('refuses to approve a slip whose stock has since been transferred away', async () => {
+    const invRes = await request(app).post('/api/inventory').set(auth(superToken))
+      .send({ itemName: 'Hub Shortage Widget', unit: 'ml', stockQty: 500, unitCost: 1 });
+    const itemId = invRes.body.item._id;
+
+    await mongoose.model('LinkedBusiness').create({
+      businessType: 'log', role: 'client', partnerSlug: 'shortage-partner', partnerName: 'Shortage Partner',
+      partnerUrl: 'http://unreachable.invalid', linkToken: 'shortage-token', status: 'active',
+    });
+
+    const filed = await request(app).post('/api/hub/transfers/send').set(auth(superToken))
+      .send({ partnerSlug: 'shortage-partner', items: [{ itemId, qty: 500 }] });
+    const { shipmentRef } = filed.body;
+
+    // Stock walks out between filing and approval.
+    await mongoose.model('Inventory').updateOne({ _id: itemId }, { $set: { stockQty: 10 } });
+
+    const approve = await request(app).post('/api/hub/transfers/approve').set(auth(superToken))
+      .send({ shipmentRef });
+    expect(approve.status).toBe(409);
+    expect(approve.body.error).toMatch(/stock changed/i);
+  });
+
+  it('rejecting a filed slip closes it without ever touching stock', async () => {
+    const invRes = await request(app).post('/api/inventory').set(auth(superToken))
+      .send({ itemName: 'Hub Reject Widget', unit: 'ml', stockQty: 300, unitCost: 1 });
+    const itemId = invRes.body.item._id;
+
+    await mongoose.model('LinkedBusiness').create({
+      businessType: 'log', role: 'client', partnerSlug: 'reject-partner', partnerName: 'Reject Partner',
+      partnerUrl: 'http://unreachable.invalid', linkToken: 'reject-token', status: 'active',
+    });
+
+    const filed = await request(app).post('/api/hub/transfers/send').set(auth(superToken))
+      .send({ partnerSlug: 'reject-partner', items: [{ itemId, qty: 50 }] });
+    const { shipmentRef } = filed.body;
+
+    const rejected = await request(app).post('/api/hub/transfers/reject').set(auth(superToken))
+      .send({ shipmentRef, reason: 'Not authorised this month.' });
+    expect(rejected.status).toBe(200);
+    expect(rejected.body.rejected).toBe(1);
+
+    const saved = await mongoose.model('CrossTransfer').findOne({ shipmentRef }).lean();
+    expect(saved.status).toBe('Rejected');
+    expect(saved.rejectionReason).toBe('Not authorised this month.');
+
+    const invAfter = await mongoose.model('Inventory').findById(itemId).lean();
+    expect(invAfter.stockQty).toBe(300);
   });
 });

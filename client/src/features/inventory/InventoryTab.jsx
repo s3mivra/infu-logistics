@@ -70,6 +70,7 @@ export default function InventoryTab({ ctx }) {
     pricingItemsPerPage, pricingPage, printOrderSlip, printXReading, products,
     removeAddOnFromOrder, removeComplimentary, removeMaterial, removeSize, restockData,
     rfActiveFund, rfDisbForm, rfDisbModal, rfDisbSubmitting, rfFunds,
+    suppliers, fetchSuppliers,
     rfLoading, rfNewForm, rfNewModal, rfNewSubmitting, rfReplForm,
     rfReplModal, rfReplSubmitting, rfTxPage, rfTxPages, rfTxTotal,
     rfTxs, scpwdOpen, setAccountingPage, setActiveInventoryItem, setActiveTab,
@@ -166,6 +167,15 @@ export default function InventoryTab({ ctx }) {
     } catch { ui.alert('Network error.'); }
     finally { setEodExporting(false); }
   };
+  // The receive form's "Paid From" picker offers revolving funds and suppliers,
+  // so both lists have to be loaded before it can be used - they are not part
+  // of the inventory payload itself.
+  useEffect(() => {
+    fetchRfFunds?.();
+    fetchSuppliers?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (!openActionMenu) return;
     const close = () => setOpenActionMenu(null);
@@ -1188,20 +1198,63 @@ export default function InventoryTab({ ctx }) {
                   <div>
                     <label className="text-[10px] text-fg/40 font-bold uppercase tracking-wider block mb-1">Paid From / Charge To</label>
                     <select
-                      value={invForm.creditAccount || ''}
-                      onChange={e => setInvForm({...invForm, creditAccount: e.target.value})}
+                      value={invForm.revolvingFundId ? `fund:${invForm.revolvingFundId}` : (invForm.creditAccount || '')}
+                      onChange={e => {
+                        const v = e.target.value;
+                        // A fund is not a COA account - picking one routes the
+                        // credit to Petty Cash / Revolving Fund server-side AND
+                        // draws down that fund's own balance.
+                        if (v.startsWith('fund:')) setInvForm({ ...invForm, revolvingFundId: v.slice(5), creditAccount: '114000', supplierId: '', supplierName: '' });
+                        else setInvForm({ ...invForm, revolvingFundId: '', creditAccount: v });
+                      }}
                       className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 transition"
                     >
                       <option value="" disabled>Select payment source</option>
                       {(procurementCreditAccounts || []).map(a => (
                         <option key={a.code} value={a.code}>{a.name} ({a.code}){String(a.code).startsWith('220') ? ' · On Credit' : ''}</option>
                       ))}
+                      {(rfFunds || []).filter(f => f.isActive !== false).length > 0 && (
+                        <optgroup label="Revolving Funds">
+                          {(rfFunds || []).filter(f => f.isActive !== false).map(f => (
+                            <option key={f._id} value={`fund:${f._id}`}>{f.name} · ₱{(f.currentBalance || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })} available</option>
+                          ))}
+                        </optgroup>
+                      )}
                     </select>
-                    {String(invForm.creditAccount || '').startsWith('220') && (
-                      <p className="text-[9px] text-yellow-400/70 mt-1.5 bg-yellow-500/8 border border-yellow-500/15 rounded-md px-2 py-1">
-                        Goods on credit — settle later via AP payment.
-                      </p>
+                    {/* On credit, the liability needs a name against it or
+                        "how much do we owe X" can't be answered later. */}
+                    {String(invForm.creditAccount || '').startsWith('220') && !invForm.revolvingFundId && (
+                      <>
+                        <p className="text-[9px] text-yellow-400/70 mt-1.5 bg-yellow-500/8 border border-yellow-500/15 rounded-md px-2 py-1">
+                          Goods on credit — settle later via AP payment.
+                        </p>
+                        <select
+                          value={invForm.supplierId || ''}
+                          onChange={e => {
+                            const sup = (suppliers || []).find(x => String(x._id) === e.target.value);
+                            setInvForm({ ...invForm, supplierId: e.target.value, supplierName: sup?.name || '' });
+                          }}
+                          className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-fg text-sm outline-none focus:border-accent/50 transition mt-1.5"
+                        >
+                          <option value="">Supplier (optional)</option>
+                          {(suppliers || []).map(sup => (
+                            <option key={sup._id} value={sup._id}>{sup.name}</option>
+                          ))}
+                        </select>
+                      </>
                     )}
+                    {invForm.revolvingFundId && (() => {
+                      const f = (rfFunds || []).find(x => String(x._id) === String(invForm.revolvingFundId));
+                      const cost = (parseFloat(invForm.packQty) || 0) * (parseFloat(invForm.costPerPack) || 0);
+                      const short = f && cost > (f.currentBalance || 0);
+                      return (
+                        <p className={`text-[9px] mt-1.5 rounded-md px-2 py-1 border ${short ? 'text-red-400 bg-red-500/8 border-red-500/20' : 'text-fg/50 bg-white/[0.03] border-white/10'}`}>
+                          {short
+                            ? `Cost ₱${cost.toFixed(2)} exceeds the ₱${(f.currentBalance || 0).toFixed(2)} left in ${f.name}.`
+                            : `Draws ₱${cost.toFixed(2)} from ${f?.name || 'the fund'} — its balance and its own transaction log both move.`}
+                        </p>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -1211,7 +1264,12 @@ export default function InventoryTab({ ctx }) {
               {(() => {
                 const isApAccount = String(invForm.creditAccount || '').startsWith('220');
                 const totalCost = (parseFloat(invForm.packQty) || 0) * (parseFloat(invForm.costPerPack) || 0);
-                const blocked = !isApAccount && cashOnHand < totalCost;
+                // A fund-funded receipt is checked against the FUND's balance,
+                // not Cash on Hand - they are different pots of money.
+                const fund = invForm.revolvingFundId ? (rfFunds || []).find(x => String(x._id) === String(invForm.revolvingFundId)) : null;
+                const blocked = fund
+                  ? totalCost > (fund.currentBalance || 0)
+                  : (!isApAccount && cashOnHand < totalCost);
                 return (
                   <button
                     onClick={addInventory}

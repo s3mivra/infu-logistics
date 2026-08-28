@@ -1,7 +1,7 @@
 ﻿// orders routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { resolveCreditLimit, checkCreditAvailable } from '../lib/credit.js';
+import { resolveCreditLimit, checkCreditAvailable, arBalance } from '../lib/credit.js';
 import { title } from '../lib/normalize.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
@@ -187,6 +187,7 @@ export default function registerOrders(ctx) {
     verifyClientToken,
     requireSuperAdmin,
     requireSuperOrAdmin,
+    requirePermission,
     verifyOrderAuth,
   } = ctx;
 
@@ -785,8 +786,10 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
           paymentMethod: { $ne: 'Cash' },
           isComplimentary: { $ne: true },
           arSettled: { $ne: true },
-        }, { total: 1 }).lean();
-        const outstanding = openRows.reduce((s, r) => s + (Number(r.total) || 0), 0);
+        }, { total: 1, arPaidAmount: 1 }).lean();
+        // Partial collections free up credit headroom immediately - a client who
+        // has paid down half an invoice should not still be blocked for its full value.
+        const outstanding = openRows.reduce((s, r) => s + arBalance(r), 0);
         const check = checkCreditAvailable({ limit, outstanding, orderTotal: finalTotal });
         if (!check.allowed) {
           return res.status(409).json({
@@ -1792,12 +1795,22 @@ app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
 });
 
 // ============================================================
-// A/R SETTLEMENT - record delivery-partner payout received
-// Used when Grab / Foodpanda / Manual Delivery payouts arrive
+// A/R SETTLEMENT - record a collection against a receivable
+// Handles both the delivery-partner payout case (Grab / Foodpanda / Manual
+// Delivery) and ordinary on-account client collections.
+//
+// PARTIAL BY DESIGN: paying 1,500 against a 1,700 invoice posts 1,500 and
+// leaves 200 outstanding - the order only flips arSettled once the running
+// arPaidAmount reaches the face total. Each collection also records two dates
+// that are genuinely different in practice:
+//   collectionDate - when the money left the client's hands
+//   depositDate    - when it landed in the bank/fund being debited
+// The journal entry is dated on the deposit date, because that is when the
+// asset account actually moved.
 // ============================================================
 app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { amount, paymentMethod, note, referenceNumber } = req.body;
+    const { amount, paymentMethod, note, referenceNumber, collectionDate, depositDate, collectedBy } = req.body;
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
     if (order.paymentMethod === 'Cash')
@@ -1805,10 +1818,25 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     if (order.arSettled) return res.status(400).json({ success: false, error: 'Order already settled.' });
     if (order.status !== 'Completed') return res.status(400).json({ success: false, error: 'Order must be Completed before settlement.' });
 
-    const amt = parseFloat(amount);
+    const amt = Math.round((parseFloat(amount) || 0) * 100) / 100;
     if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Settlement amount must be > 0.' });
-    if (amt > order.total + 0.01)
-      return res.status(400).json({ success: false, error: `Settlement amount exceeds outstanding A/R (₱${order.total.toFixed(2)}).` });
+
+    // Outstanding is the REMAINING balance, not the invoice face value - a
+    // second collection on a partly paid invoice may only take the rest.
+    const outstanding = arBalance(order);
+    if (amt > outstanding + 0.01)
+      return res.status(400).json({ success: false, error: `Settlement amount exceeds outstanding A/R (P${outstanding.toFixed(2)} remaining of P${(order.total || 0).toFixed(2)}).` });
+
+    // Dates default to "now" so the existing one-shot flow keeps working
+    // unchanged for callers that don't send them.
+    const collectedOn = collectionDate ? new Date(collectionDate) : new Date();
+    const depositedOn = depositDate ? new Date(depositDate) : collectedOn;
+    if (Number.isNaN(collectedOn.getTime())) return res.status(400).json({ success: false, error: 'Invalid collection date.' });
+    if (Number.isNaN(depositedOn.getTime())) return res.status(400).json({ success: false, error: 'Invalid deposit date.' });
+    // Money cannot be banked before it was collected - a reversed pair here is
+    // almost always a typo, and it would make the collection report nonsense.
+    if (depositedOn.getTime() < dayStart(collectedOn).getTime())
+      return res.status(400).json({ success: false, error: 'Deposit date cannot be earlier than the collection date.' });
 
     // Debit-side account from configurable payment-method map.
     const debitAcct = accountForPaymentMethod(paymentMethod);
@@ -1819,7 +1847,14 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
       try { await logAudit(req, { action: 'unmappedTender', entity: 'PaymentMethodMap', entityId: paymentMethod || '(none)', after: { account: debitAcct.code, order: order.orderNumber } }); } catch { /* non-fatal */ }
     }
 
-    const reference = mkRef('ARS', order.orderNumber);
+    const paidBefore = Math.round((Number(order.arPaidAmount) || 0) * 100) / 100;
+    const paidAfter = Math.round((paidBefore + amt) * 100) / 100;
+    const fullySettled = paidAfter >= (Number(order.total) || 0) - 0.01;
+    const seq = (order.arPayments?.length || 0) + 1;
+
+    // Sequence the reference so a second collection on the same order doesn't
+    // reuse the first one's journal reference.
+    const reference = `${mkRef('ARS', order.orderNumber)}${seq > 1 ? `-${seq}` : ''}`;
 
     const lines = [
       { accountCode: debitAcct.code, accountName: debitAcct.name, debit: amt, credit: 0 },
@@ -1828,26 +1863,85 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     assertBalanced(lines, reference);
 
     await JournalEntry.create({
+      date: depositedOn,
       reference,
-      description: `A/R settlement: ${order.orderNumber} via ${order.paymentMethod}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}${note ? ` (${note})` : ''}`,
+      description: `A/R collection ${seq > 1 ? `#${seq} ` : ''}${fullySettled ? '(final)' : '(partial)'} ${order.orderNumber} via ${order.paymentMethod}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}${note ? ` (${note})` : ''}`,
       lines, totalDebit: amt, totalCredit: amt,
     });
 
-    order.arSettled = true;
-    order.arSettledAt = new Date();
-    order.arSettledAmount = amt;
+    order.arPayments.push({
+      amount: amt,
+      paymentMethod: paymentMethod || 'Cash on Hand',
+      referenceNumber: referenceNumber || '',
+      note: note || '',
+      collectionDate: collectedOn,
+      depositDate: depositedOn,
+      collectedBy: String(collectedBy || '').trim(),
+      recordedBy: req.user?.name || '',
+      journalRef: reference,
+    });
+    order.arPaidAmount = paidAfter;
+
+    // The legacy arSettled* fields keep tracking the LATEST collection so
+    // existing readers (exports, printed docs) stay correct; arSettled itself
+    // now only flips on full payment.
+    order.arSettledAt = depositedOn;
+    order.arSettledAmount = paidAfter;
     order.arSettledMethod = paymentMethod || 'Cash on Hand';
     order.arSettledNote = note || '';
     order.arSettledReference = referenceNumber || '';
+    order.arSettled = fullySettled;
     await order.save();
+
+    try {
+      await logAudit(req, {
+        action: fullySettled ? 'settle-ar' : 'settle-ar-partial',
+        entity: 'Order', entityId: order.orderNumber,
+        after: { amount: amt, paidAfter, balance: arBalance(order), collectionDate: collectedOn, depositDate: depositedOn, reference },
+      });
+    } catch { /* audit is non-fatal */ }
 
     emitToMgr('erpUpdated');
     emitToOps('orderUpdated', order.toObject());
-    res.json({ success: true, order });
+    res.json({ success: true, order, balance: arBalance(order), fullySettled });
   } catch (err) {
     log.error({ err }, 'A/R settlement failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
+});
+
+// --- A/R PAYMENT HISTORY for one order ---------------------------------------
+// Every collection posted against this receivable, oldest first, with the
+// running balance after each - the "why does this invoice still show 200"
+// answer without digging through the general ledger.
+app.get('/api/orders/:id/ar-payments', verifyToken, requireStaff, requirePermission('accounting.view'), async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id, {
+      orderNumber: 1, customerName: 1, total: 1, paymentMethod: 1, createdAt: 1,
+      arPaidAmount: 1, arPayments: 1, arSettled: 1, arDueDate: 1, arTermsDays: 1,
+    }).lean();
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+
+    let running = 0;
+    const payments = [...(order.arPayments || [])]
+      .sort((a, b) => new Date(a.collectionDate || a.createdAt) - new Date(b.collectionDate || b.createdAt))
+      .map(p => {
+        running = Math.round((running + (Number(p.amount) || 0)) * 100) / 100;
+        return { ...p, balanceAfter: Math.max(0, Math.round(((Number(order.total) || 0) - running) * 100) / 100) };
+      });
+
+    res.json({
+      success: true,
+      order: {
+        _id: order._id, orderNumber: order.orderNumber, customerName: order.customerName,
+        total: order.total, paymentMethod: order.paymentMethod, createdAt: order.createdAt,
+        arDueDate: order.arDueDate, arSettled: order.arSettled,
+      },
+      payments,
+      totalPaid: Math.round((Number(order.arPaidAmount) || 0) * 100) / 100,
+      balance: arBalance(order),
+    });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // --- PARTIAL DELIVERY ROUTE ---

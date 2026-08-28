@@ -6,7 +6,7 @@
 // meant matching rows by NAME, which breaks the moment two clients share one.
 // Here everything is keyed by account id.
 /* eslint-disable no-unused-vars */
-import { ageingBuckets, resolveCreditLimit, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
+import { ageingBuckets, resolveCreditLimit, withArBalance, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
 
 import { captureError } from '../lib/errorLog.js';
 
@@ -62,7 +62,7 @@ export default function registerClients(ctx) {
         $or: [{ clientAccountId: { $in: ids } }, { clientId: { $in: ids } }],
       }, {
         clientAccountId: 1, clientId: 1, total: 1, status: 1, createdAt: 1,
-        paymentMethod: 1, isComplimentary: 1, arSettled: 1, isParked: 1,
+        paymentMethod: 1, isComplimentary: 1, arSettled: 1, isParked: 1, arPaidAmount: 1,
       }).lean();
 
       const byClient = new Map(ids.map(id => [id, []]));
@@ -85,7 +85,9 @@ export default function registerClients(ctx) {
         // Aged A/R uses COMPLETED sales only (a real book receivable), while
         // exposure counts everything committed - the same distinction the
         // credit gate and the ageing report already make.
-        const aged = ageingBuckets(list.filter(o => o.status === 'Completed' && isReceivable(o)));
+        // withArBalance restates each order's `total` as its unpaid remainder, so
+        // a partly collected invoice ages on what is left rather than face value.
+        const aged = ageingBuckets(withArBalance(list.filter(o => o.status === 'Completed' && isReceivable(o))));
         const exposure = +list
           .filter(o => isLive(o) && isReceivable(o))
           .reduce((s, o) => s + (Number(o.total) || 0), 0)
@@ -141,7 +143,7 @@ export default function registerClients(ctx) {
         ...orderMatchesClient(req.params.id),
       }, {
         orderNumber: 1, billingNumber: 1, status: 1, total: 1, paymentMethod: 1,
-        createdAt: 1, arSettled: 1, items: 1,
+        createdAt: 1, arSettled: 1, items: 1, arPaidAmount: 1,
       }).sort({ createdAt: -1 }).limit(limit).lean();
 
       res.json({

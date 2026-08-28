@@ -2,7 +2,10 @@
 import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus, LayoutGrid, BarChart3, ExternalLink, Boxes } from 'lucide-react';
 
 const statusColor = {
+  // Awaiting our own approval before the partner is even told about it.
+  Requested: 'bg-orange-500/15 text-orange-400',
   Pending:  'bg-yellow-500/15 text-yellow-400',
+  Cancelled: 'bg-white/10 text-fg/40',
   Accepted: 'bg-blue-500/15 text-blue-400',
   Released: 'bg-blue-500/15 text-blue-400',
   Received: 'bg-green-500/15 text-green-500',
@@ -133,6 +136,7 @@ export default function HubTab({ ctx }) {
       }
       setSendCart([]);
       if (warnings.length) setSendErr(`⚠ ${warnings.join('; ')}`);
+      else setSendErr('⚠ Transfer slip filed - it must be approved below before the partner is notified.');
       load();
     } catch (e) { setSendErr(e.message); }
     finally { setSendBusy(false); }
@@ -162,6 +166,25 @@ export default function HubTab({ ctx }) {
     load();
   };
 
+  // Approve/reject act on a whole SHIPMENT (every line filed together), not one
+  // line - the slip is signed off as a unit, the way a requisition is.
+  const [slipBusy, setSlipBusy] = useState('');
+  const actOnSlip = async (shipmentRef, action, reason) => {
+    setSlipBusy(shipmentRef); setErr('');
+    try {
+      const r = await authFetch(`/api/hub/transfers/${action}`, {
+        method: 'POST',
+        body: JSON.stringify({ shipmentRef, ...(reason ? { reason } : {}) }),
+      });
+      const d = await r.json();
+      // An unreachable partner leaves the slip untouched so approving again
+      // retries cleanly - say so rather than silently doing nothing.
+      if (!r.ok) { setErr(d.error || `Could not ${action} the transfer slip.`); return; }
+      load();
+    } catch (e) { setErr(e.message); }
+    finally { setSlipBusy(''); }
+  };
+
   const card  = 'bg-card-bg border border-white/10 rounded-xl p-4 mb-4';
   const input = 'w-full bg-page-bg border border-white/10 rounded-lg p-2.5 text-fg text-sm outline-none focus:border-accent';
   const btn   = (v = 'primary') => `px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider min-h-[40px] disabled:opacity-40 transition ${
@@ -172,6 +195,17 @@ export default function HubTab({ ctx }) {
 
   const partners = info?.links || [];
   const pendingInbound = transfers.filter(t => t.direction === 'inbound' && t.status === 'Pending');
+  // Outbound slips still awaiting approval, grouped by the shipment they were
+  // filed under so a multi-item transfer is approved as one slip.
+  const awaitingApproval = Object.values(
+    transfers
+      .filter(t => t.direction === 'outbound' && t.status === 'Requested')
+      .reduce((acc, t) => {
+        const k = t.shipmentRef || t.reference;
+        (acc[k] ||= { shipmentRef: k, partnerName: t.partnerName || t.partnerSlug, requestedBy: t.requestedBy, createdAt: t.createdAt, lines: [] }).lines.push(t);
+        return acc;
+      }, {})
+  );
 
   return (
     <div className="max-w-4xl mx-auto space-y-4 pb-10">
@@ -424,6 +458,14 @@ export default function HubTab({ ctx }) {
           <div className="flex items-center gap-2 mb-4">
             <Send size={15} className="text-accent" />
             <h3 className="text-fg font-black uppercase tracking-wider text-sm">New Transfer</h3>
+            {/* The counterpart note to the Inventory tab's transfer panel:
+                this one crosses a company boundary, so it posts real journal
+                entries on both sides and needs sign-off before it is sent. */}
+            <p className="text-fg/40 text-[11px] font-normal normal-case tracking-normal mt-1">
+              Ships stock to <span className="text-fg/70 font-bold">another business</span> in your network - it leaves your books and lands on theirs.
+              Moving stock between your own locations is the Transfer tab under Inventory.
+              Filing this creates a slip that must be approved before the partner is notified.
+            </p>
           </div>
 
           {/* FROM / TO */}
@@ -513,6 +555,56 @@ export default function HubTab({ ctx }) {
         </div>
       )}
 
+      {/* ── Outbound slips awaiting approval ──
+          Stock only leaves this business once someone signs the slip off - the
+          same gate the internal Inventory → Transfer tab uses, and the same
+          shape as a requisition or PO approval. Until then the partner has not
+          been told anything. */}
+      {awaitingApproval.length > 0 && (
+        <div className="bg-orange-500/8 border border-orange-500/20 rounded-xl p-4 mb-4">
+          <h3 className="text-orange-400 font-black uppercase tracking-wider text-sm mb-1 flex items-center gap-2">
+            <Send size={14} /> {awaitingApproval.length} Transfer Slip{awaitingApproval.length > 1 ? 's' : ''} Awaiting Approval
+          </h3>
+          <p className="text-fg/40 text-[11px] mb-3">The partner business is only notified once a slip is approved.</p>
+          <div className="space-y-3">
+            {awaitingApproval.map(slip => (
+              <div key={slip.shipmentRef} className="bg-card-bg rounded-lg p-3">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <p className="text-fg font-bold text-sm">
+                      To <span className="text-accent">{slip.partnerName}</span>
+                      <span className="text-fg/30 font-mono text-[10px] ml-2">{slip.shipmentRef}</span>
+                    </p>
+                    <p className="text-fg/40 text-[11px]">
+                      {slip.lines.length} line{slip.lines.length > 1 ? 's' : ''}
+                      {slip.requestedBy ? ` · filed by ${slip.requestedBy}` : ''}
+                      {slip.createdAt ? ` · ${new Date(slip.createdAt).toLocaleDateString()}` : ''}
+                    </p>
+                  </div>
+                  {isSuperAdmin && (
+                    <div className="flex gap-2 shrink-0">
+                      <button disabled={slipBusy === slip.shipmentRef} onClick={() => actOnSlip(slip.shipmentRef, 'approve')} className={btn()}>
+                        {slipBusy === slip.shipmentRef ? 'Approving…' : 'Approve & Send'}
+                      </button>
+                      <button disabled={slipBusy === slip.shipmentRef} onClick={() => actOnSlip(slip.shipmentRef, 'reject')} className={btn('red')}>Reject</button>
+                    </div>
+                  )}
+                </div>
+                <ul className="mt-2 space-y-1">
+                  {slip.lines.map(l => (
+                    <li key={l._id} className="text-xs text-fg/60 flex justify-between gap-3 border-t border-white/5 pt-1">
+                      <span className="text-fg/80 font-bold truncate">{l.itemName}</span>
+                      <span className="tabular-nums shrink-0">{l.qtyBase} {l.unit}</span>
+                    </li>
+                  ))}
+                </ul>
+                {!isSuperAdmin && <p className="text-fg/30 text-[10px] mt-2 italic">Waiting on someone with approval rights.</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Pending Inbound (action required) ── */}
       {pendingInbound.length > 0 && (
         <div className="bg-yellow-500/8 border border-yellow-500/20 rounded-xl p-4 mb-4">
@@ -581,8 +673,10 @@ export default function HubTab({ ctx }) {
                           <button onClick={() => act(t._id, 'reject')} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 min-h-[28px]">Reject</button>
                         </div>
                       )}
-                      {t.direction === 'outbound' && t.status === 'Pending' && (
-                        <button onClick={() => act(t._id, 'cancel')} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/8 text-fg/50 hover:bg-white/15 min-h-[28px]">Cancel</button>
+                      {t.direction === 'outbound' && ['Pending', 'Requested'].includes(t.status) && (
+                        <button onClick={() => act(t._id, 'cancel')} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/8 text-fg/50 hover:bg-white/15 min-h-[28px]">
+                          {t.status === 'Requested' ? 'Withdraw' : 'Cancel'}
+                        </button>
                       )}
                     </td>
                   </tr>

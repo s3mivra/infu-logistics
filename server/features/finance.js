@@ -1,7 +1,7 @@
 ﻿// finance routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { ageingBuckets, ageingByClient, resolveCreditLimit, resolveClientKey, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
+import { ageingBuckets, ageingByClient, resolveCreditLimit, resolveClientKey, arBalance, withArBalance, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
 
@@ -423,18 +423,23 @@ app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, 
       paymentMethod: { $ne: 'Cash' },
       isComplimentary: { $ne: true }, // comps collect no money - never an A/R
       arSettled: { $ne: true }
-    }, { orderNumber: 1, customerName: 1, table: 1, total: 1, paymentMethod: 1, createdAt: 1, arTermsDays: 1, arDueDate: 1 })
+    }, { orderNumber: 1, customerName: 1, table: 1, total: 1, paymentMethod: 1, createdAt: 1, arTermsDays: 1, arDueDate: 1, arPaidAmount: 1, arPayments: 1 })
       .sort({ createdAt: -1 }).limit(500).lean();
     // Flag each receivable overdue when its snapshotted terms date has passed.
     // Orders booked before terms existed carry no arDueDate and are never overdue.
     const now = Date.now();
     let overdueTotal = 0, overdueCount = 0;
+    // `balance` is what is still owed; `total` stays the invoice face value so
+    // the UI can show "P200 left of P1,700". Everything that sums A/R exposure
+    // works off balance - a partly collected invoice must not keep counting at
+    // full value.
     const orders = rows.map((r) => {
       const overdue = r.arDueDate ? new Date(r.arDueDate).getTime() < now : false;
-      if (overdue) { overdueTotal += r.total || 0; overdueCount += 1; }
-      return { ...r, overdue };
+      const balance = arBalance(r);
+      if (overdue) { overdueTotal += balance; overdueCount += 1; }
+      return { ...r, overdue, balance, paid: Math.round(((Number(r.arPaidAmount) || 0)) * 100) / 100, paymentCount: (r.arPayments || []).length, arPayments: undefined };
     });
-    const totalOutstanding = orders.reduce((s, r) => s + (r.total || 0), 0);
+    const totalOutstanding = orders.reduce((s, r) => s + (r.balance || 0), 0);
     res.json({ success: true, orders, totalOutstanding, overdueTotal, overdueCount });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -453,7 +458,8 @@ app.get('/api/finance/ar-ageing', verifyToken, ...canViewAcct, async (req, res) 
       paymentMethod: { $ne: 'Cash' },
       isComplimentary: { $ne: true },
       arSettled: { $ne: true },
-    }, { customerName: 1, total: 1, createdAt: 1, clientAccountId: 1, clientId: 1 }).lean();
+    }, { customerName: 1, total: 1, createdAt: 1, clientAccountId: 1, clientId: 1, arPaidAmount: 1 }).lean()
+      .then(withArBalance);
 
     const [modeRow, globalRow, clients] = await Promise.all([
       Settings.findOne({ key: 'creditLimitMode' }).lean(),
@@ -478,7 +484,8 @@ app.get('/api/finance/ar-ageing', verifyToken, ...canViewAcct, async (req, res) 
       paymentMethod: { $ne: 'Cash' },
       isComplimentary: { $ne: true },
       arSettled: { $ne: true },
-    }, { customerName: 1, total: 1, clientAccountId: 1, clientId: 1 }).lean();
+    }, { customerName: 1, total: 1, clientAccountId: 1, clientId: 1, arPaidAmount: 1 }).lean()
+      .then(withArBalance);
 
     const exposureByClient = new Map();
     for (const r of committed) {

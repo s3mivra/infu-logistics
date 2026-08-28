@@ -60,6 +60,38 @@ export function checkCreditAvailable({ limit, outstanding = 0, orderTotal = 0 })
   };
 }
 
+/**
+ * What is still owed on one receivable.
+ *
+ * An order's `total` is its face value and never changes; `arPaidAmount` is the
+ * running sum of collections posted against it. A ₱1,700 invoice with ₱1,500
+ * collected still carries ₱200 of A/R, and every A/R view - ageing, outstanding
+ * list, credit exposure, collection worklist - must agree on that or a partly
+ * paid invoice either vanishes from the books or stays on them at full value.
+ *
+ * Clamped at zero: an overpayment is a payable, not a negative receivable, and
+ * must never quietly offset another client's balance in an aged total.
+ */
+export function arBalance(order = {}) {
+  const total = Number(order.total) || 0;
+  const paid = Number(order.arPaidAmount) || 0;
+  return Math.max(0, Math.round((total - paid) * 100) / 100);
+}
+
+/**
+ * Restate rows so `total` reads as the remaining balance, which is the shape
+ * ageingBuckets/ageingByClient already consume. Keeps the face value under
+ * `faceTotal` for anything that needs to show "₱1,700 invoice, ₱200 left".
+ */
+export function withArBalance(rows = []) {
+  return rows.map(r => ({
+    ...r,
+    faceTotal: Number(r.total) || 0,
+    arPaidAmount: Number(r.arPaidAmount) || 0,
+    total: arBalance(r),
+  }));
+}
+
 // Bucket edges in days. An invoice is "current" up to and including 30 days old.
 export const AGEING_BUCKETS = ['current', 'd31_60', 'd61_90', 'd90_plus'];
 

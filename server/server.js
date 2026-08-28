@@ -1206,6 +1206,30 @@ items: [{
   // JournalEntry.reference (mkRef('ARS', ...)) - this is what ties the record
   // back to an actual bank statement line or receipt for reconciliation.
   arSettledReference: { type: String, default: '' },
+  // --- PARTIAL A/R SETTLEMENT ---
+  // A receivable is rarely paid in one clean shot: a client settles ₱1,500 of a
+  // ₱1,700 invoice and the remaining ₱200 must stay on the books. `arPaidAmount`
+  // is the running sum of every collection posted against this order, and
+  // `arSettled` only flips true once that sum reaches `total`. Every A/R view
+  // reads `total - arPaidAmount` (see arBalance in lib/credit.js) so a partly
+  // paid invoice ages on its remaining balance, not its original face value.
+  arPaidAmount: { type: Number, default: 0 },
+  // One row per collection. collectionDate = when the money was actually taken
+  // in from the client (what the collector reports); depositDate = when it hit
+  // the bank/fund. They are genuinely different dates - cash collected Friday
+  // is often only banked Monday - and reconciliation needs both.
+  arPayments: [{
+    amount:          { type: Number, required: true },
+    paymentMethod:   { type: String, default: '' },
+    referenceNumber: { type: String, default: '' },
+    note:            { type: String, default: '' },
+    collectionDate:  { type: Date },
+    depositDate:     { type: Date },
+    collectedBy:     { type: String, default: '' },
+    recordedBy:      { type: String, default: '' },
+    journalRef:      { type: String, default: '' },
+    createdAt:       { type: Date, default: Date.now },
+  }],
   // Payment-terms snapshot for on-account (non-cash) sales, captured when the
   // order Completes so later changes to the client's default terms don't
   // retroactively move an existing receivable's due date.
@@ -1406,8 +1430,20 @@ const CrossTransferSchema = new mongoose.Schema({
   shipmentRef:  { type: String, index: true },
   // Which expiry batch was picked when sending (internal use only, not shown to customers).
   batchInfo:    { expiryDate: Date, batchIdx: Number },
-  status:       { type: String, enum: ['Pending', 'Accepted', 'Rejected', 'Released', 'Received'], default: 'Pending' },
+  // 'Requested' is the pre-send approval gate: an outbound shipment is drafted
+  // by staff and sits here until someone with authority approves it, exactly
+  // like an internal StockTransfer or a requisition slip. Only on approval is
+  // the partner notified, so nothing crosses a business boundary unapproved.
+  // Inbound rows never enter 'Requested' - they arrive already approved by the
+  // sending business and start at 'Pending' awaiting our accept/reject.
+  status:       { type: String, enum: ['Requested', 'Pending', 'Accepted', 'Rejected', 'Cancelled', 'Released', 'Received'], default: 'Pending' },
   receivedAt:   Date,
+  // Transfer-slip trail - who asked, who authorised, and why it was refused.
+  requestedBy:  { type: String, default: '' },
+  approvedBy:   { type: String, default: '' },
+  approvedAt:   { type: Date },
+  rejectedBy:   { type: String, default: '' },
+  rejectionReason: { type: String, default: '' },
 }, { timestamps: true });
 const CrossTransfer = mongoose.model('CrossTransfer', CrossTransferSchema);
 
