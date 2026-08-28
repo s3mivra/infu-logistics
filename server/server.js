@@ -704,6 +704,29 @@ const runStartupTasks = async () => {
       log.error({ err }, 'Counter sync error');
     }
 
+    // Seed the business's actual job titles as custom roles (idempotent - only
+    // creates whichever of these don't already exist by name, never touches one
+    // that's already there, so re-running this on every boot is safe even after
+    // someone's edited these in the Access Roles UI). Chosen for a logistics
+    // operation that also runs a café counter: Logistics/Office split the
+    // warehouse-vs-back-office work, Barista/Head Barista are the counter
+    // staff, Admin is the full-ops role.
+    try {
+      const wantedRoles = [
+        { name: 'Logistics',    permissions: ['inventory.view', 'inventory.manage', 'procurement.view', 'orders.view', 'requisitions.view'] },
+        { name: 'Office',       permissions: ['orders.view', 'orders.manage', 'procurement.view', 'procurement.manage', 'accounting.view', 'requisitions.view', 'reports.view', 'analytics.view'] },
+        { name: 'Admin',        permissions: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'inventory.view', 'inventory.manage', 'inventory.delete', 'products.view', 'products.manage', 'procurement.view', 'procurement.manage', 'procurement.delete', 'accounting.view', 'requisitions.view', 'requisitions.approve', 'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'] },
+        { name: 'Barista',      permissions: ['pos.use', 'orders.view', 'inventory.view', 'products.view'] },
+        { name: 'Head Barista', permissions: ['pos.use', 'orders.view', 'orders.manage', 'inventory.view', 'inventory.manage', 'products.view', 'requisitions.view'] },
+      ];
+      for (const r of wantedRoles) {
+        const exists = await Role.findOne({ name: { $regex: `^${escapeRegex(r.name)}$`, $options: 'i' } }).lean();
+        if (!exists) { await Role.create(r); log.info(`✅ Seeded role: ${r.name}`); }
+      }
+    } catch (err) {
+      log.error({ err }, 'Role seed error');
+    }
+
     // Load custom-role → permissions into the authz resolver (function is hoisted).
     await refreshCustomRolePerms();
 };

@@ -34,9 +34,11 @@ export async function bootApp({ businessType = 'log', jwtSecret = 'test-secret-h
 }
 
 let userSeq = 0;
-export async function makeUser({ name, role, password = 'pw' }) {
+export async function makeUser({ name, role, password = 'pw', permissions }) {
   const User = mongoose.model('User');
-  await User.create({ name, role, userCode: `ADN-T${String(++userSeq).padStart(4, '0')}`, password: await bcrypt.hash(password, 12) });
+  const doc = { name, role, userCode: `ADN-T${String(++userSeq).padStart(4, '0')}`, password: await bcrypt.hash(password, 12) };
+  if (Array.isArray(permissions)) doc.permissions = permissions;
+  await User.create(doc);
   return name;
 }
 

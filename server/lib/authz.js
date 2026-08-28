@@ -33,6 +33,14 @@ export const PERMISSIONS = [
   { key: 'procurement.delete', group: 'Procurement', label: 'Delete POs & suppliers' },
   { key: 'accounting.view',    group: 'Accounting',  label: 'View accounting / ledger' },
   { key: 'accounting.manage',  group: 'Accounting',  label: 'Post journal entries / manage books' },
+  // Split out from accounting.* on purpose: accounting.view unlocks the whole
+  // Ledger tab (trial balance, journal, bills, ...), which is far more than
+  // "can this person see the Approvals queue". Someone reviewing requisition
+  // slips (petty-cash disbursements, PO releases) doesn't need to see the
+  // general ledger, and vice versa - riding on accounting.view meant granting
+  // either one silently unlocked the other.
+  { key: 'requisitions.view',    group: 'Accounting', label: 'View requisition slips & the Approvals queue' },
+  { key: 'requisitions.approve', group: 'Accounting', label: 'Approve / reject requisition slips' },
   { key: 'reports.view',       group: 'Reports',     label: 'View reports' },
   { key: 'analytics.view',     group: 'Reports',     label: 'View analytics dashboard' },
   { key: 'audit.view',         group: 'Reports',     label: 'View audit report' },

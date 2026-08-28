@@ -31,11 +31,14 @@ export default function registerRequisitions(ctx) {
     REQ_SLIP_STATUSES,
   } = ctx;
 
-  const canViewAcct = [requireStaff, requirePermission('accounting.view')];
-  const canPostAcct = [requireStaff, requirePermission('accounting.manage')];
+  // Dedicated permissions (#11) - decoupled from accounting.view/manage so
+  // granting someone the general ledger doesn't silently also hand them the
+  // Approvals queue, and vice versa.
+  const canViewReq = [requireStaff, requirePermission('requisitions.view')];
+  const canApproveReq = [requireStaff, requirePermission('requisitions.approve')];
 
   // ── LIST ──────────────────────────────────────────────────────────────────
-  app.get('/api/requisition-slips', verifyToken, ...canViewAcct, async (req, res) => {
+  app.get('/api/requisition-slips', verifyToken, ...canViewReq, async (req, res) => {
     try {
       const filter = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
       if (req.query.status && REQ_SLIP_STATUSES.includes(req.query.status)) filter.status = req.query.status;
@@ -45,7 +48,7 @@ export default function registerRequisitions(ctx) {
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
-  app.get('/api/requisition-slips/:id', verifyToken, ...canViewAcct, async (req, res) => {
+  app.get('/api/requisition-slips/:id', verifyToken, ...canViewReq, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const slip = await RequisitionSlip.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) }).lean();
@@ -125,7 +128,7 @@ export default function registerRequisitions(ctx) {
   // Executes the underlying movement, THEN marks the slip Approved with who
   // approved it - if the movement fails (e.g. fund balance moved since
   // filing), the slip stays Pending and nothing is half-done.
-  app.post('/api/requisition-slips/:id/approve', verifyToken, ...canPostAcct, async (req, res) => {
+  app.post('/api/requisition-slips/:id/approve', verifyToken, ...canApproveReq, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const slip = await RequisitionSlip.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
@@ -209,7 +212,7 @@ export default function registerRequisitions(ctx) {
   });
 
   // ── REJECT ────────────────────────────────────────────────────────────────
-  app.post('/api/requisition-slips/:id/reject', verifyToken, ...canPostAcct, async (req, res) => {
+  app.post('/api/requisition-slips/:id/reject', verifyToken, ...canApproveReq, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const { reason } = req.body || {};

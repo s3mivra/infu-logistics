@@ -21,7 +21,7 @@ export default function LedgerTab({ ctx }) {
     API_URL, AUDIT_PAGE_SIZE, BIZ_NAME, COMP_REASON_LABELS, FRONTEND_URL,
     HIST_PAGE_SIZE, POS_PER_PAGE, SHIFT_HIST_PAGE_SIZE, accountingItemsPerPage, accountingPage,
     journalSearch, setJournalSearch,
-    activeAdmin, activeInventoryItem, activeTab, addInventory, addMaterialToRecipe,
+    activeAdmin, activeInventoryItem, activeTab, addInventory, addMaterialToRecipe, can,
     addOnForm, addSize, analyticsData, analyticsLoading, apiFetch,
     applyComplimentary, applyDiscount, applyItemDiscount, arOutstanding, arAgeing, fetchArAgeing, archiveDay, fetchExpenses,
     archivedOrders, auditCancelPage, auditCompPage, auditDiscPage, auditFilter,
@@ -860,7 +860,10 @@ export default function LedgerTab({ ctx }) {
                   ['backdate',   'Backdate Sale',       Clock],
                   ['revolving',  'Revolving Funds',     RefreshCw],
                   ['expenses',   'Expenses',            Receipt],
-                  ['approvals',  'Approvals',           ShieldCheck],
+                  // Its own permission (requisitions.view), not accounting.view -
+                  // someone who can see the general ledger shouldn't automatically
+                  // also see the Approvals queue, and vice versa.
+                  ...(can('requisitions.view') ? [['approvals', 'Approvals', ShieldCheck]] : []),
                 ]
             ).map(([id, label, Icon]) => (
               <button
@@ -2494,7 +2497,7 @@ export default function LedgerTab({ ctx }) {
           {ledgerSubTab === 'expenses' && <ExpensesPage />}
 
           {/* ===== APPROVALS SUB-TAB (Requisition Slips) ===== */}
-          {ledgerSubTab === 'approvals' && (
+          {ledgerSubTab === 'approvals' && can('requisitions.view') && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div>
