@@ -231,3 +231,99 @@ describe('bulk quantity discounts: combined with product discount via max, not s
     expect(res.body.order.total).toBeCloseTo(285, 2);
   });
 });
+
+// clientBulkBreaks is the client-specific counterpart to bulkBreaks above:
+// a client who already has a discount on a product gets an even bigger break
+// once they order enough of it - but quoted as a real PRICE ("₱180 each at
+// 50+"), not a percent, and unlike bulkBreaks it applies to NOBODY else at
+// the same quantity.
+describe('client-specific bulk pricing: a quoted price at volume, only for the named client', () => {
+  it('converts the quoted price to a discount and combines it via max with the flat rate', async () => {
+    const ClientAccount = mongoose.model('ClientAccount');
+    const client = await ClientAccount.create({
+      clientCode: 'PR-CBB-1', username: 'pr_cbb_client', name: 'PR Client Bulk Client',
+      password: 'x', paymentMethod: 'Cash', isActive: true,
+    });
+    const prod = await mongoose.model('Product').create({
+      name: 'PR Client Bulk Product', category: 'PR-Cat', basePrice: 200, discountPercent: 5,
+      // 50+ of this, for THIS client, is ₱150 each - a 25% break, well past
+      // their existing 5% flat rate.
+      clientBulkBreaks: [{ clientId: String(client._id), minQty: 50, price: 150 }],
+    });
+
+    const res = await auth('post', '/api/orders', staffTok).send({
+      items: [{ productId: String(prod._id), name: 'PR Client Bulk Product', price: 200, quantity: 50 }],
+      table: 'Takeout', paymentMethod: 'Cash', clientAccountId: String(client._id),
+    });
+    expect(res.status).toBe(200);
+    // 50 * ₱150 = 7500, not 50 * 200 * 0.95 = 9500.
+    expect(res.body.order.total).toBeCloseTo(7500, 2);
+  });
+
+  it('does not apply below the quantity threshold - falls back to the flat rate', async () => {
+    const ClientAccount = mongoose.model('ClientAccount');
+    const client = await ClientAccount.create({
+      clientCode: 'PR-CBB-2', username: 'pr_cbb_client2', name: 'PR Client Bulk Client 2',
+      password: 'x', paymentMethod: 'Cash', isActive: true,
+    });
+    const prod = await mongoose.model('Product').create({
+      name: 'PR Client Bulk Product 2', category: 'PR-Cat', basePrice: 200, discountPercent: 5,
+      clientBulkBreaks: [{ clientId: String(client._id), minQty: 50, price: 150 }],
+    });
+
+    const res = await auth('post', '/api/orders', staffTok).send({
+      items: [{ productId: String(prod._id), name: 'PR Client Bulk Product 2', price: 200, quantity: 10 }],
+      table: 'Takeout', paymentMethod: 'Cash', clientAccountId: String(client._id),
+    });
+    expect(res.status).toBe(200);
+    // Only 10, not 50+ - just the flat 5%: 10 * 200 * 0.95 = 1900.
+    expect(res.body.order.total).toBeCloseTo(1900, 2);
+  });
+
+  it('never applies to a DIFFERENT client, even at the qualifying quantity', async () => {
+    const ClientAccount = mongoose.model('ClientAccount');
+    const namedClient = await ClientAccount.create({
+      clientCode: 'PR-CBB-3', username: 'pr_cbb_client3', name: 'PR Client Bulk Client 3',
+      password: 'x', paymentMethod: 'Cash', isActive: true,
+    });
+    const otherClient = await ClientAccount.create({
+      clientCode: 'PR-CBB-4', username: 'pr_cbb_client4', name: 'PR Someone Else',
+      password: 'x', paymentMethod: 'Cash', isActive: true,
+    });
+    const prod = await mongoose.model('Product').create({
+      name: 'PR Client Bulk Product 3', category: 'PR-Cat', basePrice: 200,
+      clientBulkBreaks: [{ clientId: String(namedClient._id), minQty: 50, price: 150 }],
+    });
+
+    const res = await auth('post', '/api/orders', staffTok).send({
+      items: [{ productId: String(prod._id), name: 'PR Client Bulk Product 3', price: 200, quantity: 50 }],
+      table: 'Takeout', paymentMethod: 'Cash', clientAccountId: String(otherClient._id),
+    });
+    expect(res.status).toBe(200);
+    // The break is quoted to a DIFFERENT client - this buyer pays full price.
+    expect(res.body.order.total).toBeCloseTo(10000, 2);
+  });
+
+  it('among several qualifying tiers, the best (lowest) price wins', async () => {
+    const ClientAccount = mongoose.model('ClientAccount');
+    const client = await ClientAccount.create({
+      clientCode: 'PR-CBB-5', username: 'pr_cbb_client5', name: 'PR Client Bulk Client 5',
+      password: 'x', paymentMethod: 'Cash', isActive: true,
+    });
+    const prod = await mongoose.model('Product').create({
+      name: 'PR Client Bulk Product 4', category: 'PR-Cat', basePrice: 200,
+      clientBulkBreaks: [
+        { clientId: String(client._id), minQty: 20, price: 180 },
+        { clientId: String(client._id), minQty: 50, price: 150 },
+      ],
+    });
+
+    const res = await auth('post', '/api/orders', staffTok).send({
+      items: [{ productId: String(prod._id), name: 'PR Client Bulk Product 4', price: 200, quantity: 60 }],
+      table: 'Takeout', paymentMethod: 'Cash', clientAccountId: String(client._id),
+    });
+    expect(res.status).toBe(200);
+    // Qualifies for both tiers (20+ and 50+); the better price (150) wins.
+    expect(res.body.order.total).toBeCloseTo(9000, 2);
+  });
+});

@@ -928,9 +928,27 @@ export default function SuperAdminPanel() {
     setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false, creditLimit: client.creditLimit === null || client.creditLimit === undefined ? '' : String(client.creditLimit), creditTermsDays: client.creditTermsDays === null || client.creditTermsDays === undefined ? '' : String(client.creditTermsDays), segments: (client.segments || []).join(', ') });
     setClientFormError('');
     setClientModal({ open: true, mode: 'edit', client });
+    fetchClientPricing(client._id);
   };
 
-  const closeClientModal = () => setClientModal({ open: false, mode: 'create', client: null });
+  // This client's special pricing, gathered from every product that mentions
+  // them (clientDiscounts / clientBulkBreaks are keyed by clientId, scattered
+  // across the catalogue - see GET /api/client-accounts/:id/pricing). Actually
+  // EDITING a rate still happens on the product (Products tab); this is a
+  // read-only summary so an owner can see the whole picture in one place.
+  const [clientPricing, setClientPricing] = useState(null);
+  const [clientPricingLoading, setClientPricingLoading] = useState(false);
+  const fetchClientPricing = async (clientId) => {
+    setClientPricingLoading(true);
+    try {
+      const res = await apiFetch(`/api/client-accounts/${clientId}/pricing`);
+      const d = await res.json();
+      if (d.success) setClientPricing(d.products);
+    } catch { /* the summary just won't show - editing on the product still works */ }
+    finally { setClientPricingLoading(false); }
+  };
+
+  const closeClientModal = () => { setClientModal({ open: false, mode: 'create', client: null }); setClientPricing(null); };
 
   const handleClientSubmit = async (e) => {
     e.preventDefault();
@@ -2547,6 +2565,50 @@ export default function SuperAdminPanel() {
                   );
                 })()}
               </div>
+
+              {/* Special pricing summary - read-only, gathered from every product
+                  that mentions this client (see GET .../:id/pricing). Editing
+                  still happens on the product itself (Products tab); this is
+                  just so the whole picture is visible in one place instead of
+                  hunting product by product. */}
+              {clientModal.mode === 'edit' && (
+                <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+                  <p className="text-[10px] font-bold text-fg/40 uppercase tracking-widest mb-2">Special Pricing</p>
+                  {clientPricingLoading ? (
+                    <p className="text-[11px] text-fg/30 italic">Loading…</p>
+                  ) : !clientPricing || clientPricing.length === 0 ? (
+                    <p className="text-[11px] text-fg/30 italic">No product-specific rates or volume breaks yet - set one on a product in the Products tab.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {clientPricing.map(p => (
+                        <details key={p.productId} className="group bg-page-bg/40 border border-white/10 rounded-lg">
+                          <summary className="flex items-center justify-between gap-2 px-3 py-2 cursor-pointer list-none">
+                            <span className="text-xs font-bold text-fg truncate">{p.name}</span>
+                            <span className="flex items-center gap-2 shrink-0">
+                              <span className="text-xs font-black text-brand tabular-nums">
+                                ₱{(p.flatPrice ?? p.basePrice).toFixed(2)}
+                              </span>
+                              {p.breaks.length > 0 && (
+                                <ChevronRight size={12} className="text-fg/30 transition group-open:rotate-90" />
+                              )}
+                            </span>
+                          </summary>
+                          {p.breaks.length > 0 && (
+                            <div className="px-3 pb-2 pt-0.5 space-y-0.5 border-t border-white/5 mt-0.5">
+                              {p.breaks.map((b, i) => (
+                                <div key={i} className="flex items-center justify-between text-[11px]">
+                                  <span className="text-fg/40">{b.minQty}+ units</span>
+                                  <span className="font-bold text-fg/70 tabular-nums">₱{b.price.toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </details>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {clientModal.mode === 'edit' && (
                 <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">

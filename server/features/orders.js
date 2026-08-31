@@ -616,7 +616,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     const _prodNames = items.map(i => i.name).filter(Boolean);
     const _discProds = await Product.find(
       { $or: [{ _id: { $in: _prodIds } }, { name: { $in: _prodNames } }] },
-      { _id: 1, name: 1, basePrice: 1, discountPercent: 1, clientDiscounts: 1, segmentDiscounts: 1, bulkBreaks: 1, vatExempt: 1 }
+      { _id: 1, name: 1, basePrice: 1, discountPercent: 1, clientDiscounts: 1, segmentDiscounts: 1, bulkBreaks: 1, clientBulkBreaks: 1, vatExempt: 1 }
     ).lean();
     const _discById = new Map(_discProds.map(p => [String(p._id), p]));
     const _discByName = new Map(_discProds.map(p => [p.name, p]));
@@ -661,6 +661,27 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       if (!qualifying.length) return 0;
       return Math.max(0, Math.min(100, Math.max(...qualifying.map(b => Number(b.percent || 0)))));
     };
+    // Per-CLIENT quantity breaks, unlike bulkQtyDiscPct above which applies to
+    // any buyer. These are quoted as a real PRICE ("once you order 50+, it's
+    // PHP 180 each"), not a discount percent, so the tier's price is converted
+    // to an equivalent percent-off-basePrice here - same conversion PriceTier's
+    // per_product mode already does - and then combined into the same Math.max
+    // as every other discount. A buyer who isn't this named client never sees it.
+    const clientBulkQtyDiscPct = (item) => {
+      if (!_buyerClientId) return 0;
+      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+      const breaks = (p?.clientBulkBreaks || []).filter(b => String(b.clientId) === String(_buyerClientId));
+      if (!breaks.length) return 0;
+      const qty = Number(item.quantity || 0);
+      const qualifying = breaks.filter(b => qty >= Number(b.minQty || 0));
+      if (!qualifying.length) return 0;
+      const base = Number(p?.basePrice) || 0;
+      if (base <= 0) return 0;
+      // The best (lowest) quoted price among qualifying tiers, converted to
+      // the discount percent that would produce it.
+      const bestPrice = Math.max(0, Math.min(...qualifying.map(b => Math.max(0, Number(b.price) || 0))));
+      return Math.max(0, Math.min(100, +(100 - (bestPrice / base) * 100).toFixed(4)));
+    };
 
     // Per-item pass resolves only the PRODUCT-level discounts. Order-level
     // discount and VAT are settled afterwards in one place, because with
@@ -683,9 +704,10 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       totalGross += itemBase;
 
       // Per-product discount applies to THIS line only - combine the resolved
-      // client/segment/default rate with any qualifying bulk-quantity break,
-      // taking whichever is higher (never stacked).
-      const prodPct = Math.max(productDiscPct(item), bulkQtyDiscPct(item));
+      // client/segment/default rate with any qualifying bulk-quantity break
+      // (universal or client-specific), taking whichever is higher (never
+      // stacked).
+      const prodPct = Math.max(productDiscPct(item), bulkQtyDiscPct(item), clientBulkQtyDiscPct(item));
       const prodDisc = +(itemBase * prodPct / 100).toFixed(2);
       item.productDiscountPercent = prodPct;
       totalProductDisc += prodDisc;

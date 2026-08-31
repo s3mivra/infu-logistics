@@ -230,7 +230,7 @@ export default function AdminDashboard() {
   // clientDiscounts, leaving stale values in the next product you added).
   const emptyProductForm = () => ({
     name: '', description: '', category: '', basePrice: '', discountPercent: 0, clientDiscounts: [],
-    segmentDiscounts: [], bulkBreaks: [],
+    segmentDiscounts: [], bulkBreaks: [], clientBulkBreaks: [],
     baseSize: '', sizes: [], image: '', baseRecipe: [], addOns: [], modifierGroups: [], imageUrl: ''
   });
   const [formData, setFormData] = useState(emptyProductForm);

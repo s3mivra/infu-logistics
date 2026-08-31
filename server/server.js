@@ -391,6 +391,7 @@ const productSchema = z.object({
   clientDiscounts: z.array(z.object({ clientId: z.string(), percent: z.number().min(0).max(100) })).optional(),
   segmentDiscounts: z.array(z.object({ segment: z.string(), percent: z.number().min(0).max(100) })).optional(),
   bulkBreaks: z.array(z.object({ minQty: z.number().positive(), percent: z.number().min(0).max(100) })).optional(),
+  clientBulkBreaks: z.array(z.object({ clientId: z.string(), minQty: z.number().positive(), price: z.number().min(0) })).optional(),
   baseSize: z.string().max(40).optional(), baseRecipe: zRecipe,
   sizes: z.array(z.object({ sizeCode: z.string().optional(), name: z.string().optional(), price: zMoney.optional(), recipe: zRecipe })).optional(),
   addOns: z.array(z.object({ name: z.string(), price: zMoney.optional(), recipe: zRecipe })).optional(),
@@ -971,6 +972,20 @@ const ProductSchema = new mongoose.Schema({
   // qualifying minQty wins) and combined with the other discount percents via
   // Math.max, same as clientDiscounts/segmentDiscounts - never stacked.
   bulkBreaks: [{ minQty: { type: Number, required: true }, percent: { type: Number, default: 0 } }],
+  // Per-client quantity breaks that set an explicit PRICE, not a percent -
+  // "once Client X orders 50+ of this, charge them PHP 180 each" rather than
+  // "X% off". Kept as a real price (not a discount%) because that is how the
+  // deal is actually quoted to the client; it is converted to an equivalent
+  // discount percent at resolution time (same technique PriceTier's
+  // per_product mode already uses) so it flows through the existing
+  // percent-based discount/VAT pipeline unchanged. Unlike the universal
+  // bulkBreaks above, this only applies to the named client - someone else
+  // ordering the same quantity pays the regular price.
+  clientBulkBreaks: [{
+    clientId: { type: String, required: true },
+    minQty:   { type: Number, required: true },
+    price:    { type: Number, required: true },
+  }],
   baseSize: String,
   costOverride: Number,
   baseRecipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }],

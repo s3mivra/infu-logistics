@@ -384,6 +384,44 @@ app.get('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res)
   }
 });
 
+// ── THIS CLIENT'S SPECIAL PRICING ────────────────────────────────────────────
+// Reverse lookup: the override lives on the PRODUCT (clientDiscounts /
+// clientBulkBreaks are arrays keyed by clientId), so "what deals does this
+// client have" isn't a single document read - it's every product that
+// mentions them. Surfaced on the client's own account view so an owner can
+// see the whole picture (base rate, and any volume price) without opening
+// each product one at a time.
+app.get('/api/client-accounts/:id/pricing', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Client not found.' });
+    const clientId = String(req.params.id);
+    const products = await Product.find(
+      { $or: [{ 'clientDiscounts.clientId': clientId }, { 'clientBulkBreaks.clientId': clientId }] },
+      { name: 1, category: 1, basePrice: 1, clientDiscounts: 1, clientBulkBreaks: 1 },
+    ).sort({ name: 1 }).lean();
+
+    const rows = products.map(p => {
+      const flat = (p.clientDiscounts || []).find(d => String(d.clientId) === clientId);
+      const breaks = (p.clientBulkBreaks || [])
+        .filter(b => String(b.clientId) === clientId)
+        .map(b => ({ minQty: b.minQty, price: b.price }))
+        .sort((a, b) => a.minQty - b.minQty);
+      const basePrice = Number(p.basePrice) || 0;
+      const flatPrice = flat ? Math.round(basePrice * (1 - (Number(flat.percent) || 0) / 100) * 100) / 100 : null;
+      return {
+        productId: p._id, name: p.name, category: p.category || '', basePrice,
+        flatPercent: flat ? Number(flat.percent) || 0 : null,
+        flatPrice,
+        breaks,
+      };
+    });
+
+    res.json({ success: true, products: rows });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 // Light contact-field sanitizers. Email format is validated loosely (there's
 // no server-side deliverability check - nothing here sends mail); an invalid
 // one is rejected rather than silently stored, so the collections/CRM views

@@ -454,6 +454,7 @@ export default function ProductsTab({ ctx }) {
                           clientDiscounts: (p.clientDiscounts || []).map(d => ({ clientId: String(d.clientId), percent: Number(d.percent || 0) })),
                           segmentDiscounts: (p.segmentDiscounts || []).map(d => ({ segment: String(d.segment || ''), percent: Number(d.percent || 0) })),
                           bulkBreaks: (p.bulkBreaks || []).map(b => ({ minQty: Number(b.minQty || 0), percent: Number(b.percent || 0) })),
+                          clientBulkBreaks: (p.clientBulkBreaks || []).map(b => ({ clientId: String(b.clientId || ''), minQty: Number(b.minQty || 0), price: Number(b.price || 0) })),
                           baseSize: p.baseSize || '',
                           sizes: p.sizes || [], image: p.image || '',
                           baseRecipe: (p.baseRecipe || []).map(mat => {
@@ -751,6 +752,70 @@ export default function ProductsTab({ ctx }) {
                         </div>
                         <button type="button"
                           onClick={() => setFormData({ ...formData, clientDiscounts: (formData.clientDiscounts || []).filter((_, i) => i !== idx) })}
+                          className="text-red-400/70 hover:text-red-500 text-sm">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                  )}
+
+                  {/* Per-client quantity breaks - "once THIS client orders 50+, it's
+                      ₱180 each" - a real quoted PRICE, not a percent, and unlike Bulk
+                      Quantity Breaks below it only applies to the named client. Every
+                      other buyer hitting the same quantity pays the regular price.
+                      Combined with every other discount by taking whichever is
+                      better - never stacked. */}
+                  {BUSINESS_TYPE === 'log' && (
+                  <div className="bg-page-bg/40 border border-white/10 rounded-xl p-3 mt-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs font-black text-fg/70 uppercase tracking-wider">Client Bulk Pricing</label>
+                      <button type="button"
+                        disabled={!clientAccounts?.length}
+                        onClick={() => setFormData({ ...formData, clientBulkBreaks: [...(formData.clientBulkBreaks || []), { clientId: '', minQty: 1, price: 0 }] })}
+                        className="text-[11px] font-black text-brand hover:text-fg transition disabled:opacity-40">+ Add break</button>
+                    </div>
+                    {(!formData.clientBulkBreaks || formData.clientBulkBreaks.length === 0) && (
+                      <p className="text-[10px] text-fg/30 italic">
+                        {(!clientAccounts || clientAccounts.length === 0)
+                          ? 'No client accounts yet - create one in the Client Accounts panel first.'
+                          : 'e.g. "once this client orders 50+, charge them ₱180 each" - a quoted price at volume, only for this client.'}
+                      </p>
+                    )}
+                    {(formData.clientBulkBreaks || []).map((b, idx) => (
+                      <div key={idx} className="flex items-center gap-2 mb-1.5 flex-wrap">
+                        <select value={b.clientId}
+                          onChange={e => {
+                            const list = [...(formData.clientBulkBreaks || [])];
+                            list[idx] = { ...list[idx], clientId: e.target.value };
+                            setFormData({ ...formData, clientBulkBreaks: list });
+                          }}
+                          className="w-full sm:w-2/5 shrink-0 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-fg text-xs outline-none focus:border-brand">
+                          <option value="">Select client…</option>
+                          {(clientAccounts || []).map(c => (
+                            <option key={c._id} value={c._id}>{c.name || c.username} ({c.clientCode})</option>
+                          ))}
+                        </select>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="text-[10px] text-fg/40 font-bold shrink-0">Qty ≥</span>
+                          <input type="number" min="1" step="1" value={b.minQty}
+                            onChange={e => {
+                              const list = [...(formData.clientBulkBreaks || [])];
+                              list[idx] = { ...list[idx], minQty: Math.max(1, parseInt(e.target.value, 10) || 1) };
+                              setFormData({ ...formData, clientBulkBreaks: list });
+                            }}
+                            className="w-16 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand" />
+                        </div>
+                        <div className="relative w-28 shrink-0">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-fg/40 text-[10px] font-bold">₱</span>
+                          <input type="number" min="0" step="0.01" value={b.price}
+                            onChange={e => {
+                              const list = [...(formData.clientBulkBreaks || [])];
+                              list[idx] = { ...list[idx], price: Math.max(0, parseFloat(e.target.value) || 0) };
+                              setFormData({ ...formData, clientBulkBreaks: list });
+                            }}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg pl-5 pr-2 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand" />
+                        </div>
+                        <button type="button"
+                          onClick={() => setFormData({ ...formData, clientBulkBreaks: (formData.clientBulkBreaks || []).filter((_, i) => i !== idx) })}
                           className="text-red-400/70 hover:text-red-500 text-sm">✕</button>
                       </div>
                     ))}
