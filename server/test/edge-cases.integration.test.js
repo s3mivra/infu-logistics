@@ -114,10 +114,10 @@ describe('void variants', () => {
     const id = o.body.order._id;
     await complete(id);
     // settle the A/R first
-    const s = await req('post', `/api/orders/${id}/settle-ar`, T.super).send({ amount: 100, paymentMethod: 'Bank Transfer' });
+    const s = await req('post', `/api/orders/${id}/settle-ar`, T.super).send({ amount: 100, paymentMethod: 'Bank Transfer', referenceNumber: 'BANK-REF-A' });
     expect(s.status).toBe(200);
     // re-settling is rejected
-    const again = await req('post', `/api/orders/${id}/settle-ar`, T.super).send({ amount: 100, paymentMethod: 'Bank Transfer' });
+    const again = await req('post', `/api/orders/${id}/settle-ar`, T.super).send({ amount: 100, paymentMethod: 'Bank Transfer', referenceNumber: 'BANK-REF-A' });
     expect(again.status).toBe(400);
     // voiding a settled order is blocked
     const v = await req('post', `/api/orders/${id}/void`, T.super).send({ reason: 'Restock' });
@@ -138,7 +138,7 @@ describe('void variants', () => {
   it('settle-AR rejects a cash sale (400)', async () => {
     const o = await mkOrder({ ...line('productId'), paymentMethod: 'Cash' });
     await complete(o.body.order._id);
-    const s = await req('post', `/api/orders/${o.body.order._id}/settle-ar`, T.super).send({ amount: 100, paymentMethod: 'Cash' });
+    const s = await req('post', `/api/orders/${o.body.order._id}/settle-ar`, T.super).send({ amount: 100, paymentMethod: 'Cash', referenceNumber: 'CASH-REF-1' });
     expect(s.status).toBe(400);
   });
 
@@ -148,7 +148,7 @@ describe('void variants', () => {
     await complete(id);
     // "CryptoWallet" is not a seeded default, has no override, and no matching
     // custom sub-account → the settlement must debit the Unassigned clearing account.
-    const s = await req('post', `/api/orders/${id}/settle-ar`, T.super).send({ amount: 100, paymentMethod: 'CryptoWallet' });
+    const s = await req('post', `/api/orders/${id}/settle-ar`, T.super).send({ amount: 100, paymentMethod: 'CryptoWallet', referenceNumber: 'CRYPTO-REF-1' });
     expect(s.status).toBe(200);
     const je = await mongoose.model('JournalEntry').findOne({ reference: new RegExp(`ARS.*${o.body.order.orderNumber}`) }).lean();
     const debit = je.lines.find(l => l.debit > 0);
@@ -159,7 +159,7 @@ describe('void variants', () => {
     const o = await mkOrder({ ...line('productId'), paymentMethod: 'GCash' });
     const id = o.body.order._id;
     await complete(id);
-    const s = await req('post', `/api/orders/${id}/settle-ar`, T.super).send({ amount: 100, paymentMethod: 'GCash' });
+    const s = await req('post', `/api/orders/${id}/settle-ar`, T.super).send({ amount: 100, paymentMethod: 'GCash', referenceNumber: 'GCASH-REF-1' });
     expect(s.status).toBe(200);
     const je = await mongoose.model('JournalEntry').findOne({ reference: new RegExp(`ARS.*${o.body.order.orderNumber}`) }).lean();
     const debit = je.lines.find(l => l.debit > 0);

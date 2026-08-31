@@ -1,7 +1,7 @@
 ﻿import React, { useState, useEffect, useRef, memo, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { io } from 'socket.io-client';
-import { Coffee, ShoppingCart, Plus, Minus, X, Clock, CheckCircle, Package, AlertCircle, Users, Lock, RefreshCw, ChevronLeft } from 'lucide-react';
+import { Coffee, ShoppingCart, Plus, Minus, X, Clock, CheckCircle, Package, AlertCircle, Users, Lock, RefreshCw, ChevronLeft, Search } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { loadDraft, saveDraft, clearDraft } from '../../shared/draft';
 
@@ -130,6 +130,9 @@ export default function CustomerMenu() {
   const [orderNotes, setOrderNotes] = useState('');
 
   const [activeCategory, setActiveCategory] = useState('All');
+  // Large catalogues (logistics especially) are slow to browse by category
+  // tabs alone - a name/code search finds one item in a tap instead of scrolling.
+  const [menuSearch, setMenuSearch] = useState('');
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedSize, setSelectedSize] = useState(null);
 
@@ -469,6 +472,10 @@ export default function CustomerMenu() {
       return [...prev, { cartItemId, productId: product._id, name: size ? `${product.name} (${sizeName})` : product.name, price, quantity: 1, department: dept, itemStatus: 'Received', selectedAddOns: addOns }];
     });
     setSelectedProduct(null); setSelectedSize(null); setSelectedAddOns([]);
+    // Non-blocking confirmation - the floating cart bar covers the FIRST add,
+    // but tapping several different items in a row with only a badge number
+    // changing is easy to miss; a short toast per add closes that gap.
+    ui.toast(`${size ? `${product.name} (${sizeName})` : product.name} added to cart`, { tone: 'success', duration: 1600 });
   };
 
   // --- CART MATH & LOGIC ---
@@ -561,6 +568,11 @@ export default function CustomerMenu() {
 
   // Only show products that are manually enabled AND have all recipe ingredients in stock
   const visibleProducts = useMemo(() => products.filter(isProductVisible), [products]);
+  const searchedProducts = useMemo(() => {
+    const q = menuSearch.trim().toLowerCase();
+    if (!q) return visibleProducts;
+    return visibleProducts.filter(p => p.name.toLowerCase().includes(q) || String(p.productCode || '').toLowerCase().includes(q));
+  }, [visibleProducts, menuSearch]);
 
   const allCategories = useMemo(() => ['All', ...new Set(visibleProducts.map(p => p.category))], [visibleProducts]);
   const displayedCategories = useMemo(() => activeCategory === 'All' ? allCategories.filter(c => c !== 'All') : [activeCategory], [activeCategory, allCategories]);
@@ -810,6 +822,25 @@ export default function CustomerMenu() {
             </button>
           )}
         </div>
+        {/* Product search */}
+        <div className="px-4 pt-1 pb-2">
+          <div className="relative">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30" />
+            <input
+              type="text"
+              value={menuSearch}
+              onChange={e => setMenuSearch(e.target.value)}
+              placeholder="Search products by name or code…"
+              className="w-full bg-white/5 border border-white/10 focus:border-brand rounded-xl pl-9 pr-9 py-2.5 text-sm text-fg placeholder-fg/30 outline-none transition"
+            />
+            {menuSearch && (
+              <button onClick={() => setMenuSearch('')} aria-label="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-fg/40 hover:text-fg transition">
+                <X size={15} />
+              </button>
+            )}
+          </div>
+        </div>
         {/* Category ribbon */}
         <div className="flex gap-2 px-4 pb-3 pt-1 overflow-x-auto scrollbar-none">
           {allCategories.map(cat => (
@@ -849,8 +880,10 @@ export default function CustomerMenu() {
         )}
         {displayedCategories.length === 0
           ? <p className="text-center text-fg/30 mt-20 font-bold">No items available.</p>
+          : searchedProducts.length === 0 && menuSearch.trim()
+          ? <p className="text-center text-fg/30 mt-20 font-bold">No products match "{menuSearch.trim()}".</p>
           : displayedCategories.map(category => {
-              const catProducts = visibleProducts.filter(p => p.category === category);
+              const catProducts = searchedProducts.filter(p => p.category === category);
               if (catProducts.length === 0) return null;
               return (
                 <div key={category} className="mb-10">

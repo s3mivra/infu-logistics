@@ -73,7 +73,7 @@ describe('QR payment reference', () => {
     await auth('put', `/api/orders/${id}`, staffTok).send({ status: 'Completed' });
 
     const settled = await auth('post', `/api/orders/${id}/settle-ar`, superTok)
-      .send({ amount: 250, paymentMethod: 'QR' });
+      .send({ amount: 250, paymentMethod: 'QR', referenceNumber: 'QR-SETTLE-REF-1' });
     expect(settled.status).toBe(200);
 
     const o = await mongoose.model('Order').findById(id).lean();

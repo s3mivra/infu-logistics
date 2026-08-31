@@ -1496,6 +1496,60 @@ const CrossTransferSchema = new mongoose.Schema({
 }, { timestamps: true });
 const CrossTransfer = mongoose.model('CrossTransfer', CrossTransferSchema);
 
+// ── HUB TRANSFER REQUESTS - negotiated stock ASKS between businesses ────────
+// Distinct from CrossTransfer (an already-agreed shipment being sent/received):
+// this is the negotiation that happens BEFORE one exists. Either business can
+// initiate - "send me your extra 50 units of X" - and the other side can
+// decline outright, or counter with what they can actually give (fewer units,
+// or drop a line entirely), before it ever commits to moving real stock.
+//
+// Each business's own server keeps its OWN copy of the SAME negotiation,
+// linked by `requestRef` (shared across both databases, since Mongo _ids
+// differ per tenant) and kept in sync via the existing partnerCall/
+// requireLinkToken internal-route pattern CrossTransfer already uses.
+// `side` says which copy this is: 'filed' on the initiator's server, 'received'
+// on the other party's.
+//
+// Fixed-depth negotiation (by design, not an oversight - see the state
+// machine in hub.js):
+//   Pending        - awaiting the OTHER party's first response
+//     -> Declined       (either party, any time before Approved)
+//     -> Approved       (the other party accepts the ask exactly as asked -
+//                        nothing negotiated, so it commits immediately)
+//     -> CounterPending (the other party proposes different quantities/lines)
+//   CounterPending -> Declined | AwaitingFinal (original requester accepts the
+//                     counter - but the fulfilling side gets one more look
+//                     before real stock commits, since accepting a counter
+//                     isn't the same as promising to ship it NOW)
+//   AwaitingFinal  -> Declined | Approved (fulfilling side's final sign-off -
+//                     THIS is what actually creates the CrossTransfer shipment)
+const TRANSFER_REQUEST_STATUSES = ['Pending', 'CounterPending', 'AwaitingFinal', 'Approved', 'Declined', 'Cancelled'];
+const TransferRequestSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  requestRef:   { type: String, index: true, required: true },   // shared across both businesses' copies
+  side:         { type: String, enum: ['filed', 'received'], required: true },
+  fromSlug:     String, fromName: String,   // who would SHIP if this is approved
+  toSlug:       String, toName:   String,   // who would RECEIVE
+  filedBySlug:  String,                     // fromSlug or toSlug - whoever initiated the ask
+  status:       { type: String, enum: TRANSFER_REQUEST_STATUSES, default: 'Pending', index: true },
+  // `lines` is always "what's currently on the table" - overwritten wholesale
+  // on a counter, so there is exactly one place to read the live proposal
+  // from. `originalLines` is a frozen snapshot of the very first ask, kept so
+  // the negotiation history can show what changed.
+  lines:         [{ itemId: String, itemName: String, unit: String, qty: Number, note: String }],
+  originalLines: [{ itemId: String, itemName: String, unit: String, qty: Number, note: String }],
+  round:         { type: Number, default: 1 },   // 1 = original ask, 2 = countered
+  history:       [{ by: String, slug: String, action: String, note: String, at: { type: Date, default: Date.now } }],
+  requestedBy:   { type: String, default: '' },   // staff name who filed the ask
+  respondedBy:   { type: String, default: '' },   // staff name who last acted on the other side
+  // Set once Approved - the CrossTransfer shipmentRef the negotiation turned into.
+  linkedShipmentRef: { type: String, default: '' },
+}, { timestamps: true });
+TransferRequestSchema.index({ businessType: 1, requestRef: 1, side: 1 }, { unique: true });
+const TransferRequest = mongoose.model('TransferRequest', TransferRequestSchema);
+
+
 const JournalEntrySchema = new mongoose.Schema({
   date: { type: Date, default: Date.now, index: true },
   reference: { type: String, index: true },
@@ -2705,7 +2759,12 @@ function reportLinesForItem(item, prods, prodMap, invMap) {
 // Per-order rows (client can roll up to per-day). Splits each order's payment(s)
 // into the four channels, keeping the per-method detail (GCash/Maya/Grab/...).
 const paymentChannel = (method) => {
-  if (!method || method === 'Cash') return 'cash';
+  // A check, once collected, is physically handled the same way cash is -
+  // it goes in the drawer/bag with the cash, not into a wallet balance. It
+  // books to its own COA account (115000 Checks on Hand, see chartOfAccounts.js)
+  // so the ledger keeps it distinct from real cash, but this report is about
+  // how the money moved through the till, so it groups with Cash, not E-Wallet.
+  if (!method || method === 'Cash' || method === 'Check') return 'cash';
   if (method === 'Bank Transfer') return 'bank';
   if (['Grab Delivery', 'Foodpanda', 'Manual Delivery'].includes(method)) return 'delivery';
   return 'ewallet'; // GCash, Maya, Maribank, E-Wallet, Other E-Wallet, etc.
@@ -2973,6 +3032,9 @@ const ctx = {
   LinkedBusinessSchema, LinkedBusiness,
   HubInviteSchema, HubInvite,
   CrossTransferSchema, CrossTransfer,
+  TRANSFER_REQUEST_STATUSES,
+  TransferRequestSchema,
+  TransferRequest,
   JournalEntrySchema,
   JournalEntry,
   TenantStatsSchema,

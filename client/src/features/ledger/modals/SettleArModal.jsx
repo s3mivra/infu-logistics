@@ -28,6 +28,10 @@ export default function SettleArModal() {
   // simply doesn't apply to one.
   const datesOutOfOrder = !isCheck && settleForm.collectionDate && settleForm.depositDate && settleForm.depositDate < settleForm.collectionDate;
   const missingCheckNo = isCheck && !String(settleForm.checkNumber || '').trim();
+  // A collection needs SOMETHING tying it to a real transaction to ever be
+  // reconciled - a check's own check number already serves that role for
+  // Check, so only every other method needs the generic reference field.
+  const missingReference = !isCheck && !String(settleForm.referenceNumber || '').trim();
 
   const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -157,12 +161,14 @@ export default function SettleArModal() {
                 className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
               <p className="text-[9px] text-fg/25 mt-1">Who physically took the money in - the collection report groups by this.</p>
             </div>
-            <div>
-              <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Reference No. (optional)</label>
-              <input type="text" placeholder="Bank txn ID, check no., GCash ref..." value={settleForm.referenceNumber || ''} onChange={e => setSettleForm({...settleForm, referenceNumber: e.target.value})}
-                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
-              <p className="text-[9px] text-fg/25 mt-1">For reconciling against the bank statement or receipt later.</p>
-            </div>
+            {!isCheck && (
+              <div>
+                <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Reference No. *</label>
+                <input type="text" placeholder="Bank txn ID, GCash ref, transaction no..." value={settleForm.referenceNumber || ''} onChange={e => setSettleForm({...settleForm, referenceNumber: e.target.value})}
+                  className={`w-full bg-page-bg border rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60 ${missingReference ? 'border-red-500/60' : 'border-white/10'}`} />
+                <p className="text-[9px] text-fg/25 mt-1">Required - this is what ties the collection back to a real bank/wallet transaction for reconciliation.</p>
+              </div>
+            )}
             <div>
               <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Note (optional)</label>
               <input type="text" placeholder="Grab payout batch #..." value={settleForm.note} onChange={e => setSettleForm({...settleForm, note: e.target.value})}
@@ -170,7 +176,7 @@ export default function SettleArModal() {
             </div>
           </div>
           <div className="px-5 pb-5 pt-3 border-t border-white/10">
-            <button onClick={submitArSettlement} disabled={settleSubmitting || overpaying || datesOutOfOrder || missingCheckNo}
+            <button onClick={submitArSettlement} disabled={settleSubmitting || overpaying || datesOutOfOrder || missingCheckNo || missingReference}
               className="w-full py-4 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active-press transition shadow-elev-2 disabled:opacity-50 min-h-[56px] flex items-center justify-center gap-2">
               <Check size={18}/> {settleSubmitting ? 'Recording…' : isPartial ? 'Record Partial Payment' : 'Record Collection'}
             </button>

@@ -16,12 +16,14 @@ const SELF_URL = hubUrlFor(TENANT);
 
 export default function registerHub(ctx) {
   const {
-    app, BUSINESS_TYPE,
+    app, BUSINESS_TYPE, mongoose,
     LinkedBusiness, HubInvite, CrossTransfer,
+    TransferRequest, TRANSFER_REQUEST_STATUSES,
     Inventory, StockCard, JournalEntry, Order,
     verifyToken,
     requireStaff: requireAuth, requireSuperAdmin,
     logAudit,
+    mkSeqRef,
   } = ctx;
 
   // Internal auth: partner calls use a shared linkToken
@@ -611,4 +613,340 @@ export default function registerHub(ctx) {
     );
     res.json({ ok: true });
   });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // HUB TRANSFER REQUESTS - negotiated stock asks between businesses
+  // ══════════════════════════════════════════════════════════════════════════
+  // Distinct from the "New Transfer" (Send) flow above, which is always US
+  // pushing stock we already have to a partner. A Transfer Request is an ASK -
+  // either business can initiate one, so `fromSlug`/`toSlug` are NOT locked to
+  // "us" on one side the way CrossTransfer's `direction` is. See the state
+  // machine and field comments on TransferRequestSchema (server.js) for the
+  // full negotiation shape; this is the routing layer on top of it.
+
+  const genRequestRef = () => `TRQ-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+  // Sync the OTHER business's mirror copy of a negotiation after any state
+  // change on ours - same partnerCall/requireLinkToken pattern CrossTransfer
+  // already uses for cross-tenant sync. Non-fatal: our own copy is already
+  // saved by the time this runs, so a delivery failure here is a "the other
+  // side is stale, they'll see it next poll" problem, not a data-loss one.
+  async function syncTransferRequest(link, doc) {
+    try {
+      await partnerCall(link, '/api/hub/internal/transfer-request-sync', {
+        requestRef: doc.requestRef,
+        fromSlug: doc.fromSlug, fromName: doc.fromName,
+        toSlug: doc.toSlug, toName: doc.toName,
+        filedBySlug: doc.filedBySlug,
+        status: doc.status,
+        lines: doc.lines,
+        originalLines: doc.originalLines,
+        round: doc.round,
+        history: doc.history,
+        respondedBy: doc.respondedBy,
+        linkedShipmentRef: doc.linkedShipmentRef,
+      });
+    } catch (e) {
+      return `Saved here, but could not notify the partner: ${e.message}`;
+    }
+  }
+
+  async function linkFor(partnerSlug) {
+    return LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug, status: 'active' }).lean();
+  }
+
+  // ── FILE a new ask ───────────────────────────────────────────────────────
+  // Body: { partnerSlug, weAreAskingThemToSend: bool, items: [{itemId?, itemName, unit, qty, note}] }
+  // weAreAskingThemToSend true  -> fromSlug = partner, toSlug = us (we're asking to RECEIVE)
+  // weAreAskingThemToSend false -> fromSlug = us, toSlug = partner (we're asking THEM to let us send / offering)
+  app.post('/api/hub/transfer-requests', verifyToken, requireAuth, async (req, res) => {
+    const { partnerSlug, weAreAskingThemToSend = true, items } = req.body || {};
+    if (!partnerSlug || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'partnerSlug and items[] are required.' });
+    }
+    const link = await linkFor(partnerSlug);
+    if (!link) return res.status(404).json({ error: 'No active link with that partner.' });
+
+    const lines = items
+      .filter(l => l && String(l.itemName || '').trim() && Number(l.qty) > 0)
+      .map(l => ({ itemId: l.itemId ? String(l.itemId) : '', itemName: String(l.itemName).trim(), unit: String(l.unit || '').trim(), qty: Number(l.qty), note: String(l.note || '').trim() }));
+    if (!lines.length) return res.status(400).json({ error: 'No valid line items.' });
+
+    const requestRef = genRequestRef();
+    const fromSlug = weAreAskingThemToSend ? partnerSlug : TENANT;
+    const fromName = weAreAskingThemToSend ? (link.partnerName || partnerSlug) : TENANT;
+    const toSlug = weAreAskingThemToSend ? TENANT : partnerSlug;
+    const toName = weAreAskingThemToSend ? TENANT : (link.partnerName || partnerSlug);
+
+    const mine = await TransferRequest.create({
+      businessType: BUSINESS_TYPE, requestRef, side: 'filed',
+      fromSlug, fromName, toSlug, toName, filedBySlug: TENANT,
+      status: 'Pending', lines, originalLines: lines, round: 1,
+      history: [{ by: req.user?.name || '', slug: TENANT, action: 'filed', note: '', at: new Date() }],
+      requestedBy: req.user?.name || '',
+    });
+
+    let warning;
+    try {
+      await partnerCall(link, '/api/hub/internal/transfer-request-notify', {
+        requestRef, fromSlug, fromName, toSlug, toName, filedBySlug: TENANT,
+        lines, requestedBy: req.user?.name || '',
+      });
+    } catch (e) {
+      warning = `Filed, but could not notify the partner: ${e.message}. They won't see it until you retry.`;
+    }
+
+    try { await logAudit?.(req, { action: 'create', entity: 'TransferRequest', entityId: requestRef, after: { partnerSlug, lines: lines.length } }); } catch { /* non-fatal */ }
+    res.json({ ok: true, request: mine, warning });
+  });
+
+  // ── LIST ours (both what we filed and what's been asked of us) ──────────
+  app.get('/api/hub/transfer-requests', verifyToken, requireAuth, async (req, res) => {
+    const rows = await TransferRequest.find({ businessType: BUSINESS_TYPE }).sort({ createdAt: -1 }).limit(200).lean();
+    res.json({ ok: true, requests: rows });
+  });
+
+  // Who is allowed to act right now, and what the resulting status is. Single
+  // source of truth for the state machine so the route handlers below don't
+  // each re-derive it slightly differently.
+  function nextActor(doc) {
+    // The requester is whoever filed it; the "other side" is whichever of
+    // fromSlug/toSlug isn't them.
+    const otherSlug = doc.filedBySlug === doc.fromSlug ? doc.toSlug : doc.fromSlug;
+    if (doc.status === 'Pending') return otherSlug;              // awaiting first response
+    if (doc.status === 'CounterPending') return doc.filedBySlug;  // awaiting requester's accept/decline
+    if (doc.status === 'AwaitingFinal') return otherSlug;         // awaiting fulfilling side's final sign-off
+    return null; // terminal
+  }
+
+  async function loadMine(req, res) {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) { res.status(404).json({ error: 'Not found.' }); return null; }
+    const doc = await TransferRequest.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE });
+    if (!doc) { res.status(404).json({ error: 'Not found.' }); return null; }
+    return doc;
+  }
+
+  function guardActor(req, res, doc) {
+    const actor = nextActor(doc);
+    if (actor !== TENANT) {
+      res.status(409).json({ error: actor ? `Waiting on ${actor === doc.filedBySlug ? 'the requester' : 'the other business'} - not your turn.` : `This request is already ${doc.status}.` });
+      return false;
+    }
+    return true;
+  }
+
+  // ── DECLINE (either party, any non-terminal state) ───────────────────────
+  app.post('/api/hub/transfer-requests/:id/decline', verifyToken, requireAuth, async (req, res) => {
+    const doc = await loadMine(req, res);
+    if (!doc) return;
+    if (!guardActor(req, res, doc)) return;
+
+    const reason = String(req.body?.reason || '').trim().slice(0, 500);
+    doc.status = 'Declined';
+    doc.respondedBy = req.user?.name || '';
+    doc.history.push({ by: req.user?.name || '', slug: TENANT, action: 'declined', note: reason, at: new Date() });
+    await doc.save();
+
+    const link = await linkFor(doc.fromSlug === TENANT ? doc.toSlug : doc.fromSlug);
+    const warning = link ? await syncTransferRequest(link, doc) : 'No active link with the partner to notify.';
+    try { await logAudit?.(req, { action: 'decline', entity: 'TransferRequest', entityId: doc.requestRef, after: { reason } }); } catch { /* non-fatal */ }
+    res.json({ ok: true, request: doc, warning });
+  });
+
+  // ── COUNTER (the party being asked proposes different quantities/lines) ──
+  // Body: { lines: [{itemId?, itemName, unit, qty, note}], note }
+  // Only reducing/dropping is meaningful here - this is "what we can actually
+  // give", not a chance to ask for something different. Not enforced strictly
+  // server-side (staff judgment), but the UI only offers adjust-down/remove.
+  app.post('/api/hub/transfer-requests/:id/counter', verifyToken, requireAuth, async (req, res) => {
+    const doc = await loadMine(req, res);
+    if (!doc) return;
+    if (doc.status !== 'Pending') return res.status(409).json({ error: `Can only counter a Pending request (currently ${doc.status}).` });
+    if (!guardActor(req, res, doc)) return;
+
+    const items = Array.isArray(req.body?.lines) ? req.body.lines : [];
+    const lines = items
+      .filter(l => l && String(l.itemName || '').trim() && Number(l.qty) > 0)
+      .map(l => ({ itemId: l.itemId ? String(l.itemId) : '', itemName: String(l.itemName).trim(), unit: String(l.unit || '').trim(), qty: Number(l.qty), note: String(l.note || '').trim() }));
+    if (!lines.length) return res.status(400).json({ error: 'Counter-offer needs at least one line item.' });
+
+    const note = String(req.body?.note || '').trim().slice(0, 500);
+    doc.lines = lines;
+    doc.round = 2;
+    doc.status = 'CounterPending';
+    doc.respondedBy = req.user?.name || '';
+    doc.history.push({ by: req.user?.name || '', slug: TENANT, action: 'countered', note, at: new Date() });
+    await doc.save();
+
+    const link = await linkFor(doc.fromSlug === TENANT ? doc.toSlug : doc.fromSlug);
+    const warning = link ? await syncTransferRequest(link, doc) : 'No active link with the partner to notify.';
+    res.json({ ok: true, request: doc, warning });
+  });
+
+  // ── ACCEPT the counter-offer (original requester only) ───────────────────
+  // Does NOT create the shipment yet - the fulfilling side gets one more look
+  // (AwaitingFinal) before real stock actually commits. Accepting a counter
+  // is "yes, those numbers work for me", not "ship it now".
+  app.post('/api/hub/transfer-requests/:id/accept-counter', verifyToken, requireAuth, async (req, res) => {
+    const doc = await loadMine(req, res);
+    if (!doc) return;
+    if (doc.status !== 'CounterPending') return res.status(409).json({ error: `No counter-offer to accept (currently ${doc.status}).` });
+    if (!guardActor(req, res, doc)) return;
+
+    doc.status = 'AwaitingFinal';
+    doc.respondedBy = req.user?.name || '';
+    doc.history.push({ by: req.user?.name || '', slug: TENANT, action: 'accepted-counter', note: '', at: new Date() });
+    await doc.save();
+
+    const link = await linkFor(doc.fromSlug === TENANT ? doc.toSlug : doc.fromSlug);
+    const warning = link ? await syncTransferRequest(link, doc) : 'No active link with the partner to notify.';
+    res.json({ ok: true, request: doc, warning });
+  });
+
+  // ── APPROVE the ORIGINAL ask as-is (no negotiation needed) ────────────────
+  // Skips straight to Approved/shipment creation - nothing was countered, so
+  // there is nothing left for a second round to confirm.
+  app.post('/api/hub/transfer-requests/:id/approve-as-is', verifyToken, requireAuth, async (req, res) => {
+    const doc = await loadMine(req, res);
+    if (!doc) return;
+    if (doc.status !== 'Pending') return res.status(409).json({ error: `Only a Pending request can be approved as-is (currently ${doc.status}).` });
+    if (!guardActor(req, res, doc)) return;
+    return finalizeTransferRequest(req, res, doc);
+  });
+
+  // ── FINAL APPROVAL after a negotiated counter (fulfilling side only) ─────
+  app.post('/api/hub/transfer-requests/:id/finalize', verifyToken, requireAuth, async (req, res) => {
+    const doc = await loadMine(req, res);
+    if (!doc) return;
+    if (doc.status !== 'AwaitingFinal') return res.status(409).json({ error: `Nothing awaiting final approval (currently ${doc.status}).` });
+    if (!guardActor(req, res, doc)) return;
+    return finalizeTransferRequest(req, res, doc);
+  });
+
+  // Shared by approve-as-is and finalize: both end the negotiation the same
+  // way - lock in `lines` as the agreed shipment and create the real
+  // CrossTransfer(s) FROM whoever fromSlug is. The fulfilling business's own
+  // financial sign-off already happened by way of this negotiation (they
+  // approved or countered-then-finalized it themselves), so this posts
+  // straight to 'Pending' (already agreed + notified) rather than re-entering
+  // the internal pre-approval queue the plain "New Transfer" flow uses -
+  // that queue exists to gate an UNPREPARED send; this one was prepared here.
+  async function finalizeTransferRequest(req, res, doc) {
+    // finalize only ever runs on the FULFILLING side's own server (fromSlug),
+    // since only they hold the stock and only they were the "other side"
+    // asked to act at AwaitingFinal/Pending. Guard it explicitly so a stray
+    // call against the requester's mirror copy can't fabricate a shipment.
+    if (doc.fromSlug !== TENANT) {
+      return res.status(409).json({ error: 'Only the business that would ship the stock can approve this.' });
+    }
+
+    const shipmentRef = `HT-${Date.now().toString(36).toUpperCase()}`;
+    const created = [];
+    const errors = [];
+    for (const line of doc.lines) {
+      let item = null;
+      if (line.itemId && mongoose.Types.ObjectId.isValid(line.itemId)) {
+        item = await Inventory.findOne({ _id: line.itemId, businessType: BUSINESS_TYPE }).lean();
+      }
+      if (!item) { errors.push(`${line.itemName}: no matching inventory item selected - drop or re-pick this line before approving.`); continue; }
+      if (item.stockQty < line.qty) { errors.push(`${item.itemName}: need ${line.qty}${line.unit}, only ${item.stockQty}${item.unit} on hand.`); continue; }
+
+      const reference = `${shipmentRef}-L${created.length + 1}`;
+      const t = await CrossTransfer.create({
+        businessType: BUSINESS_TYPE, direction: 'outbound',
+        partnerSlug: doc.toSlug, partnerName: doc.toName,
+        itemId: item._id, itemName: item.itemName, unit: item.unit, qtyBase: line.qty,
+        unitCost: item.unitCost || 0, displayUnit: item.displayUnit || '', unitMultiplier: item.unitMultiplier || 1,
+        packSize: item.packSize ?? null, itemCode: item.itemCode || '', stockCategory: item.stockCategory || '',
+        note: line.note || `Via negotiated request ${doc.requestRef}`,
+        reference, shipmentRef, status: 'Pending',
+        requestedBy: doc.requestedBy, approvedBy: req.user?.name || '', approvedAt: new Date(),
+      });
+      created.push(t);
+    }
+
+    if (!created.length) return res.status(409).json({ error: `Could not create the shipment. ${errors.join(' ')}` });
+
+    const link = await linkFor(doc.toSlug);
+    if (link) {
+      try {
+        await partnerCall(link, '/api/hub/internal/transfer-notify', {
+          shipmentRef, fromSlug: TENANT, fromName: TENANT,
+          items: created.map(t => ({
+            reference: t.reference, itemName: t.itemName, unit: t.unit, qtyBase: t.qtyBase, note: t.note,
+            unitCost: t.unitCost, displayUnit: t.displayUnit, unitMultiplier: t.unitMultiplier,
+            packSize: t.packSize, itemCode: t.itemCode, stockCategory: t.stockCategory,
+          })),
+        });
+      } catch { /* the shipment rows already exist locally; partner will still see them once reachable */ }
+    }
+
+    doc.status = 'Approved';
+    doc.linkedShipmentRef = shipmentRef;
+    doc.respondedBy = req.user?.name || '';
+    doc.history.push({ by: req.user?.name || '', slug: TENANT, action: 'approved', note: errors.length ? `${errors.length} line(s) skipped: ${errors.join(' ')}` : '', at: new Date() });
+    await doc.save();
+
+    const warning = link ? await syncTransferRequest(link, doc) : 'No active link with the partner to notify.';
+    try { await logAudit?.(req, { action: 'approve', entity: 'TransferRequest', entityId: doc.requestRef, after: { shipmentRef, lines: created.length } }); } catch { /* non-fatal */ }
+    res.json({ ok: true, request: doc, shipmentRef, transfers: created, errors: errors.length ? errors : undefined, warning });
+  }
+
+  // ── CANCEL (filer withdraws before any response) ─────────────────────────
+  app.post('/api/hub/transfer-requests/:id/cancel', verifyToken, requireAuth, async (req, res) => {
+    const doc = await loadMine(req, res);
+    if (!doc) return;
+    if (doc.filedBySlug !== TENANT) return res.status(403).json({ error: 'Only the business that filed this can withdraw it.' });
+    if (doc.status !== 'Pending') return res.status(409).json({ error: `Can only withdraw a request nobody has responded to yet (currently ${doc.status}).` });
+
+    doc.status = 'Cancelled';
+    doc.history.push({ by: req.user?.name || '', slug: TENANT, action: 'cancelled', note: '', at: new Date() });
+    await doc.save();
+
+    const link = await linkFor(doc.fromSlug === TENANT ? doc.toSlug : doc.fromSlug);
+    const warning = link ? await syncTransferRequest(link, doc) : undefined;
+    res.json({ ok: true, request: doc, warning });
+  });
+
+  // ── INTERNAL: partner filed a new ask against us ──────────────────────────
+  app.post('/api/hub/internal/transfer-request-notify', requireLinkToken, async (req, res) => {
+    const { requestRef, fromSlug, fromName, toSlug, toName, filedBySlug, lines, requestedBy } = req.body || {};
+    if (!requestRef) return res.status(400).json({ error: 'requestRef is required.' });
+    await TransferRequest.updateOne(
+      { businessType: BUSINESS_TYPE, requestRef, side: 'received' },
+      { $setOnInsert: {
+        businessType: BUSINESS_TYPE, requestRef, side: 'received',
+        fromSlug, fromName, toSlug, toName, filedBySlug,
+        status: 'Pending', lines: lines || [], originalLines: lines || [], round: 1,
+        history: [{ by: requestedBy || '', slug: filedBySlug, action: 'filed', note: '', at: new Date() }],
+        requestedBy: requestedBy || '',
+      } },
+      { upsert: true },
+    );
+    res.json({ ok: true });
+  });
+
+  // ── INTERNAL: partner's copy changed (decline/counter/accept/finalize) ───
+  // One generic sync route rather than one per action - the caller's local
+  // document is already the source of truth for the new state, this just
+  // mirrors it onto our copy of the SAME negotiation.
+  app.post('/api/hub/internal/transfer-request-sync', requireLinkToken, async (req, res) => {
+    const { requestRef, status, lines, originalLines, round, history, respondedBy, linkedShipmentRef } = req.body || {};
+    if (!requestRef || !TRANSFER_REQUEST_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid payload.' });
+    const result = await TransferRequest.updateOne(
+      { businessType: BUSINESS_TYPE, requestRef },
+      { $set: {
+        status,
+        ...(lines ? { lines } : {}),
+        ...(originalLines ? { originalLines } : {}),
+        ...(round ? { round } : {}),
+        ...(history ? { history } : {}),
+        ...(respondedBy !== undefined ? { respondedBy } : {}),
+        ...(linkedShipmentRef ? { linkedShipmentRef } : {}),
+      } },
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: 'Unknown request on this side.' });
+    res.json({ ok: true });
+  });
+
 }

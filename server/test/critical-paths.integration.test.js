@@ -169,7 +169,7 @@ describe('finance: every money endpoint posts a balanced double-entry', () => {
     expect(before.orders.some((r) => r.orderNumber === 'ORD-AR-1')).toBe(true);
 
     const res = await auth('post', `/api/orders/${o._id}/settle-ar`, tok.super)
-      .send({ amount: 500, paymentMethod: 'Bank Transfer' });
+      .send({ amount: 500, paymentMethod: 'Bank Transfer', referenceNumber: 'BANK-REF-1' });
     expect(res.status).toBe(200);
     expect(res.body.order.arSettled).toBe(true);
 

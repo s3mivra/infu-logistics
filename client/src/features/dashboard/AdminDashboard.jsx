@@ -2614,7 +2614,11 @@ const updateStatus = async (orderId, newStatus) => {
   // "open, edit the numbers you actually want to change, save" rather than
   // typing every product from scratch.
   const exportPriceTiersExcel = async () => {
-    if (!pricingTable.tiers || pricingTable.tiers.length === 0) return ui.alert('No price tiers set up yet - open Pricing Control first (or Super Admin → Price Tiers) so this can load.');
+    // No tiers yet is fine - the sheet comes back as Code/Product/List Price
+    // with no tier columns. Add a column yourself, name it after the tier you
+    // want (new or existing), fill in prices, and importing it creates that
+    // tier - see parsePriceTierExcel/submitPriceTierImport below.
+    if (!pricingTable.products || pricingTable.products.length === 0) return ui.alert('No products to export yet.');
     const XLSX = await import('xlsx');
     const headers = ['Code', 'Product', 'List Price', ...pricingTable.tiers.map(t => t.name)];
     const rows = (pricingTable.products || []).map(p => [
@@ -3109,6 +3113,10 @@ const updateStatus = async (orderId, newStatus) => {
     const isCheck = settleForm.paymentMethod === 'Check';
     if (isCheck && !String(settleForm.checkNumber || '').trim())
       return ui.alert('Enter the check number.');
+    // Every other tender needs a reference tying it to a real transaction -
+    // a check's own check number already serves that role for Check.
+    if (!isCheck && !String(settleForm.referenceNumber || '').trim())
+      return ui.alert('Enter a reference number (bank transaction ID, GCash ref, etc.).');
     if (!isCheck && settleForm.depositDate && settleForm.collectionDate && settleForm.depositDate < settleForm.collectionDate)
       return ui.alert('Deposit date cannot be earlier than the collection date.');
     setSettleSubmitting(true);
@@ -6602,16 +6610,21 @@ const updateStatus = async (orderId, newStatus) => {
           <span className="text-[10px] text-fg/60 font-bold uppercase tracking-wider">Auto-Close</span>
           <MidnightCountdown />
         </div>
-        {/* Clock In/Out/Break - always visible (frequent, critical action) */}
-        <button onClick={handleClockButton}
-          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-white bg-amber-500 hover:bg-amber-600' : clockStatus.isClockedIn ? 'text-white bg-accent hover:bg-accent/80' : 'text-fg/40 hover:text-fg hover:bg-white/5'}`}>
-          <Clock size={15} />
-          {clockStatus.onBreak
-            ? `On Break - tap to resume`
-            : clockStatus.isClockedIn
-              ? `Clocked In · ${clockStatus.entry ? Math.round((Date.now()-new Date(clockStatus.entry.clockIn))/60000) : 0}m`
-              : 'Clock In'}
-        </button>
+        {/* Clock In/Out/Break - always visible for staff (frequent, critical
+            action). Hidden for superadmin: they're already exempt from the
+            clock-in gate below (owners aren't tracked for attendance), so
+            this button was just nagging someone the app never blocks. */}
+        {!isSuperAdmin && (
+          <button onClick={handleClockButton}
+            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-white bg-amber-500 hover:bg-amber-600' : clockStatus.isClockedIn ? 'text-white bg-accent hover:bg-accent/80' : 'text-fg/40 hover:text-fg hover:bg-white/5'}`}>
+            <Clock size={15} />
+            {clockStatus.onBreak
+              ? `On Break - tap to resume`
+              : clockStatus.isClockedIn
+                ? `Clocked In · ${clockStatus.entry ? Math.round((Date.now()-new Date(clockStatus.entry.clockIn))/60000) : 0}m`
+                : 'Clock In'}
+          </button>
+        )}
 
         {/* Settings - system preferences & account. The QR-Orders / Auto-Close /
             Product-Images toggles and Change Password now live on this page

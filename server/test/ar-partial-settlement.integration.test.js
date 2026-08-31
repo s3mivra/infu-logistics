@@ -29,7 +29,12 @@ async function receivable(price) {
   return a.body.order._id;
 }
 
-const settle = (id, body) => auth('post', `/api/orders/${id}/settle-ar`, superTok).send(body);
+// A reference number is required on every collection except Check (whose own
+// checkNumber already serves that role) - defaulted here so existing test
+// bodies don't all need to carry one explicitly; the dedicated test below
+// covers the requirement itself.
+const settle = (id, body) => auth('post', `/api/orders/${id}/settle-ar`, superTok)
+  .send({ referenceNumber: body.paymentMethod === 'Check' ? undefined : 'TEST-REF', ...body });
 
 beforeAll(async () => {
   ctx = await bootApp({ businessType: 'log' });
@@ -92,6 +97,17 @@ describe('partial A/R settlement', () => {
     expect(after.arSettled).toBe(true);
     expect(after.arPaidAmount).toBe(1700);
     expect(after.arPayments).toHaveLength(2);
+  });
+
+  it('refuses a collection with no reference number - unreconcilable otherwise', async () => {
+    const id = await receivable(400);
+    const res = await auth('post', `/api/orders/${id}/settle-ar`, superTok)
+      .send({ amount: 400, paymentMethod: 'Cash on Hand' });   // no referenceNumber
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/reference number is required/i);
+
+    const o = await Order().findById(id).lean();
+    expect(o.arPaidAmount).toBe(0);
   });
 
   it('refuses a collection larger than what is left, quoting the remainder', async () => {

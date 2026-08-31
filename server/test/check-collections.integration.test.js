@@ -29,7 +29,11 @@ async function receivable(price) {
   return a.body.order._id;
 }
 
-const settle = (id, body) => auth('post', `/api/orders/${id}/settle-ar`, superTok).send(body);
+// A reference number is required for every tender except Check (its own
+// checkNumber already serves that role) - defaulted so test bodies don't all
+// need to carry one explicitly.
+const settle = (id, body) => auth('post', `/api/orders/${id}/settle-ar`, superTok)
+  .send({ referenceNumber: body.paymentMethod === 'Check' ? undefined : 'TEST-REF', ...body });
 
 // Take in one check and hand back the register row for it.
 async function payByCheck(orderId, amount, extra = {}) {

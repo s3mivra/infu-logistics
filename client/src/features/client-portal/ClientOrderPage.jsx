@@ -503,6 +503,9 @@ export default function ClientOrderPage() {
         selectedAddOns: [],
       }];
     });
+    // Non-blocking confirmation - only the FIRST add opens the cart drawer/bar;
+    // tapping several different products after that has no other feedback.
+    ui.toast(`${product.name} added to cart`, { tone: 'success', duration: 1600 });
   }, []);
 
   const changeQty = useCallback((productId, delta) => {

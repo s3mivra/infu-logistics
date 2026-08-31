@@ -686,8 +686,12 @@ export default function SuperAdminPanel() {
   // a percent-mode tier receiving explicit prices switches to per_product
   // first - otherwise resolveTierPrice ignores them entirely.
   const exportTierPricingExcel = async () => {
-    if (!tierPricingTable.tiers || tierPricingTable.tiers.length === 0) {
-      return showToast('No price tiers to export yet - create one first.', 'error');
+    // No tiers yet is fine - the sheet just comes back as Code/Product/List
+    // Price with no tier columns. Add a column yourself, name it after the
+    // tier you want (new or existing), fill in prices, and importing it
+    // creates that tier - see parseTierPricingExcel/submitTierPricingImport.
+    if (!tierPricingTable.products || tierPricingTable.products.length === 0) {
+      return showToast('No products to export yet.', 'error');
     }
     const XLSX = await import('xlsx');
     const headers = ['Code', 'Product', 'List Price', ...tierPricingTable.tiers.map(t => t.name)];

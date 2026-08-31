@@ -12,6 +12,17 @@ const statusColor = {
   Rejected: 'bg-red-500/15 text-red-400',
 };
 
+// Transfer Request (negotiation) statuses are a different vocabulary from
+// CrossTransfer's shipment statuses above - same color language, own words.
+const negoStatusColor = {
+  Pending: 'bg-yellow-500/15 text-yellow-400',
+  CounterPending: 'bg-orange-500/15 text-orange-400',
+  AwaitingFinal: 'bg-blue-500/15 text-blue-400',
+  Approved: 'bg-green-500/15 text-green-500',
+  Declined: 'bg-red-500/15 text-red-400',
+  Cancelled: 'bg-white/10 text-fg/40',
+};
+
 export default function HubTab({ ctx }) {
   // fetchERPData reloads the shared inventory the rest of the dashboard reads.
   // A transfer moves real stock, so anything that completes one has to pull it
@@ -54,6 +65,103 @@ export default function HubTab({ ctx }) {
   const [acceptCreateNew, setAcceptCreateNew] = useState(false);
   const [acceptBusy, setAcceptBusy]         = useState(false);
   const [acceptErr, setAcceptErr]           = useState('');
+
+  // ── TRANSFER REQUESTS (negotiated asks) ──────────────────────────────────
+  // The "New Transfer" panel below can ALSO file an ask instead of a push -
+  // 'send' is the existing flow (we ship stock we have); 'ask' is new (we
+  // request stock we don't have, and the other business can decline, accept
+  // as-is, or counter with what they can actually give).
+  const [transferMode, setTransferMode] = useState('send'); // 'send' | 'ask'
+  const [askPartner, setAskPartner]     = useState('');
+  const [askItemName, setAskItemName]   = useState('');
+  const [askUnit, setAskUnit]           = useState('');
+  const [askQty, setAskQty]             = useState('');
+  const [askNote, setAskNote]           = useState('');
+  const [askCart, setAskCart]           = useState([]); // [{itemName,unit,qty,note}]
+  const [askBusy, setAskBusy]           = useState(false);
+  const [askErr, setAskErr]             = useState('');
+
+  const [transferRequests, setTransferRequests] = useState([]);
+  const loadTransferRequests = useCallback(async () => {
+    try {
+      const r = await authFetch('/api/hub/transfer-requests');
+      const d = await r.json();
+      if (r.ok) setTransferRequests(d.requests || []);
+    } catch {}
+  }, [authFetch]);
+  useEffect(() => { loadTransferRequests(); }, [loadTransferRequests]);
+
+  // Counter-offer modal: lets the party being asked adjust quantities down or
+  // drop a line entirely - never add a new one (this is "what we can give",
+  // not a chance to substitute something else).
+  const [counterTarget, setCounterTarget] = useState(null); // TransferRequest doc
+  const [counterLines, setCounterLines]   = useState([]);   // editable copy of .lines
+  const [counterNote, setCounterNote]     = useState('');
+  const [counterBusy, setCounterBusy]     = useState(false);
+  const [counterErr, setCounterErr]       = useState('');
+  const [declineTarget, setDeclineTarget] = useState(null); // TransferRequest doc
+  const [declineReason, setDeclineReason] = useState('');
+  const [declineBusy, setDeclineBusy]     = useState(false);
+
+  const addToAskCart = () => {
+    const qty = parseFloat(askQty);
+    if (!askItemName.trim() || !(qty > 0)) return;
+    setAskCart(c => [...c, { itemName: askItemName.trim(), unit: askUnit.trim(), qty, note: askNote.trim() }]);
+    setAskItemName(''); setAskUnit(''); setAskQty(''); setAskNote('');
+  };
+  const removeFromAskCart = (idx) => setAskCart(c => c.filter((_, i) => i !== idx));
+
+  const sendAsk = async () => {
+    if (!askPartner || askCart.length === 0) return;
+    setAskBusy(true); setAskErr('');
+    try {
+      const r = await authFetch('/api/hub/transfer-requests', {
+        method: 'POST',
+        body: JSON.stringify({ partnerSlug: askPartner, weAreAskingThemToSend: true, items: askCart }),
+      });
+      const d = await r.json();
+      if (!r.ok) { setAskErr(d.error); return; }
+      setAskCart([]);
+      if (d.warning) setAskErr(`⚠ ${d.warning}`);
+      loadTransferRequests();
+    } catch (e) { setAskErr(e.message); }
+    finally { setAskBusy(false); }
+  };
+
+  const actOnRequest = async (id, action, body = {}) => {
+    const r = await authFetch(`/api/hub/transfer-requests/${id}/${action}`, { method: 'POST', body: JSON.stringify(body) });
+    const d = await r.json();
+    if (!r.ok) { alert(d.error || `Could not ${action}.`); return null; }
+    loadTransferRequests();
+    if (action === 'finalize' || action === 'approve-as-is') fetchERPData?.();
+    return d;
+  };
+
+  const openCounter = (doc) => {
+    setCounterTarget(doc);
+    setCounterLines(doc.lines.map(l => ({ ...l })));
+    setCounterNote('');
+    setCounterErr('');
+  };
+  const updateCounterQty = (idx, qty) => setCounterLines(ls => ls.map((l, i) => i === idx ? { ...l, qty: parseFloat(qty) || 0 } : l));
+  const removeCounterLine = (idx) => setCounterLines(ls => ls.filter((_, i) => i !== idx));
+  const submitCounter = async () => {
+    const lines = counterLines.filter(l => l.qty > 0);
+    if (!lines.length) { setCounterErr('At least one line with a quantity greater than zero.'); return; }
+    setCounterBusy(true); setCounterErr('');
+    try {
+      const d = await actOnRequest(counterTarget._id, 'counter', { lines, note: counterNote.trim() });
+      if (d) setCounterTarget(null); else setCounterErr('Could not send the counter-offer.');
+    } finally { setCounterBusy(false); }
+  };
+
+  const submitDecline = async () => {
+    setDeclineBusy(true);
+    try {
+      const d = await actOnRequest(declineTarget._id, 'decline', { reason: declineReason.trim() });
+      if (d) setDeclineTarget(null);
+    } finally { setDeclineBusy(false); }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -466,105 +574,307 @@ export default function HubTab({ ctx }) {
       {/* ── New Transfer ── */}
       {partners.length > 0 && (
         <div className={card}>
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 mb-2">
             <Send size={15} className="text-accent" />
             <h3 className="text-fg font-black uppercase tracking-wider text-sm">New Transfer</h3>
-            {/* The counterpart note to the Inventory tab's transfer panel:
-                this one crosses a company boundary, so it posts real journal
-                entries on both sides and needs sign-off before it is sent. */}
-            <p className="text-fg/40 text-[11px] font-normal normal-case tracking-normal mt-1">
-              Ships stock to <span className="text-fg/70 font-bold">another business</span> in your network - it leaves your books and lands on theirs.
-              Moving stock between your own locations is the Transfer tab under Inventory.
-              Filing this creates a slip that must be approved before the partner is notified.
-            </p>
+          </div>
+          {/* Two directions through the same panel: SEND pushes stock you
+              already have (existing flow, unchanged - internal approval, then
+              the partner is notified and accepts). ASK requests stock you
+              DON'T have, from a partner - they can decline, accept exactly as
+              asked, or counter with what they can actually give before
+              anything ships. See the Transfer Requests queue below for the
+              negotiation once one is filed. */}
+          <div className="flex gap-1.5 mb-3 bg-page-bg border border-white/8 rounded-xl p-1 w-fit">
+            <button onClick={() => setTransferMode('send')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition ${transferMode === 'send' ? 'bg-accent text-white' : 'text-fg/50 hover:text-fg'}`}>
+              Send Stock
+            </button>
+            <button onClick={() => setTransferMode('ask')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition ${transferMode === 'ask' ? 'bg-accent text-white' : 'text-fg/50 hover:text-fg'}`}>
+              Request Stock
+            </button>
           </div>
 
-          {/* FROM / TO */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-            <div>
-              <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">From (Source)</label>
-              <select value={sendFrom} onChange={e => setSendFrom(e.target.value)} className={input}>
-                <option value="__self__">This Business ({info?.tenant ?? '…'})</option>
-                {partners.filter(p => p.status === 'active').map(p => (
-                  <option key={p._id} value={p.partnerSlug}>{p.partnerName || p.partnerSlug}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">To (Destination)</label>
-              <select value={sendPartner} onChange={e => setSendPartner(e.target.value)} className={input}>
-                <option value="">- Select business -</option>
-                {partners.filter(p => p.status === 'active' && (sendFrom === '__self__' || p.partnerSlug !== sendFrom)).map(p => (
-                  <option key={p._id} value={p.partnerSlug}>{p.partnerName || p.partnerSlug}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+          {transferMode === 'send' ? (
+            <>
+              <p className="text-fg/40 text-[11px] mb-4">
+                Ships stock to <span className="text-fg/70 font-bold">another business</span> in your network - it leaves your books and lands on theirs.
+                Moving stock between your own locations is the Transfer tab under Inventory.
+                Filing this creates a slip that must be approved before the partner is notified.
+              </p>
 
-          {/* Add item row */}
-          <div className="bg-page-bg border border-white/8 rounded-xl p-3 mb-3">
-            <p className="text-[10px] text-fg/40 uppercase font-bold mb-2">Add Item</p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              <select value={sendItem} onChange={e => setSendItem(e.target.value)} className={input}>
-                <option value="">- Select product -</option>
-                {inventory.map(i => (
-                  <option key={i._id} value={i._id}>{i.itemName} · {i.stockQty} {i.unit}</option>
-                ))}
-              </select>
-              <input
-                type="number" min="0.001" step="any" value={sendQty}
-                onChange={e => setSendQty(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addToCart()}
-                className={input}
-                placeholder={sendItem && inventory.find(i => i._id === sendItem) ? `Qty (${inventory.find(i => i._id === sendItem).unit})` : 'Quantity'}
-              />
-              <input value={sendNote} onChange={e => setSendNote(e.target.value)} onKeyDown={e => e.key === 'Enter' && addToCart()} className={input} placeholder="Note (optional)" />
-            </div>
-            <button
-              onClick={addToCart}
-              disabled={!sendItem || !(parseFloat(sendQty) > 0)}
-              className={`mt-2 ${btn('ghost')} text-xs`}
-            >+ Add to Transfer</button>
-          </div>
+              {/* FROM / TO */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                <div>
+                  <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">From (Source)</label>
+                  <select value={sendFrom} onChange={e => setSendFrom(e.target.value)} className={input}>
+                    <option value="__self__">This Business ({info?.tenant ?? '…'})</option>
+                    {partners.filter(p => p.status === 'active').map(p => (
+                      <option key={p._id} value={p.partnerSlug}>{p.partnerName || p.partnerSlug}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">To (Destination)</label>
+                  <select value={sendPartner} onChange={e => setSendPartner(e.target.value)} className={input}>
+                    <option value="">- Select business -</option>
+                    {partners.filter(p => p.status === 'active' && (sendFrom === '__self__' || p.partnerSlug !== sendFrom)).map(p => (
+                      <option key={p._id} value={p.partnerSlug}>{p.partnerName || p.partnerSlug}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
-          {/* Cart */}
-          {sendCart.length > 0 && (
-            <div className="border border-white/8 rounded-xl overflow-hidden mb-3">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-fg/40 text-[9px] uppercase tracking-widest border-b border-white/8 bg-white/3">
-                    <th className="text-left py-2 px-3">Product</th>
-                    <th className="text-right py-2 px-3">Qty</th>
-                    <th className="text-left py-2 px-3">Note</th>
-                    <th className="py-2 px-3" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {sendCart.map((line, i) => (
-                    <tr key={i} className="border-b border-white/5 last:border-0">
-                      <td className="py-2 px-3 font-bold text-fg">{line.itemName}</td>
-                      <td className="py-2 px-3 text-right tabular-nums text-fg">{line.qty} {line.unit}</td>
-                      <td className="py-2 px-3 text-fg/50 italic">{line.note || '-'}</td>
-                      <td className="py-2 px-3 text-right">
-                        <button onClick={() => removeFromCart(i)} className="text-red-400/60 hover:text-red-400 text-[10px] font-bold uppercase">Remove</button>
-                      </td>
-                    </tr>
+              {/* Add item row */}
+              <div className="bg-page-bg border border-white/8 rounded-xl p-3 mb-3">
+                <p className="text-[10px] text-fg/40 uppercase font-bold mb-2">Add Item</p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <select value={sendItem} onChange={e => setSendItem(e.target.value)} className={input}>
+                    <option value="">- Select product -</option>
+                    {inventory.map(i => (
+                      <option key={i._id} value={i._id}>{i.itemName} · {i.stockQty} {i.unit}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number" min="0.001" step="any" value={sendQty}
+                    onChange={e => setSendQty(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && addToCart()}
+                    className={input}
+                    placeholder={sendItem && inventory.find(i => i._id === sendItem) ? `Qty (${inventory.find(i => i._id === sendItem).unit})` : 'Quantity'}
+                  />
+                  <input value={sendNote} onChange={e => setSendNote(e.target.value)} onKeyDown={e => e.key === 'Enter' && addToCart()} className={input} placeholder="Note (optional)" />
+                </div>
+                <button
+                  onClick={addToCart}
+                  disabled={!sendItem || !(parseFloat(sendQty) > 0)}
+                  className={`mt-2 ${btn('ghost')} text-xs`}
+                >+ Add to Transfer</button>
+              </div>
+
+              {/* Cart */}
+              {sendCart.length > 0 && (
+                <div className="border border-white/8 rounded-xl overflow-hidden mb-3">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-fg/40 text-[9px] uppercase tracking-widest border-b border-white/8 bg-white/3">
+                        <th className="text-left py-2 px-3">Product</th>
+                        <th className="text-right py-2 px-3">Qty</th>
+                        <th className="text-left py-2 px-3">Note</th>
+                        <th className="py-2 px-3" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sendCart.map((line, i) => (
+                        <tr key={i} className="border-b border-white/5 last:border-0">
+                          <td className="py-2 px-3 font-bold text-fg">{line.itemName}</td>
+                          <td className="py-2 px-3 text-right tabular-nums text-fg">{line.qty} {line.unit}</td>
+                          <td className="py-2 px-3 text-fg/50 italic">{line.note || '-'}</td>
+                          <td className="py-2 px-3 text-right">
+                            <button onClick={() => removeFromCart(i)} className="text-red-400/60 hover:text-red-400 text-[10px] font-bold uppercase">Remove</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <button
+                onClick={sendTransfer}
+                disabled={sendBusy || !sendPartner || sendCart.length === 0}
+                className={btn()}
+              >
+                {sendBusy ? 'Sending…' : `Send ${sendCart.length > 0 ? `${sendCart.length} item${sendCart.length > 1 ? 's' : ''}` : 'Transfer'}`}
+              </button>
+              {sendErr && <p className={`text-xs mt-2 ${sendErr.startsWith('⚠') ? 'text-yellow-400' : 'text-red-400'}`}>{sendErr}</p>}
+            </>
+          ) : (
+            <>
+              <p className="text-fg/40 text-[11px] mb-4">
+                Asks <span className="text-fg/70 font-bold">another business</span> to send you stock you don't have. They can decline,
+                accept it exactly as asked, or counter with what they can actually give - nothing ships until it's agreed on both sides.
+                You won't see their inventory, so type what you need by name.
+              </p>
+
+              <div className="mb-4">
+                <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">Ask (Business)</label>
+                <select value={askPartner} onChange={e => setAskPartner(e.target.value)} className={input}>
+                  <option value="">- Select business -</option>
+                  {partners.filter(p => p.status === 'active').map(p => (
+                    <option key={p._id} value={p.partnerSlug}>{p.partnerName || p.partnerSlug}</option>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                </select>
+              </div>
 
-          <button
-            onClick={sendTransfer}
-            disabled={sendBusy || !sendPartner || sendCart.length === 0}
-            className={btn()}
-          >
-            {sendBusy ? 'Sending…' : `Send ${sendCart.length > 0 ? `${sendCart.length} item${sendCart.length > 1 ? 's' : ''}` : 'Transfer'}`}
-          </button>
-          {sendErr && <p className={`text-xs mt-2 ${sendErr.startsWith('⚠') ? 'text-yellow-400' : 'text-red-400'}`}>{sendErr}</p>}
+              <div className="bg-page-bg border border-white/8 rounded-xl p-3 mb-3">
+                <p className="text-[10px] text-fg/40 uppercase font-bold mb-2">Add Item</p>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                  <input value={askItemName} onChange={e => setAskItemName(e.target.value)} className={input} placeholder="Item name" />
+                  <input value={askUnit} onChange={e => setAskUnit(e.target.value)} className={input} placeholder="Unit (pcs, kg…)" />
+                  <input
+                    type="number" min="0.001" step="any" value={askQty}
+                    onChange={e => setAskQty(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && addToAskCart()}
+                    className={input} placeholder="Quantity"
+                  />
+                  <input value={askNote} onChange={e => setAskNote(e.target.value)} onKeyDown={e => e.key === 'Enter' && addToAskCart()} className={input} placeholder="Note (optional)" />
+                </div>
+                <button onClick={addToAskCart} disabled={!askItemName.trim() || !(parseFloat(askQty) > 0)} className={`mt-2 ${btn('ghost')} text-xs`}>
+                  + Add to Request
+                </button>
+              </div>
+
+              {askCart.length > 0 && (
+                <div className="border border-white/8 rounded-xl overflow-hidden mb-3">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-fg/40 text-[9px] uppercase tracking-widest border-b border-white/8 bg-white/3">
+                        <th className="text-left py-2 px-3">Item</th>
+                        <th className="text-right py-2 px-3">Qty</th>
+                        <th className="text-left py-2 px-3">Note</th>
+                        <th className="py-2 px-3" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {askCart.map((line, i) => (
+                        <tr key={i} className="border-b border-white/5 last:border-0">
+                          <td className="py-2 px-3 font-bold text-fg">{line.itemName}</td>
+                          <td className="py-2 px-3 text-right tabular-nums text-fg">{line.qty} {line.unit}</td>
+                          <td className="py-2 px-3 text-fg/50 italic">{line.note || '-'}</td>
+                          <td className="py-2 px-3 text-right">
+                            <button onClick={() => removeFromAskCart(i)} className="text-red-400/60 hover:text-red-400 text-[10px] font-bold uppercase">Remove</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <button onClick={sendAsk} disabled={askBusy || !askPartner || askCart.length === 0} className={btn()}>
+                {askBusy ? 'Sending…' : `Ask for ${askCart.length > 0 ? `${askCart.length} item${askCart.length > 1 ? 's' : ''}` : 'Stock'}`}
+              </button>
+              {askErr && <p className={`text-xs mt-2 ${askErr.startsWith('⚠') ? 'text-yellow-400' : 'text-red-400'}`}>{askErr}</p>}
+            </>
+          )}
         </div>
       )}
+
+      {/* ── Transfer Requests (negotiation queue) ──
+          Three groups: what needs YOUR response now, what's awaiting the
+          OTHER side, and closed ones for reference. Every card carries the
+          full negotiation history so it's clear what changed and why. */}
+      {transferRequests.length > 0 && (() => {
+        const needsMe = transferRequests.filter(r =>
+          (r.status === 'Pending' && r.filedBySlug !== info?.tenant) ||
+          (r.status === 'CounterPending' && r.filedBySlug === info?.tenant) ||
+          (r.status === 'AwaitingFinal' && r.filedBySlug !== info?.tenant)
+        );
+        const waitingOnThem = transferRequests.filter(r => !needsMe.includes(r) && ['Pending', 'CounterPending', 'AwaitingFinal'].includes(r.status));
+        const closed = transferRequests.filter(r => ['Approved', 'Declined', 'Cancelled'].includes(r.status));
+
+        const RequestCard = ({ r, actionable }) => {
+          const iAmFiler = r.filedBySlug === info?.tenant;
+          const otherName = r.fromSlug === info?.tenant ? r.toName : r.fromName;
+          return (
+            <div className="bg-page-bg border border-white/8 rounded-xl p-3">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="min-w-0">
+                  <p className="text-fg font-bold text-sm">
+                    {r.fromSlug === info?.tenant ? 'To' : 'From'} <span className="text-accent">{otherName}</span>
+                    <span className={`ml-2 text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${negoStatusColor[r.status] || 'bg-white/10 text-fg/40'}`}>{r.status}</span>
+                    {r.round > 1 && <span className="ml-1.5 text-[9px] text-fg/30 font-bold uppercase">round {r.round}</span>}
+                  </p>
+                  <p className="text-fg/40 text-[10px]">{iAmFiler ? 'You asked' : 'They asked'} · {r.requestedBy || 'someone'} · {new Date(r.createdAt).toLocaleDateString()}</p>
+                </div>
+                {actionable && (
+                  <div className="flex gap-1.5 shrink-0">
+                    {r.status === 'Pending' && !iAmFiler && (
+                      <>
+                        <button onClick={() => actOnRequest(r._id, 'approve-as-is')} className={`${btn()} text-[10px] py-1.5 px-2.5 min-h-0`}>Approve As-Is</button>
+                        <button onClick={() => openCounter(r)} className={`${btn('ghost')} text-[10px] py-1.5 px-2.5 min-h-0`}>Counter</button>
+                        <button onClick={() => setDeclineTarget(r)} className={`${btn('red')} text-[10px] py-1.5 px-2.5 min-h-0`}>Decline</button>
+                      </>
+                    )}
+                    {r.status === 'Pending' && iAmFiler && (
+                      <button onClick={() => actOnRequest(r._id, 'cancel')} className={`${btn('ghost')} text-[10px] py-1.5 px-2.5 min-h-0`}>Withdraw</button>
+                    )}
+                    {r.status === 'CounterPending' && iAmFiler && (
+                      <>
+                        <button onClick={() => actOnRequest(r._id, 'accept-counter')} className={`${btn()} text-[10px] py-1.5 px-2.5 min-h-0`}>Accept Counter</button>
+                        <button onClick={() => setDeclineTarget(r)} className={`${btn('red')} text-[10px] py-1.5 px-2.5 min-h-0`}>Decline</button>
+                      </>
+                    )}
+                    {r.status === 'AwaitingFinal' && !iAmFiler && (
+                      <>
+                        <button onClick={() => actOnRequest(r._id, 'finalize')} className={`${btn()} text-[10px] py-1.5 px-2.5 min-h-0`}>Final Approve</button>
+                        <button onClick={() => setDeclineTarget(r)} className={`${btn('red')} text-[10px] py-1.5 px-2.5 min-h-0`}>Decline</button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+              <ul className="mt-2 space-y-1">
+                {r.lines.map((l, i) => (
+                  <li key={i} className="text-xs text-fg/60 flex justify-between gap-3 border-t border-white/5 pt-1">
+                    <span className="text-fg/80 font-bold truncate">{l.itemName}{l.note && <span className="text-fg/30 font-normal italic"> · {l.note}</span>}</span>
+                    <span className="tabular-nums shrink-0">{l.qty} {l.unit}</span>
+                  </li>
+                ))}
+              </ul>
+              {r.round > 1 && (
+                <p className="text-[10px] text-fg/30 mt-1.5 italic">
+                  Originally asked: {r.originalLines.map(l => `${l.qty} ${l.unit} ${l.itemName}`).join(', ')}
+                </p>
+              )}
+              {r.history?.length > 1 && (
+                <details className="mt-1.5">
+                  <summary className="text-[9px] text-fg/30 uppercase tracking-widest font-bold cursor-pointer hover:text-fg/50">History ({r.history.length})</summary>
+                  <ul className="mt-1 space-y-0.5">
+                    {r.history.map((h, i) => (
+                      <li key={i} className="text-[10px] text-fg/40">
+                        <span className="font-bold text-fg/60">{h.action}</span> by {h.by || h.slug} {h.note && `- "${h.note}"`}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          );
+        };
+
+        return (
+          <div className={card}>
+            <div className="flex items-center gap-2 mb-3">
+              <RefreshCw size={15} className="text-accent" />
+              <h3 className="text-fg font-black uppercase tracking-wider text-sm">Transfer Requests</h3>
+              {needsMe.length > 0 && <span className="text-[9px] font-black uppercase bg-brand/20 text-brand px-2 py-0.5 rounded-full">{needsMe.length} need{needsMe.length === 1 ? 's' : ''} you</span>}
+            </div>
+
+            {needsMe.length > 0 && (
+              <div className="space-y-2 mb-4">
+                <p className="text-[10px] font-black uppercase tracking-widest text-brand">Needs Your Response</p>
+                {needsMe.map(r => <RequestCard key={r._id} r={r} actionable />)}
+              </div>
+            )}
+            {waitingOnThem.length > 0 && (
+              <div className="space-y-2 mb-4">
+                <p className="text-[10px] font-black uppercase tracking-widest text-fg/40">Awaiting The Other Side</p>
+                {waitingOnThem.map(r => <RequestCard key={r._id} r={r} actionable={false} />)}
+              </div>
+            )}
+            {closed.length > 0 && (
+              <details>
+                <summary className="text-[10px] font-black uppercase tracking-widest text-fg/40 cursor-pointer hover:text-fg/60">Closed ({closed.length})</summary>
+                <div className="space-y-2 mt-2">
+                  {closed.map(r => <RequestCard key={r._id} r={r} actionable={false} />)}
+                </div>
+              </details>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Outbound slips awaiting approval ──
           Stock only leaves this business once someone signs the slip off - the
@@ -734,6 +1044,77 @@ export default function HubTab({ ctx }) {
               <button onClick={() => setAcceptTarget(null)} className={btn('ghost')}>Cancel</button>
               <button onClick={doAccept} disabled={acceptBusy || (!acceptItemId && !acceptCreateNew)} className={btn()}>
                 {acceptBusy ? 'Accepting…' : 'Confirm Accept'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Counter-offer modal ──
+          Only adjusting quantities down or dropping a line entirely - this is
+          "what we can actually give", not a chance to substitute something
+          else. Adding a new item isn't offered here on purpose. */}
+      {counterTarget && (
+        <div className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={e => { if (e.target === e.currentTarget) setCounterTarget(null); }}
+          role="dialog" aria-modal="true" aria-label="Counter-offer">
+          <div className="bg-surface border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-elev-3">
+            <h3 className="text-fg font-black text-base mb-1">Counter-Offer</h3>
+            <p className="text-fg/50 text-sm mb-4">
+              Adjust what you can actually give <span className="text-accent font-bold">{counterTarget.fromSlug === info?.tenant ? counterTarget.toName : counterTarget.fromName}</span>.
+              Reduce a quantity or remove a line - it goes back to them to accept or decline.
+            </p>
+
+            <div className="space-y-2 mb-3">
+              {counterLines.map((l, i) => (
+                <div key={i} className="flex items-center gap-2 bg-page-bg border border-white/8 rounded-xl p-2.5">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-fg font-bold text-sm truncate">{l.itemName}</p>
+                    {l.note && <p className="text-fg/30 text-[10px] italic truncate">{l.note}</p>}
+                  </div>
+                  <input
+                    type="number" min="0" step="any" value={l.qty}
+                    onChange={e => updateCounterQty(i, e.target.value)}
+                    className="w-24 bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-fg text-sm text-right outline-none focus:border-accent"
+                  />
+                  <span className="text-fg/40 text-xs w-10">{l.unit}</span>
+                  <button onClick={() => removeCounterLine(i)} className="text-red-400/60 hover:text-red-400 text-[10px] font-bold uppercase px-1">✕</button>
+                </div>
+              ))}
+              {counterLines.length === 0 && <p className="text-fg/30 text-xs italic text-center py-3">Every line removed - add at least one back to counter.</p>}
+            </div>
+
+            <input value={counterNote} onChange={e => setCounterNote(e.target.value)} className={input} placeholder="Note (optional) - e.g. why the quantity changed" />
+
+            {counterErr && <p className="text-red-400 text-xs mt-3">{counterErr}</p>}
+
+            <div className="flex gap-2 mt-5 justify-end">
+              <button onClick={() => setCounterTarget(null)} className={btn('ghost')}>Cancel</button>
+              <button onClick={submitCounter} disabled={counterBusy || counterLines.every(l => !(l.qty > 0))} className={btn()}>
+                {counterBusy ? 'Sending…' : 'Send Counter-Offer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Decline modal ── */}
+      {declineTarget && (
+        <div className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={e => { if (e.target === e.currentTarget) setDeclineTarget(null); }}
+          role="dialog" aria-modal="true" aria-label="Decline transfer request">
+          <div className="bg-surface border border-red-500/25 rounded-2xl p-6 w-full max-w-md shadow-elev-3">
+            <h3 className="text-fg font-black text-base mb-1">Decline Request</h3>
+            <p className="text-fg/50 text-sm mb-4">
+              This closes the negotiation with <span className="text-accent font-bold">{declineTarget.fromSlug === info?.tenant ? declineTarget.toName : declineTarget.fromName}</span>.
+              Your reason is visible to them.
+            </p>
+            <textarea value={declineReason} onChange={e => setDeclineReason(e.target.value)} rows={3}
+              className={`${input} resize-none`} placeholder="Reason (optional but helpful)" />
+            <div className="flex gap-2 mt-5 justify-end">
+              <button onClick={() => setDeclineTarget(null)} className={btn('ghost')}>Cancel</button>
+              <button onClick={submitDecline} disabled={declineBusy} className={btn('red')}>
+                {declineBusy ? 'Declining…' : 'Decline'}
               </button>
             </div>
           </div>

@@ -1883,6 +1883,19 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     const amt = Math.round((parseFloat(amount) || 0) * 100) / 100;
     if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Settlement amount must be > 0.' });
 
+    // A collection with nothing tying it to an actual bank/wallet transaction
+    // is unreconcilable the same way an unreferenced check or QR order is
+    // (see the check-number and QR-reference rules elsewhere in this file) -
+    // "someone said GCash paid us ₱1,500" with no transaction id to check it
+    // against is not something finance can ever verify. Check is exempt here
+    // because its checkNumber (validated below) already serves as the
+    // reference - requiring a second one would just be asking twice.
+    const isCheckTender = String(paymentMethod || '').trim().toLowerCase() === 'check';
+    const referenceTrimmed = String(referenceNumber || '').trim();
+    if (!isCheckTender && !referenceTrimmed) {
+      return res.status(400).json({ success: false, error: 'A reference number is required (bank transaction ID, GCash ref, check no., etc.) to reconcile this collection later.' });
+    }
+
     // Outstanding is the REMAINING balance, not the invoice face value - a
     // second collection on a partly paid invoice may only take the rest.
     const outstanding = arBalance(order);
