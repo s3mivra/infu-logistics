@@ -2621,7 +2621,18 @@ const updateStatus = async (orderId, newStatus) => {
     if (!pricingTable.products || pricingTable.products.length === 0) return ui.alert('No products to export yet.');
     const XLSX = await import('xlsx');
     const headers = ['Code', 'Product', 'List Price', ...pricingTable.tiers.map(t => t.name)];
-    const rows = (pricingTable.products || []).map(p => [
+    // Sorted by code so the sheet reads in item-numbering order (P10001,
+    // P10002, ...) instead of whatever order the DB happened to return, and a
+    // re-export after editing prices lines up the same way every time. Blank
+    // codes sink to the bottom rather than sorting first.
+    const sortedProducts = [...(pricingTable.products || [])].sort((a, b) => {
+      const ca = a.productCode || '', cb = b.productCode || '';
+      if (!ca && !cb) return a.name.localeCompare(b.name);
+      if (!ca) return 1;
+      if (!cb) return -1;
+      return ca.localeCompare(cb, undefined, { numeric: true, sensitivity: 'base' });
+    });
+    const rows = sortedProducts.map(p => [
       p.productCode || '',
       p.name,
       Number(p.basePrice || 0),

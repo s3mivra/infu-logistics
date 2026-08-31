@@ -695,7 +695,19 @@ export default function SuperAdminPanel() {
     }
     const XLSX = await import('xlsx');
     const headers = ['Code', 'Product', 'List Price', ...tierPricingTable.tiers.map(t => t.name)];
-    const rows = (tierPricingTable.products || []).map(p => [
+    // Sorted by code so the sheet reads in the same order as the item numbering
+    // scheme (P10001, P10002, ...) instead of whatever order Mongo happened to
+    // return - makes a long catalogue actually scannable, and a re-export after
+    // editing prices lines up the same way every time. Blank codes (no code
+    // assigned) sink to the bottom rather than sorting first.
+    const sortedProducts = [...(tierPricingTable.products || [])].sort((a, b) => {
+      const ca = a.productCode || '', cb = b.productCode || '';
+      if (!ca && !cb) return a.name.localeCompare(b.name);
+      if (!ca) return 1;
+      if (!cb) return -1;
+      return ca.localeCompare(cb, undefined, { numeric: true, sensitivity: 'base' });
+    });
+    const rows = sortedProducts.map(p => [
       p.productCode || '',
       p.name,
       Number(p.basePrice || 0),
