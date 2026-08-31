@@ -250,10 +250,6 @@ export default function SuperAdminPanel() {
   const [clients, setClients]           = useState([]);
   const [clientsLoading, setClientsLoading] = useState(false);
   const [priceTiers, setPriceTiers]     = useState([]);
-  // Product+price data for the Excel export/import round trip - this panel
-  // has no other reason to hold the full product list, so it's scoped to
-  // just what that flow needs (code, name, base price, per-tier prices).
-  const [tierPricingTable, setTierPricingTable] = useState({ products: [], tiers: [] });
   const [tierImportPreview, setTierImportPreview] = useState(null);
   const [tierImporting, setTierImporting] = useState(false);
   const [tierModal, setTierModal]       = useState({ open: false, mode: 'create', tier: null });
@@ -664,17 +660,9 @@ export default function SuperAdminPanel() {
     } catch { /* non-fatal - picker falls back to whatever tags exist */ }
   }, [apiFetch]);
 
-  const fetchTierPricingTable = useCallback(async () => {
-    if (BUSINESS_TYPE !== 'log') return;
-    try {
-      const res = await apiFetch('/api/price-tiers/pricing-table');
-      if (res.ok) setTierPricingTable(await res.json());
-    } catch { /* export/import just won't have fresh data until retried */ }
-  }, [apiFetch]);
-
   useEffect(() => {
-    if (isAuthenticated) { fetchPriceTiers(); fetchTierPricingTable(); }
-  }, [isAuthenticated, fetchPriceTiers, fetchTierPricingTable]);
+    if (isAuthenticated) fetchPriceTiers();
+  }, [isAuthenticated, fetchPriceTiers]);
 
   // ── PRICE TIER EXCEL EXPORT/IMPORT ────────────────────────────────────────
   // Same shape and rules as Pricing Control's copy of this flow (see
@@ -690,17 +678,17 @@ export default function SuperAdminPanel() {
     // Price with no tier columns. Add a column yourself, name it after the
     // tier you want (new or existing), fill in prices, and importing it
     // creates that tier - see parseTierPricingExcel/submitTierPricingImport.
-    if (!tierPricingTable.products || tierPricingTable.products.length === 0) {
+    if (!pricingTable.products || pricingTable.products.length === 0) {
       return showToast('No products to export yet.', 'error');
     }
     const XLSX = await import('xlsx');
-    const headers = ['Code', 'Product', 'List Price', ...tierPricingTable.tiers.map(t => t.name)];
+    const headers = ['Code', 'Product', 'List Price', ...pricingTable.tiers.map(t => t.name)];
     // Sorted by code so the sheet reads in the same order as the item numbering
     // scheme (P10001, P10002, ...) instead of whatever order Mongo happened to
     // return - makes a long catalogue actually scannable, and a re-export after
     // editing prices lines up the same way every time. Blank codes (no code
     // assigned) sink to the bottom rather than sorting first.
-    const sortedProducts = [...(tierPricingTable.products || [])].sort((a, b) => {
+    const sortedProducts = [...(pricingTable.products || [])].sort((a, b) => {
       const ca = a.productCode || '', cb = b.productCode || '';
       if (!ca && !cb) return a.name.localeCompare(b.name);
       if (!ca) return 1;
@@ -711,7 +699,7 @@ export default function SuperAdminPanel() {
       p.productCode || '',
       p.name,
       Number(p.basePrice || 0),
-      ...tierPricingTable.tiers.map(t => {
+      ...pricingTable.tiers.map(t => {
         const v = t.prices?.[String(p._id)];
         return (v === null || v === undefined) ? '' : Number(v);
       }),
@@ -743,8 +731,8 @@ export default function SuperAdminPanel() {
         .map((h, i) => ({ h, i }))
         .filter(({ h, i }) => i !== codeCol && i !== nameCol && norm(h) !== 'listprice' && h.trim());
 
-      const byCode = new Map((tierPricingTable.products || []).filter(p => p.productCode).map(p => [norm(p.productCode), p]));
-      const byName = new Map((tierPricingTable.products || []).map(p => [norm(p.name), p]));
+      const byCode = new Map((pricingTable.products || []).filter(p => p.productCode).map(p => [norm(p.productCode), p]));
+      const byName = new Map((pricingTable.products || []).map(p => [norm(p.name), p]));
 
       const tierResults = tierCols.map(({ h }) => ({ name: h.trim(), rows: [] }));
       const unmatchedCodes = [];
@@ -801,7 +789,7 @@ export default function SuperAdminPanel() {
             await apiFetch(`/api/price-tiers/${tierId}`, { method: 'PUT', body: JSON.stringify({ pricingMode: 'per_product' }) });
           }
 
-          const existingRow = tierPricingTable.tiers.find(pt => pt._id === tierId);
+          const existingRow = pricingTable.tiers.find(pt => pt._id === tierId);
           const merged = new Map(
             existingRow && !t.wasPercent
               ? Object.entries(existingRow.prices || {}).filter(([, v]) => v !== null && v !== undefined)
@@ -816,7 +804,7 @@ export default function SuperAdminPanel() {
         } catch { failCount++; }
       }
       setTierImportPreview(null);
-      fetchPriceTiers(); fetchTierPricingTable();
+      fetchPriceTiers(); fetchPricingTable();
       showToast(failCount > 0 ? `Imported ${okCount} tier(s), ${failCount} failed.` : `Imported ${okCount} tier(s) of prices.`, failCount > 0 ? 'error' : 'success');
     } finally {
       setTierImporting(false);
