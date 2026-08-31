@@ -47,6 +47,7 @@ import registerPurchaseOrders from './features/purchase-orders.js';
 import registerBills from './features/bills.js';
 import registerRequisitions from './features/requisitions.js';
 import registerCollections from './features/collections.js';
+import registerChangeRequests from './features/change-requests.js';
 import registerNotifications from './features/notifications.js';
 import registerClients from './features/clients.js';
 import registerHub from './features/hub.js';
@@ -576,6 +577,7 @@ const runStartupTasks = async () => {
         { name: 'Maya',            parent: '113000', preferred: '113002' },
         { name: 'Maribank',        parent: '113000', preferred: '113003' },
         { name: 'Other E-Wallet',  parent: '113000', preferred: '113004' },
+        { name: 'QR',              parent: '113000', preferred: '113005' },
         { name: 'Bank Transfer',   parent: '112000', preferred: '112001' },
         { name: 'Foodpanda',       parent: '120000', preferred: '120001' },
         { name: 'Grab Delivery',   parent: '120000', preferred: '120002' },
@@ -1195,6 +1197,19 @@ items: [{
   guestCount: { type: Number, default: 1 },
   // Split-payment breakdown: [{ method, amount }]
   payments: [{ method: String, amount: Number }],
+  // External reference the CUSTOMER supplies for their own payment - the GCash
+  // / Maya / InstaPay confirmation number after scanning a payment QR, a bank
+  // transfer reference, etc. Required for QR orders placed through the client
+  // portal, because a QR payment leaves no trace on our side otherwise: the
+  // money arrives in the wallet and this number is the only thing tying it to
+  // an order. Distinct from arSettledReference, which is OUR reference for
+  // collecting a receivable later.
+  paymentReference: { type: String, default: '' },
+  // Date written on the check when the sale was tendered by check. Post-dated
+  // checks are normal in PH trade, so this is not necessarily the sale date -
+  // it is the earliest the check can be banked. Carried through to the check
+  // register when the receivable is collected.
+  paymentCheckDate: { type: Date, default: null },
   // A/R settlement tracking (delivery partner payouts: Grab/Foodpanda/Manual Delivery)
   arSettled:        { type: Boolean, default: false },
   arSettledAt:      { type: Date },
@@ -1723,6 +1738,10 @@ const DEFAULT_PAYMENT_ACCOUNT_MAP = {
   'Cash in Bank':      '112000',
   // Checks land in Checks on Hand, not the bank - see 115000 in chartOfAccounts.js.
   'Check':             '115000',
+  // Scan-to-pay QR (GCash/Maya/InstaPay QR Ph). Lands in E-Wallet like the
+  // named wallets it is funded from - the reference number on the order is
+  // what identifies which wallet actually received it.
+  'QR':                '113000',
   'GCash':             '113000',
   'Maya':              '113000',
   'Maribank':          '113000',
@@ -1842,6 +1861,12 @@ const AccountSchema = new mongoose.Schema({
   normalBalance: String, // 'Debit' | 'Credit'
   parent:        String,            // parent account code (for custom child accounts)
   custom:        { type: Boolean, default: false }, // user-created child account
+  // Lets a custom sub-account be pulled out of the payment-method list (POS,
+  // client portal, QR menu) WITHOUT deleting it - deleting is blocked once a
+  // journal entry has posted to the code, so this is the only way to retire a
+  // discontinued tender ("we stopped accepting GoTyme") while keeping its
+  // history intact. Canonical accounts ignore this - they are never deleted.
+  isActive:      { type: Boolean, default: true },
 }, { timestamps: true });
 const Account = mongoose.model('Account', AccountSchema);
 
@@ -1882,7 +1907,7 @@ async function refreshCustomMeta() {
     CUSTOM_META.clear();
     for (const a of rows) {
       const p = ACCOUNTS[a.parent] || {};
-      CUSTOM_META.set(a.code, { name: a.name, type: a.type || p.type, parent: a.parent, cogs: !!p.cogs });
+      CUSTOM_META.set(a.code, { name: a.name, type: a.type || p.type, parent: a.parent, cogs: !!p.cogs, isActive: a.isActive !== false });
     }
   } catch { /* non-fatal */ }
 }
@@ -2030,6 +2055,41 @@ async function refreshCustomRolePerms() {
 
 
 // 1. Minimal Audit Log Schema (New)
+// ── CHANGE REQUESTS ──────────────────────────────────────────────────────────
+// A held edit to a money lever - a selling price, a cost basis, a client's
+// credit line. Someone without pricing.approve edits as normal; the guarded
+// FIELDS of that edit are peeled off into one of these and the rest is written
+// straight away, so a price change never lands unreviewed while a harmless
+// rename still works. See lib/changeApproval.js for which fields are gated.
+//
+// `changes` snapshots BOTH values: the approver is agreeing to a specific
+// "250 -> 300", so applying it later re-checks that the current value is still
+// 250 rather than blindly overwriting whatever it has since become.
+const CHANGE_REQUEST_STATUSES = ['Pending', 'Approved', 'Rejected'];
+const ChangeRequestSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  entity:       { type: String, enum: ['Product', 'Inventory', 'ClientAccount'], required: true },
+  entityId:     { type: String, required: true, index: true },
+  entityName:   { type: String, default: '' },   // snapshot, so the queue reads well even if renamed later
+  changes: [{
+    field:    { type: String, required: true },
+    label:    { type: String, default: '' },
+    oldValue: mongoose.Schema.Types.Mixed,
+    newValue: mongoose.Schema.Types.Mixed,
+  }],
+  reason:       { type: String, default: '' },
+  status:       { type: String, enum: CHANGE_REQUEST_STATUSES, default: 'Pending', index: true },
+  requestedBy:  { type: String, default: '' },
+  approvedBy:   { type: String, default: '' },
+  approvedAt:   { type: Date },
+  rejectedBy:   { type: String, default: '' },
+  rejectionReason: { type: String, default: '' },
+  appliedAt:    { type: Date },
+}, { timestamps: true });
+ChangeRequestSchema.index({ businessType: 1, status: 1, createdAt: -1 });
+const ChangeRequest = mongoose.model('ChangeRequest', ChangeRequestSchema);
+
 const AuditLogSchema = new mongoose.Schema({
   userId: { type: String, required: true },
   action: { type: String, required: true },
@@ -2933,6 +2993,9 @@ const ctx = {
   SCHEDULED_SHIFT_STATUSES,
   ownerUserIds,
   ownerIdentity,
+  ChangeRequestSchema,
+  ChangeRequest,
+  CHANGE_REQUEST_STATUSES,
   logAudit,
   PaymentMethodMapSchema,
   PaymentMethodMap,
@@ -3036,6 +3099,7 @@ registerPurchaseOrders(ctx);
 registerBills(ctx);
 registerRequisitions(ctx);
 registerCollections(ctx);
+registerChangeRequests(ctx);
 registerNotifications(ctx);
 registerClients(ctx);
 registerHub(ctx);

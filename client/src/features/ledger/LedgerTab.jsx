@@ -26,8 +26,12 @@ export default function LedgerTab({ ctx }) {
     applyComplimentary, applyDiscount, applyItemDiscount, arOutstanding, arAgeing, fetchArAgeing, archiveDay, fetchExpenses,
     openArHistory, todayLocal,
     arReport, arReportAsOf, setArReportAsOf, fetchArReport,
+    apReport, apReportAsOf, setApReportAsOf, fetchApReport,
+    supplierPayments, supPayRange, setSupPayRange, fetchSupplierPayments,
     collectionReport, collRange, setCollRange, fetchCollectionReport,
     checkRegister, checkFilter, setCheckFilter, fetchChecks, actOnCheck,
+    changeRequests, canApprovePricing, fetchChangeRequests, actOnChangeRequest,
+    priceChangeLog, priceLogRange, setPriceLogRange, fetchPriceChangeLog,
     archivedOrders, auditCancelPage, auditCompPage, auditDiscPage, auditFilter,
     auditStaffPage, bsData, calcRecipeCost, cashOnHand, cashTendered,
     catForm, categories, closeRfFund, collapsedOrders, compOverride,
@@ -104,7 +108,7 @@ export default function LedgerTab({ ctx }) {
     exportBillsPDF, exportAuditLogPDF, loadPdfLibs, addLogoToPDF, pdfMoney,
     coaAccounts, fetchCoa, coaParent, setCoaParent, coaNewName, setCoaNewName,
     coaEditId, setCoaEditId, coaEditName, setCoaEditName, coaBusy,
-    addCoaChild, renameCoaChild, deleteCoaChild, seedPaymentSubaccounts,
+    addCoaChild, renameCoaChild, deleteCoaChild, toggleAccountActive, seedPaymentSubaccounts,
     cashAndBankAccounts, apAccounts, arAccounts,
     closedPeriods, fetchClosedPeriods, closePeriod, reopenPeriod,
     periodCloseForm, setPeriodCloseForm,
@@ -887,6 +891,9 @@ export default function LedgerTab({ ctx }) {
                   ['payments',      'By Payment',             Banknote],
                   ['arreport',      'A/R Report',             Truck],
                   ['collections',   'Collections',            Banknote],
+                  ['apreport',      'A/P Report',             Receipt],
+                  ['supplierpay',   'Supplier Payments',      Banknote],
+                  ['pricelog',      'Price Changes',          TrendingUp],
                   ['profitcat',     'By Category',            BarChart2],
                   ['pnlmonthly',    'Monthly P&L',            BarChart3],
                   ['bsmonthly',     'Monthly Balance Sheet',  BarChart3],
@@ -934,6 +941,9 @@ export default function LedgerTab({ ctx }) {
                   if (id === 'payments') fetchSalesByPayment();
                   if (id === 'arreport' && !arReport) fetchArReport();
                   if (id === 'collections') { if (!collectionReport) fetchCollectionReport(); if (!checkRegister) fetchChecks(); }
+                  if (id === 'pricelog') { fetchChangeRequests(); if (!priceChangeLog) fetchPriceChangeLog(); }
+                  if (id === 'apreport' && !apReport) fetchApReport();
+                  if (id === 'supplierpay' && !supplierPayments) fetchSupplierPayments();
                   if (id === 'profitcat') fetchProfitByCategory();
                   if (id === 'menueng') fetchMenuEngineering();
                   if (id === 'variance') fetchCashierVariance();
@@ -1703,6 +1713,201 @@ export default function LedgerTab({ ctx }) {
             );
           })()}
 
+          {/* ===== PRICE CHANGES SUB-TAB ===== */}
+          {/* Two halves: what is waiting on someone (the approval queue), and
+              what has already been applied across the whole catalogue. The
+              per-product view lives behind Pricing Control's History button;
+              this is the "what did anyone change last month" view. */}
+          {ledgerSubTab === 'pricelog' && (
+            <div className="space-y-4 animate-fade-in">
+
+              {/* ── Awaiting approval ── */}
+              {changeRequests?.length > 0 && (
+                <div className="bg-surface border border-yellow-500/25 rounded-2xl p-6 space-y-3">
+                  <div>
+                    <h3 className="text-xl font-black text-fg flex items-center gap-2">
+                      <ShieldCheck size={18} className="text-yellow-400" />
+                      {changeRequests.length} Price Change{changeRequests.length === 1 ? '' : 's'} Awaiting Approval
+                    </h3>
+                    <p className="text-fg/40 text-[11px] mt-0.5">
+                      {canApprovePricing
+                        ? 'These are not in effect yet. Approving applies the new value immediately.'
+                        : 'Your requests. Someone with approval rights has to sign these off.'}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    {changeRequests.map(r => (
+                      <div key={r._id} className="bg-page-bg/50 border border-white/10 rounded-xl p-3">
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div className="min-w-0">
+                            <p className="text-fg font-bold text-sm">{r.entityName || r.entityId}</p>
+                            {r.changes.map((c, i) => (
+                              <div key={i} className="flex items-center gap-2 font-mono text-xs mt-0.5">
+                                <span className="text-fg/50">{c.label}</span>
+                                <span className="text-fg/40 line-through">₱{Number(c.oldValue || 0).toFixed(2)}</span>
+                                <span className="text-fg/30">→</span>
+                                <span className={`font-black ${Number(c.newValue) > Number(c.oldValue) ? 'text-red-400' : 'text-green-400'}`}>
+                                  ₱{Number(c.newValue || 0).toFixed(2)}
+                                </span>
+                              </div>
+                            ))}
+                            <p className="text-[10px] text-fg/40 mt-1">
+                              by {r.requestedBy || 'someone'} · {new Date(r.createdAt).toLocaleDateString()}
+                              {r.reason && <span className="italic"> · "{r.reason}"</span>}
+                            </p>
+                          </div>
+                          <div className="flex gap-2 shrink-0">
+                            {canApprovePricing ? (
+                              <>
+                                <button onClick={() => actOnChangeRequest(r._id, 'approve')}
+                                  className="bg-brand text-white px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[36px]">
+                                  Approve
+                                </button>
+                                <button onClick={async () => {
+                                  const reason = await ui.confirm({
+                                    title: 'Reject this price change?',
+                                    message: `${r.entityName}: ${r.changes.map(c => `${c.label} → ₱${Number(c.newValue || 0).toFixed(2)}`).join(', ')}. The price stays as it is.`,
+                                    confirmLabel: 'Reject', tone: 'danger',
+                                  });
+                                  if (reason) actOnChangeRequest(r._id, 'reject', 'Rejected by approver');
+                                }}
+                                  className="bg-red-500/10 text-red-400 px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-red-500/20 transition min-h-[36px]">
+                                  Reject
+                                </button>
+                              </>
+                            ) : (
+                              <button onClick={() => actOnChangeRequest(r._id, 'withdraw')}
+                                className="bg-white/5 text-fg/50 px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-white/10 transition min-h-[36px]">
+                                Withdraw
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Applied changes ── */}
+              <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4">
+                <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
+                  <div>
+                    <h3 className="text-2xl font-black text-fg">Price Change Log</h3>
+                    <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Every price &amp; cost change, and who signed it off</p>
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <div>
+                      <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">From</label>
+                      <input type="date" value={priceLogRange.start} onChange={e => setPriceLogRange({ ...priceLogRange, start: e.target.value })}
+                        className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">To</label>
+                      <input type="date" value={priceLogRange.end} onChange={e => setPriceLogRange({ ...priceLogRange, end: e.target.value })}
+                        className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
+                    </div>
+                    <button onClick={fetchPriceChangeLog}
+                      className="bg-brand text-white px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
+                      Run
+                    </button>
+                  </div>
+                </div>
+
+                {!priceChangeLog ? (
+                  <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Pick a range and run the log</div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Changes</p>
+                        <p className="text-xl font-black tabular-nums text-fg">{priceChangeLog.summary.total}</p>
+                        <p className="text-[9px] text-fg/40 mt-0.5">{priceChangeLog.summary.priceChanges} price · {priceChangeLog.summary.costChanges} cost</p>
+                      </div>
+                      <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Increases</p>
+                        <p className="text-xl font-black tabular-nums text-red-400">{priceChangeLog.summary.increases}</p>
+                        {priceChangeLog.summary.largestIncrease && (
+                          <p className="text-[9px] text-fg/40 mt-0.5 truncate">
+                            max +{priceChangeLog.summary.largestIncrease.percent}% · {priceChangeLog.summary.largestIncrease.productName}
+                          </p>
+                        )}
+                      </div>
+                      <div className="rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-3">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Decreases</p>
+                        <p className="text-xl font-black tabular-nums text-green-400">{priceChangeLog.summary.decreases}</p>
+                        {priceChangeLog.summary.largestDecrease && (
+                          <p className="text-[9px] text-fg/40 mt-0.5 truncate">
+                            max {priceChangeLog.summary.largestDecrease.percent}% · {priceChangeLog.summary.largestDecrease.productName}
+                          </p>
+                        )}
+                      </div>
+                      {/* How many went through review rather than straight in -
+                          the number that says whether the gate is doing anything. */}
+                      <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Reviewed</p>
+                        <p className="text-xl font-black tabular-nums text-fg/70">{priceChangeLog.summary.viaApproval}</p>
+                        <p className="text-[9px] text-fg/40 mt-0.5">{priceChangeLog.summary.pendingCount} still pending</p>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                            <th className="text-left py-2.5">When</th>
+                            <th className="text-left py-2.5">Product</th>
+                            <th className="text-left py-2.5">Type</th>
+                            <th className="text-right py-2.5">From</th>
+                            <th className="text-right py-2.5">To</th>
+                            <th className="text-right py-2.5">Move</th>
+                            <th className="text-left py-2.5 pl-3">Who</th>
+                            <th className="text-left py-2.5">Reason</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {priceChangeLog.changes.map((c, i) => (
+                            <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition">
+                              <td className="py-2.5 text-fg/50 text-xs">{new Date(c.date).toLocaleDateString()}</td>
+                              <td className="py-2.5 text-fg font-bold text-xs">
+                                {c.productName}
+                                {c.productCode && <span className="block text-[9px] text-fg/30">{c.productCode}</span>}
+                              </td>
+                              <td className="py-2.5">
+                                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${c.type === 'price' ? 'bg-brand/20 text-brand' : 'bg-orange-500/20 text-orange-400'}`}>
+                                  {c.type === 'price' ? 'Price' : 'Cost'}
+                                </span>
+                              </td>
+                              <td className="py-2.5 text-right tabular-nums text-fg/40">₱{Number(c.oldValue || 0).toFixed(2)}</td>
+                              <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{Number(c.newValue || 0).toFixed(2)}</td>
+                              <td className={`py-2.5 text-right tabular-nums font-bold ${c.delta > 0 ? 'text-red-400' : c.delta < 0 ? 'text-green-400' : 'text-fg/30'}`}>
+                                {c.percent === null ? '—' : `${c.percent > 0 ? '+' : ''}${c.percent}%`}
+                              </td>
+                              <td className="py-2.5 pl-3 text-xs">
+                                {c.viaApproval ? (
+                                  <>
+                                    <span className="text-fg/70">{c.requestedBy || '—'}</span>
+                                    <span className="block text-[9px] text-green-500">approved by {c.approvedBy || '—'}</span>
+                                  </>
+                                ) : (
+                                  <span className="text-fg/70">{c.changedBy || '—'}</span>
+                                )}
+                              </td>
+                              <td className="py-2.5 text-fg/40 text-xs italic max-w-[200px] truncate" title={c.reason}>{c.reason || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {!priceChangeLog.changes.length && (
+                        <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">No price changes in this range</div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* ===== A/R REPORT SUB-TAB ===== */}
           {/* The printable receivables schedule: one line per open invoice.
               Read as-of a date, so re-running last month's report reproduces
@@ -2101,6 +2306,252 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
+          {/* ===== A/P REPORT SUB-TAB ===== */}
+          {/* The mirror of the A/R report. Aged on the DUE date, not the bill
+              date: nobody cares how long ago a bill was raised, only how far
+              past its payment date it is. */}
+          {ledgerSubTab === 'apreport' && (
+            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
+              <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
+                <div>
+                  <h3 className="text-2xl font-black text-fg">A/P Report</h3>
+                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Aged payables · what we owe, and when it's due</p>
+                </div>
+                <div className="flex items-end gap-2">
+                  <div>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">As Of</label>
+                    <input type="date" value={apReportAsOf} onChange={e => setApReportAsOf(e.target.value)}
+                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
+                  </div>
+                  <button onClick={fetchApReport}
+                    className="bg-brand text-white px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
+                    Run
+                  </button>
+                </div>
+              </div>
+
+              {!apReport ? (
+                <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Pick a date and run the report</div>
+              ) : (
+                <>
+                  {/* Buckets are DAYS PAST DUE here, not invoice age. */}
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    {[
+                      { label: 'Not Yet Due', sub: '', amt: apReport.totals.current, color: 'text-green-400', bg: 'bg-green-500/10 border-green-500/20' },
+                      { label: '1–30', sub: 'days late', amt: apReport.totals.d31_60, color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' },
+                      { label: '31–60', sub: 'days late', amt: apReport.totals.d61_90, color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20' },
+                      { label: '61+', sub: 'days late', amt: apReport.totals.d90_plus, color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20' },
+                      { label: 'Total', sub: `${apReport.totals.count} bill(s)`, amt: apReport.totals.total, color: 'text-brand', bg: 'bg-brand/10 border-brand/25' },
+                    ].map(b => (
+                      <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.bg}`}>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
+                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/20'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className={`rounded-xl border px-4 py-3 ${apReport.overdueTotal > 0 ? 'border-red-500/25 bg-red-500/10' : 'border-white/10 bg-white/5'}`}>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Overdue</p>
+                      <p className={`text-xl font-black tabular-nums ${apReport.overdueTotal > 0 ? 'text-red-400' : 'text-fg/20'}`}>₱{apReport.overdueTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                      <p className="text-[9px] text-fg/40 mt-0.5">{apReport.overdueCount} bill(s) past their date</p>
+                    </div>
+                    {/* An aged bucket never answers "do we have the cash this
+                        week" - this does. */}
+                    <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Due Within 7 Days</p>
+                      <p className="text-xl font-black tabular-nums text-fg">₱{apReport.dueSoonTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                      <p className="text-[9px] text-fg/40 mt-0.5">{apReport.dueSoonCount} bill(s) coming up</p>
+                    </div>
+                    {/* Owed regardless, but can't be scheduled until someone
+                        signs it off - an approval problem, not a cash one. */}
+                    <div className={`rounded-xl border px-4 py-3 ${apReport.awaitingApprovalTotal > 0 ? 'border-yellow-500/25 bg-yellow-500/10' : 'border-white/10 bg-white/5'}`}>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Awaiting Approval</p>
+                      <p className={`text-xl font-black tabular-nums ${apReport.awaitingApprovalTotal > 0 ? 'text-yellow-400' : 'text-fg/20'}`}>₱{apReport.awaitingApprovalTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                      <p className="text-[9px] text-fg/40 mt-0.5">{apReport.awaitingApprovalCount} bill(s) not yet authorised</p>
+                    </div>
+                  </div>
+
+                  {apReport.totals.undated > 0 && (
+                    <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">No Due Date Set</p>
+                      <p className="text-lg font-black tabular-nums text-fg/70">₱{apReport.totals.undated.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                      <p className="text-[9px] text-fg/40 mt-0.5">Can't be aged — set terms on these bills so they stop hiding from the buckets.</p>
+                    </div>
+                  )}
+
+                  <div className="bg-page-bg/40 border border-white/10 rounded-xl overflow-x-auto">
+                    <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 px-4 py-3 border-b border-white/10">By Supplier</p>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                          <th className="text-left py-2.5 px-4">Supplier</th>
+                          <th className="text-right py-2.5">Not Due</th>
+                          <th className="text-right py-2.5">1–30</th>
+                          <th className="text-right py-2.5">31–60</th>
+                          <th className="text-right py-2.5">61+</th>
+                          <th className="text-right py-2.5 px-4">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {apReport.bySupplier.map(g => (
+                          <tr key={g.supplier} className="border-b border-white/5">
+                            <td className="py-2.5 px-4 font-bold text-fg">{g.supplier}</td>
+                            <td className="py-2.5 text-right tabular-nums text-fg/70">{g.current ? `₱${g.current.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                            <td className="py-2.5 text-right tabular-nums text-yellow-500/80">{g.d31_60 ? `₱${g.d31_60.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                            <td className="py-2.5 text-right tabular-nums text-orange-500/80">{g.d61_90 ? `₱${g.d61_90.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                            <td className="py-2.5 text-right tabular-nums text-red-500/80">{g.d90_plus ? `₱${g.d90_plus.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                            <td className="py-2.5 px-4 text-right tabular-nums font-black text-fg">₱{g.total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 mb-2">Open Bills</p>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                          <th className="text-left py-2.5">Bill</th>
+                          <th className="text-left py-2.5">Supplier</th>
+                          <th className="text-left py-2.5">Description</th>
+                          <th className="text-left py-2.5">Due</th>
+                          <th className="text-left py-2.5">Status</th>
+                          <th className="text-right py-2.5">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {apReport.bills.map(b => (
+                          <tr key={b._id} className={`border-b border-white/5 ${b.overdue ? 'bg-red-500/5' : ''}`}>
+                            <td className="py-2.5 font-bold text-fg text-xs">
+                              {b.billNumber}
+                              {b.poNumber && <span className="block text-[9px] text-fg/30">{b.poNumber}</span>}
+                            </td>
+                            <td className="py-2.5 text-fg/70 text-xs">{b.supplier}</td>
+                            <td className="py-2.5 text-fg/50 text-xs max-w-[220px] truncate" title={b.description}>{b.description || '—'}</td>
+                            <td className="py-2.5 text-xs">
+                              {b.dueDate ? (
+                                b.overdue
+                                  ? <span className="text-[10px] font-black px-2 py-1 rounded bg-red-500/15 text-red-400">{b.daysPastDue}d LATE</span>
+                                  : <span className="text-fg/60">{new Date(b.dueDate).toLocaleDateString()}</span>
+                              ) : <span className="text-[10px] font-black px-2 py-1 rounded bg-white/10 text-fg/40">NO DATE</span>}
+                            </td>
+                            <td className="py-2.5">
+                              <span className={`text-[9px] font-black uppercase px-2 py-1 rounded ${b.awaitingApproval ? 'bg-yellow-500/15 text-yellow-400' : 'bg-white/10 text-fg/60'}`}>
+                                {b.status}
+                              </span>
+                            </td>
+                            <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{b.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {!apReport.bills.length && <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Nothing owed as of this date</div>}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ===== SUPPLIER PAYMENTS SUB-TAB ===== */}
+          {/* The exact counterpart of the collection report: that one is what
+              came in, this is what went out. */}
+          {ledgerSubTab === 'supplierpay' && (
+            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
+              <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
+                <div>
+                  <h3 className="text-2xl font-black text-fg">Supplier Payments</h3>
+                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">What we actually paid out, and from which account</p>
+                </div>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">From</label>
+                    <input type="date" value={supPayRange.start} onChange={e => setSupPayRange({ ...supPayRange, start: e.target.value })}
+                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">To</label>
+                    <input type="date" value={supPayRange.end} onChange={e => setSupPayRange({ ...supPayRange, end: e.target.value })}
+                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
+                  </div>
+                  <button onClick={fetchSupplierPayments}
+                    className="bg-brand text-white px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
+                    Run
+                  </button>
+                </div>
+              </div>
+
+              {!supplierPayments ? (
+                <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Pick a range and run the report</div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Total Paid Out</p>
+                      <p className="text-2xl font-black tabular-nums text-red-400">₱{supplierPayments.totalPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Payments</p>
+                      <p className="text-2xl font-black tabular-nums text-fg">{supplierPayments.count}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid md:grid-cols-2 gap-3">
+                    {[
+                      ['By Supplier', supplierPayments.bySupplier, 'supplier'],
+                      ['By Account Paid From', supplierPayments.byAccount, 'account'],
+                    ].map(([label, list, key]) => (
+                      <div key={label} className="bg-page-bg/40 border border-white/10 rounded-xl overflow-hidden">
+                        <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 px-4 py-2.5 border-b border-white/10">{label}</p>
+                        <table className="w-full text-sm">
+                          <tbody>
+                            {list.slice(0, 10).map(r => (
+                              <tr key={r[key]} className="border-b border-white/5">
+                                <td className="py-2 px-4 text-fg/70 truncate max-w-[180px]">{r[key]}</td>
+                                <td className="py-2 px-4 text-right tabular-nums font-bold text-fg">₱{r.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                              </tr>
+                            ))}
+                            {!list.length && <tr><td className="py-4 px-4 text-fg/30 text-xs">None</td></tr>}
+                          </tbody>
+                        </table>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                          <th className="text-left py-2.5">Date</th>
+                          <th className="text-left py-2.5">Supplier</th>
+                          <th className="text-left py-2.5">Reference</th>
+                          <th className="text-left py-2.5">Paid From</th>
+                          <th className="text-right py-2.5">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {supplierPayments.payments.map((p, i) => (
+                          <tr key={`${p.reference}-${i}`} className="border-b border-white/5 hover:bg-white/5 transition">
+                            <td className="py-2.5 text-fg/50 text-xs">{new Date(p.date).toLocaleDateString()}</td>
+                            <td className="py-2.5 text-fg/70 text-xs">{p.supplier}</td>
+                            <td className="py-2.5 text-fg/50 text-xs">
+                              {p.reference || '—'}
+                              {p.description && <span className="block text-[9px] text-fg/30 italic max-w-[240px] truncate" title={p.description}>{p.description}</span>}
+                            </td>
+                            <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand px-2 py-1 rounded">{p.paidFrom || '—'}</span></td>
+                            <td className="py-2.5 text-right tabular-nums font-black text-red-400">₱{p.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {!supplierPayments.payments.length && <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">No supplier payments in this range</div>}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {/* ===== A/R OUTSTANDING SUB-TAB ===== */}
           {(ledgerSubTab === 'ar' || ledgerSubTab === 'araap') && (
             <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
@@ -2256,16 +2707,26 @@ export default function LedgerTab({ ctx }) {
                               <button onClick={() => {
                                 let defaultMethod = 'Cash on Hand';
                                 if (o.paymentMethod === 'Bank Transfer') defaultMethod = 'Bank Transfer';
-                                else if (['GCash','Maya','Maribank','E-Wallet','Other E-Wallet'].includes(o.paymentMethod)) defaultMethod = o.paymentMethod === 'Other E-Wallet' ? 'GCash' : o.paymentMethod;
+                                else if (o.paymentMethod === 'Check') defaultMethod = 'Check';
+                                else if (['GCash','Maya','Maribank','E-Wallet','Other E-Wallet','QR'].includes(o.paymentMethod)) defaultMethod = o.paymentMethod === 'Other E-Wallet' ? 'GCash' : o.paymentMethod;
                                 else if (['Grab Delivery','Foodpanda','Manual Delivery'].includes(o.paymentMethod)) defaultMethod = 'Bank Transfer';
                                 setSettleModal({ order: o });
                                 // Default to collecting the REMAINDER, not the
                                 // invoice face value - on a partly paid invoice
                                 // the face value would be rejected as an overpayment.
+                                // A sale tendered by check already captured the
+                                // check number and date - carry them into the
+                                // register rather than making someone read them
+                                // off the paper a second time (and risk a typo
+                                // that breaks the match).
+                                const wasCheck = o.paymentMethod === 'Check';
                                 setSettleForm({
                                   amount: (o.balance ?? o.total).toFixed(2), paymentMethod: defaultMethod,
                                   note: '', referenceNumber: '', collectedBy: '',
                                   collectionDate: todayLocal(), depositDate: todayLocal(),
+                                  checkNumber: wasCheck ? (o.paymentReference || '') : '',
+                                  checkDate: wasCheck && o.paymentCheckDate ? new Date(o.paymentCheckDate).toISOString().slice(0, 10) : '',
+                                  checkBank: '', checkDrawer: '',
                                 });
                               }}
                                 className="bg-brand text-white px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
@@ -3498,7 +3959,10 @@ export default function LedgerTab({ ctx }) {
                                     <tr key={`${parentCode}-sa-${sa.code}`} className="border-b border-white/5 hover:bg-page-bg/30">
                                       <td className="py-2 pl-10 text-fg/80 text-sm">
                                         <span className="text-fg/20 mr-2">↳</span>
-                                        <span className="font-bold">{sa.name}</span>
+                                        <span className={`font-bold ${sa.isActive === false ? 'line-through text-fg/30' : ''}`}>{sa.name}</span>
+                                        {sa.isActive === false && (
+                                          <span className="ml-2 text-[9px] uppercase tracking-widest font-black bg-white/10 text-fg/40 px-1.5 py-0.5 rounded">Inactive</span>
+                                        )}
                                       </td>
                                       <td className="py-2 text-fg/40 text-xs font-mono">{sa.code}</td>
                                       <td className="py-2">
@@ -3552,8 +4016,22 @@ export default function LedgerTab({ ctx }) {
                                           )}
                                         </div>
                                       </td>
-                                      <td className="py-2 pr-3 text-right text-[10px] uppercase tracking-widest font-black text-fg/60">
-                                        Sub-account
+                                      <td className="py-2 pr-3 text-right">
+                                        {canEdit ? (
+                                          <button onClick={() => toggleAccountActive(sa._id, sa.isActive === false)}
+                                            title={sa.isActive === false
+                                              ? 'Bring back as a selectable payment method'
+                                              : 'Remove from POS/portal picker without deleting - history stays intact'}
+                                            className={`text-[9px] uppercase tracking-widest font-black px-2 py-1 rounded transition ${
+                                              sa.isActive === false
+                                                ? 'bg-green-500/10 text-green-400 hover:bg-green-500/20'
+                                                : 'bg-white/5 text-fg/50 hover:bg-white/10 hover:text-fg'
+                                            }`}>
+                                            {sa.isActive === false ? 'Reactivate' : 'Deactivate'}
+                                          </button>
+                                        ) : (
+                                          <span className="text-[10px] uppercase tracking-widest font-black text-fg/60">Sub-account</span>
+                                        )}
                                       </td>
                                     </tr>
                                   );
@@ -3746,6 +4224,7 @@ export default function LedgerTab({ ctx }) {
                             <option value="Maya">Maya</option>
                             <option value="Maribank">Maribank / Seabank</option>
                             <option value="Other E-Wallet">Other E-Wallet</option>
+                            <option value="QR">QR / Scan to Pay</option>
                           </optgroup>
                           <optgroup label="Delivery Partners">
                             <option value="Grab Delivery">Grab Delivery</option>

@@ -65,12 +65,14 @@ const items = partialModal.items || [];
               <optgroup label="In-Store Payments">
                 <option value="Cash">Cash</option>
                 <option value="Bank Transfer">Bank Transfer</option>
+                <option value="Check">Check</option>
               </optgroup>
               <optgroup label="E-Wallets">
                 <option value="GCash">GCash</option>
                 <option value="Maya">Maya</option>
                 <option value="Maribank">Maribank / Seabank</option>
                 <option value="Other E-Wallet">Other E-Wallet</option>
+                <option value="QR">QR / Scan to Pay</option>
               </optgroup>
               <optgroup label="Delivery Partners">
                 <option value="Grab Delivery">Grab Delivery</option>

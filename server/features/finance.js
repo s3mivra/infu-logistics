@@ -423,7 +423,10 @@ app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, 
       paymentMethod: { $ne: 'Cash' },
       isComplimentary: { $ne: true }, // comps collect no money - never an A/R
       arSettled: { $ne: true }
-    }, { orderNumber: 1, customerName: 1, table: 1, total: 1, paymentMethod: 1, createdAt: 1, arTermsDays: 1, arDueDate: 1, arPaidAmount: 1, arPayments: 1 })
+      // paymentReference / paymentCheckDate carry the check details captured at
+      // the sale, so collecting the receivable can pre-fill them instead of
+      // making someone read the check number off the paper a second time.
+    }, { orderNumber: 1, customerName: 1, table: 1, total: 1, paymentMethod: 1, createdAt: 1, arTermsDays: 1, arDueDate: 1, arPaidAmount: 1, arPayments: 1, paymentReference: 1, paymentCheckDate: 1 })
       .sort({ createdAt: -1 }).limit(500).lean();
     // Flag each receivable overdue when its snapshotted terms date has passed.
     // Orders booked before terms existed carry no arDueDate and are never overdue.
@@ -873,6 +876,7 @@ app.get('/api/coa', verifyToken, requireStaff, async (req, res) => {
     const customMapped = custom.map(a => ({
       _id: a._id, code: a.code, name: a.name, type: a.type,
       parent: a.parent || null, isParent: false, custom: true,
+      isActive: a.isActive !== false,
     }));
     res.json({ success: true, accounts: [...canonical, ...customMapped] });
   } catch (err) {
@@ -907,6 +911,11 @@ app.post('/api/accounts', verifyToken, ...canPostAcct, async (req, res) => {
       custom: true, normalBalance: normalBalanceForCode(code),
     });
     await refreshCustomMeta();
+    // Event-driven invalidation: every connected POS/portal/QR-menu client
+    // holds its OWN payment-method list in local state (no polling). This is
+    // the only signal that tells them to refetch - see GET
+    // /api/payment-methods/active for what they refetch and why it's cheap.
+    emitToAll('paymentMethodsUpdated');
     res.json({ success: true, account });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -923,6 +932,7 @@ app.put('/api/accounts/:id', verifyToken, ...canPostAcct, async (req, res) => {
     acct.name = name.trim();
     await acct.save();
     await refreshCustomMeta();
+    emitToAll('paymentMethodsUpdated');
     res.json({ success: true, account: acct });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -939,8 +949,33 @@ app.delete('/api/accounts/:id', verifyToken, ...canPostAcct, async (req, res) =>
     const before = acct.toObject();
     await Account.deleteOne({ _id: acct._id });
     await refreshCustomMeta();
+    emitToAll('paymentMethodsUpdated');
     await logAudit(req, { action: 'delete', entity: 'Account', entityId: acct._id, before });
     res.json({ success: true });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// Toggle a custom sub-account in/out of the payment-method list WITHOUT
+// deleting it. This is the escape hatch delete can't offer once a journal
+// entry has posted to the code (delete is then permanently blocked, and
+// rightly so - the ledger history must not lose its account) - a discontinued
+// tender ("we stopped taking GoTyme") still needs to come off the POS/portal
+// picker while its past transactions keep resolving correctly.
+app.patch('/api/accounts/:id/active', verifyToken, ...canPostAcct, async (req, res) => {
+  try {
+    const { isActive } = req.body;
+    if (typeof isActive !== 'boolean') return res.status(400).json({ success: false, error: 'isActive must be true or false.' });
+    const acct = await Account.findById(req.params.id);
+    if (!acct || !acct.custom) return res.status(404).json({ success: false, error: 'Custom account not found.' });
+    const before = { isActive: acct.isActive };
+    acct.isActive = isActive;
+    await acct.save();
+    await refreshCustomMeta();
+    emitToAll('paymentMethodsUpdated');
+    await logAudit(req, { action: isActive ? 'activate' : 'deactivate', entity: 'Account', entityId: acct._id, before, after: { isActive } });
+    res.json({ success: true, account: acct });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -1232,4 +1267,72 @@ app.patch('/api/revolving-funds/:id/close', verifyToken, ...canPostAcct, async (
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
+
+// ── ACTIVE PAYMENT METHODS (POS / Customer Portal / QR Menu / Online Shop) ────
+// The single source of truth every ordering surface reads to build its
+// tender picker. Nothing here touches the database: it is assembled from the
+// same in-memory maps accountForPaymentMethod() itself reads (DEFAULT_PAYMENT_
+// ACCOUNT_MAP + CUSTOM_META, refreshed on every COA mutation), so serving it
+// costs microseconds and there is no polling story to worry about - clients
+// fetch it once, cache it locally, and only refetch when the
+// 'paymentMethodsUpdated' socket event tells them the set actually changed
+// (emitted from the /api/accounts CRUD routes above).
+//
+// Two kinds of entry:
+//   'canonical' - the built-in tenders (Cash, Bank Transfer, Check, QR, GCash,
+//     Maya, Maribank, Other E-Wallet, On Account). These are wired into core
+//     app logic (EOD cash reconciliation, arSettled semantics, credit-limit
+//     gating) and are always present - they are not something this screen can
+//     turn off. Delivery-partner tenders (Grab/Foodpanda/Lalamove/Manual
+//     Delivery/Pickup) are deliberately excluded: those are operational
+//     dispatch channels a cashier picks, not something a customer selects.
+//   'custom' - a sub-account someone added under a payment-relevant parent in
+//     the Routing screen (e.g. "GoTyme" under 113000). Selectable by name,
+//     toggleable via PATCH /api/accounts/:id/active, and only disappears from
+//     this list when deactivated - never silently, since deleting is blocked
+//     the moment it has a real journal entry against it.
+// PUBLIC, same as GET /api/products - a customer picking a tender on the QR
+// menu or the client portal has no staff/client session to present yet at the
+// point this is needed (it drives the picker BEFORE checkout). Nothing here
+// is sensitive: just tender names and which COA bucket they route to, the
+// same account codes already visible on any printed receipt.
+app.get('/api/payment-methods/active', async (req, res) => {
+  try {
+    const GROUP_BY_PARENT = {
+      '111000': 'In-Store', '112000': 'In-Store', '115000': 'In-Store',
+      '113000': 'E-Wallets',
+      '220000': 'Credit',
+    };
+    // Canonical tenders customers/cashiers actually select. Keeping this list
+    // separate from DEFAULT_PAYMENT_ACCOUNT_MAP's full keyset is what excludes
+    // the delivery-partner channels described above.
+    const CANONICAL_SELECTABLE = ['Cash', 'Bank Transfer', 'Check', 'QR', 'GCash', 'Maya', 'Maribank', 'Other E-Wallet', 'On Account'];
+    // Seeded at boot (see SEED_SUB_ACCOUNTS) as custom COA children so
+    // dispatch channels get their own GL bucket, but they are NOT something a
+    // customer picks as a tender - a cashier assigns the delivery channel
+    // separately. Excluded by name so they don't leak into the picker list.
+    const DELIVERY_CHANNEL_NAMES = new Set(['Grab Delivery', 'Foodpanda', 'Lalamove', 'Manual Delivery', 'Pickup']);
+
+    const methods = CANONICAL_SELECTABLE.map(name => {
+      const code = DEFAULT_PAYMENT_ACCOUNT_MAP[name];
+      return { name, code, parent: code, kind: 'canonical', group: GROUP_BY_PARENT[code] || 'In-Store' };
+    });
+
+    for (const [code, meta] of CUSTOM_META.entries()) {
+      if (!GROUP_BY_PARENT[meta.parent]) continue;         // not under a payment-relevant parent
+      if (meta.isActive === false) continue;                // deactivated - see PATCH .../active
+      // A custom child whose name collides with a canonical one (the
+      // auto-bind case in accountForPaymentMethod) is a ROUTE for that
+      // existing tender, not a new one - don't list it twice.
+      if (CANONICAL_SELECTABLE.some(n => n.toLowerCase() === String(meta.name).trim().toLowerCase())) continue;
+      if (DELIVERY_CHANNEL_NAMES.has(meta.name)) continue;
+      methods.push({ name: meta.name, code, parent: meta.parent, kind: 'custom', group: GROUP_BY_PARENT[meta.parent] });
+    }
+
+    res.json({ success: true, methods });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 }

@@ -150,10 +150,12 @@ export default function registerReports(ctx) {
     Role,
     AuditLogSchema,
     AuditLog,
+    ChangeRequest,
     DiscountSchema,
     Discount,
     SupplierSchema,
     Supplier,
+    Bill,
     EODRecordSchema,
     EODRecord,
     CounterSchema,
@@ -1606,6 +1608,323 @@ app.get('/api/reports/collections', verifyToken, ...canViewReports, async (req, 
     });
   } catch (err) {
     log.error({ err }, 'Collection report failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ============================================================
+// PRICE CHANGE LOG - every price and cost change across the whole catalogue,
+// in one place.
+//
+// The per-product history (GET /api/products/:id/price-history) answers "what
+// has this item cost over time". This answers the other question an owner
+// actually asks: "what did anyone change last month, and who signed it off" -
+// without opening products one at a time. Reads the same AuditLog trail, so a
+// change made directly and one that went through the approval queue both
+// appear, distinguishable by `viaApproval`.
+// ============================================================
+app.get('/api/reports/price-changes', verifyToken, ...canViewReports, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    const filter = {
+      action: { $in: ['PRODUCT_PRICE_CHANGED', 'PRODUCT_RECIPE_COST_CHANGED'] },
+    };
+    if (start || end) {
+      filter.timestamp = {};
+      if (start) filter.timestamp.$gte = dayStart(start);
+      if (end) filter.timestamp.$lte = dayEnd(end);
+    }
+    if (req.query.changedBy) filter.userId = String(req.query.changedBy).trim();
+
+    const rows = await AuditLog.find(filter).sort({ timestamp: -1 }).limit(1000).lean();
+
+    // Resolve each row back to a live product so the log can link through and
+    // show the current price next to what it was changed to. targetReference is
+    // a productCode when the product has one, else the raw _id - both are
+    // looked up, the same way the per-product history does it.
+    const refs = [...new Set(rows.map(r => r.targetReference).filter(Boolean))];
+    const ids = refs.filter(r => mongoose.Types.ObjectId.isValid(r));
+    const products = await Product.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
+      $or: [{ productCode: { $in: refs } }, ...(ids.length ? [{ _id: { $in: ids } }] : [])],
+    }, { name: 1, productCode: 1, basePrice: 1, costOverride: 1 }).lean();
+
+    const byRef = new Map();
+    for (const p of products) {
+      if (p.productCode) byRef.set(p.productCode, p);
+      byRef.set(String(p._id), p);
+    }
+
+    const changes = rows.map(r => {
+      const isPrice = r.action === 'PRODUCT_PRICE_CHANGED';
+      const product = byRef.get(r.targetReference) || null;
+      const oldValue = isPrice ? r.details?.oldPrice : r.details?.oldCost;
+      const newValue = isPrice ? r.details?.newPrice : r.details?.newCost;
+      const from = Number(oldValue) || 0;
+      const to = Number(newValue) || 0;
+      return {
+        date: r.timestamp,
+        type: isPrice ? 'price' : 'cost',
+        productId: product ? String(product._id) : null,
+        productName: r.details?.name || product?.name || r.targetReference,
+        productCode: product?.productCode || '',
+        oldValue, newValue,
+        delta: Math.round((to - from) * 100) / 100,
+        // Percent move is what makes an outlier jump off the page; guarded so a
+        // change from zero doesn't render as Infinity.
+        percent: from > 0 ? Math.round(((to - from) / from) * 1000) / 10 : null,
+        reason: r.details?.reason || '',
+        changedBy: r.userId || '',
+        viaApproval: !!r.details?.viaApproval,
+        requestedBy: r.details?.requestedBy || '',
+        approvedBy: r.details?.approvedBy || '',
+        currentValue: product ? (isPrice ? product.basePrice : product.costOverride) : null,
+      };
+    });
+
+    // Still-open requests, so the log shows what is about to change as well as
+    // what already has.
+    const pending = await ChangeRequest.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
+      entity: 'Product', status: 'Pending',
+    }).sort({ createdAt: -1 }).limit(200).lean();
+
+    const increases = changes.filter(c => c.type === 'price' && c.delta > 0);
+    const decreases = changes.filter(c => c.type === 'price' && c.delta < 0);
+
+    res.json({
+      success: true,
+      period: { start: start || null, end: end || null },
+      changes,
+      pending: pending.map(r => ({
+        _id: r._id, date: r.createdAt, productName: r.entityName,
+        changes: r.changes, reason: r.reason, requestedBy: r.requestedBy,
+      })),
+      summary: {
+        total: changes.length,
+        priceChanges: changes.filter(c => c.type === 'price').length,
+        costChanges: changes.filter(c => c.type === 'cost').length,
+        increases: increases.length,
+        decreases: decreases.length,
+        // The biggest single move in the window - the one worth a second look.
+        largestIncrease: increases.length ? increases.reduce((a, b) => (b.percent ?? 0) > (a.percent ?? 0) ? b : a) : null,
+        largestDecrease: decreases.length ? decreases.reduce((a, b) => (b.percent ?? 0) < (a.percent ?? 0) ? b : a) : null,
+        pendingCount: pending.length,
+        // How many changes went through review rather than straight in.
+        viaApproval: changes.filter(c => c.viaApproval).length,
+      },
+    });
+  } catch (err) {
+    log.error({ err }, 'Price change log failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ============================================================
+// A/P REPORT - every unpaid bill as of a date, aged, per supplier.
+//
+// The mirror of /api/reports/ar-aging: that one answers "who owes me and how
+// old is it", this answers "who do I owe and when is it due". The two are
+// deliberately aged on DIFFERENT dates, because the questions differ:
+//
+//   A/R ages on invoice date - how long a debt has been outstanding is what
+//        tells you whether you will ever collect it.
+//   A/P ages on DUE date     - nobody cares how long ago a bill was raised;
+//        what matters is how far past its payment date it is, because that is
+//        what damages a supplier relationship or triggers a penalty.
+//
+// A bill with no due date has nothing to be late against, so it is reported
+// as "undated" rather than silently bucketed as current (which would understate
+// what is overdue) or as 90+ (which would invent a crisis).
+//
+// `asOf` re-runs a past position: bills raised after that date are excluded,
+// and bills paid after it are counted as still open, so last month's report
+// still reproduces last month's numbers.
+// ============================================================
+app.get('/api/reports/ap-aging', verifyToken, ...canViewReports, async (req, res) => {
+  try {
+    const asOf = req.query.asOf ? dayEnd(req.query.asOf) : new Date();
+    if (Number.isNaN(asOf.getTime())) return res.status(400).json({ success: false, error: 'Invalid asOf date.' });
+
+    // Approved and Pending bills are both real obligations - an unapproved bill
+    // is money the supplier is already owed, it just hasn't been authorised for
+    // payment yet. Rejected bills are not debts. Paid ones are filtered by date
+    // below rather than by status, so an as-of report sees them as still open.
+    const bills = await Bill.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
+      status: { $in: ['Pending', 'Approved', 'Paid'] },
+      createdAt: { $lte: asOf },
+    }, {
+      billNumber: 1, supplierId: 1, supplierName: 1, source: 1, poNumber: 1,
+      description: 1, amount: 1, status: 1, dueDate: 1, scheduledPaymentDate: 1,
+      createdAt: 1, paidAt: 1, approvedAt: 1,
+    }).sort({ dueDate: 1 }).lean();
+
+    const open = [];
+    for (const b of bills) {
+      // Paid ON OR BEFORE the report date is settled as of then; paid after it
+      // was still outstanding at the time.
+      if (b.status === 'Paid' && b.paidAt && new Date(b.paidAt) <= asOf) continue;
+
+      const amount = Math.round((Number(b.amount) || 0) * 100) / 100;
+      if (amount <= 0.01) continue;
+
+      const due = b.dueDate ? new Date(b.dueDate) : null;
+      // Days PAST DUE - negative means it isn't due yet.
+      const daysPastDue = due ? Math.floor((asOf - due) / 86400000) : null;
+      const bucket = due === null ? 'undated' : bucketFor(Math.max(0, daysPastDue));
+
+      open.push({
+        _id: b._id,
+        billNumber: b.billNumber,
+        supplierId: b.supplierId ? String(b.supplierId) : null,
+        supplier: b.supplierName || 'Unattributed',
+        source: b.source,
+        poNumber: b.poNumber || '',
+        description: b.description || '',
+        amount,
+        status: b.status,
+        billDate: b.createdAt,
+        dueDate: due,
+        scheduledPaymentDate: b.scheduledPaymentDate || null,
+        daysPastDue,
+        overdue: daysPastDue !== null && daysPastDue > 0,
+        bucket,
+        // Waiting on someone before it can even be scheduled - a Pending bill
+        // that is already overdue is an approval problem, not a cash one.
+        awaitingApproval: b.status === 'Pending',
+      });
+    }
+
+    const blank = () => ({ current: 0, d31_60: 0, d61_90: 0, d90_plus: 0, undated: 0, total: 0, count: 0 });
+    const totals = blank();
+    const bySupplierMap = new Map();
+    for (const b of open) {
+      totals[b.bucket] += b.amount; totals.total += b.amount; totals.count += 1;
+      const key = b.supplier;
+      if (!bySupplierMap.has(key)) bySupplierMap.set(key, { supplier: key, supplierId: b.supplierId, ...blank() });
+      const g = bySupplierMap.get(key);
+      g[b.bucket] += b.amount; g.total += b.amount; g.count += 1;
+    }
+    const round = (o) => {
+      for (const k of ['current', 'd31_60', 'd61_90', 'd90_plus', 'undated', 'total']) o[k] = Math.round(o[k] * 100) / 100;
+      return o;
+    };
+
+    const sum = (list) => Math.round(list.reduce((s, b) => s + b.amount, 0) * 100) / 100;
+    // What falls due in the next week - the number that drives "do we have the
+    // cash", which an aged bucket alone never answers.
+    const weekAhead = new Date(asOf.getTime() + 7 * 86400000);
+    const dueSoon = open.filter(b => b.dueDate && !b.overdue && new Date(b.dueDate) <= weekAhead);
+
+    res.json({
+      success: true,
+      asOf,
+      bills: open.sort((a, b) => {
+        // Most overdue first; undated bills sink to the bottom.
+        if (a.daysPastDue === null) return 1;
+        if (b.daysPastDue === null) return -1;
+        return b.daysPastDue - a.daysPastDue;
+      }),
+      bySupplier: [...bySupplierMap.values()].map(round).sort((a, b) => b.total - a.total),
+      totals: round(totals),
+      overdueTotal: sum(open.filter(b => b.overdue)),
+      overdueCount: open.filter(b => b.overdue).length,
+      dueSoonTotal: sum(dueSoon),
+      dueSoonCount: dueSoon.length,
+      awaitingApprovalTotal: sum(open.filter(b => b.awaitingApproval)),
+      awaitingApprovalCount: open.filter(b => b.awaitingApproval).length,
+    });
+  } catch (err) {
+    log.error({ err }, 'A/P report failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ============================================================
+// PAYMENTS REPORT - money actually paid OUT to suppliers in a date range.
+//
+// The exact counterpart of the collection report: that one is what came in,
+// this is what went out. Reads the A/P journal debits rather than Bill rows,
+// so a direct supplier payment that never had a bill raised against it still
+// appears - otherwise the report would quietly understate what left the bank.
+// ============================================================
+app.get('/api/reports/supplier-payments', verifyToken, ...canViewReports, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    const from = start ? dayStart(start) : dayStart(new Date(Date.now() - 30 * 86400000));
+    const to = end ? dayEnd(end) : dayEnd(new Date());
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()))
+      return res.status(400).json({ success: false, error: 'Invalid date range.' });
+    if (from > to) return res.status(400).json({ success: false, error: 'Start date must be on or before the end date.' });
+
+    // A DEBIT to 220000 is A/P going down - i.e. a supplier being paid.
+    const rows = await JournalEntry.aggregate([
+      { $match: { date: { $gte: from, $lte: to } } },
+      { $unwind: '$lines' },
+      { $match: { 'lines.accountCode': '220000', 'lines.debit': { $gt: 0 } } },
+      { $group: {
+        _id: '$_id',
+        date:         { $first: '$date' },
+        reference:    { $first: '$reference' },
+        description:  { $first: '$description' },
+        supplierName: { $first: '$supplierName' },
+        supplierId:   { $first: '$supplierId' },
+        lines:        { $first: '$lines' },
+        amount:       { $sum: '$lines.debit' },
+      }},
+      { $sort: { date: -1 } },
+      { $limit: 1000 },
+    ]);
+
+    // Which account the money actually left. The A/P line is the debit; the
+    // credit side of the same entry is the cash/bank account that funded it.
+    const entryIds = rows.map(r => r._id);
+    const fullEntries = await JournalEntry.find({ _id: { $in: entryIds } }, { lines: 1 }).lean();
+    const paidFromById = new Map(fullEntries.map(e => {
+      const credit = (e.lines || []).find(l => (l.credit || 0) > 0);
+      return [String(e._id), credit ? { code: credit.accountCode, name: credit.accountName } : null];
+    }));
+
+    const payments = rows.map(r => ({
+      date: r.date,
+      reference: r.reference || '',
+      description: r.description || '',
+      supplier: r.supplierName || 'Unattributed',
+      supplierId: r.supplierId ? String(r.supplierId) : null,
+      amount: Math.round((Number(r.amount) || 0) * 100) / 100,
+      paidFrom: paidFromById.get(String(r._id))?.name || '',
+      paidFromCode: paidFromById.get(String(r._id))?.code || '',
+    }));
+
+    const groupBy = (key, label) => {
+      const m = new Map();
+      for (const p of payments) {
+        const k = p[key] || '(none)';
+        if (!m.has(k)) m.set(k, { [label]: k, amount: 0, count: 0 });
+        const g = m.get(k); g.amount += p.amount; g.count += 1;
+      }
+      return [...m.values()].map(g => ({ ...g, amount: Math.round(g.amount * 100) / 100 })).sort((a, b) => b.amount - a.amount);
+    };
+
+    const dailyMap = new Map();
+    for (const p of payments) {
+      const k = new Date(p.date).toISOString().slice(0, 10);
+      dailyMap.set(k, Math.round(((dailyMap.get(k) || 0) + p.amount) * 100) / 100);
+    }
+
+    res.json({
+      success: true,
+      period: { start: from, end: to },
+      payments,
+      totalPaid: Math.round(payments.reduce((s, p) => s + p.amount, 0) * 100) / 100,
+      count: payments.length,
+      bySupplier: groupBy('supplier', 'supplier'),
+      byAccount: groupBy('paidFrom', 'account'),
+      daily: [...dailyMap.entries()].map(([date, amount]) => ({ date, amount })).sort((a, b) => a.date.localeCompare(b.date)),
+    });
+  } catch (err) {
+    log.error({ err }, 'Supplier payments report failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });

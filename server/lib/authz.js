@@ -41,6 +41,10 @@ export const PERMISSIONS = [
   // either one silently unlocked the other.
   { key: 'requisitions.view',    group: 'Accounting', label: 'View requisition slips & the Approvals queue' },
   { key: 'requisitions.approve', group: 'Accounting', label: 'Approve / reject requisition slips' },
+  // Edits to money levers - a selling price, a cost basis, a client's credit
+  // line - are held for sign-off unless the editor holds this. See
+  // lib/changeApproval.js for exactly which fields are gated and why.
+  { key: 'pricing.approve',    group: 'Accounting', label: 'Approve price, cost & credit-limit changes' },
   { key: 'reports.view',       group: 'Reports',     label: 'View reports' },
   { key: 'analytics.view',     group: 'Reports',     label: 'View analytics dashboard' },
   { key: 'audit.view',         group: 'Reports',     label: 'View audit report' },
@@ -72,7 +76,8 @@ export const ROLE_DEFAULT_PERMISSIONS = {
             'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage'],
   // The books role: view + post accounting, plus read-only ops context.
   finance: ['orders.view', 'inventory.view', 'procurement.view',
-            'accounting.view', 'accounting.manage', 'reports.view', 'analytics.view', 'audit.view'],
+            'accounting.view', 'accounting.manage', 'pricing.approve',
+            'reports.view', 'analytics.view', 'audit.view'],
   cashier: ['pos.use', 'orders.view', 'orders.manage', 'inventory.view', 'products.view', 'procurement.view'],
   staff:   ['pos.use', 'orders.view', 'inventory.view', 'products.view'],
 };

@@ -216,6 +216,19 @@ app.get('/api/public/portal-settings', async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
+// PUBLIC, no session - the login screen needs to know whether to ask for a
+// starting cash float BEFORE anyone is authenticated (that's what the setting
+// controls). Whitelist only what is genuinely safe pre-login; this is not a
+// general escape hatch for reading settings without a token.
+app.get('/api/settings/public', async (req, res) => {
+  try {
+    const row = await Settings.findOne({ key: 'requireCashShift' }).lean();
+    // Unset means the historical behaviour: required. Preserves every existing
+    // deployment's current login flow until someone explicitly turns it off.
+    res.json({ success: true, requireCashShift: row?.value !== false });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 app.get('/api/settings', verifyToken, requireStaff, async (req, res) => {
   try {
     const rows = await Settings.find().lean();

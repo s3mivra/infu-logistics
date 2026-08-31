@@ -180,13 +180,22 @@ export default function registerShifts(ctx) {
 app.post('/api/shifts/start', verifyToken, requireStaff, async (req, res) => {
   try {
     const { startingCash } = req.body;
-    // Mandatory starting cash - reject missing/invalid/negative. No silent default-to-0:
-    // a zero opening float must be entered explicitly so EOS variance is meaningful.
+    // A shop that never runs a cash drawer (e.g. cashless-only, or a logistics
+    // business where nobody physically tenders cash) can turn this off in
+    // Settings so login stops asking for a float nobody is counting. Off:
+    // missing/blank is silently 0, same treatment every login already gives a
+    // superadmin. On (default): unchanged from the historical behaviour below
+    // - explicit, non-negative, or the login flow refuses to proceed. Kept as
+    // a hard requirement is the whole reason EOS variance means anything.
+    const cashShiftRow = await Settings.findOne({ key: 'requireCashShift' }).lean();
+    const cashShiftRequired = cashShiftRow?.value !== false;
+
     const opening = Number(startingCash);
-    if (startingCash === undefined || startingCash === null || startingCash === '' ||
-        !Number.isFinite(opening) || opening < 0) {
+    if (cashShiftRequired && (startingCash === undefined || startingCash === null || startingCash === '' ||
+        !Number.isFinite(opening) || opening < 0)) {
       return res.status(400).json({ success: false, error: 'A valid starting cash amount is required.' });
     }
+    const safeOpening = Number.isFinite(opening) && opening >= 0 ? opening : 0;
     // Close any dangling open shifts for this cashier
     await Shift.updateMany(
       { cashierId: String(req.user._id), status: 'Open' },
@@ -195,7 +204,7 @@ app.post('/api/shifts/start', verifyToken, requireStaff, async (req, res) => {
     const shift = await Shift.create({
       cashierId:    String(req.user._id),
       cashierName:  req.user.name,
-      startingCash: opening,
+      startingCash: safeOpening,
     });
     res.json({ success: true, shift });
   } catch (err) {

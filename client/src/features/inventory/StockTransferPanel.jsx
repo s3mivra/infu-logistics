@@ -17,7 +17,7 @@ import * as ui from '../../shared/ui';
 export default function StockTransferPanel({
   inventory = [], stockTransfers = [], locationAnalytics = [],
   requestStockTransfer, actOnStockTransfer, isSuperAdmin, peso, apiFetch,
-  exportStockTransfersPDF,
+  exportStockTransfersPDF, itemDisplay,
 }) {
   const [fromItemId, setFromItemId] = useState('');
   const [toValue, setToValue] = useState(''); // an inventory _id, or `hub:<partnerSlug>`
@@ -30,6 +30,21 @@ export default function StockTransferPanel({
 
   const fromItem = inventory.find(i => i._id === fromItemId);
   const fromBatches = (fromItem?.expiryBatches || []).filter(b => (b.qty || 0) > 0);
+
+  // Quantities are entered in PIECES and converted to base units on the way
+  // out, because that is how stock is counted everywhere else in the app. For
+  // a packed item ("377G", packSize 24, ...) one piece is packBase base units;
+  // for an unpacked one a piece IS the display unit, so the factor is 1 and
+  // nothing changes. Guarded so an item with no descriptors can never produce
+  // a 0 or NaN factor and silently transfer nothing.
+  const disp = fromItem && itemDisplay ? itemDisplay(fromItem) : null;
+  const perPiece = Number(disp?.isPacked ? disp.packBase : 1) || 1;
+  const pieceLabel = disp?.isPacked ? 'pcs' : (disp?.unit || fromItem?.unit || 'units');
+  const qtyPieces = parseFloat(qty);
+  const qtyInBase = Number.isFinite(qtyPieces) ? +(qtyPieces * perPiece).toFixed(6) : 0;
+  // What is actually on hand, in the same unit the user is typing in.
+  const availablePieces = fromItem ? +(((fromItem.stockQty || 0) / perPiece).toFixed(4)) : 0;
+  const overAvailable = !!fromItem && qtyInBase > (fromItem.stockQty || 0) + 1e-6;
   const isHubTarget = toValue.startsWith('hub:');
   const toItemId = isHubTarget ? '' : toValue;
 
@@ -58,14 +73,15 @@ export default function StockTransferPanel({
   useEffect(() => { loadHub(); }, [loadHub]);
 
   const submit = async () => {
-    if (!fromItemId || !toValue || !(parseFloat(qty) > 0) || busy) return;
+    if (!fromItemId || !toValue || !(qtyInBase > 0) || busy) return;
+    if (overAvailable) { ui.alert(`Only ${availablePieces} ${pieceLabel} on hand.`); return; }
     setBusy(true);
     if (isHubTarget) {
       const partnerSlug = toValue.slice('hub:'.length);
       try {
         const res = await apiFetch('/api/hub/transfers/send', {
           method: 'POST',
-          body: JSON.stringify({ partnerSlug, items: [{ itemId: fromItemId, qty: parseFloat(qty), note: note.trim() }] }),
+          body: JSON.stringify({ partnerSlug, items: [{ itemId: fromItemId, qty: qtyInBase, note: note.trim() }] }),
         });
         const data = await res.json();
         if (!res.ok || data.errors?.length) {
@@ -79,7 +95,7 @@ export default function StockTransferPanel({
       setBusy(false);
       return;
     }
-    const ok = await requestStockTransfer({ fromItemId, toItemId, qtyBase: parseFloat(qty), note: note.trim(), expiryDate: expiryChoice || null });
+    const ok = await requestStockTransfer({ fromItemId, toItemId, qtyBase: qtyInBase, note: note.trim(), expiryDate: expiryChoice || null });
     setBusy(false);
     if (ok) { setQty(''); setNote(''); setExpiryChoice(''); }
   };
@@ -103,6 +119,15 @@ export default function StockTransferPanel({
     Rejected: 'bg-red-500/15 text-red-400',
   };
   const label = (i) => `${i.itemName}${i.stockLocation ? ` · ${i.stockLocation}` : ''}`;
+  // Transfers are stored in base units (the ledger and stock cards need them
+  // that way), but read back in pieces so a row matches what was typed. Falls
+  // back to the raw stored figure when the item can't be resolved.
+  const showQty = (t, itemId) => {
+    const it = inventory.find(i => String(i._id) === String(itemId ?? t.fromItemId ?? t.itemId));
+    const d = it && itemDisplay ? itemDisplay(it) : null;
+    if (!d?.isPacked || !d.packBase) return `${t.qtyBase} ${t.unit || it?.unit || ''}`.trim();
+    return `${+(t.qtyBase / d.packBase).toFixed(2)} pcs`;
+  };
 
   return (
     <div className="space-y-4">
@@ -135,7 +160,13 @@ export default function StockTransferPanel({
             <label className="text-[10px] text-white uppercase font-bold block mb-1">From (source)</label>
             <select value={fromItemId} onChange={e => setFromItemId(e.target.value)} className={input}>
               <option value="">- Select item -</option>
-              {inventory.map(i => <option key={i._id} value={i._id}>{label(i)} ({i.stockQty} {i.unit})</option>)}
+              {inventory.map(i => {
+                // Show on-hand in the same unit the quantity box accepts, so
+                // "120 pcs available" and "transfer 5 pcs" agree.
+                const d = itemDisplay ? itemDisplay(i) : null;
+                const onHand = d?.isPacked ? `${+d.packQty.toFixed(2)} pcs` : `${i.stockQty} ${d?.unit || i.unit}`;
+                return <option key={i._id} value={i._id}>{label(i)} ({onHand})</option>;
+              })}
             </select>
             {fromBatches.length > 0 && (
               <div className="mt-1.5">
@@ -147,7 +178,7 @@ export default function StockTransferPanel({
                     const rotationDate = b.expiryDate || b.productionDate;
                     const dateLabel = b.expiryDate ? `Exp ${fmtExpiry(b.expiryDate)}` : `Prod ${fmtExpiry(b.productionDate)}`;
                     return (
-                      <option key={i} value={rotationDate}>{dateLabel} - {b.qty} {fromItem.unit} available</option>
+                      <option key={i} value={rotationDate}>{dateLabel} - {+(b.qty / perPiece).toFixed(2)} {pieceLabel} available</option>
                     );
                   })}
                 </select>
@@ -176,15 +207,32 @@ export default function StockTransferPanel({
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
           <div>
-            <label className="text-[10px] text-white uppercase font-bold block mb-1">Quantity{fromItem ? ` (${fromItem.unit})` : ''}</label>
-            <input type="number" min="0" value={qty} onChange={e => setQty(e.target.value)} placeholder="Base units" className={input} />
+            <label className="text-[10px] text-white uppercase font-bold block mb-1">
+              Quantity{fromItem ? ` (${pieceLabel})` : ''}
+            </label>
+            <input type="number" min="0" step="any" value={qty} onChange={e => setQty(e.target.value)}
+              placeholder={fromItem ? `How many ${pieceLabel}` : 'Select a source item first'}
+              className={`${input}${overAvailable ? ' border-red-500/60' : ''}`} />
+            {fromItem && (
+              <p className={`text-[10px] mt-1 ${overAvailable ? 'text-red-400 font-bold' : 'text-fg/40'}`}>
+                {overAvailable
+                  ? `Only ${availablePieces} ${pieceLabel} on hand.`
+                  : <>
+                      {availablePieces} {pieceLabel} on hand
+                      {/* Show the base-unit figure that will actually be moved
+                          when a piece is not one base unit - it is what the
+                          stock card and the ledger will record. */}
+                      {perPiece !== 1 && qtyInBase > 0 && ` · moves ${qtyInBase} ${fromItem.unit}`}
+                    </>}
+              </p>
+            )}
           </div>
           <div>
             <label className="text-[10px] text-white uppercase font-bold block mb-1">Note (optional)</label>
             <input value={note} onChange={e => setNote(e.target.value)} placeholder="Reason / reference" className={input} />
           </div>
         </div>
-        <button onClick={submit} disabled={busy || !fromItemId || !toValue || !(parseFloat(qty) > 0)} className="bg-accent text-white px-5 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-40 min-h-[44px]">
+        <button onClick={submit} disabled={busy || !fromItemId || !toValue || !(qtyInBase > 0) || overAvailable} className="bg-accent text-white px-5 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-40 min-h-[44px]">
           {isHubTarget ? 'Send to Partner' : 'Request Transfer'}
         </button>
       </div>
@@ -219,7 +267,7 @@ export default function StockTransferPanel({
                     <td className="py-2 text-white font-bold">{t.itemName}</td>
                     <td className="py-2 text-white text-xs">{t.fromLocation || '?'} → {t.toLocation || '?'}</td>
                     <td className="py-2 text-right text-white tabular-nums font-bold">
-                      {t.qtyBase} {t.unit}
+                      {showQty(t)}
                       {/* t.expiryDate holds whichever rotation date the pinned batch used - a
                           real expiry, or a production date for goods with no real expiry. */}
                       {t.expiryDate && <span className="block text-[10px] font-normal text-white">batch {fmtExpiry(t.expiryDate)}</span>}
@@ -278,7 +326,7 @@ export default function StockTransferPanel({
                       <td className="py-2 text-white text-xs font-mono">{t.reference}</td>
                       <td className="py-2 text-white font-bold">{t.itemName}</td>
                       <td className="py-2 text-white text-xs">{t.partnerName || t.partnerSlug}</td>
-                      <td className="py-2 text-right text-white tabular-nums font-bold">{t.qtyBase} {t.unit}</td>
+                      <td className="py-2 text-right text-white tabular-nums font-bold">{showQty(t, t.itemId)}</td>
                       <td className="py-2 pl-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${hubStatusColor[t.status] || 'bg-white/10 text-white/50'}`}>{t.status}</span></td>
                     </tr>
                   ))}

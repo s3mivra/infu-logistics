@@ -15,6 +15,10 @@ const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase()
 // order placed via QR in a logistics deployment silently routed to a
 // "Kitchen" station that doesn't exist there instead of Logistics/Warehouse.
 const DEFAULT_DEPARTMENT = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
+// What the customer-facing copy calls the station an order is sent to. A
+// logistics business has no kitchen, so "Send to Kitchen" on its QR menu was
+// naming a station that doesn't exist. Mirrors SEND_TARGET in OrdersTab.
+const SEND_TARGET = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
 const socket = io(API_URL, { transports: ['websocket'], upgrade: false });
 // See AdminDashboard.jsx for why: an open socket blocks bfcache, so
 // disconnect before the page would be frozen and reconnect if restored from it.
@@ -778,7 +782,7 @@ export default function CustomerMenu() {
               <CheckCircle size={32} className="text-brand" />
             </div>
             <h2 className="text-2xl font-black text-fg mb-2 uppercase tracking-widest">Order Sent!</h2>
-            <p className="text-fg/50 text-sm">Your order is on its way to the kitchen.</p>
+            <p className="text-fg/50 text-sm">Your order is on its way to {SEND_TARGET.toLowerCase()}.</p>
           </div>
         </div>
       )}
@@ -962,7 +966,7 @@ export default function CustomerMenu() {
                 disabled={isSubmitting}
                 className="w-full bg-brand hover:bg-brand-dark text-fg font-black py-4 rounded-2xl text-lg transition shadow-2xl shadow-brand/30 uppercase tracking-widest active:scale-95 disabled:opacity-60"
               >
-                {isSubmitting ? 'Sending…' : 'Send to Kitchen'}
+                {isSubmitting ? 'Sending…' : `Send to ${SEND_TARGET}`}
               </button>
             </div>
           </div>

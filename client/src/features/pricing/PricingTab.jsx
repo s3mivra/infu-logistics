@@ -51,6 +51,7 @@ export default function PricingTab({ ctx }) {
     posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable,
     pricingItemsPerPage, pricingPage, printOrderSlip, printXReading, products,
     priceTiers, pricingTable, fetchPricingTable, handleTierCellUpdate, handleTierPercentUpdate,
+    exportPriceTiersExcel, priceTierImportPreview, setPriceTierImportPreview, parsePriceTierExcel, submitPriceTierImport, priceTierImporting,
     removeAddOnFromOrder, removeComplimentary, removeMaterial, removeSize, restockData,
     rfActiveFund, rfDisbForm, rfDisbModal, rfDisbSubmitting, rfFunds,
     rfLoading, rfNewForm, rfNewModal, rfNewSubmitting, rfReplForm,
@@ -448,6 +449,16 @@ export default function PricingTab({ ctx }) {
               </h3>
               <div className="flex items-center gap-2">
               <button onClick={exportPriceTiersPDF} className="text-[10px] bg-accent/10 hover:bg-accent/20 text-accent px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition shrink-0">Export PDF</button>
+              {/* Bulk pricing round-trip: download the sheet (Code, Product, one
+                  column per tier prefilled with its current rate), edit prices
+                  offline, import it back. See exportPriceTiersExcel /
+                  parsePriceTierExcel in AdminDashboard.jsx for the full logic. */}
+              <button onClick={exportPriceTiersExcel} className="text-[10px] bg-accent/10 hover:bg-accent/20 text-accent px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition shrink-0">Download Excel</button>
+              <label className="text-[10px] bg-accent text-white px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition shrink-0 cursor-pointer hover:bg-accent/90">
+                Import Excel
+                <input type="file" accept=".xlsx,.xls" className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) parsePriceTierExcel(f); e.target.value = ''; }} />
+              </label>
               <div className="relative">
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
                 <input

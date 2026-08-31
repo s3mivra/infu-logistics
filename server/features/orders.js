@@ -745,6 +745,39 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       ? (paymentsInput.length === 1 ? paymentsInput[0].method : 'Split')
       : (bodyPaymentMethod || clientPresetPayment || 'Cash');
 
+    // ── PAYMENT REFERENCE (QR and Check) ───────────────────────────────────
+    // Two tenders leave no usable trace on our side without a reference:
+    //   QR    - settles into a wallet; the customer's confirmation number is
+    //           the only thing tying that money to this order.
+    //   Check - a piece of paper; the check number is how it is identified in
+    //           the register, chased at the bank, and matched when it clears
+    //           or bounces.
+    // In both cases an order accepted without one can never be reconciled, so
+    // it is refused here rather than left for someone to guess at later.
+    const paymentReference = String(req.body.paymentReference || '').trim().slice(0, 60);
+    const tender = String(resolvedPaymentMethod).trim().toUpperCase();
+    if (tender === 'QR' && !paymentReference) {
+      return res.status(400).json({
+        success: false,
+        error: 'A payment reference number is required for QR payments. Enter the confirmation number from your payment app.',
+      });
+    }
+    let paymentCheckDate = null;
+    if (tender === 'CHECK') {
+      if (!paymentReference) {
+        return res.status(400).json({
+          success: false,
+          error: 'A check number is required when paying by check.',
+        });
+      }
+      if (req.body.paymentCheckDate) {
+        paymentCheckDate = new Date(req.body.paymentCheckDate);
+        if (Number.isNaN(paymentCheckDate.getTime())) {
+          return res.status(400).json({ success: false, error: 'Invalid check date.' });
+        }
+      }
+    }
+
     // ── CREDIT LIMIT GATE ──────────────────────────────────────────────────
     // Only on-account (non-cash) buying consumes credit - a cash sale settles
     // immediately and can never grow the receivable. Checked here, after the
@@ -837,6 +870,8 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       ...(isClientOrder && { clientId: req.user._id || req.user.clientId || '', clientUsername: req.user.username || '' }),
       ...(idempotencyKey && { idempotencyKey }),
       ...(paymentsInput?.length > 0 && { payments: paymentsInput }),
+      ...(paymentReference && { paymentReference }),
+      ...(paymentCheckDate && { paymentCheckDate }),
     });
 
     emitToOps('newOrder', newOrder);
@@ -943,6 +978,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
 
   try {
     const { status, discountPercent, isVatExempt, paymentMethod, discountType, discountedIndices, items, amountTendered } = req.body;
+    const putPaymentReference = String(req.body.paymentReference || '').trim().slice(0, 60);
     
     const order = await Order.findById(req.params.id).session(session);
     if (!order) {
@@ -974,6 +1010,29 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       }
     }
     if (paymentMethod && !order.isComplimentary) order.paymentMethod = paymentMethod;
+
+    // Same rule as order creation: a check or a QR payment is unreconcilable
+    // without its number, and the POS settles a tender through THIS route
+    // ("Pay & Send"), not through order creation - so the gate has to exist on
+    // both paths or the POS would be a way around it.
+    if (!order.isComplimentary) {
+      const putTender = String(paymentMethod || order.paymentMethod || '').trim().toUpperCase();
+      const existingRef = putPaymentReference || order.paymentReference || '';
+      if ((putTender === 'CHECK' || putTender === 'QR') && !existingRef) {
+        return res.status(400).json({
+          success: false,
+          error: putTender === 'CHECK'
+            ? 'A check number is required when paying by check.'
+            : 'A payment reference number is required for QR payments.',
+        });
+      }
+      if (putPaymentReference) order.paymentReference = putPaymentReference;
+      if (req.body.paymentCheckDate) {
+        const d = new Date(req.body.paymentCheckDate);
+        if (Number.isNaN(d.getTime())) return res.status(400).json({ success: false, error: 'Invalid check date.' });
+        order.paymentCheckDate = d;
+      }
+    }
 
     // Allow the Kitchen/Bar to update specific item statuses safely
     // Allow the Kitchen/Bar to update specific item statuses safely

@@ -4,6 +4,7 @@ import { io } from 'socket.io-client';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
+import { usePaymentMethods } from '../../shared/usePaymentMethods';
 import { buildReceiptHTML as buildSharedReceipt, printReceiptHTML, resolveLetterhead } from '../../shared/receiptTemplate';
 import { buildEscposReceiptBytes, sleep as escposSleep, readPrinterMode, writePrinterMode } from '../../shared/escpos';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
@@ -16,6 +17,7 @@ import EditInventoryModal from '../inventory/modals/EditInventoryModal';
 import SpoilageModal from '../inventory/modals/SpoilageModal';
 import SettleArModal from '../ledger/modals/SettleArModal';
 import ArHistoryModal from '../ledger/modals/ArHistoryModal';
+import PriceTierImportModal from '../pricing/modals/PriceTierImportModal';
 import BounceCheckModal from '../ledger/modals/BounceCheckModal';
 import RevolvingFundNewModal from '../ledger/modals/RevolvingFundNewModal';
 import RevolvingFundDisburseModal from '../ledger/modals/RevolvingFundDisburseModal';
@@ -194,6 +196,11 @@ export default function AdminDashboard() {
   const navigate = useNavigate(); // in-app (SPA) navigation - no full page reload
 
   const [paymentSelections, setPaymentSelections] = useState({});
+  // Per-order check number / QR confirmation number, and the date written on a
+  // check. Keyed by order id like cashTendered, since several orders can be
+  // open on the POS at once.
+  const [paymentRefs, setPaymentRefs] = useState({});
+  const [paymentCheckDates, setPaymentCheckDates] = useState({});
 
   // Restore the last-viewed tab across page refreshes (was resetting to Orders&POS).
   // Falls back to 'orders' for a fresh session or bad/stale storage.
@@ -314,6 +321,34 @@ export default function AdminDashboard() {
   // --- CHECK REGISTER ---
   // Checks taken in against A/R, tracked On Hand -> Deposited -> Cleared, or
   // Bounced (which reverses the collection and reopens the invoice).
+  // Price/cost edits held for approval, and the log of applied ones.
+  const [changeRequests, setChangeRequests] = useState([]);
+  const [canApprovePricing, setCanApprovePricing] = useState(false);
+  const [priceChangeLog, setPriceChangeLog] = useState(null);
+  const [priceLogRange, setPriceLogRange] = useState({
+    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
+    end: new Date().toISOString().slice(0, 10),
+  });
+  // Requests against the product whose history is open - shown alongside the
+  // applied changes so "why is this still ₱250" is answered on the same screen.
+  const [pricePending, setPricePending] = useState([]);
+  // --- A/P REPORT (aged payables) + SUPPLIER PAYMENTS ---
+  // The mirrors of the A/R and collection reports: what we owe, and what we
+  // actually paid out.
+  const [apReport, setApReport] = useState(null);
+  const [apReportAsOf, setApReportAsOf] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+  const [supplierPayments, setSupplierPayments] = useState(null);
+  const [supPayRange, setSupPayRange] = useState({
+    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
+    end: new Date().toISOString().slice(0, 10),
+  });
+  // COA-derived tender list (see usePaymentMethods) - the POS's own copy of
+  // the same live list the client portal reads, riding this dashboard's
+  // already-open socket rather than a second connection.
+  const { methods: activePaymentMethods, grouped: paymentMethodGroups } = usePaymentMethods(apiFetch, socket);
   const [checkRegister, setCheckRegister] = useState(null);
   const [checkFilter, setCheckFilter] = useState('');
   const [bounceTarget, setBounceTarget] = useState(null);   // the check row being bounced
@@ -467,6 +502,20 @@ export default function AdminDashboard() {
 
   // --- SHIFT STATES ---
   const [startingCash, setStartingCash] = useState(() => localStorage.getItem('semivra_last_actual_cash') || '');
+  // Whether login asks for a starting-cash float at all. Read PRE-AUTH (plain
+  // fetch, no token exists yet) from the one whitelisted public setting - a
+  // shop that never runs a cash drawer can turn this off so login stops
+  // asking for a number nobody is counting.
+  const [requireCashShift, setRequireCashShift] = useState(true);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/settings/public`);
+        const d = await res.json();
+        if (d.success) setRequireCashShift(d.requireCashShift !== false);
+      } catch { /* default stays required - the safer failure mode */ }
+    })();
+  }, []);
   const [shiftEndModal, setShiftEndModal] = useState(false);
   const [shiftReconcile, setShiftReconcile] = useState({ actualCash: '', result: null });
   const [shiftEndLoading, setShiftEndLoading] = useState(false);
@@ -801,8 +850,10 @@ export default function AdminDashboard() {
       const isSuperAdminLogin = data.user?.role === 'superadmin';
       const cashAmount = parseFloat(startingCash);
 
-      // Non-superadmins must declare their opening cash
-      if (!isSuperAdminLogin && (!startingCash || isNaN(cashAmount) || cashAmount < 0)) {
+      // Non-superadmins must declare their opening cash - unless the shop has
+      // turned that requirement off entirely (Settings → System → Require
+      // Cash Shift on Login), in which case nobody is asked, superadmin or not.
+      if (requireCashShift && !isSuperAdminLogin && (!startingCash || isNaN(cashAmount) || cashAmount < 0)) {
         setLoginError('Please enter a valid Starting Cash amount (₱0 or more).');
         return;
       }
@@ -812,8 +863,9 @@ export default function AdminDashboard() {
       setIsAuthenticated(true);
       setActiveAdmin(data.user);
 
-      // Superadmin with no cash entered → log shift with ₱0
-      const finalCash = isSuperAdminLogin ? (isNaN(cashAmount) ? 0 : cashAmount) : cashAmount;
+      // Superadmin, or any role once the shop has turned the requirement off,
+      // logs the shift at ₱0 when nothing was entered.
+      const finalCash = (isSuperAdminLogin || !requireCashShift) ? (isNaN(cashAmount) ? 0 : cashAmount) : cashAmount;
       try {
         const shiftRes = await fetch(`${API_URL}/api/shifts/start`, {
           method: 'POST',
@@ -930,6 +982,21 @@ export default function AdminDashboard() {
     });
   };
 
+  // Say plainly when an edit saved but its price was held for approval. The
+  // server returns `pendingApproval` on exactly that case.
+  const reportHeldChange = async (res) => {
+    try {
+      const data = await res.json();
+      if (data?.pendingApproval?.length) {
+        const lines = data.pendingApproval
+          .map(c => `${c.label}: ₱${Number(c.oldValue || 0).toFixed(2)} → ₱${Number(c.newValue || 0).toFixed(2)}`)
+          .join('\n');
+        ui.alert(`Sent for approval — not applied yet:\n${lines}`);
+      }
+      return data;
+    } catch { return null; }
+  };
+
   const handleInlinePriceUpdate = async (productId, sizeIndex) => {
     const product = products.find(p => p._id === productId);
     if (!product) return;
@@ -948,13 +1015,17 @@ export default function AdminDashboard() {
     else updatedProduct.sizes[sizeIndex].price = newPrice;
 
     try {
-      await apiFetch(`/api/products/${productId}`, {
+      const res = await apiFetch(`/api/products/${productId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-Change-Reason': encodeURIComponent(reason.trim()) },
         body: JSON.stringify(updatedProduct)
       });
+      // A held price change still returns 200 - without saying so, the user
+      // would walk away believing the price had changed when it had not.
+      await reportHeldChange(res);
       setEditPriceId(null);
       fetchData();
+      fetchChangeRequests();
     } catch (err) {
       console.error("Failed to update price", err);
     }
@@ -980,13 +1051,16 @@ export default function AdminDashboard() {
       );
     }
     try {
-      await apiFetch(`/api/products/${productId}`, {
+      const res = await apiFetch(`/api/products/${productId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-Change-Reason': encodeURIComponent(reason.trim()) },
         body: JSON.stringify(updatedProduct)
       });
+      // Recipe cost is gated the same way a selling price is.
+      await reportHeldChange(res);
       setEditCostId(null);
       fetchData();
+      fetchChangeRequests();
     } catch (err) {
       console.error('Failed to update cost', err);
     }
@@ -1211,6 +1285,7 @@ export default function AdminDashboard() {
       const data = await res.json();
       if (data.success) {
         setPriceHistory(data.history);
+        setPricePending(data.pending || []);
         setPriceHistoryProduct({ ...product, ...data.product });
         setPriceHistoryOpen(true);
       } else {
@@ -1303,6 +1378,19 @@ export default function AdminDashboard() {
       const d = await r.json();
       if (d.success) fetchCoa(); else ui.alert(d.error || 'Delete failed.');
     } catch { ui.alert('Delete failed.'); }
+  };
+  // Pull a discontinued tender out of the POS/portal/QR-menu picker without
+  // deleting the account - delete is blocked once it has real journal history,
+  // so this is the only way to retire one while keeping that history intact.
+  // fetchCoa() alone is enough here: the server also emits
+  // 'paymentMethodsUpdated', which is what every OTHER connected client (a
+  // second cashier's POS, an open client-portal tab) reacts to.
+  const toggleAccountActive = async (id, nextActive) => {
+    try {
+      const r = await apiFetch(`/api/accounts/${id}/active`, { method: 'PATCH', body: JSON.stringify({ isActive: nextActive }) });
+      const d = await r.json();
+      if (d.success) fetchCoa(); else ui.alert(d.error || 'Could not update.');
+    } catch { ui.alert('Could not update.'); }
   };
 
   // Re-run the boot-time seed for payment-method sub-accounts. Safe to invoke
@@ -1903,6 +1991,14 @@ const updateStatus = async (orderId, newStatus) => {
       // Include cash tendered for cash payments
       if (payload.paymentMethod === 'Cash' && cashTendered[orderId]) {
         payload.amountTendered = parseFloat(cashTendered[orderId]) || 0;
+      }
+      // Check number / QR confirmation number - the server refuses these
+      // tenders without one, since it is the only handle on the money after.
+      if (['Check', 'QR'].includes(payload.paymentMethod)) {
+        payload.paymentReference = (paymentRefs[orderId] || '').trim();
+        if (payload.paymentMethod === 'Check' && paymentCheckDates[orderId]) {
+          payload.paymentCheckDate = paymentCheckDates[orderId];
+        }
       }
     }
 
@@ -2506,6 +2602,164 @@ const updateStatus = async (orderId, newStatus) => {
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
     });
     doc.save(`Market-Segment-Pricing-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  // ── PRICE TIER EXCEL EXPORT/IMPORT ──────────────────────────────────────────
+  // One sheet: Code | Product | <Tier 1> | <Tier 2> | ... Each tier column is
+  // prefilled with what that tier currently charges (blank where a per_product
+  // tier has no rate set for that row), so filling in a bulk price list is
+  // "open, edit the numbers you actually want to change, save" rather than
+  // typing every product from scratch.
+  const exportPriceTiersExcel = async () => {
+    if (!pricingTable.tiers || pricingTable.tiers.length === 0) return ui.alert('No price tiers set up yet - open Pricing Control first (or Super Admin → Price Tiers) so this can load.');
+    const XLSX = await import('xlsx');
+    const headers = ['Code', 'Product', 'List Price', ...pricingTable.tiers.map(t => t.name)];
+    const rows = (pricingTable.products || []).map(p => [
+      p.productCode || '',
+      p.name,
+      Number(p.basePrice || 0),
+      // Blank cell = "this tier has no explicit rate for this product" (a
+      // percent-mode tier, or a per_product tier with no row yet) - left
+      // empty rather than 0 so re-importing an untouched cell doesn't zero
+      // out a price nobody meant to touch.
+      ...pricingTable.tiers.map(t => {
+        const v = t.prices?.[String(p._id)];
+        return (v === null || v === undefined) ? '' : Number(v);
+      }),
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    ws['!cols'] = headers.map(h => ({ wch: Math.max(10, Math.min(24, h.length + 4)) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Price Tiers');
+    XLSX.writeFile(wb, `price-tiers-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  // Parsed-file preview, shown before anything is written - same shape/spirit
+  // as importPreview for POs: nothing touches the server until the user
+  // confirms. { tiers: [{ name, tierId|null, rows: [{productId,name,price}] }],
+  // unmatchedCodes: [...], newTierNames: [...] }
+  const [priceTierImportPreview, setPriceTierImportPreview] = useState(null);
+  const [priceTierImporting, setPriceTierImporting] = useState(false);
+
+  const parsePriceTierExcel = async (file) => {
+    if (!file) return;
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      if (!grid.length) return ui.alert('That file has no rows.');
+
+      const header = grid[0].map(h => String(h ?? '').trim());
+      const norm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const codeCol = header.findIndex(h => norm(h) === 'code');
+      const nameCol = header.findIndex(h => norm(h).includes('product'));
+      if (codeCol === -1 && nameCol === -1) {
+        return ui.alert('Could not find a "Code" or "Product" column - use the downloaded template as a starting point.');
+      }
+      // Every OTHER column (skipping List Price, which is read-only reference
+      // data) is a tier name to import.
+      const tierCols = header
+        .map((h, i) => ({ h, i }))
+        .filter(({ h, i }) => i !== codeCol && i !== nameCol && norm(h) !== 'listprice' && h.trim());
+
+      // Match each row to a real product: code first (authoritative - a name
+      // can be edited in the sheet without breaking the match), name as a
+      // fallback for a catalogue with no product codes.
+      const byCode = new Map((pricingTable.products || []).filter(p => p.productCode).map(p => [norm(p.productCode), p]));
+      const byName = new Map((pricingTable.products || []).map(p => [norm(p.name), p]));
+
+      const tierResults = tierCols.map(({ h }) => ({ name: h.trim(), rows: [] }));
+      const unmatchedCodes = [];
+
+      for (let r = 1; r < grid.length; r++) {
+        const row = grid[r];
+        if (!row || row.every(c => c === '' || c === null || c === undefined)) continue;
+        const code = codeCol >= 0 ? String(row[codeCol] ?? '').trim() : '';
+        const name = nameCol >= 0 ? String(row[nameCol] ?? '').trim() : '';
+        const product = (code && byCode.get(norm(code))) || (name && byName.get(norm(name)));
+        if (!product) { if (code || name) unmatchedCodes.push(code || name); continue; }
+
+        tierCols.forEach(({ i }, ti) => {
+          const raw = row[i];
+          if (raw === '' || raw === null || raw === undefined) return; // blank = leave alone
+          const price = Number(raw);
+          if (!Number.isFinite(price) || price < 0) return;
+          tierResults[ti].rows.push({ productId: product._id, name: product.name, price });
+        });
+      }
+
+      // Attach the existing tier (if any) so the preview can show whether a
+      // column is updating a known tier or about to create a brand-new one.
+      const withMatch = tierResults
+        .filter(t => t.rows.length > 0)   // a column nobody filled in is a no-op
+        .map(t => {
+          const existing = (priceTiers || []).find(pt => pt.name.trim().toLowerCase() === t.name.toLowerCase());
+          return { ...t, tierId: existing?._id || null, wasPercent: existing?.pricingMode !== 'per_product' };
+        });
+
+      if (withMatch.length === 0) {
+        return ui.alert('No prices to import - every tier column was left blank.');
+      }
+
+      setPriceTierImportPreview({ tiers: withMatch, unmatchedCodes: [...new Set(unmatchedCodes)] });
+    } catch (err) {
+      console.error('parsePriceTierExcel', err);
+      ui.alert('Could not read that file. Make sure it is the .xlsx exported from this screen (or matches its columns).');
+    }
+  };
+
+  // Applies the preview: for each tier column, create the tier if the name is
+  // new, flip it to per_product mode if it wasn't already (importing explicit
+  // prices only means anything in that mode - see resolveTierPrice), then
+  // merge the imported rows onto its EXISTING price list and replace (the
+  // /products route replaces wholesale) - same merge shape handleTierCellUpdate
+  // already uses for a single cell, just applied to a whole column at once.
+  const submitPriceTierImport = async () => {
+    if (!priceTierImportPreview || priceTierImporting) return;
+    setPriceTierImporting(true);
+    const results = [];
+    try {
+      for (const t of priceTierImportPreview.tiers) {
+        let tierId = t.tierId;
+        try {
+          if (!tierId) {
+            const created = await apiFetch('/api/price-tiers', {
+              method: 'POST',
+              body: JSON.stringify({ name: t.name, pricingMode: 'per_product', percent: 0 }),
+            });
+            const cd = await created.json();
+            if (!cd.success) { results.push(`✗ ${t.name}: ${cd.error}`); continue; }
+            tierId = cd.tier._id;
+          } else if (t.wasPercent) {
+            // A percent-mode tier receiving explicit prices switches modes -
+            // otherwise the import would silently do nothing (percent tiers
+            // ignore productPrices entirely).
+            await apiFetch(`/api/price-tiers/${tierId}`, { method: 'PUT', body: JSON.stringify({ pricingMode: 'per_product' }) });
+          }
+
+          // Merge onto whatever this tier already has, not a blank slate -
+          // an untouched product elsewhere in the tier must keep its rate.
+          const existingRow = pricingTable.tiers.find(pt => pt._id === tierId);
+          const merged = new Map(
+            existingRow && !t.wasPercent
+              ? Object.entries(existingRow.prices || {}).filter(([, v]) => v !== null && v !== undefined)
+              : []
+          );
+          for (const row of t.rows) merged.set(String(row.productId), row.price);
+          const prices = [...merged.entries()].map(([productId, price]) => ({ productId, price }));
+
+          const res = await apiFetch(`/api/price-tiers/${tierId}/products`, { method: 'PUT', body: JSON.stringify({ prices }) });
+          const data = await res.json();
+          results.push(data.success ? `✓ ${t.name}: ${t.rows.length} price(s)` : `✗ ${t.name}: ${data.error}`);
+        } catch { results.push(`✗ ${t.name}: network error`); }
+      }
+      setPriceTierImportPreview(null);
+      fetchPriceTiers(); fetchPricingTable();
+      ui.alert(results.join('\n'));
+    } finally {
+      setPriceTierImporting(false);
+    }
   };
 
   const exportShiftHistoryPDF = async () => {
@@ -4878,6 +5132,18 @@ const updateStatus = async (orderId, newStatus) => {
       const d = await res.json(); if (d.success) fetchSettings();
     } catch (err) { console.error('toggleQROrders', err); }
   };
+  // Superadmin-only: whether login asks for a starting-cash float at all.
+  // Turning it off is meant for a shop with no cash drawer to reconcile -
+  // existing open/closed shift HISTORY is untouched either way, this only
+  // changes whether the NEXT login is asked.
+  const toggleRequireCashShift = async () => {
+    const next = systemSettings.requireCashShift === false; // currently off → turning on
+    try {
+      const res = await apiFetch('/api/settings/requireCashShift', { method: 'PATCH', body: JSON.stringify({ value: next }) });
+      const d = await res.json();
+      if (d.success) { fetchSettings(); setRequireCashShift(next); }
+    } catch (err) { console.error('toggleRequireCashShift', err); }
+  };
   // Superadmin-only: enable/disable the automatic midnight close & day archive.
   const toggleAutoClose = async () => {
     const next = systemSettings.autoCloseEnabled === false; // currently off → turning on
@@ -4932,6 +5198,63 @@ const updateStatus = async (orderId, newStatus) => {
       const d = await res.json();
       if (d.success) setCollectionReport(d); else ui.alert(d.error || 'Could not load the collection report.');
     } catch (err) { console.error('fetchCollectionReport', err); }
+  };
+
+  const fetchApReport = async () => {
+    try {
+      const res = await apiFetch(`/api/reports/ap-aging?asOf=${apReportAsOf}`);
+      const d = await res.json();
+      if (d.success) setApReport(d); else ui.alert(d.error || 'Could not load the A/P report.');
+    } catch (err) { console.error('fetchApReport', err); }
+  };
+
+  const fetchSupplierPayments = async () => {
+    try {
+      const res = await apiFetch(`/api/reports/supplier-payments?start=${supPayRange.start}&end=${supPayRange.end}`);
+      const d = await res.json();
+      if (d.success) setSupplierPayments(d); else ui.alert(d.error || 'Could not load supplier payments.');
+    } catch (err) { console.error('fetchSupplierPayments', err); }
+  };
+
+  const fetchChangeRequests = async (status = 'Pending') => {
+    try {
+      const res = await apiFetch(`/api/change-requests${status ? `?status=${status}` : ''}`);
+      if (!res.ok) return;                       // no permission - silently skip
+      const d = await res.json();
+      if (d.success) { setChangeRequests(d.requests || []); setCanApprovePricing(!!d.canApprove); }
+    } catch (err) { console.error('fetchChangeRequests', err); }
+  };
+
+  const actOnChangeRequest = async (id, action, reason) => {
+    try {
+      const res = await apiFetch(`/api/change-requests/${id}/${action}`, {
+        method: 'POST', body: JSON.stringify(reason ? { reason } : {}),
+      });
+      const d = await res.json();
+      if (!d.success) {
+        // A stale request is the interesting failure: the price moved after
+        // the request was filed, so applying it would overwrite a decision
+        // nobody reviewed. Name the numbers rather than just failing.
+        if (d.conflicts?.length) {
+          const lines = d.conflicts
+            .map(c => `${c.label}: expected ₱${Number(c.expected || 0).toFixed(2)}, now ₱${Number(c.current || 0).toFixed(2)}`)
+            .join('\n');
+          return ui.alert(`${d.error}\n\n${lines}`);
+        }
+        return ui.alert(d.error || `Could not ${action} the request.`);
+      }
+      fetchChangeRequests();
+      fetchData();
+      if (priceChangeLog) fetchPriceChangeLog();
+    } catch { ui.alert('Network error.'); }
+  };
+
+  const fetchPriceChangeLog = async () => {
+    try {
+      const res = await apiFetch(`/api/reports/price-changes?start=${priceLogRange.start}&end=${priceLogRange.end}`);
+      const d = await res.json();
+      if (d.success) setPriceChangeLog(d); else ui.alert(d.error || 'Could not load the price change log.');
+    } catch (err) { console.error('fetchPriceChangeLog', err); }
   };
 
   const fetchChecks = async (status = checkFilter) => {
@@ -5968,21 +6291,23 @@ const updateStatus = async (orderId, newStatus) => {
             className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-fg placeholder-white/20 text-center py-3 rounded-xl outline-none mb-3 font-bold tracking-widest transition"
             required
           />
-          <div className="relative mb-1">
-            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-brand font-black text-lg pointer-events-none">₱</span>
-            <input
-              type="number"
-              aria-label="Starting Cash in Philippine Pesos"
-              placeholder="Starting Cash"
-              min="0"
-              step="0.01"
-              value={startingCash}
-              onChange={e => setStartingCash(e.target.value)}
-              className="w-full bg-white/5 border border-brand/30 focus:border-brand text-fg text-center py-3 pl-8 rounded-xl outline-none font-black text-lg transition"
-            />
-          </div>
+          {requireCashShift && (
+            <div className="relative mb-1">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-brand font-black text-lg pointer-events-none">₱</span>
+              <input
+                type="number"
+                aria-label="Starting Cash in Philippine Pesos"
+                placeholder="Starting Cash"
+                min="0"
+                step="0.01"
+                value={startingCash}
+                onChange={e => setStartingCash(e.target.value)}
+                className="w-full bg-white/5 border border-brand/30 focus:border-brand text-fg text-center py-3 pl-8 rounded-xl outline-none font-black text-lg transition"
+              />
+            </div>
+          )}
           <p className="text-fg/25 text-xs mb-5 text-center font-medium">
-            Required for staff · Optional for Superadmin
+            {requireCashShift ? 'Required for staff · Optional for Superadmin' : 'Cash shift tracking is turned off for this shop'}
           </p>
           <button type="submit" className="w-full bg-brand hover:bg-brand-dark text-fg font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest">
             Start Shift
@@ -6384,6 +6709,7 @@ const updateStatus = async (orderId, newStatus) => {
     // ── Shift end / bank deposit (ShiftEndModal) ────────────────────────────
     shiftEndModal, setShiftEndModal, shiftEndLoading, shiftReconcile, setShiftReconcile,
     handleEndShift, handleBankDeposit, performLogout, startingCash,
+    requireCashShift, toggleRequireCashShift,
     depositAmount, setDepositAmount, depositError, setDepositError, depositLoading,
     // ── Stock history / import / partial fulfil modals ──────────────────────
     submitImport, loadPdfLibs, addLogoToPDF, pdfMoney,
@@ -6392,7 +6718,7 @@ const updateStatus = async (orderId, newStatus) => {
     // ── Chart of Accounts CRUD ──
     coaAccounts, fetchCoa, coaParent, setCoaParent, coaNewName, setCoaNewName,
     coaEditId, setCoaEditId, coaEditName, setCoaEditName, coaBusy,
-    addCoaChild, renameCoaChild, deleteCoaChild, seedPaymentSubaccounts,
+    addCoaChild, renameCoaChild, deleteCoaChild, toggleAccountActive, seedPaymentSubaccounts,
     // ── Derived account lists for "Paid From / Charge To" dropdowns ──
     cashAndBankAccounts, apAccounts, arAccounts, procurementCreditAccounts,
     // ── Closed periods ──
@@ -6450,6 +6776,7 @@ const updateStatus = async (orderId, newStatus) => {
     compSelections, setCompSelections, compOverride, setCompOverride,
     compReasonTypes, setCompReasonTypes, compReasonNotes, setCompReasonNotes,
     paymentSelections, setPaymentSelections,
+    paymentRefs, setPaymentRefs, paymentCheckDates, setPaymentCheckDates,
     submitManualOrder, openProductModal, confirmPosItem,
     ordersPage, setOrdersPage, ordersItemsPerPage,
     // ── Inventory ───────────────────────────────────────────────────────────
@@ -6515,6 +6842,7 @@ const updateStatus = async (orderId, newStatus) => {
     exportBillsPDF, exportAuditLogPDF, exportExpensesPDF,
     exportStockTransfersPDF, exportProductionHistoryPDF, exportMenuItemsPDF, exportRevolvingFundsPDF,
     exportPricingMasterlistPDF, exportPriceTiersPDF, exportShiftHistoryPDF, exportTimesheetsPDF,
+    exportPriceTiersExcel, priceTierImportPreview, setPriceTierImportPreview, parsePriceTierExcel, submitPriceTierImport, priceTierImporting,
     exportInventoryToPDF, exportLedgerToPDF, exportAllToPDF,
     handleSaveProduct, handleSaveCategory, toggleProductAvailability, toggleProductOOS,
     // ── Change Password ──────────────────────────────────────────────────────
@@ -6546,8 +6874,14 @@ const updateStatus = async (orderId, newStatus) => {
     // ── Sales by Payment ─────────────────────────────────────────────────────
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     arReport, arReportAsOf, setArReportAsOf, fetchArReport,
+    apReport, apReportAsOf, setApReportAsOf, fetchApReport,
+    supplierPayments, supPayRange, setSupPayRange, fetchSupplierPayments,
     collectionReport, collRange, setCollRange, fetchCollectionReport,
+    activePaymentMethods, paymentMethodGroups,
     checkRegister, checkFilter, setCheckFilter, fetchChecks, actOnCheck,
+    changeRequests, canApprovePricing, fetchChangeRequests, actOnChangeRequest,
+    priceChangeLog, priceLogRange, setPriceLogRange, fetchPriceChangeLog,
+    pricePending,
     bounceTarget, setBounceTarget, bounceForm, setBounceForm, bounceSubmitting, submitBounceCheck,
     // ── Summary Sales (channel breakdown) ────────────────────────────────────
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
@@ -6795,6 +7129,7 @@ const updateStatus = async (orderId, newStatus) => {
       {/* ===== A/R SETTLEMENT MODAL ===== */}
       <SettleArModal />
       <ArHistoryModal />
+      <PriceTierImportModal />
       <BounceCheckModal />
 
       {/* --- PRICING & DISCOUNTS TAB --- */}

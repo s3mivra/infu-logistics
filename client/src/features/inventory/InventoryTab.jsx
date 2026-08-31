@@ -289,6 +289,7 @@ export default function InventoryTab({ ctx }) {
                 peso={peso}
                 apiFetch={apiFetch}
                 exportStockTransfersPDF={exportStockTransfersPDF}
+                itemDisplay={itemDisplay}
               />
             )}
 

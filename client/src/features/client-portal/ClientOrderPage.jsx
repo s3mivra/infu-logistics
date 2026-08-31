@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
+import { usePaymentMethods } from '../../shared/usePaymentMethods';
 import * as ui from '../../shared/ui';
 import { loadSession, clearSession, saveSession, loadDraft, saveDraft } from './clientSession';
 import { CLIENT_THEMES, applyClientTheme, cachedClientTheme, clearClientTheme } from './clientTheme';
@@ -37,6 +38,8 @@ const PAYMENT_LABELS = {
   'Bank Transfer': 'Bank Transfer',
   'Credit Card': 'Credit Card',
   'Credit': 'Credit',
+  QR: 'QR / Scan to Pay',
+  Check: 'Check',
 };
 
 // Fallback support link. The `portalSupportLink` setting overrides it, so a shop
@@ -57,7 +60,13 @@ const ENV_BILLING = {
 };
 
 // Client-selectable payment methods - mirrors the POS order tab, minus delivery partners.
-const CLIENT_PAYMENT_METHODS = ['Cash', 'Bank Transfer', 'GCash', 'Maya', 'Maribank', 'Other E-Wallet', 'Credit'];
+const CLIENT_PAYMENT_METHODS = ['Cash', 'Bank Transfer', 'Check', 'QR', 'GCash', 'Maya', 'Maribank', 'Other E-Wallet', 'Credit'];
+// Nicer labels for the canonical tenders; a custom one (e.g. "GoTyme" added in
+// the Payment Routing screen) just displays its own name as-is.
+const METHOD_LABELS = { QR: 'QR / Scan to Pay', Maribank: 'Maribank / Seabank' };
+// Tenders whose reference number is the ONLY handle on the money afterwards:
+// a QR confirmation number, or a check number. Both are mandatory.
+const REFERENCE_REQUIRED = ['QR', 'Check'];
 
 const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -215,6 +224,11 @@ export default function ClientOrderPage() {
   const [submitting, setSubmitting] = useState(false);
   const [successOrder, setSuccessOrder] = useState(null);
   const [showQr, setShowQr] = useState(false);
+  // Set once the QR has actually been opened, so the reference field appears
+  // when the customer closes it - the point at which they have the number.
+  const [qrScanned, setQrScanned] = useState(false);
+  const [paymentReference, setPaymentReference] = useState('');
+  const [paymentCheckDate, setPaymentCheckDate] = useState('');
 
   // Order status queue (portal sidebar)
   const [myOrders, setMyOrders] = useState([]);
@@ -604,6 +618,12 @@ export default function ClientOrderPage() {
 
   const handleSubmitOrder = async () => {
     if (!cart.length || submitting) return;
+    if (needsReference && !paymentReference.trim()) {
+      ui.alert(paymentMethod === 'Check'
+        ? 'Enter the check number before placing the order.'
+        : 'Enter the reference number from your payment app before placing the order.');
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await fetch(`${API_URL}/api/orders`, {
@@ -618,6 +638,8 @@ export default function ClientOrderPage() {
           customerName: clientInfo?.name || clientInfo?.username || 'Client',
           paymentMethod,
           orderNotes: orderNotes.trim(),
+          ...(paymentReference.trim() ? { paymentReference: paymentReference.trim() } : {}),
+          ...(isCheckPayment && paymentCheckDate ? { paymentCheckDate } : {}),
         }),
       });
       const data = await res.json();
@@ -626,6 +648,9 @@ export default function ClientOrderPage() {
         setCart([]);
         setCartOpen(false);
         setOrderNotes('');
+        setPaymentReference('');
+        setPaymentCheckDate('');
+        setQrScanned(false);
         fetchMyOrders();
       } else {
         ui.alert(data.error || 'Order failed. Please try again.');
@@ -636,6 +661,18 @@ export default function ClientOrderPage() {
       setSubmitting(false);
     }
   };
+
+  // Same COA-derived list the POS and QR menu read - added here so a payment
+  // method someone just enabled in Routing appears without a portal reload.
+  const { grouped: paymentGroups } = usePaymentMethods(null, socket);
+
+  // Closing the QR is the hand-off from "go pay" to "tell us what you paid".
+  const closeQr = () => { setShowQr(false); setQrScanned(true); };
+  // The reference is required for a QR payment, and also once someone has
+  // actually opened the QR - at that point they have paid, whatever pill is
+  // selected, and the payment is unmatchable without the number.
+  const needsReference = REFERENCE_REQUIRED.includes(paymentMethod) || qrScanned;
+  const isCheckPayment = paymentMethod === 'Check';
 
   // Support CTA, reused across the success screen, the queue and the cart.
   const SupportLink = ({ label = supportLabel, className = '' }) => (supportLink ? (
@@ -954,7 +991,7 @@ export default function ClientOrderPage() {
       {showQr && portal.paymentQrImage && (
         <div
           className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setShowQr(false)}
+          onClick={closeQr}
         >
           <div
             className="bg-sidebar-bg border border-white/10 rounded-2xl p-5 flex flex-col items-center gap-4 max-w-xs w-full"
@@ -962,7 +999,7 @@ export default function ClientOrderPage() {
           >
             <div className="flex items-center justify-between w-full">
               <p className="font-bold text-fg text-sm">Scan to Pay</p>
-              <button onClick={() => setShowQr(false)} className="text-fg/40 hover:text-fg transition">
+              <button onClick={closeQr} className="text-fg/40 hover:text-fg transition">
                 <X size={18} />
               </button>
             </div>
@@ -971,9 +1008,24 @@ export default function ClientOrderPage() {
               alt="Payment QR"
               className="w-full max-w-[220px] rounded-xl object-contain"
             />
+            {showPrices && cartTotal > 0 && (
+              <div className="w-full text-center">
+                <p className="text-[10px] uppercase tracking-widest text-fg/40 font-bold">Amount</p>
+                <p className="text-2xl font-black text-fg tabular-nums">{peso(cartTotal)}</p>
+              </div>
+            )}
             <p className="text-xs text-fg/40 text-center">
-              Scan the QR code with GCash, Maya, or your banking app to pay.
+              Scan with GCash, Maya, or your banking app. Keep the confirmation
+              number - you'll be asked for it next.
             </p>
+            {/* Closing is what advances the flow: it's the moment the customer
+                has paid and has a reference number in front of them. */}
+            <button
+              onClick={closeQr}
+              className="w-full py-3 rounded-xl bg-brand text-white text-xs font-black uppercase tracking-widest hover:bg-brand/90 transition"
+            >
+              I've Paid - Enter Reference
+            </button>
           </div>
         </div>
       )}
@@ -1482,25 +1534,30 @@ export default function ClientOrderPage() {
                 <CreditCard size={13} />
                 Payment Method
               </div>
-              {/* Styled pill grid — groups: In-Store, E-Wallets */}
+              {/* Styled pill grid — groups come from the live COA-derived list
+                  (see usePaymentMethods), so a sub-account added in the
+                  Payment Routing screen (Admin → Accounts & Periods) shows up
+                  here without a redeploy. 'Credit' is a portal-only
+                  on-account concept, not a COA tender, so it's appended as a
+                  fixed extra pill rather than pulled from that list. */}
               {[
-                { label: 'In-Store', methods: [['Cash','Cash'],['Bank Transfer','Bank Transfer'],['Credit','Credit']] },
-                { label: 'E-Wallets', methods: [['GCash','GCash'],['Maya','Maya'],['Maribank','Maribank / Seabank'],['Other E-Wallet','Other E-Wallet']] },
-              ].map(group => (
+                { label: 'In-Store', methods: [...(paymentGroups['In-Store'] || []), { name: 'Credit' }] },
+                { label: 'E-Wallets', methods: paymentGroups['E-Wallets'] || [] },
+              ].filter(group => group.methods.length > 0).map(group => (
                 <div key={group.label}>
                   <p className="text-[10px] font-bold text-fg/30 uppercase tracking-widest mb-1.5">{group.label}</p>
                   <div className="flex flex-wrap gap-2">
-                    {group.methods.map(([val, lbl]) => (
+                    {group.methods.map(m => (
                       <button
-                        key={val}
-                        onClick={() => setPaymentMethod(val)}
+                        key={m.name}
+                        onClick={() => setPaymentMethod(m.name)}
                         className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
-                          paymentMethod === val
+                          paymentMethod === m.name
                             ? 'bg-brand text-white border-brand'
                             : 'bg-white/5 text-fg/60 border-white/10 hover:border-white/30 hover:text-fg'
                         }`}
                       >
-                        {lbl}
+                        {METHOD_LABELS[m.name] || m.name}
                       </button>
                     ))}
                   </div>
@@ -1510,11 +1567,54 @@ export default function ClientOrderPage() {
               {portal.paymentQrImage && (
                 <button
                   onClick={() => setShowQr(true)}
-                  className="w-full mt-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-brand text-white text-xs font-bold uppercase tracking-wider hover:bg-brand/90 transition"
+                  className={`w-full mt-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition ${
+                    qrScanned
+                      ? 'bg-white/5 text-fg/50 border border-white/10 hover:bg-white/10'
+                      : 'bg-brand text-white hover:bg-brand/90'
+                  }`}
                 >
                   <QrCode size={14} />
-                  Pay Now — Scan QR
+                  {qrScanned ? 'Show QR again' : 'Pay Now — Scan QR'}
                 </button>
+              )}
+
+              {/* Reference number. Appears once the QR has been scanned (or QR
+                  is picked outright) and blocks the order until filled: a QR
+                  payment lands in the wallet with nothing linking it to this
+                  order except this number. */}
+              {needsReference && (
+                <div className="rounded-xl border border-brand/30 bg-brand/10 p-3 space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-brand">
+                      {isCheckPayment ? 'Check Number' : 'Reference Number'}
+                    </p>
+                    <span className="text-[9px] font-black uppercase text-red-400">Required</span>
+                  </div>
+                  <input
+                    value={paymentReference}
+                    onChange={e => setPaymentReference(e.target.value)}
+                    placeholder={isCheckPayment ? 'e.g. 0012345' : 'e.g. 0012 3456 7890'}
+                    inputMode="text"
+                    autoComplete="off"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-3 py-2.5 rounded-xl outline-none transition text-sm font-bold tabular-nums"
+                  />
+                  {isCheckPayment && (
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-1">Check Date</p>
+                      <input
+                        type="date"
+                        value={paymentCheckDate}
+                        onChange={e => setPaymentCheckDate(e.target.value)}
+                        className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm font-bold"
+                      />
+                    </div>
+                  )}
+                  <p className="text-[10px] text-fg/40 leading-snug">
+                    {isCheckPayment
+                      ? 'The number printed on the check, and the date written on it if post-dated. We use these to track it until it clears.'
+                      : 'The confirmation or transaction number your payment app showed after sending. We use it to match your payment to this order.'}
+                  </p>
+                </div>
               )}
               {clientInfo?.paymentMethod && clientInfo.paymentMethod !== paymentMethod && (
                 <p className="text-xs text-fg/30">
@@ -1558,11 +1658,13 @@ export default function ClientOrderPage() {
             </div>
             <button
               onClick={handleSubmitOrder}
-              disabled={submitting || cart.length === 0}
+              disabled={submitting || cart.length === 0 || (needsReference && !paymentReference.trim())}
               className="w-full bg-brand hover:bg-brand-dark text-white font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
             >
               {submitting ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
-              {submitting ? 'Placing Order…' : 'Place Order'}
+              {submitting
+                ? 'Placing Order…'
+                : (needsReference && !paymentReference.trim()) ? 'Enter Reference to Continue' : 'Place Order'}
             </button>
           </div>
         </div>

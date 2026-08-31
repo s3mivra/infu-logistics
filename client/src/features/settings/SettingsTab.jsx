@@ -1,5 +1,5 @@
 ﻿import React, { useState } from 'react';
-import { SlidersHorizontal, QrCode, Clock, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type, X } from 'lucide-react';
+import { SlidersHorizontal, QrCode, Clock, DollarSign, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type, X } from 'lucide-react';
 import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
 
 // ── SettingsTab - system preferences & account controls ───────────────────────
@@ -119,12 +119,14 @@ const readFontScale = () => {
 export default function SettingsTab({ ctx }) {
   const {
     systemSettings = {}, toggleQROrders, toggleAutoClose, toggleImages,
+    toggleRequireCashShift,
     isSuperAdmin, setChangePwModal, setChangePwError, BIZ_NAME, activeAdmin,
     saveSetting,
   } = ctx;
 
   const qrOn    = systemSettings.isAcceptingQROrders !== false;
   const autoOn  = systemSettings.autoCloseEnabled !== false;
+  const cashShiftOn = systemSettings.requireCashShift !== false;
   const imgOn   = systemSettings.imagesEnabled !== false;
 
   const [theme, setTheme] = useState(readTheme);
@@ -221,6 +223,12 @@ export default function SettingsTab({ ctx }) {
             <SettingRow icon={Clock} title="Automatic Midnight Close"
               desc={autoOn ? 'The day auto-closes & archives at midnight.' : 'Manual close required; the day stays open past midnight.'}>
               <Toggle on={autoOn} onChange={toggleAutoClose} />
+            </SettingRow>
+            <SettingRow icon={DollarSign} title="Require Cash Shift on Login"
+              desc={cashShiftOn
+                ? 'Staff must declare a starting cash float before starting a shift.'
+                : 'Login skips the starting-cash prompt entirely - for shops with no cash drawer to reconcile.'}>
+              <Toggle on={cashShiftOn} onChange={toggleRequireCashShift} />
             </SettingRow>
             <SettingRow icon={ImageIcon} title="Product Images"
               desc={imgOn ? 'Product images show across the menu, portal & lists.' : 'Images are hidden app-wide (faster, text-only).'}>

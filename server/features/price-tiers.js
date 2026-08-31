@@ -160,7 +160,10 @@ export default function registerPriceTiers(ctx) {
     try {
       const [tiers, products] = await Promise.all([
         PriceTier.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).sort({ name: 1 }).lean(),
-        Product.find({}, { name: 1, category: 1, basePrice: 1, isAvailable: 1 }).sort({ category: 1, name: 1 }).lean(),
+        // productCode is the Excel import/export match key (see the client's
+        // exportPriceTiersExcel / parsePriceTierExcel) - authoritative because a
+        // product's NAME can be edited in the sheet without breaking the match.
+        Product.find({}, { name: 1, category: 1, basePrice: 1, isAvailable: 1, productCode: 1 }).sort({ category: 1, name: 1 }).lean(),
       ]);
       const rows = tiers.map(t => ({
         _id: t._id, name: t.name, percent: t.percent, pricingMode: t.pricingMode, isActive: t.isActive,

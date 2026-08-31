@@ -104,6 +104,8 @@ export default function OrdersTab({ ctx }) {
     posNotes, setPosNotes, posGuestCount, setPosGuestCount,
     posPayments, setPosPayments,
     modifierGroups, printKitchenTicket,
+    paymentRefs, setPaymentRefs, paymentCheckDates, setPaymentCheckDates,
+    paymentMethodGroups,
     refundModal, setRefundModal, handleRefund, openPartial, dropRemaining,
     combos, addComboToPosCart,
     parkedOrders, parkedModalOpen, setParkedModalOpen, fetchParked, parkCurrentOrder, resumeParked,
@@ -1225,6 +1227,13 @@ export default function OrdersTab({ ctx }) {
                                 }
                                 return (() => {
                                   const isCash = displayPayment === 'Cash';
+                                  const isCheck = displayPayment === 'Check';
+                                  const isQr = displayPayment === 'QR';
+                                  // A check number / QR confirmation number is the only handle on
+                                  // that money afterwards, so the sale can't be sent without one.
+                                  const ref = (paymentRefs[order._id] || '').trim();
+                                  const needsRef = isCheck || isQr;
+                                  const missingRef = needsRef && !ref;
                                   const tendered = parseFloat(cashTendered[order._id] || '0') || 0;
                                   const changeDue = isCash && tendered > 0 ? tendered - displayTotal : null;
                                   const isUnderpaid = isCash && tendered > 0 && tendered < displayTotal;
@@ -1241,14 +1250,32 @@ export default function OrdersTab({ ctx }) {
                                         <optgroup label="In-Store Payments">
                                           <option value="Cash">Cash</option>
                                           <option value="Bank Transfer">Bank Transfer</option>
+                                          <option value="Check">Check</option>
                                           <option value="Credit">Credit</option>
+                                          {/* Custom sub-accounts under a cash/bank/checks parent -
+                                              e.g. "GoTyme" added in Payment Routing - show up here
+                                              live via the socket-driven activePaymentMethods list. */}
+                                          {(paymentMethodGroups?.['In-Store'] || [])
+                                            .filter(m => m.kind === 'custom')
+                                            .map(m => <option key={m.code} value={m.name}>{m.name}</option>)}
                                         </optgroup>
                                         <optgroup label="E-Wallets">
                                           <option value="GCash">GCash</option>
                                           <option value="Maya">Maya</option>
                                           <option value="Maribank">Maribank / Seabank</option>
                                           <option value="Other E-Wallet">Other E-Wallet</option>
+                                          <option value="QR">QR / Scan to Pay</option>
+                                          {(paymentMethodGroups?.['E-Wallets'] || [])
+                                            .filter(m => m.kind === 'custom')
+                                            .map(m => <option key={m.code} value={m.name}>{m.name}</option>)}
                                         </optgroup>
+                                        {(paymentMethodGroups?.['Credit'] || []).some(m => m.kind === 'custom') && (
+                                          <optgroup label="On-Account Vendors">
+                                            {paymentMethodGroups['Credit'].filter(m => m.kind === 'custom').map(m => (
+                                              <option key={m.code} value={m.name}>{m.name}</option>
+                                            ))}
+                                          </optgroup>
+                                        )}
                                         <optgroup label="Delivery Partners">
                                           <option value="Grab Delivery">Grab Delivery</option>
                                           {BUSINESS_TYPE === 'log'
@@ -1261,14 +1288,13 @@ export default function OrdersTab({ ctx }) {
                                             Gotyme, etc.). Grouped by their parent account so the
                                             cashier sees which bucket each one belongs to. */}
                                         {(() => {
+                                          // 111000/112000/113000/220000 are already covered above via
+                                          // paymentMethodGroups (the live COA-derived list) - only
+                                          // Delivery Partners still needs this older per-parent scan.
                                           const PARENT_LABEL = {
-                                            '111000': 'Custom Cash Accounts',
-                                            '112000': 'Custom Bank Accounts',
-                                            '113000': 'Custom E-Wallets',
                                             '120000': 'Custom Delivery Partners',
-                                            '220000': 'Custom On-Account Vendors',
                                           };
-                                          const STANDARD_NAMES = new Set(['Cash','Bank Transfer','GCash','Maya','Maribank','Other E-Wallet','Grab Delivery','Lalamove','Foodpanda','Manual Delivery','Pickup','On Account','Cash in Bank','E-Wallet']);
+                                          const STANDARD_NAMES = new Set(['Cash','Bank Transfer','Check','GCash','Maya','Maribank','Other E-Wallet','QR','Grab Delivery','Lalamove','Foodpanda','Manual Delivery','Pickup','On Account','Cash in Bank','E-Wallet']);
                                           const groups = {};
                                           for (const a of (coaAccounts || [])) {
                                             if (!a.custom || !a.parent) continue;
@@ -1285,6 +1311,37 @@ export default function OrdersTab({ ctx }) {
                                           ));
                                         })()}
                                       </select>
+                                      {needsRef && (
+                                        <div className="flex flex-col gap-1.5">
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest whitespace-nowrap">
+                                              {isCheck ? 'Check No.' : 'Ref No.'}
+                                            </span>
+                                            <input
+                                              type="text"
+                                              placeholder={isCheck ? 'Required' : 'Confirmation no.'}
+                                              value={paymentRefs[order._id] || ''}
+                                              onChange={(e) => setPaymentRefs(prev => ({ ...prev, [order._id]: e.target.value }))}
+                                              className={`flex-1 bg-white/5 border rounded-lg px-2 py-1.5 text-sm font-mono text-fg outline-none ${missingRef ? 'border-red-500/60' : 'border-white/10 focus:border-accent/50'}`}
+                                              aria-label={isCheck ? 'Check number' : 'Payment reference number'}
+                                            />
+                                          </div>
+                                          {/* Post-dated checks are normal - this is the earliest
+                                              the check can actually be banked. */}
+                                          {isCheck && (
+                                            <div className="flex items-center gap-2">
+                                              <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest whitespace-nowrap">Check Date</span>
+                                              <input
+                                                type="date"
+                                                value={paymentCheckDates[order._id] || ''}
+                                                onChange={(e) => setPaymentCheckDates(prev => ({ ...prev, [order._id]: e.target.value }))}
+                                                className="flex-1 bg-white/5 border border-white/10 focus:border-accent/50 rounded-lg px-2 py-1.5 text-sm font-mono text-fg outline-none"
+                                                aria-label="Check date"
+                                              />
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
                                       {isCash && (
                                         <div className="flex flex-col gap-1">
                                           <div className="flex items-center gap-2">
@@ -1310,7 +1367,7 @@ export default function OrdersTab({ ctx }) {
                                       )}
                                       <div className="flex gap-2">
                                         <button
-                                          disabled={isUnderpaid}
+                                          disabled={isUnderpaid || missingRef}
                                           onClick={() => {
                                             // Seed the selection with the default so it persists even if untouched.
                                             if (paymentSelections[order._id] === undefined) {
@@ -1318,9 +1375,9 @@ export default function OrdersTab({ ctx }) {
                                             }
                                             setTimeout(() => updateStatus(order._id, 'Preparing'), 0);
                                           }}
-                                          className={`flex-1 py-2.5 rounded-lg font-black text-xs uppercase tracking-widest transition ${isUnderpaid ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-accent text-white hover:bg-accentShadow'}`}
+                                          className={`flex-1 py-2.5 rounded-lg font-black text-xs uppercase tracking-widest transition ${(isUnderpaid || missingRef) ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-accent text-white hover:bg-accentShadow'}`}
                                         >
-                                          Pay & Send to {SEND_TARGET}
+                                          {missingRef ? `${isCheck ? 'Check No.' : 'Ref No.'} Required` : `Pay & Send to ${SEND_TARGET}`}
                                         </button>
                                         <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500 text-white py-2.5 px-4 rounded-lg hover:bg-red-400 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop</button>
                                       </div>

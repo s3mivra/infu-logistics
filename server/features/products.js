@@ -2,6 +2,8 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
+import { splitUpdate } from '../lib/changeApproval.js';
+import { hasPermission } from '../lib/authz.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
 
 export default function registerProducts(ctx) {
@@ -159,6 +161,7 @@ export default function registerProducts(ctx) {
     emitToOps,
     emitToAll,
     emitToMgr,
+    ChangeRequest,
     getCategoryPrefix,
     generateNextSequence,
     scheduleMidnightArchive,
@@ -591,7 +594,8 @@ app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res
 app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
   try {
     const existing = await Product.findById(req.params.id).lean();
-    const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' });
+    if (!existing) return res.status(404).json({ success: false, error: 'Product not found.' });
+
     // Reason from the X-Change-Reason header (URL-encoded). Required for every
     // price / recipe-cost change; the client refuses to submit without one.
     const changeReason = (() => {
@@ -599,7 +603,41 @@ app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
       catch { return String(req.headers['x-change-reason'] || '').slice(0, 300); }
     })();
 
-    if (existing && req.body.basePrice !== undefined && Number(req.body.basePrice) !== Number(existing.basePrice)) {
+    // ── APPROVAL GATE ────────────────────────────────────────────────────────
+    // A selling price is a money decision, so it is held for sign-off unless
+    // the editor is someone who would sign it off anyway. Everything else in
+    // the same submission (name, category, recipe) still saves immediately -
+    // an unrelated typo fix must not be blocked behind a price review.
+    const { apply, pending } = splitUpdate({
+      entity: 'Product',
+      existing,
+      update: req.body,
+      canApprove: hasPermission(req.user, 'pricing.approve'),
+    });
+
+    let changeRequest = null;
+    if (pending.length) {
+      changeRequest = await ChangeRequest.create({
+        businessType: BUSINESS_TYPE,
+        ...tenantScope(req),
+        entity: 'Product',
+        entityId: String(existing._id),
+        entityName: existing.name || '',
+        changes: pending,
+        reason: changeReason,
+        requestedBy: req.user?.name || '',
+      });
+      // Tell whoever can act on it that something is waiting.
+      emitToMgr?.('mgrAlert', {
+        kind: 'changeRequest',
+        ref: existing.name || existing.productCode || '',
+        message: `${req.user?.name || 'Someone'} requested a price change on ${existing.name}: ${pending.map(c => `${c.label} ${c.oldValue} -> ${c.newValue}`).join(', ')}.`,
+      });
+    }
+
+    const updatedProduct = await Product.findByIdAndUpdate(req.params.id, apply, { returnDocument: 'after' });
+
+    if (existing && apply.basePrice !== undefined && Number(apply.basePrice) !== Number(existing.basePrice)) {
       await AuditLog.create({
         userId: req.user ? req.user.name : 'System',
         action: 'PRODUCT_PRICE_CHANGED',
@@ -652,7 +690,14 @@ app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
       after:  updatedProduct ? { name: updatedProduct.name, basePrice: updatedProduct.basePrice, category: updatedProduct.category, costOverride: updatedProduct.costOverride } : null,
     });
     emitToAll('menuUpdated');
-    res.json({ success: true, product: updatedProduct });
+    // `pendingApproval` is how the UI knows to say "saved, but the price is
+    // awaiting approval" instead of reporting a clean save that silently
+    // dropped the number the user typed.
+    res.json({
+      success: true,
+      product: updatedProduct,
+      ...(pending.length ? { pendingApproval: pending, changeRequestId: String(changeRequest?._id || '') } : {}),
+    });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -686,8 +731,34 @@ app.get('/api/products/:id/price-history', verifyToken, requireStaff, async (req
       newValue: r.action === 'PRODUCT_PRICE_CHANGED' ? r.details?.newPrice : r.details?.newCost,
       reason: r.details?.reason || '',
       changedBy: r.userId || '',
+      // Who asked vs who allowed it. Only set on changes that went through the
+      // approval queue; a change made directly by an approver has neither, and
+      // `viaApproval` is what tells the two apart in the UI.
+      viaApproval: !!r.details?.viaApproval,
+      requestedBy: r.details?.requestedBy || '',
+      approvedBy: r.details?.approvedBy || '',
     }));
-    res.json({ success: true, product: { name: product.name, basePrice: product.basePrice, costOverride: product.costOverride }, history });
+
+    // Changes still waiting on someone. Shown alongside the applied history so
+    // "why is this still ₱250 when I changed it" has an answer on the same
+    // screen, rather than looking like the edit was lost.
+    const pending = await ChangeRequest.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
+      entity: 'Product', entityId: String(product._id), status: 'Pending',
+    }).sort({ createdAt: -1 }).lean();
+
+    res.json({
+      success: true,
+      product: { name: product.name, basePrice: product.basePrice, costOverride: product.costOverride },
+      history,
+      pending: pending.map(r => ({
+        _id: r._id,
+        date: r.createdAt,
+        changes: r.changes,
+        reason: r.reason,
+        requestedBy: r.requestedBy,
+      })),
+    });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

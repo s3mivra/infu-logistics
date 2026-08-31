@@ -116,6 +116,7 @@ export default function SettleArModal() {
                 <option>Cash on Hand</option>
                 <option>Bank Transfer</option>
                 <option>Check</option>
+                <option>QR</option>
                 <option>GCash</option>
                 <option>Maya</option>
                 <option>Maribank</option>
