@@ -484,17 +484,17 @@ export default function PricingTab({ ctx }) {
               independently per product.
             </p>
 
-            <div className="overflow-x-auto pr-2">
-              <table className="w-full text-left text-sm min-w-[700px]">
+            <div className="overflow-x-auto pr-2 border border-white/5 rounded-lg">
+              <table className="w-full text-left text-sm border-collapse">
                 <thead>
-                  <tr className="text-fg/80 border-b border-gray-800">
-                    <th className="pb-3 uppercase tracking-wider text-xs sticky left-0 bg-surface">Product</th>
-                    <th className="pb-3 text-right uppercase tracking-wider text-xs">List Price</th>
+                  <tr className="text-fg/80">
+                    <th className="py-3 px-3 uppercase tracking-wider text-xs sticky left-0 bg-surface z-10 min-w-[180px] border-b border-r border-white/10">Product</th>
+                    <th className="py-3 px-3 text-right uppercase tracking-wider text-xs min-w-[100px] border-b border-r border-white/10">List Price</th>
                     {pricingTable.tiers.map(t => (
-                      <th key={t._id} className="pb-3 text-right uppercase tracking-wider text-xs whitespace-nowrap">
-                        {t.name}
-                        {t.isActive === false && <span className="ml-1 text-fg/25 normal-case">(inactive)</span>}
-                        <span className="block text-[9px] text-fg/30 normal-case font-normal">
+                      <th key={t._id} className="py-3 px-3 text-right uppercase tracking-wider text-xs whitespace-nowrap min-w-[140px] border-b border-r border-white/10 last:border-r-0">
+                        <span className="block truncate max-w-[160px] ml-auto" title={t.name}>{t.name}</span>
+                        {t.isActive === false && <span className="text-fg/25 normal-case text-[9px]">(inactive)</span>}
+                        <span className="block text-[9px] text-fg/30 normal-case font-normal mt-0.5">
                           {t.pricingMode === 'per_product' ? 'price list' : `${t.percent}% off`}
                         </span>
                       </th>
@@ -504,10 +504,10 @@ export default function PricingTab({ ctx }) {
                 <tbody>
                   {tierPagedProducts.length === 0 ? (
                     <tr><td colSpan={2 + pricingTable.tiers.length} className="py-4 text-center text-gray-500">No products found.</td></tr>
-                  ) : tierPagedProducts.map(p => (
-                    <tr key={p._id} className="border-t border-white/10 hover:bg-page-bg/30 transition">
-                      <td className="py-2 font-bold text-fg sticky left-0 bg-surface">{p.name}</td>
-                      <td className="py-2 text-right font-mono text-xs text-fg/50">₱{Number(p.basePrice || 0).toFixed(2)}</td>
+                  ) : tierPagedProducts.map((p, pIdx) => (
+                    <tr key={p._id} className={`border-b border-white/5 hover:bg-accent/5 transition ${pIdx % 2 === 1 ? 'bg-white/[0.02]' : ''}`}>
+                      <td className={`py-3 px-3 font-bold text-fg sticky left-0 z-10 border-r border-white/10 ${pIdx % 2 === 1 ? 'bg-surface-2' : 'bg-surface'}`}>{p.name}</td>
+                      <td className="py-3 px-3 text-right font-mono text-xs text-fg/50 border-r border-white/10">₱{Number(p.basePrice || 0).toFixed(2)}</td>
                       {pricingTable.tiers.map(t => {
                         const price = t.prices[p._id];
                         const off = price !== null && p.basePrice > 0 ? Math.round((1 - price / p.basePrice) * 100) : null;
@@ -531,7 +531,7 @@ export default function PricingTab({ ctx }) {
 
                         if (editTierCell === cellId) {
                           return (
-                            <td key={t._id} className="py-2 text-right font-mono font-bold text-accent align-top">
+                            <td key={t._id} className="py-3 px-3 text-right font-mono font-bold text-accent align-top border-r border-white/10 last:border-r-0">
                               <div className="flex justify-end items-center gap-2">
                                 {isPerProduct ? (
                                   <div className="relative w-20">
@@ -607,7 +607,7 @@ export default function PricingTab({ ctx }) {
                           );
                         }
                         return (
-                          <td key={t._id} className="py-2 text-right font-mono align-top">
+                          <td key={t._id} className="py-3 px-3 text-right font-mono align-top border-r border-white/10 last:border-r-0">
                             <div
                               className="cursor-pointer hover:bg-white/10 px-2 py-1 rounded inline-flex items-center gap-1.5 transition group justify-end"
                               onClick={() => { setEditTierCell(cellId); setEditTierCellVal(isPerProduct ? (price === null ? '' : String(price)) : String(t.percent)); setNewBreakQty(''); setNewBreakPrice(''); }}
