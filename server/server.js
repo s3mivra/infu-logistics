@@ -2242,6 +2242,18 @@ const PriceTierSchema = new mongoose.Schema({
     productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
     price:     { type: Number, required: true, min: 0 },
   }],
+  // Quantity breaks, scoped to this TIER (not one client - see the Product
+  // schema's clientBulkBreaks for that). "Anyone in Kape Sinukuan Price who
+  // orders 20+ of this product pays ₱550 each" rather than the tier's flat
+  // per-product rate above. Independent array (not nested under productPrices)
+  // so a product can have a flat tier rate with no break, a break with no flat
+  // rate, or both - resolveTierPrice takes whichever benefits the buyer more
+  // once the ordered quantity is known.
+  productBulkBreaks: [{
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
+    minQty:    { type: Number, required: true },
+    price:     { type: Number, required: true, min: 0 },
+  }],
   note:     { type: String, default: '' },
   isActive: { type: Boolean, default: true },
 }, { timestamps: true });

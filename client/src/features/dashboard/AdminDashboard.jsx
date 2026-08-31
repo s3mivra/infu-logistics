@@ -1616,6 +1616,42 @@ export default function AdminDashboard() {
     } catch { ui.alert('Failed to update price. Check your connection.'); }
   };
 
+  // Quantity breaks for a 'per_product' tier's cell - "anyone in this tier who
+  // orders 20+ of this product pays ₱550 each" instead of the flat cell price.
+  // Same wholesale-replace shape as handleTierCellUpdate: read the tier's
+  // CURRENT breaks for every product, splice this one product's list, and
+  // send the whole bulkBreaks array back (the route replaces it, doesn't
+  // patch) - the flat `prices` aren't touched, since the PUT route only
+  // replaces whichever of prices/bulkBreaks the caller actually sends.
+  const tierBreaksFor = (tierId, productId) =>
+    (pricingTable.tiers.find(t => t._id === tierId)?.bulkBreaks || []).filter(b => b.productId === productId);
+
+  const saveTierBulkBreaks = async (tierId, productId, nextBreaksForProduct) => {
+    const tierRow = pricingTable.tiers.find(t => t._id === tierId);
+    if (!tierRow) return;
+    const others = (tierRow.bulkBreaks || []).filter(b => b.productId !== productId);
+    const bulkBreaks = [...others, ...nextBreaksForProduct.map(b => ({ productId, minQty: b.minQty, price: b.price }))];
+    try {
+      const res = await apiFetch(`/api/price-tiers/${tierId}/products`, { method: 'PUT', body: JSON.stringify({ bulkBreaks }) });
+      const data = await res.json();
+      if (data.success) fetchPricingTable();
+      else ui.alert(data.error || 'Failed to update the quantity break.');
+    } catch { ui.alert('Failed to update the quantity break. Check your connection.'); }
+  };
+
+  const addTierBulkBreak = (tierId, productId, minQty, price) => {
+    const qty = Math.max(1, parseInt(minQty, 10) || 0);
+    const p = Math.max(0, parseFloat(price) || 0);
+    if (!qty || !(p >= 0)) return ui.alert('Enter a quantity and a price.');
+    const existing = tierBreaksFor(tierId, productId);
+    if (existing.some(b => b.minQty === qty)) return ui.alert(`A break at ${qty}+ already exists - remove it first to change the price.`);
+    saveTierBulkBreaks(tierId, productId, [...existing, { minQty: qty, price: p }]);
+  };
+
+  const removeTierBulkBreak = (tierId, productId, minQty) => {
+    saveTierBulkBreaks(tierId, productId, tierBreaksFor(tierId, productId).filter(b => b.minQty !== minQty));
+  };
+
   // Editing a cell under a 'percent'-mode tier: that column is ONE shared rate
   // across every product, so the field edited there IS the percent itself, not
   // a price to reverse-engineer a percent from - a ₱ input would imply a
@@ -6765,6 +6801,7 @@ const updateStatus = async (orderId, newStatus) => {
     priceTiers,
     // ── Market segment pricing table (Pricing Control) ──
     pricingTable, fetchPricingTable, handleTierCellUpdate, handleTierPercentUpdate,
+    tierBreaksFor, addTierBulkBreak, removeTierBulkBreak,
     // ── Partial fulfillment ──
     partialModal, setPartialModal, partialQtys, setPartialQtys,
     partialMode, setPartialMode, partialPayment, setPartialPayment,

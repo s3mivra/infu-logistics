@@ -140,14 +140,33 @@ export default function registerPriceTiers(ctx) {
         if (!Number.isFinite(price) || price < 0) continue;
         clean.push({ productId: r.productId, price });
       }
+      // Quantity breaks, scoped to THIS tier - optional, and independent of
+      // `prices` above (a product can have a break with no flat rate, or vice
+      // versa). Only validated/replaced when the caller actually sends the
+      // key, so a plain flat-price save (the common case) never has to also
+      // resend every break just to avoid wiping them out.
+      let breaksClean = null;
+      if (Array.isArray(req.body?.bulkBreaks)) {
+        breaksClean = [];
+        for (const r of req.body.bulkBreaks) {
+          if (!r || !mongoose.Types.ObjectId.isValid(r.productId)) continue;
+          const minQty = Number(r.minQty);
+          const price = Number(r.price);
+          if (!Number.isFinite(minQty) || minQty <= 0) continue;
+          if (!Number.isFinite(price) || price < 0) continue;
+          breaksClean.push({ productId: r.productId, minQty, price });
+        }
+      }
+
       // Confirm every productId is real and belongs to this business - a stray
       // id here would silently price a row nobody can ever see or buy.
-      const ids = clean.map(c => c.productId);
+      const ids = [...new Set([...clean.map(c => c.productId), ...(breaksClean || []).map(c => c.productId)])];
       const validIds = new Set((await Product.find({ _id: { $in: ids } }, { _id: 1 }).lean()).map(p => String(p._id)));
       tier.productPrices = clean.filter(c => validIds.has(String(c.productId)));
+      if (breaksClean !== null) tier.productBulkBreaks = breaksClean.filter(c => validIds.has(String(c.productId)));
 
       await tier.save();
-      await logAudit(req, { action: 'update', entity: 'PriceTier', entityId: tier._id, after: { name: tier.name, productPriceCount: tier.productPrices.length } });
+      await logAudit(req, { action: 'update', entity: 'PriceTier', entityId: tier._id, after: { name: tier.name, productPriceCount: tier.productPrices.length, bulkBreakCount: tier.productBulkBreaks.length } });
       res.json({ success: true, tier });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
@@ -167,7 +186,13 @@ export default function registerPriceTiers(ctx) {
       ]);
       const rows = tiers.map(t => ({
         _id: t._id, name: t.name, percent: t.percent, pricingMode: t.pricingMode, isActive: t.isActive,
+        // qty defaults to 0 here (see resolveTierPrice), so this NEVER reflects
+        // a quantity break - there is no cart quantity yet at this static
+        // display. `bulkBreaks` is exposed separately so the UI can still show
+        // "P550 at 20+" underneath, and edit it, without pretending it's the
+        // flat price.
         prices: Object.fromEntries(products.map(p => [String(p._id), resolveTierPrice(p, t)])),
+        bulkBreaks: (t.productBulkBreaks || []).map(b => ({ productId: String(b.productId), minQty: b.minQty, price: b.price })),
       }));
       res.json({ success: true, products, tiers: rows });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }

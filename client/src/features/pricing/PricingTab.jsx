@@ -51,6 +51,7 @@ export default function PricingTab({ ctx }) {
     posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable,
     pricingItemsPerPage, pricingPage, printOrderSlip, printXReading, products,
     priceTiers, pricingTable, fetchPricingTable, handleTierCellUpdate, handleTierPercentUpdate,
+    tierBreaksFor, addTierBulkBreak, removeTierBulkBreak,
     exportPriceTiersExcel, priceTierImportPreview, setPriceTierImportPreview, parsePriceTierExcel, submitPriceTierImport, priceTierImporting,
     removeAddOnFromOrder, removeComplimentary, removeMaterial, removeSize, restockData,
     rfActiveFund, rfDisbForm, rfDisbModal, rfDisbSubmitting, rfFunds,
@@ -93,6 +94,11 @@ export default function PricingTab({ ctx }) {
   const tierItemsPerPage = 12;
   const [editTierCell, setEditTierCell] = useState(null); // `${tierId}:${productId}` or null
   const [editTierCellVal, setEditTierCellVal] = useState('');
+  // The append mini-form for a quantity break, shown while a per_product cell
+  // is open - separate from the flat-price input above it, since the two
+  // save independently (see saveTierBulkBreaks in AdminDashboard.jsx).
+  const [newBreakQty, setNewBreakQty] = useState('');
+  const [newBreakPrice, setNewBreakPrice] = useState('');
 
   const categoryOptions = useMemo(() => {
     const seen = new Set();
@@ -517,9 +523,15 @@ export default function PricingTab({ ctx }) {
                           else handleTierPercentUpdate(t._id, editTierCellVal);
                           setEditTierCell(null);
                         };
+                        // Existing quantity breaks for THIS tier x product cell -
+                        // "anyone in this tier who orders 20+ pays ₱550 each".
+                        // Only meaningful for per_product cells (a percent-mode
+                        // column is one shared rate with no per-product rows at all).
+                        const breaks = isPerProduct ? tierBreaksFor(t._id, p._id).sort((a, b) => a.minQty - b.minQty) : [];
+
                         if (editTierCell === cellId) {
                           return (
-                            <td key={t._id} className="py-2 text-right font-mono font-bold text-accent">
+                            <td key={t._id} className="py-2 text-right font-mono font-bold text-accent align-top">
                               <div className="flex justify-end items-center gap-2">
                                 {isPerProduct ? (
                                   <div className="relative w-20">
@@ -550,17 +562,55 @@ export default function PricingTab({ ctx }) {
                                     <span className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/30 text-xs">%</span>
                                   </div>
                                 )}
-                                <button onClick={save} className="text-green-400 hover:text-green-300"><Check size={14} /></button>
-                                <button onClick={() => setEditTierCell(null)} className="text-red-400 hover:text-red-300">✕</button>
+                                <button onClick={save} title="Save price" className="text-green-400 hover:text-green-300"><Check size={14} /></button>
+                                <button onClick={() => setEditTierCell(null)} title="Cancel" className="text-red-400 hover:text-red-300">✕</button>
                               </div>
+
+                              {/* Quantity breaks - independent of the flat price
+                                  above, only shown for per_product cells. */}
+                              {isPerProduct && (
+                                <div className="mt-2 text-left bg-page-bg/60 border border-white/10 rounded-lg p-2 w-52 ml-auto">
+                                  <p className="text-[9px] font-black uppercase tracking-widest text-fg/40 mb-1.5">Quantity Breaks</p>
+                                  {breaks.map(b => (
+                                    <div key={b.minQty} className="flex items-center justify-between text-[11px] mb-1">
+                                      <span className="text-fg/60 font-normal">{b.minQty}+ units</span>
+                                      <span className="flex items-center gap-1.5">
+                                        <span className="font-bold text-fg tabular-nums">₱{Number(b.price).toFixed(2)}</span>
+                                        <button onClick={() => removeTierBulkBreak(t._id, p._id, b.minQty)} title="Remove this break" className="text-red-400/60 hover:text-red-400">✕</button>
+                                      </span>
+                                    </div>
+                                  ))}
+                                  {breaks.length === 0 && <p className="text-[10px] text-fg/25 italic mb-1.5">None yet.</p>}
+                                  <div className="flex items-center gap-1 mt-1.5">
+                                    <input type="number" min="1" step="1" placeholder="Qty"
+                                      value={newBreakQty} onChange={e => setNewBreakQty(e.target.value)}
+                                      className="w-14 bg-white/5 border border-white/10 rounded px-1.5 py-1 text-fg text-[11px] font-normal outline-none focus:border-accent" />
+                                    <span className="text-fg/30 text-[10px]">@</span>
+                                    <div className="relative flex-1">
+                                      <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-fg/30 text-[10px]">₱</span>
+                                      <input type="number" min="0" step="0.01" placeholder="Price"
+                                        value={newBreakPrice} onChange={e => setNewBreakPrice(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') { addTierBulkBreak(t._id, p._id, newBreakQty, newBreakPrice); setNewBreakQty(''); setNewBreakPrice(''); } }}
+                                        className="w-full bg-white/5 border border-white/10 rounded pl-4 pr-1 py-1 text-fg text-[11px] font-normal outline-none focus:border-accent" />
+                                    </div>
+                                    {/* The third (append) button - adds this qty/price
+                                        row as a break for this tier x product cell. */}
+                                    <button
+                                      onClick={() => { addTierBulkBreak(t._id, p._id, newBreakQty, newBreakPrice); setNewBreakQty(''); setNewBreakPrice(''); }}
+                                      title="Add quantity break"
+                                      className="text-accent hover:text-fg shrink-0"
+                                    ><Plus size={14} /></button>
+                                  </div>
+                                </div>
+                              )}
                             </td>
                           );
                         }
                         return (
-                          <td key={t._id} className="py-2 text-right font-mono">
+                          <td key={t._id} className="py-2 text-right font-mono align-top">
                             <div
                               className="cursor-pointer hover:bg-white/10 px-2 py-1 rounded inline-flex items-center gap-1.5 transition group justify-end"
-                              onClick={() => { setEditTierCell(cellId); setEditTierCellVal(isPerProduct ? (price === null ? '' : String(price)) : String(t.percent)); }}
+                              onClick={() => { setEditTierCell(cellId); setEditTierCellVal(isPerProduct ? (price === null ? '' : String(price)) : String(t.percent)); setNewBreakQty(''); setNewBreakPrice(''); }}
                               title={isPerProduct ? 'Set this product\'s price for this tier' : `Shared rate - editing this changes ${t.name}'s % for every product`}
                             >
                               {price === null ? (
@@ -573,6 +623,17 @@ export default function PricingTab({ ctx }) {
                               )}
                               <span className="text-[10px] text-gray-500 group-hover:text-accent">✎</span>
                             </div>
+                            {/* Collapsed-view breaks, e.g. "20+  ₱550" - the same
+                                shape as the edit form above, just read-only. */}
+                            {breaks.length > 0 && (
+                              <div className="mt-0.5 text-right">
+                                {breaks.map(b => (
+                                  <p key={b.minQty} className="text-[9px] text-fg/40 tabular-nums leading-tight">
+                                    {b.minQty}+ <span className="text-fg/60 font-bold">₱{Number(b.price).toFixed(2)}</span>
+                                  </p>
+                                ))}
+                              </div>
+                            )}
                           </td>
                         );
                       })}

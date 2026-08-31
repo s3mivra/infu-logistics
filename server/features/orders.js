@@ -7,6 +7,7 @@ import { withOptionalTransaction } from '../lib/txn.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
+import { resolveTierPercent } from '../lib/priceTiers.js';
 
 export default function registerOrders(ctx) {
   const {
@@ -682,6 +683,21 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       const bestPrice = Math.max(0, Math.min(...qualifying.map(b => Math.max(0, Number(b.price) || 0))));
       return Math.max(0, Math.min(100, +(100 - (bestPrice / base) * 100).toFixed(4)));
     };
+    // TIER-scoped quantity breaks - unlike clientBulkQtyDiscPct above (one
+    // named client) and bulkQtyDiscPct (any buyer), this applies to every
+    // client tagged into a per_product tier the buyer belongs to. "Anyone in
+    // Kape Sinukuan Price who orders 20+ of this pays ₱550 each." resolveTier
+    // Percent already knows how to pick the better of the tier's flat rate and
+    // a qualifying break (lib/priceTiers.js) - this just supplies the
+    // quantity it needs, which the static pricing table never has.
+    const tierBulkQtyDiscPct = (item) => {
+      if (!_perProductTiers.length) return 0;
+      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+      if (!p) return 0;
+      const qty = Number(item.quantity || 0);
+      const pcts = _perProductTiers.map(t => resolveTierPercent(p, t, qty)).filter(v => v !== null);
+      return pcts.length ? Math.max(0, Math.min(100, Math.max(...pcts))) : 0;
+    };
 
     // Per-item pass resolves only the PRODUCT-level discounts. Order-level
     // discount and VAT are settled afterwards in one place, because with
@@ -705,9 +721,9 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
 
       // Per-product discount applies to THIS line only - combine the resolved
       // client/segment/default rate with any qualifying bulk-quantity break
-      // (universal or client-specific), taking whichever is higher (never
-      // stacked).
-      const prodPct = Math.max(productDiscPct(item), bulkQtyDiscPct(item), clientBulkQtyDiscPct(item));
+      // (universal, tier-wide, or client-specific), taking whichever is
+      // higher (never stacked).
+      const prodPct = Math.max(productDiscPct(item), bulkQtyDiscPct(item), clientBulkQtyDiscPct(item), tierBulkQtyDiscPct(item));
       const prodDisc = +(itemBase * prodPct / 100).toFixed(2);
       item.productDiscountPercent = prodPct;
       totalProductDisc += prodDisc;

@@ -21,7 +21,7 @@ export async function loadTierContext({ PriceTier, businessType, tenantScope, re
     const wanted = buyerSegments.map(s => String(s).trim().toLowerCase()).filter(Boolean);
     const tiers = await PriceTier.find(
       { businessType, ...tenantScope(req), isActive: true },
-      { name: 1, percent: 1, pricingMode: 1, productPrices: 1 },
+      { name: 1, percent: 1, pricingMode: 1, productPrices: 1, productBulkBreaks: 1 },
     ).lean();
     const hits = tiers.filter(t => wanted.includes(String(t.name).trim().toLowerCase()));
     const flatHits = hits.filter(t => t.pricingMode !== 'per_product');
