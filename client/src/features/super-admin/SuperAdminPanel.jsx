@@ -5,7 +5,7 @@ import {
   Users, Shield, Menu, X, LogOut, Plus, Edit2, Trash2,
   Search, Eye, EyeOff, AlertCircle, Tag, Loader2, Lock,
   ChevronRight, UserCheck, Monitor, Check, Package, ToggleLeft, ToggleRight,
-  KeyRound, Copy, AlertTriangle, RefreshCw, Settings
+  KeyRound, Copy, AlertTriangle, RefreshCw, Settings, Download, Upload
 } from 'lucide-react';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
@@ -250,6 +250,12 @@ export default function SuperAdminPanel() {
   const [clients, setClients]           = useState([]);
   const [clientsLoading, setClientsLoading] = useState(false);
   const [priceTiers, setPriceTiers]     = useState([]);
+  // Product+price data for the Excel export/import round trip - this panel
+  // has no other reason to hold the full product list, so it's scoped to
+  // just what that flow needs (code, name, base price, per-tier prices).
+  const [tierPricingTable, setTierPricingTable] = useState({ products: [], tiers: [] });
+  const [tierImportPreview, setTierImportPreview] = useState(null);
+  const [tierImporting, setTierImporting] = useState(false);
   const [tierModal, setTierModal]       = useState({ open: false, mode: 'create', tier: null });
   const [tierForm, setTierForm]         = useState({ name: '', percent: '', pricingMode: 'percent', note: '', isActive: true });
   const [tierFormError, setTierFormError]     = useState('');
@@ -658,9 +664,148 @@ export default function SuperAdminPanel() {
     } catch { /* non-fatal - picker falls back to whatever tags exist */ }
   }, [apiFetch]);
 
+  const fetchTierPricingTable = useCallback(async () => {
+    if (BUSINESS_TYPE !== 'log') return;
+    try {
+      const res = await apiFetch('/api/price-tiers/pricing-table');
+      if (res.ok) setTierPricingTable(await res.json());
+    } catch { /* export/import just won't have fresh data until retried */ }
+  }, [apiFetch]);
+
   useEffect(() => {
-    if (isAuthenticated) fetchPriceTiers();
-  }, [isAuthenticated, fetchPriceTiers]);
+    if (isAuthenticated) { fetchPriceTiers(); fetchTierPricingTable(); }
+  }, [isAuthenticated, fetchPriceTiers, fetchTierPricingTable]);
+
+  // ── PRICE TIER EXCEL EXPORT/IMPORT ────────────────────────────────────────
+  // Same shape and rules as Pricing Control's copy of this flow (see
+  // exportPriceTiersExcel/parsePriceTierExcel/submitPriceTierImport in
+  // AdminDashboard.jsx): Code | Product | List Price | one column per tier,
+  // prefilled with its current rate (blank = no rate set, never 0 - so
+  // re-importing an untouched cell can't zero a price out). A column merges
+  // onto the tier's EXISTING prices rather than replacing them wholesale, and
+  // a percent-mode tier receiving explicit prices switches to per_product
+  // first - otherwise resolveTierPrice ignores them entirely.
+  const exportTierPricingExcel = async () => {
+    if (!tierPricingTable.tiers || tierPricingTable.tiers.length === 0) {
+      return showToast('No price tiers to export yet - create one first.', 'error');
+    }
+    const XLSX = await import('xlsx');
+    const headers = ['Code', 'Product', 'List Price', ...tierPricingTable.tiers.map(t => t.name)];
+    const rows = (tierPricingTable.products || []).map(p => [
+      p.productCode || '',
+      p.name,
+      Number(p.basePrice || 0),
+      ...tierPricingTable.tiers.map(t => {
+        const v = t.prices?.[String(p._id)];
+        return (v === null || v === undefined) ? '' : Number(v);
+      }),
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    ws['!cols'] = headers.map(h => ({ wch: Math.max(10, Math.min(24, h.length + 4)) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Price Tiers');
+    XLSX.writeFile(wb, `price-tiers-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  const parseTierPricingExcel = async (file) => {
+    if (!file) return;
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      if (!grid.length) return showToast('That file has no rows.', 'error');
+
+      const header = grid[0].map(h => String(h ?? '').trim());
+      const norm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const codeCol = header.findIndex(h => norm(h) === 'code');
+      const nameCol = header.findIndex(h => norm(h).includes('product'));
+      if (codeCol === -1 && nameCol === -1) {
+        return showToast('Could not find a "Code" or "Product" column - use the downloaded template.', 'error');
+      }
+      const tierCols = header
+        .map((h, i) => ({ h, i }))
+        .filter(({ h, i }) => i !== codeCol && i !== nameCol && norm(h) !== 'listprice' && h.trim());
+
+      const byCode = new Map((tierPricingTable.products || []).filter(p => p.productCode).map(p => [norm(p.productCode), p]));
+      const byName = new Map((tierPricingTable.products || []).map(p => [norm(p.name), p]));
+
+      const tierResults = tierCols.map(({ h }) => ({ name: h.trim(), rows: [] }));
+      const unmatchedCodes = [];
+
+      for (let r = 1; r < grid.length; r++) {
+        const row = grid[r];
+        if (!row || row.every(c => c === '' || c === null || c === undefined)) continue;
+        const code = codeCol >= 0 ? String(row[codeCol] ?? '').trim() : '';
+        const name = nameCol >= 0 ? String(row[nameCol] ?? '').trim() : '';
+        const product = (code && byCode.get(norm(code))) || (name && byName.get(norm(name)));
+        if (!product) { if (code || name) unmatchedCodes.push(code || name); continue; }
+
+        tierCols.forEach(({ i }, ti) => {
+          const raw = row[i];
+          if (raw === '' || raw === null || raw === undefined) return;
+          const price = Number(raw);
+          if (!Number.isFinite(price) || price < 0) return;
+          tierResults[ti].rows.push({ productId: product._id, name: product.name, price });
+        });
+      }
+
+      const withMatch = tierResults
+        .filter(t => t.rows.length > 0)
+        .map(t => {
+          const existing = (priceTiers || []).find(pt => pt.name.trim().toLowerCase() === t.name.toLowerCase());
+          return { ...t, tierId: existing?._id || null, wasPercent: existing?.pricingMode !== 'per_product' };
+        });
+
+      if (withMatch.length === 0) return showToast('No prices to import - every tier column was left blank.', 'error');
+      setTierImportPreview({ tiers: withMatch, unmatchedCodes: [...new Set(unmatchedCodes)] });
+    } catch (err) {
+      console.error('parseTierPricingExcel', err);
+      showToast('Could not read that file. Use the downloaded template as a starting point.', 'error');
+    }
+  };
+
+  const submitTierPricingImport = async () => {
+    if (!tierImportPreview || tierImporting) return;
+    setTierImporting(true);
+    let okCount = 0, failCount = 0;
+    try {
+      for (const t of tierImportPreview.tiers) {
+        let tierId = t.tierId;
+        try {
+          if (!tierId) {
+            const created = await apiFetch('/api/price-tiers', {
+              method: 'POST',
+              body: JSON.stringify({ name: t.name, pricingMode: 'per_product', percent: 0 }),
+            });
+            const cd = await created.json();
+            if (!cd.success) { failCount++; continue; }
+            tierId = cd.tier._id;
+          } else if (t.wasPercent) {
+            await apiFetch(`/api/price-tiers/${tierId}`, { method: 'PUT', body: JSON.stringify({ pricingMode: 'per_product' }) });
+          }
+
+          const existingRow = tierPricingTable.tiers.find(pt => pt._id === tierId);
+          const merged = new Map(
+            existingRow && !t.wasPercent
+              ? Object.entries(existingRow.prices || {}).filter(([, v]) => v !== null && v !== undefined)
+              : []
+          );
+          for (const row of t.rows) merged.set(String(row.productId), row.price);
+          const prices = [...merged.entries()].map(([productId, price]) => ({ productId, price }));
+
+          const res = await apiFetch(`/api/price-tiers/${tierId}/products`, { method: 'PUT', body: JSON.stringify({ prices }) });
+          const data = await res.json();
+          if (data.success) okCount++; else failCount++;
+        } catch { failCount++; }
+      }
+      setTierImportPreview(null);
+      fetchPriceTiers(); fetchTierPricingTable();
+      showToast(failCount > 0 ? `Imported ${okCount} tier(s), ${failCount} failed.` : `Imported ${okCount} tier(s) of prices.`, failCount > 0 ? 'error' : 'success');
+    } finally {
+      setTierImporting(false);
+    }
+  };
 
   const openTierCreate = () => {
     setTierForm({ name: '', percent: '', pricingMode: 'percent', note: '', isActive: true });
@@ -1047,13 +1192,30 @@ export default function SuperAdminPanel() {
             </button>
           )}
           {activeSection === 'tiers' && (
-            <button
-              onClick={openTierCreate}
-              className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-fg font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex-shrink-0"
-            >
-              <Plus size={15} />
-              New Tier
-            </button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {/* Bulk pricing round-trip: download Code/Product/one-column-per-tier
+                  prefilled with current rates, edit offline, import it back. */}
+              <button
+                onClick={exportTierPricingExcel}
+                className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold px-3.5 py-2.5 rounded-xl transition text-sm"
+              >
+                <Download size={14} />
+                Download Excel
+              </button>
+              <label className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold px-3.5 py-2.5 rounded-xl transition text-sm cursor-pointer">
+                <Upload size={14} />
+                Import Excel
+                <input type="file" accept=".xlsx,.xls" className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) parseTierPricingExcel(f); e.target.value = ''; }} />
+              </label>
+              <button
+                onClick={openTierCreate}
+                className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-fg font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm"
+              >
+                <Plus size={15} />
+                New Tier
+              </button>
+            </div>
           )}
         </div>
 
@@ -1910,6 +2072,78 @@ export default function SuperAdminPanel() {
               >
                 {deleteLoading ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                 {deleteLoading ? 'Removing…' : 'Confirm Remove'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* PRICE TIER EXCEL IMPORT PREVIEW - nothing writes until confirmed.    */}
+      {/* Each group is one COLUMN from the imported sheet: a tier name plus   */}
+      {/* every product row that got a price. Unrecognized name -> new tier.  */}
+      {/* =================================================================== */}
+      {tierImportPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={e => { if (e.target === e.currentTarget) setTierImportPreview(null); }}>
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col animate-fade-in">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
+              <div>
+                <h2 className="text-lg font-black text-fg">Import Price Tiers</h2>
+                <p className="text-fg/40 text-xs mt-0.5">
+                  {tierImportPreview.tiers.length} tier column{tierImportPreview.tiers.length === 1 ? '' : 's'} ·{' '}
+                  {tierImportPreview.tiers.reduce((s, t) => s + t.rows.length, 0)} price(s) to set
+                </p>
+              </div>
+              <button onClick={() => setTierImportPreview(null)} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+            </div>
+
+            <div className="px-6 py-4 space-y-3 overflow-y-auto">
+              {tierImportPreview.unmatchedCodes.length > 0 && (
+                <div className="rounded-xl border border-yellow-500/25 bg-yellow-500/10 p-3">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-yellow-400 flex items-center gap-1.5">
+                    <AlertTriangle size={12} /> {tierImportPreview.unmatchedCodes.length} row(s) skipped - no matching product
+                  </p>
+                  <p className="text-[11px] text-fg/50 mt-1 truncate">
+                    {tierImportPreview.unmatchedCodes.slice(0, 8).join(', ')}
+                    {tierImportPreview.unmatchedCodes.length > 8 ? `, +${tierImportPreview.unmatchedCodes.length - 8} more` : ''}
+                  </p>
+                </div>
+              )}
+
+              {tierImportPreview.tiers.map(t => (
+                <div key={t.name} className="bg-page-bg/50 border border-white/10 rounded-xl p-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className="text-fg font-black text-sm">{t.name}</span>
+                      {!t.tierId && <span className="text-[9px] font-black uppercase tracking-wider bg-brand/15 text-brand px-1.5 py-0.5 rounded">New Tier</span>}
+                      {t.tierId && t.wasPercent && (
+                        <span className="text-[9px] font-black uppercase tracking-wider bg-yellow-500/15 text-yellow-400 px-1.5 py-0.5 rounded" title="Currently a flat % rate - importing prices switches it to a per-product price list.">
+                          Switches to Price List
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-fg/40 text-xs font-bold">{t.rows.length} price{t.rows.length === 1 ? '' : 's'}</span>
+                  </div>
+                  <div className="mt-2 max-h-24 overflow-y-auto space-y-0.5">
+                    {t.rows.slice(0, 6).map(r => (
+                      <div key={r.productId} className="flex justify-between text-[11px] text-fg/50">
+                        <span className="truncate pr-2">{r.name}</span>
+                        <span className="font-mono text-fg/70 shrink-0">₱{r.price.toFixed(2)}</span>
+                      </div>
+                    ))}
+                    {t.rows.length > 6 && <p className="text-[10px] text-fg/30 italic">+{t.rows.length - 6} more</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="px-6 py-4 border-t border-white/5 flex gap-2 shrink-0">
+              <button onClick={() => setTierImportPreview(null)} className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-fg/70 font-bold rounded-xl transition text-sm">
+                Cancel
+              </button>
+              <button onClick={submitTierPricingImport} disabled={tierImporting}
+                className="flex-1 py-3 bg-brand hover:bg-brand-dark text-fg font-bold rounded-xl transition text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+                <Check size={16} /> {tierImporting ? 'Importing…' : 'Import Prices'}
               </button>
             </div>
           </div>

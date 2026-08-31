@@ -345,10 +345,6 @@ export default function AdminDashboard() {
     start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
     end: new Date().toISOString().slice(0, 10),
   });
-  // COA-derived tender list (see usePaymentMethods) - the POS's own copy of
-  // the same live list the client portal reads, riding this dashboard's
-  // already-open socket rather than a second connection.
-  const { methods: activePaymentMethods, grouped: paymentMethodGroups } = usePaymentMethods(apiFetch, socket);
   const [checkRegister, setCheckRegister] = useState(null);
   const [checkFilter, setCheckFilter] = useState('');
   const [bounceTarget, setBounceTarget] = useState(null);   // the check row being bounced
@@ -824,6 +820,13 @@ export default function AdminDashboard() {
     }
     return response;
   }, []);
+
+  // COA-derived tender list (see usePaymentMethods) - the POS's own copy of
+  // the same live list the client portal reads, riding this dashboard's
+  // already-open socket rather than a second connection. Declared here,
+  // AFTER apiFetch, because it's a const the hook call closes over - putting
+  // it above apiFetch's own declaration hits the temporal dead zone.
+  const { methods: activePaymentMethods, grouped: paymentMethodGroups } = usePaymentMethods(apiFetch, socket);
 
   const handleSystemLogin = async (e) => {
     e.preventDefault();
