@@ -1,7 +1,7 @@
 ﻿import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network, Factory } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
 import { usePaymentMethods } from '../../shared/usePaymentMethods';
@@ -28,6 +28,7 @@ import CommandPalette from './CommandPalette';
 import ShiftEndModal from '../shifts/modals/ShiftEndModal';
 import StockHistoryModal from '../inventory/modals/StockHistoryModal';
 import PriceHistoryModal from '../pricing/modals/PriceHistoryModal';
+import TierPriceHistoryModal from '../pricing/modals/TierPriceHistoryModal';
 import ImportModal from '../inventory/modals/ImportModal';
 import MenuImportModal from '../products/modals/MenuImportModal';
 import PartialFulfillModal from '../orders/modals/PartialFulfillModal';
@@ -48,6 +49,7 @@ const ProcurementTab = lazy(() => import('../procurement/ProcurementTab'));
 const SettingsTab   = lazy(() => import('../settings/SettingsTab'));
 const ClientsTab    = lazy(() => import('../clients/ClientsTab'));
 const HubTab        = lazy(() => import('../hub/HubTab'));
+const ProductionTab = lazy(() => import('../production/ProductionTab'));
 
 // Small fallback shown while a tab chunk loads.
 const TabFallback = () => (
@@ -1298,6 +1300,34 @@ export default function AdminDashboard() {
       ui.alert('Failed to load price history. Check your connection.');
     } finally {
       setPriceHistoryLoading(false);
+    }
+  };
+
+  // Market Segment Pricing's own "History" button - the tier-side counterpart
+  // to fetchPriceHistory above. For a per_product tier it's one cell's price
+  // trail (needs productId); for a percent tier it's the tier's shared rate
+  // trail (no productId - see the server route's split).
+  const [tierPriceHistory, setTierPriceHistory] = useState([]);
+  const [tierPriceHistoryOpen, setTierPriceHistoryOpen] = useState(false);
+  const [tierPriceHistoryCtx, setTierPriceHistoryCtx] = useState(null); // { tierName, productName, current }
+  const [tierPriceHistoryLoading, setTierPriceHistoryLoading] = useState(false);
+  const fetchTierPriceHistory = async (tierId, productId, tierName, productName, current) => {
+    setTierPriceHistoryLoading(true);
+    try {
+      const qs = productId ? `?productId=${productId}` : '';
+      const res = await apiFetch(`/api/price-tiers/${tierId}/history${qs}`);
+      const data = await res.json();
+      if (data.success) {
+        setTierPriceHistory(data.history);
+        setTierPriceHistoryCtx({ tierName, productName, current });
+        setTierPriceHistoryOpen(true);
+      } else {
+        ui.alert(data.error || 'Could not load price history.');
+      }
+    } catch {
+      ui.alert('Failed to load price history. Check your connection.');
+    } finally {
+      setTierPriceHistoryLoading(false);
     }
   };
 
@@ -6580,6 +6610,8 @@ const updateStatus = async (orderId, newStatus) => {
           { id: 'orders', label: 'Orders & POS', icon: ShoppingCart, perm: 'orders.view' },
           { id: 'inventory', label: 'Inventory & Stock', icon: Package, perm: 'inventory.view' },
           { id: 'hub', label: 'Hub', icon: Network, perm: 'inventory.view' },
+          // Logistics-only: raw materials → finished item, approval-gated.
+          ...(BUSINESS_TYPE === 'log' ? [{ id: 'production', label: 'Production', icon: Factory, perm: 'inventory.view' }] : []),
           { id: 'procurement', label: 'Procurement', icon: Truck, perm: 'procurement.view' },
           { id: 'clients', label: 'Clients', icon: Users, perm: 'orders.view' },
           { id: 'products', label: 'Menu Setup', icon: ChefHat, perm: 'products.view' },
@@ -6850,6 +6882,7 @@ const updateStatus = async (orderId, newStatus) => {
     activeInventoryItem, setActiveInventoryItem, restockData, setRestockData,
     stockHistory, setStockHistory, historyModalOpen, setHistoryModalOpen, historyItemName, setHistoryItemName, historyItem, historyLoading,
     priceHistory, priceHistoryOpen, setPriceHistoryOpen, priceHistoryProduct, priceHistoryLoading, fetchPriceHistory,
+    tierPriceHistory, tierPriceHistoryOpen, setTierPriceHistoryOpen, tierPriceHistoryCtx, tierPriceHistoryLoading, fetchTierPriceHistory,
     physicalCounts, setPhysicalCounts, varianceReasons, setVarianceReasons,
     varianceNoteMode, setVarianceNoteMode,
     eodStatus, eodLockedAt, dailyMovement,
@@ -7173,6 +7206,7 @@ const updateStatus = async (orderId, newStatus) => {
       {/* --- INVENTORY TAB --- */}
       {activeTab === 'inventory' && <Suspense fallback={<TabFallback />}><InventoryTab ctx={ctx} /></Suspense>}
       {activeTab === 'hub' && <Suspense fallback={<TabFallback />}><HubTab ctx={ctx} /></Suspense>}
+      {activeTab === 'production' && <Suspense fallback={<TabFallback />}><ProductionTab ctx={ctx} /></Suspense>}
 
       {/* --- ACCOUNTING & LEDGER TAB --- */}
       {(activeTab === 'ledger' || activeTab === 'reports') && <Suspense fallback={<TabFallback />}><LedgerTab ctx={ctx} /></Suspense>}
@@ -7219,6 +7253,7 @@ const updateStatus = async (orderId, newStatus) => {
 
       {/* --- PRICE HISTORY MODAL (Pricing Control) --- */}
       <PriceHistoryModal />
+      <TierPriceHistoryModal />
 
       {/* ============================================================
           WASTE / SPOILAGE LOGGING MODAL

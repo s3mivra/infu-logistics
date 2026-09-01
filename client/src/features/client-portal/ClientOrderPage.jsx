@@ -133,7 +133,7 @@ const TONE_CLS = {
   gray:  'bg-white border-white text-black',
 };
 
-const ProductCard = memo(({ product, onAdd, showPrices }) => {
+const ProductCard = memo(({ product, onAdd, onPreview, showPrices }) => {
   // Unorderable when staff 86'd it OR the linked stock is depleted (stockAvailable).
   const unavailable = product.isAvailable === false || product.stockAvailable === false;
   const discount = (product.effectiveDiscountPercent ?? product.discountPercent) || 0;
@@ -143,11 +143,14 @@ const ProductCard = memo(({ product, onAdd, showPrices }) => {
   const net = hasSale ? Number(product.activeSalePrice) : base * (1 - discount / 100);
   return (
   <div
-    onClick={() => !unavailable && onAdd(product)}
+    // Tapping the card previews the product (its image, full-size) - it no
+    // longer adds to cart. Only the + button below does that, so a customer
+    // browsing/looking at photos can't accidentally order something.
+    onClick={() => onPreview(product)}
     className={`bg-sidebar-bg rounded-2xl border p-3 transition-all duration-150 group relative
       ${unavailable
-        ? 'border-white/5 opacity-50 cursor-not-allowed'
-        : 'border-white/5 hover:border-brand/30 cursor-pointer active:scale-[0.97]'}`}
+        ? 'border-white/5 opacity-50'
+        : 'border-white/5 hover:border-brand/30 active:scale-[0.97]'} cursor-pointer`}
   >
     {/* Product image - only present when the "Product Images" setting is on
         (the server strips product.image for customers when disabled). */}
@@ -217,6 +220,10 @@ export default function ClientOrderPage() {
   // Cart
   const [cart, setCart] = useState([]);
   const [cartOpen, setCartOpen] = useState(false);
+  // Product preview - tapping a card opens this instead of adding to cart;
+  // the + button on the card (and the Add to Cart button in here) are the
+  // only things that actually add an item.
+  const [previewProduct, setPreviewProduct] = useState(null);
 
   // Order state
   const [paymentMethod, setPaymentMethod] = useState('Cash');
@@ -1196,44 +1203,87 @@ export default function ClientOrderPage() {
                 </div>
               ) : filteredOrders.map(o => {
                 const v = STATUS_VIEW(o.status);
+                const items = o.items || [];
+                const totalQty = items.reduce((s, i) => s + Number(i.quantity || 0), 0);
+                const orderTotal = items.reduce((s, i) => {
+                  const unit = Number(i.price || 0) * (1 - lineDiscPct(i) / 100);
+                  return s + unit * Number(i.quantity || 0);
+                }, 0);
+                // Lazada-style summary: name every item up to 2, then fold the
+                // rest into "+N more" rather than listing a long receipt here -
+                // the full breakdown is what "View slip" is for.
+                const shown = items.slice(0, 2);
+                const extra = items.length - shown.length;
                 return (
-                  <div key={o._id} onClick={() => setSlipOrder(o)}
-                    className="bg-page-bg border border-white/10 rounded-2xl p-4 cursor-pointer hover:border-brand/30 transition">
-                    <div className="flex items-start justify-between mb-2 gap-2">
-                      <div className="min-w-0 flex flex-col gap-0.5">
-                        <span className="font-mono text-xs text-brand font-black tracking-wider">{o.orderNumber}</span>
-                        {o.billingNumber && (
-                          <span className="font-mono text-[10px] text-fg/40">Billing: {o.billingNumber}</span>
+                  <div key={o._id}
+                    className="bg-page-bg border border-white/10 rounded-2xl overflow-hidden hover:border-brand/30 transition">
+                    {/* Status strip - the first thing a Lazada-style card leads
+                        with, so "where is my order" is answered before anything else. */}
+                    <div className={`flex items-center justify-between gap-2 px-4 py-2 ${TONE_CLS[v.tone] || TONE_CLS.gray}`}>
+                      <span className="text-[11px] font-black uppercase tracking-wider">{v.label}</span>
+                      <span className="font-mono text-[10px] font-bold opacity-80 tracking-wide">{o.orderNumber}</span>
+                    </div>
+
+                    <div className="p-4 cursor-pointer" onClick={() => setSlipOrder(o)}>
+                      {v.msg && <p className="text-fg/50 text-[11px] leading-snug mb-2.5">{v.msg}</p>}
+
+                      {/* Item summary */}
+                      <div className="space-y-1.5">
+                        {shown.map((it, i) => (
+                          <div key={i} className="flex items-center justify-between gap-3 text-xs">
+                            <span className="text-fg/70 truncate min-w-0">
+                              {it.name} <span className="text-fg/30 font-mono">×{it.quantity}</span>
+                            </span>
+                            {showPrices && (
+                              <span className="text-fg/50 font-mono shrink-0 tabular-nums">
+                                {peso(Number(it.price || 0) * (1 - lineDiscPct(it) / 100) * Number(it.quantity || 0))}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                        {extra > 0 && <p className="text-fg/30 text-[11px] italic">+{extra} more item{extra === 1 ? '' : 's'}</p>}
+                      </div>
+
+                      {/* Total + view slip, footer-style */}
+                      <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-white/5">
+                        <span className="text-fg/30 text-[10px]">
+                          {totalQty} item{totalQty === 1 ? '' : 's'} · {new Date(o.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </span>
+                        {showPrices ? (
+                          <span className="text-fg font-black text-sm">{peso(orderTotal)}</span>
+                        ) : (
+                          <span className="text-fg/30 text-[10px] font-black uppercase tracking-wider inline-flex items-center gap-1"><FileText size={11} /> View slip</span>
                         )}
                       </div>
-                      <span className="text-fg/30 text-[10px] font-black uppercase tracking-wider shrink-0 inline-flex items-center gap-1">
-                        <FileText size={11} /> View slip
-                      </span>
                     </div>
-                    <div className={`rounded-xl border px-3 py-2 ${TONE_CLS[v.tone] || TONE_CLS.gray}`}>
-                      <p className="text-xs font-black uppercase tracking-wider">{v.label}</p>
-                      {v.msg && <p className="text-[11px] mt-1 leading-snug opacity-90">{v.msg}</p>}
-                      {v.needsProof && <SupportLink className="mt-2" />}
-                      {v.canConfirm && (
-                        o.clientReceived ? (
-                          <p className="mt-2 text-[11px] font-black inline-flex items-center gap-1.5"><CheckCircle size={13} /> Received - thank you!</p>
-                        ) : (
-                          <button onClick={e => { e.stopPropagation(); confirmReceived(o._id); }}
-                            className="mt-2 w-full bg-emerald-500 hover:bg-emerald-400 transition rounded-lg px-3 py-2 text-[11px] font-black text-fg uppercase tracking-wider">
-                            I received my order
+
+                    {/* Actions - Lazada-style outlined pills, right-aligned,
+                        only the ones relevant to this order's current state. */}
+                    {(v.needsProof || v.canConfirm || o.status === 'Pending') && (
+                      <div className="flex items-center justify-end gap-2 px-4 pb-4 flex-wrap">
+                        {v.needsProof && <SupportLink className="" />}
+                        {v.canConfirm && (
+                          o.clientReceived ? (
+                            <p className="text-[11px] font-black inline-flex items-center gap-1.5 text-emerald-400"><CheckCircle size={13} /> Received - thank you!</p>
+                          ) : (
+                            <button onClick={e => { e.stopPropagation(); confirmReceived(o._id); }}
+                              className="bg-emerald-500 hover:bg-emerald-400 transition rounded-full px-4 py-1.5 text-[11px] font-black text-fg uppercase tracking-wider">
+                              I received my order
+                            </button>
+                          )
+                        )}
+                        {o.status === 'Pending' && (
+                          <button onClick={e => { e.stopPropagation(); cancelOrder(o._id); }}
+                            className="border border-red-500/30 text-red-300 hover:bg-red-500/10 transition rounded-full px-4 py-1.5 text-[11px] font-black uppercase tracking-wider">
+                            Cancel order
                           </button>
-                        )
-                      )}
-                    </div>
-                    {o.status === 'Pending' && (
-                      <button onClick={e => { e.stopPropagation(); cancelOrder(o._id); }}
-                        className="mt-2 w-full border border-red-500/30 text-red-300 hover:bg-red-500/10 transition rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-wider">
-                        Cancel order
-                      </button>
+                        )}
+                        <button onClick={() => setSlipOrder(o)}
+                          className="border border-white/10 text-fg/60 hover:text-fg hover:border-white/20 transition rounded-full px-4 py-1.5 text-[11px] font-black uppercase tracking-wider">
+                          View slip
+                        </button>
+                      </div>
                     )}
-                    <div className="mt-2 text-[10px] text-fg/30">
-                      {(o.items || []).reduce((s, i) => s + (i.quantity || 0), 0)} item(s) · {new Date(o.createdAt).toLocaleString()}
-                    </div>
                   </div>
                 );
               })}
@@ -1244,6 +1294,57 @@ export default function ClientOrderPage() {
 
       {/* ── PO Slip popup ─────────────────────────────────────────────────────── */}
       {slipOrder && <OrderSlipModal />}
+
+      {/* ── Product preview - tapping a card opens this (its photo, full size),
+          rather than adding it to cart. "Add to Cart" here is the only way
+          this modal itself adds an item. ──────────────────────────────────── */}
+      {previewProduct && (() => {
+        const p = previewProduct;
+        const unavailable = p.isAvailable === false || p.stockAvailable === false;
+        const discount = (p.effectiveDiscountPercent ?? p.discountPercent) || 0;
+        const base = Number(p.basePrice || 0);
+        const hasSale = p.activeSalePrice != null;
+        const net = hasSale ? Number(p.activeSalePrice) : base * (1 - discount / 100);
+        return (
+          <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm"
+            onClick={() => setPreviewProduct(null)} role="dialog" aria-modal="true" aria-label={p.name}>
+            <div className="bg-sidebar-bg border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-sm max-h-[92vh] overflow-hidden flex flex-col"
+              onClick={e => e.stopPropagation()}>
+              <div className="relative w-full h-56 sm:h-64 flex items-center justify-center shrink-0" style={{ background: 'color-mix(in srgb, currentColor 6%, transparent)' }}>
+                {p.image
+                  ? <img src={p.image} alt={p.name} className="w-full h-full object-contain p-4" style={{ filter: 'drop-shadow(0 6px 16px rgba(0,0,0,0.55))' }} />
+                  : <Package size={56} className="opacity-20" />}
+                <button onClick={() => setPreviewProduct(null)} className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center text-white" aria-label="Close">
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="p-5 overflow-y-auto custom-scrollbar">
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="font-bold text-fg text-lg leading-snug">{p.name}</h3>
+                  <span className={`shrink-0 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${unavailable ? 'bg-white border-white text-fg' : 'bg-emerald-400 border-emerald-400 text-white'}`}>
+                    {unavailable ? 'Out of Stock' : 'In Stock'}
+                  </span>
+                </div>
+                {p.description && <p className="text-fg/50 text-sm mt-2 leading-relaxed">{p.description}</p>}
+                {showPrices && (
+                  <div className="flex items-center gap-2 mt-3">
+                    <p className={`font-black text-xl ${hasSale ? 'text-orange-400' : 'text-fg'}`}>{peso(net)}</p>
+                    {(hasSale || discount > 0) && <p className="text-fg/30 text-sm line-through">{peso(base)}</p>}
+                  </div>
+                )}
+                {!unavailable && (
+                  <button
+                    onClick={() => { addToCart(p); setPreviewProduct(null); }}
+                    className="mt-4 w-full bg-brand hover:bg-brand-dark text-white font-bold text-sm py-3 rounded-xl transition active:scale-[0.98] flex items-center justify-center gap-2"
+                  >
+                    <Plus size={16} strokeWidth={2.5} /> Add to Cart
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Client account settings ───────────────────────────────────────────── */}
       {settingsOpen && (
@@ -1398,40 +1499,45 @@ export default function ClientOrderPage() {
         </div>
       )}
 
-      {/* Product search */}
-      <div className="px-3 sm:px-4 pt-3 pb-1 flex-shrink-0">
-        <div className="relative">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30" />
-          <input
-            type="text"
-            value={productSearch}
-            onChange={e => setProductSearch(e.target.value)}
-            placeholder="Search products by name or code…"
-            className="w-full bg-white/5 border border-white/10 focus:border-brand rounded-xl pl-9 pr-9 py-2.5 text-sm text-fg placeholder-fg/30 outline-none transition"
-          />
-          {productSearch && (
-            <button onClick={() => setProductSearch('')} aria-label="Clear search"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-fg/40 hover:text-fg transition">
-              <X size={15} />
-            </button>
-          )}
+      {/* Search + category filter - sticky right under the header, so both
+          stay reachable while scrolling the product grid instead of
+          scrolling away with the welcome banner and announcement above them. */}
+      <div className="sticky top-14 z-20 bg-page-bg flex-shrink-0">
+        {/* Product search */}
+        <div className="px-3 sm:px-4 pt-3 pb-1">
+          <div className="relative">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30" />
+            <input
+              type="text"
+              value={productSearch}
+              onChange={e => setProductSearch(e.target.value)}
+              placeholder="Search products by name or code…"
+              className="w-full bg-white/5 border border-white/10 focus:border-brand rounded-xl pl-9 pr-9 py-2.5 text-sm text-fg placeholder-fg/30 outline-none transition"
+            />
+            {productSearch && (
+              <button onClick={() => setProductSearch('')} aria-label="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-fg/40 hover:text-fg transition">
+                <X size={15} />
+              </button>
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* Category filter */}
-      <div className="flex gap-2 px-3 sm:px-4 py-3 overflow-x-auto scrollbar-hide border-b border-white/5 flex-shrink-0">
-        {/* A category with nothing sellable in it (e.g. raw materials only - no
-            SRP) never gets its own pill - there'd be nothing to show anyway. */}
-        {['All', ...(products.some(p => p.isBulk) ? ['Bulk'] : []), ...categories.filter(c => products.some(p => p.category === c.name && !p.isArchived && (p.basePrice || 0) > 0)).map(c => c.name)].map(cat => (
-          <button
-            key={cat}
-            onClick={() => setActiveCategory(cat)}
-            className={`px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition flex-shrink-0
-              ${activeCategory === cat ? 'bg-brand text-white' : 'bg-white/5 text-fg/50 hover:text-fg'}`}
-          >
-            {cat}
-          </button>
-        ))}
+        {/* Category filter */}
+        <div className="flex gap-2 px-3 sm:px-4 py-3 overflow-x-auto scrollbar-hide border-b border-white/5">
+          {/* A category with nothing sellable in it (e.g. raw materials only - no
+              SRP) never gets its own pill - there'd be nothing to show anyway. */}
+          {['All', ...(products.some(p => p.isBulk) ? ['Bulk'] : []), ...categories.filter(c => products.some(p => p.category === c.name && !p.isArchived && (p.basePrice || 0) > 0)).map(c => c.name)].map(cat => (
+            <button
+              key={cat}
+              onClick={() => setActiveCategory(cat)}
+              className={`px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition flex-shrink-0
+                ${activeCategory === cat ? 'bg-brand text-white' : 'bg-white/5 text-fg/50 hover:text-fg'}`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Product grid - leaves room at the bottom for the cart FAB on mobile */}
@@ -1450,7 +1556,7 @@ export default function ClientOrderPage() {
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5 sm:gap-3">
             {visibleProducts.map(p => (
-              <ProductCard key={p._id} product={p} onAdd={addToCart} showPrices={showPrices} />
+              <ProductCard key={p._id} product={p} onAdd={addToCart} onPreview={setPreviewProduct} showPrices={showPrices} />
             ))}
           </div>
         )}

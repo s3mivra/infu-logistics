@@ -18,6 +18,7 @@ export default function registerPriceTiers(ctx) {
     BUSINESS_TYPE,
     tenantScope,
     logAudit,
+    AuditLog,
     PriceTier,
     ClientAccount,
     Product,
@@ -97,6 +98,18 @@ export default function registerPriceTiers(ctx) {
       if (req.body?.isActive !== undefined) tier.isActive = !!req.body.isActive;
       await tier.save();
 
+      // "As of [date]" history for a percent-mode tier - one shared rate, so
+      // logged once against the tier itself (not per product, unlike the
+      // per_product branch below). Only fires when the rate actually moved.
+      if (before.percent !== tier.percent) {
+        await AuditLog.create({
+          userId: req.user ? req.user.name : 'System',
+          action: 'TIER_PERCENT_CHANGED',
+          targetReference: String(tier._id),
+          details: { tierName: tier.name, oldPercent: before.percent, newPercent: tier.percent },
+        });
+      }
+
       let retagged = 0;
       if (tier.name !== oldName) {
         // Move the tag on every client that carried the old name, and on every
@@ -162,11 +175,41 @@ export default function registerPriceTiers(ctx) {
       // id here would silently price a row nobody can ever see or buy.
       const ids = [...new Set([...clean.map(c => c.productId), ...(breaksClean || []).map(c => c.productId)])];
       const validIds = new Set((await Product.find({ _id: { $in: ids } }, { _id: 1 }).lean()).map(p => String(p._id)));
+
+      // Snapshot the price this tier charged for each product BEFORE the
+      // replace below, so the "as of [date]" history can log only the rows
+      // that actually moved - not all 300 products every time a sheet is
+      // re-saved. Keyed by productId since that's what the UI's per-product
+      // history view looks a change up by.
+      const beforePrices = new Map((tier.productPrices || []).map(p => [String(p.productId), Number(p.price)]));
+
       tier.productPrices = clean.filter(c => validIds.has(String(c.productId)));
       if (breaksClean !== null) tier.productBulkBreaks = breaksClean.filter(c => validIds.has(String(c.productId)));
 
       await tier.save();
       await logAudit(req, { action: 'update', entity: 'PriceTier', entityId: tier._id, after: { name: tier.name, productPriceCount: tier.productPrices.length, bulkBreakCount: tier.productBulkBreaks.length } });
+
+      // Per-product "as of [date]: price" trail - Market Segment Pricing's
+      // counterpart to PRODUCT_PRICE_CHANGED. `targetReference` is
+      // `<tierId>:<productId>` so a single history lookup can pull just one
+      // cell's changes; covers rows that changed price, rows newly added
+      // (oldPrice null), and rows removed from the sheet (newPrice null).
+      const afterPrices = new Map(tier.productPrices.map(p => [String(p.productId), Number(p.price)]));
+      const touched = new Set([...beforePrices.keys(), ...afterPrices.keys()]);
+      const entries = [];
+      for (const productId of touched) {
+        const oldPrice = beforePrices.has(productId) ? beforePrices.get(productId) : null;
+        const newPrice = afterPrices.has(productId) ? afterPrices.get(productId) : null;
+        if (oldPrice === newPrice) continue;
+        entries.push({
+          userId: req.user ? req.user.name : 'System',
+          action: 'TIER_PRICE_CHANGED',
+          targetReference: `${tier._id}:${productId}`,
+          details: { tierId: String(tier._id), tierName: tier.name, productId, oldPrice, newPrice },
+        });
+      }
+      if (entries.length) await AuditLog.insertMany(entries);
+
       res.json({ success: true, tier });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
@@ -195,6 +238,49 @@ export default function registerPriceTiers(ctx) {
         bulkBreaks: (t.productBulkBreaks || []).map(b => ({ productId: String(b.productId), minQty: b.minQty, price: b.price })),
       }));
       res.json({ success: true, products, tiers: rows });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  // ── HISTORY ──────────────────────────────────────────────────────────────────
+  // Market Segment Pricing's "as of [date]: price" trail, mirroring
+  // /api/products/:id/price-history. With ?productId=, returns that one
+  // cell's price changes (per_product tiers); without it, returns the
+  // tier's shared percent changes (percent tiers) - a per_product tier has
+  // no single "tier price" to show without a product, and a percent tier
+  // has no per-product rows at all, so the two never overlap for one call.
+  app.get('/api/price-tiers/:id/history', verifyToken, requireStaff, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Tier not found.' });
+      const tier = await PriceTier.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) }).lean();
+      if (!tier) return res.status(404).json({ success: false, error: 'Tier not found.' });
+
+      const productId = req.query.productId && mongoose.Types.ObjectId.isValid(req.query.productId) ? String(req.query.productId) : null;
+
+      let rows;
+      let type;
+      if (productId) {
+        type = 'price';
+        rows = await AuditLog.find({
+          action: 'TIER_PRICE_CHANGED',
+          targetReference: `${tier._id}:${productId}`,
+        }).sort({ timestamp: -1 }).limit(200).lean();
+      } else {
+        type = 'percent';
+        rows = await AuditLog.find({
+          action: 'TIER_PERCENT_CHANGED',
+          targetReference: String(tier._id),
+        }).sort({ timestamp: -1 }).limit(200).lean();
+      }
+
+      const history = rows.map(r => ({
+        date: r.timestamp,
+        type,
+        oldValue: type === 'price' ? r.details?.oldPrice : r.details?.oldPercent,
+        newValue: type === 'price' ? r.details?.newPrice : r.details?.newPercent,
+        changedBy: r.userId || '',
+      }));
+
+      res.json({ success: true, tier: { _id: tier._id, name: tier.name, percent: tier.percent, pricingMode: tier.pricingMode }, history });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 

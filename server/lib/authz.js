@@ -41,6 +41,13 @@ export const PERMISSIONS = [
   // either one silently unlocked the other.
   { key: 'requisitions.view',    group: 'Accounting', label: 'View requisition slips & the Approvals queue' },
   { key: 'requisitions.approve', group: 'Accounting', label: 'Approve / reject requisition slips' },
+  // Production orders (logistics deployments): consuming raw materials to
+  // produce/replenish a finished item. Split the same way as requisitions -
+  // filing a production order only needs inventory.manage-level trust; the
+  // stock movement itself (materials out, output in) is held for a separate
+  // approval.
+  { key: 'production.view',      group: 'Inventory',  label: 'View production orders' },
+  { key: 'production.approve',   group: 'Inventory',  label: 'Approve / reject production orders' },
   // Edits to money levers - a selling price, a cost basis, a client's credit
   // line - are held for sign-off unless the editor holds this. See
   // lib/changeApproval.js for exactly which fields are gated and why.
@@ -64,18 +71,18 @@ export const ROLE_DEFAULT_PERMISSIONS = {
   // Shop administrator: runs operations & config and can VIEW the books, but
   // cannot post journal entries (that's finance/superadmin) or manage staff.
   admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete',
-            'inventory.view', 'inventory.manage', 'inventory.delete',
+            'inventory.view', 'inventory.manage', 'inventory.delete', 'production.view', 'production.approve',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage', 'procurement.delete',
             'accounting.view', 'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'],
   // Operations lead: full ops (incl. building rosters), no books/settings/staff.
   manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete',
-            'inventory.view', 'inventory.manage',
+            'inventory.view', 'inventory.manage', 'production.view', 'production.approve',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage',
             'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage'],
   // The books role: view + post accounting, plus read-only ops context.
-  finance: ['orders.view', 'inventory.view', 'procurement.view',
+  finance: ['orders.view', 'inventory.view', 'procurement.view', 'production.view',
             'accounting.view', 'accounting.manage', 'pricing.approve',
             'reports.view', 'analytics.view', 'audit.view'],
   cashier: ['pos.use', 'orders.view', 'orders.manage', 'inventory.view', 'products.view', 'procurement.view'],

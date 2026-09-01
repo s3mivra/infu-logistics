@@ -51,7 +51,7 @@ export default function PricingTab({ ctx }) {
     posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable,
     pricingItemsPerPage, pricingPage, printOrderSlip, printXReading, products,
     priceTiers, pricingTable, fetchPricingTable, handleTierCellUpdate, handleTierPercentUpdate,
-    tierBreaksFor, addTierBulkBreak, removeTierBulkBreak,
+    tierBreaksFor, addTierBulkBreak, removeTierBulkBreak, fetchTierPriceHistory,
     exportPriceTiersExcel, priceTierImportPreview, setPriceTierImportPreview, parsePriceTierExcel, submitPriceTierImport, priceTierImporting,
     removeAddOnFromOrder, removeComplimentary, removeMaterial, removeSize, restockData,
     rfActiveFund, rfDisbForm, rfDisbModal, rfDisbSubmitting, rfFunds,
@@ -564,6 +564,10 @@ export default function PricingTab({ ctx }) {
                                 )}
                                 <button onClick={save} title="Save price" className="text-green-400 hover:text-green-300"><Check size={14} /></button>
                                 <button onClick={() => setEditTierCell(null)} title="Cancel" className="text-red-400 hover:text-red-300">✕</button>
+                                <button
+                                  onClick={() => fetchTierPriceHistory(t._id, isPerProduct ? p._id : null, t.name, isPerProduct ? p.name : null, isPerProduct ? price : t.percent)}
+                                  title="Price history" className="text-fg/30 hover:text-accent"
+                                ><History size={13} /></button>
                               </div>
 
                               {/* Quantity breaks - independent of the flat price

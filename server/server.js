@@ -46,6 +46,7 @@ import registerSettings from './features/settings.js';
 import registerPurchaseOrders from './features/purchase-orders.js';
 import registerBills from './features/bills.js';
 import registerRequisitions from './features/requisitions.js';
+import registerProduction from './features/production.js';
 import registerCollections from './features/collections.js';
 import registerChangeRequests from './features/change-requests.js';
 import registerNotifications from './features/notifications.js';
@@ -2919,6 +2920,60 @@ const RequisitionSlipSchema = new mongoose.Schema({
 RequisitionSlipSchema.index({ businessType: 1, status: 1, createdAt: -1 });
 const RequisitionSlip = mongoose.model('RequisitionSlip', RequisitionSlipSchema);
 
+// Production Orders (logistics deployments) - "take these raw materials from
+// inventory, turn them into this finished item, in this batch". Filed by any
+// staff member (Pending), but - same gate as RequisitionSlip above - nothing
+// actually moves until someone holding production.approve signs off: only
+// THEN do the materials actually leave inventory and the output actually
+// land, atomically, together. Filing never touches stock, so a request that
+// sits unapproved for days can't have already silently drained the shelf.
+const PRODUCTION_ORDER_STATUSES = ['Pending', 'Approved', 'Rejected'];
+const ProductionOrderSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  orderNumber: { type: String, index: true },              // PROD-2026-000001
+  status: { type: String, default: 'Pending', enum: PRODUCTION_ORDER_STATUSES, index: true },
+  // Stamped equal to orderNumber once created - the batch every material
+  // consumption AND the output's own new stock batch are tagged with, so
+  // "what went into batch PROD-2026-000014" is answerable from Stock Card
+  // alone, both directions.
+  batchNumber: { type: String, default: '' },
+
+  materials: [{
+    invId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', required: true },
+    itemName: { type: String, default: '' },
+    qty: { type: Number, default: 0 },                     // base units (g/ml/pcs)
+    unit: { type: String, default: '' },
+  }],
+
+  // 'existing' adds outputQty onto an already-tracked item (outputInvId set
+  // at filing time); 'new' creates a brand-new Inventory item on approval -
+  // outputInvId is null until then, filled in once it exists.
+  outputType: { type: String, enum: ['new', 'existing'], required: true },
+  outputInvId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
+  outputName: { type: String, default: '' },
+  outputQty: { type: Number, default: 0 },                  // base units produced
+  outputUnit: { type: String, default: '' },
+  // 'new' only - base units per ONE piece (e.g. 377 for "...377G"), carried
+  // onto the created Inventory item's own packSize so later production runs
+  // against it can be counted in pieces too, same as every packed item.
+  outputPackSize: { type: Number, default: null },
+  outputStockCategory: { type: String, default: '' },
+  outputStockLocation: { type: String, default: '' },
+  outputExpiryDate: { type: Date, default: null },
+  productionDate: { type: Date, default: () => new Date() },
+
+  notes: { type: String, default: '' },
+  requestedBy: { type: String, default: '' },
+  approvedBy: { type: String, default: '' },
+  approvedAt: { type: Date, default: null },
+  rejectedBy: { type: String, default: '' },
+  rejectedAt: { type: Date, default: null },
+  rejectionReason: { type: String, default: '' },
+}, { timestamps: true });
+ProductionOrderSchema.index({ businessType: 1, status: 1, createdAt: -1 });
+const ProductionOrder = mongoose.model('ProductionOrder', ProductionOrderSchema);
+
 // ── REVOLVING FUND ROUTES ─────────────────────────────────────────────────────
 
 
@@ -3151,6 +3206,9 @@ const ctx = {
   RequisitionSlipSchema,
   RequisitionSlip,
   REQ_SLIP_STATUSES,
+  ProductionOrderSchema,
+  ProductionOrder,
+  PRODUCTION_ORDER_STATUSES,
   verifyToken,
   verifyClientToken,
   requireSuperAdmin,
@@ -3187,6 +3245,7 @@ registerSettings(ctx);
 registerPurchaseOrders(ctx);
 registerBills(ctx);
 registerRequisitions(ctx);
+registerProduction(ctx);
 registerCollections(ctx);
 registerChangeRequests(ctx);
 registerNotifications(ctx);
