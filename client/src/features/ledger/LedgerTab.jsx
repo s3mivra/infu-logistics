@@ -752,6 +752,7 @@ export default function LedgerTab({ ctx }) {
   const approveReqSlip = async (slip) => {
     const label = slip.type === 'petty-cash' ? `₱${slip.amount.toFixed(2)} from ${slip.fundName}`
       : slip.type === 'new-fund' ? `new fund "${slip.fundName}" opened with ₱${slip.amount.toFixed(2)}`
+      : slip.type === 'fund-replenish' ? `${slip.amount > 0 ? `₱${slip.amount.toFixed(2)}` : 'a top-up'} into ${slip.fundName}`
       : `PO to ${slip.supplier || 'supplier'} (est. ₱${slip.estTotal.toFixed(2)})`;
     if (!(await ui.confirm(`Approve ${slip.slipNumber}: ${label}?`))) return;
     setReqSlipBusy(true);
@@ -779,11 +780,17 @@ export default function LedgerTab({ ctx }) {
   // Small shared helpers so all three type-branch spots below (PDF export,
   // the on-screen table, the preview modal) read the same way for the new
   // 'new-fund' type instead of it falling through to "Procurement" by accident.
-  const reqTypeLabel = (t) => t === 'petty-cash' ? 'Petty Cash' : t === 'new-fund' ? 'New Fund' : 'Procurement';
+  const reqTypeLabel = (t) => t === 'petty-cash' ? 'Petty Cash' : t === 'new-fund' ? 'New Fund' : t === 'fund-replenish' ? 'Fund Replenish' : 'Procurement';
   const reqSummary = (s) => s.type === 'petty-cash' ? `${s.fundName} — ${s.description}`
     : s.type === 'new-fund' ? `Open "${s.fundName}"${s.description ? ` — ${s.description}` : ''}`
+    : s.type === 'fund-replenish' ? `Top up ${s.fundName}${s.description ? ` — ${s.description}` : ''}`
     : `${s.supplier || 'No supplier'} (${(s.lines || []).length} item(s))`;
-  const reqAmount = (s) => (s.type === 'petty-cash' || s.type === 'new-fund') ? s.amount : s.estTotal;
+  // fund-replenish's amount is 0 when the filer left it blank ("top up to
+  // full" - resolved from the fund's actual shortfall at approval time), so
+  // the Approvals table shows "to full" instead of a misleading ₱0.00.
+  const reqAmount = (s) => (s.type === 'petty-cash' || s.type === 'new-fund') ? s.amount
+    : s.type === 'fund-replenish' ? (s.amount > 0 ? s.amount : null)
+    : s.estTotal;
 
   const exportRequisitionSlipsPDF = async () => {
     if (!reqSlips || reqSlips.length === 0) return ui.alert('No requisition slips to export.');
@@ -796,7 +803,7 @@ export default function LedgerTab({ ctx }) {
       startY: 34,
       head: [['Slip #', 'Type', 'Summary', 'Amount', 'Prepared By', 'Status', 'Approved/Rejected By']],
       body: reqSlips.map(s => [
-        s.slipNumber, reqTypeLabel(s.type), reqSummary(s), pdfMoney(reqAmount(s)),
+        s.slipNumber, reqTypeLabel(s.type), reqSummary(s), reqAmount(s) === null ? 'To full' : pdfMoney(reqAmount(s)),
         s.preparedBy || '-', s.status, s.approvedBy || s.rejectedBy || '-',
       ]),
       styles: { fontSize: 7.5 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' } },
@@ -3484,7 +3491,7 @@ export default function LedgerTab({ ctx }) {
                             <td className="px-5 py-2.5">
                               <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-full ${s.status === 'Pending' ? 'bg-amber-500/20 text-amber-400' : s.status === 'Approved' ? 'bg-brand/20 text-brand' : 'bg-red-500/20 text-red-400'}`}>{s.status}</span>
                             </td>
-                            <td className="px-5 py-2.5 text-right font-mono tabular-nums font-bold text-fg">{peso(reqAmount(s))}</td>
+                            <td className="px-5 py-2.5 text-right font-mono tabular-nums font-bold text-fg">{reqAmount(s) === null ? 'To full' : peso(reqAmount(s))}</td>
                             <td className="px-5 py-2.5 text-right whitespace-nowrap">
                               {s.status === 'Pending' && can('requisitions.approve') ? (
                                 <div className="flex items-center justify-end gap-3">
@@ -4703,7 +4710,7 @@ export default function LedgerTab({ ctx }) {
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                   <div>
                     <h2 className="font-black text-fg text-lg">{reqSlipPreview.slipNumber}</h2>
-                    <p className="text-fg/40 text-xs mt-0.5">{reqSlipPreview.type === 'petty-cash' ? 'Petty Cash / Revolving Fund Requisition' : reqSlipPreview.type === 'new-fund' ? 'New Revolving Fund Requisition' : 'Procurement Requisition'}</p>
+                    <p className="text-fg/40 text-xs mt-0.5">{reqSlipPreview.type === 'petty-cash' ? 'Petty Cash / Revolving Fund Requisition' : reqSlipPreview.type === 'new-fund' ? 'New Revolving Fund Requisition' : reqSlipPreview.type === 'fund-replenish' ? 'Revolving Fund Replenishment' : 'Procurement Requisition'}</p>
                   </div>
                   <button onClick={() => setReqSlipPreview(null)} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
                 </div>
@@ -4724,6 +4731,15 @@ export default function LedgerTab({ ctx }) {
                       <div className="flex justify-between"><span className="text-fg/50">New Fund Name</span><span className="text-fg font-bold">{reqSlipPreview.fundName}</span></div>
                       {reqSlipPreview.description && <div className="flex justify-between"><span className="text-fg/50">Note</span><span className="text-fg font-bold text-right max-w-[60%]">{reqSlipPreview.description}</span></div>}
                       <div className="flex justify-between border-t border-white/10 pt-2 mt-1"><span className="text-fg/50">Opening Amount</span><span className="text-brand font-black text-lg tabular-nums">{peso(reqSlipPreview.amount)}</span></div>
+                    </div>
+                  ) : reqSlipPreview.type === 'fund-replenish' ? (
+                    <div className="bg-page-bg border border-white/10 rounded-lg p-4 space-y-2 text-sm">
+                      <div className="flex justify-between"><span className="text-fg/50">Fund</span><span className="text-fg font-bold">{reqSlipPreview.fundName}</span></div>
+                      {reqSlipPreview.description && <div className="flex justify-between"><span className="text-fg/50">Note</span><span className="text-fg font-bold text-right max-w-[60%]">{reqSlipPreview.description}</span></div>}
+                      <div className="flex justify-between border-t border-white/10 pt-2 mt-1">
+                        <span className="text-fg/50">Amount</span>
+                        <span className="text-brand font-black text-lg tabular-nums">{reqSlipPreview.amount > 0 ? peso(reqSlipPreview.amount) : 'Top up to full'}</span>
+                      </div>
                     </div>
                   ) : (
                     <div className="bg-page-bg border border-white/10 rounded-lg p-4 space-y-3 text-sm">

@@ -2870,7 +2870,14 @@ const RequisitionSlipSchema = new mongoose.Schema({
   // fields below: fundName/amount/description as the fund's name/opening
   // amount/note, categoryCode as the funding source account (mirrors how
   // POST /api/revolving-funds itself takes a sourceAccount).
-  type: { type: String, enum: ['petty-cash', 'procurement', 'new-fund'], required: true, index: true },
+  // 'fund-replenish' tops up an EXISTING fund. Deliberately the mirror image
+  // of 'petty-cash': money going OUT of a fund (disbursement) never needs
+  // approval here - it's capped by currentBalance and posts immediately via
+  // POST /api/revolving-funds/:id/disburse - but money coming IN (replenish)
+  // always does, because it's the side that actually draws down a real cash/
+  // bank account. Same fields as petty-cash: fundId/fundName/amount/
+  // description/categoryCode (source account this time, not an expense).
+  type: { type: String, enum: ['petty-cash', 'procurement', 'new-fund', 'fund-replenish'], required: true, index: true },
   status: { type: String, default: 'Pending', enum: REQ_SLIP_STATUSES, index: true },
 
   // petty-cash / new-fund fields

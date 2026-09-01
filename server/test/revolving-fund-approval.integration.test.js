@@ -75,3 +75,69 @@ describe('revolving fund creation requires approval for non-superadmin', () => {
     expect(res.status).toBe(400); // create-time dup check already catches it
   });
 });
+
+describe('revolving fund: disbursement is immediate, replenishment always needs approval', () => {
+  it('a plain staff member can disburse immediately - capped by the current balance, no approval', async () => {
+    const open = await request(app).post('/api/revolving-funds').set(auth(superToken))
+      .send({ name: 'Ops Fund', initialAmount: 500, sourceAccount: '111000' });
+    const fundId = open.body.fund._id;
+
+    const over = await request(app).post(`/api/revolving-funds/${fundId}/disburse`).set(auth(staffToken))
+      .send({ amount: 600, description: 'Too much', categoryCode: '650000' });
+    expect(over.status).toBe(400); // can never exceed the current balance
+
+    const dis = await request(app).post(`/api/revolving-funds/${fundId}/disburse`).set(auth(staffToken))
+      .send({ amount: 200, description: 'Supplies', categoryCode: '650000' });
+    expect(dis.status).toBe(200);
+    expect(dis.body.fund.currentBalance).toBe(300); // reflected immediately, no requisition slip involved
+  });
+
+  it('there is no direct POST /api/revolving-funds/:id/replenish any more - it must go through approval', async () => {
+    const open = await request(app).post('/api/revolving-funds').set(auth(superToken))
+      .send({ name: 'Replenish Direct Test Fund', initialAmount: 500, sourceAccount: '111000' });
+    const fundId = open.body.fund._id;
+    const res = await request(app).post(`/api/revolving-funds/${fundId}/replenish`).set(auth(superToken)).send({ amount: 100 });
+    expect(res.status).toBe(404); // route no longer exists
+  });
+
+  it('filing a fund-replenish slip does not move money; only approving it does', async () => {
+    const open = await request(app).post('/api/revolving-funds').set(auth(superToken))
+      .send({ name: 'Replenish Test Fund', initialAmount: 1000, sourceAccount: '111000' });
+    const fundId = open.body.fund._id;
+    await request(app).post(`/api/revolving-funds/${fundId}/disburse`).set(auth(staffToken))
+      .send({ amount: 400, description: 'Spent it', categoryCode: '650000' });
+
+    const RevolvingFund = mongoose.model('RevolvingFund');
+    expect((await RevolvingFund.findById(fundId).lean()).currentBalance).toBe(600);
+
+    const filed = await request(app).post('/api/requisition-slips').set(auth(staffToken))
+      .send({ type: 'fund-replenish', fundId, amount: 300, sourceAccount: '111000' });
+    expect(filed.body.success).toBe(true);
+    expect(filed.body.slip.status).toBe('Pending');
+    expect((await RevolvingFund.findById(fundId).lean()).currentBalance).toBe(600); // unchanged - still pending
+
+    const approve = await request(app).post(`/api/requisition-slips/${filed.body.slip._id}/approve`).set(auth(superToken)).send({});
+    expect(approve.status).toBe(200);
+    expect((await RevolvingFund.findById(fundId).lean()).currentBalance).toBe(900);
+
+    const JournalEntry = mongoose.model('JournalEntry');
+    const je = await JournalEntry.findOne({ reference: approve.body.slip.resultRefLabel }).lean();
+    expect(je.totalDebit).toBeCloseTo(je.totalCredit, 2);
+  });
+
+  it('omitting the amount tops the fund back up to its initial balance', async () => {
+    const open = await request(app).post('/api/revolving-funds').set(auth(superToken))
+      .send({ name: 'Top-Up Test Fund', initialAmount: 1000, sourceAccount: '111000' });
+    const fundId = open.body.fund._id;
+    await request(app).post(`/api/revolving-funds/${fundId}/disburse`).set(auth(staffToken))
+      .send({ amount: 350, description: 'Spent', categoryCode: '650000' });
+
+    const filed = await request(app).post('/api/requisition-slips').set(auth(staffToken))
+      .send({ type: 'fund-replenish', fundId }); // no amount - "top up to full"
+    const approve = await request(app).post(`/api/requisition-slips/${filed.body.slip._id}/approve`).set(auth(superToken)).send({});
+    expect(approve.status).toBe(200);
+
+    const RevolvingFund = mongoose.model('RevolvingFund');
+    expect((await RevolvingFund.findById(fundId).lean()).currentBalance).toBe(1000);
+  });
+});

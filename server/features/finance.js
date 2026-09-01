@@ -1148,7 +1148,11 @@ app.post('/api/revolving-funds', verifyToken, requireSuperAdmin, async (req, res
   }
 });
 
-// POST disburse from a fund (any staff - they need to log what they spend)
+// POST disburse from a fund (any staff - they need to log what they spend).
+// Deliberately NOT approval-gated: an expense against a revolving fund is
+// capped by its own currentBalance (can never overdraw it) and reflects
+// immediately - see 'fund-replenish' below for why money going the OTHER
+// way (topping the fund back up) is held for approval instead.
 app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, async (req, res) => {
   try {
     const fund = await RevolvingFund.findById(req.params.id);
@@ -1194,54 +1198,14 @@ app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, async (
   }
 });
 
-// POST replenish a fund back to its initial amount (superadmin only)
-app.post('/api/revolving-funds/:id/replenish', verifyToken, ...canPostAcct, async (req, res) => {
-  try {
-    const fund = await RevolvingFund.findById(req.params.id);
-    if (!fund || !fund.isActive) return res.status(404).json({ success: false, error: 'Fund not found.' });
-
-    const { amount, note, sourceAccount } = req.body;
-    // sourceAccount: any cash/bank/e-wallet account (canonical or custom sub-account).
-    const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
-    const srcMeta = acctMeta(sourceAccount);
-    const srcCode = (srcMeta && isCashLike(sourceAccount)) ? sourceAccount : '111000';
-    const srcName = acctMeta(srcCode)?.name || 'Cash on Hand';
-
-    // If amount not specified, replenish back to full initialAmount
-    const shortfall = +(fund.initialAmount - fund.currentBalance).toFixed(2);
-    const amt = amount ? Number(amount) : shortfall;
-
-    if (amt <= 0) return res.status(400).json({ success: false, error: 'Fund is already full; nothing to replenish.' });
-
-    fund.currentBalance = +(fund.currentBalance + amt).toFixed(2);
-    await fund.save();
-
-    // DR 1050 Petty Cash / CR sourceAccount
-    const je = await JournalEntry.create({
-      date: new Date(),
-      description: `Revolving Fund replenishment: ${fund.name} (from ${srcName})${note ? ': ' + note : ''}`,
-      lines: [
-        { accountCode: '114000', accountName: 'Petty Cash / Revolving Fund', debit: amt, credit: 0 },
-        { accountCode: srcCode,  accountName: srcName,                      debit: 0, credit: amt },
-      ],
-      totalDebit: amt, totalCredit: amt,
-      reference: await mkSeqRef('RF-IN'),
-    });
-
-    const tx = await RevolvingFundTx.create({
-      fundId: fund._id, type: 'replenishment', amount: amt,
-      description: note || `Replenished ₱${amt.toFixed(2)}; balance restored`,
-      performedBy: req.user?.name,
-      balanceAfter: fund.currentBalance,
-      journalRef: je._id,
-    });
-
-    emitToMgr('erpUpdated'); // auto-refresh the general ledger (fund replenishment)
-    res.json({ success: true, fund, tx });
-  } catch (err) {
-    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
-  }
-});
+// Replenishing a fund used to be immediate here (superadmin/accounting.manage
+// only). It now ALWAYS requires approval - unlike a disbursement (capped by
+// currentBalance, reflects immediately, see /disburse above), a replenishment
+// draws down a real cash/bank account, so it goes through the same
+// request → approve flow as petty-cash and procurement: file via
+// POST /api/requisition-slips { type: 'fund-replenish', fundId, amount?,
+// sourceAccount?, note? }, then POST /api/requisition-slips/:id/approve
+// (requisitions.approve) actually moves the money. See requisitions.js.
 
 // GET transaction history for a fund
 app.get('/api/revolving-funds/:id/transactions', verifyToken, ...canViewAcct, async (req, res) => {

@@ -177,20 +177,27 @@ describe('finance: every money endpoint posts a balanced double-entry', () => {
     expect(after.orders.some((r) => r.orderNumber === 'ORD-AR-1')).toBe(false);
   });
 
-  it('revolving fund: open → disburse → replenish, each balanced; balance returns to initial', async () => {
+  it('revolving fund: open → disburse (immediate) → replenish (needs approval), each balanced; balance returns to initial', async () => {
     const open = await auth('post', '/api/revolving-funds', tok.super).send({ name: 'Petty Cash', initialAmount: 1000 });
     expect(open.status).toBe(200);
     const fundId = open.body.fund._id;
 
+    // Disbursement is immediate - no approval, just capped by currentBalance.
     const dis = await auth('post', `/api/revolving-funds/${fundId}/disburse`, tok.staff)
       .send({ amount: 100, description: 'Snacks', categoryCode: '650000' });
     expect(dis.status).toBe(200);
     expect(dis.body.fund.currentBalance).toBeCloseTo(900, 2);
 
-    const rep = await auth('post', `/api/revolving-funds/${fundId}/replenish`, tok.super).send({ amount: 100 });
+    // Replenishment always needs approval - filing alone must not move money.
+    const filed = await auth('post', '/api/requisition-slips', tok.staff)
+      .send({ type: 'fund-replenish', fundId, amount: 100 });
+    expect(filed.status).toBe(200);
+    const RevolvingFund = mongoose.model('RevolvingFund');
+    expect((await RevolvingFund.findById(fundId).lean()).currentBalance).toBeCloseTo(900, 2);
+
+    const rep = await auth('post', `/api/requisition-slips/${filed.body.slip._id}/approve`, tok.super).send({});
     expect(rep.status).toBe(200);
 
-    const RevolvingFund = mongoose.model('RevolvingFund');
     const f = await RevolvingFund.findById(fundId).lean();
     expect(f.currentBalance).toBeCloseTo(1000, 2);
   });

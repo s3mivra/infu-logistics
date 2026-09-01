@@ -73,7 +73,7 @@ export default function registerRequisitions(ctx) {
   app.post('/api/requisition-slips', verifyToken, requireStaff, async (req, res) => {
     try {
       const { type } = req.body || {};
-      if (!['petty-cash', 'procurement', 'new-fund'].includes(type)) return res.status(400).json({ success: false, error: 'type must be "petty-cash", "procurement", or "new-fund".' });
+      if (!['petty-cash', 'procurement', 'new-fund', 'fund-replenish'].includes(type)) return res.status(400).json({ success: false, error: 'type must be "petty-cash", "procurement", "new-fund", or "fund-replenish".' });
 
       const year = new Date().getFullYear();
       const slipNumber = await generateNextSequence(RequisitionSlip, `REQ-${year}`, 'slipNumber');
@@ -95,6 +95,31 @@ export default function registerRequisitions(ctx) {
           preparedBy,
         });
         await logAudit(req, { action: 'create', entity: 'RequisitionSlip', entityId: slip._id, after: { slipNumber, type, amount: amt } });
+        return res.json({ success: true, slip });
+      }
+
+      if (type === 'fund-replenish') {
+        const { fundId, amount, note, sourceAccount } = req.body;
+        if (!mongoose.Types.ObjectId.isValid(fundId || '')) return res.status(400).json({ success: false, error: 'A valid fund is required.' });
+        const fund = await RevolvingFund.findOne({ _id: fundId, isActive: true });
+        if (!fund) return res.status(404).json({ success: false, error: 'Fund not found or closed.' });
+        // amount is optional - omitted means "top up to full" (initialAmount),
+        // computed from whatever the balance actually is AT APPROVAL time
+        // (matches the old direct-replenish route's own behavior), not now -
+        // the balance can move between filing and approval.
+        let amt = 0;
+        if (amount !== undefined && amount !== null && amount !== '') {
+          amt = Number(amount);
+          if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Amount must be a positive number.' });
+        }
+
+        const slip = await RequisitionSlip.create({
+          slipNumber, type: 'fund-replenish', status: 'Pending',
+          fundId: fund._id, fundName: fund.name, amount: amt,
+          description: String(note || '').trim(), categoryCode: sourceAccount || '111000',
+          preparedBy,
+        });
+        await logAudit(req, { action: 'create', entity: 'RequisitionSlip', entityId: slip._id, after: { slipNumber, type, fundName: fund.name, amount: amt } });
         return res.json({ success: true, slip });
       }
 
@@ -205,6 +230,52 @@ export default function registerRequisitions(ctx) {
         await logAudit(req, { action: 'approve', entity: 'RequisitionSlip', entityId: slip._id, after: { slipNumber: slip.slipNumber, approvedBy: slip.approvedBy, fundId: fund._id } });
         emitToMgr('erpUpdated');
         return res.json({ success: true, slip, fund });
+      }
+
+      if (slip.type === 'fund-replenish') {
+        const fund = await RevolvingFund.findById(slip.fundId);
+        if (!fund || !fund.isActive) return res.status(404).json({ success: false, error: 'Fund no longer exists or was closed.' });
+
+        const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
+        const srcCode = (acctMeta(slip.categoryCode) && isCashLike(slip.categoryCode)) ? slip.categoryCode : '111000';
+        const srcName = acctMeta(srcCode)?.name || 'Cash on Hand';
+
+        // Re-derive "top up to full" from the CURRENT balance, not whatever
+        // it was when the slip was filed - the whole reason this needs
+        // approval is money actually moves, so it has to be right as of now.
+        const shortfall = +(fund.initialAmount - fund.currentBalance).toFixed(2);
+        const amt = slip.amount > 0 ? slip.amount : shortfall;
+        if (amt <= 0) return res.status(400).json({ success: false, error: 'Fund is already full; nothing to replenish - reject this slip instead.' });
+
+        fund.currentBalance = +(fund.currentBalance + amt).toFixed(2);
+        await fund.save();
+
+        const reference = await mkSeqRef('RF-IN');
+        const je = await JournalEntry.create({
+          date: new Date(),
+          description: `Revolving Fund replenishment: ${fund.name} (from ${srcName}) [${slip.slipNumber}]${slip.description ? ': ' + slip.description : ''}`,
+          lines: [
+            { accountCode: '114000', accountName: 'Petty Cash / Revolving Fund', debit: amt, credit: 0 },
+            { accountCode: srcCode, accountName: srcName, debit: 0, credit: amt },
+          ],
+          totalDebit: amt, totalCredit: amt, reference,
+        });
+        const tx = await RevolvingFundTx.create({
+          fundId: fund._id, type: 'replenishment', amount: amt,
+          description: slip.description || `Replenished ₱${amt.toFixed(2)}; balance restored`,
+          performedBy: slip.preparedBy, balanceAfter: fund.currentBalance, journalRef: je._id,
+        });
+
+        slip.resultRefId = String(tx._id);
+        slip.resultRefLabel = reference;
+        slip.status = 'Approved';
+        slip.approvedBy = req.user?.name || '';
+        slip.approvedAt = new Date();
+        await slip.save();
+
+        await logAudit(req, { action: 'approve', entity: 'RequisitionSlip', entityId: slip._id, after: { slipNumber: slip.slipNumber, approvedBy: slip.approvedBy, amount: amt } });
+        emitToMgr('erpUpdated');
+        return res.json({ success: true, slip, fund, tx });
       }
 
       if (slip.type === 'petty-cash') {

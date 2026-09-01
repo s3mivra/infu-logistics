@@ -3084,8 +3084,12 @@ const updateStatus = async (orderId, newStatus) => {
     finally { setRfNewSubmitting(false); }
   };
 
-  // Files a Requisition Slip instead of disbursing directly - nothing moves
-  // until it's approved on Ledger → Approvals (see requisitions.js).
+  // Disburses IMMEDIATELY - no approval queue. An expense against a fund is
+  // capped by its own currentBalance (the server refuses anything over it)
+  // and reflects right away; only money going the OTHER way (replenishing
+  // the fund, see submitRfRepl) is held for approval, since that's the side
+  // that actually draws down a real cash/bank account. See finance.js's
+  // POST /api/revolving-funds/:id/disburse.
   const submitRfDisb = async () => {
     if (rfDisbSubmitting || !rfActiveFund) return;
     const amt = parseFloat(rfDisbForm.amount);
@@ -3093,38 +3097,42 @@ const updateStatus = async (orderId, newStatus) => {
     if (!rfDisbForm.description.trim()) return ui.alert('Description is required.');
     setRfDisbSubmitting(true);
     try {
-      const res = await apiFetch('/api/requisition-slips', {
+      const res = await apiFetch(`/api/revolving-funds/${rfActiveFund._id}/disburse`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'petty-cash', fundId: rfActiveFund._id, amount: amt, description: rfDisbForm.description.trim(), categoryCode: rfDisbForm.categoryCode }),
+        body: JSON.stringify({ amount: amt, description: rfDisbForm.description.trim(), categoryCode: rfDisbForm.categoryCode }),
       });
       const data = await res.json();
-      if (!data.success) return ui.alert(data.error || 'Failed to file requisition slip.');
+      if (!data.success) return ui.alert(data.error || 'Failed to disburse.');
       setRfDisbModal(false);
       setRfDisbForm({ amount: '', description: '', categoryCode: '760000' });
-      ui.alert(`Requisition Slip ${data.slip.slipNumber} filed. Awaiting approval - the fund balance won't change until then.`);
+      setRfFunds(prev => prev.map(f => f._id === data.fund._id ? data.fund : f));
+      setRfActiveFund(data.fund);
+      await fetchRfTxs(rfActiveFund._id, 1);
     } catch (err) { ui.alert('Network error.'); }
     finally { setRfDisbSubmitting(false); }
   };
 
+  // Files a Requisition Slip instead of replenishing directly - unlike a
+  // disbursement, this draws down a real cash/bank account, so the balance
+  // doesn't move until someone with requisitions.approve signs off on
+  // Ledger → Approvals (see requisitions.js, type 'fund-replenish').
   const submitRfRepl = async () => {
     if (rfReplSubmitting || !rfActiveFund) return;
     setRfReplSubmitting(true);
     try {
-      const body = { note: rfReplForm.note, sourceAccount: rfReplForm.sourceAccount };
+      const body = { type: 'fund-replenish', fundId: rfActiveFund._id, note: rfReplForm.note, sourceAccount: rfReplForm.sourceAccount };
       if (rfReplForm.amount) body.amount = parseFloat(rfReplForm.amount);
-      const res = await apiFetch(`/api/revolving-funds/${rfActiveFund._id}/replenish`, {
+      const res = await apiFetch('/api/requisition-slips', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (!data.success) return ui.alert(data.error || 'Replenishment failed.');
+      if (!data.success) return ui.alert(data.error || 'Failed to file requisition slip.');
       setRfReplModal(false);
       setRfReplForm({ amount: '', note: '', sourceAccount: '111000' });
-      setRfFunds(prev => prev.map(f => f._id === data.fund._id ? data.fund : f));
-      setRfActiveFund(data.fund);
-      await fetchRfTxs(rfActiveFund._id, 1);
+      ui.alert(`Requisition Slip ${data.slip.slipNumber} filed. Awaiting approval - the fund balance won't change until then.`);
     } catch (err) { ui.alert('Network error.'); }
     finally { setRfReplSubmitting(false); }
   };
