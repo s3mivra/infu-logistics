@@ -145,13 +145,20 @@ export default function registerPriceTiers(ctx) {
       const tier = await PriceTier.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
       if (!tier) return res.status(404).json({ success: false, error: 'Tier not found.' });
 
-      const rows = Array.isArray(req.body?.prices) ? req.body.prices : [];
-      const clean = [];
-      for (const r of rows) {
-        if (!r || !mongoose.Types.ObjectId.isValid(r.productId)) continue;
-        const price = Number(r.price);
-        if (!Number.isFinite(price) || price < 0) continue;
-        clean.push({ productId: r.productId, price });
+      // Only validated/replaced when the caller actually sends the `prices`
+      // key - same "only touch what was sent" rule as `bulkBreaks` below.
+      // Without this, saving JUST a quantity break (which sends only
+      // `bulkBreaks`, no `prices`) fell through to `rows = []` and wiped
+      // every flat price this tier had for every product.
+      let clean = null;
+      if (Array.isArray(req.body?.prices)) {
+        clean = [];
+        for (const r of req.body.prices) {
+          if (!r || !mongoose.Types.ObjectId.isValid(r.productId)) continue;
+          const price = Number(r.price);
+          if (!Number.isFinite(price) || price < 0) continue;
+          clean.push({ productId: r.productId, price });
+        }
       }
       // Quantity breaks, scoped to THIS tier - optional, and independent of
       // `prices` above (a product can have a break with no flat rate, or vice
@@ -173,7 +180,7 @@ export default function registerPriceTiers(ctx) {
 
       // Confirm every productId is real and belongs to this business - a stray
       // id here would silently price a row nobody can ever see or buy.
-      const ids = [...new Set([...clean.map(c => c.productId), ...(breaksClean || []).map(c => c.productId)])];
+      const ids = [...new Set([...(clean || []).map(c => c.productId), ...(breaksClean || []).map(c => c.productId)])];
       const validIds = new Set((await Product.find({ _id: { $in: ids } }, { _id: 1 }).lean()).map(p => String(p._id)));
 
       // Snapshot the price this tier charged for each product BEFORE the
@@ -183,7 +190,7 @@ export default function registerPriceTiers(ctx) {
       // history view looks a change up by.
       const beforePrices = new Map((tier.productPrices || []).map(p => [String(p.productId), Number(p.price)]));
 
-      tier.productPrices = clean.filter(c => validIds.has(String(c.productId)));
+      if (clean !== null) tier.productPrices = clean.filter(c => validIds.has(String(c.productId)));
       if (breaksClean !== null) tier.productBulkBreaks = breaksClean.filter(c => validIds.has(String(c.productId)));
 
       await tier.save();

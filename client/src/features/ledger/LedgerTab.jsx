@@ -736,6 +736,26 @@ export default function LedgerTab({ ctx }) {
   const [reqSlipRejecting, setReqSlipRejecting] = useState(null); // slip being rejected (reason prompt)
   const [reqSlipRejectReason, setReqSlipRejectReason] = useState('');
   const [reqSlipBusy, setReqSlipBusy] = useState(false);
+  // Live fund balance for the previewed slip - fetched fresh on open rather
+  // than trusted from whatever rfFunds happens to hold, since an approver
+  // reviewing this queue may never have opened the Revolving Funds panel
+  // this session. Only meaningful for the two types that touch a fund
+  // (petty-cash out, fund-replenish in); null otherwise.
+  const [reqSlipFundBalance, setReqSlipFundBalance] = useState(null);
+  useEffect(() => {
+    const needsFund = reqSlipPreview && ['petty-cash', 'fund-replenish'].includes(reqSlipPreview.type) && reqSlipPreview.fundId;
+    if (!needsFund) { setReqSlipFundBalance(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await apiFetch('/api/revolving-funds');
+        const d = await r.json();
+        const fund = d.success ? (d.funds || []).find(f => String(f._id) === String(reqSlipPreview.fundId)) : null;
+        if (!cancelled) setReqSlipFundBalance(fund ? fund.currentBalance : null);
+      } catch { if (!cancelled) setReqSlipFundBalance(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [reqSlipPreview, apiFetch]);
 
   const fetchRequisitionSlips = async (status) => {
     setReqSlipsLoading(true);
@@ -2562,17 +2582,17 @@ export default function LedgerTab({ ctx }) {
           {/* ===== A/R OUTSTANDING SUB-TAB ===== */}
           {(ledgerSubTab === 'ar' || ledgerSubTab === 'araap') && (
             <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
-              <div className="flex justify-between items-end border-b border-white/10 pb-4">
-                <div>
-                  <h3 className="text-2xl font-black text-fg">Accounts Receivable</h3>
+              <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
+                <div className="min-w-0">
+                  <h3 className="text-xl sm:text-2xl font-black text-fg">Accounts Receivable</h3>
                   <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Non-Cash sales awaiting settlement (E-Wallet · Bank · Delivery)</p>
                 </div>
-                <div className="flex items-start gap-3">
+                <div className="flex items-end gap-3 flex-wrap">
                   <div className="text-right">
-                    <p className="text-fg/60 text-[10px] font-bold uppercase">Total Outstanding</p>
-                    <p className="text-3xl text-brand font-black tabular-nums">₱{arOutstanding.totalOutstanding.toFixed(2)}</p>
+                    <p className="text-fg/60 text-[10px] font-bold uppercase whitespace-nowrap">Total Outstanding</p>
+                    <p className="text-2xl sm:text-3xl text-brand font-black tabular-nums whitespace-nowrap">₱{arOutstanding.totalOutstanding.toFixed(2)}</p>
                   </div>
-                  {arOutstanding.orders.length > 0 && <button onClick={exportArPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
+                  {arOutstanding.orders.length > 0 && <button onClick={exportArPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition shrink-0"><Download size={12} /> PDF</button>}
                 </div>
               </div>
 
@@ -4725,6 +4745,24 @@ export default function LedgerTab({ ctx }) {
                       <div className="flex justify-between"><span className="text-fg/50">Fund</span><span className="text-fg font-bold">{reqSlipPreview.fundName}</span></div>
                       <div className="flex justify-between"><span className="text-fg/50">Description</span><span className="text-fg font-bold text-right max-w-[60%]">{reqSlipPreview.description}</span></div>
                       <div className="flex justify-between border-t border-white/10 pt-2 mt-1"><span className="text-fg/50">Amount</span><span className="text-brand font-black text-lg tabular-nums">{peso(reqSlipPreview.amount)}</span></div>
+                      {/* Live balance preview - what approving this actually
+                          does to the fund, so the reviewer isn't approving
+                          blind. Money going OUT of a fund, so subtracted. */}
+                      {reqSlipFundBalance !== null && (
+                        <div className="flex justify-between border-t border-white/10 pt-2 mt-1 text-xs">
+                          <span className="text-fg/40">Current Balance → After</span>
+                          <span className="font-mono tabular-nums">
+                            <span className="text-fg/60">{peso(reqSlipFundBalance)}</span>
+                            <span className="text-fg/30 mx-1">→</span>
+                            <span className={reqSlipFundBalance - reqSlipPreview.amount < 0 ? 'text-red-400 font-bold' : 'text-fg font-bold'}>
+                              {peso(reqSlipFundBalance - reqSlipPreview.amount)}
+                            </span>
+                          </span>
+                        </div>
+                      )}
+                      {reqSlipFundBalance !== null && reqSlipFundBalance < reqSlipPreview.amount && (
+                        <p className="text-red-400 text-[11px] font-bold">⚠ Exceeds the fund's current balance - approving this will fail.</p>
+                      )}
                     </div>
                   ) : reqSlipPreview.type === 'new-fund' ? (
                     <div className="bg-page-bg border border-white/10 rounded-lg p-4 space-y-2 text-sm">
@@ -4732,16 +4770,36 @@ export default function LedgerTab({ ctx }) {
                       {reqSlipPreview.description && <div className="flex justify-between"><span className="text-fg/50">Note</span><span className="text-fg font-bold text-right max-w-[60%]">{reqSlipPreview.description}</span></div>}
                       <div className="flex justify-between border-t border-white/10 pt-2 mt-1"><span className="text-fg/50">Opening Amount</span><span className="text-brand font-black text-lg tabular-nums">{peso(reqSlipPreview.amount)}</span></div>
                     </div>
-                  ) : reqSlipPreview.type === 'fund-replenish' ? (
-                    <div className="bg-page-bg border border-white/10 rounded-lg p-4 space-y-2 text-sm">
-                      <div className="flex justify-between"><span className="text-fg/50">Fund</span><span className="text-fg font-bold">{reqSlipPreview.fundName}</span></div>
-                      {reqSlipPreview.description && <div className="flex justify-between"><span className="text-fg/50">Note</span><span className="text-fg font-bold text-right max-w-[60%]">{reqSlipPreview.description}</span></div>}
-                      <div className="flex justify-between border-t border-white/10 pt-2 mt-1">
-                        <span className="text-fg/50">Amount</span>
-                        <span className="text-brand font-black text-lg tabular-nums">{reqSlipPreview.amount > 0 ? peso(reqSlipPreview.amount) : 'Top up to full'}</span>
+                  ) : reqSlipPreview.type === 'fund-replenish' ? (() => {
+                    // "Top up to full" resolves to the fund's own initialAmount
+                    // at approval time, not now - the preview below computes
+                    // it from the live balance we just fetched so the reviewer
+                    // sees the real number, not a placeholder.
+                    const willBe = reqSlipPreview.amount > 0
+                      ? (reqSlipFundBalance !== null ? reqSlipFundBalance + reqSlipPreview.amount : null)
+                      : (rfFunds.find(f => String(f._id) === String(reqSlipPreview.fundId))?.initialAmount ?? null);
+                    return (
+                      <div className="bg-page-bg border border-white/10 rounded-lg p-4 space-y-2 text-sm">
+                        <div className="flex justify-between"><span className="text-fg/50">Fund</span><span className="text-fg font-bold">{reqSlipPreview.fundName}</span></div>
+                        {reqSlipPreview.description && <div className="flex justify-between"><span className="text-fg/50">Note</span><span className="text-fg font-bold text-right max-w-[60%]">{reqSlipPreview.description}</span></div>}
+                        <div className="flex justify-between border-t border-white/10 pt-2 mt-1">
+                          <span className="text-fg/50">Amount</span>
+                          <span className="text-brand font-black text-lg tabular-nums">{reqSlipPreview.amount > 0 ? peso(reqSlipPreview.amount) : 'Top up to full'}</span>
+                        </div>
+                        {/* Live balance preview - money coming IN this time, so added. */}
+                        {reqSlipFundBalance !== null && (
+                          <div className="flex justify-between border-t border-white/10 pt-2 mt-1 text-xs">
+                            <span className="text-fg/40">Current Balance → After</span>
+                            <span className="font-mono tabular-nums">
+                              <span className="text-fg/60">{peso(reqSlipFundBalance)}</span>
+                              <span className="text-fg/30 mx-1">→</span>
+                              <span className="text-fg font-bold">{willBe !== null ? peso(willBe) : '—'}</span>
+                            </span>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ) : (
+                    );
+                  })() : (
                     <div className="bg-page-bg border border-white/10 rounded-lg p-4 space-y-3 text-sm">
                       <div className="flex justify-between"><span className="text-fg/50">Supplier</span><span className="text-fg font-bold">{reqSlipPreview.supplier || 'Unassigned'}</span></div>
                       <div className="space-y-1">

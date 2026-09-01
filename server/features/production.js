@@ -42,6 +42,7 @@ export default function registerProduction(ctx) {
     assertBalanced,
     ProductionOrder,
     PRODUCTION_ORDER_STATUSES,
+    PRODUCTION_FULFILLMENT_STATUSES,
   } = ctx;
 
   const canApproveProd = [requireStaff, requirePermission('production.approve')];
@@ -53,6 +54,7 @@ export default function registerProduction(ctx) {
     try {
       const filter = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
       if (req.query.status && PRODUCTION_ORDER_STATUSES.includes(req.query.status)) filter.status = req.query.status;
+      if (req.query.fulfillmentStatus && PRODUCTION_FULFILLMENT_STATUSES.includes(req.query.fulfillmentStatus)) filter.fulfillmentStatus = req.query.fulfillmentStatus;
       if (!hasPermission(req.user, 'production.view')) filter.requestedBy = req.user?.name || '\0no-name\0';
       const orders = await ProductionOrder.find(filter).sort({ createdAt: -1 }).limit(500).lean();
       res.json({ success: true, orders });
@@ -166,9 +168,14 @@ export default function registerProduction(ctx) {
 
   // ── APPROVE ───────────────────────────────────────────────────────────────
   // Re-validates against CURRENT stock (levels can have moved since filing),
-  // then consumes every material and lands the output atomically - if any
-  // material is short, nothing moves and the order stays Pending so it can
-  // be edited/refiled rather than half-consuming the batch.
+  // then consumes every material - if any material is short, nothing moves
+  // and the order stays Pending so it can be edited/refiled rather than
+  // half-consuming the batch. This is ONLY the materials leaving; the output
+  // is NOT credited yet (see /reconcile below) - yield is never guaranteed,
+  // so crediting the planned outputQty here would silently book stock that
+  // may not actually exist. Approving flips fulfillmentStatus to Processing,
+  // same idea as a Purchase Order moving to "Ordered": the plan is committed,
+  // the real-world result gets confirmed separately.
   app.post('/api/production-orders/:id/approve', verifyToken, ...canApproveProd, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
@@ -204,10 +211,50 @@ export default function registerProduction(ctx) {
           }], { session });
         }
 
-        // Output unit cost - the materials' total cost spread across the
-        // batch. Never stacked on top of anything else; this IS the cost.
-        const outputUnitCost = order.outputQty > 0 ? +(totalMaterialsCost / order.outputQty).toFixed(6) : 0;
+        order.status = 'Approved';
+        order.fulfillmentStatus = 'Processing';
+        order.batchNumber = batchNumber;
+        order.totalMaterialsCost = +totalMaterialsCost.toFixed(6);
+        order.approvedBy = req.user?.name || '';
+        order.approvedAt = new Date();
+        await order.save({ session });
 
+        return order;
+      }, { log });
+
+      await logAudit(req, { action: 'approve', entity: 'ProductionOrder', entityId: order._id, after: { batchNumber, approvedBy: order.approvedBy, totalMaterialsCost: order.totalMaterialsCost } });
+      emitToMgr('erpUpdated');
+      res.json({ success: true, order: result });
+    } catch (err) {
+      if (err?.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.message });
+      log.error?.({ err }, 'POST /api/production-orders/:id/approve failed');
+      (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+    }
+  });
+
+  // ── RECONCILE ────────────────────────────────────────────────────────────
+  // The Purchase Order "receive" step, for production: type in what actually
+  // came out of the batch. Credits the output at THAT figure (not the
+  // planned outputQty), so the recorded unit cost reflects the real yield -
+  // a lower-than-planned yield means each unit actually cost more, and this
+  // is where that shows up. fulfillmentStatus becomes Complete when the
+  // actual figure meets or beats the plan, Partial when it falls short.
+  app.post('/api/production-orders/:id/reconcile', verifyToken, ...canApproveProd, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const order = await ProductionOrder.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+      if (!order) return res.status(404).json({ success: false, error: 'Not found' });
+      if (order.status !== 'Approved') return res.status(409).json({ success: false, error: 'Only an approved order can be reconciled.' });
+      if (order.fulfillmentStatus !== 'Processing') return res.status(409).json({ success: false, error: `This batch is already ${order.fulfillmentStatus}.` });
+
+      const actualQty = Number(req.body?.actualOutputQty);
+      if (!Number.isFinite(actualQty) || actualQty <= 0) return res.status(400).json({ success: false, error: 'Enter the actual quantity produced (a positive number).' });
+
+      const batchNumber = order.batchNumber;
+      const totalMaterialsCost = Number(order.totalMaterialsCost) || 0;
+      const outputUnitCost = +(totalMaterialsCost / actualQty).toFixed(6);
+
+      const result = await withOptionalTransaction(mongoose, async (session) => {
         let outputItem;
         if (order.outputType === 'existing') {
           outputItem = await Inventory.findById(order.outputInvId).session(session ?? null);
@@ -215,13 +262,13 @@ export default function registerProduction(ctx) {
 
           const existingQty = Number(outputItem.stockQty) || 0;
           const existingValue = existingQty * (Number(outputItem.unitCost) || 0);
-          const addedValue = order.outputQty * outputUnitCost;
-          const newQty = +(existingQty + order.outputQty).toFixed(6);
+          const addedValue = actualQty * outputUnitCost;
+          const newQty = +(existingQty + actualQty).toFixed(6);
           outputItem.stockQty = newQty;
           outputItem.unitCost = newQty > 0 ? +((existingValue + addedValue) / newQty).toFixed(6) : 0;
 
           outputItem.expiryBatches = [...(outputItem.expiryBatches || []), {
-            qty: order.outputQty,
+            qty: actualQty,
             expiryDate: order.outputExpiryDate || null,
             productionDate: order.productionDate || new Date(),
             receivedAt: new Date(),
@@ -235,7 +282,7 @@ export default function registerProduction(ctx) {
           const created = await Inventory.create([{
             businessType: BUSINESS_TYPE, ...tenantScope(req),
             itemCode, itemName: order.outputName,
-            stockQty: order.outputQty, unit: order.outputUnit,
+            stockQty: actualQty, unit: order.outputUnit,
             unitCost: outputUnitCost,
             displayUnit: order.outputUnit, unitMultiplier: 1,
             packSize: order.outputPackSize || null,
@@ -243,7 +290,7 @@ export default function registerProduction(ctx) {
             stockLocation: order.outputStockLocation || '',
             expiryDate: order.outputExpiryDate || null,
             expiryBatches: [{
-              qty: order.outputQty,
+              qty: actualQty,
               expiryDate: order.outputExpiryDate || null,
               productionDate: order.productionDate || new Date(),
               receivedAt: new Date(),
@@ -256,8 +303,8 @@ export default function registerProduction(ctx) {
 
         await StockCard.create([{
           inventoryId: outputItem._id, itemName: outputItem.itemName, type: 'Production Output',
-          reference: batchNumber, qtyChange: order.outputQty, balanceAfter: outputItem.stockQty,
-          unitCost: outputUnitCost, remarks: `Produced in batch ${batchNumber}`,
+          reference: batchNumber, qtyChange: actualQty, balanceAfter: outputItem.stockQty,
+          unitCost: outputUnitCost, remarks: `Produced in batch ${batchNumber} (planned ${order.outputQty}${order.outputUnit})`,
         }], { session });
 
         // Wired into the Ledger: a real, balanced journal entry so the batch
@@ -275,27 +322,27 @@ export default function registerProduction(ctx) {
           assertBalanced(lines, batchNumber);
           await JournalEntry.create([{
             reference: batchNumber,
-            description: `Production batch ${batchNumber}: ${order.materials.map(m => m.itemName).join(', ')} → ${order.outputQty}${order.outputUnit} ${outputItem.itemName}`,
+            description: `Production batch ${batchNumber}: ${order.materials.map(m => m.itemName).join(', ')} → ${actualQty}${order.outputUnit} ${outputItem.itemName} (planned ${order.outputQty}${order.outputUnit})`,
             lines, totalDebit: totalMaterialsCost, totalCredit: totalMaterialsCost,
           }], { session });
         }
 
-        order.status = 'Approved';
-        order.batchNumber = batchNumber;
+        order.fulfillmentStatus = actualQty >= order.outputQty ? 'Complete' : 'Partial';
+        order.actualOutputQty = actualQty;
         order.outputInvId = outputItem._id;
-        order.approvedBy = req.user?.name || '';
-        order.approvedAt = new Date();
+        order.reconciledBy = req.user?.name || '';
+        order.reconciledAt = new Date();
         await order.save({ session });
 
         return { order, outputItem };
       }, { log });
 
-      await logAudit(req, { action: 'approve', entity: 'ProductionOrder', entityId: order._id, after: { batchNumber, approvedBy: order.approvedBy, outputInvId: String(result.outputItem._id) } });
+      await logAudit(req, { action: 'reconcile', entity: 'ProductionOrder', entityId: order._id, after: { batchNumber, actualQty, fulfillmentStatus: result.order.fulfillmentStatus } });
       emitToMgr('erpUpdated');
       res.json({ success: true, order: result.order, outputItem: result.outputItem });
     } catch (err) {
       if (err?.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.message });
-      log.error?.({ err }, 'POST /api/production-orders/:id/approve failed');
+      log.error?.({ err }, 'POST /api/production-orders/:id/reconcile failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
   });

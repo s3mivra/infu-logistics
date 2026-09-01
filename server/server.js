@@ -2930,11 +2930,21 @@ const RequisitionSlip = mongoose.model('RequisitionSlip', RequisitionSlipSchema)
 // Production Orders (logistics deployments) - "take these raw materials from
 // inventory, turn them into this finished item, in this batch". Filed by any
 // staff member (Pending), but - same gate as RequisitionSlip above - nothing
-// actually moves until someone holding production.approve signs off: only
-// THEN do the materials actually leave inventory and the output actually
-// land, atomically, together. Filing never touches stock, so a request that
-// sits unapproved for days can't have already silently drained the shelf.
+// actually moves until someone holding production.approve signs off.
+//
+// Two SEPARATE status tracks, mirroring the Purchase Order pattern
+// (Ordered → Processing → Complete/Incomplete, reconciled by hand against
+// what actually arrived):
+//   `status` - the approval decision: Pending → Approved/Rejected. Approving
+//     is what actually consumes the materials (the planned recipe is what's
+//     spent, known up front - re-validated against current stock).
+//   `fulfillmentStatus` - only meaningful once Approved: Processing (materials
+//     spent, output not yet confirmed) → Complete/Partial once someone types
+//     in the ACTUAL quantity produced (can differ from the planned outputQty -
+//     yield is never guaranteed) and it's credited to inventory at that real
+//     figure, not the estimate.
 const PRODUCTION_ORDER_STATUSES = ['Pending', 'Approved', 'Rejected'];
+const PRODUCTION_FULFILLMENT_STATUSES = ['Processing', 'Partial', 'Complete'];
 const ProductionOrderSchema = new mongoose.Schema({
   businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
@@ -2977,6 +2987,17 @@ const ProductionOrderSchema = new mongoose.Schema({
   rejectedBy: { type: String, default: '' },
   rejectedAt: { type: Date, default: null },
   rejectionReason: { type: String, default: '' },
+
+  // ── Fulfillment (post-approval reconciliation) ──────────────────────────
+  fulfillmentStatus: { type: String, enum: PRODUCTION_FULFILLMENT_STATUSES, default: null },
+  // Total cost of the materials actually consumed at approval - captured
+  // then (not re-derived later, unitCost can drift) so reconciliation can
+  // compute the output's real unit cost from whatever quantity actually
+  // came out, however far that turns out to be from the plan.
+  totalMaterialsCost: { type: Number, default: 0 },
+  actualOutputQty: { type: Number, default: null },        // base units - null until reconciled
+  reconciledBy: { type: String, default: '' },
+  reconciledAt: { type: Date, default: null },
 }, { timestamps: true });
 ProductionOrderSchema.index({ businessType: 1, status: 1, createdAt: -1 });
 const ProductionOrder = mongoose.model('ProductionOrder', ProductionOrderSchema);
@@ -3216,6 +3237,7 @@ const ctx = {
   ProductionOrderSchema,
   ProductionOrder,
   PRODUCTION_ORDER_STATUSES,
+  PRODUCTION_FULFILLMENT_STATUSES,
   verifyToken,
   verifyClientToken,
   requireSuperAdmin,

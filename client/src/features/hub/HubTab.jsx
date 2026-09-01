@@ -76,6 +76,22 @@ export default function HubTab({ ctx }) {
   const [askItemName, setAskItemName]   = useState('');
   const [askUnit, setAskUnit]           = useState('');
   const [askQty, setAskQty]             = useState('');
+  // Quick-pick from your OWN inventory catalogue (a running-low item you
+  // already stock is the common case) - just pre-fills the name/unit text
+  // fields below, which stay freely editable since you can't see the
+  // partner's stock and the request is name+qty only, not a real item link.
+  const [askPick, setAskPick]           = useState('');
+
+  // "+ New item not yet in Inventory" - Send Stock normally requires picking
+  // a REAL inventory item (it decrements actual stock on send), but a brand
+  // new/untracked product has nothing to pick. Toggling this creates the
+  // Inventory record first (starting stock = the qty typed here), then adds
+  // it to the cart exactly like any other pick.
+  const [sendManualMode, setSendManualMode] = useState(false);
+  const [sendNewName, setSendNewName]       = useState('');
+  const [sendNewUnit, setSendNewUnit]       = useState('pcs');
+  const [sendNewCost, setSendNewCost]       = useState('');
+  const [sendNewBusy, setSendNewBusy]       = useState(false);
   const [askNote, setAskNote]           = useState('');
   const [askCart, setAskCart]           = useState([]); // [{itemName,unit,qty,note}]
   const [askBusy, setAskBusy]           = useState(false);
@@ -107,7 +123,7 @@ export default function HubTab({ ctx }) {
     const qty = parseFloat(askQty);
     if (!askItemName.trim() || !(qty > 0)) return;
     setAskCart(c => [...c, { itemName: askItemName.trim(), unit: askUnit.trim(), qty, note: askNote.trim() }]);
-    setAskItemName(''); setAskUnit(''); setAskQty(''); setAskNote('');
+    setAskItemName(''); setAskUnit(''); setAskQty(''); setAskNote(''); setAskPick('');
   };
   const removeFromAskCart = (idx) => setAskCart(c => c.filter((_, i) => i !== idx));
 
@@ -231,6 +247,34 @@ export default function HubTab({ ctx }) {
   };
 
   const removeFromCart = (idx) => setSendCart(c => c.filter((_, i) => i !== idx));
+
+  // Creates the new Inventory item (starting stock = the qty being sent),
+  // then adds it to the cart exactly like picking an existing one - Send
+  // Stock always ships a REAL inventory item, so a brand-new product has to
+  // become one before it can go in the cart at all.
+  const addNewItemToCart = async () => {
+    const name = sendNewName.trim();
+    const qty = parseFloat(sendQty);
+    if (!name || !(qty > 0)) return;
+    setSendNewBusy(true); setSendErr('');
+    try {
+      const res = await authFetch('/api/inventory', {
+        method: 'POST',
+        body: JSON.stringify({
+          itemName: name, unit: sendNewUnit.trim() || 'pcs',
+          stockQty: qty, unitCost: parseFloat(sendNewCost) || 0,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) { setSendErr(data.error || 'Failed to create the new item.'); return; }
+      const item = data.item;
+      setSendCart(c => [...c, { itemId: item._id, itemName: item.itemName, unit: item.unit, qty, note: sendNote.trim() }]);
+      fetchERPData?.(); // so it also shows up in the dropdown for the next line
+      setSendManualMode(false);
+      setSendNewName(''); setSendNewUnit('pcs'); setSendNewCost(''); setSendQty(''); setSendNote('');
+    } catch { setSendErr('Failed to create the new item. Check your connection.'); }
+    finally { setSendNewBusy(false); }
+  };
 
   const sendTransfer = async () => {
     if (!sendPartner || sendCart.length === 0) return;
@@ -628,28 +672,63 @@ export default function HubTab({ ctx }) {
 
               {/* Add item row */}
               <div className="bg-page-bg border border-white/8 rounded-xl p-3 mb-3">
-                <p className="text-[10px] text-fg/40 uppercase font-bold mb-2">Add Item</p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                  <select value={sendItem} onChange={e => setSendItem(e.target.value)} className={input}>
-                    <option value="">- Select product -</option>
-                    {inventory.map(i => (
-                      <option key={i._id} value={i._id}>{i.itemName} · {i.stockQty} {i.unit}</option>
-                    ))}
-                  </select>
-                  <input
-                    type="number" min="0.001" step="any" value={sendQty}
-                    onChange={e => setSendQty(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && addToCart()}
-                    className={input}
-                    placeholder={sendItem && inventory.find(i => i._id === sendItem) ? `Qty (${inventory.find(i => i._id === sendItem).unit})` : 'Quantity'}
-                  />
-                  <input value={sendNote} onChange={e => setSendNote(e.target.value)} onKeyDown={e => e.key === 'Enter' && addToCart()} className={input} placeholder="Note (optional)" />
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[10px] text-fg/40 uppercase font-bold">Add Item</p>
+                  {/* A brand-new/untracked product has nothing to pick from
+                      the dropdown below - toggling this creates its
+                      Inventory record first, so the shipment still ships a
+                      real, stock-backed item. */}
+                  <button onClick={() => setSendManualMode(m => !m)} className="text-[10px] font-bold uppercase tracking-wider text-accent hover:underline">
+                    {sendManualMode ? '← Pick from Inventory instead' : '+ New product not yet in Inventory'}
+                  </button>
                 </div>
-                <button
-                  onClick={addToCart}
-                  disabled={!sendItem || !(parseFloat(sendQty) > 0)}
-                  className={`mt-2 ${btn('ghost')} text-xs`}
-                >+ Add to Transfer</button>
+                {sendManualMode ? (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                      <input value={sendNewName} onChange={e => setSendNewName(e.target.value)} className={input} placeholder="New product name" />
+                      <input value={sendNewUnit} onChange={e => setSendNewUnit(e.target.value)} className={input} placeholder="Unit (pcs, kg…)" />
+                      <input
+                        type="number" min="0.001" step="any" value={sendQty}
+                        onChange={e => setSendQty(e.target.value)}
+                        className={input} placeholder="Starting Qty"
+                      />
+                      <input
+                        type="number" min="0" step="0.01" value={sendNewCost}
+                        onChange={e => setSendNewCost(e.target.value)}
+                        className={input} placeholder="Unit Cost (optional)"
+                      />
+                    </div>
+                    <button
+                      onClick={addNewItemToCart}
+                      disabled={sendNewBusy || !sendNewName.trim() || !(parseFloat(sendQty) > 0)}
+                      className={`mt-2 ${btn('ghost')} text-xs`}
+                    >{sendNewBusy ? 'Creating…' : '+ Create & Add to Transfer'}</button>
+                  </>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                      <select value={sendItem} onChange={e => setSendItem(e.target.value)} className={input}>
+                        <option value="">- Select product -</option>
+                        {inventory.map(i => (
+                          <option key={i._id} value={i._id}>{i.itemName} · {i.stockQty} {i.unit}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="number" min="0.001" step="any" value={sendQty}
+                        onChange={e => setSendQty(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && addToCart()}
+                        className={input}
+                        placeholder={sendItem && inventory.find(i => i._id === sendItem) ? `Qty (${inventory.find(i => i._id === sendItem).unit})` : 'Quantity'}
+                      />
+                      <input value={sendNote} onChange={e => setSendNote(e.target.value)} onKeyDown={e => e.key === 'Enter' && addToCart()} className={input} placeholder="Note (optional)" />
+                    </div>
+                    <button
+                      onClick={addToCart}
+                      disabled={!sendItem || !(parseFloat(sendQty) > 0)}
+                      className={`mt-2 ${btn('ghost')} text-xs`}
+                    >+ Add to Transfer</button>
+                  </>
+                )}
               </div>
 
               {/* Cart */}
@@ -709,8 +788,23 @@ export default function HubTab({ ctx }) {
 
               <div className="bg-page-bg border border-white/8 rounded-xl p-3 mb-3">
                 <p className="text-[10px] text-fg/40 uppercase font-bold mb-2">Add Item</p>
+                {/* Quick-pick from your own catalogue (e.g. asking for more of
+                    something you already stock but is running low) - just
+                    fills the Item Name/Unit fields below, which stay editable
+                    since you can't see the partner's stock and this is a
+                    name+qty ask, not a link to a real inventory item. */}
+                <select value={askPick} onChange={e => {
+                  const id = e.target.value; setAskPick(id);
+                  const item = inventory.find(i => i._id === id);
+                  if (item) { setAskItemName(item.itemName); setAskUnit(item.unit || ''); }
+                }} className={`${input} mb-2`}>
+                  <option value="">- Or pick from your own products (optional) -</option>
+                  {inventory.map(i => (
+                    <option key={i._id} value={i._id}>{i.itemName} · {i.unit}</option>
+                  ))}
+                </select>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                  <input value={askItemName} onChange={e => setAskItemName(e.target.value)} className={input} placeholder="Item name" />
+                  <input value={askItemName} onChange={e => { setAskItemName(e.target.value); setAskPick(''); }} className={input} placeholder="Item name" />
                   <input value={askUnit} onChange={e => setAskUnit(e.target.value)} className={input} placeholder="Unit (pcs, kg…)" />
                   <input
                     type="number" min="0.001" step="any" value={askQty}

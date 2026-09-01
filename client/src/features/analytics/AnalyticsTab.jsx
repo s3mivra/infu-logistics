@@ -240,15 +240,15 @@ export default function AnalyticsTab({ ctx }) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-brand border border-brand rounded-xl p-6 shadow-lg shadow-brand/5 flex flex-col justify-center">
               <p className="text-white text-xs font-bold uppercase tracking-wider mb-1">Net Revenue (All-Time)</p>
-              <p className="text-4xl font-black text-white mb-1">₱{allTime.revenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+              <p className="text-2xl sm:text-3xl md:text-4xl font-black text-white mb-1 break-words">₱{allTime.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
               <p className="text-sm text-white font-medium">{allTime.orders} completed orders</p>
-              {allTime.comp > 0 && <p className="text-xs text-fg/50 font-semibold mt-1">+₱{allTime.comp.toLocaleString(undefined, { minimumFractionDigits: 2 })} complimentary (excluded)</p>}
+              {allTime.comp > 0 && <p className="text-xs text-fg/50 font-semibold mt-1">+₱{allTime.comp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} complimentary (excluded)</p>}
             </div>
 
             <div className="bg-surface border border-white/10 rounded-xl p-6 flex flex-col justify-center">
               <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Best Sales Day</p>
               <p className="text-3xl font-black text-fg mb-2">{bestDay.date}</p>
-              <p className="text-sm text-green-400 font-bold uppercase tracking-widest">₱{bestDay.revenue.toLocaleString(undefined, { minimumFractionDigits: 2 })} Earned</p>
+              <p className="text-sm text-green-400 font-bold uppercase tracking-widest">₱{bestDay.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Earned</p>
             </div>
 
             <div className="bg-surface border border-white/10 rounded-xl p-6 overflow-hidden relative">
@@ -270,7 +270,7 @@ export default function AnalyticsTab({ ctx }) {
           <div className="bg-surface border border-white/10 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-10">
             <div className="flex-1">
               <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Total Inventory Value</p>
-              <p className="text-3xl font-black text-fg">₱{totalInvValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+              <p className="text-3xl font-black text-fg">₱{totalInvValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
               <p className="text-fg/30 text-xs font-medium mt-1">Cost of all stock on hand</p>
             </div>
             <div className="flex gap-6 sm:gap-10 shrink-0">
@@ -283,7 +283,7 @@ export default function AnalyticsTab({ ctx }) {
                 <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider mt-0.5">Out of Stock</p>
               </div>
               <div className="flex flex-col items-center">
-                <p className="text-2xl font-black text-fg">₱{totalSkus > 0 ? (totalInvValue / totalSkus).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '0.00'}</p>
+                <p className="text-2xl font-black text-fg">₱{totalSkus > 0 ? (totalInvValue / totalSkus).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}</p>
                 <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider mt-0.5">Avg / SKU</p>
               </div>
               <div className="flex flex-col items-center" title="COGS this month ÷ average inventory value - estimated, not an exact historical figure (see tooltip on the label below)">
@@ -315,7 +315,7 @@ export default function AnalyticsTab({ ctx }) {
                     ))}
                   </div>
                   <span className="text-xs font-bold text-fg/60">
-                    ₱{salesTrendData.currentTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    ₱{salesTrendData.currentTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     <span className={`ml-2 ${salesTrendData.changePct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                       {salesTrendData.changePct >= 0 ? '▲' : '▼'} {Math.abs(salesTrendData.changePct)}% vs prior {salesTrendPeriod}
                     </span>

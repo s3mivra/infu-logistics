@@ -1,11 +1,21 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Factory, Plus, Trash2, Check, X, Package, Clock } from 'lucide-react';
+import { Factory, Plus, Trash2, Check, X, Package, Clock, ClipboardCheck } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
+// Approval decision - Pending -> Approved/Rejected.
 const STATUS_CLS = {
   Pending:  'bg-yellow-500/15 text-yellow-400',
   Approved: 'bg-green-500/15 text-green-500',
   Rejected: 'bg-red-500/15 text-red-400',
+};
+// Fulfillment - only meaningful once Approved. Processing (materials spent,
+// actual yield not yet confirmed) -> Complete/Partial once reconciled,
+// mirroring how a Purchase Order's Ordered/Processing/Complete/Incomplete
+// tracks what actually arrived vs what was ordered.
+const FULFILLMENT_CLS = {
+  Processing: 'bg-blue-500/15 text-blue-400',
+  Partial:    'bg-orange-500/15 text-orange-400',
+  Complete:   'bg-green-500/15 text-green-500',
 };
 
 // Production Orders (logistics deployments): materials taken from Inventory,
@@ -37,6 +47,8 @@ export default function ProductionTab({ ctx }) {
   const [rejecting, setRejecting] = useState(null);   // order being rejected
   const [rejectReason, setRejectReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const [reconciling, setReconciling] = useState(null); // order being reconciled
+  const [actualQty, setActualQty] = useState('');
 
   // ── Filing form ────────────────────────────────────────────────────────────
   const [formOpen, setFormOpen] = useState(false);
@@ -136,7 +148,10 @@ export default function ProductionTab({ ctx }) {
   };
 
   const approveOrder = async (order) => {
-    if (!(await ui.confirm(`Approve production batch for ${order.outputName}? This will decrease the materials and add ${order.outputQty}${order.outputUnit} of stock immediately.`))) return;
+    // Approving only consumes the materials now - the output isn't credited
+    // until someone confirms the actual yield (see reconcileOrder below), so
+    // the confirmation here is honest about what actually happens.
+    if (!(await ui.confirm(`Approve production batch for ${order.outputName}? This will decrease the materials now. The output stock is added once the actual quantity produced is confirmed (Reconcile).`))) return;
     setBusy(true);
     try {
       const res = await apiFetch(`/api/production-orders/${order._id}/approve`, { method: 'POST', body: JSON.stringify({}) });
@@ -148,6 +163,27 @@ export default function ProductionTab({ ctx }) {
         ui.alert(data.error || 'Failed to approve.');
       }
     } catch { ui.alert('Failed to approve. Check your connection.'); }
+    finally { setBusy(false); }
+  };
+
+  // The manual "how much did we actually get" step - mirrors typing a
+  // Purchase Order's receivedQty. Credits the output at THIS figure, not
+  // the planned outputQty.
+  const submitReconcile = async () => {
+    const qty = parseFloat(actualQty);
+    if (!qty || qty <= 0) return ui.alert('Enter the actual quantity produced.');
+    setBusy(true);
+    try {
+      const res = await apiFetch(`/api/production-orders/${reconciling._id}/reconcile`, { method: 'POST', body: JSON.stringify({ actualOutputQty: qty }) });
+      const data = await res.json();
+      if (data.success) {
+        setReconciling(null); setActualQty('');
+        fetchOrders(statusFilter);
+        fetchERPData?.();
+      } else {
+        ui.alert(data.error || 'Failed to reconcile.');
+      }
+    } catch { ui.alert('Failed to reconcile. Check your connection.'); }
     finally { setBusy(false); }
   };
 
@@ -329,7 +365,12 @@ export default function ProductionTab({ ctx }) {
                     {o.batchNumber && <span className="font-mono text-accent"> · {o.batchNumber}</span>}
                   </p>
                 </div>
-                <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-full ${STATUS_CLS[o.status] || ''}`}>{o.status}</span>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-full ${STATUS_CLS[o.status] || ''}`}>{o.status}</span>
+                  {o.fulfillmentStatus && (
+                    <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-full ${FULFILLMENT_CLS[o.fulfillmentStatus] || ''}`}>{o.fulfillmentStatus}</span>
+                  )}
+                </div>
               </div>
 
               <div className="text-xs text-fg/60 space-y-0.5 mb-2">
@@ -337,6 +378,18 @@ export default function ProductionTab({ ctx }) {
                   <p key={m.invId}>{m.itemName} <span className="text-fg/30 font-mono">× {m.qty}{m.unit}</span></p>
                 ))}
               </div>
+
+              {/* Once reconciled, show planned vs actual - the whole point of
+                  this step is that yield isn't guaranteed, so the gap (if
+                  any) should be visible, not just the final number. */}
+              {o.actualOutputQty != null && (
+                <p className="text-xs mb-1">
+                  <span className="text-fg/40">Planned {o.outputQty}{o.outputUnit} → Actual</span>{' '}
+                  <span className={o.fulfillmentStatus === 'Partial' ? 'text-orange-400 font-bold' : 'text-green-400 font-bold'}>
+                    {o.actualOutputQty}{o.outputUnit}
+                  </span>
+                </p>
+              )}
 
               <p className="text-[10px] text-fg/30 flex items-center gap-1.5">
                 <Clock size={11} /> {new Date(o.createdAt).toLocaleString()}
@@ -366,6 +419,15 @@ export default function ProductionTab({ ctx }) {
                   </button>
                 </div>
               )}
+
+              {o.status === 'Approved' && o.fulfillmentStatus === 'Processing' && canApprove && (
+                <div className="flex items-center mt-3 pt-3 border-t border-white/5">
+                  <button onClick={() => { setReconciling(o); setActualQty(String(o.outputQty)); }} disabled={busy}
+                    className="flex items-center gap-1.5 bg-accent hover:bg-accent/90 disabled:opacity-50 text-white font-bold text-xs px-3 py-1.5 rounded-lg transition">
+                    <ClipboardCheck size={13} /> Reconcile - confirm actual output
+                  </button>
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -383,6 +445,27 @@ export default function ProductionTab({ ctx }) {
             <div className="flex gap-2">
               <button onClick={() => setRejecting(null)} className="flex-1 border border-white/10 text-fg/60 hover:text-fg py-2 rounded-lg text-xs font-bold uppercase transition">Cancel</button>
               <button onClick={submitReject} disabled={busy} className="flex-1 bg-red-500 hover:bg-red-400 disabled:opacity-50 text-white py-2 rounded-lg text-xs font-bold uppercase transition">Reject</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Reconcile modal - the manual "actual output qty" input, like typing
+          a Purchase Order's received quantity. */}
+      {reconciling && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setReconciling(null)}>
+          <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm" onClick={e => e.stopPropagation()}>
+            <h3 className="font-bold text-fg mb-1 flex items-center gap-1.5"><ClipboardCheck size={16} className="text-accent" /> Confirm actual output</h3>
+            <p className="text-fg/50 text-xs mb-3">{reconciling.outputName} - planned {reconciling.outputQty}{reconciling.outputUnit}</p>
+            <label className="text-[9px] text-fg/40 uppercase tracking-wider block mb-1">Actual quantity produced ({reconciling.outputUnit})</label>
+            <input type="number" min="0" step="0.01" autoFocus value={actualQty} onChange={e => setActualQty(e.target.value)}
+              className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent mb-1" />
+            <p className="text-[10px] text-fg/30 mb-3">
+              Meets or beats {reconciling.outputQty}{reconciling.outputUnit} → marked <span className="text-green-400 font-bold">Complete</span>.
+              Falls short → marked <span className="text-orange-400 font-bold">Partial</span>. This is what actually gets added to stock.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => { setReconciling(null); setActualQty(''); }} className="flex-1 border border-white/10 text-fg/60 hover:text-fg py-2 rounded-lg text-xs font-bold uppercase transition">Cancel</button>
+              <button onClick={submitReconcile} disabled={busy} className="flex-1 bg-accent hover:bg-accent/90 disabled:opacity-50 text-white py-2 rounded-lg text-xs font-bold uppercase transition">Confirm</button>
             </div>
           </div>
         </div>

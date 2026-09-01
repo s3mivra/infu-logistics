@@ -60,6 +60,30 @@ describe('PUT /api/price-tiers/:id/products with bulkBreaks', () => {
     expect(saved.productBulkBreaks).toHaveLength(1); // still there
   });
 
+  it('regression: adding a break via bulkBreaks-only (no prices key) must NOT wipe the existing flat price', async () => {
+    // This is exactly what the Pricing Control UI's "append" button sends -
+    // saveTierBulkBreaks() only ever includes `bulkBreaks` in the body, never
+    // `prices`. Before the fix, `prices` defaulted to [] whenever it was
+    // omitted (unlike `bulkBreaks`, which stayed untouched when omitted), so
+    // a break-only save silently cleared every flat price this tier had.
+    const { tier, prod } = await tierWithBreak({ tierName: 'TierBulkOnly', flatPrice: 780, minQty: null, breakPrice: null });
+    const saved0 = await mongoose.model('PriceTier').findById(tier._id).lean();
+    expect(saved0.productPrices).toHaveLength(1);
+    expect(saved0.productPrices[0].price).toBe(780);
+
+    // Add a quantity break the way the UI actually does it - bulkBreaks only.
+    const res = await auth('put', `/api/price-tiers/${tier._id}/products`, superTok)
+      .send({ bulkBreaks: [{ productId: prod._id, minQty: 20, price: 550 }] });
+    expect(res.status).toBe(200);
+
+    const saved = await mongoose.model('PriceTier').findById(tier._id).lean();
+    expect(saved.productPrices).toHaveLength(1);        // flat price still there
+    expect(saved.productPrices[0].price).toBe(780);       // unchanged
+    expect(saved.productBulkBreaks).toHaveLength(1);
+    expect(saved.productBulkBreaks[0].minQty).toBe(20);
+    expect(saved.productBulkBreaks[0].price).toBe(550);
+  });
+
   it('rejects a break with a non-positive minQty or a negative price', async () => {
     const tier = await mongoose.model('PriceTier').create({ name: 'TierC', pricingMode: 'per_product' });
     const prod = await mongoose.model('Product').create({ name: 'TBB Reject Product', category: 'TbbCat', basePrice: 100 });

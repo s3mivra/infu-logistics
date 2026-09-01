@@ -228,12 +228,23 @@ const ZoomableImage = ({ src, alt }) => {
     setPos(clampPos({ x: offX, y: offY }, 2.5));
   };
 
-  const onWheel = (e) => {
-    e.preventDefault();
-    const next = clampScale(scale - e.deltaY * 0.0025);
-    setScale(next);
-    if (next <= 1) setPos({ x: 0, y: 0 }); else setPos(p => clampPos(p, next));
-  };
+  // React's synthetic onWheel is attached passively, so e.preventDefault()
+  // there is silently ignored and the page scrolls right through the zoom -
+  // has to be a real DOM listener with { passive: false } to actually stop it.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const handler = (e) => {
+      e.preventDefault();
+      setScale(s => {
+        const next = clampScale(s - e.deltaY * 0.0025);
+        setPos(p => (next <= 1 ? { x: 0, y: 0 } : clampPos(p, next)));
+        return next;
+      });
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, []);
 
   const onMouseDown = (e) => {
     if (scale <= 1) return;
@@ -277,8 +288,7 @@ const ZoomableImage = ({ src, alt }) => {
   return (
     <div ref={wrapRef}
       className="relative w-full h-full flex items-center justify-center overflow-hidden touch-none select-none"
-      style={{ cursor: scale > 1 ? 'grab' : 'zoom-in' }}
-      onWheel={onWheel}
+      style={{ cursor: scale > 1 ? 'grab' : 'zoom-in', overscrollBehavior: 'contain' }}
       onDoubleClick={e => toggleZoom(e.clientX, e.clientY)}
       onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={endDrag} onMouseLeave={endDrag}
       onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
