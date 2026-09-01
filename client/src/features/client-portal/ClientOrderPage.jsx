@@ -195,6 +195,107 @@ const ProductCard = memo(({ product, onAdd, onPreview, showPrices }) => {
 });
 ProductCard.displayName = 'ProductCard';
 
+// Pinch/scroll/double-tap zoom for the product preview photo. Self-contained
+// (no external gesture lib) - supports two-finger pinch and single-finger
+// drag-to-pan once zoomed (touch), mouse wheel zoom + drag-to-pan (desktop),
+// and a double-click/double-tap to jump between 1x and 2.5x centered on
+// where the user clicked. Resets to 1x whenever the image itself changes
+// (new product opened), via the `src` key remount below.
+const ZoomableImage = ({ src, alt }) => {
+  const wrapRef = useRef(null);
+  const [scale, setScale] = useState(1);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const drag = useRef(null);       // { startX, startY, origX, origY } while panning (mouse or 1-finger)
+  const pinch = useRef(null);      // { dist, scale } while 2-finger pinching
+
+  const clampScale = (s) => Math.min(4, Math.max(1, s));
+  const clampPos = (p, s) => {
+    if (!wrapRef.current) return p;
+    const { width, height } = wrapRef.current.getBoundingClientRect();
+    const maxX = (width * (s - 1)) / 2;
+    const maxY = (height * (s - 1)) / 2;
+    return { x: Math.min(maxX, Math.max(-maxX, p.x)), y: Math.min(maxY, Math.max(-maxY, p.y)) };
+  };
+
+  const toggleZoom = (clientX, clientY) => {
+    if (scale > 1) { setScale(1); setPos({ x: 0, y: 0 }); return; }
+    if (!wrapRef.current) { setScale(2.5); return; }
+    const rect = wrapRef.current.getBoundingClientRect();
+    // Zoom in centered on the tap/click point rather than the image center.
+    const offX = (rect.width / 2 - (clientX - rect.left)) * (2.5 - 1);
+    const offY = (rect.height / 2 - (clientY - rect.top)) * (2.5 - 1);
+    setScale(2.5);
+    setPos(clampPos({ x: offX, y: offY }, 2.5));
+  };
+
+  const onWheel = (e) => {
+    e.preventDefault();
+    const next = clampScale(scale - e.deltaY * 0.0025);
+    setScale(next);
+    if (next <= 1) setPos({ x: 0, y: 0 }); else setPos(p => clampPos(p, next));
+  };
+
+  const onMouseDown = (e) => {
+    if (scale <= 1) return;
+    drag.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y };
+  };
+  const onMouseMove = (e) => {
+    if (!drag.current) return;
+    const next = { x: drag.current.origX + (e.clientX - drag.current.startX), y: drag.current.origY + (e.clientY - drag.current.startY) };
+    setPos(clampPos(next, scale));
+  };
+  const endDrag = () => { drag.current = null; };
+
+  const touchDist = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+  const onTouchStart = (e) => {
+    if (e.touches.length === 2) {
+      pinch.current = { dist: touchDist(e.touches), scale };
+      drag.current = null;
+    } else if (e.touches.length === 1 && scale > 1) {
+      const t = e.touches[0];
+      drag.current = { startX: t.clientX, startY: t.clientY, origX: pos.x, origY: pos.y };
+    }
+  };
+  const onTouchMove = (e) => {
+    if (e.touches.length === 2 && pinch.current) {
+      e.preventDefault();
+      const next = clampScale(pinch.current.scale * (touchDist(e.touches) / pinch.current.dist));
+      setScale(next);
+      if (next <= 1) setPos({ x: 0, y: 0 }); else setPos(p => clampPos(p, next));
+    } else if (e.touches.length === 1 && drag.current) {
+      e.preventDefault();
+      const t = e.touches[0];
+      const next = { x: drag.current.origX + (t.clientX - drag.current.startX), y: drag.current.origY + (t.clientY - drag.current.startY) };
+      setPos(clampPos(next, scale));
+    }
+  };
+  const onTouchEnd = (e) => {
+    if (e.touches.length < 2) pinch.current = null;
+    if (e.touches.length === 0) drag.current = null;
+  };
+
+  return (
+    <div ref={wrapRef}
+      className="relative w-full h-full flex items-center justify-center overflow-hidden touch-none select-none"
+      style={{ cursor: scale > 1 ? 'grab' : 'zoom-in' }}
+      onWheel={onWheel}
+      onDoubleClick={e => toggleZoom(e.clientX, e.clientY)}
+      onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={endDrag} onMouseLeave={endDrag}
+      onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+    >
+      <img src={src} alt={alt} draggable={false}
+        className="w-full h-full object-contain p-4 transition-transform duration-100 ease-out"
+        style={{ filter: 'drop-shadow(0 6px 16px rgba(0,0,0,0.55))', transform: `translate(${pos.x}px, ${pos.y}px) scale(${scale})` }}
+      />
+      {scale === 1 && (
+        <span className="absolute bottom-2 right-2 text-[9px] font-bold uppercase tracking-wider text-white/70 bg-black/40 px-2 py-1 rounded-full pointer-events-none">
+          Pinch or double-tap to zoom
+        </span>
+      )}
+    </div>
+  );
+};
+
 // ── main component ────────────────────────────────────────────────────────────
 
 export default function ClientOrderPage() {
@@ -1310,11 +1411,11 @@ export default function ClientOrderPage() {
             onClick={() => setPreviewProduct(null)} role="dialog" aria-modal="true" aria-label={p.name}>
             <div className="bg-sidebar-bg border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-sm max-h-[92vh] overflow-hidden flex flex-col"
               onClick={e => e.stopPropagation()}>
-              <div className="relative w-full h-56 sm:h-64 flex items-center justify-center shrink-0" style={{ background: 'color-mix(in srgb, currentColor 6%, transparent)' }}>
+              <div className="relative w-full h-72 sm:h-80 shrink-0" style={{ background: 'color-mix(in srgb, currentColor 6%, transparent)' }}>
                 {p.image
-                  ? <img src={p.image} alt={p.name} className="w-full h-full object-contain p-4" style={{ filter: 'drop-shadow(0 6px 16px rgba(0,0,0,0.55))' }} />
-                  : <Package size={56} className="opacity-20" />}
-                <button onClick={() => setPreviewProduct(null)} className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center text-white" aria-label="Close">
+                  ? <ZoomableImage key={p.image} src={p.image} alt={p.name} />
+                  : <div className="w-full h-full flex items-center justify-center"><Package size={56} className="opacity-20" /></div>}
+                <button onClick={() => setPreviewProduct(null)} className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center text-white z-10" aria-label="Close">
                   <X size={16} />
                 </button>
               </div>
