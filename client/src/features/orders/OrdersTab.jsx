@@ -139,6 +139,10 @@ export default function OrdersTab({ ctx }) {
   // customer to scan; they/staff dismiss it once paid.
   const [payQrOpen, setPayQrOpen] = React.useState(false);
   const payQrImage = systemSettings.paymentQrImage || '';
+  // "Mark Complimentary" is an edge case, not something every cashier touches
+  // on every order - collapsed by default so the card reads as a normal
+  // payment panel, and only expands into a form when someone actually needs it.
+  const [compFormOpen, setCompFormOpen] = React.useState({});
 
   return (
           <div className="w-full">
@@ -917,44 +921,43 @@ export default function OrdersTab({ ctx }) {
                                                 const itemPct  = Number(item.discountPercent || 0);
                                                 const effPct   = Math.max(prodPct, itemPct);
                                                 const isClientRate = prodPct > 0 && prodPct >= itemPct;
+                                                // Pricing edits stay in the general "All" queue only - a
+                                                // department-filtered fulfillment view (Logistics, Warehouse,
+                                                // Kitchen, Bar) is meant to be read-only on price, same as the
+                                                // Promo/Complimentary controls elsewhere in this card.
+                                                const canEditPct = order.status === 'Pending' && departmentFilter === 'All';
                                                 return (
-                                                  <div className="flex flex-col items-end gap-0.5">
-                                                    {effPct > 0 ? (
-                                                      <>
-                                                        <span className="text-accent line-through text-[10px] font-mono">
-                                                          P{lineGross.toFixed(2)}
-                                                        </span>
-                                                        <span className="text-accent font-mono font-bold text-xs">
-                                                          P{(lineGross * (1 - effPct / 100)).toFixed(2)}
-                                                        </span>
-                                                        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${isClientRate ? 'bg-emerald-500 text-white border border-emerald-500' : 'bg-amber-500 text-white border border-amber-500'}`}>
+                                                  <div className="flex flex-col items-end gap-1">
+                                                    {/* Discount context sits ABOVE the price, only when one
+                                                        actually applies - a card with no discounted items
+                                                        reads as a plain, quiet price list instead of every
+                                                        row carrying a redundant "0%" edit box. */}
+                                                    {effPct > 0 && (
+                                                      <div className="flex items-center gap-1.5">
+                                                        <span className="text-fg/30 line-through text-[10px] font-mono">P{lineGross.toFixed(2)}</span>
+                                                        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${isClientRate ? 'bg-emerald-500 text-white' : 'bg-amber-500 text-white'}`}>
                                                           {isClientRate ? `Client −${effPct}%` : `−${effPct}%`}
                                                         </span>
-                                                      </>
-                                                    ) : (
-                                                      <span className="text-black font-mono text-xs">
-                                                        P{lineGross.toFixed(2)}
-                                                      </span>
-                                                    )}
-                                                    {/* Pricing edits stay in the general "All" queue only - a
-                                                        department-filtered fulfillment view (Logistics,
-                                                        Warehouse, Kitchen, Bar) is meant to be read-only on
-                                                        price, same as the Promo/Complimentary controls
-                                                        elsewhere in this card. This one input was the odd one
-                                                        out, gated only on order.status - editable even while
-                                                        filtered to a single department. */}
-                                                    {order.status === 'Pending' && departmentFilter === 'All' && (
-                                                      <div className="relative mt-0.5">
-                                                        <input
-                                                          type="number" min="0" max="100" step="1"
-                                                          placeholder="0"
-                                                          value={item.discountPercent || ''}
-                                                          onChange={e => applyItemDiscount(order._id, item.originalIdx, e.target.value)}
-                                                          className="w-14 bg-white border border-black rounded pl-1.5 pr-5 py-0.5 text-black text-[10px] font-bold outline-none focus:border-brand/60 placeholder-black tabular-nums"
-                                                        />
-                                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-black text-[9px] font-bold pointer-events-none">%</span>
                                                       </div>
                                                     )}
+                                                    <div className="flex items-center gap-1.5">
+                                                      <span className={`font-mono font-bold text-sm ${effPct > 0 ? 'text-accent' : 'text-black'}`}>
+                                                        P{(lineGross * (1 - effPct / 100)).toFixed(2)}
+                                                      </span>
+                                                      {canEditPct && (
+                                                        <div className="relative">
+                                                          <input
+                                                            type="number" min="0" max="100" step="1"
+                                                            placeholder="0"
+                                                            value={item.discountPercent || ''}
+                                                            onChange={e => applyItemDiscount(order._id, item.originalIdx, e.target.value)}
+                                                            title="Cashier discount override for this line"
+                                                            className="w-12 bg-white border border-black/20 rounded pl-1.5 pr-4 py-0.5 text-black text-[10px] font-bold outline-none focus:border-brand/60 placeholder-black/30 tabular-nums"
+                                                          />
+                                                          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-black/40 text-[9px] font-bold pointer-events-none">%</span>
+                                                        </div>
+                                                      )}
+                                                    </div>
                                                   </div>
                                                 );
                                               })()
@@ -1024,12 +1027,19 @@ export default function OrdersTab({ ctx }) {
                                     </button>
                                   </div>
                                 ) : (
-                                  /* ── PENDING STATE: input form ── */
+                                  /* ── PENDING STATE: collapsed by default - just a toggle
+                                      until someone actually needs to comp this order. ── */
                                   <div className="flex flex-col gap-1.5">
-                                    <div className="flex items-center gap-1.5">
+                                    <button
+                                      onClick={() => setCompFormOpen(prev => ({ ...prev, [order._id]: !prev[order._id] }))}
+                                      className="flex items-center gap-1.5 text-left hover:opacity-80 transition"
+                                    >
                                       <Gift size={10} className="text-gray-500 flex-shrink-0" />
-                                      <span className="text-fg text-[9px] font-bold uppercase tracking-wider">Mark Complimentary</span>
-                                    </div>
+                                      <span className="text-fg/60 text-[9px] font-bold uppercase tracking-wider">Mark Complimentary</span>
+                                      {compFormOpen[order._id] ? <ChevronUp size={11} className="text-gray-500" /> : <ChevronDown size={11} className="text-gray-500" />}
+                                    </button>
+                                    {!compFormOpen[order._id] ? null : (
+                                    <div className="flex flex-col gap-1.5 bg-white/[0.03] border border-white/10 rounded-lg p-2">
                                     {/* Reason type - REQUIRED */}
                                     <select
                                       className="w-full bg-surface-2 border border-white/10 text-fg text-[10px] rounded p-1.5 outline-none font-semibold"
@@ -1066,6 +1076,8 @@ export default function OrdersTab({ ctx }) {
                                         <Check size={11} /> Apply
                                       </button>
                                     </div>
+                                    </div>
+                                    )}
                                   </div>
                                 )}
                               </div>
@@ -1146,23 +1158,30 @@ export default function OrdersTab({ ctx }) {
                                               SC/PWD (per item) {scpwdOpen[order._id] ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
                                             </button>
                                             {scpwdOpen[order._id] && (
-                                              <div className="max-h-[130px] overflow-y-auto custom-scrollbar space-y-1.5 pt-0.5 pr-1">
+                                              // Stacked, not squeezed side-by-side - a real item name
+                                              // ("Specialty Vietnam Lam Dong") next to a select box in a
+                                              // ~300px-wide card left almost nothing for the name, so it
+                                              // truncated into "1x SPEC…" - unreadable and impossible to
+                                              // tell which item you're discounting.
+                                              <div className="max-h-[160px] overflow-y-auto custom-scrollbar space-y-2 pt-1 pr-1">
                                                 {order.items.map((item, idx) => (
-                                                  <div key={idx} className="flex items-center gap-2">
-                                                    <span className="text-[11px] text-black font-semibold flex-1 truncate min-w-0">{item.quantity}x {item.name}</span>
-                                                    <select
-                                                      className="bg-white border border-black rounded text-[10px] text-black outline-none px-1 py-0.5 h-6 cursor-pointer flex-shrink-0"
-                                                      value={item.discountPercent || ''}
-                                                      onChange={(e) => applyItemDiscount(order._id, idx, e.target.value)}
-                                                    >
-                                                      <option value="">No disc</option>
-                                                      {scpwdDiscounts.map(d => (
-                                                        <option key={d._id} value={d.percentage}>{d.name} ({d.percentage}%)</option>
-                                                      ))}
-                                                    </select>
-                                                    {item.discountPercent > 0 && (
-                                                      <span className="text-accent font-mono text-[10px] whitespace-nowrap flex-shrink-0">-{item.discountPercent}%</span>
-                                                    )}
+                                                  <div key={idx} className="flex items-center justify-between gap-2 bg-black/[0.03] rounded-lg px-2 py-1.5">
+                                                    <span className="text-[11px] text-black font-semibold leading-snug flex-1 min-w-0 break-words">{item.quantity}x {item.name}</span>
+                                                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                                                      {item.discountPercent > 0 && (
+                                                        <span className="text-accent font-mono text-[10px] whitespace-nowrap font-bold">-{item.discountPercent}%</span>
+                                                      )}
+                                                      <select
+                                                        className="bg-white border border-black rounded text-[10px] text-black outline-none px-1.5 py-1 h-7 cursor-pointer w-[92px]"
+                                                        value={item.discountPercent || ''}
+                                                        onChange={(e) => applyItemDiscount(order._id, idx, e.target.value)}
+                                                      >
+                                                        <option value="">No disc</option>
+                                                        {scpwdDiscounts.map(d => (
+                                                          <option key={d._id} value={d.percentage}>{d.name} ({d.percentage}%)</option>
+                                                        ))}
+                                                      </select>
+                                                    </div>
                                                   </div>
                                                 ))}
                                               </div>
