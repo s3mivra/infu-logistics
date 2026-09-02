@@ -875,21 +875,23 @@ export default function OrdersTab({ ctx }) {
                                     <h4 className="text-[9px] uppercase text-accent font-black mb-2 tracking-widest">{dept}</h4>
                                     {deptItems.map(item => (
                                       <div key={item.originalIdx} className="mb-2 last:mb-0">
-                                        <div className="flex justify-between items-start gap-2">
-                                          <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                                            <span className={`font-semibold text-sm leading-tight ${item.itemStatus === 'Delivered' ? 'text-gray-600 line-through' : 'text-black'}`}>
-                                              {item.quantity}x {item.name}
-                                            </span>
-                                            {(item.fulfilledQty || 0) > 0 && (item.fulfilledQty || 0) < (item.quantity || 0) && (
-                                              <span className="text-[9px] font-black uppercase tracking-wider text-emerald-600">
-                                                {item.fulfilledQty} fulfilled · {Math.max(0, (item.quantity || 0) - (item.fulfilledQty || 0))} remaining
-                                              </span>
-                                            )}
-                                            {(item.fulfilledQty || 0) >= (item.quantity || 0) && (item.quantity || 0) > 0 && order.status === 'Partially Fulfilled' && (
-                                              <span className="text-[9px] font-black uppercase tracking-wider text-emerald-600 flex items-center gap-0.5"><Check size={9} /> Fully fulfilled</span>
-                                            )}
-                                          </div>
-                                          <div className="flex items-center gap-1 flex-shrink-0">
+                                        {/* Name always gets the FULL row width - a long product name
+                                            competing side-by-side with the price/discount column was
+                                            what squeezed both into an unreadable, overlapping mess on a
+                                            narrow (phone-width) POS screen. Price/discount now gets its
+                                            own row below instead, same idea as the SC/PWD cards. */}
+                                        <span className={`block font-semibold text-sm leading-snug ${item.itemStatus === 'Delivered' ? 'text-gray-600 line-through' : 'text-black'}`}>
+                                          {item.quantity}x {item.name}
+                                        </span>
+                                        {(item.fulfilledQty || 0) > 0 && (item.fulfilledQty || 0) < (item.quantity || 0) && (
+                                          <span className="block text-[9px] font-black uppercase tracking-wider text-emerald-600 mt-0.5">
+                                            {item.fulfilledQty} fulfilled · {Math.max(0, (item.quantity || 0) - (item.fulfilledQty || 0))} remaining
+                                          </span>
+                                        )}
+                                        {(item.fulfilledQty || 0) >= (item.quantity || 0) && (item.quantity || 0) > 0 && order.status === 'Partially Fulfilled' && (
+                                          <span className="text-[9px] font-black uppercase tracking-wider text-emerald-600 flex items-center gap-0.5 mt-0.5"><Check size={9} /> Fully fulfilled</span>
+                                        )}
+                                        <div className="flex items-center justify-end gap-1 mt-1">
                                             {(order.status === 'Preparing' || order.status === 'Ready') ? (
                                               <>
                                                 {item.itemStatus === 'Received' && (
@@ -962,7 +964,6 @@ export default function OrdersTab({ ctx }) {
                                                 );
                                               })()
                                             )}
-                                          </div>
                                         </div>
                                         {item.isCombo && (item.comboItems || []).length > 0 && (
                                           <div className="pl-5 mt-1 space-y-0.5">
@@ -1158,16 +1159,17 @@ export default function OrdersTab({ ctx }) {
                                               SC/PWD (per item) {scpwdOpen[order._id] ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
                                             </button>
                                             {scpwdOpen[order._id] && (
-                                              // Stacked, not squeezed side-by-side - a real item name
-                                              // ("Specialty Vietnam Lam Dong") next to a select box in a
-                                              // ~300px-wide card left almost nothing for the name, so it
-                                              // truncated into "1x SPEC…" - unreadable and impossible to
-                                              // tell which item you're discounting.
-                                              <div className="max-h-[160px] overflow-y-auto custom-scrollbar space-y-2 pt-1 pr-1">
+                                              // Fully stacked, one item per block - name gets the whole
+                                              // row's width on its own line, controls sit on the row below.
+                                              // A side-by-side layout (name + select sharing one row) left
+                                              // almost no room for a real item name on a phone-width POS
+                                              // screen: it either truncated into "1x SPEC…" or, worse, wrapped
+                                              // one character per line when the available width collapsed.
+                                              <div className="max-h-[180px] overflow-y-auto custom-scrollbar space-y-2 pt-1 pr-1">
                                                 {order.items.map((item, idx) => (
-                                                  <div key={idx} className="flex items-center justify-between gap-2 bg-black/[0.03] rounded-lg px-2 py-1.5">
-                                                    <span className="text-[11px] text-black font-semibold leading-snug flex-1 min-w-0 break-words">{item.quantity}x {item.name}</span>
-                                                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                                                  <div key={idx} className="bg-black/[0.03] rounded-lg px-2 py-1.5">
+                                                    <span className="block text-[11px] text-black font-semibold leading-snug">{item.quantity}x {item.name}</span>
+                                                    <div className="flex items-center justify-end gap-1.5 mt-1">
                                                       {item.discountPercent > 0 && (
                                                         <span className="text-accent font-mono text-[10px] whitespace-nowrap font-bold">-{item.discountPercent}%</span>
                                                       )}
