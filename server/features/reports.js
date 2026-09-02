@@ -4,6 +4,7 @@
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { bucketFor, resolveClientKey } from '../lib/credit.js';
 import { captureError } from '../lib/errorLog.js';
+import { sectionAncestor } from '../lib/chartOfAccounts.js';
 
 export default function registerReports(ctx) {
   const {
@@ -212,8 +213,15 @@ app.get('/api/reports/pnl', verifyToken, ...canViewReports, async (req, res) => 
       { $sort: { _id: 1 } }
     ]);
 
-    const revenue = [], cogs = [], opex = [];
-    let totalRevenue = 0, totalCogs = 0, totalOpex = 0, totalContraRevenue = 0;
+    // Revenue/COGS/OpEx as before, PLUS a proper split for the two accounts
+    // this endpoint used to mix in by mistake: 'other-income' (800000-family)
+    // was being folded into Revenue, and 900000-family expenses were folded
+    // into flat OpEx - both inflate/deflate the wrong line and hide the
+    // "non-operating" distinction a normal income statement keeps separate.
+    // /api/reports/pnl-monthly already got this right; this brings the
+    // single-period view in line with it.
+    const revenue = [], otherIncome = [], cogs = [], opex = [], otherExpense = [];
+    let totalRevenue = 0, totalOtherIncome = 0, totalCogs = 0, totalOpex = 0, totalOtherExpense = 0, totalContraRevenue = 0;
 
     for (const r of agg) {
       const code = r._id;
@@ -222,29 +230,56 @@ app.get('/api/reports/pnl', verifyToken, ...canViewReports, async (req, res) => 
       const expBalance = (r.totalDebit || 0) - (r.totalCredit || 0); // expense = debit-balance
 
       if (!meta) continue;
-      if (meta.type === 'revenue' || meta.type === 'other-income') {
+      if (meta.type === 'revenue') {
         revenue.push({ code, name: meta.name, amount: +balance.toFixed(2) });
         totalRevenue += balance;
+      } else if (meta.type === 'other-income') {
+        otherIncome.push({ code, name: meta.name, amount: +balance.toFixed(2) });
+        totalOtherIncome += balance;
       } else if (meta.type === 'contra-revenue') {
         revenue.push({ code, name: meta.name, amount: -(+expBalance.toFixed(2)) });
         totalContraRevenue += expBalance;
       } else if (meta.type === 'expense' && meta.cogs) {
         cogs.push({ code, name: meta.name, amount: +expBalance.toFixed(2) });
         totalCogs += expBalance;
+      } else if (meta.type === 'expense' && String(code).startsWith('9')) {
+        otherExpense.push({ code, name: meta.name, amount: +expBalance.toFixed(2) });
+        totalOtherExpense += expBalance;
       } else if (meta.type === 'expense') {
         opex.push({ code, name: meta.name, amount: +expBalance.toFixed(2) });
         totalOpex += expBalance;
       }
     }
 
+    // Sectioned view (a named group with its own subtotal - "Payroll &
+    // Benefits", "Current Assets", etc.) so a screen can render grouped
+    // subtotals the way a formal report does, instead of one flat list per
+    // bucket. Built from the SAME rows above, just re-bucketed by
+    // sectionAncestor() - purely a presentation grouping, doesn't change any
+    // total computed above.
+    const sectionize = (items) => {
+      const bySection = new Map();
+      for (const item of items) {
+        const sec = sectionAncestor(item.code, acctMeta) || { code: item.code, name: item.name };
+        if (!bySection.has(sec.code)) bySection.set(sec.code, { code: sec.code, name: sec.name, items: [], total: 0 });
+        const bucket = bySection.get(sec.code);
+        bucket.items.push(item);
+        bucket.total = +(bucket.total + item.amount).toFixed(2);
+      }
+      return [...bySection.values()].sort((a, b) => a.code.localeCompare(b.code));
+    };
+
     const netRevenue = totalRevenue - totalContraRevenue;
     const grossProfit = netRevenue - totalCogs;
-    const netIncome = grossProfit - totalOpex;
+    // Matches pnl-monthly's formula: gross profit, less operating expenses,
+    // plus other income, less other (non-operating) expenses.
+    const netIncome = grossProfit - totalOpex + totalOtherIncome - totalOtherExpense;
 
     res.json({
       success: true,
       period: { start: startDate, end: endDate },
-      revenue, cogs, opex,
+      revenue, otherIncome, cogs, opex, otherExpense,
+      sections: { revenue: sectionize(revenue), cogs: sectionize(cogs), opex: sectionize(opex), otherIncome: sectionize(otherIncome), otherExpense: sectionize(otherExpense) },
       totals: {
         revenue: +totalRevenue.toFixed(2),
         contraRevenue: +totalContraRevenue.toFixed(2),
@@ -253,6 +288,8 @@ app.get('/api/reports/pnl', verifyToken, ...canViewReports, async (req, res) => 
         grossProfit: +grossProfit.toFixed(2),
         grossMargin: netRevenue > 0 ? +((grossProfit / netRevenue) * 100).toFixed(2) : 0,
         opex: +totalOpex.toFixed(2),
+        otherIncome: +totalOtherIncome.toFixed(2),
+        otherExpense: +totalOtherExpense.toFixed(2),
         netIncome: +netIncome.toFixed(2),
         netMargin: netRevenue > 0 ? +((netIncome / netRevenue) * 100).toFixed(2) : 0,
       }
@@ -469,10 +506,28 @@ app.get('/api/reports/balance-sheet', verifyToken, ...canViewReports, async (req
     const totalLiabAndEquity = totalLiabilities + totalEquity;
     const balanced = Math.abs(totalAssets - totalLiabAndEquity) <= 0.01;
 
+    // Sectioned view - groups each flat list into named subtotal blocks
+    // (Current Assets, Fixed Assets, Current Liabilities, Accounts Payable,
+    // ...) the same way a formal balance sheet is laid out, instead of one
+    // undifferentiated list per side. Purely presentational - the flat
+    // assets/liabilities/equity arrays and every total above are unchanged.
+    const sectionize = (items) => {
+      const bySection = new Map();
+      for (const item of items) {
+        const sec = sectionAncestor(item.code, acctMeta) || { code: item.code, name: item.name };
+        if (!bySection.has(sec.code)) bySection.set(sec.code, { code: sec.code, name: sec.name, items: [], total: 0 });
+        const bucket = bySection.get(sec.code);
+        bucket.items.push(item);
+        bucket.total = +(bucket.total + item.amount).toFixed(2);
+      }
+      return [...bySection.values()].sort((a, b) => a.code.localeCompare(b.code));
+    };
+
     res.json({
       success: true,
       asOf,
       assets, liabilities, equity,
+      sections: { assets: sectionize(assets), liabilities: sectionize(liabilities) },
       totals: {
         assets:      +totalAssets.toFixed(2),
         liabilities: +totalLiabilities.toFixed(2),

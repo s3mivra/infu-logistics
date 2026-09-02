@@ -1453,58 +1453,97 @@ export default function LedgerTab({ ctx }) {
 
               {!pnlData ? (
                 <div className="py-16 text-center text-fg/60 font-bold uppercase tracking-widest text-sm">Click "Run" to generate report</div>
-              ) : (
+              ) : (() => {
+                // Renders one bucket (Revenue, OpEx, ...) as a stack of NAMED
+                // sections with their own subtotal - e.g. "Salaries & Wages",
+                // "Repairs & Maintenance" - each a bolded header + its line
+                // items + a subtotal row, instead of one flat undifferentiated
+                // list. Falls back to the flat list when the server sent no
+                // section breakdown (older cached response) or there's
+                // nothing to show for this bucket.
+                const Sections = ({ sections, flat, emptyLabel }) => {
+                  if (!flat || flat.length === 0) return <p className="text-fg/60 text-sm">{emptyLabel}</p>;
+                  if (!sections || sections.length === 0) sections = [{ code: '_flat', name: '', items: flat, total: flat.reduce((s, r) => s + r.amount, 0) }];
+                  return (
+                    <div className="space-y-3">
+                      {sections.map(sec => (
+                        <table key={sec.code} className="w-full text-sm">
+                          <tbody>
+                            {sec.name && sec.items.length > 1 && (
+                              <tr><td colSpan={2} className="pb-1 text-[10px] font-black uppercase tracking-widest text-fg/40">{sec.name}</td></tr>
+                            )}
+                            {sec.items.map(r => (
+                              <tr key={r.code} className="border-b border-white/5">
+                                <td className="py-2 text-fg/80 text-xs"><span className="text-fg/60 mr-2">{r.code}</span>{r.name}</td>
+                                <td className="py-2 text-right text-fg tabular-nums font-bold">{r.amount >= 0 ? '' : '('}₱{Math.abs(r.amount).toFixed(2)}{r.amount < 0 ? ')' : ''}</td>
+                              </tr>
+                            ))}
+                            {sec.items.length > 1 && (
+                              <tr><td className="pt-1 text-fg/50 text-[11px] font-bold uppercase">{sec.name || 'Subtotal'}</td><td className="pt-1 text-right text-fg/70 tabular-nums font-bold text-xs">₱{sec.total.toFixed(2)}</td></tr>
+                            )}
+                          </tbody>
+                        </table>
+                      ))}
+                    </div>
+                  );
+                };
+
+                return (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {/* Revenue */}
                   <div className="space-y-3">
                     <h4 className="text-brand font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2">Revenue</h4>
-                    {pnlData.revenue.length === 0 ? <p className="text-fg/60 text-sm">No revenue entries.</p> :
-                      <table className="w-full text-sm">
-                        <tbody>
-                          {pnlData.revenue.map(r => (
-                            <tr key={r.code} className="border-b border-white/5">
-                              <td className="py-2 text-fg/80 text-xs"><span className="text-fg/60 mr-2">{r.code}</span>{r.name}</td>
-                              <td className="py-2 text-right text-fg tabular-nums font-bold">{r.amount >= 0 ? '' : '(' }₱{Math.abs(r.amount).toFixed(2)}{r.amount < 0 ? ')' : ''}</td>
-                            </tr>
-                          ))}
-                          <tr><td className="pt-3 font-black text-fg uppercase text-xs">Net Revenue</td><td className="pt-3 text-right text-brand tabular-nums font-black text-lg">₱{pnlData.totals.netRevenue.toFixed(2)}</td></tr>
-                        </tbody>
-                      </table>
-                    }
+                    <Sections sections={pnlData.sections?.revenue} flat={pnlData.revenue} emptyLabel="No revenue entries." />
+                    {pnlData.revenue.length > 0 && (
+                      <table className="w-full text-sm"><tbody>
+                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Net Revenue</td><td className="pt-2 text-right text-brand tabular-nums font-black text-lg">₱{pnlData.totals.netRevenue.toFixed(2)}</td></tr>
+                      </tbody></table>
+                    )}
+
                     <h4 className="text-orange-400 font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mt-6">Cost of Goods Sold</h4>
-                    {pnlData.cogs.length === 0 ? <p className="text-fg/60 text-sm">No COGS entries.</p> :
-                      <table className="w-full text-sm">
-                        <tbody>
-                          {pnlData.cogs.map(r => (
-                            <tr key={r.code} className="border-b border-white/5">
-                              <td className="py-2 text-fg/80 text-xs"><span className="text-fg/60 mr-2">{r.code}</span>{r.name}</td>
-                              <td className="py-2 text-right text-fg tabular-nums font-bold">₱{r.amount.toFixed(2)}</td>
-                            </tr>
-                          ))}
-                          <tr><td className="pt-3 font-black text-fg uppercase text-xs">Total COGS</td><td className="pt-3 text-right text-orange-400 tabular-nums font-black">₱{pnlData.totals.cogs.toFixed(2)}</td></tr>
-                          <tr className="border-t border-white/10"><td className="pt-3 font-black text-fg uppercase text-sm">Gross Profit</td><td className="pt-3 text-right text-green-400 tabular-nums font-black text-lg">₱{pnlData.totals.grossProfit.toFixed(2)}</td></tr>
-                          <tr><td className="font-bold text-fg/50 uppercase text-xs">Gross Margin</td><td className="text-right text-fg/70 tabular-nums font-black text-sm">{pnlData.totals.grossMargin.toFixed(2)}%</td></tr>
-                        </tbody>
-                      </table>
-                    }
+                    <Sections sections={pnlData.sections?.cogs} flat={pnlData.cogs} emptyLabel="No COGS entries." />
+                    {pnlData.cogs.length > 0 && (
+                      <table className="w-full text-sm"><tbody>
+                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total COGS</td><td className="pt-2 text-right text-orange-400 tabular-nums font-black">₱{pnlData.totals.cogs.toFixed(2)}</td></tr>
+                      </tbody></table>
+                    )}
+                    <table className="w-full text-sm"><tbody>
+                      <tr className="border-t border-white/10"><td className="pt-3 font-black text-fg uppercase text-sm">Gross Profit</td><td className="pt-3 text-right text-green-400 tabular-nums font-black text-lg">₱{pnlData.totals.grossProfit.toFixed(2)}</td></tr>
+                      <tr><td className="font-bold text-fg/50 uppercase text-xs">Gross Margin</td><td className="text-right text-fg/70 tabular-nums font-black text-sm">{pnlData.totals.grossMargin.toFixed(2)}%</td></tr>
+                    </tbody></table>
+
+                    {/* Other Income - kept separate from Revenue (interest
+                        earned, gains, etc. aren't sales) so the top line
+                        isn't inflated by non-operating income. */}
+                    {pnlData.otherIncome?.length > 0 && (<>
+                      <h4 className="text-blue-400 font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mt-6">Other Income</h4>
+                      <Sections sections={pnlData.sections?.otherIncome} flat={pnlData.otherIncome} emptyLabel="" />
+                      <table className="w-full text-sm"><tbody>
+                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total Other Income</td><td className="pt-2 text-right text-blue-400 tabular-nums font-black">₱{pnlData.totals.otherIncome.toFixed(2)}</td></tr>
+                      </tbody></table>
+                    </>)}
                   </div>
 
                   {/* Operating Expenses */}
                   <div className="space-y-3">
                     <h4 className="text-red-400 font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2">Operating Expenses</h4>
-                    {pnlData.opex.length === 0 ? <p className="text-fg/60 text-sm">No expense entries in this period.</p> :
-                      <table className="w-full text-sm">
-                        <tbody>
-                          {pnlData.opex.map(r => (
-                            <tr key={r.code} className="border-b border-white/5">
-                              <td className="py-2 text-fg/80 text-xs"><span className="text-fg/60 mr-2">{r.code}</span>{r.name}</td>
-                              <td className="py-2 text-right text-fg tabular-nums font-bold">₱{r.amount.toFixed(2)}</td>
-                            </tr>
-                          ))}
-                          <tr><td className="pt-3 font-black text-fg uppercase text-xs">Total OpEx</td><td className="pt-3 text-right text-red-400 tabular-nums font-black">₱{pnlData.totals.opex.toFixed(2)}</td></tr>
-                        </tbody>
-                      </table>
-                    }
+                    <Sections sections={pnlData.sections?.opex} flat={pnlData.opex} emptyLabel="No expense entries in this period." />
+                    {pnlData.opex.length > 0 && (
+                      <table className="w-full text-sm"><tbody>
+                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total OpEx</td><td className="pt-2 text-right text-red-400 tabular-nums font-black">₱{pnlData.totals.opex.toFixed(2)}</td></tr>
+                      </tbody></table>
+                    )}
+
+                    {/* Other (Non-Operating) Expenses - the same distinction
+                        as Other Income above; interest paid, disposal losses,
+                        etc. sit below regular OpEx, not mixed into it. */}
+                    {pnlData.otherExpense?.length > 0 && (<>
+                      <h4 className="text-fg/50 font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mt-6">Other Expenses</h4>
+                      <Sections sections={pnlData.sections?.otherExpense} flat={pnlData.otherExpense} emptyLabel="" />
+                      <table className="w-full text-sm"><tbody>
+                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total Other Expenses</td><td className="pt-2 text-right text-fg/70 tabular-nums font-black">₱{pnlData.totals.otherExpense.toFixed(2)}</td></tr>
+                      </tbody></table>
+                    </>)}
 
                     {/* Net Income Summary */}
                     <div className={`mt-6 rounded-xl p-5 border ${pnlData.totals.netIncome >= 0 ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
@@ -1519,7 +1558,8 @@ export default function LedgerTab({ ctx }) {
                     </div>
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </div>
           )}
 
@@ -1611,38 +1651,53 @@ export default function LedgerTab({ ctx }) {
 
               {!bsData ? (
                 <div className="py-16 text-center text-fg/60 font-bold uppercase tracking-widest text-sm">Click "Refresh" to load</div>
-              ) : (
+              ) : (() => {
+                // Same named-section-with-subtotal pattern as the P&L above -
+                // "Current Assets", "Accounts Payable", etc. as their own
+                // bolded header + subtotal, instead of one flat list per side.
+                const BsSections = ({ sections, flat, emptyLabel }) => {
+                  if (!flat || flat.length === 0) return <p className="text-fg/60 text-xs italic py-2">{emptyLabel}</p>;
+                  if (!sections || sections.length === 0) sections = [{ code: '_flat', name: '', items: flat, total: flat.reduce((s, r) => s + r.amount, 0) }];
+                  return (
+                    <div className="space-y-3">
+                      {sections.map(sec => (
+                        <table key={sec.code} className="w-full text-sm">
+                          <tbody>
+                            {sec.name && sec.items.length > 1 && (
+                              <tr><td colSpan={2} className="pb-1 text-[10px] font-black uppercase tracking-widest text-fg/40">{sec.name}</td></tr>
+                            )}
+                            {sec.items.map(r => (
+                              <tr key={r.code} className="border-b border-white/5">
+                                <td className="py-2 text-fg/80 text-xs"><span className="text-fg/60 mr-2">{r.code}</span>{r.name}</td>
+                                <td className="py-2 text-right text-fg tabular-nums font-bold">{r.amount < 0 ? '−' : ''}₱{Math.abs(r.amount).toFixed(2)}</td>
+                              </tr>
+                            ))}
+                            {sec.items.length > 1 && (
+                              <tr><td className="pt-1 text-fg/50 text-[11px] font-bold uppercase">{sec.name || 'Subtotal'}</td><td className="pt-1 text-right text-fg/70 tabular-nums font-bold text-xs">₱{sec.total.toFixed(2)}</td></tr>
+                            )}
+                          </tbody>
+                        </table>
+                      ))}
+                    </div>
+                  );
+                };
+                return (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {/* Assets */}
                   <div>
                     <h4 className="text-brand font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mb-3">Assets</h4>
-                    <table className="w-full text-sm">
-                      <tbody>
-                        {bsData.assets.map(r => (
-                          <tr key={r.code} className="border-b border-white/5">
-                            <td className="py-2 text-fg/80 text-xs"><span className="text-fg/60 mr-2">{r.code}</span>{r.name}</td>
-                            <td className="py-2 text-right text-fg tabular-nums font-bold">₱{r.amount.toFixed(2)}</td>
-                          </tr>
-                        ))}
-                        <tr><td className="pt-3 font-black text-fg uppercase text-xs">Total Assets</td><td className="pt-3 text-right text-brand tabular-nums font-black text-lg">₱{bsData.totals.assets.toFixed(2)}</td></tr>
-                      </tbody>
-                    </table>
+                    <BsSections sections={bsData.sections?.assets} flat={bsData.assets} emptyLabel="No assets recorded" />
+                    <table className="w-full text-sm"><tbody>
+                      <tr><td className="pt-3 font-black text-fg uppercase text-xs">Total Assets</td><td className="pt-3 text-right text-brand tabular-nums font-black text-lg">₱{bsData.totals.assets.toFixed(2)}</td></tr>
+                    </tbody></table>
                   </div>
                   {/* Liabilities */}
                   <div>
                     <h4 className="text-red-400 font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mb-3">Liabilities</h4>
-                    <table className="w-full text-sm">
-                      <tbody>
-                        {bsData.liabilities.length === 0 ? <tr><td className="py-2 text-fg/60 text-xs italic">No liabilities recorded</td></tr> :
-                          bsData.liabilities.map(r => (
-                          <tr key={r.code} className="border-b border-white/5">
-                            <td className="py-2 text-fg/80 text-xs"><span className="text-fg/60 mr-2">{r.code}</span>{r.name}</td>
-                            <td className="py-2 text-right text-fg tabular-nums font-bold">₱{r.amount.toFixed(2)}</td>
-                          </tr>
-                        ))}
-                        <tr><td className="pt-3 font-black text-fg uppercase text-xs">Total Liabilities</td><td className="pt-3 text-right text-red-400 tabular-nums font-black">₱{bsData.totals.liabilities.toFixed(2)}</td></tr>
-                      </tbody>
-                    </table>
+                    <BsSections sections={bsData.sections?.liabilities} flat={bsData.liabilities} emptyLabel="No liabilities recorded" />
+                    <table className="w-full text-sm"><tbody>
+                      <tr><td className="pt-3 font-black text-fg uppercase text-xs">Total Liabilities</td><td className="pt-3 text-right text-red-400 tabular-nums font-black">₱{bsData.totals.liabilities.toFixed(2)}</td></tr>
+                    </tbody></table>
                   </div>
                   {/* Equity */}
                   <div>
@@ -1660,7 +1715,8 @@ export default function LedgerTab({ ctx }) {
                     </table>
                   </div>
                 </div>
-              )}
+                );
+              })()}
 
               {bsData && (
                 <div className={`mt-4 rounded-xl p-4 flex justify-between items-center border ${bsData.totals.balanced ? 'bg-accent border-accent' : 'bg-red-500 border-red-500'}`}>

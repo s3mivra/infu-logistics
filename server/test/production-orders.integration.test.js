@@ -196,6 +196,28 @@ describe('POST /api/production-orders/:id/reconcile - the manual "actual output 
     expect(output.unitCost).toBeCloseTo(200 / 10, 4); // fewer units, same total cost -> higher unit cost
   });
 
+  it('records the moisture/variance between planned and actual output', async () => {
+    const mat = await makeMaterial({ name: 'PROD Green Beans Moisture Loss', stockQty: 100, unitCost: 10 });
+    const { orderId } = await fileAndApprove({ materials: [{ invId: mat._id, qty: 20 }], outputType: 'new', outputName: 'Roasted Beans Moisture Loss', outputQty: 20 });
+
+    const res = await auth('post', `/api/production-orders/${orderId}/reconcile`, mgrTok).send({ actualOutputQty: 17 }); // 15% short
+    expect(res.status).toBe(200);
+    expect(res.body.order.moistureLoss).toBe(3);          // 20 - 17
+    expect(res.body.order.moistureLossPercent).toBe(15);  // 3/20 * 100
+    expect(res.body.order.fulfillmentStatus).toBe('Partial');
+  });
+
+  it('a NEGATIVE moisture value means the batch came in OVER plan, not clamped to zero', async () => {
+    const mat = await makeMaterial({ name: 'PROD Green Beans Moisture Gain', stockQty: 100, unitCost: 10 });
+    const { orderId } = await fileAndApprove({ materials: [{ invId: mat._id, qty: 20 }], outputType: 'new', outputName: 'Roasted Beans Moisture Gain', outputQty: 20 });
+
+    const res = await auth('post', `/api/production-orders/${orderId}/reconcile`, mgrTok).send({ actualOutputQty: 22 }); // 10% over
+    expect(res.status).toBe(200);
+    expect(res.body.order.moistureLoss).toBe(-2);
+    expect(res.body.order.moistureLossPercent).toBe(-10);
+    expect(res.body.order.fulfillmentStatus).toBe('Complete');
+  });
+
   it('cannot reconcile the same order twice', async () => {
     const mat = await makeMaterial({ name: 'PROD Green Beans R', stockQty: 100, unitCost: 10 });
     const { orderId } = await fileAndApprove({ materials: [{ invId: mat._id, qty: 20 }], outputType: 'new', outputName: 'Roasted Beans R', outputQty: 16 });

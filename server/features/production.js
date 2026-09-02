@@ -329,6 +329,11 @@ export default function registerProduction(ctx) {
 
         order.fulfillmentStatus = actualQty >= order.outputQty ? 'Complete' : 'Partial';
         order.actualOutputQty = actualQty;
+        // Moisture/variance - planned vs actual. Positive = shrank (the
+        // common case - moisture loss during roasting/drying); negative =
+        // came in over plan, still worth recording rather than clamping to 0.
+        order.moistureLoss = +(order.outputQty - actualQty).toFixed(6);
+        order.moistureLossPercent = order.outputQty > 0 ? +((order.moistureLoss / order.outputQty) * 100).toFixed(2) : 0;
         order.outputInvId = outputItem._id;
         order.reconciledBy = req.user?.name || '';
         order.reconciledAt = new Date();
@@ -337,7 +342,7 @@ export default function registerProduction(ctx) {
         return { order, outputItem };
       }, { log });
 
-      await logAudit(req, { action: 'reconcile', entity: 'ProductionOrder', entityId: order._id, after: { batchNumber, actualQty, fulfillmentStatus: result.order.fulfillmentStatus } });
+      await logAudit(req, { action: 'reconcile', entity: 'ProductionOrder', entityId: order._id, after: { batchNumber, actualQty, fulfillmentStatus: result.order.fulfillmentStatus, moistureLossPercent: result.order.moistureLossPercent } });
       emitToMgr('erpUpdated');
       res.json({ success: true, order: result.order, outputItem: result.outputItem });
     } catch (err) {

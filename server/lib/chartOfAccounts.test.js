@@ -11,6 +11,7 @@ import {
   isExpenseCode,
   isOtherIncomeCode,
   isCogsCode,
+  sectionAncestor,
 } from './chartOfAccounts.js';
 
 describe('chartOfAccounts.ACCOUNTS coverage (6-digit SAP)', () => {
@@ -97,6 +98,44 @@ describe('chartOfAccounts.isCogsCode + getAccount fallback (coverage)', () => {
   });
   it('getAccount returns an unknown stub for an unmapped code', () => {
     expect(getAccount('999999')).toMatchObject({ type: 'unknown' });
+  });
+});
+
+describe('sectionAncestor - finds the named report group (subtotal block) a leaf account belongs to', () => {
+  it('a leaf whose parent is itself a direct child of a root climbs one level to that group', () => {
+    // 111000 Cash on Hand -> parent 110000 Current Assets -> parent 100000 (root)
+    expect(sectionAncestor('111000')).toMatchObject({ code: '110000', name: 'Current Assets' });
+    expect(sectionAncestor('112000')).toMatchObject({ code: '110000', name: 'Current Assets' });
+  });
+
+  it('220000 Accounts Payable has 200000 as its own parent (a root), so it IS the section', () => {
+    expect(sectionAncestor('220000')).toMatchObject({ code: '220000', name: 'Accounts Payable' });
+  });
+
+  it('a leaf that is already a direct child of a root (no group above it) is its own section', () => {
+    // 610000 Salaries & Wages -> parent 600000, which IS a root - stop immediately.
+    expect(sectionAncestor('610000')).toMatchObject({ code: '610000', name: 'Salaries & Wages' });
+    expect(sectionAncestor('510000')).toMatchObject({ code: '510000', name: 'Cost of Goods Sold' });
+  });
+
+  it('a custom sub-account (created via Add Sub-Account, resolved through a custom lookup) climbs past its immediate leaf parent to the real section', () => {
+    const lookup = (code) => {
+      if (code === '111001') return { name: 'Lalamove', type: 'asset', parent: '111000' };
+      return ACCOUNTS[code];
+    };
+    expect(sectionAncestor('111001', lookup)).toMatchObject({ code: '110000', name: 'Current Assets' });
+  });
+
+  it('returns null for an unknown code', () => {
+    expect(sectionAncestor('999999')).toBeNull();
+  });
+
+  it('every ACCOUNTS leaf resolves to SOME section without throwing or infinite-looping', () => {
+    for (const code of Object.keys(ACCOUNTS)) {
+      const sec = sectionAncestor(code);
+      expect(sec, code).toBeTruthy();
+      expect(ACCOUNTS[sec.code], `${code} -> ${sec.code}`).toBeDefined();
+    }
   });
 });
 

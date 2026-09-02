@@ -2998,6 +2998,16 @@ const ProductionOrderSchema = new mongoose.Schema({
   actualOutputQty: { type: Number, default: null },        // base units - null until reconciled
   reconciledBy: { type: String, default: '' },
   reconciledAt: { type: Date, default: null },
+
+  // Moisture/variance - the gap between what was planned and what actually
+  // came out, named for the common real-world cause in this kind of
+  // production (roasting, drying, etc. loses weight to moisture as it
+  // processes). Positive = came in under plan (loss); negative = came in
+  // over (a gain - still worth surfacing, e.g. a generous fill or a
+  // measurement error upstream). null until reconciled, alongside
+  // actualOutputQty above.
+  moistureLoss: { type: Number, default: null },            // base units: outputQty - actualOutputQty
+  moistureLossPercent: { type: Number, default: null },     // moistureLoss / outputQty * 100
 }, { timestamps: true });
 ProductionOrderSchema.index({ businessType: 1, status: 1, createdAt: -1 });
 const ProductionOrder = mongoose.model('ProductionOrder', ProductionOrderSchema);

@@ -368,48 +368,94 @@ app.get('/api/expenses', verifyToken, ...canViewAcct, async (req, res) => {
   }
 });
 
+// Shared by the single-entry route below AND the bulk Excel importer -
+// exactly one place that knows how an expense row becomes a balanced journal
+// entry, so the two paths can never quietly drift apart. Returns
+// { ok:true, je } or { ok:false, error } instead of throwing/writing to
+// `res` itself, so the importer can collect one error per row without a bad
+// row aborting the whole batch.
+async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, description, vendor, refNo, date }) {
+  const amt = parseFloat(amount);
+  if (!amt || amt <= 0) return { ok: false, error: 'Amount must be > 0.' };
+  const cat = EXPENSE_CATEGORIES.find(c => c.code === categoryCode);
+  if (!cat) return { ok: false, error: 'Invalid expense category.' };
+  if (!description?.trim()) return { ok: false, error: 'Description required.' };
+
+  // Pick the credit-side account via the configurable payment-method map.
+  // Manager can route "GCash" to a custom sub-account (e.g. BPI E-Wallet 113001) via Ledger UI.
+  const credAcct = accountForPaymentMethod(paymentMethod);
+  if (credAcct.fallback) {
+    emitToMgr('mgrAlert', { kind: 'unmappedTender', method: paymentMethod || '(none)', account: credAcct.code, message: `Expense payment method "${paymentMethod || '(none)'}" has no account route - booked against Unassigned Receipts. Configure it in Payment Routing.` });
+    try { await logAudit(req, { action: 'unmappedTender', entity: 'PaymentMethodMap', entityId: paymentMethod || '(none)', after: { account: credAcct.code, context: 'expense' } }); } catch { /* non-fatal */ }
+  }
+
+  const acct = ACCOUNTS[categoryCode];
+  const reference = await mkSeqRef('EXP');
+  const entryDate = date ? new Date(date) : new Date();
+  if (date && Number.isNaN(entryDate.getTime())) return { ok: false, error: 'Invalid date.' };
+
+  const lines = [
+    { accountCode: categoryCode, accountName: acct.name, debit: amt, credit: 0 },
+    { accountCode: credAcct.code, accountName: credAcct.name, debit: 0, credit: amt },
+  ];
+  assertBalanced(lines, reference);
+
+  // Expenses aren't their own collection (see the GET route above) - vendor
+  // and the caller's own reference number both fold into the description,
+  // same way vendor always has, so there's nothing extra to keep in sync.
+  const tag = [vendor?.trim() && `Paid to: ${vendor.trim()}`, refNo?.trim() && `Ref: ${refNo.trim()}`].filter(Boolean).join(', ');
+  const je = await JournalEntry.create({
+    reference,
+    description: `${cat.label}: ${description.trim()}${tag ? ` (${tag})` : ''}`,
+    lines,
+    totalDebit: amt,
+    totalCredit: amt,
+    date: entryDate,
+  });
+  return { ok: true, je };
+}
+
 app.post('/api/expenses', verifyToken, ...canPostAcct, async (req, res) => {
   try {
-    const { amount, categoryCode, paymentMethod, description, vendor, date } = req.body;
-    const amt = parseFloat(amount);
-    if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Amount must be > 0.' });
-    if (!EXPENSE_CATEGORIES.find(c => c.code === categoryCode))
-      return res.status(400).json({ success: false, error: 'Invalid expense category.' });
-    if (!description?.trim()) return res.status(400).json({ success: false, error: 'Description required.' });
-
-    // Pick the credit-side account via the configurable payment-method map.
-    // Manager can route "GCash" to a custom sub-account (e.g. BPI E-Wallet 113001) via Ledger UI.
-    const credAcct = accountForPaymentMethod(paymentMethod);
-    if (credAcct.fallback) {
-      emitToMgr('mgrAlert', { kind: 'unmappedTender', method: paymentMethod || '(none)', account: credAcct.code, message: `Expense payment method "${paymentMethod || '(none)'}" has no account route - booked against Unassigned Receipts. Configure it in Payment Routing.` });
-      try { await logAudit(req, { action: 'unmappedTender', entity: 'PaymentMethodMap', entityId: paymentMethod || '(none)', after: { account: credAcct.code, context: 'expense' } }); } catch { /* non-fatal */ }
-    }
-
-    const cat = EXPENSE_CATEGORIES.find(c => c.code === categoryCode);
-    const acct = ACCOUNTS[categoryCode];
-
-    const reference = await mkSeqRef('EXP');
-    const entryDate = date ? new Date(date) : new Date();
-
-    const lines = [
-      { accountCode: categoryCode, accountName: acct.name, debit: amt, credit: 0 },
-      { accountCode: credAcct.code, accountName: credAcct.name, debit: 0, credit: amt },
-    ];
-    assertBalanced(lines, reference);
-
-    const je = await JournalEntry.create({
-      reference,
-      description: `${cat.label}: ${description.trim()}${vendor ? ` (${vendor.trim()})` : ''}`,
-      lines,
-      totalDebit: amt,
-      totalCredit: amt,
-      date: entryDate,
-    });
-
+    const result = await createExpenseEntry(req, req.body || {});
+    if (!result.ok) return res.status(400).json({ success: false, error: result.error });
     emitToMgr('erpUpdated');
-    res.json({ success: true, entry: je });
+    res.json({ success: true, entry: result.je });
   } catch (err) {
     log.error({ err }, 'POST /api/expenses failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// Bulk Excel import - the client has already parsed/validated/previewed the
+// file (see AdminDashboard.jsx's parseExpenseImportExcel); this just creates
+// one balanced entry per row, same as filing them one at a time through the
+// form above, and reports back which rows actually landed. A bad row is
+// skipped, not fatal to the batch - one typo shouldn't lose 40 good rows.
+// Capped so one runaway file can't flood the ledger with thousands of entries.
+const EXPENSE_IMPORT_MAX_ROWS = 500;
+app.post('/api/expenses/import', verifyToken, ...canPostAcct, async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    if (!rows.length) return res.status(400).json({ success: false, error: 'No rows to import.' });
+    if (rows.length > EXPENSE_IMPORT_MAX_ROWS) {
+      return res.status(400).json({ success: false, error: `Too many rows (${rows.length}) - import at most ${EXPENSE_IMPORT_MAX_ROWS} at a time.` });
+    }
+
+    let created = 0;
+    let totalAmount = 0;
+    const skipped = [];
+    for (let i = 0; i < rows.length; i++) {
+      const result = await createExpenseEntry(req, rows[i]);
+      if (result.ok) { created++; totalAmount += Number(result.je.totalDebit) || 0; }
+      else skipped.push({ row: i + 1, error: result.error, data: rows[i] });
+    }
+
+    if (created > 0) emitToMgr('erpUpdated');
+    try { await logAudit(req, { action: 'import', entity: 'Expense', entityId: 'bulk', after: { created, skipped: skipped.length, totalAmount: +totalAmount.toFixed(2) } }); } catch { /* non-fatal */ }
+    res.json({ success: true, created, totalAmount: +totalAmount.toFixed(2), skipped });
+  } catch (err) {
+    log.error({ err }, 'POST /api/expenses/import failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });

@@ -1,5 +1,5 @@
 ﻿import { useEffect } from 'react';
-import { Check, Plus, Receipt, Download } from 'lucide-react';
+import { Check, Plus, Receipt, Download, Upload, X, AlertTriangle } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
 
 // Expenses as a full page rather than a popup.
@@ -9,10 +9,13 @@ import { useDashboard } from '../dashboard/DashboardContext';
 // is what an operator actually wants when they open "Expenses". A popup could
 // only ever take input.
 
+const STATUS_DOT = { ok: 'bg-green-400', warn: 'bg-yellow-400', error: 'bg-red-400' };
+
 export default function ExpensesPage() {
   const {
     expenseCategories, expenseForm, setExpenseForm, expenseSubmitting, submitExpense,
     expenseList, fetchExpenses, fetchExpenseCategories, exportExpensesPDF,
+    downloadExpenseImportTemplate, parseExpenseImportExcel, expenseImportPreview, setExpenseImportPreview, expenseImporting, submitExpenseImport,
   } = useDashboard();
 
   useEffect(() => {
@@ -51,10 +54,23 @@ export default function ExpensesPage() {
 
       {/* Entry form - same fields as the old modal, laid out for a page. */}
       <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
-        <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
+        <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2 flex-wrap">
           <Plus size={14} className="text-brand" />
           <h3 className="text-sm font-black text-fg uppercase tracking-wider">Add Expense</h3>
-          <span className="ml-auto text-[10px] text-fg/80 font-bold uppercase tracking-widest">Operating cost entry</span>
+          <span className="text-[10px] text-fg/80 font-bold uppercase tracking-widest mr-auto">Operating cost entry</span>
+          {/* Bulk round-trip: download the sheet (Ref No./Date/Category/Total
+              Amount/Payment/Paid To/Description), fill it in offline, import
+              it back - each valid row becomes the same balanced journal entry
+              this form creates one at a time. See parseExpenseImportExcel in
+              AdminDashboard.jsx for the full logic. */}
+          <button onClick={downloadExpenseImportTemplate} className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition">
+            <Download size={11} /> Template
+          </button>
+          <label className="flex items-center gap-1.5 bg-brand/15 hover:bg-brand/25 text-brand px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition cursor-pointer">
+            <Upload size={11} /> Import Excel
+            <input type="file" accept=".xlsx,.xls" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) parseExpenseImportExcel(f); e.target.value = ''; }} />
+          </label>
         </div>
         <div className="p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
@@ -154,6 +170,75 @@ export default function ExpensesPage() {
           </div>
         )}
       </div>
+
+      {/* Import preview - nothing hits the server until this is confirmed. */}
+      {expenseImportPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setExpenseImportPreview(null)}>
+          <div className="bg-surface border border-white/10 rounded-2xl w-full max-w-4xl max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
+              <div>
+                <h2 className="font-black text-fg text-lg flex items-center gap-2"><Upload size={16} className="text-brand" /> Import Preview</h2>
+                <p className="text-fg/40 text-xs mt-0.5">
+                  <span className="text-green-400 font-bold">{expenseImportPreview.readyCount} ready</span>
+                  {expenseImportPreview.warnCount > 0 && <> · <span className="text-yellow-400 font-bold">{expenseImportPreview.warnCount} with warnings</span></>}
+                  {expenseImportPreview.errorCount > 0 && <> · <span className="text-red-400 font-bold">{expenseImportPreview.errorCount} rejected</span></>}
+                  {' · '}total {peso(expenseImportPreview.totalAmount)}
+                </p>
+              </div>
+              <button onClick={() => setExpenseImportPreview(null)} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+            </div>
+
+            <div className="overflow-auto flex-1">
+              <table className="w-full text-left text-xs min-w-[820px]">
+                <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5 sticky top-0 bg-surface">
+                  <tr>
+                    <th className="px-3 py-2 w-6"></th>
+                    <th className="px-3 py-2">Row</th>
+                    <th className="px-3 py-2">Ref No.</th>
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Category</th>
+                    <th className="px-3 py-2 text-right">Amount</th>
+                    <th className="px-3 py-2">Payment</th>
+                    <th className="px-3 py-2">Paid To</th>
+                    <th className="px-3 py-2">Description</th>
+                    <th className="px-3 py-2">Note</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {expenseImportPreview.rows.map(r => (
+                    <tr key={r.rowNum} className={`border-b border-white/5 ${r.status === 'error' ? 'bg-red-500/5' : r.status === 'warn' ? 'bg-yellow-500/5' : ''}`}>
+                      <td className="px-3 py-2"><span className={`inline-block w-2 h-2 rounded-full ${STATUS_DOT[r.status]}`} /></td>
+                      <td className="px-3 py-2 text-fg/40">{r.rowNum}</td>
+                      <td className="px-3 py-2 font-mono text-fg/60">{r.refNo || '-'}</td>
+                      <td className="px-3 py-2 text-fg/60 whitespace-nowrap">{r.date || '(today)'}</td>
+                      <td className="px-3 py-2 text-fg/70">{r.categoryLabel || '-'}</td>
+                      <td className="px-3 py-2 text-right font-mono tabular-nums text-fg font-bold">{r.amount != null ? peso(r.amount) : '-'}</td>
+                      <td className="px-3 py-2 text-fg/70">{r.paymentMethod || '-'}</td>
+                      <td className="px-3 py-2 text-fg/70">{r.vendor || '-'}</td>
+                      <td className="px-3 py-2 text-fg/70 truncate max-w-[200px]">{r.description || '-'}</td>
+                      <td className="px-3 py-2 text-[10px]">
+                        {r.status === 'error' && <span className="text-red-400 flex items-center gap-1"><AlertTriangle size={10} /> {r.message}</span>}
+                        {r.status === 'warn' && <span className="text-yellow-400">{r.message}</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="px-5 py-4 border-t border-white/10 flex items-center gap-3 shrink-0">
+              <p className="text-[10px] text-fg/40 flex-1">
+                Rejected rows are skipped, not imported - fix them in the file and re-upload if needed. Rows with a warning still import (booked to Unassigned Receipts until the payment method is routed).
+              </p>
+              <button onClick={() => setExpenseImportPreview(null)} className="border border-white/10 text-fg/60 hover:text-fg px-4 py-2.5 rounded-xl text-xs font-bold uppercase transition">Cancel</button>
+              <button onClick={submitExpenseImport} disabled={expenseImporting || expenseImportPreview.readyCount + expenseImportPreview.warnCount === 0}
+                className="bg-brand hover:bg-brand/90 disabled:opacity-50 text-white px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition">
+                {expenseImporting ? 'Importing…' : `Import ${expenseImportPreview.readyCount + expenseImportPreview.warnCount} Row(s)`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

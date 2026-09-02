@@ -95,3 +95,58 @@ describe('expense listing', () => {
     expect((await request(app).get('/api/expenses')).status).toBe(401);
   });
 });
+
+describe('POST /api/expenses/import - bulk Excel import', () => {
+  const importRows = (rows) => request(app).post('/api/expenses/import').set(auth(superToken)).send({ rows });
+
+  it('creates one entry per valid row and reports the total', async () => {
+    const res = await importRows([
+      { amount: 100, categoryCode: '650000', paymentMethod: 'Cash on Hand', description: 'bulk row 1' },
+      { amount: 200, categoryCode: '640000', paymentMethod: 'Cash on Hand', description: 'bulk row 2' },
+    ]);
+    expect(res.status).toBe(200);
+    expect(res.body.created).toBe(2);
+    expect(res.body.totalAmount).toBe(300);
+    expect(res.body.skipped).toHaveLength(0);
+
+    const b = await list();
+    expect(b.expenses.some(e => /bulk row 1/.test(e.description))).toBe(true);
+    expect(b.expenses.some(e => /bulk row 2/.test(e.description))).toBe(true);
+  });
+
+  it('skips a bad row without losing the good ones in the same batch', async () => {
+    const res = await importRows([
+      { amount: 100, categoryCode: '650000', paymentMethod: 'Cash on Hand', description: 'good row' },
+      { amount: -5, categoryCode: '650000', paymentMethod: 'Cash on Hand', description: 'bad amount' },
+      { amount: 100, categoryCode: 'nope', paymentMethod: 'Cash on Hand', description: 'bad category' },
+      { amount: 100, categoryCode: '650000', paymentMethod: 'Cash on Hand', description: '' }, // missing description
+    ]);
+    expect(res.status).toBe(200);
+    expect(res.body.created).toBe(1);
+    expect(res.body.skipped).toHaveLength(3);
+    expect(res.body.skipped.map(s => s.row)).toEqual([2, 3, 4]);
+  });
+
+  it('folds vendor ("Paid To") and refNo into the description', async () => {
+    await importRows([{ amount: 50, categoryCode: '650000', paymentMethod: 'Cash on Hand', description: 'stapler', vendor: 'National Bookstore', refNo: 'OR-99182' }]);
+    const b = await list();
+    const row = b.expenses.find(e => /stapler/.test(e.description));
+    expect(row.description).toMatch(/National Bookstore/);
+    expect(row.description).toMatch(/OR-99182/);
+  });
+
+  it('rejects an empty batch', async () => {
+    expect((await importRows([])).status).toBe(400);
+  });
+
+  it('rejects a batch over the row cap', async () => {
+    const rows = Array.from({ length: 501 }, (_, i) => ({ amount: 1, categoryCode: '650000', paymentMethod: 'Cash on Hand', description: `row ${i}` }));
+    const res = await importRows(rows);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/500/);
+  });
+
+  it('requires authentication', async () => {
+    expect((await request(app).post('/api/expenses/import').send({ rows: [] })).status).toBe(401);
+  });
+});

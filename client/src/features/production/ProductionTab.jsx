@@ -24,7 +24,7 @@ const FULFILLMENT_CLS = {
 // shape already used for petty-cash and procurement, just for stock instead
 // of money. See server/features/production.js for the approval-time logic.
 export default function ProductionTab({ ctx }) {
-  const { apiFetch, inventory = [], stockCategories = [], stockLocations = [], can, fetchERPData, itemDisplay } = ctx;
+  const { apiFetch, inventory = [], stockCategories = [], stockLocations = [], can, fetchERPData, itemDisplay, exportProductionOrdersPDF } = ctx;
   const canApprove = can('production.approve');
 
   // Quantities throughout this tab are entered in PIECES, same convention as
@@ -217,10 +217,19 @@ export default function ProductionTab({ ctx }) {
         <h2 className="text-xl font-bold text-fg flex items-center gap-2">
           <Factory size={20} className="text-accent" /> Production
         </h2>
-        <button onClick={() => setFormOpen(o => !o)}
-          className="flex items-center gap-1.5 bg-accent text-white px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-accent/90 transition">
-          <Plus size={14} /> {formOpen ? 'Close' : 'New Production Order'}
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Reconciled batches: planned vs actual, and the moisture/variance
+              between them - the report doesn't exist until at least one
+              batch has been reconciled. */}
+          <button onClick={exportProductionOrdersPDF}
+            className="flex items-center gap-1.5 bg-accent/10 hover:bg-accent/20 text-accent px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition">
+            <ClipboardCheck size={14} /> Production Report
+          </button>
+          <button onClick={() => setFormOpen(o => !o)}
+            className="flex items-center gap-1.5 bg-accent text-white px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-accent/90 transition">
+            <Plus size={14} /> {formOpen ? 'Close' : 'New Production Order'}
+          </button>
+        </div>
       </div>
 
       {formOpen && (
@@ -383,11 +392,24 @@ export default function ProductionTab({ ctx }) {
                   this step is that yield isn't guaranteed, so the gap (if
                   any) should be visible, not just the final number. */}
               {o.actualOutputQty != null && (
-                <p className="text-xs mb-1">
-                  <span className="text-fg/40">Planned {o.outputQty}{o.outputUnit} → Actual</span>{' '}
-                  <span className={o.fulfillmentStatus === 'Partial' ? 'text-orange-400 font-bold' : 'text-green-400 font-bold'}>
-                    {o.actualOutputQty}{o.outputUnit}
+                <p className="text-xs mb-1 flex items-center gap-2 flex-wrap">
+                  <span>
+                    <span className="text-fg/40">Planned {o.outputQty}{o.outputUnit} → Actual</span>{' '}
+                    <span className={o.fulfillmentStatus === 'Partial' ? 'text-orange-400 font-bold' : 'text-green-400 font-bold'}>
+                      {o.actualOutputQty}{o.outputUnit}
+                    </span>
                   </span>
+                  {/* Moisture/variance - the gap between planned and actual,
+                      named for the usual real-world cause (moisture loss
+                      during roasting/drying). A negative value means the
+                      batch came in OVER plan - shown as a gain, not hidden. */}
+                  {o.moistureLossPercent != null && o.moistureLossPercent !== 0 && (
+                    <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${o.moistureLossPercent > 0 ? 'bg-orange-500/15 text-orange-400' : 'bg-blue-500/15 text-blue-400'}`}>
+                      {o.moistureLossPercent > 0
+                        ? `Moisture loss ${o.moistureLossPercent}%`
+                        : `Over plan +${Math.abs(o.moistureLossPercent)}%`}
+                    </span>
+                  )}
                 </p>
               )}
 

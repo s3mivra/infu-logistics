@@ -2583,6 +2583,39 @@ const updateStatus = async (orderId, newStatus) => {
     doc.save(`Production-History-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
+  // Production Report - reconciled Production Orders (batchNumber, planned vs
+  // actual output, and the moisture/variance between them), distinct from
+  // exportProductionHistoryPDF above (that one reads Inventory's raw
+  // production-dated batches; this one reads the Production Orders
+  // themselves, so it's the only report that can show moisture at all).
+  const exportProductionOrdersPDF = async () => {
+    try {
+      const res = await apiFetch('/api/production-orders?fulfillmentStatus=Complete');
+      const res2 = await apiFetch('/api/production-orders?fulfillmentStatus=Partial');
+      const [d1, d2] = await Promise.all([res.json(), res2.json()]);
+      const rows = [...(d1.success ? d1.orders : []), ...(d2.success ? d2.orders : [])];
+      if (rows.length === 0) return ui.alert('No reconciled production batches yet - approve and reconcile a batch first.');
+      rows.sort((a, b) => new Date(b.reconciledAt) - new Date(a.reconciledAt));
+      const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+      await addLogoToPDF(doc);
+      doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+      doc.setFontSize(10); doc.text('PRODUCTION REPORT', 105, 22, { align: 'center' });
+      doc.setFontSize(9); doc.text(`${rows.length} batch(es) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+      autoTable(doc, {
+        startY: 34,
+        head: [['Batch', 'Product', 'Planned', 'Actual', 'Moisture / Variance', 'Status', 'Reconciled']],
+        body: rows.map(r => [
+          r.batchNumber, r.outputName,
+          `${r.outputQty}${r.outputUnit}`, `${r.actualOutputQty}${r.outputUnit}`,
+          r.moistureLossPercent > 0 ? `-${r.moistureLossPercent}% loss` : r.moistureLossPercent < 0 ? `+${Math.abs(r.moistureLossPercent)}% over` : '0%',
+          r.fulfillmentStatus, r.reconciledAt ? new Date(r.reconciledAt).toLocaleDateString() : '-',
+        ]),
+        styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
+      });
+      doc.save(`Production-Report-${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch { ui.alert('Failed to load production orders for the report.'); }
+  };
+
   const exportMenuItemsPDF = async () => {
     if (!products || products.length === 0) return ui.alert('No menu items to export.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
@@ -3184,6 +3217,163 @@ const updateStatus = async (orderId, newStatus) => {
       setExpenseSubmitting(false);
     }
   };
+  // ── Expenses: bulk Excel import ──────────────────────────────────────────────
+  // Same shape as the Price Tiers importer above: Download Template → parse
+  // client-side into a row-by-row preview (nothing hits the server yet) →
+  // confirm → one POST that creates a balanced journal entry per valid row
+  // (see createExpenseEntry in finance.js - the single-entry form above uses
+  // the exact same server-side logic, just one row at a time).
+  const downloadExpenseImportTemplate = async () => {
+    const XLSX = await import('xlsx');
+    const headers = ['Ref No.', 'Date', 'Category', 'Total Amount', 'Payment', 'Paid To', 'Description'];
+    const sample = ['REC-00123', new Date().toISOString().slice(0, 10), (expenseCategories[0]?.label || 'Miscellaneous Expense'), 500, (activePaymentMethods[0]?.name || 'Cash on Hand'), 'Meralco', 'July electricity bill'];
+    const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
+    ws['!cols'] = headers.map(h => ({ wch: Math.max(12, Math.min(28, h.length + 6)) }));
+    // A reference sheet listing the exact category/payment labels this
+    // importer understands - typing "utilities" instead of "Utilities" still
+    // matches (case-insensitive), but this saves a guess either way.
+    const legend = XLSX.utils.aoa_to_sheet([
+      ['Valid Categories', 'Valid Payment Methods'],
+      ...Array.from({ length: Math.max(expenseCategories.length, activePaymentMethods.length) }, (_, i) => [
+        expenseCategories[i]?.label || '', activePaymentMethods[i]?.name || '',
+      ]),
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Expenses');
+    XLSX.utils.book_append_sheet(wb, legend, 'Valid Values');
+    XLSX.writeFile(wb, `expense-import-template-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  // { rows: [{ rowNum, refNo, date, categoryCode, categoryLabel, amount, paymentMethod, paymentMatched, vendor, description, status: 'ok'|'warn'|'error', message }], readyCount, warnCount, errorCount, totalAmount }
+  const [expenseImportPreview, setExpenseImportPreview] = useState(null);
+  const [expenseImporting, setExpenseImporting] = useState(false);
+
+  const parseExpenseImportExcel = async (file) => {
+    if (!file) return;
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      if (!grid.length) return ui.alert('That file has no rows.');
+
+      const header = grid[0].map(h => String(h ?? '').trim());
+      const norm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const col = (...names) => header.findIndex(h => names.includes(norm(h)));
+      const cRef = col('refno', 'reference', 'refnumber');
+      const cDate = col('date');
+      const cCat = col('category');
+      const cAmt = col('totalamount', 'amount');
+      const cPay = col('payment', 'paidfrom', 'paymentmethod');
+      const cVendor = col('paidto', 'vendor');
+      const cDesc = col('description');
+      if (cCat === -1 || cAmt === -1 || cPay === -1 || cDesc === -1) {
+        return ui.alert('Could not find the Category, Total Amount, Payment, and Description columns - use the downloaded template as a starting point.');
+      }
+
+      const catByCode = new Map(expenseCategories.map(c => [c.code, c]));
+      const catByLabel = new Map(expenseCategories.map(c => [norm(c.label), c]));
+      const findCategory = (raw) => {
+        const s = String(raw ?? '').trim();
+        if (!s) return null;
+        return catByCode.get(s) || catByLabel.get(norm(s))
+          || expenseCategories.find(c => norm(c.label).includes(norm(s))) || null;
+      };
+      const payByName = new Map((activePaymentMethods || []).map(m => [norm(m.name), m.name]));
+      const findPayment = (raw) => {
+        const s = String(raw ?? '').trim();
+        if (!s) return { name: '', matched: false };
+        const exact = payByName.get(norm(s));
+        if (exact) return { name: exact, matched: true };
+        const partial = (activePaymentMethods || []).find(m => norm(m.name).includes(norm(s)) || norm(s).includes(norm(m.name)));
+        return partial ? { name: partial.name, matched: true } : { name: s, matched: false };
+      };
+
+      const rows = [];
+      for (let r = 1; r < grid.length; r++) {
+        const row = grid[r];
+        if (!row || row.every(c => c === '' || c === null || c === undefined)) continue;
+        const rowNum = r + 1; // 1-based, matches what a spreadsheet user sees
+        const refNo = cRef >= 0 ? String(row[cRef] ?? '').trim() : '';
+        const dateRaw = cDate >= 0 ? row[cDate] : '';
+        const amountRaw = row[cAmt];
+        const vendor = cVendor >= 0 ? String(row[cVendor] ?? '').trim() : '';
+        const description = String(row[cDesc] ?? '').trim();
+        const category = findCategory(row[cCat]);
+        const payment = findPayment(row[cPay]);
+        const amount = parseFloat(amountRaw);
+
+        // Excel serial dates come back as a Date object already via cellDates;
+        // sheet_to_json without cellDates gives numbers - handle both, plus a
+        // plain typed string like "2026-08-01".
+        let date = '';
+        if (dateRaw instanceof Date && !Number.isNaN(dateRaw.getTime())) date = dateRaw.toISOString().slice(0, 10);
+        else if (typeof dateRaw === 'number') date = new Date(Math.round((dateRaw - 25569) * 86400 * 1000)).toISOString().slice(0, 10);
+        else if (String(dateRaw ?? '').trim()) {
+          const parsed = new Date(String(dateRaw).trim());
+          date = Number.isNaN(parsed.getTime()) ? String(dateRaw).trim() : parsed.toISOString().slice(0, 10);
+        }
+        const dateInvalid = date && Number.isNaN(new Date(date).getTime());
+
+        const errors = [];
+        if (!Number.isFinite(amount) || amount <= 0) errors.push('Total Amount must be a positive number');
+        if (!category) errors.push(`Category "${row[cCat]}" not recognized`);
+        if (!description) errors.push('Description is required');
+        if (dateInvalid) errors.push(`Date "${dateRaw}" could not be read`);
+
+        const warnings = [];
+        if (!errors.length && !payment.matched) warnings.push(`Payment "${payment.name}" not on the active list - will book to Unassigned Receipts`);
+
+        rows.push({
+          rowNum, refNo, date: dateInvalid ? '' : date,
+          categoryCode: category?.code || '', categoryLabel: category?.label || String(row[cCat] ?? ''),
+          amount: Number.isFinite(amount) ? amount : null,
+          paymentMethod: payment.name, paymentMatched: payment.matched,
+          vendor, description,
+          status: errors.length ? 'error' : (warnings.length ? 'warn' : 'ok'),
+          message: [...errors, ...warnings].join('; '),
+        });
+      }
+
+      if (!rows.length) return ui.alert('No data rows found in that file.');
+      const readyCount = rows.filter(r => r.status === 'ok').length;
+      const warnCount = rows.filter(r => r.status === 'warn').length;
+      const errorCount = rows.filter(r => r.status === 'error').length;
+      const totalAmount = rows.filter(r => r.status !== 'error').reduce((s, r) => s + (r.amount || 0), 0);
+      setExpenseImportPreview({ rows, readyCount, warnCount, errorCount, totalAmount });
+    } catch (err) {
+      console.error('parseExpenseImportExcel', err);
+      ui.alert('Could not read that file. Make sure it is the .xlsx exported from this screen (or matches its columns).');
+    }
+  };
+
+  const submitExpenseImport = async () => {
+    if (!expenseImportPreview || expenseImporting) return;
+    const importable = expenseImportPreview.rows.filter(r => r.status !== 'error');
+    if (!importable.length) return ui.alert('No importable rows - fix the errors and re-upload.');
+    setExpenseImporting(true);
+    try {
+      const res = await apiFetch('/api/expenses/import', {
+        method: 'POST',
+        body: JSON.stringify({
+          rows: importable.map(r => ({
+            amount: r.amount, categoryCode: r.categoryCode, paymentMethod: r.paymentMethod,
+            description: r.description, vendor: r.vendor, refNo: r.refNo, date: r.date || undefined,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) return ui.alert(data.error || 'Import failed.');
+      setExpenseImportPreview(null);
+      fetchExpenses();
+      if (ledgerSubTab === 'pnl') fetchPnl();
+      if (ledgerSubTab === 'balance') fetchBalanceSheet();
+      const skippedMsg = data.skipped?.length ? `\n${data.skipped.length} row(s) skipped:\n${data.skipped.map(s => `Row ${s.row}: ${s.error}`).join('\n')}` : '';
+      ui.alert(`Imported ${data.created} expense(s) totaling ₱${data.totalAmount.toFixed(2)}.${skippedMsg}`);
+    } catch { ui.alert('Failed to import. Check your connection.'); }
+    finally { setExpenseImporting(false); }
+  };
+
   const submitArSettlement = async () => {
     if (settleSubmitting || !settleModal?.order) return;
     const amt = parseFloat(settleForm.amount);
@@ -6854,6 +7044,7 @@ const updateStatus = async (orderId, newStatus) => {
     stockTransfers, locationAnalytics, fetchStockTransfers, requestStockTransfer, actOnStockTransfer,
     expenseModal, setExpenseModal, expenseCategories, fetchExpenseCategories,
     expenseForm, setExpenseForm, expenseSubmitting, submitExpense, expenseList, fetchExpenses,
+    downloadExpenseImportTemplate, parseExpenseImportExcel, expenseImportPreview, setExpenseImportPreview, expenseImporting, submitExpenseImport,
     settleModal, setSettleModal, settleForm, setSettleForm, settleSubmitting, setSettleSubmitting,
     arHistory, setArHistory, arHistoryLoading, openArHistory, todayLocal,
     submitArSettlement,
@@ -6945,7 +7136,7 @@ const updateStatus = async (orderId, newStatus) => {
     exportArPDF, exportApPDF, exportPaymentsPDF,
     exportProfitByCategoryPDF, exportMenuEngineeringPDF, exportVariancePDF, exportCommissionsPDF,
     exportBillsPDF, exportAuditLogPDF, exportExpensesPDF,
-    exportStockTransfersPDF, exportProductionHistoryPDF, exportMenuItemsPDF, exportRevolvingFundsPDF,
+    exportStockTransfersPDF, exportProductionHistoryPDF, exportProductionOrdersPDF, exportMenuItemsPDF, exportRevolvingFundsPDF,
     exportPricingMasterlistPDF, exportPriceTiersPDF, exportShiftHistoryPDF, exportTimesheetsPDF,
     exportPriceTiersExcel, priceTierImportPreview, setPriceTierImportPreview, parsePriceTierExcel, submitPriceTierImport, priceTierImporting,
     exportInventoryToPDF, exportLedgerToPDF, exportAllToPDF,

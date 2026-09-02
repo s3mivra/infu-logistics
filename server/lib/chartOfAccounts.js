@@ -134,3 +134,38 @@ export function isExpenseCode(code) {
   const c = String(code || '');
   return c.startsWith('5') || c.startsWith('6') || c.startsWith('7') || c.startsWith('9');
 }
+
+// The 9 first-level roots every branch of the COA hangs off. Used by
+// sectionAncestor() below to find where a leaf account's own report
+// "section" (a named group with a subtotal) actually starts.
+const SECTION_ROOTS = new Set(['100000', '200000', '300000', '400000', '500000', '600000', '700000', '800000', '900000']);
+
+// Walks a leaf/posting account UP its parent chain and returns the nearest
+// ancestor that is itself a direct child of one of the 9 roots - that
+// ancestor IS the account's report section (a named group with its own
+// subtotal on the P&L / Balance Sheet), same idea as the reference
+// spreadsheet's "PAYROLL & BENEFITS" / "CURRENT ASSETS" headers.
+//
+// Examples with the canonical COA above:
+//   '111000' (Cash on Hand)     -> '110000' Current Assets   (one hop: 111000's parent 110000 is itself a root's child)
+//   '610000' (Salaries & Wages) -> '610000' itself            (already a direct child of root 600000 - no group above it)
+//   '111001' (a custom sub-account someone added under Cash on Hand)
+//                                -> '110000' Current Assets   (climbs past 111000 too - a sub-account reports under
+//                                                               the SAME section as its parent leaf, not its own section)
+// `lookup(code)` resolves ONE account's metadata - defaults to the static
+// map here, but callers with custom sub-accounts (created via the Payment
+// Routing / Chart of Accounts UI, stored in the DB rather than this file)
+// should pass their own acctMeta(code) that merges both, so a custom child
+// account still climbs correctly to its real section.
+// Returns null for an unknown code.
+export function sectionAncestor(code, lookup = (c) => ACCOUNTS[c]) {
+  let node = String(code || '');
+  let meta = lookup(node);
+  if (!meta) return null;
+  while (meta.parent && !SECTION_ROOTS.has(node) && !SECTION_ROOTS.has(meta.parent)) {
+    node = meta.parent;
+    meta = lookup(node);
+    if (!meta) break;
+  }
+  return { code: node, name: (lookup(node) || meta)?.name || node };
+}
