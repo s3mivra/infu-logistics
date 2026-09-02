@@ -32,6 +32,13 @@ beforeAll(async () => {
     businessType: 'log', role: 'client', partnerSlug: 'other-biz', partnerName: 'Other Biz',
     partnerUrl: 'http://unreachable.invalid', linkToken: 'other-biz-token', status: 'active',
   });
+  // A SEPARATE, legitimately-linked partner - used to prove one linked
+  // partner cannot spoof or tamper with a negotiation between us and a
+  // DIFFERENT partner just because they also hold a valid link token.
+  await mongoose.model('LinkedBusiness').create({
+    businessType: 'log', role: 'client', partnerSlug: 'third-party-biz', partnerName: 'Third Party Biz',
+    partnerUrl: 'http://unreachable.invalid', linkToken: 'third-party-token', status: 'active',
+  });
 
   const invRes = await auth('post', '/api/inventory', superTok)
     .send({ itemName: 'Negotiated Widget', unit: 'pcs', stockQty: 500, unitCost: 10 });
@@ -188,6 +195,69 @@ describe('someone else asking US to fulfill', () => {
     const res = await auth('post', `/api/hub/transfer-requests/${doc._id}/approve-as-is`, superTok).send({});
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/only 5pcs on hand/i);
+  });
+});
+
+describe('security: a linked partner cannot spoof or tamper with a negotiation it is not a party to', () => {
+  it('transfer-request-notify rejects a fromSlug/toSlug that does not include the authenticated partner', async () => {
+    const requestRef = `TRQ-SPOOF-${Math.random().toString(36).slice(2, 8)}`;
+    // third-party-biz authenticates with ITS OWN token, but claims the
+    // request is between us and other-biz - it is neither fromSlug nor toSlug.
+    const res = await asPartner('/api/hub/internal/transfer-request-notify', 'third-party-token').send({
+      requestRef, fromSlug: TENANT, fromName: TENANT, toSlug: 'other-biz', toName: 'Other Biz',
+      filedBySlug: 'other-biz',
+      lines: [{ itemId: String(item._id), itemName: item.itemName, unit: item.unit, qty: 5 }],
+      requestedBy: 'Spoofer',
+    });
+    expect(res.status).toBe(403);
+    expect(await mongoose.model('TransferRequest').findOne({ requestRef })).toBeNull();
+  });
+
+  it('transfer-request-sync rejects a partner that is not fromSlug/toSlug on that specific record', async () => {
+    // A real negotiation between us and other-biz.
+    const requestRef = `TRQ-REAL-${Math.random().toString(36).slice(2, 8)}`;
+    await asPartner('/api/hub/internal/transfer-request-notify', 'other-biz-token').send({
+      requestRef, fromSlug: TENANT, fromName: TENANT, toSlug: 'other-biz', toName: 'Other Biz',
+      filedBySlug: 'other-biz',
+      lines: [{ itemId: String(item._id), itemName: item.itemName, unit: item.unit, qty: 10 }],
+      requestedBy: 'Their Staffer',
+    });
+    const before = await mongoose.model('TransferRequest').findOne({ requestRef }).lean();
+    expect(before.status).toBe('Pending');
+
+    // third-party-biz - a real, linked partner, but NOT a party to this
+    // negotiation - tries to forge it into AwaitingFinal with inflated qty,
+    // which our staff would then ship on Finalize if this succeeded.
+    const forged = await asPartner('/api/hub/internal/transfer-request-sync', 'third-party-token').send({
+      requestRef, status: 'AwaitingFinal',
+      lines: [{ itemId: String(item._id), itemName: item.itemName, unit: item.unit, qty: 999 }],
+      round: 2, respondedBy: 'Spoofer',
+    });
+    expect(forged.status).toBe(403);
+
+    const after = await mongoose.model('TransferRequest').findOne({ requestRef }).lean();
+    expect(after.status).toBe('Pending'); // untouched
+    expect(after.lines[0].qty).toBe(10);   // untouched
+  });
+
+  it('the legitimate other party can still sync normally after the spoof attempt was rejected', async () => {
+    const requestRef = `TRQ-REAL2-${Math.random().toString(36).slice(2, 8)}`;
+    await asPartner('/api/hub/internal/transfer-request-notify', 'other-biz-token').send({
+      requestRef, fromSlug: TENANT, fromName: TENANT, toSlug: 'other-biz', toName: 'Other Biz',
+      filedBySlug: 'other-biz',
+      lines: [{ itemId: String(item._id), itemName: item.itemName, unit: item.unit, qty: 10 }],
+      requestedBy: 'Their Staffer',
+    });
+    // third party tries and is rejected (already proven above); the real
+    // other-biz partner's own sync must still work.
+    await asPartner('/api/hub/internal/transfer-request-sync', 'third-party-token').send({ requestRef, status: 'Declined' });
+
+    const legit = await asPartner('/api/hub/internal/transfer-request-sync', 'other-biz-token').send({
+      requestRef, status: 'Declined', respondedBy: 'Their Staffer',
+    });
+    expect(legit.status).toBe(200);
+    const after = await mongoose.model('TransferRequest').findOne({ requestRef }).lean();
+    expect(after.status).toBe('Declined');
   });
 });
 

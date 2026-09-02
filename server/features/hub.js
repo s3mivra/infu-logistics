@@ -912,6 +912,14 @@ export default function registerHub(ctx) {
   app.post('/api/hub/internal/transfer-request-notify', requireLinkToken, async (req, res) => {
     const { requestRef, fromSlug, fromName, toSlug, toName, filedBySlug, lines, requestedBy } = req.body || {};
     if (!requestRef) return res.status(400).json({ error: 'requestRef is required.' });
+    // The caller must actually be one of the two parties they're claiming
+    // this request is between - requireLinkToken only proves "you're SOME
+    // linked partner of ours", not that you're THIS negotiation's other
+    // side. Without this, any linked partner could inject a fake "ask" that
+    // claims to be from a different business entirely (even from us).
+    if (req.linkedPartner.partnerSlug !== fromSlug && req.linkedPartner.partnerSlug !== toSlug) {
+      return res.status(403).json({ error: 'fromSlug/toSlug must include the authenticated partner.' });
+    }
     await TransferRequest.updateOne(
       { businessType: BUSINESS_TYPE, requestRef, side: 'received' },
       { $setOnInsert: {
@@ -933,8 +941,21 @@ export default function registerHub(ctx) {
   app.post('/api/hub/internal/transfer-request-sync', requireLinkToken, async (req, res) => {
     const { requestRef, status, lines, originalLines, round, history, respondedBy, linkedShipmentRef } = req.body || {};
     if (!requestRef || !TRANSFER_REQUEST_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid payload.' });
+
+    // Load first so the caller's identity can be checked against THIS
+    // record's actual two parties before anything is written - matching by
+    // requestRef alone (as this used to) let ANY linked partner overwrite
+    // the status/lines/history of a negotiation they're not even part of,
+    // including forging the "agreed" quantities our own staff would then
+    // ship on Finalize.
+    const existing = await TransferRequest.findOne({ businessType: BUSINESS_TYPE, requestRef });
+    if (!existing) return res.status(404).json({ error: 'Unknown request on this side.' });
+    if (req.linkedPartner.partnerSlug !== existing.fromSlug && req.linkedPartner.partnerSlug !== existing.toSlug) {
+      return res.status(403).json({ error: 'Not a party to this request.' });
+    }
+
     const result = await TransferRequest.updateOne(
-      { businessType: BUSINESS_TYPE, requestRef },
+      { _id: existing._id },
       { $set: {
         status,
         ...(lines ? { lines } : {}),
