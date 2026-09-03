@@ -336,6 +336,11 @@ app.get('/api/products', async (req, res) => {
         // Strip internal cost / recipe (BOM) data from customer-facing responses so
         // ingredient lists, per-item costs, and margins are not exposed publicly.
         // Keep customer-relevant fields (size name/price, add-on name/price).
+        // Keep a private copy for the stockAvailable computation further down.
+        // Deleting outright made every recipe-built product look like a 1:1
+        // stocked good to customers, which meant it could never be in stock -
+        // the whole FB menu showed "Not available" no matter the inventory.
+        p.__recipeForStock = p.baseRecipe;
         delete p.baseRecipe; delete p.costOverride;
         (p.sizes  || []).forEach(s => { delete s.recipe; delete s.costOverride; });
         (p.addOns || []).forEach(a => { delete a.recipe; });
@@ -415,7 +420,10 @@ app.get('/api/products', async (req, res) => {
     };
 
     products.forEach(p => {
-      const recipe = p.baseRecipe || [];
+      // baseRecipe is stripped from customer-facing responses above, so fall
+      // back to the copy kept there - availability must not depend on who is
+      // asking.
+      const recipe = p.baseRecipe || p.__recipeForStock || [];
       // Resolve the linked stock item: FB recipe products link via invId; log 1:1
       // goods match by code then name. Used for both stock and the unit label.
       const linkedInv = recipe.find(r => r.invId) ? invById[recipe.find(r => r.invId).invId]
@@ -471,6 +479,8 @@ app.get('/api/products', async (req, res) => {
       }
     });
 
+    // The private recipe copy must never leave the server.
+    products.forEach(p => { delete p.__recipeForStock; });
     res.json({ success: true, products, saleThresholds: thresholdRules });
   } catch (err) {
     log.error({ err }, 'GET /api/products failed');
