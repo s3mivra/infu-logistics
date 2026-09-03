@@ -503,6 +503,243 @@ app.post('/api/products', verifyToken, requireStaff, validate(productSchema), as
 // { rows: [{ category, name, srp, ingredients: [{ name, qty, unit }] }] } -
 // this route re-matches ingredients against the CURRENT Inventory (never
 // trusts a client-supplied invId/cost) and does the actual create/update.
+// ── MENU BACKUP / RESTORE ────────────────────────────────────────────────────
+// A lossless round-trip of the whole menu, so a rebuilt or refreshed database
+// does not mean rebuilding every product and recipe by hand.
+//
+// Deliberately NOT the same thing as /api/products/import-menu: that one is a
+// fuzzy first-time import from a spreadsheet a human typed. This is a backup
+// of what the system already holds, and it aims to restore byte-for-byte.
+//
+// The one thing that CANNOT be trusted across databases is invId - Inventory
+// ObjectIds are regenerated when stock is rebuilt. So every recipe line carries
+// the stock ITEM CODE, NAME and UNIT alongside its invId, and restore resolves
+// in that order of confidence: id (same database) -> itemCode (rebuilt, and the
+// code is the thing a human actually curates) -> name (last resort, since names
+// get retyped and drift). A line whose ingredient cannot be found is reported
+// as unmatched rather than dropped silently, because a recipe that quietly
+// loses an ingredient understates COGS forever after.
+const MENU_BACKUP_VERSION = 1;
+
+app.get('/api/products/menu-backup', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const scope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    const includeArchived = req.query.includeArchived === 'true';
+    const q = { ...scope };
+    if (!includeArchived) q.isArchived = { $ne: true };
+
+    const [products, modifierGroups, invItems] = await Promise.all([
+      Product.find(q).sort({ category: 1, name: 1 }).lean(),
+      ModifierGroup.find(scope).lean(),
+      Inventory.find(scope, { itemCode: 1, itemName: 1 }).lean(),
+    ]);
+
+    // Modifier groups are referenced by ObjectId, which will not survive a
+    // rebuild either - export them by name so restore can re-link.
+    const groupNameById = new Map(modifierGroups.map(g => [String(g._id), g.name]));
+
+    // A recipe line stores invId + name but not the stock's own code, so look
+    // it up here. The code is what a human curates and keeps stable, which
+    // makes it the best key for re-linking into a rebuilt database.
+    const codeByInvId = new Map(invItems.map(i => [String(i._id), i.itemCode || '']));
+    const codeByName = new Map(invItems.map(i => [String(i.itemName || '').toLowerCase().trim(), i.itemCode || '']));
+
+    const exportRecipe = (recipe) => (recipe || []).map(r => ({
+      itemCode: codeByInvId.get(String(r.invId)) || codeByName.get(String(r.name || '').toLowerCase().trim()) || '',
+      name: r.name, qty: r.qty, unit: r.unit, cost: r.cost, invId: r.invId,
+    }));
+
+    res.json({
+      success: true,
+      version: MENU_BACKUP_VERSION,
+      businessType: BUSINESS_TYPE,
+      exportedAt: new Date(),
+      exportedBy: req.user?.name || '',
+      counts: { products: products.length, modifierGroups: modifierGroups.length },
+      modifierGroups: modifierGroups.map(g => ({
+        name: g.name, required: g.required, multiSelect: g.multiSelect,
+        options: (g.options || []).map(o => ({ name: o.name, price: o.price, recipe: exportRecipe(o.recipe) })),
+      })),
+      products: products.map(p => ({
+        productCode: p.productCode, barcode: p.barcode, name: p.name,
+        description: p.description, category: p.category, isBulk: p.isBulk,
+        basePrice: p.basePrice, discountPercent: p.discountPercent, vatExempt: p.vatExempt,
+        baseSize: p.baseSize, costOverride: p.costOverride,
+        bulkBreaks: p.bulkBreaks, clientBulkBreaks: p.clientBulkBreaks,
+        clientDiscounts: p.clientDiscounts, segmentDiscounts: p.segmentDiscounts,
+        image: p.image, isAvailable: p.isAvailable, isOutOfStock: p.isOutOfStock,
+        isArchived: p.isArchived,
+        baseRecipe: exportRecipe(p.baseRecipe),
+        sizes: (p.sizes || []).map(s => ({
+          sizeCode: s.sizeCode, name: s.name, price: s.price,
+          costOverride: s.costOverride, recipe: exportRecipe(s.recipe),
+        })),
+        addOns: (p.addOns || []).map(a => ({ name: a.name, price: a.price, recipe: exportRecipe(a.recipe) })),
+        // By NAME, so the link survives a rebuild.
+        modifierGroupNames: (p.modifierGroups || []).map(id => groupNameById.get(String(id))).filter(Boolean),
+      })),
+    });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const backup = req.body?.backup || req.body;
+    const products = Array.isArray(backup?.products) ? backup.products : null;
+    if (!products) return res.status(400).json({ success: false, error: 'That file does not look like a menu backup - no products array.' });
+    if (backup.version && Number(backup.version) > MENU_BACKUP_VERSION) {
+      return res.status(400).json({ success: false, error: `This backup was made by a newer version (v${backup.version}) than this server understands (v${MENU_BACKUP_VERSION}).` });
+    }
+
+    const scope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    const dryRun = req.body?.dryRun === true;
+    // 'skip' protects a live menu; 'overwrite' is for restoring into an empty
+    // or known-stale one. Skip is the default because losing hand-tuned
+    // pricing to a stale backup is worse than an incomplete restore.
+    const onConflict = req.body?.onConflict === 'overwrite' ? 'overwrite' : 'skip';
+
+    const invItems = await Inventory.find(scope).lean();
+    const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const byId = new Map(invItems.map(i => [String(i._id), i]));
+    const byCode = new Map(invItems.filter(i => i.itemCode).map(i => [String(i.itemCode).toLowerCase().trim(), i]));
+    const byName = new Map(invItems.map(i => [String(i.itemName || '').toLowerCase().trim(), i]));
+
+    const unmatchedNames = new Set();
+    const matchedBy = { invId: 0, itemCode: 0, name: 0 };
+    // Resolve in descending order of confidence: the original invId (same
+    // database), then the stock's own item code (survives a rebuild and is
+    // curated by a human), then the name (last resort - names get retyped).
+    // A cross-dimension match is refused outright so a "ml" line can never
+    // land on a pcs-tracked item and silently corrupt the cost.
+    const resolveLine = (line) => {
+      let item = byId.get(String(line.invId || ''));
+      if (item) matchedBy.invId++;
+      if (!item && line.itemCode) {
+        item = byCode.get(String(line.itemCode).toLowerCase().trim());
+        if (item) matchedBy.itemCode++;
+      }
+      if (!item) {
+        item = byName.get(String(line.name || '').toLowerCase().trim())
+          || invItems.find(i => norm(i.itemName) === norm(line.name));
+        if (item) matchedBy.name++;
+      }
+      if (!item) { if (line.name || line.itemCode) unmatchedNames.add(line.name || line.itemCode); return null; }
+      if (line.unit && unitTypeOf(line.unit) !== unitTypeOf(item.unit)) { unmatchedNames.add(`${line.name} (unit ${line.unit})`); return null; }
+      return {
+        invId: String(item._id), name: item.itemName,
+        qty: Number(line.qty) || 0,
+        cost: item.unitCost || 0,          // always re-priced from CURRENT stock
+        unit: line.unit || effectiveDisplay(item).displayUnit,
+      };
+    };
+    const resolveRecipe = (recipe) => (recipe || []).map(resolveLine).filter(Boolean);
+
+    // Modifier groups first, so products can link to them by name.
+    const groupIdByName = new Map();
+    let groupsCreated = 0;
+    for (const g of (backup.modifierGroups || [])) {
+      if (!g?.name) continue;
+      const existing = await ModifierGroup.findOne({ ...scope, name: new RegExp(`^${escapeRegex(g.name)}$`, 'i') });
+      if (existing) { groupIdByName.set(g.name.toLowerCase(), existing._id); continue; }
+      if (dryRun) { groupsCreated++; continue; }
+      const created = await ModifierGroup.create({
+        ...scope, name: g.name, required: !!g.required, multiSelect: !!g.multiSelect,
+        options: (g.options || []).map(o => ({ name: o.name, price: o.price || 0, recipe: resolveRecipe(o.recipe) })),
+      });
+      groupIdByName.set(g.name.toLowerCase(), created._id);
+      groupsCreated++;
+    }
+
+    const results = [];
+    let created = 0, updated = 0, skipped = 0;
+
+    for (const p of products) {
+      const name = String(p?.name || '').trim();
+      if (!name || !(Number(p.basePrice) >= 0)) {
+        results.push({ name: name || '(missing)', ok: false, error: 'Missing product name or base price.' });
+        continue;
+      }
+      try {
+        const existing = await Product.findOne({
+          ...scope, name: new RegExp(`^${escapeRegex(name)}$`, 'i'), isArchived: { $ne: true },
+        });
+        if (existing && onConflict === 'skip') {
+          skipped++;
+          results.push({ name, ok: true, action: 'skipped', reason: 'already on the menu' });
+          continue;
+        }
+
+        const doc = {
+          barcode: p.barcode || '', description: p.description || '',
+          category: String(p.category || 'Uncategorized').trim(),
+          isBulk: !!p.isBulk, basePrice: Number(p.basePrice),
+          discountPercent: Number(p.discountPercent) || 0, vatExempt: !!p.vatExempt,
+          baseSize: p.baseSize || '', costOverride: p.costOverride,
+          bulkBreaks: p.bulkBreaks || [], clientBulkBreaks: p.clientBulkBreaks || [],
+          clientDiscounts: p.clientDiscounts || [], segmentDiscounts: p.segmentDiscounts || [],
+          image: p.image || '',
+          isAvailable: p.isAvailable !== false, isOutOfStock: !!p.isOutOfStock,
+          baseRecipe: resolveRecipe(p.baseRecipe),
+          sizes: (p.sizes || []).map(s => ({
+            sizeCode: s.sizeCode, name: s.name, price: s.price,
+            costOverride: s.costOverride, recipe: resolveRecipe(s.recipe),
+          })),
+          addOns: (p.addOns || []).map(a => ({ name: a.name, price: a.price || 0, recipe: resolveRecipe(a.recipe) })),
+          modifierGroups: (p.modifierGroupNames || [])
+            .map(n => groupIdByName.get(String(n).toLowerCase())).filter(Boolean),
+        };
+
+        const recipeLines = doc.baseRecipe.length
+          + doc.sizes.reduce((s, x) => s + x.recipe.length, 0)
+          + doc.addOns.reduce((s, x) => s + x.recipe.length, 0);
+
+        if (dryRun) {
+          existing ? updated++ : created++;
+          results.push({ name, ok: true, action: existing ? 'would update' : 'would create', recipeLines });
+          continue;
+        }
+
+        if (existing) {
+          Object.assign(existing, doc);
+          await existing.save();
+          updated++;
+          results.push({ name, ok: true, action: 'updated', recipeLines });
+        } else {
+          const catPrefix = getCategoryPrefix(doc.category);
+          // Keep the original code when it is still free, so references in
+          // history and printed material keep resolving.
+          const codeTaken = p.productCode ? await Product.exists({ ...scope, productCode: p.productCode }) : true;
+          const productCode = (p.productCode && !codeTaken)
+            ? p.productCode
+            : await generateNextSequence(Product, catPrefix, 'productCode');
+          await Product.create({ ...scope, ...doc, productCode, name });
+          created++;
+          results.push({ name, ok: true, action: 'created', recipeLines });
+        }
+      } catch (e) {
+        results.push({ name, ok: false, error: e.message });
+      }
+    }
+
+    if (!dryRun) emitToMgr('erpUpdated');
+    res.json({
+      success: true, dryRun,
+      created, updated, skipped, groupsCreated,
+      // How each recipe line was re-linked. A restore leaning on `name` is
+      // worth a second look: it means the stock codes did not line up.
+      matchedBy,
+      // Surfaced loudly: these recipe lines could NOT be linked to stock, so
+      // those products will under-report COGS until the ingredient exists.
+      unmatchedIngredients: [...unmatchedNames].sort(),
+      results,
+    });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res) => {
   try {
     const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];

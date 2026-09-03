@@ -20,6 +20,7 @@ export default function registerBills(ctx) {
     BILL_STATUSES,
     Supplier,
     JournalEntry,
+    CheckVoucher,
     AuditLog,
     emitToMgr,
     verifyToken,
@@ -198,51 +199,158 @@ export default function registerBills(ctx) {
   });
 
   // ── PAY ──────────────────────────────────────────────────────────────────────
-  // Records the actual payment for THIS bill specifically (DR 220000 AP / CR the
+  // Records a payment against THIS bill specifically (DR 220000 AP / CR the
   // cash/bank/e-wallet account paid from) - same shape as the existing
   // /api/finance/ap-payment, just scoped and attributed to one bill instead of a
   // supplier's running balance. Both post to the same 220000 ledger, so
   // ap-outstanding/vendor-statement see this payment either way.
+  //
+  // Partial payment: `amount` defaults to the full remaining balance (the old
+  // always-pay-in-full behavior), but can be less - the bill then moves to
+  // 'Partially Paid' instead of 'Paid', same shape as A/R settlement.
+  //
+  // Overpayment: if `amount` exceeds what's actually still owed, the excess
+  // is diverted to the supplier's creditBalance (160100 Supplier Credit
+  // Balance) instead of overstating what this bill collected - never
+  // silently lost, never double-counted against the bill itself.
+  //
+  // Every payment - full, partial, or with an overpay split - issues a
+  // Check Voucher, the actual paper trail for the disbursement.
   app.post('/api/bills/:id/pay', verifyToken, ...canPostAcct, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const bill = await Bill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
       if (!bill) return res.status(404).json({ success: false, error: 'Not found' });
-      if (bill.status !== 'Approved') return res.status(409).json({ success: false, error: 'Only an Approved bill can be paid.' });
+      if (!['Approved', 'Partially Paid'].includes(bill.status)) {
+        return res.status(409).json({ success: false, error: `Only an Approved or Partially Paid bill can be paid (this one is ${bill.status}).` });
+      }
+
+      const outstanding = money(bill.amount - (bill.paidAmount || 0));
+      if (outstanding <= 0) return res.status(409).json({ success: false, error: 'This bill is already fully paid.' });
 
       const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
-      const { payFromAccount, referenceNumber } = req.body || {};
+      const { amount, payFromAccount, referenceNumber } = req.body || {};
+      const paidAmt = money(amount !== undefined && amount !== null && amount !== '' ? amount : outstanding);
+      if (!paidAmt || paidAmt <= 0) return res.status(400).json({ success: false, error: 'Amount must be positive.' });
+
+      const applied = Math.min(paidAmt, outstanding);
+      const overpay = money(paidAmt - applied);
+
       const srcMeta = acctMeta(payFromAccount);
       const srcCode = (srcMeta && isCashLike(payFromAccount)) ? payFromAccount : '111000';
       const srcName = acctMeta(srcCode)?.name || 'Cash on Hand';
 
       const reference = await mkSeqRef('BILL-PAY');
       const lines = [
-        { accountCode: '220000', accountName: 'Accounts Payable', debit: bill.amount, credit: 0 },
-        { accountCode: srcCode, accountName: srcName, debit: 0, credit: bill.amount },
+        { accountCode: '220000', accountName: 'Accounts Payable', debit: applied, credit: 0 },
+      ];
+      if (overpay > 0) {
+        lines.push({ accountCode: '160100', accountName: 'Supplier Credit Balance (Overpayments)', debit: overpay, credit: 0 });
+      }
+      lines.push({ accountCode: srcCode, accountName: srcName, debit: 0, credit: paidAmt });
+      assertBalanced(lines, reference);
+      await JournalEntry.create({
+        date: new Date(), reference,
+        description: `Payment for bill ${bill.billNumber} (${bill.description || bill.poNumber || bill.supplierName})${overpay > 0 ? ` - includes ₱${overpay.toFixed(2)} overpayment (credited to supplier)` : ''}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}`,
+        lines, totalDebit: paidAmt, totalCredit: paidAmt,
+        supplierId: String(bill.supplierId), supplierName: bill.supplierName,
+      });
+
+      const voucherNumber = await mkSeqRef('CV');
+      const voucher = await CheckVoucher.create({
+        businessType: BUSINESS_TYPE, ...tenantScope(req),
+        voucherNumber, payeeType: 'supplier', payeeId: String(bill.supplierId), payeeName: bill.supplierName,
+        amount: paidAmt, purpose: 'bill-payment', sourceAccount: srcCode, sourceAccountName: srcName,
+        referenceNumber: referenceNumber || '', billId: bill._id, journalEntryRef: reference,
+        issuedBy: req.user?.name || '',
+      });
+
+      bill.paidAmount = money((bill.paidAmount || 0) + applied);
+      bill.status = bill.paidAmount >= bill.amount - 0.01 ? 'Paid' : 'Partially Paid';
+      bill.paidAt = new Date();
+      bill.journalEntryRef = reference;
+      bill.paymentReference = referenceNumber || '';
+      bill.payments.push({
+        amount: paidAmt, payFromAccount: srcCode, referenceNumber: referenceNumber || '',
+        checkVoucherRef: voucherNumber, journalRef: reference, paidBy: req.user?.name || '',
+      });
+      await bill.save();
+
+      if (overpay > 0) {
+        await Supplier.updateOne({ _id: bill.supplierId }, {
+          $inc: { creditBalance: overpay },
+          $push: { creditHistory: { type: 'overpayment', amount: overpay, billId: bill._id, billNumber: bill.billNumber, reference, note: 'Overpayment on bill settlement', by: req.user?.name || '' } },
+        });
+      }
+
+      await AuditLog.create({
+        userId: req.user?.name || 'System', action: 'BILL_PAID', targetReference: bill.billNumber,
+        details: { amount: paidAmt, applied, overpay, payFromAccount: srcCode, referenceNumber: referenceNumber || '', voucherNumber, supplierId: String(bill.supplierId), recordedBy: req.user?.name },
+      });
+      emitToMgr('erpUpdated');
+      res.json({ success: true, bill, voucher, overpay });
+    } catch (err) {
+      log.error({ err }, 'POST /api/bills/:id/pay failed');
+      (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+    }
+  });
+
+  // ── SUPPLIER CREDIT: apply to a bill ────────────────────────────────────────
+  // Reclassifies stored supplier credit (160100, an asset - they owe it to
+  // us) directly against a bill's outstanding balance. No cash moves; this is
+  // purely "use what they already owe us instead of paying more cash out."
+  app.post('/api/suppliers/:id/credit/apply', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Supplier not found.' });
+      const supplier = await Supplier.findOne({ _id: req.params.id, ...tenantScope(req) });
+      if (!supplier) return res.status(404).json({ success: false, error: 'Supplier not found.' });
+
+      const { billId, amount, referenceNumber, note } = req.body || {};
+      if (!billId || !mongoose.Types.ObjectId.isValid(billId)) return res.status(400).json({ success: false, error: 'A valid bill is required.' });
+      const bill = await Bill.findOne({ _id: billId, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+      if (!bill) return res.status(404).json({ success: false, error: 'Bill not found.' });
+      if (String(bill.supplierId) !== String(supplier._id)) return res.status(400).json({ success: false, error: 'This bill belongs to a different supplier.' });
+      if (!['Approved', 'Partially Paid'].includes(bill.status)) {
+        return res.status(409).json({ success: false, error: `Only an Approved or Partially Paid bill can take a credit application (this one is ${bill.status}).` });
+      }
+
+      const outstanding = money(bill.amount - (bill.paidAmount || 0));
+      if (outstanding <= 0) return res.status(409).json({ success: false, error: 'This bill is already fully paid.' });
+
+      const requested = money(amount !== undefined && amount !== null && amount !== '' ? amount : Math.min(supplier.creditBalance, outstanding));
+      if (!requested || requested <= 0) return res.status(400).json({ success: false, error: 'Amount must be positive.' });
+      if (requested > supplier.creditBalance + 0.01) return res.status(400).json({ success: false, error: `Only ₱${supplier.creditBalance.toFixed(2)} of credit is available.` });
+      if (requested > outstanding + 0.01) return res.status(400).json({ success: false, error: `Cannot apply more than the bill's outstanding balance (₱${outstanding.toFixed(2)}).` });
+
+      const reference = await mkSeqRef('SUP-CR-APPLY');
+      const lines = [
+        { accountCode: '220000', accountName: 'Accounts Payable', debit: requested, credit: 0 },
+        { accountCode: '160100', accountName: 'Supplier Credit Balance (Overpayments)', debit: 0, credit: requested },
       ];
       assertBalanced(lines, reference);
       await JournalEntry.create({
         date: new Date(), reference,
-        description: `Payment for bill ${bill.billNumber} (${bill.description || bill.poNumber || bill.supplierName})${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}`,
-        lines, totalDebit: bill.amount, totalCredit: bill.amount,
-        supplierId: String(bill.supplierId), supplierName: bill.supplierName,
+        description: `Supplier credit applied to bill ${bill.billNumber} (${supplier.name})${note ? ` - ${note}` : ''}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}`,
+        lines, totalDebit: requested, totalCredit: requested,
+        supplierId: String(supplier._id), supplierName: supplier.name,
       });
 
-      bill.status = 'Paid';
+      bill.paidAmount = money((bill.paidAmount || 0) + requested);
+      bill.status = bill.paidAmount >= bill.amount - 0.01 ? 'Paid' : 'Partially Paid';
       bill.paidAt = new Date();
       bill.journalEntryRef = reference;
-      bill.paymentReference = referenceNumber || '';
+      bill.payments.push({ amount: requested, payFromAccount: '160100', referenceNumber: referenceNumber || 'Supplier credit applied', journalRef: reference, paidBy: req.user?.name || '' });
       await bill.save();
 
-      await AuditLog.create({
-        userId: req.user?.name || 'System', action: 'BILL_PAID', targetReference: bill.billNumber,
-        details: { amount: bill.amount, payFromAccount: srcCode, referenceNumber: referenceNumber || '', supplierId: String(bill.supplierId), recordedBy: req.user?.name },
-      });
+      supplier.creditBalance = money(supplier.creditBalance - requested);
+      supplier.creditHistory.push({ type: 'applied', amount: requested, billId: bill._id, billNumber: bill.billNumber, reference, note: note || 'Applied to bill', by: req.user?.name || '' });
+      await supplier.save();
+
+      await logAudit(req, { action: 'apply-credit', entity: 'Supplier', entityId: supplier._id, after: { billNumber: bill.billNumber, amount: requested } });
       emitToMgr('erpUpdated');
-      res.json({ success: true, bill });
+      res.json({ success: true, bill, supplier: { _id: supplier._id, creditBalance: supplier.creditBalance } });
     } catch (err) {
-      log.error({ err }, 'POST /api/bills/:id/pay failed');
+      log.error({ err }, 'POST /api/suppliers/:id/credit/apply failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
   });

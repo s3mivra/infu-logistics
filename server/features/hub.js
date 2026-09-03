@@ -3,6 +3,7 @@
 // (requireLinkToken), not JWT - each tenant has its own JWT_SECRET so
 // partner JWTs are never valid here.
 import crypto from 'node:crypto';
+import { mergeTrialBalances, buildPnl, buildBalanceSheet, unknownCodes } from '../lib/consolidate.js';
 
 const TENANT = (() => {
   const m = (process.env.MONGO_URI || '').match(/\/semivra_([^?/]+)/);
@@ -24,6 +25,7 @@ export default function registerHub(ctx) {
     requireStaff: requireAuth, requireSuperAdmin,
     logAudit,
     mkSeqRef,
+    acctMeta,
   } = ctx;
 
   // Internal auth: partner calls use a shared linkToken
@@ -968,6 +970,115 @@ export default function registerHub(ctx) {
     );
     if (!result.matchedCount) return res.status(404).json({ error: 'Unknown request on this side.' });
     res.json({ ok: true });
+  });
+
+  // ── CONSOLIDATED BOOKS ─────────────────────────────────────────────────────
+  // One P&L / Balance Sheet across every linked branch. Each branch is its own
+  // deployment and database, so this works the way transfers and the network
+  // summary already do: call each active partner's API over the existing
+  // link-token trust and merge the results here.
+  //
+  // What crosses the wire is a TRIAL BALANCE (debit/credit totals per account
+  // code), not a finished report - see lib/consolidate.js for why.
+  //
+  // Unlike the inventory network view, an unreachable branch is NOT treated as
+  // best-effort here. A consolidated P&L that quietly omits a branch is a wrong
+  // financial statement, which is worse than no statement, so the response
+  // always carries `complete` and `unreachable` and the UI must refuse to
+  // present an incomplete set of books as final.
+  const parseRange = (q) => {
+    const start = q.start ? new Date(q.start) : new Date(new Date().getFullYear(), 0, 1);
+    start.setHours(0, 0, 0, 0);
+    const end = q.end ? new Date(q.end) : new Date();
+    end.setHours(23, 59, 59, 999);
+    const asOf = q.asOf ? new Date(q.asOf) : end;
+    asOf.setHours(23, 59, 59, 999);
+    return { start, end, asOf };
+  };
+
+  const trialBalance = async (match) => {
+    const agg = await JournalEntry.aggregate([
+      { $match: match },
+      { $unwind: '$lines' },
+      { $group: {
+        _id: '$lines.accountCode',
+        name: { $first: '$lines.accountName' },
+        debit: { $sum: { $ifNull: ['$lines.debit', 0] } },
+        credit: { $sum: { $ifNull: ['$lines.credit', 0] } },
+      } },
+      { $sort: { _id: 1 } },
+    ]);
+    return agg.map(r => ({ code: r._id, name: r.name, debit: r.debit || 0, credit: r.credit || 0 }));
+  };
+
+  // This branch's own trial balances: one for the P&L window, one cumulative
+  // as-of the balance-sheet date.
+  const ownTrialBalances = async ({ start, end, asOf }) => ({
+    tenant: TENANT,
+    period: await trialBalance({ date: { $gte: start, $lte: end } }),
+    asOf: await trialBalance({ date: { $lte: asOf } }),
+  });
+
+  // What a linked partner calls to pull OUR trial balances for THEIR
+  // consolidated books.
+  app.get('/api/hub/internal/trial-balance', requireLinkToken, async (req, res) => {
+    try {
+      res.json(await ownTrialBalances(parseRange(req.query)));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/hub/network-financials', verifyToken, requireAuth, requireSuperAdmin, async (req, res) => {
+    try {
+      const range = parseRange(req.query);
+      const qs = `start=${range.start.toISOString()}&end=${range.end.toISOString()}&asOf=${range.asOf.toISOString()}`;
+      const links = await LinkedBusiness.find({ businessType: BUSINESS_TYPE, status: 'active' }).lean();
+
+      const own = await ownTrialBalances(range);
+      const fetched = await Promise.all(links.map(async (link) => {
+        try {
+          const r = await fetch(`${link.partnerUrl}/api/hub/internal/trial-balance?${qs}`, {
+            headers: { 'x-link-token': link.linkToken },
+            signal: AbortSignal.timeout(15_000),
+          });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(data.error || `Partner returned ${r.status}`);
+          return { slug: link.partnerSlug, name: link.partnerName || link.partnerSlug, ok: true, ...data };
+        } catch (err) {
+          return { slug: link.partnerSlug, name: link.partnerName || link.partnerSlug, ok: false, error: err.message };
+        }
+      }));
+
+      const reachable = fetched.filter(b => b.ok);
+      const unreachable = fetched.filter(b => !b.ok).map(b => ({ slug: b.slug, name: b.name, error: b.error }));
+
+      const branches = [{ slug: TENANT, name: 'This Business', self: true, ...own }, ...reachable];
+      const periodRows = mergeTrialBalances(branches.map(b => ({ rows: b.period })));
+      const asOfRows = mergeTrialBalances(branches.map(b => ({ rows: b.asOf })));
+
+      res.json({
+        success: true,
+        complete: unreachable.length === 0,
+        unreachable,
+        period: { start: range.start, end: range.end },
+        asOf: range.asOf,
+        // Per-branch bottom line, so a combined figure can be traced back.
+        branches: branches.map(b => ({
+          slug: b.slug, name: b.name, self: !!b.self,
+          netIncome: buildPnl(b.period, acctMeta).totals.netIncome,
+          totalAssets: buildBalanceSheet(b.asOf, acctMeta).totals.assets,
+        })),
+        pnl: buildPnl(periodRows, acctMeta),
+        balanceSheet: buildBalanceSheet(asOfRows, acctMeta),
+        // Codes a branch posted to that this instance's chart doesn't know -
+        // typically a custom sub-account added on one branch only. Surfaced
+        // rather than silently dropped from the consolidated totals.
+        unknownAccounts: unknownCodes(asOfRows, acctMeta),
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
 }

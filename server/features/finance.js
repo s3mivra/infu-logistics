@@ -242,6 +242,98 @@ app.post('/api/journal', verifyToken, ...canPostAcct, async (req, res) => {
   }
 });
 
+// ── OPENING BALANCES ─────────────────────────────────────────────────────────
+// Onboarding a business that already has a history: its balance sheet has to
+// be carried in before day-to-day posting means anything. POST /api/journal
+// can technically do this, but it makes someone hand-build a balanced
+// multi-line entry, which is the whole difficulty. Here each account is given
+// its NATURAL balance as a positive number (assets debit, liabilities and
+// equity credit) and the entry is assembled and balanced server-side.
+//
+// P&L accounts are refused on purpose: an opening balance sheet carries
+// accumulated results in equity (Retained Earnings), never as revenue or
+// expense in the new books, which would restate this period's profit.
+app.get('/api/finance/opening-balances', verifyToken, ...canViewAcct, async (req, res) => {
+  try {
+    const entry = await JournalEntry.findOne({ reference: /^OPEN-/ }).sort({ createdAt: 1 }).lean();
+    res.json({ success: true, entry: entry || null });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.post('/api/finance/opening-balances', verifyToken, ...canPostAcct, async (req, res) => {
+  try {
+    const { date: requestedDate, lines, note, referenceNumber, force } = req.body || {};
+    if (!Array.isArray(lines) || lines.length === 0) {
+      return res.status(400).json({ success: false, error: 'At least one opening balance line is required.' });
+    }
+
+    // Opening balances are a once-per-business event. Posting a second set
+    // silently doubles every carried-in balance, so it takes an explicit force.
+    const existing = await JournalEntry.findOne({ reference: /^OPEN-/ }).lean();
+    if (existing && !force) {
+      return res.status(409).json({ success: false, error: `Opening balances were already posted (${existing.reference}). Re-posting would double every carried-in balance - pass force to override.` });
+    }
+
+    const lock = await periodLockFor(requestedDate || new Date());
+    if (lock) return res.status(423).json({ success: false, error: `Period ${lock.year}-${String(lock.month).padStart(2, '0')} is closed. Reopen the period first.` });
+
+    const jeLines = [];
+    let totalDebit = 0, totalCredit = 0;
+    for (const raw of lines) {
+      const code = String(raw.accountCode || '').trim();
+      const amount = Math.round((Number(raw.amount) || 0) * 100) / 100;
+      if (!amount) continue; // a blank row is not an error, just nothing to carry
+      const meta = acctMeta(code);
+      if (!meta) return res.status(400).json({ success: false, error: `Unknown account code: ${code}.` });
+      if (!['asset', 'liability', 'equity'].includes(meta.type)) {
+        return res.status(400).json({ success: false, error: `${code} ${meta.name} is a ${meta.type} account. Opening balances carry the balance sheet only - accumulated results belong in equity.` });
+      }
+      // Natural side: assets are debit-balance, liabilities and equity credit.
+      // A negative amount flips the side, which is how a contra balance
+      // (e.g. accumulated depreciation) is carried in.
+      const debit = meta.type === 'asset' ? Math.max(0, amount) : Math.max(0, -amount);
+      const credit = meta.type === 'asset' ? Math.max(0, -amount) : Math.max(0, amount);
+      jeLines.push({ accountCode: code, accountName: meta.name, debit, credit });
+      totalDebit += debit; totalCredit += credit;
+    }
+    if (jeLines.length === 0) return res.status(400).json({ success: false, error: 'Every line was zero - nothing to carry in.' });
+
+    // Whatever does not balance is, by definition, the owner's stake in what
+    // was carried in. Plugging it to Owner's Capital is what makes this usable
+    // without the user pre-computing equity themselves.
+    const diff = Math.round((totalDebit - totalCredit) * 100) / 100;
+    if (Math.abs(diff) > 0.01) {
+      const plugMeta = acctMeta('310000');
+      jeLines.push({
+        accountCode: '310000', accountName: plugMeta?.name || "Owner's Capital",
+        debit: diff < 0 ? Math.abs(diff) : 0,
+        credit: diff > 0 ? diff : 0,
+      });
+      if (diff > 0) totalCredit += diff; else totalDebit += Math.abs(diff);
+    }
+
+    const reference = await mkSeqRef('OPEN');
+    assertBalanced(jeLines, reference);
+    const payload = {
+      reference,
+      description: `Opening balances${note ? ` - ${note}` : ''}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}`,
+      lines: jeLines,
+      totalDebit: Math.round(totalDebit * 100) / 100,
+      totalCredit: Math.round(totalCredit * 100) / 100,
+    };
+    if (requestedDate) payload.date = new Date(requestedDate);
+    const entry = await JournalEntry.create(payload);
+    await logAudit(req, { action: 'create', entity: 'JournalEntry', entityId: entry._id, after: { reference, openingBalance: true, totalDebit: payload.totalDebit } });
+
+    emitToMgr('erpUpdated');
+    res.json({ success: true, entry, balancingEntry: Math.abs(diff) > 0.01 ? Math.abs(diff) : 0 });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 app.get('/api/finance/balances', verifyToken, ...canViewAcct, async (req, res) => {
   try {
     // Aggregate at MongoDB level - no full collection load, OOM-safe at scale
@@ -472,8 +564,21 @@ app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, 
       // paymentReference / paymentCheckDate carry the check details captured at
       // the sale, so collecting the receivable can pre-fill them instead of
       // making someone read the check number off the paper a second time.
-    }, { orderNumber: 1, customerName: 1, table: 1, total: 1, paymentMethod: 1, createdAt: 1, arTermsDays: 1, arDueDate: 1, arPaidAmount: 1, arPayments: 1, paymentReference: 1, paymentCheckDate: 1 })
+    }, { orderNumber: 1, customerName: 1, table: 1, total: 1, paymentMethod: 1, createdAt: 1, arTermsDays: 1, arDueDate: 1, arPaidAmount: 1, arPayments: 1, paymentReference: 1, paymentCheckDate: 1, clientId: 1 })
       .sort({ createdAt: -1 }).limit(500).lean();
+
+    // Stored credit the client is sitting on (from a past overpayment). Attached
+    // here so the A/R table can offer "apply credit" against a specific invoice
+    // without a lookup per row - see POST /api/client-accounts/:id/credit/apply.
+    const clientIds = [...new Set(rows.map(r => r.clientId).filter(Boolean).map(String))];
+    const creditByClient = new Map();
+    if (clientIds.length) {
+      const withCredit = await ClientAccount.find(
+        { _id: { $in: clientIds }, creditBalance: { $gt: 0 } },
+        { creditBalance: 1 },
+      ).lean();
+      for (const c of withCredit) creditByClient.set(String(c._id), c.creditBalance);
+    }
     // Flag each receivable overdue when its snapshotted terms date has passed.
     // Orders booked before terms existed carry no arDueDate and are never overdue.
     const now = Date.now();
@@ -486,7 +591,12 @@ app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, 
       const overdue = r.arDueDate ? new Date(r.arDueDate).getTime() < now : false;
       const balance = arBalance(r);
       if (overdue) { overdueTotal += balance; overdueCount += 1; }
-      return { ...r, overdue, balance, paid: Math.round(((Number(r.arPaidAmount) || 0)) * 100) / 100, paymentCount: (r.arPayments || []).length, arPayments: undefined };
+      return {
+        ...r, overdue, balance,
+        paid: Math.round(((Number(r.arPaidAmount) || 0)) * 100) / 100,
+        paymentCount: (r.arPayments || []).length, arPayments: undefined,
+        clientCredit: creditByClient.get(String(r.clientId)) || 0,
+      };
     });
     const totalOutstanding = orders.reduce((s, r) => s + (r.balance || 0), 0);
     res.json({ success: true, orders, totalOutstanding, overdueTotal, overdueCount });

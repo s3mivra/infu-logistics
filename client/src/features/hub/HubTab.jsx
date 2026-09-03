@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
-import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus, LayoutGrid, BarChart3, ExternalLink, Boxes } from 'lucide-react';
+import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus, LayoutGrid, BarChart3, ExternalLink, Boxes, Share2, Landmark, AlertTriangle } from 'lucide-react';
 
 const statusColor = {
   // Awaiting our own approval before the partner is even told about it.
@@ -23,6 +23,103 @@ const negoStatusColor = {
   Cancelled: 'bg-white/10 text-fg/40',
 };
 
+// ── Network Map ──────────────────────────────────────────────────────────────
+// Visual topology of this deployment and everything linked to it. Every business
+// is its own deployment/database (see hub.js - there is no shared DB), so this
+// is the only place the whole shape is visible at once: which business is the
+// main host, which branches hang off it, or that this one stands alone.
+//
+// Drawn from /api/hub/info alone, which is cheap and always loaded. Liveness is
+// overlaid only if the on-demand network fan-out has been run - an un-probed
+// partner reads "unknown" rather than being wrongly coloured healthy.
+//
+// NOTE on `role`: a LinkedBusiness row stores THIS instance's role in the
+// relationship, not the partner's. role==='hub' means "we are the hub, so this
+// partner is our subhost"; role==='client' means "we are the client, so this
+// partner is our main host".
+function NetworkMap({ info, network, card }) {
+  const active = (info?.links || []).filter(l => l.status === 'active');
+  const mains = active.filter(l => l.role === 'client'); // partners that host us
+  const subs = active.filter(l => l.role === 'hub');     // partners we host
+
+  const liveness = new Map((network?.partners || []).map(p => [p.partnerSlug, p.ok]));
+  const tone = (slug) => (!liveness.has(slug) ? 'text-fg/40' : liveness.get(slug) ? 'text-green-500' : 'text-red-400');
+
+  const NW = 152, NH = 46, GAP = 26;
+  const rowW = (n) => n * NW + Math.max(0, n - 1) * GAP;
+  const W = Math.max(720, rowW(mains.length), rowW(subs.length)) + 48;
+  const xs = (n) => { const s = (W - rowW(n)) / 2; return Array.from({ length: n }, (_, i) => s + i * (NW + GAP)); };
+  const Y = { main: 26, self: 150, sub: 274 };
+  const H = 344;
+
+  const mx = xs(mains.length), sx = xs(subs.length), selfX = (W - NW) / 2;
+  const cx = (x) => x + NW / 2;
+
+  const Node = ({ x, y, title, sub, t }) => (
+    <g className={t}>
+      <rect x={x} y={y} width={NW} height={NH} rx={9} fill="rgba(255,255,255,0.04)" stroke="currentColor" strokeWidth="1.5" />
+      <text x={cx(x)} y={y + 20} textAnchor="middle" fill="currentColor" className="text-[11px] font-black">{title}</text>
+      <text x={cx(x)} y={y + 34} textAnchor="middle" fill="currentColor" opacity="0.55" className="text-[9px]">{sub}</text>
+    </g>
+  );
+
+  const RowLabel = ({ y, children }) => (
+    <text x={14} y={y} fill="currentColor" opacity="0.35" className="text-[9px] font-black uppercase tracking-widest text-fg">{children}</text>
+  );
+
+  return (
+    <div className={card}>
+      <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+        <h3 className="text-fg font-black uppercase tracking-wider text-sm flex items-center gap-2">
+          <Share2 size={15} className="text-accent" /> Network Map
+        </h3>
+        <div className="flex items-center gap-3 text-[10px] text-fg/40 uppercase tracking-widest">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" /> Online</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" /> Unreachable</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-fg/30" /> Not probed</span>
+        </div>
+      </div>
+
+      {active.length === 0 ? (
+        <div className="py-8 text-center">
+          <div className="inline-block px-6 py-4 rounded-xl border border-accent/40 bg-accent/5">
+            <p className="text-accent font-black text-sm">{info?.tenant || 'This Business'}</p>
+            <p className="text-fg/40 text-[10px] uppercase tracking-widest mt-1">Standalone</p>
+          </div>
+          <p className="text-fg/40 text-xs mt-3">Not linked to any other branch. Generate an invite code above to add one.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 480 }} role="img" aria-label="Network topology">
+            {mains.map((m, i) => (
+              <line key={`ml${m._id}`} x1={cx(mx[i])} y1={Y.main + NH} x2={cx(selfX)} y2={Y.self}
+                stroke="currentColor" strokeWidth="1.5" className="text-blue-400" opacity="0.5" />
+            ))}
+            {subs.map((s, i) => (
+              <line key={`sl${s._id}`} x1={cx(selfX)} y1={Y.self + NH} x2={cx(sx[i])} y2={Y.sub}
+                stroke="currentColor" strokeWidth="1.5" className="text-purple-400" opacity="0.5" />
+            ))}
+
+            {mains.length > 0 && <RowLabel y={Y.main - 8}>Main Host</RowLabel>}
+            <RowLabel y={Y.self - 8}>This Business</RowLabel>
+            {subs.length > 0 && <RowLabel y={Y.sub - 8}>Branches</RowLabel>}
+
+            {mains.map((m, i) => (
+              <Node key={m._id} x={mx[i]} y={Y.main} t={tone(m.partnerSlug)}
+                title={m.partnerName || m.partnerSlug} sub={m.partnerSlug} />
+            ))}
+            <Node x={selfX} y={Y.self} t="text-accent" title={info?.tenant || 'This Business'} sub="you" />
+            {subs.map((s, i) => (
+              <Node key={s._id} x={sx[i]} y={Y.sub} t={tone(s.partnerSlug)}
+                title={s.partnerName || s.partnerSlug} sub={s.partnerSlug} />
+            ))}
+          </svg>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function HubTab({ ctx }) {
   // fetchERPData reloads the shared inventory the rest of the dashboard reads.
   // A transfer moves real stock, so anything that completes one has to pull it
@@ -41,7 +138,17 @@ export default function HubTab({ ctx }) {
   // demand (not on every Hub visit) - it fans out a network call per partner.
   const [network, setNetwork]           = useState(null); // { own, partners }
   const [networkLoading, setNetworkLoading] = useState(false);
-  const [networkView, setNetworkView]   = useState('inventory'); // 'inventory' | 'compare' | 'switch'
+  const [networkView, setNetworkView]   = useState('inventory'); // 'inventory' | 'compare' | 'switch' | 'books'
+
+  // Consolidated Books: one P&L + Balance Sheet across every linked branch,
+  // built from each branch's trial balance (see /api/hub/network-financials).
+  // Separate from the network summary above because it spans a date range and
+  // is a heavier call - loaded only when the user asks for it.
+  const thisYear = new Date().getFullYear();
+  const [fin, setFin] = useState(null);
+  const [finLoading, setFinLoading] = useState(false);
+  const [finStart, setFinStart] = useState(`${thisYear}-01-01`);
+  const [finEnd, setFinEnd] = useState(new Date().toISOString().slice(0, 10));
 
   // invite / redeem
   const [inviteCode, setInviteCode]   = useState('');
@@ -202,6 +309,17 @@ export default function HubTab({ ctx }) {
     } catch {}
     finally { setNetworkLoading(false); }
   }, [authFetch]);
+
+  const loadFinancials = useCallback(async () => {
+    setFinLoading(true); setErr('');
+    try {
+      const r = await authFetch(`/api/hub/network-financials?start=${finStart}&end=${finEnd}`);
+      const d = await r.json();
+      if (!r.ok) { setErr(d.error || 'Could not build consolidated books.'); return; }
+      setFin(d);
+    } catch { setErr('Network error building consolidated books.'); }
+    finally { setFinLoading(false); }
+  }, [authFetch, finStart, finEnd]);
 
   const generateInvite = async () => {
     setBusy(true); setErr('');
@@ -403,8 +521,12 @@ export default function HubTab({ ctx }) {
                   <div className="flex items-center gap-2">
                     <Link2 size={13} className="text-accent" />
                     <span className="text-fg font-bold text-sm">{p.partnerName || p.partnerSlug}</span>
-                    <span className={`text-[10px] font-black px-2 py-0.5 rounded ${p.role === 'hub' ? 'bg-blue-500/15 text-blue-400' : 'bg-purple-500/15 text-purple-400'}`}>
-                      {p.role === 'hub' ? 'HUB' : 'CLIENT'}
+                    {/* `role` is OUR side of the relationship, not theirs:
+                        role==='hub' means we are the hub, so this partner is
+                        our subhost; role==='client' means we are the client,
+                        so this partner is our main host. Label accordingly. */}
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded ${p.role === 'hub' ? 'bg-purple-500/15 text-purple-400' : 'bg-blue-500/15 text-blue-400'}`}>
+                      {p.role === 'hub' ? 'SUBHOST' : 'MAIN HOST'}
                     </span>
                     <span className={`text-[10px] px-2 py-0.5 rounded ${p.status === 'active' ? 'bg-green-500/15 text-green-500' : 'bg-red-500/15 text-red-400'}`}>
                       {p.status}
@@ -422,6 +544,8 @@ export default function HubTab({ ctx }) {
           </div>
         )}
       </div>
+
+      <NetworkMap info={info} network={network} card={card} />
 
       {/* ── Network Overview: unified inventory, branch comparison, central
           reporting, and a switcher to each linked business's own dashboard.
@@ -444,6 +568,7 @@ export default function HubTab({ ctx }) {
                   ['inventory', 'Unified Inventory', Boxes],
                   ['compare', 'Compare Branches', BarChart3],
                   ['switch', 'Switch Branch', ExternalLink],
+                  ['books', 'Consolidated Books', Landmark],
                 ].map(([id, label, Icon]) => (
                   <button key={id} onClick={() => setNetworkView(id)}
                     className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition ${networkView === id ? 'bg-accent text-white' : 'text-fg/50 hover:text-fg'}`}>
@@ -554,6 +679,141 @@ export default function HubTab({ ctx }) {
                       <span className="flex items-center gap-1.5 text-accent text-xs font-bold">Open <ExternalLink size={12} /></span>
                     </a>
                   ))}
+                </div>
+              )}
+
+              {/* Consolidated Books - one P&L + Balance Sheet across every
+                  branch, summed from each branch's trial balance. Unlike the
+                  views above, an unreachable branch is surfaced as a hard
+                  warning: a consolidated statement missing a branch is a wrong
+                  statement, not a partial one. */}
+              {networkView === 'books' && (
+                <div className="space-y-4">
+                  <div className="flex items-end gap-2 flex-wrap">
+                    <div>
+                      <label className="text-[10px] text-fg/40 uppercase tracking-widest font-black block mb-1">From</label>
+                      <input type="date" value={finStart} onChange={e => setFinStart(e.target.value)} className={input} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-fg/40 uppercase tracking-widest font-black block mb-1">To</label>
+                      <input type="date" value={finEnd} onChange={e => setFinEnd(e.target.value)} className={input} />
+                    </div>
+                    <button onClick={loadFinancials} disabled={finLoading} className={btn()}>
+                      {finLoading ? 'Building…' : 'Build Books'}
+                    </button>
+                  </div>
+
+                  {!fin ? (
+                    <p className="text-fg/40 text-xs py-6 text-center uppercase tracking-widest">
+                      Pick a period and build the consolidated books
+                    </p>
+                  ) : (
+                    <>
+                      {!fin.complete && (
+                        <div className="flex items-start gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+                          <AlertTriangle size={15} className="text-red-400 mt-0.5 shrink-0" />
+                          <div className="text-xs">
+                            <p className="text-red-400 font-black uppercase tracking-wider">Incomplete - not a final statement</p>
+                            <p className="text-fg/60 mt-1">
+                              These branches could not be reached, and the totals below <span className="font-bold">exclude</span> them:
+                            </p>
+                            <ul className="mt-1 space-y-0.5">
+                              {fin.unreachable.map(u => (
+                                <li key={u.slug} className="text-fg/50">• <span className="text-fg/80 font-bold">{u.name}</span> - {u.error}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      )}
+
+                      {fin.unknownAccounts?.length > 0 && (
+                        <div className="flex items-start gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-xs">
+                          <AlertTriangle size={15} className="text-yellow-400 mt-0.5 shrink-0" />
+                          <div>
+                            <p className="text-yellow-400 font-black uppercase tracking-wider">Unmapped accounts</p>
+                            <p className="text-fg/60 mt-1">
+                              A branch posted to accounts this business does not have, so they are excluded from the totals:{' '}
+                              <span className="text-fg/80">{fin.unknownAccounts.map(a => `${a.code} ${a.name}`).join(', ')}</span>
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Per-branch contribution, so a combined figure is traceable */}
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
+                              <th className="text-left py-2">Branch</th>
+                              <th className="text-right py-2 pl-3">Net Income</th>
+                              <th className="text-right py-2 pl-3">Total Assets</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {fin.branches.map(b => (
+                              <tr key={b.slug} className="border-b border-white/5">
+                                <td className="py-2 font-bold text-fg">
+                                  {b.name}{b.self && <span className="ml-2 text-[9px] font-black bg-accent/15 text-accent px-1.5 py-0.5 rounded uppercase">You</span>}
+                                </td>
+                                <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{peso(b.netIncome)}</td>
+                                <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{peso(b.totalAssets)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Consolidated P&L */}
+                        <div className="bg-page-bg border border-white/8 rounded-xl p-3">
+                          <p className="text-[10px] font-black text-fg/40 uppercase tracking-widest mb-2">Consolidated P&amp;L</p>
+                          {[
+                            ['Revenue', fin.pnl.totals.revenue],
+                            ['Less: Contra Revenue', -fin.pnl.totals.contra],
+                            ['Net Revenue', fin.pnl.totals.netRevenue, true],
+                            ['Cost of Goods Sold', -fin.pnl.totals.cogs],
+                            ['Gross Profit', fin.pnl.totals.grossProfit, true],
+                            ['Operating Expenses', -fin.pnl.totals.opex],
+                            ['Other Income', fin.pnl.totals.otherincome],
+                            ['Other Expense', -fin.pnl.totals.otherexpense],
+                          ].map(([label, val, strong]) => (
+                            <div key={label} className={`flex justify-between py-1 text-xs ${strong ? 'border-t border-white/10 mt-1 pt-1.5' : ''}`}>
+                              <span className={strong ? 'text-fg font-bold' : 'text-fg/50'}>{label}</span>
+                              <span className={`tabular-nums ${strong ? 'text-fg font-black' : 'text-fg/70'}`}>{peso(val)}</span>
+                            </div>
+                          ))}
+                          <div className="flex justify-between py-1.5 mt-1 border-t-2 border-accent/30">
+                            <span className="text-fg font-black text-sm">Net Income</span>
+                            <span className={`tabular-nums font-black text-sm ${fin.pnl.totals.netIncome >= 0 ? 'text-green-500' : 'text-red-400'}`}>
+                              {peso(fin.pnl.totals.netIncome)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Consolidated Balance Sheet */}
+                        <div className="bg-page-bg border border-white/8 rounded-xl p-3">
+                          <p className="text-[10px] font-black text-fg/40 uppercase tracking-widest mb-2">
+                            Consolidated Balance Sheet
+                          </p>
+                          {[
+                            ['Total Assets', fin.balanceSheet.totals.assets, true],
+                            ['Total Liabilities', fin.balanceSheet.totals.liabilities],
+                            ['Total Equity', fin.balanceSheet.totals.equity],
+                            ['Liabilities + Equity', fin.balanceSheet.totals.liabilitiesAndEquity, true],
+                          ].map(([label, val, strong]) => (
+                            <div key={label} className={`flex justify-between py-1 text-xs ${strong ? 'border-t border-white/10 mt-1 pt-1.5' : ''}`}>
+                              <span className={strong ? 'text-fg font-bold' : 'text-fg/50'}>{label}</span>
+                              <span className={`tabular-nums ${strong ? 'text-fg font-black' : 'text-fg/70'}`}>{peso(val)}</span>
+                            </div>
+                          ))}
+                          <div className={`mt-2 text-[10px] font-black uppercase tracking-widest px-2 py-1.5 rounded text-center ${
+                            fin.balanceSheet.totals.balanced ? 'bg-green-500/15 text-green-500' : 'bg-red-500/15 text-red-400'}`}>
+                            {fin.balanceSheet.totals.balanced ? 'Balanced' : 'Out of balance'}
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </>

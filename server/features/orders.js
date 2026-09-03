@@ -160,6 +160,7 @@ export default function registerOrders(ctx) {
     Role,
     AuditLogSchema,
     AuditLog,
+    CheckVoucher,
     DiscountSchema,
     Discount,
     EODRecordSchema,
@@ -1936,9 +1937,23 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
 
     // Outstanding is the REMAINING balance, not the invoice face value - a
     // second collection on a partly paid invoice may only take the rest.
+    // A collection that exceeds it is allowed ONLY when the order is tied to
+    // a real ClientAccount - the excess becomes that client's stored credit
+    // (260100), which only makes sense against an account that persists past
+    // this one order. A walk-in/no-account order still hard-caps at the
+    // outstanding balance - there's nowhere for an overpayment to live.
     const outstanding = arBalance(order);
-    if (amt > outstanding + 0.01)
-      return res.status(400).json({ success: false, error: `Settlement amount exceeds outstanding A/R (P${outstanding.toFixed(2)} remaining of P${(order.total || 0).toFixed(2)}).` });
+    let overpayClient = null;
+    if (amt > outstanding + 0.01) {
+      if (order.clientId && mongoose.Types.ObjectId.isValid(order.clientId)) {
+        overpayClient = await ClientAccount.findOne({ _id: order.clientId, ...tenantScope(req) });
+      }
+      if (!overpayClient) {
+        return res.status(400).json({ success: false, error: `Settlement amount exceeds outstanding A/R (P${outstanding.toFixed(2)} remaining of P${(order.total || 0).toFixed(2)}). This order has no client account to credit the excess to.` });
+      }
+    }
+    const applied = Math.min(amt, outstanding);
+    const overpay = Math.round((amt - applied) * 100) / 100;
 
     // Dates default to "now" so the existing one-shot flow keeps working
     // unchanged for callers that don't send them.
@@ -1991,7 +2006,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     }
 
     const paidBefore = Math.round((Number(order.arPaidAmount) || 0) * 100) / 100;
-    const paidAfter = Math.round((paidBefore + amt) * 100) / 100;
+    const paidAfter = Math.round((paidBefore + applied) * 100) / 100;
     const fullySettled = paidAfter >= (Number(order.total) || 0) - 0.01;
     const seq = (order.arPayments?.length || 0) + 1;
 
@@ -1999,21 +2014,38 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     // reuse the first one's journal reference.
     const reference = `${mkRef('ARS', order.orderNumber)}${seq > 1 ? `-${seq}` : ''}`;
 
+    // Full amount collected (debit side) always equals `amt`; the credit
+    // side splits between what actually settles THIS order (`applied`) and,
+    // if the client paid more than they owed, what becomes their stored
+    // credit balance instead (`overpay`) - never silently folded into one
+    // or the other.
     const lines = [
       { accountCode: debitAcct.code, accountName: debitAcct.name, debit: amt, credit: 0 },
-      { accountCode: '120000', accountName: 'Accounts Receivable', debit: 0, credit: amt },
+      { accountCode: '120000', accountName: 'Accounts Receivable', debit: 0, credit: applied },
     ];
+    if (overpay > 0) {
+      lines.push({ accountCode: '260100', accountName: 'Client Credit Balance (Overpayments)', debit: 0, credit: overpay });
+    }
     assertBalanced(lines, reference);
 
     await JournalEntry.create({
       date: depositedOn || collectedOn,
       reference,
-      description: `A/R collection ${seq > 1 ? `#${seq} ` : ''}${fullySettled ? '(final)' : '(partial)'} ${order.orderNumber} via ${order.paymentMethod}${isCheck ? ` [check #${chequeNo}${checkBank ? ` / ${String(checkBank).trim()}` : ''}]` : ''}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}${note ? ` (${note})` : ''}`,
+      description: `A/R collection ${seq > 1 ? `#${seq} ` : ''}${fullySettled ? '(final)' : '(partial)'} ${order.orderNumber} via ${order.paymentMethod}${isCheck ? ` [check #${chequeNo}${checkBank ? ` / ${String(checkBank).trim()}` : ''}]` : ''}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}${note ? ` (${note})` : ''}${overpay > 0 ? ` - includes ₱${overpay.toFixed(2)} overpayment (credited to ${overpayClient.name})` : ''}`,
       lines, totalDebit: amt, totalCredit: amt,
     });
 
+    if (overpay > 0) {
+      overpayClient.creditBalance = Math.round((overpayClient.creditBalance + overpay) * 100) / 100;
+      overpayClient.creditHistory.push({
+        type: 'overpayment', amount: overpay, orderId: order._id, orderNumber: order.orderNumber,
+        reference, note: 'Overpayment on A/R settlement', by: req.user?.name || '',
+      });
+      await overpayClient.save();
+    }
+
     order.arPayments.push({
-      amount: amt,
+      amount: applied,
       paymentMethod: paymentMethod || 'Cash on Hand',
       referenceNumber: referenceNumber || '',
       note: note || '',
@@ -2053,9 +2085,122 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
 
     emitToMgr('erpUpdated');
     emitToOps('orderUpdated', order.toObject());
-    res.json({ success: true, order, balance: arBalance(order), fullySettled });
+    res.json({ success: true, order, balance: arBalance(order), fullySettled, overpay, clientCreditBalance: overpayClient?.creditBalance });
   } catch (err) {
     log.error({ err }, 'A/R settlement failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// --- CLIENT CREDIT: apply to an order's A/R balance --------------------------
+// Reclassifies stored client credit (260100, a liability - we owe it to
+// them) directly against an order's outstanding A/R. No cash moves; this is
+// purely "use what they're already owed instead of collecting more cash."
+// Same gate as settle-ar - both actually move AR/credit balances.
+app.post('/api/client-accounts/:id/credit/apply', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Client not found.' });
+    const client = await ClientAccount.findOne({ _id: req.params.id, ...tenantScope(req) });
+    if (!client) return res.status(404).json({ success: false, error: 'Client not found.' });
+
+    const { orderId, amount, referenceNumber, note } = req.body || {};
+    if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) return res.status(400).json({ success: false, error: 'A valid order is required.' });
+    const order = await Order.findOne({ _id: orderId, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+    if (String(order.clientId) !== String(client._id)) return res.status(400).json({ success: false, error: 'This order belongs to a different client.' });
+
+    const outstanding = arBalance(order);
+    if (outstanding <= 0) return res.status(409).json({ success: false, error: 'This order has no outstanding balance.' });
+
+    const requested = Math.round((amount !== undefined && amount !== null && amount !== '' ? Number(amount) : Math.min(client.creditBalance, outstanding)) * 100) / 100;
+    if (!requested || requested <= 0) return res.status(400).json({ success: false, error: 'Amount must be positive.' });
+    if (requested > client.creditBalance + 0.01) return res.status(400).json({ success: false, error: `Only ₱${client.creditBalance.toFixed(2)} of credit is available.` });
+    if (requested > outstanding + 0.01) return res.status(400).json({ success: false, error: `Cannot apply more than the order's outstanding balance (₱${outstanding.toFixed(2)}).` });
+
+    const reference = await mkSeqRef('CLT-CR-APPLY');
+    const lines = [
+      { accountCode: '260100', accountName: 'Client Credit Balance (Overpayments)', debit: requested, credit: 0 },
+      { accountCode: '120000', accountName: 'Accounts Receivable', debit: 0, credit: requested },
+    ];
+    assertBalanced(lines, reference);
+    await JournalEntry.create({
+      date: new Date(), reference,
+      description: `Client credit applied to ${order.orderNumber} (${client.name})${note ? ` - ${note}` : ''}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}`,
+      lines, totalDebit: requested, totalCredit: requested,
+    });
+
+    const seq = (order.arPayments?.length || 0) + 1;
+    order.arPayments.push({ amount: requested, paymentMethod: 'Client Credit', referenceNumber: referenceNumber || `Credit applied (was ${reference})`, journalRef: reference, recordedBy: req.user?.name || '' });
+    order.arPaidAmount = Math.round(((order.arPaidAmount || 0) + requested) * 100) / 100;
+    order.arSettled = order.arPaidAmount >= (order.total || 0) - 0.01;
+    if (order.arSettled) { order.arSettledAt = new Date(); order.arSettledAmount = order.arPaidAmount; order.arSettledMethod = 'Client Credit'; }
+    await order.save();
+
+    client.creditBalance = Math.round((client.creditBalance - requested) * 100) / 100;
+    client.creditHistory.push({ type: 'applied', amount: requested, orderId: order._id, orderNumber: order.orderNumber, reference, note: note || 'Applied to order', by: req.user?.name || '' });
+    await client.save();
+
+    await logAudit(req, { action: 'apply-credit', entity: 'ClientAccount', entityId: client._id, after: { orderNumber: order.orderNumber, amount: requested, seq } });
+    emitToMgr('erpUpdated');
+    emitToOps('orderUpdated', order.toObject());
+    res.json({ success: true, order, balance: arBalance(order), client: { _id: client._id, creditBalance: client.creditBalance } });
+  } catch (err) {
+    log.error({ err }, 'POST /api/client-accounts/:id/credit/apply failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// --- CLIENT CREDIT: refund out via Check Voucher -----------------------------
+// The client's stored credit is real money we owe them - this is how it
+// actually leaves: a real disbursement, with the same paper trail (Check
+// Voucher) a supplier payment gets, rather than sitting as an invisible
+// liability forever.
+app.post('/api/client-accounts/:id/credit/refund', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Client not found.' });
+    const client = await ClientAccount.findOne({ _id: req.params.id, ...tenantScope(req) });
+    if (!client) return res.status(404).json({ success: false, error: 'Client not found.' });
+
+    const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
+    const { amount, sourceAccount, referenceNumber, notes } = req.body || {};
+    const requested = Math.round((amount !== undefined && amount !== null && amount !== '' ? Number(amount) : client.creditBalance) * 100) / 100;
+    if (!requested || requested <= 0) return res.status(400).json({ success: false, error: 'Amount must be positive.' });
+    if (requested > client.creditBalance + 0.01) return res.status(400).json({ success: false, error: `Only ₱${client.creditBalance.toFixed(2)} of credit is available to refund.` });
+
+    const srcMeta = acctMeta(sourceAccount);
+    const srcCode = (srcMeta && isCashLike(sourceAccount)) ? sourceAccount : '111000';
+    const srcName = acctMeta(srcCode)?.name || 'Cash on Hand';
+
+    const reference = await mkSeqRef('CLT-CR-REFUND');
+    const lines = [
+      { accountCode: '260100', accountName: 'Client Credit Balance (Overpayments)', debit: requested, credit: 0 },
+      { accountCode: srcCode, accountName: srcName, debit: 0, credit: requested },
+    ];
+    assertBalanced(lines, reference);
+    await JournalEntry.create({
+      date: new Date(), reference,
+      description: `Client credit refunded to ${client.name}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}`,
+      lines, totalDebit: requested, totalCredit: requested,
+    });
+
+    const voucherNumber = await mkSeqRef('CV');
+    const voucher = await CheckVoucher.create({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
+      voucherNumber, payeeType: 'client', payeeId: String(client._id), payeeName: client.name,
+      amount: requested, purpose: 'client-credit-refund', sourceAccount: srcCode, sourceAccountName: srcName,
+      referenceNumber: referenceNumber || '', notes: notes || '', journalEntryRef: reference,
+      issuedBy: req.user?.name || '',
+    });
+
+    client.creditBalance = Math.round((client.creditBalance - requested) * 100) / 100;
+    client.creditHistory.push({ type: 'refunded', amount: requested, reference, note: notes || 'Refunded to client', by: req.user?.name || '' });
+    await client.save();
+
+    await logAudit(req, { action: 'refund-credit', entity: 'ClientAccount', entityId: client._id, after: { amount: requested, voucherNumber } });
+    emitToMgr('erpUpdated');
+    res.json({ success: true, voucher, client: { _id: client._id, creditBalance: client.creditBalance } });
+  } catch (err) {
+    log.error({ err }, 'POST /api/client-accounts/:id/credit/refund failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });

@@ -21,6 +21,28 @@ export const ACCOUNTS = {
   '140000': { name: 'Fixed Assets',               type: 'asset', isParent: true, parent: '100000' },
   '150000': { name: 'Accumulated Depreciation',   type: 'asset', isParent: true, parent: '100000' },
   '160000': { name: 'Other Assets',               type: 'asset', isParent: true, parent: '100000' },
+  // We paid a supplier MORE than a bill required (or ahead of one existing at
+  // all) - an asset, since THEY now owe US either a future credit or a cash
+  // refund. Lives here rather than folded into 220000 Accounts Payable so a
+  // supplier's payable and receivable balances are never netted against each
+  // other without someone deciding to do that explicitly.
+  '160100': { name: 'Supplier Credit Balance (Overpayments)', type: 'asset', parent: '160000' },
+
+  // ===== NON-TRADE RECEIVABLES =====
+  // 120000 Accounts Receivable is the TRADE control account - it only ever
+  // receives sales-driven entries. Money owed to us that did NOT arise from
+  // selling something (a cash advance to staff, a prepayment to a supplier)
+  // is a non-trade receivable and belongs in its own section, so the balance
+  // sheet never implies we sold more than we did. Kept as a separate parent
+  // under 100000 rather than restructuring 120000, which is referenced by
+  // hardcoded string across the posting paths.
+  '170000': { name: 'Non-Trade Receivables',      type: 'asset', isParent: true, parent: '100000' },
+  // Cash handed to an employee ahead of spending it. Cleared by liquidating
+  // against real expenses, or by deducting from payroll - see features/advances.js.
+  '170100': { name: 'Advances to Employees',      type: 'asset', parent: '170000' },
+  // Paid to a supplier BEFORE a bill exists (a deposit on an order). Distinct
+  // from 160100, which is what is left over after OVERpaying a bill that did.
+  '170200': { name: 'Advances to Suppliers',      type: 'asset', parent: '170000' },
 
   // ===== 200000 LIABILITIES =====
   '200000': { name: 'Liabilities',                type: 'liability', isParent: true },
@@ -30,6 +52,15 @@ export const ACCOUNTS = {
   '240000': { name: 'Payroll Liabilities',        type: 'liability', parent: '200000' },
   '250000': { name: 'Loans Payable',              type: 'liability', isParent: true, parent: '200000' },
   '260000': { name: 'Other Liabilities',          type: 'liability', parent: '200000' },
+  // A client paid MORE than they owed - a liability, since WE now owe THEM
+  // either a future credit against their next invoice or a cash refund.
+  // Mirrors 160100 on the asset side; kept out of 120000 Accounts Receivable
+  // for the same reason (never silently netted against what they still owe).
+  '260100': { name: 'Client Credit Balance (Overpayments)', type: 'liability', parent: '260000' },
+  // A customer paid a deposit/downpayment BEFORE we billed them - we owe them
+  // goods or services, not cash back. Distinct from 260100, which is what is
+  // left over after they OVERpaid an invoice that already existed.
+  '260200': { name: 'Customer Advances / Deposits', type: 'liability', parent: '260000' },
 
   // ===== 300000 EQUITY =====
   '300000': { name: 'Equity',                     type: 'equity', isParent: true },

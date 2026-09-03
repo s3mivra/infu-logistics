@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Receipt, History } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Receipt, History, HandCoins, Wallet } from 'lucide-react';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
 import ExpensesPage from './ExpensesPage';
@@ -96,6 +96,15 @@ export default function LedgerTab({ ctx }) {
     billCreate, setBillCreate, submitCreateBill,
     approveBill, rejectBill, scheduleBill,
     billPayModal, setBillPayModal, billPayFrom, setBillPayFrom, billPayReference, setBillPayReference, submitBillPay, expenseAccounts,
+    billPayAmount, setBillPayAmount, applySupplierCredit,
+    clientCreditModal, setClientCreditModal, openClientCredit, submitClientCredit,
+    checkVouchers, cvTotal, cvFilter, setCvFilter, fetchCheckVouchers,
+    cvVoidModal, setCvVoidModal, submitVoidVoucher,
+    advances, advTotals, advFilter, setAdvFilter, fetchAdvances, advBusy,
+    advIssueModal, setAdvIssueModal, submitIssueAdvance, ADV_ISSUE_BLANK,
+    advLiqModal, setAdvLiqModal, openAdvLiquidate, submitLiquidateAdvance,
+    advCancelModal, setAdvCancelModal, submitCancelAdvance,
+    obEntry, obRows, setObRows, obMeta, setObMeta, obBusy, fetchOpeningBalances, submitOpeningBalances, balanceSheetAccounts,
     profitByCategory, fetchProfitByCategory,
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
@@ -904,56 +913,85 @@ export default function LedgerTab({ ctx }) {
   const billsPage = usePagination(bills, 12);
   const poPage   = usePagination(purchaseOrder?.lines, 10);
 
+  // Sub-tab nav, grouped. These used to be one long horizontally-scrolling
+  // strip of 17 (reports) / 12 (ledger) buttons, which meant scrolling blind to
+  // find anything. Grouping by what the page is FOR lets the whole set wrap and
+  // stay visible at once.
+  const REPORT_TAB_GROUPS = [
+    ['Sales', [
+      ['salessummary',  'Sales Summary',          BarChart3],
+      ['salesline',     'Sales Line Items',       FileText],
+      ['payments',      'By Payment',             Banknote],
+      ['profitcat',     'By Category',            BarChart2],
+      ['menueng',       'Menu Engineering',       TrendingUp],
+    ]],
+    ['Receivable', [
+      ['arreport',      'A/R Report',             Truck],
+      ['collections',   'Collections',            Banknote],
+    ]],
+    ['Payable', [
+      ['apreport',      'A/P Report',             Receipt],
+      ['supplierpay',   'Supplier Payments',      Banknote],
+      ['checkvouchers', 'Check Vouchers',         Receipt],
+      ['advances',      'Advances',               HandCoins],
+    ]],
+    ['Financials', [
+      ['pnlmonthly',    'Monthly P&L',            BarChart3],
+      ['bsmonthly',     'Monthly Balance Sheet',  BarChart3],
+      ['percentagetax', 'Percentage Tax',         FileText],
+    ]],
+    ['Operations', [
+      ['pricelog',      'Price Changes',          TrendingUp],
+      ['variance',      'Cashier Variance',       Users],
+      ['commissions',   'Commissions',            Users],
+    ]],
+  ];
+  const LEDGER_TAB_GROUPS = [
+    ['Books', [
+      ['journal',    'General Ledger',      FileText],
+      ['trial',      'Trial Balance',       BarChart2],
+      ['pnl',        'P&L',                 TrendingUp],
+      ['balance',    'Balance Sheet',       BarChart2],
+    ]],
+    ['AR & AP', [
+      ['araap',      'AR & AP',             Truck],
+      ['bills',      'Bills (AP)',          Receipt],
+    ]],
+    ['Cash Out', [
+      ['revolving',  'Revolving Funds',     RefreshCw],
+      ['expenses',   'Expenses',            Receipt],
+    ]],
+    ['Setup', [
+      ['accperiods', 'Accounts & Periods',  Settings],
+      ['backdate',   'Backdate Sale',       Clock],
+      // Always visible to any staff - the server itself scopes what comes back:
+      // without requisitions.view you only ever see your OWN filed slips (so you
+      // can check "is my request still pending"), not anyone else's. Approve or
+      // Reject still require requisitions.approve regardless.
+      ['approvals',  'Approvals',           ShieldCheck],
+    ]],
+  ];
+
   return (
         <div className="space-y-4">
 
           {/* SUB-TAB NAV. The group shown depends on the top-level tab: Reports vs
               Ledger (both render from this component). Merged pages (AR & AP, and
               Accounts & Periods) stack several sections on one page. */}
-          <div className="flex gap-2 overflow-x-auto custom-scrollbar pb-1 bg-surface border border-white/10 rounded-2xl p-2">
-            {(activeTab === 'reports'
-              ? [
-                  ['salessummary',  'Sales Summary',          BarChart3],
-                  ['salesline',     'Sales Line Items',       FileText],
-                  ['payments',      'By Payment',             Banknote],
-                  ['arreport',      'A/R Report',             Truck],
-                  ['collections',   'Collections',            Banknote],
-                  ['apreport',      'A/P Report',             Receipt],
-                  ['supplierpay',   'Supplier Payments',      Banknote],
-                  ['pricelog',      'Price Changes',          TrendingUp],
-                  ['profitcat',     'By Category',            BarChart2],
-                  ['pnlmonthly',    'Monthly P&L',            BarChart3],
-                  ['bsmonthly',     'Monthly Balance Sheet',  BarChart3],
-                  ['percentagetax', 'Percentage Tax',         FileText],
-                  ['menueng',       'Menu Engineering',       TrendingUp],
-                  ['variance',      'Cashier Variance',       Users],
-                  ['commissions',   'Commissions',            Users],
-                ]
-              : [
-                  ['journal',    'General Ledger',      FileText],
-                  ['trial',      'Trial Balance',       BarChart2],
-                  ['pnl',        'P&L',                 TrendingUp],
-                  ['balance',    'Balance Sheet',       BarChart2],
-                  ['araap',      'AR & AP',             Truck],
-                  ['bills',      'Bills (AP)',          Receipt],
-                  ['accperiods', 'Accounts & Periods',  Settings],
-                  ['backdate',   'Backdate Sale',       Clock],
-                  ['revolving',  'Revolving Funds',     RefreshCw],
-                  ['expenses',   'Expenses',            Receipt],
-                  // Always visible to any staff - the server itself scopes what
-                  // comes back: without requisitions.view you only ever see your
-                  // OWN filed slips (so you can check "is my request still
-                  // pending"), not accounting.view or anyone else's. Approve/Reject
-                  // still require requisitions.approve regardless.
-                  ['approvals', 'Approvals', ShieldCheck],
-                ]
-            ).map(([id, label, Icon]) => (
-              <button
-                key={id}
-                onClick={() => {
+          <div className="bg-surface border border-white/10 rounded-2xl p-3 space-y-1.5">
+            {(activeTab === 'reports' ? REPORT_TAB_GROUPS : LEDGER_TAB_GROUPS).map(([groupLabel, items]) => (
+              <div key={groupLabel} className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-3">
+                <span className="text-[9px] font-black uppercase tracking-widest text-fg/25 sm:w-20 sm:text-right shrink-0 sm:pt-3">
+                  {groupLabel}
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {items.map(([id, label, Icon]) => (
+                    <button
+                      key={id}
+                      onClick={() => {
                   setLedgerSubTab(id);
                   // Merged "Accounts & Periods" page: load all its sections.
-                  if (id === 'accperiods') { fetchCoa(); fetchClosedPeriods(); fetchPaymentMap(); }
+                  if (id === 'accperiods') { fetchCoa(); fetchClosedPeriods(); fetchPaymentMap(); fetchOpeningBalances(); }
                   // Merged "AR & AP" page.
                   if (id === 'araap') { fetchArOutstanding(); fetchArAgeing(); fetchApData(); fetchSuppliers(); }
                   if (id === 'bills') { fetchBills(); fetchSuppliers(); fetchCoa(); }
@@ -971,6 +1009,10 @@ export default function LedgerTab({ ctx }) {
                   if (id === 'pricelog') { fetchChangeRequests(); if (!priceChangeLog) fetchPriceChangeLog(); }
                   if (id === 'apreport' && !apReport) fetchApReport();
                   if (id === 'supplierpay' && !supplierPayments) fetchSupplierPayments();
+                  if (id === 'checkvouchers' && !checkVouchers) fetchCheckVouchers();
+                  // The liquidate modal picks from real bills / receivables,
+                  // so those lists have to be present before it can open.
+                  if (id === 'advances') { if (!advances) fetchAdvances(); fetchBills(); fetchArOutstanding(); }
                   if (id === 'profitcat') fetchProfitByCategory();
                   if (id === 'menueng') fetchMenuEngineering();
                   if (id === 'variance') fetchCashierVariance();
@@ -978,11 +1020,14 @@ export default function LedgerTab({ ctx }) {
                   if (id === 'revolving') { fetchRfFunds(); setRfActiveFund(null); setRfTxs([]); }
                   if (id === 'expenses') { fetchExpenseCategories(); fetchExpenses(); }
                   if (id === 'approvals') fetchRequisitionSlips();
-                }}
-                className={`shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[44px] ${ledgerSubTab === id ? 'bg-brand text-white shadow-elev-1' : 'bg-transparent text-fg/50 hover:text-fg hover:bg-white/5'}`}
-              >
-                <Icon size={14} /> {label}
-              </button>
+                      }}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl font-bold text-[11px] uppercase tracking-wider transition min-h-[38px] ${ledgerSubTab === id ? 'bg-brand text-white shadow-elev-1' : 'bg-white/[0.03] text-fg/50 hover:text-fg hover:bg-white/8'}`}
+                    >
+                      <Icon size={13} /> {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
 
@@ -1216,6 +1261,120 @@ export default function LedgerTab({ ctx }) {
 
           {(ledgerSubTab === 'coa' || ledgerSubTab === 'accperiods') && (
             <div className={`space-y-4${ledgerSubTab === 'accperiods' ? ' lg:row-span-2' : ''}`}>
+            {/* ── OPENING BALANCES ──────────────────────────────────────────
+                Onboarding a business that already has a history. Each row is an
+                account's natural balance as a positive number; the server picks
+                the debit/credit side and plugs the difference to Owner's
+                Capital, so nobody hand-balances a multi-line entry. */}
+            <div className="bg-surface border border-white/10 rounded-2xl p-5">
+              <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+                <div>
+                  <h3 className="text-fg font-black uppercase tracking-wider text-sm flex items-center gap-2">
+                    <Wallet size={15} className="text-brand" /> Opening Balances
+                  </h3>
+                  <p className="text-[11px] text-fg/40 mt-1">
+                    Carry an existing balance sheet into the books. Balance-sheet accounts only.
+                  </p>
+                </div>
+                {obEntry === undefined && (
+                  <button onClick={fetchOpeningBalances}
+                    className="border border-white/15 text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-white/5 transition">
+                    Load
+                  </button>
+                )}
+              </div>
+
+              {obEntry && (
+                <div className="mt-3 text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5">
+                  Already posted as <span className="font-black">{obEntry.reference}</span> on{' '}
+                  {new Date(obEntry.date).toLocaleDateString()} ({peso(obEntry.totalDebit)}).
+                  Posting again adds a second full set and doubles every carried-in balance.
+                </div>
+              )}
+
+              <div className="mt-4 space-y-2">
+                {obRows.map((r, i) => (
+                  <div key={i} className="flex gap-2 items-start">
+                    <select value={r.accountCode}
+                      onChange={e => setObRows(rows => rows.map((x, j) => j === i ? { ...x, accountCode: e.target.value } : x))}
+                      className="flex-1 min-w-0 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs outline-none focus:border-brand">
+                      <option value="">Select an account…</option>
+                      {(balanceSheetAccounts || []).map(a => (
+                        <option key={a.code} value={a.code}>{a.code} - {a.name}</option>
+                      ))}
+                    </select>
+                    <input type="number" step="0.01" value={r.amount} placeholder="0.00"
+                      onChange={e => setObRows(rows => rows.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
+                      className="w-32 shrink-0 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs text-right tabular-nums outline-none focus:border-brand" />
+                    <button onClick={() => setObRows(rows => rows.length > 1 ? rows.filter((_, j) => j !== i) : rows)}
+                      disabled={obRows.length === 1}
+                      className="shrink-0 text-fg/30 hover:text-red-400 disabled:opacity-20 transition p-2" title="Remove row">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+                <button onClick={() => setObRows(rows => [...rows, { accountCode: '', amount: '' }])}
+                  className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-brand hover:text-brand/80 transition pt-1">
+                  <Plus size={12} /> Add account
+                </button>
+              </div>
+
+              {/* Live preview of what the server will do, so the plug is not a
+                  surprise after posting. */}
+              {(() => {
+                const rows = obRows.filter(r => r.accountCode && parseFloat(r.amount));
+                if (rows.length === 0) return null;
+                const byCode = new Map((balanceSheetAccounts || []).map(a => [a.code, a]));
+                let dr = 0, cr = 0;
+                for (const r of rows) {
+                  const t = byCode.get(r.accountCode)?.type;
+                  const amt = parseFloat(r.amount) || 0;
+                  if (t === 'asset') { dr += Math.max(0, amt); cr += Math.max(0, -amt); }
+                  else { cr += Math.max(0, amt); dr += Math.max(0, -amt); }
+                }
+                const diff = Math.round((dr - cr) * 100) / 100;
+                return (
+                  <div className="mt-3 bg-page-bg border border-white/10 rounded-lg p-3 text-[11px] space-y-1">
+                    <div className="flex justify-between"><span className="text-fg/50">Total debits</span><span className="tabular-nums text-fg/80">{peso(dr)}</span></div>
+                    <div className="flex justify-between"><span className="text-fg/50">Total credits</span><span className="tabular-nums text-fg/80">{peso(cr)}</span></div>
+                    <div className="flex justify-between border-t border-white/10 pt-1 mt-1">
+                      <span className="text-fg/70 font-bold">{diff === 0 ? 'Balanced' : "To Owner's Capital"}</span>
+                      <span className={`tabular-nums font-black ${diff === 0 ? 'text-green-400' : 'text-brand'}`}>
+                        {diff === 0 ? '—' : peso(Math.abs(diff))}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
+                <div>
+                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">As of date</label>
+                  <input type="date" value={obMeta.date}
+                    onChange={e => setObMeta(m => ({ ...m, date: e.target.value }))}
+                    className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs outline-none focus:border-brand" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Reference No.</label>
+                  <input type="text" value={obMeta.referenceNumber} placeholder="Prior-books ref, audit ref..."
+                    onChange={e => setObMeta(m => ({ ...m, referenceNumber: e.target.value }))}
+                    className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs outline-none focus:border-brand" />
+                </div>
+              </div>
+              <div className="mt-2">
+                <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Remarks</label>
+                <textarea value={obMeta.note} rows={2} placeholder="Where these figures came from"
+                  onChange={e => setObMeta(m => ({ ...m, note: e.target.value }))}
+                  className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs outline-none focus:border-brand" />
+              </div>
+
+              <button onClick={() => submitOpeningBalances(!!obEntry)} disabled={obBusy}
+                className={`w-full mt-4 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition disabled:opacity-50 ${
+                  obEntry ? 'bg-amber-500 hover:bg-amber-400 text-page-bg' : 'bg-brand hover:bg-brand-dark text-white'}`}>
+                {obBusy ? 'Posting…' : obEntry ? 'Post Again (doubles balances)' : 'Post Opening Balances'}
+              </button>
+            </div>
+
               {/* Add child account */}
               <div className="bg-surface border border-white/10 rounded-2xl p-5">
                 <h3 className="text-lg font-black text-fg mb-1">Add Sub-Account</h3>
@@ -2635,6 +2794,562 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
+          {/* ===== CHECK VOUCHERS SUB-TAB ===== */}
+          {/* The disbursement paper trail. Vouchers are raised automatically by
+              a bill payment or a client-credit refund - none are created by hand
+              here, so this is read + void only. Voiding marks the voucher and
+              nothing else: the journal entry stays posted and the bill stays
+              paid, because a real check may already be in someone's hands. */}
+          {ledgerSubTab === 'checkvouchers' && (
+            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
+              <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
+                <div className="min-w-0">
+                  <h3 className="text-xl sm:text-2xl font-black text-fg">Check Vouchers</h3>
+                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">
+                    The disbursement paper trail
+                  </p>
+                  <p className="text-[11px] text-fg/40 mt-1">
+                    Issued automatically on every bill payment, credit refund and cash advance - never by hand.
+                  </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest">Total Issued</p>
+                  <p className="text-2xl text-brand font-black tabular-nums">{peso(cvTotal || 0)}</p>
+                  <p className="text-[10px] text-fg/40 mt-0.5">Voided excluded</p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-end gap-2">
+                <div>
+                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Payee</label>
+                  <select value={cvFilter.payeeType} onChange={e => setCvFilter(f => ({ ...f, payeeType: e.target.value }))}
+                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs">
+                    <option value="">All</option>
+                    <option value="supplier">Supplier</option>
+                    <option value="client">Client</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Status</label>
+                  <select value={cvFilter.status} onChange={e => setCvFilter(f => ({ ...f, status: e.target.value }))}
+                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs">
+                    <option value="">All</option>
+                    <option value="Issued">Issued</option>
+                    <option value="Voided">Voided</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">From</label>
+                  <input type="date" value={cvFilter.start} onChange={e => setCvFilter(f => ({ ...f, start: e.target.value }))}
+                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">To</label>
+                  <input type="date" value={cvFilter.end} onChange={e => setCvFilter(f => ({ ...f, end: e.target.value }))}
+                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs" />
+                </div>
+                <button onClick={fetchCheckVouchers}
+                  className="bg-brand text-white px-4 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[38px]">
+                  Apply
+                </button>
+              </div>
+
+              {!checkVouchers ? (
+                <div className="py-16 text-center text-fg/40 font-bold uppercase tracking-widest text-sm">Loading…</div>
+              ) : checkVouchers.length === 0 ? (
+                <div className="py-16 text-center">
+                  <Receipt size={28} className="mx-auto text-fg/20 mb-3" />
+                  <p className="text-fg/50 font-bold uppercase tracking-widest text-sm">No vouchers found</p>
+                  <p className="text-fg/30 text-xs mt-1">Pay a bill, refund a credit or issue an advance and it lands here.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                        <th className="text-left py-2.5">Voucher #</th>
+                        <th className="text-left py-2.5">Date</th>
+                        <th className="text-left py-2.5">Payee</th>
+                        <th className="text-left py-2.5">Purpose</th>
+                        <th className="text-left py-2.5">Paid From</th>
+                        <th className="text-left py-2.5">Reference</th>
+                        <th className="text-right py-2.5">Amount</th>
+                        <th className="text-right py-2.5">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {checkVouchers.map(v => (
+                        <tr key={v._id} className={`border-b border-white/5 hover:bg-white/5 transition ${v.status === 'Voided' ? 'opacity-50' : ''}`}>
+                          <td className="py-2.5 text-fg font-bold text-xs">{v.voucherNumber || '—'}</td>
+                          <td className="py-2.5 text-fg/50 text-xs">{new Date(v.date).toLocaleDateString()}</td>
+                          <td className="py-2.5 text-xs">
+                            <span className="text-fg/70">{v.payeeName}</span>
+                            <span className="ml-1.5 text-[9px] font-black uppercase text-fg/30">{v.payeeType}</span>
+                          </td>
+                          <td className="py-2.5 text-fg/50 text-xs">{v.purpose}</td>
+                          <td className="py-2.5 text-fg/50 text-xs">{v.sourceAccountName || v.sourceAccount || '—'}</td>
+                          <td className="py-2.5 text-fg/50 text-xs">{v.referenceNumber || '—'}</td>
+                          <td className={`py-2.5 text-right tabular-nums font-black ${v.status === 'Voided' ? 'text-fg/40 line-through' : 'text-fg'}`}>
+                            {peso(v.amount)}
+                          </td>
+                          <td className="py-2.5 text-right">
+                            {v.status === 'Issued' ? (
+                              <button onClick={() => setCvVoidModal({ voucher: v, reason: '', busy: false })}
+                                className="border border-red-500/40 text-red-400 px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-red-500/10 transition">
+                                Void
+                              </button>
+                            ) : (
+                              <span className="text-[10px] font-black uppercase bg-red-500/15 text-red-400 px-2 py-1 rounded" title={v.voidReason || ''}>
+                                Voided
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Void modal - the server requires a reason, so this cannot be a
+                  plain confirm. Lives inside this sub-tab because that is the
+                  only place a void can be started from. */}
+              {cvVoidModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setCvVoidModal(null)}>
+                  <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+                    <h2 className="font-black text-fg mb-1">Void voucher {cvVoidModal.voucher.voucherNumber}</h2>
+                    <p className="text-xs text-fg/50 mb-3">
+                      {peso(cvVoidModal.voucher.amount)} to {cvVoidModal.voucher.payeeName}
+                    </p>
+                    <div className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-3">
+                      This marks the voucher only. The journal entry stays posted and the bill stays paid -
+                      correcting those is a separate, deliberate entry.
+                    </div>
+                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Reason (required)</label>
+                    <textarea
+                      value={cvVoidModal.reason} rows={3}
+                      onChange={e => setCvVoidModal(m => ({ ...m, reason: e.target.value }))}
+                      placeholder="e.g. printed with the wrong payee"
+                      className="w-full bg-page-bg border border-white/10 rounded-lg p-2.5 text-fg text-sm outline-none focus:border-brand" />
+                    <div className="flex gap-2 mt-4">
+                      <button onClick={() => setCvVoidModal(null)} disabled={cvVoidModal.busy}
+                        className="flex-1 border border-white/15 text-fg/70 px-4 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-white/5 transition">
+                        Cancel
+                      </button>
+                      <button onClick={submitVoidVoucher} disabled={cvVoidModal.busy || !cvVoidModal.reason.trim()}
+                        className="flex-1 bg-red-500 text-white px-4 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-red-500/90 transition disabled:opacity-40">
+                        {cvVoidModal.busy ? 'Voiding…' : 'Void Voucher'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ===== ADVANCES SUB-TAB ===== */}
+          {ledgerSubTab === 'advances' && (
+            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-5 animate-fade-in">
+              <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
+                <div className="min-w-0">
+                  <h3 className="text-xl sm:text-2xl font-black text-fg">Advances</h3>
+                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">
+                    Money moved before the transaction it belongs to
+                  </p>
+                </div>
+                <button onClick={() => setAdvIssueModal({ ...ADV_ISSUE_BLANK })}
+                  className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-white px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
+                  <Plus size={14} /> New Advance
+                </button>
+              </div>
+
+              {/* Issued vs still-open, the two numbers that actually matter */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="bg-page-bg border border-white/10 rounded-xl p-4">
+                  <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-1">Total Issued</p>
+                  <p className="text-2xl font-black tabular-nums text-fg">{peso(advTotals.totalIssued)}</p>
+                  <p className="text-[10px] text-fg/40 mt-1">Excludes cancelled</p>
+                </div>
+                <div className="bg-page-bg border border-white/10 rounded-xl p-4">
+                  <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-1">Still Outstanding</p>
+                  <p className={`text-2xl font-black tabular-nums ${advTotals.totalOutstanding > 0 ? 'text-amber-400' : 'text-green-400'}`}>
+                    {peso(advTotals.totalOutstanding)}
+                  </p>
+                  <p className="text-[10px] text-fg/40 mt-1">Not yet liquidated</p>
+                </div>
+              </div>
+
+              {/* Filters */}
+              <div className="flex flex-wrap items-end gap-2">
+                <div>
+                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Type</label>
+                  <select value={advFilter.type} onChange={e => setAdvFilter(f => ({ ...f, type: e.target.value }))}
+                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand">
+                    <option value="">All</option>
+                    <option value="employee">Employee</option>
+                    <option value="supplier">Supplier</option>
+                    <option value="customer">Customer deposit</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Status</label>
+                  <select value={advFilter.status} onChange={e => setAdvFilter(f => ({ ...f, status: e.target.value }))}
+                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand">
+                    <option value="">All</option>
+                    <option value="Open">Open</option>
+                    <option value="Partially Liquidated">Partially Liquidated</option>
+                    <option value="Liquidated">Liquidated</option>
+                    <option value="Cancelled">Cancelled</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">From</label>
+                  <input type="date" value={advFilter.start} onChange={e => setAdvFilter(f => ({ ...f, start: e.target.value }))}
+                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">To</label>
+                  <input type="date" value={advFilter.end} onChange={e => setAdvFilter(f => ({ ...f, end: e.target.value }))}
+                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
+                </div>
+                <button onClick={fetchAdvances}
+                  className="border border-white/15 text-fg px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-white/5 transition min-h-[38px]">
+                  Apply
+                </button>
+              </div>
+
+              {!advances ? (
+                <div className="py-16 text-center text-fg/40 font-bold uppercase tracking-widest text-sm">Loading…</div>
+              ) : advances.length === 0 ? (
+                <div className="py-16 text-center">
+                  <HandCoins size={28} className="mx-auto text-fg/20 mb-3" />
+                  <p className="text-fg/50 font-bold uppercase tracking-widest text-sm">No advances yet</p>
+                  <p className="text-fg/30 text-xs mt-1">Cash floats, supplier prepayments and customer deposits show up here.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                        <th className="text-left py-2.5">Number</th>
+                        <th className="text-left py-2.5">Type</th>
+                        <th className="text-left py-2.5">Payee</th>
+                        <th className="text-left py-2.5">Purpose</th>
+                        <th className="text-left py-2.5">Date</th>
+                        <th className="text-right py-2.5">Amount</th>
+                        <th className="text-right py-2.5">Outstanding</th>
+                        <th className="text-left py-2.5 pl-3">Status</th>
+                        <th className="text-right py-2.5">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {advances.map(a => {
+                        const typeCls = {
+                          employee: 'bg-blue-500/15 text-blue-400',
+                          supplier: 'bg-purple-500/15 text-purple-400',
+                          customer: 'bg-teal-500/15 text-teal-400',
+                        }[a.type];
+                        const stCls = {
+                          'Open': 'bg-amber-500/15 text-amber-400',
+                          'Partially Liquidated': 'bg-orange-500/15 text-orange-400',
+                          'Liquidated': 'bg-green-500/15 text-green-500',
+                          'Cancelled': 'bg-white/10 text-fg/40',
+                        }[a.status];
+                        const done = a.status === 'Liquidated' || a.status === 'Cancelled';
+                        return (
+                          <tr key={a._id} className={`border-b border-white/5 hover:bg-white/5 transition ${a.status === 'Cancelled' ? 'opacity-50' : ''}`}>
+                            <td className="py-2.5 font-bold text-fg text-xs">
+                              {a.advanceNumber}
+                              {a.checkVoucherRef && <span className="block text-[9px] text-fg/30 font-normal">CV {a.checkVoucherRef}</span>}
+                            </td>
+                            <td className="py-2.5">
+                              <span className={`text-[9px] font-black uppercase px-2 py-1 rounded ${typeCls}`}>{a.type}</span>
+                            </td>
+                            <td className="py-2.5 text-fg/70 text-xs">{a.payeeName}</td>
+                            <td className="py-2.5 text-fg/40 text-xs max-w-[180px] truncate" title={a.purpose || ''}>{a.purpose || '—'}</td>
+                            <td className="py-2.5 text-fg/50 text-xs">{new Date(a.date).toLocaleDateString()}</td>
+                            <td className="py-2.5 text-right tabular-nums text-fg/70">{peso(a.amount)}</td>
+                            <td className={`py-2.5 text-right tabular-nums font-black ${a.outstanding > 0 ? 'text-amber-400' : 'text-fg/25'}`}>
+                              {a.outstanding > 0 ? peso(a.outstanding) : '—'}
+                            </td>
+                            <td className="py-2.5 pl-3">
+                              <span className={`text-[9px] font-black uppercase px-2 py-1 rounded whitespace-nowrap ${stCls}`}
+                                title={a.status === 'Cancelled' ? (a.cancelReason || '') : ''}>
+                                {a.status}
+                              </span>
+                            </td>
+                            <td className="py-2.5 text-right">
+                              {!done && (
+                                <div className="flex flex-col items-end gap-1">
+                                  <button onClick={() => openAdvLiquidate(a)}
+                                    className="bg-brand text-white px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition whitespace-nowrap">
+                                    Liquidate
+                                  </button>
+                                  {/* Cancelling is only honest while nothing has
+                                      been cleared - after that the server sends
+                                      you to a cash return instead. */}
+                                  {a.status === 'Open' && (
+                                    <button onClick={() => setAdvCancelModal({ advance: a, reason: '' })}
+                                      className="border border-red-500/30 text-red-400 px-3 py-1 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-red-500/10 transition">
+                                      Cancel
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* ── Issue modal ── */}
+              {advIssueModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setAdvIssueModal(null)}>
+                  <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                    <h2 className="font-black text-fg text-lg mb-1">New Advance</h2>
+                    <p className="text-xs text-fg/50 mb-4">
+                      {advIssueModal.type === 'customer'
+                        ? 'A deposit received from a customer. Cash comes in and we owe them goods or services.'
+                        : 'Cash goes out now against something that has not been billed yet. A Check Voucher is issued automatically.'}
+                    </p>
+
+                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Type</label>
+                    <div className="grid grid-cols-3 gap-2 mb-4">
+                      {[['employee', 'Employee'], ['supplier', 'Supplier'], ['customer', 'Customer']].map(([v, label]) => (
+                        <button key={v} onClick={() => setAdvIssueModal(f => ({ ...f, type: v }))}
+                          className={`px-2 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition ${
+                            advIssueModal.type === v ? 'bg-brand text-white' : 'bg-white/5 text-fg/50 hover:text-fg'}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">
+                      {advIssueModal.type === 'customer' ? 'Customer' : advIssueModal.type === 'supplier' ? 'Supplier' : 'Employee'} name
+                    </label>
+                    <input type="text" value={advIssueModal.payeeName} autoFocus
+                      onChange={e => setAdvIssueModal(f => ({ ...f, payeeName: e.target.value }))}
+                      placeholder="Who is this for?"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
+
+                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Amount</label>
+                    <input type="number" step="0.01" min="0" value={advIssueModal.amount}
+                      onChange={e => setAdvIssueModal(f => ({ ...f, amount: e.target.value }))}
+                      placeholder="0.00"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
+
+                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">
+                      {advIssueModal.type === 'customer' ? 'Deposit into' : 'Pay from'}
+                    </label>
+                    <select value={advIssueModal.sourceAccount}
+                      onChange={e => setAdvIssueModal(f => ({ ...f, sourceAccount: e.target.value }))}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand">
+                      {(cashAndBankAccounts || []).map(a => <option key={a.code} value={a.code}>{a.code} - {a.name}</option>)}
+                    </select>
+
+                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Reference No.</label>
+                    <input type="text" value={advIssueModal.referenceNumber}
+                      onChange={e => setAdvIssueModal(f => ({ ...f, referenceNumber: e.target.value }))}
+                      placeholder="OR no., check no., deposit slip..."
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
+
+                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Purpose / Remarks</label>
+                    <textarea value={advIssueModal.purpose} rows={2}
+                      onChange={e => setAdvIssueModal(f => ({ ...f, purpose: e.target.value }))}
+                      placeholder="e.g. fuel float for the week"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-5 outline-none focus:border-brand" />
+
+                    <div className="flex gap-3">
+                      <button onClick={() => setAdvIssueModal(null)} disabled={advBusy}
+                        className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
+                        Cancel
+                      </button>
+                      <button onClick={submitIssueAdvance} disabled={advBusy}
+                        className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">
+                        {advBusy ? 'Recording…' : 'Issue Advance'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Liquidate modal ── */}
+              {advLiqModal && (() => {
+                const a = advLiqModal.advance;
+                const methods = a.type === 'customer'
+                  ? [['order', 'Apply to an order'], ['cash-return', 'Refund the cash']]
+                  : [['expense', 'Spent on an expense'], ['bill', 'Apply to a bill'], ['cash-return', 'Cash returned']];
+                const entered = parseFloat(advLiqModal.amount) || 0;
+                const over = entered > a.outstanding + 0.01;
+                return (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setAdvLiqModal(null)}>
+                    <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                      <h2 className="font-black text-fg text-lg mb-1">Liquidate {a.advanceNumber}</h2>
+                      <p className="text-xs text-fg/50 mb-4">
+                        {a.payeeName} · {peso(a.outstanding)} of {peso(a.amount)} still open
+                      </p>
+
+                      <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">How was it cleared?</label>
+                      <div className="space-y-1.5 mb-4">
+                        {methods.map(([v, label]) => (
+                          <button key={v} onClick={() => setAdvLiqModal(f => ({ ...f, method: v }))}
+                            className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold transition border ${
+                              advLiqModal.method === v
+                                ? 'bg-brand/15 border-brand/50 text-fg'
+                                : 'bg-white/5 border-white/10 text-fg/50 hover:text-fg'}`}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Amount</label>
+                      <input type="number" step="0.01" min="0" value={advLiqModal.amount}
+                        onChange={e => setAdvLiqModal(f => ({ ...f, amount: e.target.value }))}
+                        className={`w-full bg-white/5 border rounded-lg px-3 py-2.5 text-sm text-fg mb-1 outline-none ${
+                          over ? 'border-red-500/60' : 'border-white/10 focus:border-brand'}`} />
+                      {over
+                        ? <p className="text-[11px] text-red-400 mb-3">Exceeds the {peso(a.outstanding)} still open on this advance.</p>
+                        : <p className="text-[11px] text-fg/30 mb-3">Leave as-is to clear the full remaining balance.</p>}
+
+                      {advLiqModal.method === 'expense' && (
+                        <>
+                          <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Expense account</label>
+                          <select value={advLiqModal.expenseAccount}
+                            onChange={e => setAdvLiqModal(f => ({ ...f, expenseAccount: e.target.value }))}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand">
+                            <option value="">Select what it was spent on…</option>
+                            {(expenseAccounts || []).map(x => <option key={x.code} value={x.code}>{x.code} - {x.name}</option>)}
+                          </select>
+                        </>
+                      )}
+
+                      {advLiqModal.method === 'cash-return' && (
+                        <>
+                          <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Returned into</label>
+                          <select value={advLiqModal.returnToAccount}
+                            onChange={e => setAdvLiqModal(f => ({ ...f, returnToAccount: e.target.value }))}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand">
+                            {(cashAndBankAccounts || []).map(x => <option key={x.code} value={x.code}>{x.code} - {x.name}</option>)}
+                          </select>
+                        </>
+                      )}
+
+                      {advLiqModal.method === 'bill' && (() => {
+                        // Only a bill that can still take money is a valid
+                        // target; anything Paid or Rejected would just error.
+                        const payable = (bills || []).filter(b => ['Approved', 'Partially Paid'].includes(b.status));
+                        return (
+                          <>
+                            <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Bill to settle</label>
+                            {payable.length === 0 ? (
+                              <p className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-4">
+                                No approved or partially paid bills to apply this against.
+                              </p>
+                            ) : (
+                              <select value={advLiqModal.billId}
+                                onChange={e => setAdvLiqModal(f => ({ ...f, billId: e.target.value }))}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand">
+                                <option value="">Select a bill…</option>
+                                {payable.map(b => (
+                                  <option key={b._id} value={b._id}>
+                                    {b.billNumber} · {b.supplierName} · {peso(b.amount - (b.paidAmount || 0))} left
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </>
+                        );
+                      })()}
+
+                      {advLiqModal.method === 'order' && (() => {
+                        const open = arOutstanding?.orders || [];
+                        return (
+                          <>
+                            <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Order to apply to</label>
+                            {open.length === 0 ? (
+                              <p className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-4">
+                                No outstanding receivables to apply this deposit against.
+                              </p>
+                            ) : (
+                              <select value={advLiqModal.orderId}
+                                onChange={e => setAdvLiqModal(f => ({ ...f, orderId: e.target.value }))}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand">
+                                <option value="">Select an order…</option>
+                                {open.map(o => (
+                                  <option key={o._id} value={o._id}>
+                                    {o.orderNumber} · {o.customerName} · {peso(o.balance ?? o.total)} due
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </>
+                        );
+                      })()}
+
+                      <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Reference No.</label>
+                      <input type="text" value={advLiqModal.referenceNumber}
+                        onChange={e => setAdvLiqModal(f => ({ ...f, referenceNumber: e.target.value }))}
+                        placeholder="Receipt no., OR no., txn ref..."
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
+
+                      <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Remarks</label>
+                      <textarea value={advLiqModal.note} rows={2}
+                        onChange={e => setAdvLiqModal(f => ({ ...f, note: e.target.value }))}
+                        placeholder="What this covers"
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-5 outline-none focus:border-brand" />
+
+                      <div className="flex gap-3">
+                        <button onClick={() => setAdvLiqModal(null)} disabled={advBusy}
+                          className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
+                          Cancel
+                        </button>
+                        <button onClick={submitLiquidateAdvance} disabled={advBusy || over}
+                          className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">
+                          {advBusy ? 'Posting…' : 'Liquidate'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Cancel modal ── */}
+              {advCancelModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setAdvCancelModal(null)}>
+                  <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+                    <h2 className="font-black text-fg mb-1">Cancel {advCancelModal.advance.advanceNumber}</h2>
+                    <p className="text-xs text-fg/50 mb-3">
+                      {peso(advCancelModal.advance.amount)} · {advCancelModal.advance.payeeName}
+                    </p>
+                    <div className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-3">
+                      This posts a reversal of the original entry. Only possible because nothing has been
+                      liquidated yet.
+                    </div>
+                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Reason (required)</label>
+                    <textarea value={advCancelModal.reason} rows={3}
+                      onChange={e => setAdvCancelModal(m => ({ ...m, reason: e.target.value }))}
+                      placeholder="e.g. issued twice by mistake"
+                      className="w-full bg-page-bg border border-white/10 rounded-lg p-2.5 text-fg text-sm outline-none focus:border-brand" />
+                    <div className="flex gap-2 mt-4">
+                      <button onClick={() => setAdvCancelModal(null)} disabled={advBusy}
+                        className="flex-1 border border-white/15 text-fg/70 px-4 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-white/5 transition">
+                        Keep
+                      </button>
+                      <button onClick={submitCancelAdvance} disabled={advBusy || !advCancelModal.reason.trim()}
+                        className="flex-1 bg-red-500 text-white px-4 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-red-500/90 transition disabled:opacity-40">
+                        {advBusy ? 'Cancelling…' : 'Cancel Advance'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* ===== A/R OUTSTANDING SUB-TAB ===== */}
           {(ledgerSubTab === 'ar' || ledgerSubTab === 'araap') && (
             <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
@@ -2815,6 +3530,19 @@ export default function LedgerTab({ ctx }) {
                                 className="bg-brand text-white px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
                                 {o.paid > 0 ? 'Collect' : 'Settle'}
                               </button>
+                              {/* Stored credit from a past overpayment draws the
+                                  invoice down with no cash collected, so it is a
+                                  separate action from Settle/Collect. Only shown
+                                  when this client actually has credit sitting on
+                                  their account. */}
+                              {o.clientCredit > 0 && (
+                                <button
+                                  onClick={() => openClientCredit(o, Math.min(o.clientCredit, o.balance ?? o.total))}
+                                  title={`₱${o.clientCredit.toFixed(2)} credit available`}
+                                  className="block w-full mt-1 border border-emerald-500/40 text-emerald-400 px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-emerald-500/10 transition">
+                                  Use ₱{Math.min(o.clientCredit, o.balance ?? o.total).toFixed(2)} Credit
+                                </button>
+                              )}
                             </td>
                           </tr>
                         );
@@ -2822,6 +3550,53 @@ export default function LedgerTab({ ctx }) {
                     </tbody>
                   </table>
                   <Pager {...arPage} label="orders" />
+
+                  {/* Applying stored credit posts to the ledger just like a cash
+                      collection does, so it collects the same reference and
+                      remarks rather than firing on a bare confirm. */}
+                  {clientCreditModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setClientCreditModal(null)}>
+                      <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+                        <h2 className="font-black text-fg text-lg mb-1">Apply client credit</h2>
+                        <p className="text-xs text-fg/50 mb-4">
+                          {clientCreditModal.order.orderNumber} · {clientCreditModal.order.customerName}
+                        </p>
+                        <div className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 rounded-lg p-2.5 mb-4">
+                          {peso(clientCreditModal.order.clientCredit)} credit available ·
+                          {' '}{peso(clientCreditModal.order.balance ?? clientCreditModal.order.total)} still due.
+                          No cash is collected.
+                        </div>
+
+                        <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Amount</label>
+                        <input type="number" step="0.01" min="0" value={clientCreditModal.amount}
+                          onChange={e => setClientCreditModal(m => ({ ...m, amount: e.target.value }))}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
+
+                        <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Reference No.</label>
+                        <input type="text" value={clientCreditModal.referenceNumber}
+                          onChange={e => setClientCreditModal(m => ({ ...m, referenceNumber: e.target.value }))}
+                          placeholder="Credit memo no., OR no..."
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
+
+                        <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Remarks</label>
+                        <textarea value={clientCreditModal.note} rows={2}
+                          onChange={e => setClientCreditModal(m => ({ ...m, note: e.target.value }))}
+                          placeholder="Why this credit is being applied here"
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-5 outline-none focus:border-brand" />
+
+                        <div className="flex gap-3">
+                          <button onClick={() => setClientCreditModal(null)} disabled={clientCreditModal.busy}
+                            className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
+                            Cancel
+                          </button>
+                          <button onClick={submitClientCredit} disabled={clientCreditModal.busy}
+                            className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-white font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">
+                            {clientCreditModal.busy ? 'Applying…' : 'Apply Credit'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -3404,14 +4179,18 @@ export default function LedgerTab({ ctx }) {
                     </thead>
                     <tbody>
                       {billsPage.pageItems.map((b, i) => {
-                        const stCls = { Pending:'bg-yellow-500/20 text-yellow-400', Approved:'bg-blue-500/20 text-blue-400', Paid:'bg-green-500/20 text-green-400', Rejected:'bg-red-500/20 text-red-400' }[b.status] || 'bg-white/10 text-fg/50';
+                        const stCls = { Pending:'bg-yellow-500/20 text-yellow-400', Approved:'bg-blue-500/20 text-blue-400', 'Partially Paid':'bg-orange-500/20 text-orange-400', Paid:'bg-green-500/20 text-green-400', Rejected:'bg-red-500/20 text-red-400' }[b.status] || 'bg-white/10 text-fg/50';
+                        const billOutstanding = +(b.amount - (b.paidAmount || 0)).toFixed(2);
                         return (
                           <tr key={b._id} className={`border-b border-white/5 ${i%2?'bg-white/[0.015]':''}`}>
                             <td className="px-4 py-3 font-mono text-fg/70">{b.billNumber}</td>
                             <td className="px-4 py-3 font-bold text-fg">{b.supplierName || '-'}</td>
                             <td className="px-4 py-3"><span className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-fg/50 font-bold">{b.source}</span></td>
                             <td className="px-4 py-3 text-fg/60 max-w-[200px] truncate" title={b.description || b.poNumber}>{b.description || b.poNumber || '-'}</td>
-                            <td className="px-4 py-3 text-right font-black tabular-nums font-mono text-fg">{peso(b.amount)}</td>
+                            <td className="px-4 py-3 text-right font-black tabular-nums font-mono text-fg">
+                              {peso(b.amount)}
+                              {b.status === 'Partially Paid' && <div className="text-[10px] font-normal text-orange-400 mt-0.5">{peso(billOutstanding)} left</div>}
+                            </td>
                             <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${stCls}`}>{b.status}</span>
                               {b.scheduledPaymentDate && b.status === 'Approved' && <div className="text-[10px] text-fg/40 mt-1">pay {String(b.scheduledPaymentDate).slice(0,10)}</div>}
                             </td>
@@ -3422,10 +4201,10 @@ export default function LedgerTab({ ctx }) {
                                   <button disabled={billBusy} onClick={() => rejectBill(b)} className="px-2.5 py-1 rounded-lg bg-red-500/10 text-red-400/80 hover:bg-red-500/20 text-[11px] font-bold transition disabled:opacity-50">Reject</button>
                                 </div>
                               )}
-                              {b.status === 'Approved' && (
+                              {(b.status === 'Approved' || b.status === 'Partially Paid') && (
                                 <div className="flex gap-1.5 justify-end">
-                                  <button disabled={billBusy} onClick={() => scheduleBill(b)} className="px-2.5 py-1 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 text-[11px] font-bold transition disabled:opacity-50">Schedule</button>
-                                  <button disabled={billBusy} onClick={() => { setBillPayModal(b); setBillPayFrom('111000'); setBillPayReference(''); }} className="px-2.5 py-1 rounded-lg bg-brand/20 text-brand hover:bg-brand/30 text-[11px] font-bold transition disabled:opacity-50">Pay</button>
+                                  {b.status === 'Approved' && <button disabled={billBusy} onClick={() => scheduleBill(b)} className="px-2.5 py-1 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 text-[11px] font-bold transition disabled:opacity-50">Schedule</button>}
+                                  <button disabled={billBusy} onClick={() => { setBillPayModal(b); setBillPayFrom('111000'); setBillPayReference(''); setBillPayAmount(String(billOutstanding)); }} className="px-2.5 py-1 rounded-lg bg-brand/20 text-brand hover:bg-brand/30 text-[11px] font-bold transition disabled:opacity-50">Pay</button>
                                 </div>
                               )}
                               {(b.status === 'Paid' || b.status === 'Rejected') && (
@@ -3443,13 +4222,40 @@ export default function LedgerTab({ ctx }) {
               )}
 
               {/* Pay modal */}
-              {billPayModal && (
+              {billPayModal && (() => {
+                const outstanding = +(billPayModal.amount - (billPayModal.paidAmount || 0)).toFixed(2);
+                const enteredAmt = parseFloat(billPayAmount) || 0;
+                const willOverpay = enteredAmt > outstanding + 0.01;
+                const supplier = (suppliers || []).find(s => String(s._id) === String(billPayModal.supplierId));
+                const availableCredit = supplier?.creditBalance || 0;
+                return (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setBillPayModal(null)}>
                   <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
                     <h2 className="font-black text-fg mb-1">Pay bill {billPayModal.billNumber}</h2>
-                    <p className="text-fg/50 text-sm mb-4">{billPayModal.supplierName} · {peso(billPayModal.amount)}</p>
+                    <p className="text-fg/50 text-sm mb-1">{billPayModal.supplierName} · {peso(billPayModal.amount)} total</p>
+                    {billPayModal.paidAmount > 0 && <p className="text-orange-400 text-xs mb-2">{peso(billPayModal.paidAmount)} already paid · {peso(outstanding)} remaining</p>}
+
+                    {availableCredit > 0 && (
+                      <div className="bg-brand/10 border border-brand/20 rounded-lg px-3 py-2 mb-3 flex items-center justify-between gap-2">
+                        <span className="text-xs text-fg/70">Supplier has <span className="text-brand font-bold">{peso(availableCredit)}</span> credit available</span>
+                        <button
+                          onClick={async () => { const ok = await applySupplierCredit(billPayModal.supplierId, billPayModal._id, Math.min(availableCredit, outstanding), billPayReference); if (ok) setBillPayModal(null); }}
+                          disabled={billBusy}
+                          className="shrink-0 bg-brand/20 hover:bg-brand/30 text-brand text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg transition disabled:opacity-50"
+                        >Apply Credit</button>
+                      </div>
+                    )}
+
                     <p className="text-[11px] text-fg/40 mb-3">Posts DR Accounts Payable / CR the account you pay from.</p>
-                    <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Pay from</label>
+                    <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Amount</label>
+                    <input type="number" min="0" step="0.01" value={billPayAmount} onChange={e => setBillPayAmount(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-1" />
+                    {willOverpay && (
+                      <p className="text-[10px] text-amber-400 mb-2">
+                        Exceeds the {peso(outstanding)} owed - the extra {peso(+(enteredAmt - outstanding).toFixed(2))} becomes this supplier's credit balance, applicable to a future bill.
+                      </p>
+                    )}
+                    <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5 mt-2">Pay from</label>
                     <select value={billPayFrom} onChange={e => setBillPayFrom(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-3">
                       {(cashAndBankAccounts||[]).map(a => <option key={a.code} value={a.code}>{a.code} - {a.name}</option>)}
                     </select>
@@ -3462,7 +4268,8 @@ export default function LedgerTab({ ctx }) {
                     </div>
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </div>
           )}
 

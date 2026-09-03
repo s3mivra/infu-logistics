@@ -1586,6 +1586,15 @@ export default function AdminDashboard() {
   ], [accountsUnder]);
   const apAccounts = useMemo(() => accountsUnder('220000'), [accountsUnder]);
   const arAccounts = useMemo(() => accountsUnder('120000'), [accountsUnder]);
+  // Every postable balance-sheet account, for carrying opening balances in.
+  // Parents are excluded - posting to a rollup would double-count it against
+  // its own children in every report that walks the tree.
+  const balanceSheetAccounts = useMemo(
+    () => coaAccounts
+      .filter(a => ['asset', 'liability', 'equity'].includes(a.type) && !a.isParent && a.isActive !== false)
+      .sort((a, b) => a.code.localeCompare(b.code)),
+    [coaAccounts],
+  );
   const procurementCreditAccounts = useMemo(() => [
     ...cashAndBankAccounts, ...apAccounts,
   ], [cashAndBankAccounts, apAccounts]);
@@ -3379,9 +3388,14 @@ const updateStatus = async (orderId, newStatus) => {
     const amt = parseFloat(settleForm.amount);
     if (!amt || amt <= 0) return ui.alert('Enter a valid amount.');
     // The remaining balance, not the invoice face value - a second collection
-    // on a partly paid invoice may only take what is left.
+    // on a partly paid invoice may only take what is left. An amount ABOVE
+    // that is allowed when a real client account can hold the excess as
+    // credit (see SettleArModal's own overpaying/blockedOverpay handling) -
+    // only reject it here when there's genuinely nowhere for it to go.
     const outstanding = settleModal.order.balance ?? settleModal.order.total;
-    if (amt > outstanding + 0.01) return ui.alert(`Amount exceeds the ₱${outstanding.toFixed(2)} still outstanding on this invoice.`);
+    if (amt > outstanding + 0.01 && !settleModal.order.clientId) {
+      return ui.alert(`Amount exceeds the ₱${outstanding.toFixed(2)} still outstanding on this invoice, and this order has no client account to credit the excess to.`);
+    }
     // A check has no deposit date at collection time - it is booked to Checks
     // on Hand and only reaches an account when it clears, which the check
     // register drives. So the deposit-date rule only applies to real deposits.
@@ -3423,9 +3437,10 @@ const updateStatus = async (orderId, newStatus) => {
         // A check settles the invoice on paper, but the money is not real until
         // it clears - say so rather than letting it read like cash in hand.
         const tail = isCheck ? ' The check is On Hand until it clears - track it in Collections.' : '';
+        const overpayTail = data.overpay > 0 ? ` ₱${data.overpay.toFixed(2)} overpaid - credited to the client's balance (now ₱${(data.clientCreditBalance ?? 0).toFixed(2)}).` : '';
         ui.alert((data.fullySettled
           ? 'Collection recorded. Invoice fully settled.'
-          : `Collection recorded. ₱${(data.balance ?? 0).toFixed(2)} still outstanding on this invoice.`) + tail);
+          : `Collection recorded. ₱${(data.balance ?? 0).toFixed(2)} still outstanding on this invoice.`) + tail + overpayTail);
       } else {
         ui.alert(data.error || 'Failed to record the collection.');
       }
@@ -4523,6 +4538,68 @@ const updateStatus = async (orderId, newStatus) => {
       console.error('parseMenuImportFile', err);
       ui.alert('Failed to parse file. Make sure it is a valid .xlsx, .xls, or .csv with columns: Category, Product, SRP, Ingredient, Qty, Unit');
     }
+  };
+
+  // ── MENU BACKUP / RESTORE ──────────────────────────────────────────────────
+  // Download the whole menu as one file, and load it back later. Different from
+  // the spreadsheet import above: that reads a sheet a human typed, this is an
+  // exact copy of what the system already holds, so a rebuilt database does not
+  // mean rebuilding every product and recipe by hand.
+  const [menuBackupBusy, setMenuBackupBusy] = useState(false);
+  const downloadMenuBackup = async (includeArchived = false) => {
+    setMenuBackupBusy(true);
+    try {
+      const res = await apiFetch(`/api/products/menu-backup${includeArchived ? '?includeArchived=true' : ''}`);
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Could not build the backup.'); return; }
+      const stamp = new Date().toISOString().slice(0, 10);
+      const blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `menu-backup-${d.businessType || 'menu'}-${stamp}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      ui.alert(`Menu backup downloaded - ${d.counts.products} product(s).`);
+    } catch { ui.alert('Network error.'); }
+    finally { setMenuBackupBusy(false); }
+  };
+
+  // Restore runs twice: a dry run first so the user sees exactly what WOULD
+  // happen (and which ingredients cannot be linked) before anything is written.
+  const [menuRestoreModal, setMenuRestoreModal] = useState(null); // { backup, fileName, preview, onConflict }
+  const openMenuRestore = async (file) => {
+    if (!file) return;
+    try {
+      const backup = JSON.parse(await file.text());
+      if (!Array.isArray(backup?.products)) {
+        return ui.alert('That file does not look like a menu backup. Pick the .json file downloaded from "Download Menu Backup".');
+      }
+      setMenuRestoreModal({ backup, fileName: file.name, preview: null, onConflict: 'skip' });
+    } catch { ui.alert('Could not read that file - it is not valid JSON.'); }
+  };
+  const runMenuRestore = async (dryRun) => {
+    const m = menuRestoreModal;
+    if (!m) return;
+    setMenuBackupBusy(true);
+    try {
+      const res = await apiFetch('/api/products/menu-backup/restore', {
+        method: 'POST',
+        body: JSON.stringify({ backup: m.backup, dryRun, onConflict: m.onConflict }),
+      });
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Restore failed.'); return; }
+      if (dryRun) { setMenuRestoreModal(mm => ({ ...mm, preview: d })); return; }
+      setMenuRestoreModal(null);
+      fetchERPData();
+      ui.alert(
+        `Menu restored.\n\nCreated: ${d.created}\nUpdated: ${d.updated}\nSkipped: ${d.skipped}` +
+        (d.unmatchedIngredients?.length
+          ? `\n\nThese ingredients could not be linked to stock, so those recipe lines were left out:\n- ${d.unmatchedIngredients.join('\n- ')}`
+          : ''),
+      );
+    } catch { ui.alert('Network error.'); }
+    finally { setMenuBackupBusy(false); }
   };
 
   const submitMenuImport = async () => {
@@ -6255,6 +6332,10 @@ const updateStatus = async (orderId, newStatus) => {
   const [billPayModal, setBillPayModal] = useState(null); // the bill being paid
   const [billPayFrom, setBillPayFrom] = useState('111000');
   const [billPayReference, setBillPayReference] = useState('');
+  // Defaults to the bill's remaining balance when the modal opens (see the
+  // "Pay" button in LedgerTab) - editable down for a partial payment, or up
+  // for a deliberate overpayment (the excess becomes the supplier's credit).
+  const [billPayAmount, setBillPayAmount] = useState('');
   const [billBusy, setBillBusy] = useState(false);
 
   const fetchBills = async (status = billsFilter) => {
@@ -6290,9 +6371,232 @@ const updateStatus = async (orderId, newStatus) => {
     billAction(b._id, 'schedule', { scheduledPaymentDate: date.trim() || null });
   };
   const submitBillPay = async () => {
-    const ok = await billAction(billPayModal._id, 'pay', { payFromAccount: billPayFrom, referenceNumber: billPayReference });
-    if (ok) { setBillPayModal(null); setBillPayReference(''); ui.alert('Payment recorded.'); }
+    const amt = billPayAmount === '' ? undefined : parseFloat(billPayAmount);
+    if (billPayAmount !== '' && (!amt || amt <= 0)) return ui.alert('Enter a valid amount.');
+    setBillBusy(true);
+    try {
+      const res = await apiFetch(`/api/bills/${billPayModal._id}/pay`, { method: 'POST', body: JSON.stringify({ amount: amt, payFromAccount: billPayFrom, referenceNumber: billPayReference }) });
+      const d = await res.json();
+      if (!d.success) return ui.alert(d.error || 'Payment failed.');
+      setBillPayModal(null); setBillPayReference(''); setBillPayAmount('');
+      fetchBills();
+      ui.alert(d.overpay > 0
+        ? `Payment recorded. ₱${d.overpay.toFixed(2)} overpaid - credited to ${billPayModal.supplierName}'s supplier credit balance.`
+        : 'Payment recorded.');
+    } catch { ui.alert('Network error.'); }
+    finally { setBillBusy(false); }
   };
+  // Apply a supplier's stored credit (from a past overpayment) straight to a
+  // bill - no cash moves. `amount` optional: defaults to whatever's smaller,
+  // the credit available or the bill's outstanding balance.
+  const applySupplierCredit = async (supplierId, billId, amount, referenceNumber = '', note = '') => {
+    setBillBusy(true);
+    try {
+      const res = await apiFetch(`/api/suppliers/${supplierId}/credit/apply`, { method: 'POST', body: JSON.stringify({ billId, amount, referenceNumber, note }) });
+      const d = await res.json();
+      if (!d.success) return ui.alert(d.error || 'Failed to apply credit.');
+      fetchBills(); fetchSuppliers();
+      ui.alert('Supplier credit applied.');
+      return true;
+    } catch { ui.alert('Network error.'); return false; }
+    finally { setBillBusy(false); }
+  };
+
+  // Mirror of the above on the A/R side: apply a client's stored credit (from a
+  // past overpayment) straight to an outstanding invoice. No cash moves - it
+  // just draws the receivable down against credit already sitting on their
+  // account. `amount` optional; the server defaults it to whatever's smaller,
+  // the credit available or the invoice's remaining balance.
+  // Opened from a specific A/R row. A reference and remarks are collected the
+  // same way every other posting does it - applying credit still moves the
+  // ledger, so it deserves the same paper trail as a cash collection.
+  const [clientCreditModal, setClientCreditModal] = useState(null); // { order, amount, referenceNumber, note, busy }
+  const openClientCredit = (order, amount) => setClientCreditModal({
+    order, amount: String(amount), referenceNumber: '', note: '', busy: false,
+  });
+  const submitClientCredit = async () => {
+    const f = clientCreditModal;
+    const amt = parseFloat(f.amount);
+    if (!amt || amt <= 0) return ui.alert('Enter a valid amount.');
+    const cap = Math.min(f.order.clientCredit, f.order.balance ?? f.order.total);
+    if (amt > cap + 0.01) return ui.alert(`Cannot apply more than ₱${cap.toFixed(2)}.`);
+    setClientCreditModal(m => ({ ...m, busy: true }));
+    try {
+      const res = await apiFetch(`/api/client-accounts/${f.order.clientId}/credit/apply`, {
+        method: 'POST',
+        body: JSON.stringify({ orderId: f.order._id, amount: amt, referenceNumber: f.referenceNumber, note: f.note }),
+      });
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Failed to apply credit.'); return; }
+      setClientCreditModal(null);
+      fetchArOutstanding(); fetchArAgeing();
+      ui.alert(`Credit applied. Remaining client credit: ₱${(d.client?.creditBalance ?? 0).toFixed(2)}.`);
+    } catch { ui.alert('Network error.'); }
+    finally { setClientCreditModal(m => (m ? { ...m, busy: false } : null)); }
+  };
+
+  // ── CHECK VOUCHERS ─────────────────────────────────────────────────────────
+  // The disbursement paper trail. Vouchers are created automatically by a bill
+  // payment or a client-credit refund - nothing issues one by hand - so this is
+  // read plus void only. Voiding marks the voucher, it does NOT reverse the
+  // journal entry or re-open the bill (see check-vouchers.js).
+  const [checkVouchers, setCheckVouchers] = useState(null);
+  const [cvTotal, setCvTotal] = useState(0);
+  const [cvFilter, setCvFilter] = useState({ payeeType: '', status: '', start: '', end: '' });
+  const fetchCheckVouchers = async () => {
+    try {
+      const qs = new URLSearchParams(Object.entries(cvFilter).filter(([, v]) => v)).toString();
+      const res = await apiFetch(`/api/check-vouchers${qs ? `?${qs}` : ''}`);
+      const d = await res.json();
+      if (d.success) { setCheckVouchers(d.vouchers); setCvTotal(d.total); }
+    } catch (err) { console.error('fetchCheckVouchers', err); }
+  };
+  // A reason is mandatory server-side, so this needs a real input rather than a
+  // confirm - hence a small modal instead of ui.confirm.
+  const [cvVoidModal, setCvVoidModal] = useState(null); // { voucher, reason, busy }
+  const submitVoidVoucher = async () => {
+    if (!cvVoidModal?.reason?.trim()) return ui.alert('A reason is required to void a voucher.');
+    setCvVoidModal(m => ({ ...m, busy: true }));
+    try {
+      const res = await apiFetch(`/api/check-vouchers/${cvVoidModal.voucher._id}/void`, {
+        method: 'POST', body: JSON.stringify({ reason: cvVoidModal.reason }),
+      });
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Failed to void voucher.'); return; }
+      setCvVoidModal(null);
+      fetchCheckVouchers();
+      ui.alert(`Voucher ${cvVoidModal.voucher.voucherNumber} voided.`);
+    } catch { ui.alert('Network error.'); }
+    finally { setCvVoidModal(m => (m ? { ...m, busy: false } : null)); }
+  };
+
+  // ── ADVANCES ───────────────────────────────────────────────────────────────
+  // Money out (or a deposit in) before the transaction it belongs to exists.
+  // Issue -> liquidate in parts -> closed. See features/advances.js; the three
+  // types drive different accounts and different liquidation methods, so the
+  // form adapts rather than offering choices that cannot apply.
+  const [advances, setAdvances] = useState(null);
+  const [advTotals, setAdvTotals] = useState({ totalIssued: 0, totalOutstanding: 0 });
+  const [advFilter, setAdvFilter] = useState({ type: '', status: '', start: '', end: '' });
+  const [advBusy, setAdvBusy] = useState(false);
+  const fetchAdvances = async () => {
+    try {
+      const qs = new URLSearchParams(Object.entries(advFilter).filter(([, v]) => v)).toString();
+      const res = await apiFetch(`/api/advances${qs ? `?${qs}` : ''}`);
+      const d = await res.json();
+      if (d.success) { setAdvances(d.advances); setAdvTotals({ totalIssued: d.totalIssued, totalOutstanding: d.totalOutstanding }); }
+    } catch (err) { console.error('fetchAdvances', err); }
+  };
+
+  const ADV_ISSUE_BLANK = { type: 'employee', payeeName: '', amount: '', purpose: '', sourceAccount: '111000', referenceNumber: '' };
+  const [advIssueModal, setAdvIssueModal] = useState(null); // null | {...ADV_ISSUE_BLANK}
+  const submitIssueAdvance = async () => {
+    const f = advIssueModal;
+    if (!f.payeeName.trim()) return ui.alert('Enter who this advance is for.');
+    const amt = parseFloat(f.amount);
+    if (!amt || amt <= 0) return ui.alert('Enter a valid amount.');
+    setAdvBusy(true);
+    try {
+      const res = await apiFetch('/api/advances', { method: 'POST', body: JSON.stringify({ ...f, amount: amt }) });
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Failed to issue advance.'); return; }
+      setAdvIssueModal(null);
+      fetchAdvances();
+      ui.alert(d.voucher
+        ? `Advance ${d.advance.advanceNumber} issued. Check Voucher ${d.voucher.voucherNumber} created.`
+        : `Advance ${d.advance.advanceNumber} recorded.`);
+    } catch { ui.alert('Network error.'); }
+    finally { setAdvBusy(false); }
+  };
+
+  // Liquidation shape depends on the advance type, so the modal carries the
+  // advance it was opened from and only offers methods valid for it.
+  const [advLiqModal, setAdvLiqModal] = useState(null); // { advance, method, amount, expenseAccount, returnToAccount, billId, orderId, referenceNumber, note }
+  const openAdvLiquidate = (advance) => setAdvLiqModal({
+    advance,
+    method: advance.type === 'customer' ? 'order' : 'expense',
+    amount: String(advance.outstanding ?? ''),
+    expenseAccount: '', returnToAccount: '111000',
+    billId: '', orderId: '', referenceNumber: '', note: '',
+  });
+  const submitLiquidateAdvance = async () => {
+    const f = advLiqModal;
+    const amt = parseFloat(f.amount);
+    if (!amt || amt <= 0) return ui.alert('Enter a valid amount.');
+    if (f.method === 'expense' && !f.expenseAccount) return ui.alert('Pick the expense account this was spent on.');
+    if (f.method === 'bill' && !f.billId.trim()) return ui.alert('Enter the bill this settles.');
+    if (f.method === 'order' && !f.orderId.trim()) return ui.alert('Enter the order this applies to.');
+    setAdvBusy(true);
+    try {
+      const res = await apiFetch(`/api/advances/${f.advance._id}/liquidate`, { method: 'POST', body: JSON.stringify({
+        method: f.method, amount: amt,
+        expenseAccount: f.expenseAccount, returnToAccount: f.returnToAccount,
+        billId: f.billId || undefined, orderId: f.orderId || undefined,
+        referenceNumber: f.referenceNumber, note: f.note,
+      }) });
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Failed to liquidate.'); return; }
+      setAdvLiqModal(null);
+      fetchAdvances();
+      ui.alert(`Liquidated. ${d.advance.outstanding > 0 ? `P${d.advance.outstanding.toFixed(2)} still open.` : 'Advance fully cleared.'}`);
+    } catch { ui.alert('Network error.'); }
+    finally { setAdvBusy(false); }
+  };
+
+  const [advCancelModal, setAdvCancelModal] = useState(null); // { advance, reason }
+  const submitCancelAdvance = async () => {
+    if (!advCancelModal?.reason?.trim()) return ui.alert('A reason is required to cancel an advance.');
+    setAdvBusy(true);
+    try {
+      const res = await apiFetch(`/api/advances/${advCancelModal.advance._id}/cancel`, {
+        method: 'POST', body: JSON.stringify({ reason: advCancelModal.reason }),
+      });
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Failed to cancel advance.'); return; }
+      setAdvCancelModal(null);
+      fetchAdvances();
+      ui.alert('Advance cancelled and reversed.');
+    } catch { ui.alert('Network error.'); }
+    finally { setAdvBusy(false); }
+  };
+
+  // ── OPENING BALANCES ───────────────────────────────────────────────────────
+  // Carrying an existing business's balance sheet in at onboarding. Each row is
+  // an account's NATURAL balance as a positive number; the server assembles the
+  // sides and plugs the difference to Owner's Capital, so nobody has to
+  // hand-balance a multi-line entry.
+  const [obEntry, setObEntry] = useState(undefined); // undefined = not loaded, null = none posted
+  const [obRows, setObRows] = useState([{ accountCode: '', amount: '' }]);
+  const [obMeta, setObMeta] = useState({ date: '', referenceNumber: '', note: '' });
+  const [obBusy, setObBusy] = useState(false);
+  const fetchOpeningBalances = async () => {
+    try {
+      const res = await apiFetch('/api/finance/opening-balances');
+      const d = await res.json();
+      if (d.success) setObEntry(d.entry);
+    } catch (err) { console.error('fetchOpeningBalances', err); }
+  };
+  const submitOpeningBalances = async (force = false) => {
+    const lines = obRows
+      .filter(r => r.accountCode && parseFloat(r.amount))
+      .map(r => ({ accountCode: r.accountCode, amount: parseFloat(r.amount) }));
+    if (lines.length === 0) return ui.alert('Add at least one account with a non-zero balance.');
+    if (force && !(await ui.confirm('Opening balances were already posted. Posting again ADDS another full set - every carried-in balance will double. Continue?'))) return;
+    setObBusy(true);
+    try {
+      const res = await apiFetch('/api/finance/opening-balances', { method: 'POST', body: JSON.stringify({ ...obMeta, lines, force }) });
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Failed to post opening balances.'); return; }
+      setObRows([{ accountCode: '', amount: '' }]);
+      setObMeta({ date: '', referenceNumber: '', note: '' });
+      fetchOpeningBalances();
+      ui.alert(d.balancingEntry > 0
+        ? `Opening balances posted. ₱${d.balancingEntry.toFixed(2)} booked to Owner's Capital to balance.`
+        : 'Opening balances posted.');
+    } catch { ui.alert('Network error.'); }
+    finally { setObBusy(false); }
+  };
+
   const submitCreateBill = async () => {
     const amt = parseFloat(billCreate.amount);
     if (!billCreate.supplierId) return ui.alert('Pick a supplier.');
@@ -7040,6 +7344,14 @@ const updateStatus = async (orderId, newStatus) => {
     pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF,
     bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF,
     arOutstanding, fetchArOutstanding, arAgeing, fetchArAgeing, suppliers, fetchSuppliers,
+    clientCreditModal, setClientCreditModal, openClientCredit, submitClientCredit,
+    checkVouchers, cvTotal, cvFilter, setCvFilter, fetchCheckVouchers,
+    cvVoidModal, setCvVoidModal, submitVoidVoucher,
+    advances, advTotals, advFilter, setAdvFilter, fetchAdvances, advBusy,
+    advIssueModal, setAdvIssueModal, submitIssueAdvance, ADV_ISSUE_BLANK,
+    advLiqModal, setAdvLiqModal, openAdvLiquidate, submitLiquidateAdvance,
+    advCancelModal, setAdvCancelModal, submitCancelAdvance,
+    obEntry, obRows, setObRows, obMeta, setObMeta, obBusy, fetchOpeningBalances, submitOpeningBalances, balanceSheetAccounts,
     stockLocations, stockCategories, fetchStockTaxonomy, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory, backfillStockCategoryPrefixes, renumberStockCategory,
     stockTransfers, locationAnalytics, fetchStockTransfers, requestStockTransfer, actOnStockTransfer,
     expenseModal, setExpenseModal, expenseCategories, fetchExpenseCategories,
@@ -7089,6 +7401,7 @@ const updateStatus = async (orderId, newStatus) => {
     editInvModal, setEditInvModal, editInvForm, setEditInvForm, editInvSubmitting,
     importModal, setImportModal, importRows, setImportRows, importSubmitting,
     menuImportModal, setMenuImportModal, menuImportRows, setMenuImportRows, menuImportSubmitting,
+    menuBackupBusy, downloadMenuBackup, menuRestoreModal, setMenuRestoreModal, openMenuRestore, runMenuRestore,
     downloadMenuImportTemplate, parseMenuImportFile, submitMenuImport,
     spoilageModal, setSpoilageModal, spoilageForm, setSpoilageForm, spoilageLoading, setSpoilageLoading,
     handleRestockSubmit, submitPhysicalCounts,
@@ -7200,6 +7513,7 @@ const updateStatus = async (orderId, newStatus) => {
     billCreate, setBillCreate, submitCreateBill,
     approveBill, rejectBill, scheduleBill,
     billPayModal, setBillPayModal, billPayFrom, setBillPayFrom, billPayReference, setBillPayReference, submitBillPay,
+    billPayAmount, setBillPayAmount, applySupplierCredit,
     expenseAccounts,
     // ── Order Notes ─────────────────────────────────────────────────────────
     posNotes, setPosNotes,

@@ -948,7 +948,33 @@ export default function SuperAdminPanel() {
     finally { setClientPricingLoading(false); }
   };
 
-  const closeClientModal = () => { setClientModal({ open: false, mode: 'create', client: null }); setClientPricing(null); };
+  const closeClientModal = () => { setClientModal({ open: false, mode: 'create', client: null }); setClientPricing(null); setClientCreditRefundForm(null); };
+
+  // Client credit balance = stored excess from A/R overpayments (settle-ar
+  // credits it here when there's no outstanding balance left to absorb the
+  // extra). It can be applied to a future order (from the AR Outstanding
+  // table) or refunded out here via a real Check Voucher.
+  const [clientCreditRefundForm, setClientCreditRefundForm] = useState(null); // null = closed; {} = open
+  const [clientCreditBusy, setClientCreditBusy] = useState(false);
+  const submitClientCreditRefund = async () => {
+    const amt = parseFloat(clientCreditRefundForm.amount);
+    if (!amt || amt <= 0) return showToast('Enter a valid amount.', 'error');
+    if (amt > (clientModal.client.creditBalance || 0) + 0.01) return showToast('Amount exceeds the available credit balance.', 'error');
+    setClientCreditBusy(true);
+    try {
+      const res = await apiFetch(`/api/client-accounts/${clientModal.client._id}/credit/refund`, {
+        method: 'POST',
+        body: JSON.stringify({ amount: amt, sourceAccount: clientCreditRefundForm.sourceAccount || '111000', referenceNumber: clientCreditRefundForm.referenceNumber || '' }),
+      });
+      const d = await res.json();
+      if (!d.success) return showToast(d.error || 'Refund failed.', 'error');
+      setClientModal(m => ({ ...m, client: { ...m.client, creditBalance: d.client.creditBalance } }));
+      setClientCreditRefundForm(null);
+      fetchClients();
+      showToast(`Refunded ₱${amt.toFixed(2)} via Check Voucher ${d.voucher.voucherNumber}.`);
+    } catch { showToast('Network error.', 'error'); }
+    finally { setClientCreditBusy(false); }
+  };
 
   const handleClientSubmit = async (e) => {
     e.preventDefault();
@@ -2605,6 +2631,68 @@ export default function SuperAdminPanel() {
                           )}
                         </details>
                       ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Credit Balance - stored excess from an A/R overpayment (see
+                  POST /settle-ar) that had nowhere else to go. It sits here
+                  until either applied to a future order (from the AR
+                  Outstanding table) or refunded out via a real Check
+                  Voucher, which this panel does directly. */}
+              {clientModal.mode === 'edit' && (clientModal.client.creditBalance || 0) > 0 && (
+                <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Credit Balance</p>
+                    <span className="text-sm font-black text-emerald-400 tabular-nums">₱{clientModal.client.creditBalance.toFixed(2)}</span>
+                  </div>
+                  <p className="text-[11px] text-fg/40 mt-1">From past overpayments. Apply it to a future order's A/R settlement, or refund it out below.</p>
+                  {!clientCreditRefundForm ? (
+                    <button
+                      type="button"
+                      onClick={() => setClientCreditRefundForm({ amount: String(clientModal.client.creditBalance), sourceAccount: '111000', referenceNumber: '' })}
+                      className="mt-2 text-[11px] font-bold text-emerald-400 hover:text-emerald-300 underline"
+                    >
+                      Refund
+                    </button>
+                  ) : (
+                    <div className="mt-2 space-y-2 bg-page-bg/40 border border-white/10 rounded-lg p-2.5">
+                      <div>
+                        <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest">Amount</label>
+                        <input
+                          type="number" step="0.01" min="0"
+                          value={clientCreditRefundForm.amount}
+                          onChange={e => setClientCreditRefundForm(f => ({ ...f, amount: e.target.value }))}
+                          className="w-full mt-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-fg text-xs focus:outline-none focus:border-brand/50"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest">Reference Number</label>
+                        <input
+                          type="text"
+                          value={clientCreditRefundForm.referenceNumber}
+                          onChange={e => setClientCreditRefundForm(f => ({ ...f, referenceNumber: e.target.value }))}
+                          placeholder="Optional"
+                          className="w-full mt-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-fg text-xs focus:outline-none focus:border-brand/50"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button" disabled={clientCreditBusy}
+                          onClick={submitClientCreditRefund}
+                          className="flex-1 px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-page-bg text-xs font-bold transition disabled:opacity-50"
+                        >
+                          {clientCreditBusy ? 'Processing…' : 'Confirm Refund'}
+                        </button>
+                        <button
+                          type="button" disabled={clientCreditBusy}
+                          onClick={() => setClientCreditRefundForm(null)}
+                          className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-fg/60 text-xs font-bold transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

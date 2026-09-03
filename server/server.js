@@ -45,6 +45,8 @@ import registerAudit from './features/audit.js';
 import registerSettings from './features/settings.js';
 import registerPurchaseOrders from './features/purchase-orders.js';
 import registerBills from './features/bills.js';
+import registerCheckVouchers from './features/check-vouchers.js';
+import registerAdvances from './features/advances.js';
 import registerRequisitions from './features/requisitions.js';
 import registerProduction from './features/production.js';
 import registerCollections from './features/collections.js';
@@ -2053,6 +2055,23 @@ const ClientAccountSchema = new mongoose.Schema({
   // cleared the moment onboarding completes. null = no link outstanding.
   onboardingToken:          { type: String, default: null, index: true },
   onboardingTokenExpiresAt: { type: Date, default: null },
+  // Running credit balance from overpaying an invoice - a LIABILITY (we owe
+  // it back to them), separate from whatever they still owe us on open
+  // orders. Grows when an A/R settlement exceeds the order's remaining
+  // balance; shrinks when that credit is applied to a later order's
+  // settlement or refunded out via a Check Voucher. See
+  // POST /api/orders/:id/settle-ar and /api/client-accounts/:id/credit/* .
+  creditBalance: { type: Number, default: 0 },
+  creditHistory: [{
+    type:        { type: String, enum: ['overpayment', 'applied', 'refunded', 'adjusted'], required: true },
+    amount:      { type: Number, required: true },     // always positive; `type` says the direction
+    orderId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null },
+    orderNumber: { type: String, default: '' },
+    reference:   { type: String, default: '' },        // the JournalEntry / CheckVoucher reference tied to this movement
+    note:        { type: String, default: '' },
+    by:          { type: String, default: '' },
+    at:          { type: Date, default: Date.now },
+  }],
 }, { timestamps: true });
 const ClientAccount = mongoose.model('ClientAccount', ClientAccountSchema);
 
@@ -2305,6 +2324,23 @@ const SupplierSchema = new mongoose.Schema({
     unitCost:  { type: Number, required: true },
     notes:     { type: String, default: '' },
   }],
+  // Running credit balance from overpaying this supplier - an ASSET (they
+  // owe it back to us), separate from whatever they're currently owed on
+  // open bills. Grows when a bill payment exceeds what was actually due;
+  // shrinks when that credit is applied to a later bill or refunded out via
+  // a Check Voucher. See POST /api/bills/:id/pay and
+  // /api/suppliers/:id/credit/* in bills.js.
+  creditBalance: { type: Number, default: 0 },
+  creditHistory: [{
+    type:        { type: String, enum: ['overpayment', 'applied', 'refunded', 'adjusted'], required: true },
+    amount:      { type: Number, required: true },     // always positive; `type` says the direction
+    billId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Bill', default: null },
+    billNumber:  { type: String, default: '' },
+    reference:   { type: String, default: '' },        // the JournalEntry / CheckVoucher reference tied to this movement
+    note:        { type: String, default: '' },
+    by:          { type: String, default: '' },
+    at:          { type: Date, default: Date.now },
+  }],
 }, { timestamps: true });
 const Supplier = mongoose.model('Supplier', SupplierSchema);
 
@@ -2352,7 +2388,9 @@ const PurchaseOrder = mongoose.model('PurchaseOrder', PurchaseOrderSchema);
 //                        what books the liability (DR expenseAccountCode /
 //                        CR 220000), since a manual entry has no independent
 //                        physical-receipt event to already justify it.
-const BILL_STATUSES = ['Pending', 'Approved', 'Rejected', 'Paid'];
+// 'Partially Paid' sits between Approved and Paid - a bill only reaches Paid
+// once its running paidAmount (see below) actually reaches its full amount.
+const BILL_STATUSES = ['Pending', 'Approved', 'Partially Paid', 'Rejected', 'Paid'];
 const BillSchema = new mongoose.Schema({
   businessType:      { type: String, default: () => BUSINESS_TYPE, index: true },
   tenantId:          { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
@@ -2377,15 +2415,129 @@ const BillSchema = new mongoose.Schema({
   paidAt:            { type: Date, default: null },
   // Reference of the JournalEntry this bill is tied to: the PO-receipt entry for
   // source:'PO' bills, the approval entry for source:'Manual' bills, and
-  // overwritten with the payment entry's reference once Paid.
+  // overwritten with the LATEST payment entry's reference once any payment lands.
   journalEntryRef:   { type: String, default: '' },
   // External reference for the payment - a bank transaction ID, check number,
   // GCash ref, etc. Distinct from journalEntryRef (the internal mkSeqRef code) -
   // this is what ties the record back to an actual bank statement or receipt.
+  // Kept for the LATEST payment; the full history is in `payments` below.
   paymentReference:  { type: String, default: '' },
+  // --- PARTIAL / OVERPAYMENT TRACKING (mirrors Order.arPaidAmount/arPayments) ---
+  // A bill is rarely paid in one clean shot either. `paidAmount` is the
+  // running sum of every payment posted against this bill; `status` only
+  // reaches 'Paid' once it meets `amount`. A payment that pushes paidAmount
+  // PAST `amount` is capped here at exactly `amount` - the excess is
+  // diverted to the supplier's creditBalance instead (see POST .../pay),
+  // never silently overstating what this specific bill "collected".
+  paidAmount:        { type: Number, default: 0 },
+  payments: [{
+    amount:          { type: Number, required: true },
+    payFromAccount:  { type: String, default: '' },
+    referenceNumber: { type: String, default: '' },
+    checkVoucherRef: { type: String, default: '' },      // the CheckVoucher this payment was issued through
+    journalRef:      { type: String, default: '' },
+    paidBy:          { type: String, default: '' },
+    at:              { type: Date, default: Date.now },
+  }],
 }, { timestamps: true });
 BillSchema.index({ businessType: 1, status: 1 });
 const Bill = mongoose.model('Bill', BillSchema);
+
+// --- CHECK VOUCHER ---
+// The actual paper trail for a disbursement - standard PH bookkeeping
+// practice: every outgoing payment (an AP bill payment, or an A/R
+// overpayment refunded back out to a client) gets one numbered voucher,
+// independent of which record it happened to be paid against. A bill/refund
+// keeps its own reference to the voucher (paymentReference / journalRef),
+// but this is the canonical, printable/filable record of the payment itself.
+const CheckVoucherSchema = new mongoose.Schema({
+  businessType:   { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  voucherNumber:  { type: String, index: true },                    // CV-2026-000001
+  // Who the money went to. 'other' covers a manual/ad-hoc disbursement not
+  // tied to a Bill or a client credit refund.
+  payeeType:      { type: String, enum: ['supplier', 'client', 'other'], required: true },
+  payeeId:        { type: String, default: '' },                    // Supplier._id or ClientAccount._id, when applicable
+  payeeName:      { type: String, required: true },
+  amount:         { type: Number, required: true },
+  purpose:        { type: String, enum: ['bill-payment', 'client-credit-refund', 'supplier-credit-refund', 'other'], required: true },
+  sourceAccount:  { type: String, default: '111000' },               // which cash/bank account the money left from
+  sourceAccountName: { type: String, default: '' },
+  referenceNumber:{ type: String, default: '' },                    // the actual check number / bank transfer ref
+  notes:          { type: String, default: '' },
+  status:         { type: String, enum: ['Issued', 'Voided'], default: 'Issued' },
+  voidedBy:       { type: String, default: '' },
+  voidedAt:       { type: Date, default: null },
+  voidReason:     { type: String, default: '' },
+  billId:         { type: mongoose.Schema.Types.ObjectId, ref: 'Bill', default: null },
+  journalEntryRef:{ type: String, default: '' },
+  issuedBy:       { type: String, default: '' },
+  date:           { type: Date, default: Date.now },
+}, { timestamps: true });
+CheckVoucherSchema.index({ businessType: 1, date: -1 });
+const CheckVoucher = mongoose.model('CheckVoucher', CheckVoucherSchema);
+
+// ── ADVANCE ──────────────────────────────────────────────────────────────────
+// Money that changed hands BEFORE the transaction it belongs to exists. Three
+// shapes, one model, because the lifecycle is identical - issue, liquidate in
+// parts, close - and only the accounts flip:
+//
+//   employee  cash handed to staff to spend      DR 170100 / CR cash   (asset)
+//   supplier  prepayment/deposit on an order     DR 170200 / CR cash   (asset)
+//   customer  deposit received against future    DR cash   / CR 260200 (liability)
+//
+// Distinct from the credit balances (160100/260100), which are what is left
+// over after OVERpaying something that already existed. An advance is
+// deliberate and comes first; a credit balance is a leftover and comes second.
+const ADVANCE_TYPES = ['employee', 'supplier', 'customer'];
+const ADVANCE_STATUSES = ['Open', 'Partially Liquidated', 'Liquidated', 'Cancelled'];
+const ADVANCE_ACCOUNTS = {
+  employee: { code: '170100', name: 'Advances to Employees' },
+  supplier: { code: '170200', name: 'Advances to Suppliers' },
+  customer: { code: '260200', name: 'Customer Advances / Deposits' },
+};
+const AdvanceSchema = new mongoose.Schema({
+  businessType:   { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  advanceNumber:  { type: String, index: true },
+  type:           { type: String, enum: ADVANCE_TYPES, required: true },
+  payeeName:      { type: String, required: true },
+  payeeId:        { type: String, default: '' },
+  amount:         { type: Number, required: true },
+  // How much has been cleared so far. status is derived from this vs amount.
+  liquidatedAmount: { type: Number, default: 0 },
+  status:         { type: String, enum: ADVANCE_STATUSES, default: 'Open', index: true },
+  purpose:        { type: String, default: '' },
+  // The control account this advance sits in (from ADVANCE_ACCOUNTS above).
+  account:        { type: String, default: '' },
+  sourceAccount:  { type: String, default: '111000' },
+  sourceAccountName: { type: String, default: '' },
+  referenceNumber:{ type: String, default: '' },
+  journalEntryRef:{ type: String, default: '' },
+  checkVoucherRef:{ type: String, default: '' },
+  // Each partial clearing. `method` records HOW it cleared, which decides the
+  // contra account: an expense code, a bill, an order, or cash returned.
+  liquidations: [{
+    amount:        { type: Number, required: true },
+    method:        { type: String, enum: ['expense', 'bill', 'order', 'cash-return'], required: true },
+    expenseAccount:{ type: String, default: '' },
+    billId:        { type: mongoose.Schema.Types.ObjectId, ref: 'Bill', default: null },
+    orderId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null },
+    reference:     { type: String, default: '' },
+    journalRef:    { type: String, default: '' },
+    note:          { type: String, default: '' },
+    by:            { type: String, default: '' },
+    at:            { type: Date, default: Date.now },
+  }],
+  issuedBy:       { type: String, default: '' },
+  date:           { type: Date, default: Date.now },
+  cancelledBy:    { type: String, default: '' },
+  cancelledAt:    { type: Date, default: null },
+  cancelReason:   { type: String, default: '' },
+}, { timestamps: true });
+AdvanceSchema.index({ businessType: 1, date: -1 });
+AdvanceSchema.index({ businessType: 1, type: 1, status: 1 });
+const Advance = mongoose.model('Advance', AdvanceSchema);
 
 // --- API ROUTES ---
 
@@ -3223,6 +3375,13 @@ const ctx = {
   BillSchema,
   Bill,
   BILL_STATUSES,
+  CheckVoucherSchema,
+  CheckVoucher,
+  ADVANCE_TYPES,
+  ADVANCE_STATUSES,
+  ADVANCE_ACCOUNTS,
+  AdvanceSchema,
+  Advance,
   emitToOps,
   emitToAll,
   emitToMgr,
@@ -3283,6 +3442,8 @@ registerAudit(ctx);
 registerSettings(ctx);
 registerPurchaseOrders(ctx);
 registerBills(ctx);
+registerCheckVouchers(ctx);
+registerAdvances(ctx);
 registerRequisitions(ctx);
 registerProduction(ctx);
 registerCollections(ctx);

@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Flame, Calendar, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Flame, Calendar, ToggleLeft, ToggleRight, Upload } from 'lucide-react';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 // Category routing default per business type - log routes to Logistics, fb to Kitchen.
@@ -280,6 +280,7 @@ export default function ProductsTab({ ctx }) {
     setEditPriceVal, setEditingCategory, setEditingProduct, setExpandedBatchRows, setExpenseModal,
     setFormData, setHistoryItemName, setHistoryModalOpen, setHistoryPage, setHistorySubTab,
     setImportModal, setImportRows, setInvForm, setInvPage, setInvSubTab,
+    menuBackupBusy, downloadMenuBackup, menuRestoreModal, setMenuRestoreModal, openMenuRestore, runMenuRestore,
     setIsPosOpen, setIsStatusMenuOpen, setJeForm, setJournalEntries, setLedgerSubTab,
     setNewDiscount, setOrderFilter, setOrdersPage, setPaymentSelections, setPhysicalCounts,
     setPnlRange, setPosActiveAddOns, setPosActiveSize, setPosCart, setPosCashTendered,
@@ -327,6 +328,120 @@ export default function ProductsTab({ ctx }) {
                 <button onClick={exportMenuItemsPDF} className="text-[10px] bg-brand/10 hover:bg-brand/20 text-brand px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">Export PDF</button>
               </div>
             </div>
+
+            {/* Menu backup: an exact copy of every product, size, recipe and
+                add-on in one file. Unlike the spreadsheet importer this is a
+                true round-trip, so rebuilding a database does not mean
+                rebuilding the menu by hand. Recipes re-link to stock by
+                ingredient NAME, since inventory ids change on a rebuild. */}
+            <div className="flex flex-wrap items-center gap-2 mb-5 p-3 bg-page-bg border border-white/10 rounded-xl">
+              <div className="mr-auto min-w-0">
+                <p className="text-[11px] font-black uppercase tracking-widest text-fg/60">Menu Backup</p>
+                <p className="text-[10px] text-fg/35 mt-0.5">Download the whole menu, restore it after a rebuild.</p>
+              </div>
+              <button onClick={() => downloadMenuBackup(false)} disabled={menuBackupBusy}
+                className="flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
+                <Download size={12} /> {menuBackupBusy ? 'Working…' : 'Download'}
+              </button>
+              <label className={`flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition ${menuBackupBusy ? 'opacity-40 pointer-events-none' : 'cursor-pointer'}`}>
+                <Upload size={12} /> Restore
+                <input type="file" accept="application/json,.json" className="hidden"
+                  onChange={e => { openMenuRestore(e.target.files?.[0]); e.target.value = ''; }} />
+              </label>
+            </div>
+
+            {/* Restore always previews first (a dry run on the server) so the
+                user sees what WOULD change - and which ingredients cannot be
+                linked - before a single product is written. */}
+            {menuRestoreModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setMenuRestoreModal(null)}>
+                <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                  <h2 className="font-black text-fg text-lg mb-1">Restore menu backup</h2>
+                  <p className="text-xs text-fg/50 mb-4 break-all">
+                    {menuRestoreModal.fileName} · {menuRestoreModal.backup.products.length} product(s)
+                    {menuRestoreModal.backup.exportedAt && ` · exported ${new Date(menuRestoreModal.backup.exportedAt).toLocaleDateString()}`}
+                  </p>
+
+                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">If a product is already on the menu</label>
+                  <div className="space-y-1.5 mb-4">
+                    {[
+                      ['skip', 'Keep what is on the menu', 'Existing products are left exactly as they are.'],
+                      ['overwrite', 'Replace it from the backup', 'Overwrites price, recipe and settings with the file.'],
+                    ].map(([v, label, help]) => (
+                      <button key={v} onClick={() => setMenuRestoreModal(m => ({ ...m, onConflict: v, preview: null }))}
+                        className={`w-full text-left px-3 py-2.5 rounded-lg border transition ${
+                          menuRestoreModal.onConflict === v ? 'bg-brand/15 border-brand/50' : 'bg-white/5 border-white/10 hover:border-white/20'}`}>
+                        <span className={`block text-xs font-bold ${menuRestoreModal.onConflict === v ? 'text-fg' : 'text-fg/60'}`}>{label}</span>
+                        <span className="block text-[10px] text-fg/35 mt-0.5">{help}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {menuRestoreModal.preview ? (
+                    <div className="bg-page-bg border border-white/10 rounded-xl p-3 mb-4 text-xs space-y-1">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-1.5">Preview</p>
+                      <div className="flex justify-between"><span className="text-fg/50">Will be created</span><span className="tabular-nums font-bold text-green-400">{menuRestoreModal.preview.created}</span></div>
+                      <div className="flex justify-between"><span className="text-fg/50">Will be updated</span><span className="tabular-nums font-bold text-amber-400">{menuRestoreModal.preview.updated}</span></div>
+                      <div className="flex justify-between"><span className="text-fg/50">Left untouched</span><span className="tabular-nums font-bold text-fg/50">{menuRestoreModal.preview.skipped}</span></div>
+
+                      {/* How recipe lines re-linked to stock. Leaning on NAME
+                          is the one worth flagging: it means the stock codes
+                          did not line up, so a rename could have mismatched. */}
+                      {(() => {
+                        const mb = menuRestoreModal.preview.matchedBy || {};
+                        const total = (mb.invId || 0) + (mb.itemCode || 0) + (mb.name || 0);
+                        if (!total) return null;
+                        return (
+                          <div className="mt-2 pt-2 border-t border-white/10">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-1">Recipe lines linked by</p>
+                            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px]">
+                              {mb.invId > 0 && <span className="text-fg/50">same stock record <span className="text-fg/80 font-bold tabular-nums">{mb.invId}</span></span>}
+                              {mb.itemCode > 0 && <span className="text-fg/50">stock code <span className="text-green-400 font-bold tabular-nums">{mb.itemCode}</span></span>}
+                              {mb.name > 0 && <span className="text-fg/50">name only <span className="text-amber-400 font-bold tabular-nums">{mb.name}</span></span>}
+                            </div>
+                            {mb.name > 0 && (
+                              <p className="text-[10px] text-amber-400/80 mt-1">
+                                Matched by name because the stock code did not line up - worth checking those are the right items.
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })()}
+                      {menuRestoreModal.preview.unmatchedIngredients?.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-white/10">
+                          <p className="text-[11px] text-amber-400 font-bold">
+                            {menuRestoreModal.preview.unmatchedIngredients.length} ingredient(s) not in stock
+                          </p>
+                          <p className="text-[10px] text-fg/40 mt-0.5">
+                            Those recipe lines will be left out, so affected products under-report cost until the
+                            ingredient exists:
+                          </p>
+                          <p className="text-[10px] text-fg/60 mt-1">{menuRestoreModal.preview.unmatchedIngredients.join(', ')}</p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-fg/40 mb-4">Preview first to see exactly what this file would change.</p>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button onClick={() => setMenuRestoreModal(null)} disabled={menuBackupBusy}
+                      className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
+                      Cancel
+                    </button>
+                    <button onClick={() => runMenuRestore(true)} disabled={menuBackupBusy}
+                      className="flex-1 border border-white/15 text-fg font-bold py-2.5 rounded-xl transition text-sm hover:bg-white/5 disabled:opacity-40">
+                      {menuBackupBusy ? 'Checking…' : 'Preview'}
+                    </button>
+                    <button onClick={() => runMenuRestore(false)} disabled={menuBackupBusy || !menuRestoreModal.preview}
+                      title={!menuRestoreModal.preview ? 'Preview first' : ''}
+                      className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-40">
+                      Restore
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Search + filters - a shop with a few hundred SKUs can't page 8-at-a-time
                 to find one item, so this narrows the list before pagination. */}

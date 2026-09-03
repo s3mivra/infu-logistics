@@ -23,6 +23,12 @@ export default function SettleArModal() {
   const remainingAfter = Number.isFinite(entered) ? Math.max(0, +(outstanding - entered).toFixed(2)) : outstanding;
   const isPartial = Number.isFinite(entered) && entered > 0 && entered < outstanding - 0.01;
   const overpaying = Number.isFinite(entered) && entered > outstanding + 0.01;
+  // Only a real, linked client account can hold a credit balance forward -
+  // a walk-in/no-account order still has nowhere for the excess to live, so
+  // it's still blocked there. See POST /api/orders/:id/settle-ar.
+  const hasClientAccount = !!order.clientId;
+  const overpayAmount = overpaying ? +(entered - outstanding).toFixed(2) : 0;
+  const blockedOverpay = overpaying && !hasClientAccount;
   const isCheck = settleForm.paymentMethod === 'Check';
   // A check is not deposited at collection time, so the deposit-date rule
   // simply doesn't apply to one.
@@ -67,12 +73,17 @@ export default function SettleArModal() {
             <div>
               <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Amount Received *</label>
               <input type="number" min="0" step="0.01" value={settleForm.amount} onChange={e => setSettleForm({...settleForm, amount: e.target.value})}
-                className={`w-full bg-page-bg border rounded-xl px-3 py-3 text-fg text-xl font-black tabular-nums outline-none focus:border-brand/60 ${overpaying ? 'border-red-500/60' : 'border-white/10'}`} />
+                className={`w-full bg-page-bg border rounded-xl px-3 py-3 text-fg text-xl font-black tabular-nums outline-none focus:border-brand/60 ${blockedOverpay ? 'border-red-500/60' : overpaying ? 'border-amber-500/60' : 'border-white/10'}`} />
               <div className="flex items-center justify-between mt-1.5 gap-2">
                 {/* Partial payment is normal, not an error - say what will be
-                    left rather than blocking the user. */}
-                {overpaying ? (
-                  <p className="text-[10px] text-red-400 font-bold">Exceeds the {peso(outstanding)} outstanding.</p>
+                    left rather than blocking the user. An overpayment is ALSO
+                    fine, as long as there's a real client account to credit
+                    the excess to - it settles the order in full and the rest
+                    becomes that client's stored credit. */}
+                {blockedOverpay ? (
+                  <p className="text-[10px] text-red-400 font-bold">Exceeds the {peso(outstanding)} outstanding - this order has no client account to credit the excess to.</p>
+                ) : overpaying ? (
+                  <p className="text-[10px] text-amber-400 font-bold">Overpaying by {peso(overpayAmount)} - settles this order in full; the rest becomes client credit.</p>
                 ) : isPartial ? (
                   <p className="text-[10px] text-yellow-400 font-bold tabular-nums">Partial · {peso(remainingAfter)} will remain outstanding.</p>
                 ) : (
@@ -176,9 +187,9 @@ export default function SettleArModal() {
             </div>
           </div>
           <div className="px-5 pb-5 pt-3 border-t border-white/10">
-            <button onClick={submitArSettlement} disabled={settleSubmitting || overpaying || datesOutOfOrder || missingCheckNo || missingReference}
+            <button onClick={submitArSettlement} disabled={settleSubmitting || blockedOverpay || datesOutOfOrder || missingCheckNo || missingReference}
               className="w-full py-4 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active-press transition shadow-elev-2 disabled:opacity-50 min-h-[56px] flex items-center justify-center gap-2">
-              <Check size={18}/> {settleSubmitting ? 'Recording…' : isPartial ? 'Record Partial Payment' : 'Record Collection'}
+              <Check size={18}/> {settleSubmitting ? 'Recording…' : overpaying ? 'Record & Credit Overpayment' : isPartial ? 'Record Partial Payment' : 'Record Collection'}
             </button>
           </div>
         </div>
