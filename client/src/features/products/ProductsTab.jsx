@@ -551,7 +551,21 @@ export default function ProductsTab({ ctx }) {
                             </span>
                           );
                         })()}
+                        {/* The server decides what the CUSTOMER menu shows, and
+                            it can disagree with the estimate above (different
+                            data, a dangling ingredient link, an unlinked
+                            recipe). When it does, say so here rather than
+                            leaving staff to wonder why the item is hidden. */}
+                        {p.stockAvailable === false && (
+                          <span title={p.stockReason || 'Hidden from the customer menu.'}
+                            className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider bg-red-500/15 text-red-400">
+                            Hidden on menu
+                          </span>
+                        )}
                       </div>
+                      {p.stockAvailable === false && p.stockReason && (
+                        <p className="text-[11px] text-red-400/90 mt-1">{p.stockReason}</p>
+                      )}
                       {p.description && <p className="text-xs text-fg/40 mt-1 line-clamp-2">{p.description}</p>}
                       <p className="text-sm text-fg/70 font-bold mt-1">P{Number(p.basePrice || p.price || 0).toFixed(2)} {p.baseSize && <span className="text-xs text-fg/30 font-normal">({p.baseSize})</span>} {p.sizes?.length > 0 && <span className="text-brand/70 text-xs ml-1">(+ {p.sizes.length} sizes)</span>}</p>
                     </div>
@@ -1079,10 +1093,13 @@ export default function ProductsTab({ ctx }) {
                           <p className="p-2 text-xs text-accent italic font-medium">No inventory available.</p>
                         ) : (
                           inventory.map(inv => {
-                            const pack = packInfo ? packInfo(inv) : { packBase: 1, label: inv.unit };
-                            const packBase = pack.packBase || 1;
-                            const dispUnit = BUSINESS_TYPE === 'log' ? 'pcs' : (inv.displayUnit || inv.unit);
-                            const packCost = (inv.unitCost || 0) * packBase;
+                            // packInfo already works out BOTH the pack label
+                            // ("377g", "kg", "L") and the cost of one of those.
+                            // Pairing its cost with a different unit label is
+                            // what produced "P66.00/kg" for a P66 377g can.
+                            const pack = packInfo ? packInfo(inv) : { packBase: 1, label: inv.unit, cost: inv.unitCost || 0 };
+                            const dispUnit = BUSINESS_TYPE === 'log' ? 'pcs' : pack.label;
+                            const packCost = pack.cost || 0;
                             return (
                             <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, null)} className="w-full text-left px-3 py-2 text-xs text-accent font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
                               <span className="truncate pr-2">{inv.itemName}</span>
@@ -1135,10 +1152,9 @@ export default function ProductsTab({ ctx }) {
                           <div className="text-[10px] text-white uppercase font-black mb-2 tracking-widest flex items-center gap-1"><Plus size={12}/> Tap to Add Material</div>
                           <div className="max-h-28 overflow-y-auto bg-white border border-white/10 rounded-lg custom-scrollbar p-1">
                             {inventory.map(inv => {
-                              const pack = packInfo ? packInfo(inv) : { packBase: 1 };
-                              const packBase = pack.packBase || 1;
-                              const dispUnit = inv.displayUnit || inv.unit;
-                              const packCost = (inv.unitCost || 0) * packBase;
+                              const pack = packInfo ? packInfo(inv) : { packBase: 1, label: inv.unit, cost: inv.unitCost || 0 };
+                              const dispUnit = BUSINESS_TYPE === 'log' ? 'pcs' : pack.label;
+                              const packCost = pack.cost || 0;
                               return (
                               <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, idx)} className="w-full text-left px-3 py-2 text-xs text-accent font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
                                 <span className="truncate pr-2">{inv.itemName}</span>

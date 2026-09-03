@@ -5188,7 +5188,10 @@ const updateStatus = async (orderId, newStatus) => {
     const pack = packInfo(invItem);
     const packBase = pack.packBase || 1;         // base units per display unit (e.g. 377 for a 377g can)
     // Logistics sells per piece — always label ingredients as "pcs" so qty=1 means 1 package/unit.
-    const displayUnit = BUSINESS_TYPE === 'log' ? 'pcs' : (invItem.displayUnit || invItem.unit);
+    // qty below is ONE PACK in base units, so the label has to be the pack's
+    // own label ("377g"), not the raw display unit - otherwise a 377g can
+    // reads as "1 kg".
+    const displayUnit = BUSINESS_TYPE === 'log' ? 'pcs' : pack.label;
     const material = {
       invId: invItem._id, name: invItem.itemName,
       qty: packBase,           // stored in BASE units; 1 pack's worth by default

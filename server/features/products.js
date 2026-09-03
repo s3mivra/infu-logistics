@@ -154,6 +154,7 @@ export default function registerProducts(ctx) {
     AuditLog,
     DiscountSchema,
     Discount,
+    DiscountRule,
     EODRecordSchema,
     EODRecord,
     CounterSchema,
@@ -421,6 +422,10 @@ app.get('/api/products', async (req, res) => {
         : (invByCode[p.productCode] || invByName[p.name]);
       p.unitLabel = unitLabelOf(linkedInv);
 
+      // Why a product is unavailable, so staff are not left guessing when the
+      // menu hides something the stock screen says is in stock. Only set when
+      // stockAvailable is false; costs nothing when everything is fine.
+      p.stockReason = '';
       if (recipe.some(r => r.invId)) {
         p.stockAvailable = recipe.every(ing => {
           if (!ing.invId) return true;                  // unlinked - don't block the product
@@ -433,7 +438,19 @@ app.get('/api/products', async (req, res) => {
           // ID must never permanently strand an otherwise-in-stock product.
           const inv = invById[ing.invId] || (ing.name ? invByName[ing.name] : null);
           const need = Number(ing.qty) || 0;
-          return inv && inv.stockQty > 0 && inv.stockQty >= need;
+          if (!inv) {
+            p.stockReason = `Ingredient "${ing.name || ing.invId}" is not in inventory (its stock record was deleted or renamed).`;
+            return false;
+          }
+          if (!(inv.stockQty > 0)) {
+            p.stockReason = `"${inv.itemName}" is out of stock.`;
+            return false;
+          }
+          if (inv.stockQty < need) {
+            p.stockReason = `"${inv.itemName}" has ${inv.stockQty}${inv.unit || ''} on hand but the recipe needs ${need}${inv.unit || ''} per serving.`;
+            return false;
+          }
+          return true;
         });
       } else {
         // 1:1 logistics good: the product IS the stocked good, so with no recipe
@@ -441,6 +458,16 @@ app.get('/api/products', async (req, res) => {
         // the product - never default to "available" just because nothing matched.
         const inv = invByCode[p.productCode] || invByName[p.name];
         p.stockAvailable = !!inv && inv.stockQty >= baseUnitsPerSale(p, inv);
+        if (!p.stockAvailable) {
+          // The most confusing case in practice: a product with NO linked
+          // recipe at all is treated as a 1:1 stocked good, so it needs an
+          // inventory item matching its own code or name. A drink built from
+          // ingredients that were never linked lands here and looks
+          // inexplicably unavailable.
+          p.stockReason = !inv
+            ? `No recipe ingredients are linked to stock, and no inventory item matches this product's code (${p.productCode || '-'}) or name.`
+            : `"${inv.itemName}" has ${inv.stockQty}${inv.unit || ''} on hand, below one sellable unit.`;
+        }
       }
     });
 
@@ -528,10 +555,18 @@ app.get('/api/products/menu-backup', verifyToken, requireStaff, async (req, res)
     const q = { ...scope };
     if (!includeArchived) q.isArchived = { $ne: true };
 
-    const [products, modifierGroups, invItems] = await Promise.all([
+    // Only Category and DiscountRule carry businessType/tenantId; ModifierGroup,
+    // AddOn, Combo and Discount are global to the deployment, so scoping those
+    // queries would silently return nothing.
+    const [products, modifierGroups, invItems, categories, addOns, combos, discounts, discountRules] = await Promise.all([
       Product.find(q).sort({ category: 1, name: 1 }).lean(),
-      ModifierGroup.find(scope).lean(),
+      ModifierGroup.find({}).lean(),
       Inventory.find(scope, { itemCode: 1, itemName: 1 }).lean(),
+      Category.find(scope).sort({ name: 1 }).lean(),
+      AddOn.find({}).sort({ category: 1, name: 1 }).lean(),
+      Combo.find({}).sort({ name: 1 }).lean(),
+      Discount.find({}).lean(),
+      DiscountRule.find(scope).sort({ name: 1 }).lean(),
     ]);
 
     // Modifier groups are referenced by ObjectId, which will not survive a
@@ -555,10 +590,31 @@ app.get('/api/products/menu-backup', verifyToken, requireStaff, async (req, res)
       businessType: BUSINESS_TYPE,
       exportedAt: new Date(),
       exportedBy: req.user?.name || '',
-      counts: { products: products.length, modifierGroups: modifierGroups.length },
+      counts: {
+        products: products.length, modifierGroups: modifierGroups.length,
+        categories: categories.length, addOns: addOns.length, combos: combos.length,
+        discounts: discounts.length, discountRules: discountRules.length,
+      },
+      categories: categories.map(c => ({ name: c.name, department: c.department })),
       modifierGroups: modifierGroups.map(g => ({
-        name: g.name, required: g.required, multiSelect: g.multiSelect,
+        name: g.name, isRequired: g.isRequired, minSelect: g.minSelect, maxSelect: g.maxSelect,
         options: (g.options || []).map(o => ({ name: o.name, price: o.price, recipe: exportRecipe(o.recipe) })),
+      })),
+      // Standalone add-ons (the shared library), distinct from the per-product
+      // addOns embedded on each product below.
+      addOns: addOns.map(a => ({ name: a.name, price: a.price, category: a.category, recipe: exportRecipe(a.recipe) })),
+      // Combos reference their component products by NAME, since product ids
+      // change on a rebuild the same way inventory ids do.
+      combos: combos.map(c => ({
+        comboCode: c.comboCode, name: c.name, description: c.description,
+        price: c.price, image: c.image, isActive: c.isActive,
+        items: (c.items || []).map(i => ({ name: i.name, sizeName: i.sizeName, quantity: i.quantity })),
+      })),
+      discounts: discounts.map(d => ({ name: d.name, percentage: d.percentage, isSCPWD: d.isSCPWD })),
+      discountRules: discountRules.map(r => ({
+        name: r.name, percent: r.percent, active: r.active, priority: r.priority,
+        minSubtotal: r.minSubtotal, daysOfWeek: r.daysOfWeek,
+        startDate: r.startDate, endDate: r.endDate, segment: r.segment,
       })),
       products: products.map(p => ({
         productCode: p.productCode, barcode: p.barcode, name: p.name,
@@ -636,20 +692,65 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, async (
     };
     const resolveRecipe = (recipe) => (recipe || []).map(resolveLine).filter(Boolean);
 
-    // Modifier groups first, so products can link to them by name.
+    // Everything a product depends on is restored BEFORE the products, so the
+    // links resolve. Combos come after, since they point AT products.
+    // Existing records are matched by name and left alone - these are shared
+    // library objects, and clobbering a live discount rule from a stale file
+    // would change what customers are charged.
+    const added = { categories: 0, modifierGroups: 0, addOns: 0, combos: 0, discounts: 0, discountRules: 0 };
+
+    for (const c of (backup.categories || [])) {
+      if (!c?.name) continue;
+      if (await Category.findOne({ ...scope, name: new RegExp(`^${escapeRegex(c.name)}$`, 'i') })) continue;
+      added.categories++;
+      if (!dryRun) await Category.create({ ...scope, name: c.name, ...(c.department ? { department: c.department } : {}) });
+    }
+
+    // ModifierGroup / AddOn / Combo / Discount carry no businessType - they are
+    // global to the deployment, so they are queried and created unscoped.
     const groupIdByName = new Map();
-    let groupsCreated = 0;
     for (const g of (backup.modifierGroups || [])) {
       if (!g?.name) continue;
-      const existing = await ModifierGroup.findOne({ ...scope, name: new RegExp(`^${escapeRegex(g.name)}$`, 'i') });
+      const existing = await ModifierGroup.findOne({ name: new RegExp(`^${escapeRegex(g.name)}$`, 'i') });
       if (existing) { groupIdByName.set(g.name.toLowerCase(), existing._id); continue; }
-      if (dryRun) { groupsCreated++; continue; }
+      added.modifierGroups++;
+      if (dryRun) continue;
       const created = await ModifierGroup.create({
-        ...scope, name: g.name, required: !!g.required, multiSelect: !!g.multiSelect,
+        name: g.name,
+        isRequired: g.isRequired !== false,
+        minSelect: Number.isFinite(g.minSelect) ? g.minSelect : 1,
+        maxSelect: Number.isFinite(g.maxSelect) ? g.maxSelect : 1,
         options: (g.options || []).map(o => ({ name: o.name, price: o.price || 0, recipe: resolveRecipe(o.recipe) })),
       });
       groupIdByName.set(g.name.toLowerCase(), created._id);
-      groupsCreated++;
+    }
+
+    for (const a of (backup.addOns || [])) {
+      if (!a?.name) continue;
+      if (await AddOn.findOne({ name: new RegExp(`^${escapeRegex(a.name)}$`, 'i') })) continue;
+      added.addOns++;
+      if (!dryRun) await AddOn.create({ name: a.name, price: Number(a.price) || 0, category: a.category || 'Extras', recipe: resolveRecipe(a.recipe) });
+    }
+
+    for (const d of (backup.discounts || [])) {
+      if (!d?.name) continue;
+      if (await Discount.findOne({ name: new RegExp(`^${escapeRegex(d.name)}$`, 'i') })) continue;
+      added.discounts++;
+      if (!dryRun) await Discount.create({ name: d.name, percentage: Number(d.percentage) || 0, isSCPWD: !!d.isSCPWD });
+    }
+
+    for (const r of (backup.discountRules || [])) {
+      if (!r?.name) continue;
+      if (await DiscountRule.findOne({ ...scope, name: new RegExp(`^${escapeRegex(r.name)}$`, 'i') })) continue;
+      added.discountRules++;
+      if (!dryRun) {
+        await DiscountRule.create({
+          ...scope, name: r.name, percent: Number(r.percent) || 0,
+          active: r.active !== false, priority: Number(r.priority) || 0,
+          minSubtotal: r.minSubtotal ?? null, daysOfWeek: r.daysOfWeek || [],
+          startDate: r.startDate || null, endDate: r.endDate || null, segment: r.segment || '',
+        });
+      }
     }
 
     const results = [];
@@ -723,10 +824,38 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, async (
       }
     }
 
+    // Combos LAST: they name the products they bundle, so those have to exist
+    // first. A combo whose components are missing is reported rather than
+    // created half-empty, since a bundle silently short of an item would sell
+    // at the bundle price and hand over less than it promised.
+    const incompleteCombos = [];
+    for (const c of (backup.combos || [])) {
+      if (!c?.name) continue;
+      if (await Combo.findOne({ name: new RegExp(`^${escapeRegex(c.name)}$`, 'i') })) continue;
+      const items = [];
+      const missing = [];
+      for (const i of (c.items || [])) {
+        const prod = await Product.findOne({ ...scope, name: new RegExp(`^${escapeRegex(String(i.name || ''))}$`, 'i'), isArchived: { $ne: true } }).lean();
+        if (!prod) { missing.push(i.name); continue; }
+        items.push({ productId: String(prod._id), name: prod.name, sizeName: i.sizeName || '', quantity: Number(i.quantity) || 1 });
+      }
+      if (missing.length) { incompleteCombos.push({ combo: c.name, missing }); continue; }
+      added.combos++;
+      if (!dryRun) {
+        await Combo.create({
+          comboCode: c.comboCode, name: c.name, description: c.description || '',
+          price: Number(c.price) || 0, image: c.image || '', isActive: c.isActive !== false, items,
+        });
+      }
+    }
+
     if (!dryRun) emitToMgr('erpUpdated');
     res.json({
       success: true, dryRun,
-      created, updated, skipped, groupsCreated,
+      created, updated, skipped,
+      added,
+      // Bundles that could not be built because a component product is absent.
+      incompleteCombos,
       // How each recipe line was re-linked. A restore leaning on `name` is
       // worth a second look: it means the stock codes did not line up.
       matchedBy,

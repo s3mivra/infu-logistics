@@ -26,8 +26,11 @@ const Product = () => mongoose.model('Product');
 const Inventory = () => mongoose.model('Inventory');
 
 beforeEach(async () => {
-  await Product().deleteMany({});
-  await Inventory().deleteMany({});
+  // Every collection the backup touches, so one test's seed cannot leak into
+  // the next one's counts.
+  for (const n of ['Product', 'Inventory', 'Category', 'ModifierGroup', 'AddOn', 'Discount', 'DiscountRule', 'Combo']) {
+    await mongoose.model(n).deleteMany({});
+  }
 });
 
 async function makeInventory(itemName, unit = 'ml', unitCost = 0.5, itemCode = 'RM-0001') {
@@ -180,6 +183,110 @@ describe('restoring into a rebuilt database', () => {
 
     await auth('post', '/api/products/menu-backup/restore').send({ backup });
     expect((await Product().findOne({ name: 'Spanish Latte' }).lean()).productCode).toBe('BEV-0001');
+  });
+});
+
+describe('the rest of the menu, not just products', () => {
+  const M = (n) => mongoose.model(n);
+
+  async function seedEverything() {
+    await makeInventory('Full Milk', 'ml', 0.5, 'RM-MILK-01');
+    await makeProduct();
+    await M('Category').create({ name: 'Coffee', department: 'Bar' });
+    await M('ModifierGroup').create({
+      name: 'Sugar Level', isRequired: false, minSelect: 0, maxSelect: 3,
+      options: [{ name: '50%', price: 0 }, { name: 'Extra', price: 10 }],
+    });
+    await M('AddOn').create({ name: 'Extra Shot', price: 30, category: 'Coffee Extras' });
+    await M('Discount').create({ name: 'Senior Citizen', percentage: 20, isSCPWD: true });
+    await M('DiscountRule').create({ name: 'Happy Hour', percent: 15, priority: 2, daysOfWeek: [1, 2], minSubtotal: 200 });
+    await M('Combo').create({
+      name: 'Latte + Shot', price: 170, isActive: true,
+      items: [{ productId: 'x', name: 'Spanish Latte', sizeName: '', quantity: 1 }],
+    });
+  }
+
+  async function wipeAll() {
+    for (const n of ['Product', 'Inventory', 'Category', 'ModifierGroup', 'AddOn', 'Discount', 'DiscountRule', 'Combo']) {
+      await M(n).deleteMany({});
+    }
+  }
+
+  it('exports every menu-shaping record, not only products', async () => {
+    await seedEverything();
+    const b = (await auth('get', '/api/products/menu-backup')).body;
+
+    expect(b.counts).toMatchObject({
+      products: 1, categories: 1, modifierGroups: 1, addOns: 1, discounts: 1, discountRules: 1,
+    });
+    expect(b.categories[0]).toMatchObject({ name: 'Coffee', department: 'Bar' });
+    expect(b.addOns[0]).toMatchObject({ name: 'Extra Shot', price: 30, category: 'Coffee Extras' });
+    expect(b.discounts[0]).toMatchObject({ name: 'Senior Citizen', percentage: 20, isSCPWD: true });
+    expect(b.discountRules[0]).toMatchObject({ name: 'Happy Hour', percent: 15, priority: 2, minSubtotal: 200 });
+    expect(b.combos[0]).toMatchObject({ name: 'Latte + Shot', price: 170 });
+  });
+
+  it('keeps the modifier group selection rules', async () => {
+    await seedEverything();
+    const b = (await auth('get', '/api/products/menu-backup')).body;
+    // These are the fields that actually drive the POS prompt - losing them
+    // would turn an optional 0-3 pick into a forced single choice.
+    expect(b.modifierGroups[0]).toMatchObject({ name: 'Sugar Level', isRequired: false, minSelect: 0, maxSelect: 3 });
+    expect(b.modifierGroups[0].options).toHaveLength(2);
+  });
+
+  it('restores them all into an empty database', async () => {
+    await seedEverything();
+    const backup = (await auth('get', '/api/products/menu-backup')).body;
+    await wipeAll();
+    await makeInventory('Full Milk', 'ml', 0.5, 'RM-MILK-01');
+
+    const res = await auth('post', '/api/products/menu-backup/restore').send({ backup });
+    expect(res.status).toBe(200);
+    expect(res.body.added).toMatchObject({
+      categories: 1, modifierGroups: 1, addOns: 1, discounts: 1, discountRules: 1, combos: 1,
+    });
+
+    const g = await M('ModifierGroup').findOne({ name: 'Sugar Level' }).lean();
+    expect(g).toMatchObject({ isRequired: false, minSelect: 0, maxSelect: 3 });
+    const rule = await M('DiscountRule').findOne({ name: 'Happy Hour' }).lean();
+    expect(rule).toMatchObject({ percent: 15, minSubtotal: 200 });
+    expect(rule.daysOfWeek).toEqual([1, 2]);
+  });
+
+  it('re-points a combo at the restored product, not the old id', async () => {
+    await seedEverything();
+    const backup = (await auth('get', '/api/products/menu-backup')).body;
+    await wipeAll();
+    await makeInventory('Full Milk', 'ml', 0.5, 'RM-MILK-01');
+
+    await auth('post', '/api/products/menu-backup/restore').send({ backup });
+    const product = await M('Product').findOne({ name: 'Spanish Latte' }).lean();
+    const combo = await M('Combo').findOne({ name: 'Latte + Shot' }).lean();
+    expect(combo.items[0].productId).toBe(String(product._id));
+  });
+
+  it('refuses to build a combo whose component product is missing', async () => {
+    await seedEverything();
+    const backup = (await auth('get', '/api/products/menu-backup')).body;
+    backup.products = []; // the combo's component never gets restored
+    await wipeAll();
+
+    const res = await auth('post', '/api/products/menu-backup/restore').send({ backup });
+    expect(res.body.added.combos).toBe(0);
+    expect(res.body.incompleteCombos).toEqual([{ combo: 'Latte + Shot', missing: ['Spanish Latte'] }]);
+    expect(await M('Combo').countDocuments({})).toBe(0); // never half-built
+  });
+
+  it('leaves an existing discount rule alone rather than overwriting from a stale file', async () => {
+    await seedEverything();
+    const backup = (await auth('get', '/api/products/menu-backup')).body;
+    backup.discountRules[0].percent = 90; // stale, dangerously wrong
+
+    const res = await auth('post', '/api/products/menu-backup/restore').send({ backup });
+    expect(res.body.added.discountRules).toBe(0);
+    // What customers are charged must not change because of an old backup.
+    expect((await M('DiscountRule').findOne({ name: 'Happy Hour' }).lean()).percent).toBe(15);
   });
 });
 
