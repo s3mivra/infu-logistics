@@ -566,6 +566,15 @@ export default function ProductsTab({ ctx }) {
                       {p.stockAvailable === false && p.stockReason && (
                         <p className="text-[11px] text-red-400/90 mt-1">{p.stockReason}</p>
                       )}
+                      {/* A priced size with no materials sells for money while
+                          deducting nothing - not fatal, but it should not go
+                          unnoticed. */}
+                      {p.sizesWithoutRecipe?.length > 0 && (
+                        <p className="text-[11px] text-amber-400/90 mt-1">
+                          No materials set for {p.sizesWithoutRecipe.length === 1 ? 'size' : 'sizes'}{' '}
+                          {p.sizesWithoutRecipe.map(n => `"${n}"`).join(', ')} - selling {p.sizesWithoutRecipe.length === 1 ? 'it' : 'them'} deducts no stock.
+                        </p>
+                      )}
                       {p.description && <p className="text-xs text-fg/40 mt-1 line-clamp-2">{p.description}</p>}
                       <p className="text-sm text-fg/70 font-bold mt-1">P{Number(p.basePrice || p.price || 0).toFixed(2)} {p.baseSize && <span className="text-xs text-fg/30 font-normal">({p.baseSize})</span>} {p.sizes?.length > 0 && <span className="text-brand/70 text-xs ml-1">(+ {p.sizes.length} sizes)</span>}</p>
                     </div>

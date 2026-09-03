@@ -962,7 +962,12 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (
     }
     const [ordersData, prods, invItems] = await Promise.all([
       Order.find(match, { items: 1 }).lean(),
-      Product.find(bizScope, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1 }).lean(),
+      Product.find(bizScope, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1, addOns: 1, modifierGroups: 1 })
+        // addOns / modifierGroups carry their own recipes: an Extra Shot costs
+        // real beans. Without them the report counts the add-on's REVENUE but
+        // none of its cost, overstating margin on exactly the items these
+        // reports are used to judge.
+        .populate('modifierGroups').lean(),
       Inventory.find(bizScope, { _id: 1, itemCode: 1, itemName: 1, unitCost: 1, unitMultiplier: 1 }).lean(),
     ]);
     const prodMap = Object.fromEntries(prods.map(p => [p._id.toString(), p]));
@@ -1110,7 +1115,12 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async
     }
     const [ordersData, prods, invItems] = await Promise.all([
       Order.find(match, { items: 1 }).lean(),
-      Product.find(bizScope, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1 }).lean(),
+      Product.find(bizScope, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1, addOns: 1, modifierGroups: 1 })
+        // addOns / modifierGroups carry their own recipes: an Extra Shot costs
+        // real beans. Without them the report counts the add-on's REVENUE but
+        // none of its cost, overstating margin on exactly the items these
+        // reports are used to judge.
+        .populate('modifierGroups').lean(),
       Inventory.find(bizScope, { _id: 1, itemCode: 1, itemName: 1, unitCost: 1, unitMultiplier: 1 }).lean(),
     ]);
     const prodMap  = Object.fromEntries(prods.map(p => [p._id.toString(), p]));

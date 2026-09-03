@@ -2920,12 +2920,28 @@ function reportLinesForItem(item, prods, prodMap, invMap) {
   const base = (item.name || '').replace(/\s*\(.*?\)\s*/g, '').trim();
   const prod = prodMap[item.productId] || prods.find(p => p.name === base);
   const aoT = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
+  // An add-on's recipe is resolved exactly the way the stock deduction resolves
+  // it (see features/orders.js): a product add-on first, else a modifier-group
+  // option, which is stored as "Group name: Option name".
+  const addOnRecipe = (product, addOnName) => {
+    const direct = product?.addOns?.find(a => a.name === addOnName)?.recipe;
+    if (direct?.length) return direct;
+    if (typeof addOnName === 'string' && addOnName.includes(': ')) {
+      const [grpName, optName] = addOnName.split(': ');
+      const grp = (product?.modifierGroups || []).find(g => g && g.name === grpName);
+      return grp?.options?.find(o => o.name === optName)?.recipe || [];
+    }
+    return [];
+  };
+  // Per unit, matching how add-on revenue is counted above.
+  const addOnCost = (item.selectedAddOns || [])
+    .reduce((s, a) => s + recipeCost(addOnRecipe(prod, a.name)), 0);
   let recipe = prod?.baseRecipe || [];
   const sm = (item.name || '').match(/\(([^)]+)\)$/);
   if (sm && prod?.sizes) { const sz = prod.sizes.find(s => s.name === sm[1]); if (sz?.recipe?.length) recipe = sz.recipe; }
   return [{
     name: base || 'Unknown', category: prod?.category || 'Uncategorized',
-    qty, revenue: ((item.price || 0) + aoT) * qty, cogs: lineCost(recipe, prod) * qty,
+    qty, revenue: ((item.price || 0) + aoT) * qty, cogs: (lineCost(recipe, prod) + addOnCost) * qty,
   }];
 }
 

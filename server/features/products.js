@@ -341,6 +341,11 @@ app.get('/api/products', async (req, res) => {
         // stocked good to customers, which meant it could never be in stock -
         // the whole FB menu showed "Not available" no matter the inventory.
         p.__recipeForStock = p.baseRecipe;
+        // Size recipes are stripped too, so keep the shape the stock/size checks
+        // need before it goes. Names only - no quantities or costs.
+        p.__sizeRecipesForStock = (p.sizes || []).map(sz => ({
+          name: sz.name, sizeCode: sz.sizeCode, recipe: sz.recipe || [],
+        }));
         delete p.baseRecipe; delete p.costOverride;
         (p.sizes  || []).forEach(s => { delete s.recipe; delete s.costOverride; });
         (p.addOns || []).forEach(a => { delete a.recipe; });
@@ -461,26 +466,44 @@ app.get('/api/products', async (req, res) => {
           return true;
         });
       } else {
-        // 1:1 logistics good: the product IS the stocked good, so with no recipe
-        // to fall back on, a missing OR zero/insufficient linked item must block
-        // the product - never default to "available" just because nothing matched.
+        // No linked materials. Two very different situations share this branch:
+        //
+        //  LOG - the product IS the stocked good (1:1), so it is sellable as
+        //        long as a stock record matches its code or name.
+        //  FB  - a drink assembled from materials. With nothing linked there is
+        //        nothing to make it FROM and nothing to deduct, so selling it
+        //        would move no stock and cost nothing. It must not be offered.
+        //
+        // An FB product can still be a plain resold good (bottled water), so a
+        // genuine stock match by code/name is honoured either way - that is the
+        // only route by which a recipe-less product is sellable.
         const inv = invByCode[p.productCode] || invByName[p.name];
         p.stockAvailable = !!inv && inv.stockQty >= baseUnitsPerSale(p, inv);
         if (!p.stockAvailable) {
-          // The most confusing case in practice: a product with NO linked
-          // recipe at all is treated as a 1:1 stocked good, so it needs an
-          // inventory item matching its own code or name. A drink built from
-          // ingredients that were never linked lands here and looks
-          // inexplicably unavailable.
-          p.stockReason = !inv
-            ? `No recipe ingredients are linked to stock, and no inventory item matches this product's code (${p.productCode || '-'}) or name.`
-            : `"${inv.itemName}" has ${inv.stockQty}${inv.unit || ''} on hand, below one sellable unit.`;
+          if (inv) {
+            p.stockReason = `"${inv.itemName}" has ${inv.stockQty}${inv.unit || ''} on hand, below one sellable unit.`;
+          } else if (recipe.length === 0) {
+            p.stockReason = 'No materials have been added to the base recipe, so this cannot be made.';
+          } else {
+            p.stockReason = 'None of the base recipe materials are linked to an inventory item, so this cannot be made.';
+          }
         }
       }
+
+      // A size priced but with no materials of its own sells for money while
+      // deducting nothing and costing nothing. It does not block the product -
+      // the base size may be perfectly sellable, and a half-built size is a
+      // normal in-progress state - but it is surfaced so it does not go
+      // unnoticed and quietly leak stock.
+      const sizesForCheck = p.__sizeRecipesForStock
+        || (p.sizes || []).map(sz => ({ name: sz.name, sizeCode: sz.sizeCode, recipe: sz.recipe || [] }));
+      p.sizesWithoutRecipe = sizesForCheck
+        .filter(sz => !(sz.recipe || []).some(r => r.invId))
+        .map(sz => sz.name || sz.sizeCode || 'unnamed size');
     });
 
     // The private recipe copy must never leave the server.
-    products.forEach(p => { delete p.__recipeForStock; });
+    products.forEach(p => { delete p.__recipeForStock; delete p.__sizeRecipesForStock; });
     res.json({ success: true, products, saleThresholds: thresholdRules });
   } catch (err) {
     log.error({ err }, 'GET /api/products failed');

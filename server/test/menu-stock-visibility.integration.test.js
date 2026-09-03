@@ -117,6 +117,87 @@ describe('recipe data still never reaches a customer', () => {
   });
 });
 
+describe('a product with no materials cannot be made', () => {
+  it('is NOT available when the base recipe is empty', async () => {
+    await Product().create({ productCode: 'BEV-0010', name: 'Empty Drink', category: 'Coffee', basePrice: 90, baseRecipe: [] });
+
+    const staff = find(await asStaff(), 'Empty Drink');
+    expect(staff.stockAvailable).toBe(false);
+    expect(staff.stockReason).toMatch(/no materials have been added/i);
+    // And the customer must see the same thing.
+    expect(find(await asCustomer(), 'Empty Drink').stockAvailable).toBe(false);
+  });
+
+  it('is NOT available when materials exist but none are linked to stock', async () => {
+    await Product().create({
+      productCode: 'BEV-0011', name: 'Unlinked Drink', category: 'Coffee', basePrice: 90,
+      baseRecipe: [{ name: 'Some Syrup', qty: 10, unit: 'ml' }], // typed in, never linked
+    });
+
+    const staff = find(await asStaff(), 'Unlinked Drink');
+    expect(staff.stockAvailable).toBe(false);
+    expect(staff.stockReason).toMatch(/none of the base recipe materials are linked/i);
+  });
+
+  it('does NOT wrongly become available because a stock item shares the drink name', async () => {
+    // The trap the old code fell into: a recipe-less product was treated as a
+    // 1:1 stocked good, so a same-named stock row made an unmakeable drink
+    // look sellable. It is only sellable if it genuinely IS that stocked good.
+    await Inventory().create({ itemCode: 'RM-X', itemName: 'Empty Drink', unit: 'pcs', stockQty: 50, unitCost: 5 });
+    await Product().create({ productCode: 'BEV-0012', name: 'Empty Drink', category: 'Coffee', basePrice: 90, baseRecipe: [] });
+
+    // A real 1:1 resale good stays sellable - that route is deliberate.
+    expect(find(await asStaff(), 'Empty Drink').stockAvailable).toBe(true);
+  });
+});
+
+describe('sizes priced without materials', () => {
+  it('flags a size that has no materials of its own', async () => {
+    const beans = await Inventory().create({ itemCode: 'RM-BEAN', itemName: 'Coffee Beans', unit: 'g', stockQty: 500, unitCost: 1 });
+    await Product().create({
+      productCode: 'BEV-0013', name: 'Sized Drink', category: 'Coffee', basePrice: 100,
+      baseRecipe: [{ invId: String(beans._id), name: 'Coffee Beans', qty: 18, cost: 1, unit: 'g' }],
+      sizes: [
+        { sizeCode: 'S', name: '8oz Hot', price: 100, recipe: [{ invId: String(beans._id), name: 'Coffee Beans', qty: 18, cost: 1, unit: 'g' }] },
+        { sizeCode: 'L', name: '12oz Iced', price: 120, recipe: [] }, // priced, deducts nothing
+      ],
+    });
+
+    const staff = find(await asStaff(), 'Sized Drink');
+    expect(staff.sizesWithoutRecipe).toEqual(['12oz Iced']);
+    // The base size is fine, so the product itself is still sellable.
+    expect(staff.stockAvailable).toBe(true);
+  });
+
+  it('reports the same sizes to a customer, whose size recipes are stripped', async () => {
+    const beans = await Inventory().create({ itemCode: 'RM-BEAN', itemName: 'Coffee Beans', unit: 'g', stockQty: 500, unitCost: 1 });
+    await Product().create({
+      productCode: 'BEV-0014', name: 'Sized Drink 2', category: 'Coffee', basePrice: 100,
+      baseRecipe: [{ invId: String(beans._id), name: 'Coffee Beans', qty: 18, cost: 1, unit: 'g' }],
+      sizes: [
+        { sizeCode: 'S', name: '8oz Hot', price: 100, recipe: [{ invId: String(beans._id), name: 'Coffee Beans', qty: 18, cost: 1, unit: 'g' }] },
+        { sizeCode: 'L', name: '12oz Iced', price: 120, recipe: [] },
+      ],
+    });
+
+    // Stripping size recipes must not make every size look material-less.
+    const customer = find(await asCustomer(), 'Sized Drink 2');
+    expect(customer.sizesWithoutRecipe).toEqual(['12oz Iced']);
+    expect(customer.sizes[0].recipe).toBeUndefined();
+    expect(customer.__sizeRecipesForStock).toBeUndefined();
+  });
+
+  it('is empty when every size has materials', async () => {
+    const beans = await Inventory().create({ itemCode: 'RM-BEAN', itemName: 'Coffee Beans', unit: 'g', stockQty: 500, unitCost: 1 });
+    await Product().create({
+      productCode: 'BEV-0015', name: 'All Sized', category: 'Coffee', basePrice: 100,
+      baseRecipe: [{ invId: String(beans._id), name: 'Coffee Beans', qty: 18, cost: 1, unit: 'g' }],
+      sizes: [{ sizeCode: 'S', name: '8oz', price: 100, recipe: [{ invId: String(beans._id), name: 'Coffee Beans', qty: 18, cost: 1, unit: 'g' }] }],
+    });
+    expect(find(await asStaff(), 'All Sized').sizesWithoutRecipe).toEqual([]);
+  });
+});
+
 describe('why a product is unavailable', () => {
   it('names the ingredient whose stock record has gone', async () => {
     await Product().create({
@@ -132,7 +213,7 @@ describe('why a product is unavailable', () => {
     await Product().create({ productCode: 'BEV-0004', name: 'Unlinked Drink', category: 'Coffee', basePrice: 90, baseRecipe: [] });
     const p = find(await asStaff(), 'Unlinked Drink');
     expect(p.stockAvailable).toBe(false);
-    expect(p.stockReason).toMatch(/No recipe ingredients are linked/i);
+    expect(p.stockReason).toMatch(/no materials have been added/i);
   });
 
   it('says nothing when the product is fine', async () => {
