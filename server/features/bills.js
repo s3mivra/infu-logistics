@@ -11,6 +11,7 @@ export default function registerBills(ctx) {
     mongoose,
     log,
     mkSeqRef,
+    currentBranchCode,
     tenantScope,
     logAudit,
     assertBalanced,
@@ -259,6 +260,7 @@ export default function registerBills(ctx) {
       const voucherNumber = await mkSeqRef('CV');
       const voucher = await CheckVoucher.create({
         businessType: BUSINESS_TYPE, ...tenantScope(req),
+        branchCode: await currentBranchCode(),
         voucherNumber, payeeType: 'supplier', payeeId: String(bill.supplierId), payeeName: bill.supplierName,
         amount: paidAmt, purpose: 'bill-payment', sourceAccount: srcCode, sourceAccountName: srcName,
         referenceNumber: referenceNumber || '', billId: bill._id, journalEntryRef: reference,

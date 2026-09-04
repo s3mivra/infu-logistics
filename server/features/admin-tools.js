@@ -189,6 +189,95 @@ export default function registerAdminTools(ctx) {
 // ── TENANCY BACKFILL VERIFICATION ─────────────────────────────────────────────
 // Returns per-collection counts of docs missing or having a non-matching
 // businessType. A healthy system shows zeros across all rows.
+// ── STORAGE OVERVIEW ─────────────────────────────────────────────────────────
+// What this deployment is actually holding, and which collections are growing.
+//
+// The two that matter are StockCard and JournalEntry: both gain rows from
+// ordinary trading and neither is ever pruned, so they outgrow everything else
+// by an order of magnitude. Showing bytes alone hides that - a collection at
+// 40MB is unremarkable until you know it was 4MB a month ago. So this reports
+// per-collection size AND the growth-per-day implied by the documents written
+// in the last 30 days, which is what tells an owner when to plan an archive.
+app.get('/api/admin/storage-overview', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    const dbStats = await db.stats();
+
+    // Collections worth naming, with the date field their growth is measured on.
+    // Anything not listed still counts toward the database total below.
+    const TRACKED = [
+      { model: 'JournalEntry', label: 'Journal Entries', dateField: 'date', note: 'Grows with every posting. Never pruned.' },
+      { model: 'StockCard', label: 'Stock Movements', dateField: 'date', note: 'A row per ingredient per sale. Fastest-growing.' },
+      { model: 'Order', label: 'Orders', dateField: 'createdAt', note: 'Archiving moves these out of the active board.' },
+      { model: 'InventoryMovement', label: 'Inventory Movements', dateField: 'date', note: '' },
+      { model: 'AuditLog', label: 'Audit Log', dateField: 'timestamp', note: '' },
+      { model: 'Inventory', label: 'Inventory Items', dateField: 'createdAt', note: '' },
+      { model: 'Product', label: 'Products', dateField: 'createdAt', note: '' },
+      { model: 'Expense', label: 'Expenses', dateField: 'date', note: '' },
+      { model: 'Bill', label: 'Bills', dateField: 'createdAt', note: '' },
+      { model: 'CheckVoucher', label: 'Check Vouchers', dateField: 'date', note: '' },
+      { model: 'Advance', label: 'Advances', dateField: 'date', note: '' },
+      { model: 'ClientAccount', label: 'Clients', dateField: 'createdAt', note: '' },
+      { model: 'Supplier', label: 'Suppliers', dateField: 'createdAt', note: '' },
+    ];
+
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const collections = [];
+
+    for (const t of TRACKED) {
+      let model;
+      try { model = mongoose.model(t.model); } catch { continue; }
+      try {
+        const [docs, recent, stats] = await Promise.all([
+          model.estimatedDocumentCount(),
+          model.countDocuments({ [t.dateField]: { $gte: since } }).catch(() => 0),
+          db.command({ collStats: model.collection.collectionName }).catch(() => ({})),
+        ]);
+        const bytes = stats.storageSize || 0;
+        const avg = stats.avgObjSize || 0;
+        const perDay = recent / 30;
+        collections.push({
+          key: t.model, label: t.label, note: t.note,
+          docs, bytes,
+          avgDocBytes: Math.round(avg),
+          indexBytes: stats.totalIndexSize || 0,
+          docsLast30d: recent,
+          docsPerDay: +perDay.toFixed(1),
+          // Projected from the last 30 days, which is the only honest basis -
+          // a brand-new deployment has no trend to extrapolate from.
+          bytesPerDay: Math.round(perDay * avg),
+          projectedBytesPerYear: Math.round(perDay * avg * 365),
+        });
+      } catch { /* collection not created yet */ }
+    }
+
+    collections.sort((a, b) => b.bytes - a.bytes);
+    const totalProjectedPerYear = collections.reduce((s, c) => s + c.projectedBytesPerYear, 0);
+
+    res.json({
+      success: true,
+      database: {
+        dataBytes: dbStats.dataSize || 0,
+        storageBytes: dbStats.storageSize || 0,
+        indexBytes: dbStats.indexSize || 0,
+        totalBytes: (dbStats.storageSize || 0) + (dbStats.indexSize || 0),
+        collections: dbStats.collections || 0,
+        objects: dbStats.objects || 0,
+      },
+      collections,
+      growth: {
+        windowDays: 30,
+        projectedBytesPerYear: totalProjectedPerYear,
+        // Named so the UI does not have to guess which one to warn about.
+        fastestGrowing: [...collections].sort((a, b) => b.bytesPerDay - a.bytesPerDay)[0]?.label || null,
+      },
+      generatedAt: new Date(),
+    });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 app.get('/api/admin/tenancy-report', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const missing = { $or: [{ businessType: { $exists: false } }, { businessType: null }, { businessType: '' }] };

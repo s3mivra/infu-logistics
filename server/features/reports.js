@@ -5,6 +5,7 @@ import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { bucketFor, resolveClientKey } from '../lib/credit.js';
 import { captureError } from '../lib/errorLog.js';
 import { sectionAncestor } from '../lib/chartOfAccounts.js';
+import { buildBalanceSheet } from '../lib/consolidate.js';
 
 export default function registerReports(ctx) {
   const {
@@ -469,72 +470,23 @@ app.get('/api/reports/balance-sheet', verifyToken, ...canViewReports, async (req
       { $sort: { _id: 1 } }
     ]);
 
-    const assets = [], liabilities = [], equity = [];
-    let totalAssets = 0, totalLiabilities = 0, totalEquity = 0;
-    let retainedEarnings = 0; // = revenue − expense − contra-revenue, all-time
-
-    for (const r of agg) {
-      const code = r._id;
-      const meta = acctMeta(code);
-      if (!meta) continue;
-      const debit = r.totalDebit || 0;
-      const credit = r.totalCredit || 0;
-
-      if (meta.type === 'asset') {
-        const bal = debit - credit;
-        assets.push({ code, name: meta.name, amount: +bal.toFixed(2) });
-        totalAssets += bal;
-      } else if (meta.type === 'liability') {
-        const bal = credit - debit;
-        liabilities.push({ code, name: meta.name, amount: +bal.toFixed(2) });
-        totalLiabilities += bal;
-      } else if (meta.type === 'equity') {
-        const bal = credit - debit;
-        equity.push({ code, name: meta.name, amount: +bal.toFixed(2) });
-        totalEquity += bal;
-      } else if (meta.type === 'revenue' || meta.type === 'other-income') {
-        retainedEarnings += (credit - debit);
-      } else if (meta.type === 'contra-revenue') {
-        retainedEarnings -= (debit - credit);
-      } else if (meta.type === 'expense') {
-        retainedEarnings -= (debit - credit);
-      }
-    }
-    equity.push({ code: '330000', name: 'Retained Earnings (computed)', amount: +retainedEarnings.toFixed(2) });
-    totalEquity += retainedEarnings;
-
-    const totalLiabAndEquity = totalLiabilities + totalEquity;
-    const balanced = Math.abs(totalAssets - totalLiabAndEquity) <= 0.01;
-
-    // Sectioned view - groups each flat list into named subtotal blocks
-    // (Current Assets, Fixed Assets, Current Liabilities, Accounts Payable,
-    // ...) the same way a formal balance sheet is laid out, instead of one
-    // undifferentiated list per side. Purely presentational - the flat
-    // assets/liabilities/equity arrays and every total above are unchanged.
-    const sectionize = (items) => {
-      const bySection = new Map();
-      for (const item of items) {
-        const sec = sectionAncestor(item.code, acctMeta) || { code: item.code, name: item.name };
-        if (!bySection.has(sec.code)) bySection.set(sec.code, { code: sec.code, name: sec.name, items: [], total: 0 });
-        const bucket = bySection.get(sec.code);
-        bucket.items.push(item);
-        bucket.total = +(bucket.total + item.amount).toFixed(2);
-      }
-      return [...bySection.values()].sort((a, b) => a.code.localeCompare(b.code));
-    };
+    // Classification lives in lib/consolidate.js so this report and the
+    // consolidated cross-branch books cannot drift apart - they were duplicate
+    // implementations of the same rules, which is exactly how a branch total
+    // ends up disagreeing with the branch's own balance sheet.
+    const bsRows = agg.map(r => ({
+      code: r._id, name: r.accountName,
+      debit: r.totalDebit || 0, credit: r.totalCredit || 0,
+    }));
+    const bs = buildBalanceSheet(bsRows, acctMeta);
+    const { assets, liabilities, equity } = bs;
 
     res.json({
       success: true,
       asOf,
       assets, liabilities, equity,
-      sections: { assets: sectionize(assets), liabilities: sectionize(liabilities) },
-      totals: {
-        assets:      +totalAssets.toFixed(2),
-        liabilities: +totalLiabilities.toFixed(2),
-        equity:      +totalEquity.toFixed(2),
-        liabilitiesAndEquity: +totalLiabAndEquity.toFixed(2),
-        balanced
-      }
+      sections: bs.sections,
+      totals: bs.totals
     });
   } catch (err) {
     log.error({ err }, 'Balance sheet failed');

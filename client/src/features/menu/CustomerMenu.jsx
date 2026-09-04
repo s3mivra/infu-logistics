@@ -328,12 +328,23 @@ export default function CustomerMenu() {
       setFlowState('landing');
     };
 
-    socket.on('menuUpdated', fetchProducts);
+    // menuUpdated fires on every completed order anywhere in the shop, which
+    // has nothing to do with this phone most of the time. Collapsed into one
+    // refresh so a busy counter does not have every browsing customer re-pull
+    // the menu once per sale.
+    let menuTimer = null;
+    const handleMenuUpdated = () => {
+      clearTimeout(menuTimer);
+      menuTimer = setTimeout(fetchProducts, 1500);
+    };
+
+    socket.on('menuUpdated', handleMenuUpdated);
     socket.on('orderUpdated', handleOrderUpdated);
     socket.on('ordersArchived', handleArchive);
 
     return () => {
-      socket.off('menuUpdated', fetchProducts);
+      clearTimeout(menuTimer);
+      socket.off('menuUpdated', handleMenuUpdated);
       socket.off('orderUpdated', handleOrderUpdated);
       socket.off('ordersArchived', handleArchive);
     };

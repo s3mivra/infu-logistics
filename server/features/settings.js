@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
+import { isValidBranchCode } from '../lib/branchCode.js';
 
 export default function registerSettings(ctx) {
   const {
@@ -94,6 +95,7 @@ export default function registerSettings(ctx) {
     ModifierGroup,
     SettingsSchema,
     Settings,
+    invalidateBranchCodeCache,
     TenantSchema,
     Tenant,
     tenantSchema,
@@ -353,6 +355,26 @@ app.patch('/api/settings/currency', verifyToken, requireStaff, requirePermission
 app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('settings.manage'), async (req, res) => {
   try {
     const { value } = req.body;
+
+    // branchCode identifies this deployment in a consolidated report
+    // ("AC-A001": business AC, location A, inventory 001). A malformed code is
+    // rejected rather than stored, because the report groups on it - a typo
+    // would file this branch's money under "Unassigned" and nobody would
+    // notice until the location totals came out short. Empty clears it.
+    if (req.params.key === 'branchCode') {
+      const code = String(value == null ? '' : value).trim().toUpperCase();
+      if (code && !isValidBranchCode(code)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Branch code must look like AC-A001 - a business code, a location letter, then the inventory number at that location.',
+        });
+      }
+      const saved = await Settings.findOneAndUpdate({ key: 'branchCode' }, { value: code }, { upsert: true, returnDocument: 'after' });
+      invalidateBranchCodeCache();
+      emitToAll('settingsUpdated', { key: 'branchCode', value: code });
+      return res.json({ success: true, setting: saved });
+    }
+
     const setting = await Settings.findOneAndUpdate({ key: req.params.key }, { value }, { upsert: true, returnDocument: 'after' });
     emitToAll('settingsUpdated', { key: req.params.key, value });
 

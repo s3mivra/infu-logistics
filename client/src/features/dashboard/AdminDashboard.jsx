@@ -1095,11 +1095,16 @@ export default function AdminDashboard() {
         saleThresholdsRaw = d.saleThresholds || [];
         return d.products || [];
       })();
-      const categories     = await get('/api/categories', 'categories');
-      const discounts      = await get('/api/discounts', 'discounts');
-      const addons         = await get('/api/addons', 'addons');
-      const modifierGroups = await get('/api/modifier-groups', 'groups');
-      const combos         = await get('/api/combos?all=1', 'combos');
+      // In parallel, not one after another: these six are independent, and
+      // awaiting them in sequence made the menu load take the SUM of six round
+      // trips instead of the slowest one.
+      const [categories, discounts, addons, modifierGroups, combos] = await Promise.all([
+        get('/api/categories', 'categories'),
+        get('/api/discounts', 'discounts'),
+        get('/api/addons', 'addons'),
+        get('/api/modifier-groups', 'groups'),
+        get('/api/combos?all=1', 'combos'),
+      ]);
 
       if (products)       { setProducts(products); setSaleThresholds(saleThresholdsRaw); }
       if (categories)     setCategories(categories);
@@ -1778,6 +1783,16 @@ export default function AdminDashboard() {
   // actually arrives until the import finishes anyway - the debounce alone
   // wasn't enough to stop /api/notifications and friends from still piling up.
   const suppressERPRefreshRef = useRef(false);
+  // Debounced exactly like the ERP refresh below. Every COMPLETED ORDER
+  // broadcasts menuUpdated (stock moved, so availability may have changed), and
+  // fetchData() is six sequential API calls. Undebounced, a busy hour of
+  // trading had each connected till re-pulling the entire menu once per sale.
+  const menuRefreshTimerRef = useRef(null);
+  const scheduleMenuRefresh = () => {
+    clearTimeout(menuRefreshTimerRef.current);
+    menuRefreshTimerRef.current = setTimeout(() => { fetchData(); }, 1500);
+  };
+
   const scheduleERPRefresh = (alsoEOD) => {
     if (suppressERPRefreshRef.current) return;
     clearTimeout(erpRefreshTimerRef.current);
@@ -1824,7 +1839,7 @@ export default function AdminDashboard() {
       }
     };
     const handleOrderUpdate = (updated) => setOrders(prev => prev.map(o => o._id === updated._id ? updated : o));
-    const handleMenuUpdate  = () => fetchData();
+    const handleMenuUpdate  = () => scheduleMenuRefresh();
     const handleArchived    = () => fetchOrders();
     const handleERPUpdate   = () => scheduleERPRefresh(false);
     const handleMgrAlert    = (a) => {
@@ -4499,6 +4514,99 @@ const updateStatus = async (orderId, newStatus) => {
     return item;
   };
 
+  // ── RECIPE SHEET IMPORT ────────────────────────────────────────────────────
+  // The barista workbooks are written for humans at a bar, so this is a
+  // review-then-commit flow, never a blind import: the server parses and
+  // matches against live stock, the screen shows what it found (including what
+  // it is unsure about), and nothing is written until it is confirmed.
+  const [rsFile, setRsFile] = useState(null);          // { name, sheets }
+  const [rsPreview, setRsPreview] = useState(null);    // server parse result
+  const [rsBusy, setRsBusy] = useState(false);
+  const [rsCreateMissing, setRsCreateMissing] = useState(true);
+
+  const openRecipeSheet = async (file) => {
+    if (!file) return;
+    setRsBusy(true); setRsPreview(null);
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheets = {};
+      for (const name of wb.SheetNames) {
+        sheets[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, defval: '' });
+      }
+      setRsFile({ name: file.name, sheets });
+      const res = await apiFetch('/api/products/recipe-sheet/parse', { method: 'POST', body: JSON.stringify({ sheets }) });
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Could not read that workbook.'); return; }
+      setRsPreview(d);
+    } catch (err) {
+      console.error('openRecipeSheet', err);
+      ui.alert('Could not read that file. Pick the .xlsx recipe workbook.');
+    } finally { setRsBusy(false); }
+  };
+
+  const closeRecipeSheet = () => { setRsFile(null); setRsPreview(null); };
+
+  // Commit: create the stock items that do not exist yet (so recipes have
+  // something to link to), then hand the drinks to the existing menu importer,
+  // which re-matches every ingredient against live Inventory server-side.
+  const submitRecipeSheet = async () => {
+    if (!rsPreview) return;
+    const missing = rsPreview.materials.filter(m => !m.matchedInvId);
+    const drinks = rsPreview.drinks.filter(d => !d.needsReview);
+    if (drinks.length === 0) return ui.alert('Nothing to import - every drink needs review first.');
+
+    const ok = await ui.confirm(
+      `Import ${drinks.length} drink(s)?` +
+      (rsCreateMissing && missing.length
+        ? `
+
+${missing.length} missing stock item(s) will be created with zero quantity and zero cost - set their real cost afterwards or margins will read as 100%.`
+        : '') +
+      (rsPreview.counts.drinksNeedingReview
+        ? `
+
+${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.`
+        : ''),
+    );
+    if (!ok) return;
+
+    setRsBusy(true);
+    try {
+      if (rsCreateMissing) {
+        for (const m of missing) {
+          await apiFetch('/api/inventory', { method: 'POST', body: JSON.stringify({
+            itemName: m.name, unit: m.units[0] || 'pcs', stockQty: 0, unitCost: 0,
+          }) });
+        }
+      }
+      // Flatten each drink's parsed cells into the {name, qty, unit} rows the
+      // menu importer expects. A hot/iced variant contributes its hot figure -
+      // the sizes themselves are set up afterwards on the product.
+      const rows = drinks.map(d => ({
+        category: d.section || 'Uncategorized',
+        name: d.name,
+        srp: 0,
+        ingredients: d.ingredients.flatMap(ing => [
+          ...ing.components.map(c => ({ name: c.name, qty: c.qty, unit: c.unit })),
+          ...ing.variants.slice(0, 1).map(v => ({ name: v.name, qty: v.qty, unit: v.unit })),
+        ]).filter(x => x.name && x.qty > 0),
+      }));
+      const res = await apiFetch('/api/products/import-menu', { method: 'POST', body: JSON.stringify({ rows }) });
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Import failed.'); return; }
+      const unmatched = (d.results || []).flatMap(r => (r.unmatched || []).map(u => `${r.name}: ${u}`));
+      closeRecipeSheet();
+      fetchERPData();
+      ui.alert(
+        `Recipe sheet imported.\n\nCreated: ${d.created}\nUpdated: ${d.updated}` +
+        (unmatched.length ? `\n\nIngredients not linked (recipe line skipped):\n- ${unmatched.join('\n- ')}` : '') +
+        "\n\nPrices import as 0 - set each drink's price before selling.",
+      );
+    } catch { ui.alert('Network error.'); }
+    finally { setRsBusy(false); }
+  };
+
   const parseMenuImportFile = async (file) => {
     if (!file) return;
     try {
@@ -4765,9 +4873,16 @@ const updateStatus = async (orderId, newStatus) => {
   const exportInventoryToPDF = async () => {
     if (inventory.length === 0) return ui.alert("No inventory to export.");
     try {
-      const res = await apiFetch(`/api/inventory/history`);
+      // Ask for the day this report covers, not the whole trading history.
+      // The filter below used to run in the browser over every stock movement
+      // ever recorded, which grows without bound.
+      const dayKey = new Date().toISOString().slice(0, 10);
+      const res = await apiFetch(`/api/inventory/history?start=${dayKey}&end=${dayKey}`);
       const data = await res.json();
       const allHistory = data.success ? data.history : [];
+      if (data.truncated) {
+        ui.alert(`Showing the most recent ${data.limit} movements for today - there were more than that, so the report is clipped.`);
+      }
       const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
       await addLogoToPDF(doc);
       doc.setFontSize(18); doc.text(`${BIZ_NAME} - Daily Inventory & Movement Report`, 14, 15);
@@ -7406,6 +7521,7 @@ const updateStatus = async (orderId, newStatus) => {
     menuImportModal, setMenuImportModal, menuImportRows, setMenuImportRows, menuImportSubmitting,
     menuBackupBusy, downloadMenuBackup, menuRestoreModal, setMenuRestoreModal, openMenuRestore, runMenuRestore,
     downloadMenuImportTemplate, parseMenuImportFile, submitMenuImport,
+    rsFile, rsPreview, rsBusy, rsCreateMissing, setRsCreateMissing, openRecipeSheet, closeRecipeSheet, submitRecipeSheet,
     spoilageModal, setSpoilageModal, spoilageForm, setSpoilageForm, spoilageLoading, setSpoilageLoading,
     handleRestockSubmit, submitPhysicalCounts,
     // ── Inventory helpers ────────────────────────────────────────────────────

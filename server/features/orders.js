@@ -90,6 +90,7 @@ export default function registerOrders(ctx) {
     roleSchema,
     modifierGroupSchema,
     mkSeqRef,
+    currentBranchCode,
     loginLimiter,
     orderLimiter,
     generalApiLimiter,
@@ -2186,6 +2187,7 @@ app.post('/api/client-accounts/:id/credit/refund', verifyToken, requireSuperAdmi
     const voucherNumber = await mkSeqRef('CV');
     const voucher = await CheckVoucher.create({
       businessType: BUSINESS_TYPE, ...tenantScope(req),
+        branchCode: await currentBranchCode(),
       voucherNumber, payeeType: 'client', payeeId: String(client._id), payeeName: client.name,
       amount: requested, purpose: 'client-credit-refund', sourceAccount: srcCode, sourceAccountName: srcName,
       referenceNumber: referenceNumber || '', notes: notes || '', journalEntryRef: reference,

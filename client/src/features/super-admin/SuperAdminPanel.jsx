@@ -5,7 +5,7 @@ import {
   Users, Shield, Menu, X, LogOut, Plus, Edit2, Trash2,
   Search, Eye, EyeOff, AlertCircle, Tag, Loader2, Lock,
   ChevronRight, UserCheck, Monitor, Check, Package, ToggleLeft, ToggleRight,
-  KeyRound, Copy, AlertTriangle, RefreshCw, Settings, Download, Upload
+  KeyRound, Copy, AlertTriangle, RefreshCw, Settings, Download, Upload, Database
 } from 'lucide-react';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
@@ -271,6 +271,23 @@ export default function SuperAdminPanel() {
   const [clientFormLoading, setClientFormLoading] = useState(false);
   const [clientFormError, setClientFormError] = useState('');
   const [purgeModal, setPurgeModal] = useState({ open: false, phrase: '', busy: false, error: '', result: null });
+
+  // Storage overview. Loaded on demand rather than on mount: it runs collStats
+  // across a dozen collections, which is not worth doing every time someone
+  // opens Settings for an unrelated reason.
+  const [storage, setStorage] = useState(null);
+  const [storageBusy, setStorageBusy] = useState(false);
+  const fetchStorage = async () => {
+    setStorageBusy(true);
+    try {
+      const res = await apiFetch('/api/admin/storage-overview');
+      const d = await res.json();
+      if (d.success) setStorage(d);
+      else showToast(d.error || 'Could not read storage.', 'error');
+    } catch { showToast('Network error reading storage.', 'error'); }
+    finally { setStorageBusy(false); }
+  };
+  // fmtBytes already exists further down this file - reused, not redefined.
   const [purgeCategories, setPurgeCategories] = useState([]); // [{key, label, defaultOn}]
   const [purgeSelected, setPurgeSelected] = useState(new Set());
   const [rewireModal, setRewireModal] = useState({ open: false, busy: false, error: '', result: null });
@@ -1729,6 +1746,83 @@ export default function SuperAdminPanel() {
       {/* =================================================================== */}
       {activeSection === 'settings' && (
         <div className="flex-1 p-6 max-w-2xl">
+          {/* Storage overview. Size alone is not actionable - a 40MB
+              collection is unremarkable until you know it was 4MB last month.
+              The growth column is the point: it says which collection will
+              force an archive, and roughly when. */}
+          <div className="bg-surface border border-white/10 rounded-xl p-5 mb-5">
+            <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Database size={16} className="text-brand" />
+                  <h3 className="font-black text-fg text-sm uppercase tracking-widest">Storage</h3>
+                </div>
+                <p className="text-fg/50 text-xs mt-1">What this branch is holding, and what is growing.</p>
+              </div>
+              <button onClick={fetchStorage} disabled={storageBusy}
+                className="border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition disabled:opacity-40">
+                {storageBusy ? 'Reading…' : storage ? 'Refresh' : 'Load'}
+              </button>
+            </div>
+
+            {storage && (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 mb-4">
+                  {[
+                    ['Total on disk', fmtBytes(storage.database.totalBytes)],
+                    ['Documents', (storage.database.objects || 0).toLocaleString()],
+                    ['Growing /year', fmtBytes(storage.growth.projectedBytesPerYear)],
+                    ['Fastest growing', storage.growth.fastestGrowing || '—'],
+                  ].map(([label, val]) => (
+                    <div key={label} className="bg-page-bg border border-white/10 rounded-lg p-2.5">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-fg/40">{label}</p>
+                      <p className="text-sm font-black text-fg mt-0.5 truncate" title={String(val)}>{val}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
+                        <th className="text-left py-2">Collection</th>
+                        <th className="text-right py-2 pl-3">Records</th>
+                        <th className="text-right py-2 pl-3">Size</th>
+                        <th className="text-right py-2 pl-3">Per day</th>
+                        <th className="text-right py-2 pl-3">Per year</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {storage.collections.filter(c => c.docs > 0).map(c => (
+                        <tr key={c.key} className="border-b border-white/5">
+                          <td className="py-2">
+                            <span className="text-fg/80 font-bold">{c.label}</span>
+                            {c.note && <span className="block text-[10px] text-fg/30">{c.note}</span>}
+                          </td>
+                          <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{c.docs.toLocaleString()}</td>
+                          <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{fmtBytes(c.bytes)}</td>
+                          <td className="py-2 pl-3 text-right tabular-nums text-fg/50">
+                            {c.docsPerDay > 0 ? `${c.docsPerDay.toLocaleString()}` : '—'}
+                          </td>
+                          <td className={`py-2 pl-3 text-right tabular-nums font-bold ${
+                            c.projectedBytesPerYear > 50 * 1024 * 1024 ? 'text-amber-400' : 'text-fg/50'}`}>
+                            {c.projectedBytesPerYear > 0 ? fmtBytes(c.projectedBytesPerYear) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <p className="text-[10px] text-fg/30 mt-3">
+                  Per-day and per-year are projected from the last 30 days, so a branch that has just opened
+                  will read low until it has traded for a month. Amber marks anything on track to add more
+                  than 50 MB a year.
+                </p>
+              </>
+            )}
+          </div>
+
           <div className="bg-red-500/5 border border-red-500/30 rounded-xl p-5">
             <div className="flex items-center gap-2 mb-1">
               <AlertTriangle size={16} className="text-red-400" />

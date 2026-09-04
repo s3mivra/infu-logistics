@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
+import { parseBulkRecipes, parseDrinkSheet, collectMaterials } from '../lib/recipeImport.js';
 import { splitUpdate } from '../lib/changeApproval.js';
 import { hasPermission } from '../lib/authz.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
@@ -43,6 +44,7 @@ export default function registerProducts(ctx) {
     sortBatchesFEFO,
     batchesTotal,
     requireStaff,
+    requirePermission,
     evaluateClientAccess,
     computePercentageTax,
     PERCENTAGE_TAX_RATE,
@@ -581,7 +583,11 @@ app.post('/api/products', verifyToken, requireStaff, validate(productSchema), as
 // loses an ingredient understates COGS forever after.
 const MENU_BACKUP_VERSION = 1;
 
-app.get('/api/products/menu-backup', verifyToken, requireStaff, async (req, res) => {
+// Gated on products.manage, not merely on being staff: this returns every
+// recipe, ingredient quantity and unit cost in the business. /api/products
+// deliberately strips exactly that from non-admin callers, so shipping it
+// wholesale to any cashier would undo that.
+app.get('/api/products/menu-backup', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const scope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
     const includeArchived = req.query.includeArchived === 'true';
@@ -673,7 +679,8 @@ app.get('/api/products/menu-backup', verifyToken, requireStaff, async (req, res)
   }
 });
 
-app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, async (req, res) => {
+// Destructive: can overwrite the live menu from a file.
+app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const backup = req.body?.backup || req.body;
     const products = Array.isArray(backup?.products) ? backup.products : null;
@@ -732,20 +739,48 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, async (
     // would change what customers are charged.
     const added = { categories: 0, modifierGroups: 0, addOns: 0, combos: 0, discounts: 0, discountRules: 0 };
 
+    // Every "does this already exist?" check is answered from memory. Doing a
+    // findOne per record turned a 200-product restore into 300+ sequential
+    // round trips - the request spent nearly all its time waiting on the
+    // database rather than writing. One read per collection replaces all of it.
+    const lc = (x) => String(x || '').trim().toLowerCase();
+    const nameSet = (rows) => new Set(rows.map(r => lc(r.name)));
+    const [existingCats, existingGroups, existingAddOns, existingDiscounts, existingRules, existingCombos, existingProducts] =
+      await Promise.all([
+        Category.find(scope, { name: 1 }).lean(),
+        ModifierGroup.find({}, { name: 1 }).lean(),
+        AddOn.find({}, { name: 1 }).lean(),
+        Discount.find({}, { name: 1 }).lean(),
+        DiscountRule.find(scope, { name: 1 }).lean(),
+        Combo.find({}, { name: 1 }).lean(),
+        Product.find({ ...scope, isArchived: { $ne: true } }, { name: 1, productCode: 1 }).lean(),
+      ]);
+    const catNames = nameSet(existingCats);
+    const groupNames = nameSet(existingGroups);
+    const addOnNames = nameSet(existingAddOns);
+    const discountNames = nameSet(existingDiscounts);
+    const ruleNames = nameSet(existingRules);
+    const comboNames = nameSet(existingCombos);
+    // Product name -> id, for the combo components below and the existence
+    // check in the product loop.
+    const productIdByName = new Map(existingProducts.map(x => [lc(x.name), x._id]));
+    const usedProductCodes = new Set(existingProducts.map(x => x.productCode).filter(Boolean));
+
     for (const c of (backup.categories || [])) {
       if (!c?.name) continue;
-      if (await Category.findOne({ ...scope, name: new RegExp(`^${escapeRegex(c.name)}$`, 'i') })) continue;
+      if (catNames.has(lc(c.name))) continue;
+      catNames.add(lc(c.name));
       added.categories++;
       if (!dryRun) await Category.create({ ...scope, name: c.name, ...(c.department ? { department: c.department } : {}) });
     }
 
     // ModifierGroup / AddOn / Combo / Discount carry no businessType - they are
     // global to the deployment, so they are queried and created unscoped.
-    const groupIdByName = new Map();
+    const groupIdByName = new Map(existingGroups.map(g => [lc(g.name), g._id]));
     for (const g of (backup.modifierGroups || [])) {
       if (!g?.name) continue;
-      const existing = await ModifierGroup.findOne({ name: new RegExp(`^${escapeRegex(g.name)}$`, 'i') });
-      if (existing) { groupIdByName.set(g.name.toLowerCase(), existing._id); continue; }
+      if (groupNames.has(lc(g.name))) continue;
+      groupNames.add(lc(g.name));
       added.modifierGroups++;
       if (dryRun) continue;
       const created = await ModifierGroup.create({
@@ -760,21 +795,24 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, async (
 
     for (const a of (backup.addOns || [])) {
       if (!a?.name) continue;
-      if (await AddOn.findOne({ name: new RegExp(`^${escapeRegex(a.name)}$`, 'i') })) continue;
+      if (addOnNames.has(lc(a.name))) continue;
+      addOnNames.add(lc(a.name));
       added.addOns++;
       if (!dryRun) await AddOn.create({ name: a.name, price: Number(a.price) || 0, category: a.category || 'Extras', recipe: resolveRecipe(a.recipe) });
     }
 
     for (const d of (backup.discounts || [])) {
       if (!d?.name) continue;
-      if (await Discount.findOne({ name: new RegExp(`^${escapeRegex(d.name)}$`, 'i') })) continue;
+      if (discountNames.has(lc(d.name))) continue;
+      discountNames.add(lc(d.name));
       added.discounts++;
       if (!dryRun) await Discount.create({ name: d.name, percentage: Number(d.percentage) || 0, isSCPWD: !!d.isSCPWD });
     }
 
     for (const r of (backup.discountRules || [])) {
       if (!r?.name) continue;
-      if (await DiscountRule.findOne({ ...scope, name: new RegExp(`^${escapeRegex(r.name)}$`, 'i') })) continue;
+      if (ruleNames.has(lc(r.name))) continue;
+      ruleNames.add(lc(r.name));
       added.discountRules++;
       if (!dryRun) {
         await DiscountRule.create({
@@ -796,10 +834,10 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, async (
         continue;
       }
       try {
-        const existing = await Product.findOne({
-          ...scope, name: new RegExp(`^${escapeRegex(name)}$`, 'i'), isArchived: { $ne: true },
-        });
-        if (existing && onConflict === 'skip') {
+        // Existence comes from the preloaded map; the full document is only
+        // read when it is actually going to be overwritten.
+        const existingId = productIdByName.get(lc(name));
+        if (existingId && onConflict === 'skip') {
           skipped++;
           results.push({ name, ok: true, action: 'skipped', reason: 'already on the menu' });
           continue;
@@ -830,12 +868,13 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, async (
           + doc.addOns.reduce((s, x) => s + x.recipe.length, 0);
 
         if (dryRun) {
-          existing ? updated++ : created++;
-          results.push({ name, ok: true, action: existing ? 'would update' : 'would create', recipeLines });
+          existingId ? updated++ : created++;
+          results.push({ name, ok: true, action: existingId ? 'would update' : 'would create', recipeLines });
           continue;
         }
 
-        if (existing) {
+        if (existingId) {
+          const existing = await Product.findById(existingId);
           Object.assign(existing, doc);
           await existing.save();
           updated++;
@@ -843,12 +882,17 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, async (
         } else {
           const catPrefix = getCategoryPrefix(doc.category);
           // Keep the original code when it is still free, so references in
-          // history and printed material keep resolving.
-          const codeTaken = p.productCode ? await Product.exists({ ...scope, productCode: p.productCode }) : true;
-          const productCode = (p.productCode && !codeTaken)
+          // history and printed material keep resolving. Checked against the
+          // preloaded set, and reserved as we go so two products in the same
+          // backup cannot claim the same code.
+          const codeFree = p.productCode && !usedProductCodes.has(p.productCode);
+          const productCode = codeFree
             ? p.productCode
             : await generateNextSequence(Product, catPrefix, 'productCode');
-          await Product.create({ ...scope, ...doc, productCode, name });
+          usedProductCodes.add(productCode);
+          const madeDoc = await Product.create({ ...scope, ...doc, productCode, name });
+          // Registered so a combo later in this same restore can find it.
+          productIdByName.set(lc(name), madeDoc._id);
           created++;
           results.push({ name, ok: true, action: 'created', recipeLines });
         }
@@ -864,13 +908,16 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, async (
     const incompleteCombos = [];
     for (const c of (backup.combos || [])) {
       if (!c?.name) continue;
-      if (await Combo.findOne({ name: new RegExp(`^${escapeRegex(c.name)}$`, 'i') })) continue;
+      if (comboNames.has(lc(c.name))) continue;
+      comboNames.add(lc(c.name));
       const items = [];
       const missing = [];
       for (const i of (c.items || [])) {
-        const prod = await Product.findOne({ ...scope, name: new RegExp(`^${escapeRegex(String(i.name || ''))}$`, 'i'), isArchived: { $ne: true } }).lean();
-        if (!prod) { missing.push(i.name); continue; }
-        items.push({ productId: String(prod._id), name: prod.name, sizeName: i.sizeName || '', quantity: Number(i.quantity) || 1 });
+        // Resolved from the map, which already includes anything created by
+        // this same restore a moment ago.
+        const prodId = productIdByName.get(lc(i.name));
+        if (!prodId) { missing.push(i.name); continue; }
+        items.push({ productId: String(prodId), name: i.name, sizeName: i.sizeName || '', quantity: Number(i.quantity) || 1 });
       }
       if (missing.length) { incompleteCombos.push({ combo: c.name, missing }); continue; }
       added.combos++;
@@ -896,6 +943,77 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, async (
       // those products will under-report COGS until the ingredient exists.
       unmatchedIngredients: [...unmatchedNames].sort(),
       results,
+    });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ── RECIPE SHEET PARSE ───────────────────────────────────────────────────────
+// Reads the barista recipe workbooks (see lib/recipeImport.js) and reports what
+// it found, WITHOUT writing anything. The sheets are written for humans at a
+// bar - free-text quantities, hot/iced slashes, and column meanings that change
+// per section - so a blind import is not safe. This powers a review screen: the
+// parse is deliberately conservative and flags anything ambiguous rather than
+// guessing, and every material is matched against live Inventory here so the
+// reviewer can see what already exists and what would have to be created.
+app.post('/api/products/recipe-sheet/parse', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
+  try {
+    const sheets = req.body?.sheets;
+    if (!sheets || typeof sheets !== 'object') {
+      return res.status(400).json({ success: false, error: 'Send { sheets: { "<sheet name>": rows[] } }.' });
+    }
+
+    const bulkRecipes = [];
+    const drinks = [];
+    for (const [name, rows] of Object.entries(sheets)) {
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+      // The bulk sheet is a real table; everything else is a drink sheet.
+      if (/bulk/i.test(name)) bulkRecipes.push(...parseBulkRecipes(rows));
+      else drinks.push(...parseDrinkSheet(rows));
+    }
+
+    const materials = collectMaterials({ drinks, bulkRecipes });
+
+    // Match every material against live stock so the reviewer sees which ones
+    // already exist. Same matching the menu importer uses, so what is previewed
+    // here is what will actually link on commit.
+    const invItems = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) },
+      { itemCode: 1, itemName: 1, unit: 1, unitCost: 1 }).lean();
+    const norm = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const byExact = new Map(invItems.map(i => [String(i.itemName || '').toLowerCase().trim(), i]));
+
+    const matched = materials.map(m => {
+      const key = m.name.toLowerCase().trim();
+      let inv = byExact.get(key);
+      if (!inv) {
+        const nk = norm(key);
+        inv = invItems.find(i => norm(i.itemName) === nk)
+          || invItems.find(i => norm(i.itemName).includes(nk) || nk.includes(norm(i.itemName)));
+      }
+      return {
+        ...m,
+        matchedInvId: inv ? String(inv._id) : null,
+        matchedName: inv?.itemName || null,
+        matchedCode: inv?.itemCode || null,
+        matchedUnit: inv?.unit || null,
+        // A unit mismatch would silently corrupt the recipe cost, so it is
+        // surfaced rather than quietly accepted.
+        unitMismatch: !!(inv && m.units.length > 0 && !m.units.includes(inv.unit)),
+      };
+    });
+
+    res.json({
+      success: true,
+      counts: {
+        bulkRecipes: bulkRecipes.length,
+        drinks: drinks.length,
+        drinksNeedingReview: drinks.filter(d => d.needsReview).length,
+        materials: matched.length,
+        materialsMatched: matched.filter(m => m.matchedInvId).length,
+        materialsMissing: matched.filter(m => !m.matchedInvId).length,
+      },
+      bulkRecipes, drinks, materials: matched,
     });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));

@@ -4,6 +4,7 @@
 // partner JWTs are never valid here.
 import crypto from 'node:crypto';
 import { mergeTrialBalances, buildPnl, buildBalanceSheet, unknownCodes } from '../lib/consolidate.js';
+import { rollUpByLocation, parseBranchCode } from '../lib/branchCode.js';
 
 const TENANT = (() => {
   const m = (process.env.MONGO_URI || '').match(/\/semivra_([^?/]+)/);
@@ -26,7 +27,16 @@ export default function registerHub(ctx) {
     logAudit,
     mkSeqRef,
     acctMeta,
+    Settings,
   } = ctx;
+
+  // This deployment's own branch code ("AC-A001"), set in Settings. Two branches
+  // can share a location and still be separate inventories, so the code - not
+  // the address - is what a consolidated report groups on.
+  const ownBranchCode = async () => {
+    const row = await Settings.findOne({ key: 'branchCode' }).lean();
+    return String(row?.value || '').trim().toUpperCase();
+  };
 
   // Internal auth: partner calls use a shared linkToken
   async function requireLinkToken(req, res, next) {
@@ -1015,6 +1025,7 @@ export default function registerHub(ctx) {
   // as-of the balance-sheet date.
   const ownTrialBalances = async ({ start, end, asOf }) => ({
     tenant: TENANT,
+    branchCode: await ownBranchCode(),
     period: await trialBalance({ date: { $gte: start, $lte: end } }),
     asOf: await trialBalance({ date: { $lte: asOf } }),
   });
@@ -1057,6 +1068,19 @@ export default function registerHub(ctx) {
       const periodRows = mergeTrialBalances(branches.map(b => ({ rows: b.period })));
       const asOfRows = mergeTrialBalances(branches.map(b => ({ rows: b.asOf })));
 
+      const branchRows = branches.map(b => {
+        const code = String(b.branchCode || '').trim().toUpperCase();
+        return {
+          slug: b.slug, name: b.name, self: !!b.self,
+          branchCode: code,
+          // Surfaced so an un-coded branch is visibly un-coded rather than
+          // quietly lumped in with everything else.
+          branchCodeValid: parseBranchCode(code).valid,
+          netIncome: buildPnl(b.period, acctMeta).totals.netIncome,
+          totalAssets: buildBalanceSheet(b.asOf, acctMeta).totals.assets,
+        };
+      });
+
       res.json({
         success: true,
         complete: unreachable.length === 0,
@@ -1064,11 +1088,11 @@ export default function registerHub(ctx) {
         period: { start: range.start, end: range.end },
         asOf: range.asOf,
         // Per-branch bottom line, so a combined figure can be traced back.
-        branches: branches.map(b => ({
-          slug: b.slug, name: b.name, self: !!b.self,
-          netIncome: buildPnl(b.period, acctMeta).totals.netIncome,
-          totalAssets: buildBalanceSheet(b.asOf, acctMeta).totals.assets,
-        })),
+        branches: branchRows,
+        // The same branches grouped by LOCATION. Two inventories can share one
+        // address (AC-A001 and AC-A002), so "how did the mall site do?" is a
+        // real question the per-branch list alone cannot answer.
+        byLocation: rollUpByLocation(branchRows, ['netIncome', 'totalAssets']),
         pnl: buildPnl(periodRows, acctMeta),
         balanceSheet: buildBalanceSheet(asOfRows, acctMeta),
         // Codes a branch posted to that this instance's chart doesn't know -

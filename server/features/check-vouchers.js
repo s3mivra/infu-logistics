@@ -5,6 +5,7 @@
 // way to mark one Voided if it was issued in error (does NOT reverse the
 // underlying journal entry - that's a separate, deliberate correction).
 import { captureError } from '../lib/errorLog.js';
+import { dayStart, dayEnd } from '../lib/reportRange.js';
 
 export default function registerCheckVouchers(ctx) {
   const {
@@ -32,8 +33,12 @@ export default function registerCheckVouchers(ctx) {
       if (req.query.status && ['Issued', 'Voided'].includes(req.query.status)) q.status = req.query.status;
       if (req.query.start || req.query.end) {
         q.date = {};
-        if (req.query.start) q.date.$gte = new Date(req.query.start);
-        if (req.query.end) { const e = new Date(req.query.end); e.setHours(23, 59, 59, 999); q.date.$lte = e; }
+        // dayStart/dayEnd, not new Date(): a bare YYYY-MM-DD is parsed by JS as
+        // UTC midnight while setHours() works in local time, so mixing them
+        // gave a window of local 08:00-23:59 in UTC+8 and silently dropped
+        // everything recorded before 8am. Both bounds must share one basis.
+        if (req.query.start) q.date.$gte = dayStart(req.query.start);
+        if (req.query.end) q.date.$lte = dayEnd(req.query.end);
       }
       const limit = Math.min(500, Math.max(1, parseInt(req.query.limit) || 200));
       const vouchers = await CheckVoucher.find(q).sort({ date: -1, createdAt: -1 }).limit(limit).lean();

@@ -4,6 +4,7 @@
 import { title, upper } from '../lib/normalize.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { captureError } from '../lib/errorLog.js';
+import { dayStart, dayEnd } from '../lib/reportRange.js';
 
 export default function registerInventory(ctx) {
   const {
@@ -361,18 +362,42 @@ app.get('/api/inventory/eod-history/:dateString/variance', verifyToken, requireS
 
 app.get('/api/inventory/history/:id', verifyToken, requireStaff, async (req, res) => {
   try {
-    const history = await StockCard.find({ inventoryId: req.params.id }).sort({ date: -1 });
-    res.json({ success: true, history });
+    // Capped and lean: a busy item accumulates a row per sale, and hydrating
+    // the whole lifetime of one ingredient to show a history panel is what
+    // eventually takes the process down.
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit) || 200));
+    const history = await StockCard.find({ inventoryId: req.params.id })
+      .sort({ date: -1 }).limit(limit).lean();
+    res.json({ success: true, history, limit, truncated: history.length === limit });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
-// Fetch ALL stock card history for the master PDF report
+// Stock card history for the master report.
+//
+// This used to fetch the ENTIRE collection, unfiltered and hydrated, so the
+// client could filter it down to a single day in the browser. StockCard gains a
+// row per stock movement and never shrinks, so that transferred (and held in
+// memory) the whole trading history of the business to print one day of it.
+// The range is now applied here, and the result is capped rather than
+// unbounded - a report is a window, not a dump.
 app.get('/api/inventory/history', verifyToken, requireStaff, async (req, res) => {
   try {
-    const history = await StockCard.find().sort({ date: -1 });
-    res.json({ success: true, history });
+    const q = {};
+    if (req.query.start || req.query.end) {
+      q.date = {};
+      // dayStart/dayEnd, not new Date(): a bare YYYY-MM-DD parses as UTC
+      // midnight while setHours() is local, so mixing them drops every
+      // movement recorded before 8am in UTC+8.
+      if (req.query.start) q.date.$gte = dayStart(req.query.start);
+      if (req.query.end) q.date.$lte = dayEnd(req.query.end);
+    }
+    const limit = Math.min(5000, Math.max(1, parseInt(req.query.limit) || 2000));
+    const history = await StockCard.find(q).sort({ date: -1 }).limit(limit).lean();
+    // Told plainly, so a report built on a clipped set is never mistaken for a
+    // complete one.
+    res.json({ success: true, history, limit, truncated: history.length === limit });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

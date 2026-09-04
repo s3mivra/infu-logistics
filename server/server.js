@@ -436,6 +436,31 @@ const mkSeqRef = async (prefix) => {
   return `${key}-${counter.seq.toString().padStart(6, '0')}`;
 };
 
+// currentBranchCode - which inventory this deployment IS ("AC-A001").
+//
+// mkSeqRef counts in a per-deployment Counter, so two branches of the same
+// business each issue their own CV-2026-000001. That is fine as long as every
+// document also records WHICH branch issued it: the pair (branch, number) is
+// unique even though the number alone is not. Without it, an owner collating
+// vouchers across two inventories at one address cannot tell two CV-2026-000001
+// apart.
+//
+// Cached briefly because it is read on every document write but changes about
+// once in the life of a deployment.
+let _branchCodeCache = { value: '', at: 0 };
+const currentBranchCode = async () => {
+  if (Date.now() - _branchCodeCache.at < 60_000) return _branchCodeCache.value;
+  try {
+    const row = await Settings.findOne({ key: 'branchCode' }).lean();
+    _branchCodeCache = { value: String(row?.value || '').trim().toUpperCase(), at: Date.now() };
+  } catch { /* keep whatever we had; a missing code is not worth failing a sale over */ }
+  return _branchCodeCache.value;
+};
+// Called when the setting is written, so a freshly-set code takes effect on the
+// very next document rather than up to a minute later - documents issued in
+// that window would otherwise carry the previous (often blank) branch.
+const invalidateBranchCodeCache = () => { _branchCodeCache = { value: '', at: 0 }; };
+
 // --- HEALTH CHECK (no auth, for load balancers / uptime monitors) ---
 app.get('/health', (req, res) => {
   const dbState = mongoose.connection.readyState; // 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
@@ -1674,6 +1699,13 @@ const StockCardSchema = new mongoose.Schema({
 });
 StockCardSchema.index({ inventoryId: 1 });
 StockCardSchema.index({ reference: 1 });
+// Every stock movement writes a row here, so this collection only grows. Both
+// history endpoints sort by date, and an unindexed sort is not merely slow -
+// past ~32MB MongoDB refuses it outright and the route starts failing. The
+// compound index also covers "one item, newest first", which is the per-item
+// history view.
+StockCardSchema.index({ date: -1 });
+StockCardSchema.index({ inventoryId: 1, date: -1 });
 const StockCard = mongoose.model('StockCard', StockCardSchema);
 
 // --- SHIFT MANAGEMENT SCHEMA ---
@@ -2454,6 +2486,12 @@ const CheckVoucherSchema = new mongoose.Schema({
   businessType:   { type: String, default: () => BUSINESS_TYPE, index: true },
   tenantId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   voucherNumber:  { type: String, index: true },                    // CV-2026-000001
+  // Which inventory issued this. mkSeqRef numbers restart per deployment, so
+  // the number alone is not unique across a business with several branches -
+  // (branchCode, number) is. Blank until the deployment is given a code; the
+  // consolidated views surface that as "not set" rather than silently
+  // grouping it with everything else.
+  branchCode:     { type: String, default: '', index: true },
   // Who the money went to. 'other' covers a manual/ad-hoc disbursement not
   // tied to a Bill or a client credit refund.
   payeeType:      { type: String, enum: ['supplier', 'client', 'other'], required: true },
@@ -2500,6 +2538,12 @@ const AdvanceSchema = new mongoose.Schema({
   businessType:   { type: String, default: () => BUSINESS_TYPE, index: true },
   tenantId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   advanceNumber:  { type: String, index: true },
+  // Which inventory issued this. mkSeqRef numbers restart per deployment, so
+  // the number alone is not unique across a business with several branches -
+  // (branchCode, number) is. Blank until the deployment is given a code; the
+  // consolidated views surface that as "not set" rather than silently
+  // grouping it with everything else.
+  branchCode:     { type: String, default: '', index: true },
   type:           { type: String, enum: ADVANCE_TYPES, required: true },
   payeeName:      { type: String, required: true },
   payeeId:        { type: String, default: '' },
@@ -3279,6 +3323,8 @@ const ctx = {
   roleSchema,
   modifierGroupSchema,
   mkSeqRef,
+  currentBranchCode,
+  invalidateBranchCodeCache,
   loginLimiter,
   orderLimiter,
   generalApiLimiter,

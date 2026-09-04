@@ -2881,7 +2881,13 @@ export default function LedgerTab({ ctx }) {
                     <tbody>
                       {checkVouchers.map(v => (
                         <tr key={v._id} className={`border-b border-white/5 hover:bg-white/5 transition ${v.status === 'Voided' ? 'opacity-50' : ''}`}>
-                          <td className="py-2.5 text-fg font-bold text-xs">{v.voucherNumber || '—'}</td>
+                          <td className="py-2.5 text-fg font-bold text-xs">
+                            {v.voucherNumber || '—'}
+                            {/* Voucher numbers restart per branch, so the number
+                                alone is ambiguous once a business runs more than
+                                one inventory. */}
+                            {v.branchCode && <span className="block text-[9px] text-fg/30 font-normal font-mono">{v.branchCode}</span>}
+                          </td>
                           <td className="py-2.5 text-fg/50 text-xs">{new Date(v.date).toLocaleDateString()}</td>
                           <td className="py-2.5 text-xs">
                             <span className="text-fg/70">{v.payeeName}</span>
@@ -3061,6 +3067,7 @@ export default function LedgerTab({ ctx }) {
                           <tr key={a._id} className={`border-b border-white/5 hover:bg-white/5 transition ${a.status === 'Cancelled' ? 'opacity-50' : ''}`}>
                             <td className="py-2.5 font-bold text-fg text-xs">
                               {a.advanceNumber}
+                              {a.branchCode && <span className="block text-[9px] text-fg/30 font-normal font-mono">{a.branchCode}</span>}
                               {a.checkVoucherRef && <span className="block text-[9px] text-fg/30 font-normal">CV {a.checkVoucherRef}</span>}
                             </td>
                             <td className="py-2.5">

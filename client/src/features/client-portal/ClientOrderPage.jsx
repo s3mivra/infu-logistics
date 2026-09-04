@@ -473,8 +473,15 @@ export default function ClientOrderPage() {
 
   // Real-time menu refresh
   useEffect(() => {
-    socket.on('menuUpdated', fetchProducts);
-    return () => socket.off('menuUpdated', fetchProducts);
+    // Debounced: menuUpdated is broadcast on every completed order in the
+    // shop, not just ones relevant to this client.
+    let menuTimer = null;
+    const handleMenuUpdated = () => {
+      clearTimeout(menuTimer);
+      menuTimer = setTimeout(fetchProducts, 1500);
+    };
+    socket.on('menuUpdated', handleMenuUpdated);
+    return () => { clearTimeout(menuTimer); socket.off('menuUpdated', handleMenuUpdated); };
   }, [fetchProducts]);
 
   // Client's own orders → status queue sidebar

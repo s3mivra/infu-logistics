@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback } from 'react';
+﻿import { useState, useEffect, useCallback, Fragment } from 'react';
 import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus, LayoutGrid, BarChart3, ExternalLink, Boxes, Share2, Landmark, AlertTriangle } from 'lucide-react';
 
 const statusColor = {
@@ -128,6 +128,35 @@ export default function HubTab({ ctx }) {
   const { apiFetch: authFetch, isSuperAdmin, inventory = [], peso, fetchERPData } = ctx;
 
   const [info, setInfo]           = useState(null);
+
+  // This deployment's branch code ("AC-A001"). It is what a consolidated report
+  // groups on: the middle letter is the physical location, so two inventories
+  // at one address (AC-A001, AC-A002) roll up together while staying separate
+  // sets of books. Validated server-side - a typo would quietly file this
+  // branch under "Unassigned".
+  const [branchCode, setBranchCode] = useState('');
+  const [branchCodeSaved, setBranchCodeSaved] = useState('');
+  const [branchBusy, setBranchBusy] = useState(false);
+  const loadBranchCode = useCallback(async () => {
+    try {
+      const r = await authFetch('/api/settings');
+      const d = await r.json();
+      if (d.success) { setBranchCode(d.settings?.branchCode || ''); setBranchCodeSaved(d.settings?.branchCode || ''); }
+    } catch { /* the rest of the tab still works */ }
+  }, [authFetch]);
+  useEffect(() => { loadBranchCode(); }, [loadBranchCode]);
+
+  const saveBranchCode = async () => {
+    setBranchBusy(true); setErr('');
+    try {
+      const r = await authFetch('/api/settings/branchCode', { method: 'PATCH', body: JSON.stringify({ value: branchCode }) });
+      const d = await r.json();
+      if (!d.success) { setErr(d.error || 'Could not save the branch code.'); return; }
+      setBranchCodeSaved(d.setting?.value || '');
+      setBranchCode(d.setting?.value || '');
+    } catch { setErr('Network error saving the branch code.'); }
+    finally { setBranchBusy(false); }
+  };
   const [transfers, setTransfers] = useState([]);
   const [busy, setBusy]           = useState(false);
   const [err, setErr]             = useState('');
@@ -545,6 +574,39 @@ export default function HubTab({ ctx }) {
         )}
       </div>
 
+      {/* Branch identity. Without a code this deployment reports as
+          "Unassigned" in the consolidated books - its money still counts, but
+          it cannot roll up with the other inventories at its own address. */}
+      <div className={card}>
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
+          <div>
+            <h3 className="text-fg font-black uppercase tracking-wider text-sm">Branch Code</h3>
+            <p className="text-[11px] text-fg/40 mt-1">
+              Identifies this inventory in consolidated reports.
+            </p>
+          </div>
+          {branchCodeSaved
+            ? <span className="text-[10px] font-black uppercase bg-green-500/15 text-green-500 px-2 py-1 rounded">{branchCodeSaved}</span>
+            : <span className="text-[10px] font-black uppercase bg-amber-500/15 text-amber-400 px-2 py-1 rounded">Not set</span>}
+        </div>
+        <div className="flex flex-wrap gap-2 items-center">
+          <input
+            type="text" value={branchCode} placeholder="AC-A001"
+            onChange={e => setBranchCode(e.target.value.toUpperCase())}
+            className={`${input} font-mono max-w-[180px]`} />
+          <button onClick={saveBranchCode} disabled={branchBusy || branchCode === branchCodeSaved} className={btn()}>
+            {branchBusy ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+        <p className="text-[11px] text-fg/35 mt-2">
+          <span className="font-mono text-fg/60">AC</span> business ·
+          <span className="font-mono text-fg/60"> A</span> location ·
+          <span className="font-mono text-fg/60"> 001</span> which inventory there.
+          A second counter at the same address is <span className="font-mono text-fg/60">AC-A002</span>;
+          a different address is <span className="font-mono text-fg/60">AC-B001</span>.
+        </p>
+      </div>
+
       <NetworkMap info={info} network={network} card={card} />
 
       {/* ── Network Overview: unified inventory, branch comparison, central
@@ -739,25 +801,54 @@ export default function HubTab({ ctx }) {
                         </div>
                       )}
 
-                      {/* Per-branch contribution, so a combined figure is traceable */}
+                      {/* Per-branch contribution, grouped by LOCATION.
+                          Two inventories can sit at one address (AC-A001 and
+                          AC-A002), so the location subtotal answers "how did
+                          the mall site do?" - a question the flat branch list
+                          cannot. Branches with no code are gathered under
+                          Unassigned rather than dropped: they hold real money,
+                          and omitting them would understate the total. */}
                       <div className="overflow-x-auto">
                         <table className="w-full text-xs">
                           <thead>
                             <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
                               <th className="text-left py-2">Branch</th>
+                              <th className="text-left py-2 pl-3">Code</th>
                               <th className="text-right py-2 pl-3">Net Income</th>
                               <th className="text-right py-2 pl-3">Total Assets</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {fin.branches.map(b => (
-                              <tr key={b.slug} className="border-b border-white/5">
-                                <td className="py-2 font-bold text-fg">
-                                  {b.name}{b.self && <span className="ml-2 text-[9px] font-black bg-accent/15 text-accent px-1.5 py-0.5 rounded uppercase">You</span>}
-                                </td>
-                                <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{peso(b.netIncome)}</td>
-                                <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{peso(b.totalAssets)}</td>
-                              </tr>
+                            {(fin.byLocation || []).map(group => (
+                              <Fragment key={group.locationKey}>
+                                <tr className="bg-white/[0.03]">
+                                  <td colSpan={2} className="py-1.5 text-[10px] font-black uppercase tracking-widest text-fg/50">
+                                    {group.locationKey === 'Unassigned'
+                                      ? 'No branch code set'
+                                      : `Location ${group.location}`}
+                                    <span className="ml-2 font-normal normal-case tracking-normal text-fg/30">
+                                      {group.branchCount} {group.branchCount === 1 ? 'inventory' : 'inventories'}
+                                    </span>
+                                  </td>
+                                  <td className="py-1.5 pl-3 text-right tabular-nums font-black text-fg/70">{peso(group.totals.netIncome)}</td>
+                                  <td className="py-1.5 pl-3 text-right tabular-nums font-black text-fg/70">{peso(group.totals.totalAssets)}</td>
+                                </tr>
+                                {group.branches.map(b => (
+                                  <tr key={b.slug} className="border-b border-white/5">
+                                    <td className="py-2 pl-3 text-fg/80">
+                                      {b.name}
+                                      {b.self && <span className="ml-2 text-[9px] font-black bg-accent/15 text-accent px-1.5 py-0.5 rounded uppercase">You</span>}
+                                    </td>
+                                    <td className="py-2 pl-3">
+                                      {b.branchCodeValid
+                                        ? <span className="font-mono text-fg/50">{b.branchCode}</span>
+                                        : <span className="text-amber-400/80 text-[10px]">not set</span>}
+                                    </td>
+                                    <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{peso(b.netIncome)}</td>
+                                    <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{peso(b.totalAssets)}</td>
+                                  </tr>
+                                ))}
+                              </Fragment>
                             ))}
                           </tbody>
                         </table>

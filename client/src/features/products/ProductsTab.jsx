@@ -281,6 +281,7 @@ export default function ProductsTab({ ctx }) {
     setFormData, setHistoryItemName, setHistoryModalOpen, setHistoryPage, setHistorySubTab,
     setImportModal, setImportRows, setInvForm, setInvPage, setInvSubTab,
     menuBackupBusy, downloadMenuBackup, menuRestoreModal, setMenuRestoreModal, openMenuRestore, runMenuRestore,
+    rsFile, rsPreview, rsBusy, rsCreateMissing, setRsCreateMissing, openRecipeSheet, closeRecipeSheet, submitRecipeSheet,
     setIsPosOpen, setIsStatusMenuOpen, setJeForm, setJournalEntries, setLedgerSubTab,
     setNewDiscount, setOrderFilter, setOrdersPage, setPaymentSelections, setPhysicalCounts,
     setPnlRange, setPosActiveAddOns, setPosActiveSize, setPosCart, setPosCashTendered,
@@ -349,6 +350,102 @@ export default function ProductsTab({ ctx }) {
                   onChange={e => { openMenuRestore(e.target.files?.[0]); e.target.value = ''; }} />
               </label>
             </div>
+
+            {/* Recipe workbook import. Separate from the backup above: that is a
+                round-trip of what the system already holds, this reads the
+                barista sheets a human typed. Always review-then-commit. */}
+            <div className="flex flex-wrap items-center gap-2 mb-5 p-3 bg-page-bg border border-white/10 rounded-xl">
+              <div className="mr-auto min-w-0">
+                <p className="text-[11px] font-black uppercase tracking-widest text-fg/60">Recipe Workbook</p>
+                <p className="text-[10px] text-fg/35 mt-0.5">Read drinks and bulk recipes from the barista sheets.</p>
+              </div>
+              <label className={`flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition ${rsBusy ? 'opacity-40 pointer-events-none' : 'cursor-pointer'}`}>
+                <Upload size={12} /> {rsBusy ? 'Reading…' : 'Read Workbook'}
+                <input type="file" accept=".xlsx,.xls" className="hidden"
+                  onChange={e => { openRecipeSheet(e.target.files?.[0]); e.target.value = ''; }} />
+              </label>
+            </div>
+
+            {rsPreview && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={closeRecipeSheet}>
+                <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                  <h2 className="font-black text-fg text-lg mb-1">Recipe workbook</h2>
+                  <p className="text-xs text-fg/50 mb-4 break-all">{rsFile?.name}</p>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+                    {[
+                      ['Drinks read', rsPreview.counts.drinks, 'text-fg'],
+                      ['Ready', rsPreview.counts.drinks - rsPreview.counts.drinksNeedingReview, 'text-green-400'],
+                      ['Need review', rsPreview.counts.drinksNeedingReview, 'text-amber-400'],
+                      ['Bulk recipes', rsPreview.counts.bulkRecipes, 'text-fg'],
+                    ].map(([label, val, cls]) => (
+                      <div key={label} className="bg-page-bg border border-white/10 rounded-lg p-2.5">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-fg/40">{label}</p>
+                        <p className={`text-lg font-black tabular-nums ${cls}`}>{val}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Materials: what already exists vs what would be created. */}
+                  <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-1.5">
+                    Materials · {rsPreview.counts.materialsMatched} in stock, {rsPreview.counts.materialsMissing} missing
+                  </p>
+                  <div className="max-h-44 overflow-y-auto bg-page-bg border border-white/10 rounded-lg mb-2">
+                    {rsPreview.materials.map(m => (
+                      <div key={m.name} className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-white/5 last:border-0 text-xs">
+                        <span className="truncate text-fg/80">{m.name} <span className="text-fg/30">×{m.uses}</span></span>
+                        {m.matchedInvId ? (
+                          <span className={`shrink-0 text-[10px] font-bold ${m.unitMismatch ? 'text-amber-400' : 'text-green-400'}`}>
+                            {m.unitMismatch ? `unit mismatch (stock is ${m.matchedUnit})` : (m.matchedCode || 'in stock')}
+                          </span>
+                        ) : (
+                          <span className="shrink-0 text-[10px] font-bold text-fg/35">will be created</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <label className="flex items-center gap-2 text-[11px] text-fg/60 mb-4 cursor-pointer">
+                    <input type="checkbox" checked={rsCreateMissing} onChange={e => setRsCreateMissing(e.target.checked)} />
+                    Create the {rsPreview.counts.materialsMissing} missing stock item(s), at zero qty and zero cost
+                  </label>
+
+                  {rsPreview.counts.drinksNeedingReview > 0 && (
+                    <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/25 mb-4 text-xs">
+                      <AlertTriangle size={15} className="text-amber-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-amber-400 font-black uppercase tracking-wider">
+                          {rsPreview.counts.drinksNeedingReview} drink(s) skipped
+                        </p>
+                        <p className="text-fg/50 mt-1">
+                          Their ingredient cells are ambiguous - usually several materials in one cell, or a hot/iced
+                          split that could be read two ways. Add these by hand rather than let the import guess:
+                        </p>
+                        <p className="text-fg/70 mt-1">
+                          {rsPreview.drinks.filter(d => d.needsReview).map(d => d.name).join(', ')}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="text-[11px] text-fg/40 bg-page-bg border border-white/10 rounded-lg p-2.5 mb-4">
+                    Prices are not in these sheets, so every drink imports at ₱0 - set each price before selling.
+                    Sizes are imported using their hot figure; adjust iced quantities on the product afterwards.
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button onClick={closeRecipeSheet} disabled={rsBusy}
+                      className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
+                      Cancel
+                    </button>
+                    <button onClick={submitRecipeSheet} disabled={rsBusy}
+                      className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">
+                      {rsBusy ? 'Importing…' : `Import ${rsPreview.counts.drinks - rsPreview.counts.drinksNeedingReview} drink(s)`}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Restore always previews first (a dry run on the server) so the
                 user sees what WOULD change - and which ingredients cannot be
@@ -1136,6 +1233,26 @@ export default function ProductsTab({ ctx }) {
                         <input type="number" step="0.01" placeholder="Price" value={size.price} onChange={e => updateSize(idx, 'price', e.target.value)} className="w-1/3 bg-white/5 border border-white/10 rounded-lg p-2 text-sm text-fg font-bold placeholder-white/20" required />
                         <button type="button" onClick={() => removeSize(idx)} className="text-fg/30 hover:text-red-400 font-bold ml-auto px-2"><X size={20} /></button>
                       </div>
+
+                      {/* Per-size margin. A size carries its own price AND its own
+                          recipe, so the base-size margin above says nothing about
+                          it - without this a size can be priced blind. */}
+                      {(() => {
+                        const szCost = calcRecipeCost(size.recipe);
+                        const szPrice = parseFloat(size.price) || 0;
+                        if (!(szCost > 0) || !(szPrice > 0)) return null;
+                        const m = ((szPrice - szCost) / szPrice) * 100;
+                        return (
+                          <div className="flex justify-between items-center text-[10px] px-1 mb-2">
+                            <span className={m >= 30 ? 'text-green-400 font-black' : 'text-yellow-500 font-black'}>
+                              Margin: {m.toFixed(1)}%
+                            </span>
+                            <span className="text-fg/40 font-bold">
+                              Set 30% margin (₱{(szCost / 0.7).toFixed(2)})
+                            </span>
+                          </div>
+                        );
+                      })()}
 
                       <div className="bg-accent p-3 rounded-lg border border-white/10 mt-3">
                         <div className="flex justify-between items-center mb-3">

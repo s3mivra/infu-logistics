@@ -11,6 +11,7 @@
 // number, check number, deposit slip) and a free-text note/remarks, and both
 // are carried onto the journal entry description so the ledger says WHY.
 import { captureError } from '../lib/errorLog.js';
+import { dayStart, dayEnd } from '../lib/reportRange.js';
 
 export default function registerAdvances(ctx) {
   const {
@@ -31,6 +32,7 @@ export default function registerAdvances(ctx) {
     assertBalanced,
     acctMeta,
     mkSeqRef,
+    currentBranchCode,
     verifyToken,
     requireStaff,
     requirePermission,
@@ -58,8 +60,12 @@ export default function registerAdvances(ctx) {
       if (req.query.status) q.status = req.query.status;
       if (req.query.start || req.query.end) {
         q.date = {};
-        if (req.query.start) q.date.$gte = new Date(req.query.start);
-        if (req.query.end) { const e = new Date(req.query.end); e.setHours(23, 59, 59, 999); q.date.$lte = e; }
+        // dayStart/dayEnd, not new Date(): a bare YYYY-MM-DD is parsed by JS as
+        // UTC midnight while setHours() works in local time, so mixing them
+        // gave a window of local 08:00-23:59 in UTC+8 and silently dropped
+        // everything recorded before 8am. Both bounds must share one basis.
+        if (req.query.start) q.date.$gte = dayStart(req.query.start);
+        if (req.query.end) q.date.$lte = dayEnd(req.query.end);
       }
       const limit = Math.min(500, Math.max(1, parseInt(req.query.limit) || 200));
       const advances = await Advance.find(q).sort({ date: -1, createdAt: -1 }).limit(limit).lean();
@@ -122,6 +128,7 @@ export default function registerAdvances(ctx) {
         const voucherNumber = await mkSeqRef('CV');
         voucher = await CheckVoucher.create({
           businessType: BUSINESS_TYPE, ...tenantScope(req),
+        branchCode: await currentBranchCode(),
           voucherNumber,
           payeeType: type === 'supplier' ? 'supplier' : 'other',
           payeeId: String(payeeId || ''), payeeName,
@@ -135,6 +142,7 @@ export default function registerAdvances(ctx) {
 
       const advance = await Advance.create({
         businessType: BUSINESS_TYPE, ...tenantScope(req),
+        branchCode: await currentBranchCode(),
         advanceNumber, type, payeeName: String(payeeName).trim(), payeeId: String(payeeId || ''),
         amount: amt, purpose: purpose || '', account: ctl.code,
         sourceAccount: srcCode, sourceAccountName: srcName,

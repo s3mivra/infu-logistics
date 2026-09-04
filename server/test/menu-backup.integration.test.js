@@ -328,6 +328,28 @@ describe('restoring over a live menu', () => {
   });
 });
 
+describe('who may download the menu', () => {
+  it('refuses a cashier, who has products.view but not products.manage', async () => {
+    // The backup carries every recipe, quantity and unit cost. /api/products
+    // strips exactly that from non-admin callers, so handing the whole lot to
+    // a till operator would defeat it.
+    await makeUser({ name: 'TillPerson', role: 'cashier' });
+    const cashierTok = await loginStaff(app, 'TillPerson');
+
+    const dl = await request(app).get('/api/products/menu-backup')
+      .set('Authorization', `Bearer ${cashierTok}`);
+    expect(dl.status).toBe(403);
+
+    const restore = await request(app).post('/api/products/menu-backup/restore')
+      .set('Authorization', `Bearer ${cashierTok}`).send({ backup: { products: [] } });
+    expect(restore.status).toBe(403);
+  });
+
+  it('still allows a superadmin', async () => {
+    expect((await auth('get', '/api/products/menu-backup')).status).toBe(200);
+  });
+});
+
 describe('rejecting a bad file', () => {
   it('refuses something that is not a menu backup', async () => {
     const res = await auth('post', '/api/products/menu-backup/restore').send({ backup: { hello: 'world' } });
