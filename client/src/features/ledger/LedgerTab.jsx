@@ -975,18 +975,46 @@ export default function LedgerTab({ ctx }) {
   return (
         <div className="space-y-4">
 
-          {/* SUB-TAB NAV. The group shown depends on the top-level tab: Reports vs
-              Ledger (both render from this component). Merged pages (AR & AP, and
-              Accounts & Periods) stack several sections on one page. */}
-          <div className="bg-surface border border-white/10 rounded-2xl p-3 space-y-1.5">
-            {(activeTab === 'reports' ? REPORT_TAB_GROUPS : LEDGER_TAB_GROUPS).map(([groupLabel, items]) => (
-              <div key={groupLabel} className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-3">
-                <span className="text-[9px] font-black uppercase tracking-widest text-fg/25 sm:w-20 sm:text-right shrink-0 sm:pt-3">
-                  {groupLabel}
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {items.map(([id, label, Icon]) => (
+          {/* SUB-TAB NAV - two levels instead of one flat wall.
+              One row per group meant five rows of identical chips and a dead
+              left gutter, with nothing telling the eye where it was. The groups
+              are now the primary control and only the ACTIVE group's pages are
+              listed, so the nav stays two rows however many reports exist. */}
+          {(() => {
+            const groups = activeTab === 'reports' ? REPORT_TAB_GROUPS : LEDGER_TAB_GROUPS;
+            // Derived from the current page rather than stored: deep links,
+            // reloads and the merged pages all resolve to the right group
+            // without a second piece of state that could disagree with it.
+            const activeGroup = groups.find(([, items]) => items.some(([id]) => id === ledgerSubTab)) || groups[0];
+            const [activeLabel, activeItems] = activeGroup;
+
+            return (
+              <div className="bg-surface border border-white/10 rounded-2xl p-1.5">
+                <div className="flex gap-0.5 overflow-x-auto custom-scrollbar">
+                  {groups.map(([groupLabel, items]) => {
+                    const isActive = groupLabel === activeLabel;
+                    return (
+                      <button
+                        key={groupLabel}
+                        onClick={() => { if (!isActive) document.getElementById(`subtab-${items[0][0]}`)?.click(); }}
+                        className={`relative shrink-0 px-3.5 py-2 text-[11px] font-black uppercase tracking-widest transition ${
+                          isActive ? 'text-fg' : 'text-fg/35 hover:text-fg/70'}`}
+                      >
+                        {groupLabel}
+                        {/* Underline, not a filled pill - the group marks where
+                            you are; the page below is the thing you act on. */}
+                        {isActive && <span className="absolute left-3 right-3 -bottom-0.5 h-0.5 rounded-full bg-brand" />}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="h-px bg-white/8 my-1.5" />
+
+                <div className="flex gap-1 overflow-x-auto custom-scrollbar pb-0.5">
+                  {activeItems.map(([id, label, Icon]) => (
                     <button
+                      id={`subtab-${id}`}
                       key={id}
                       onClick={() => {
                   setLedgerSubTab(id);
@@ -1021,15 +1049,18 @@ export default function LedgerTab({ ctx }) {
                   if (id === 'expenses') { fetchExpenseCategories(); fetchExpenses(); }
                   if (id === 'approvals') fetchRequisitionSlips();
                       }}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-xl font-bold text-[11px] uppercase tracking-wider transition min-h-[38px] ${ledgerSubTab === id ? 'bg-brand text-white shadow-elev-1' : 'bg-white/[0.03] text-fg/50 hover:text-fg hover:bg-white/8'}`}
+                      className={`shrink-0 flex items-center gap-2 px-3 py-2 rounded-lg font-bold text-[11px] tracking-wide transition min-h-[36px] ${
+                        ledgerSubTab === id
+                          ? 'bg-brand text-white shadow-elev-1'
+                          : 'text-fg/55 hover:text-fg hover:bg-white/[0.06]'}`}
                     >
-                      <Icon size={13} /> {label}
+                      <Icon size={13} className={ledgerSubTab === id ? '' : 'opacity-60'} /> {label}
                     </button>
                   ))}
                 </div>
               </div>
-            ))}
-          </div>
+            );
+          })()}
 
           {/* Section area. On the merged pages (Accounts & Periods, AR & AP) the
               stacked sections flow into two columns so they fill the width instead

@@ -399,8 +399,36 @@ app.get('/api/reports/trial-balance', verifyToken, ...canViewAcct, async (req, r
 // EXPENSE ENTRY - operator-facing expense bookkeeping
 // Categories defined in lib/chartOfAccounts.js
 // ============================================================
+// Every account an expense can actually be booked to.
+//
+// EXPENSE_CATEGORIES is a hand-written list of twelve. Using it as THE set of
+// expense accounts had two consequences: real accounts in the chart could not
+// be selected at all (Employee Benefits, Transportation & Delivery,
+// Depreciation, Interest Expense...), and any custom sub-account an operator
+// added - "Electricity" under Utilities, say - was both unselectable here AND
+// invisible in the expense list below, so money spent through it silently
+// disappeared from "what have we spent".
+//
+// Derived from the live chart instead. The hand-written list is kept only for
+// its friendlier labels ("Utilities (Electricity / Water / Internet)" reads
+// better than "Utilities Expense"). Parents are excluded - posting to a rollup
+// double-counts it against its own children - and so is COGS, which is driven
+// by sales, not by someone filing a receipt.
+const expenseCategoryList = () => {
+  const friendly = new Map(EXPENSE_CATEGORIES.map(c => [c.code, c.label]));
+  const rows = [];
+  const consider = (code, meta, custom) => {
+    if (!meta || meta.type !== 'expense' || meta.isParent || meta.cogs) return;
+    if (custom && meta.isActive === false) return;
+    rows.push({ code, label: friendly.get(code) || meta.name, custom: !!custom });
+  };
+  for (const [code, meta] of Object.entries(ACCOUNTS)) consider(code, meta, false);
+  for (const [code, meta] of CUSTOM_META.entries()) if (!ACCOUNTS[code]) consider(code, meta, true);
+  return rows.sort((a, b) => a.code.localeCompare(b.code));
+};
+
 app.get('/api/expenses/categories', verifyToken, ...canViewAcct, async (req, res) => {
-  res.json({ success: true, categories: EXPENSE_CATEGORIES });
+  res.json({ success: true, categories: expenseCategoryList() });
 });
 
 // Recent expenses + a per-category summary for the range.
@@ -409,7 +437,9 @@ app.get('/api/expenses/categories', verifyToken, ...canViewAcct, async (req, res
 // truth (the ledger) rather than a parallel list that could drift from it.
 app.get('/api/expenses', verifyToken, ...canViewAcct, async (req, res) => {
   try {
-    const codes = EXPENSE_CATEGORIES.map(c => c.code);
+    // The same derived set the picker offers, so an expense can never be
+    // bookable but unreadable - which is what hid custom sub-accounts.
+    const codes = expenseCategoryList().map(c => c.code);
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
 
     // Optional range; defaults to the current month, which is what an operator
@@ -469,7 +499,10 @@ app.get('/api/expenses', verifyToken, ...canViewAcct, async (req, res) => {
 async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, description, vendor, refNo, date }) {
   const amt = parseFloat(amount);
   if (!amt || amt <= 0) return { ok: false, error: 'Amount must be > 0.' };
-  const cat = EXPENSE_CATEGORIES.find(c => c.code === categoryCode);
+  // Validated against the same derived set the picker offers. Checking the
+  // hand-written twelve here would have rejected every account the picker had
+  // just started offering.
+  const cat = expenseCategoryList().find(c => c.code === categoryCode);
   if (!cat) return { ok: false, error: 'Invalid expense category.' };
   if (!description?.trim()) return { ok: false, error: 'Description required.' };
 
@@ -481,7 +514,11 @@ async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, de
     try { await logAudit(req, { action: 'unmappedTender', entity: 'PaymentMethodMap', entityId: paymentMethod || '(none)', after: { account: credAcct.code, context: 'expense' } }); } catch { /* non-fatal */ }
   }
 
-  const acct = ACCOUNTS[categoryCode];
+  // acctMeta, not ACCOUNTS: a custom sub-account exists only in CUSTOM_META,
+  // so the raw chart lookup returned undefined and the next line threw a 500
+  // the moment anyone expensed one.
+  const acct = acctMeta(categoryCode);
+  if (!acct) return { ok: false, error: 'Invalid expense category.' };
   const reference = await mkSeqRef('EXP');
   const entryDate = date ? new Date(date) : new Date();
   if (date && Number.isNaN(entryDate.getTime())) return { ok: false, error: 'Invalid date.' };
