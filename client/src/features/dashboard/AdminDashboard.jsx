@@ -4648,6 +4648,68 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     }
   };
 
+  // ── GENERIC DATA EXPORT ────────────────────────────────────────────────────
+  // One helper for every dataset, backed by /api/export/:dataset. Downloading
+  // the TEMPLATE is the same call with template=1, so the columns a user fills
+  // in are by construction the columns the exporter produces - the two cannot
+  // drift apart and leave someone with a spreadsheet the importer rejects.
+  //
+  // Every template workbook also carries a "Valid Values" sheet: the accepted
+  // values for each constrained column. Without it the first sign that "Rent"
+  // should have been "630000" is a hundred rejected rows.
+  const [exportBusy, setExportBusy] = useState('');
+  const downloadDataset = async (dataset, { template = false, start, end, label } = {}) => {
+    setExportBusy(dataset);
+    try {
+      const qs = new URLSearchParams();
+      if (template) qs.set('template', '1');
+      if (start) qs.set('start', start);
+      if (end) qs.set('end', end);
+      const res = await apiFetch(`/api/export/${dataset}${qs.toString() ? `?${qs}` : ''}`);
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Export failed.'); return; }
+
+      const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([d.columns, ...d.rows]), 'Data');
+
+      // The valid-value sheet rides along with templates, where it is needed.
+      if (template) {
+        try {
+          const vv = await (await apiFetch('/api/export/valid-values')).json();
+          if (vv.success) {
+            const mine = vv.table.filter(t => t.dataset === dataset);
+            const rows = (mine.length ? mine : vv.table)
+              .map(t => [t.dataset, t.column, t.values.join(' | '), t.note]);
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([vv.columns, ...rows]), 'Valid Values');
+          }
+        } catch { /* the template is still usable without it */ }
+      }
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `${(label || d.label || dataset).replace(/[^\w-]+/g, '-')}-${template ? 'template' : stamp}.xlsx`);
+      if (d.truncated) {
+        ui.alert(`Only the first ${d.limit} rows were exported - narrow the date range for the rest.`);
+      }
+    } catch { ui.alert('Network error during export.'); }
+    finally { setExportBusy(''); }
+  };
+
+  // The value table: every account with its balance, on its natural side.
+  const downloadAccountBalances = async (asOf) => {
+    setExportBusy('account-balances');
+    try {
+      const res = await apiFetch(`/api/export/account-balances${asOf ? `?asOf=${asOf}` : ''}`);
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Export failed.'); return; }
+      const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([d.columns, ...d.rows]), 'Account Balances');
+      XLSX.writeFile(wb, `account-balances-${asOf || new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch { ui.alert('Network error during export.'); }
+    finally { setExportBusy(''); }
+  };
+
   // ── MENU BACKUP / RESTORE ──────────────────────────────────────────────────
   // Download the whole menu as one file, and load it back later. Different from
   // the spreadsheet import above: that reads a sheet a human typed, this is an
@@ -7520,6 +7582,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     importModal, setImportModal, importRows, setImportRows, importSubmitting,
     menuImportModal, setMenuImportModal, menuImportRows, setMenuImportRows, menuImportSubmitting,
     menuBackupBusy, downloadMenuBackup, menuRestoreModal, setMenuRestoreModal, openMenuRestore, runMenuRestore,
+    exportBusy, downloadDataset, downloadAccountBalances,
     downloadMenuImportTemplate, parseMenuImportFile, submitMenuImport,
     rsFile, rsPreview, rsBusy, rsCreateMissing, setRsCreateMissing, openRecipeSheet, closeRecipeSheet, submitRecipeSheet,
     spoilageModal, setSpoilageModal, spoilageForm, setSpoilageForm, spoilageLoading, setSpoilageLoading,

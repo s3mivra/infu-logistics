@@ -105,6 +105,7 @@ export default function LedgerTab({ ctx }) {
     advLiqModal, setAdvLiqModal, openAdvLiquidate, submitLiquidateAdvance,
     advCancelModal, setAdvCancelModal, submitCancelAdvance,
     obEntry, obRows, setObRows, obMeta, setObMeta, obBusy, fetchOpeningBalances, submitOpeningBalances, balanceSheetAccounts,
+    exportBusy, downloadDataset, downloadAccountBalances,
     profitByCategory, fetchProfitByCategory,
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
@@ -980,6 +981,35 @@ export default function LedgerTab({ ctx }) {
               left gutter, with nothing telling the eye where it was. The groups
               are now the primary control and only the ACTIVE group's pages are
               listed, so the nav stays two rows however many reports exist. */}
+          {/* Export / template control. Which dataset a page exports is a
+              lookup, not a button per screen - a new page is one line here. */}
+          {(() => {
+            const DATASET_FOR_PAGE = {
+              checkvouchers: 'checkVouchers', advances: 'advances', expenses: 'expenses',
+              journal: 'journal', bills: 'bills', araap: 'bills', revolving: 'revolvingFunds',
+              apreport: 'bills', arreport: 'orders', salesline: 'orders', salessummary: 'orders',
+            };
+            const ds = DATASET_FOR_PAGE[ledgerSubTab];
+            if (!ds) return null;
+            const busy = exportBusy === ds;
+            return (
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                <span className="text-[10px] font-black uppercase tracking-widest text-fg/30 mr-auto">
+                  Export
+                </span>
+                <button onClick={() => downloadDataset(ds)} disabled={busy}
+                  className="flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
+                  <Download size={12} /> {busy ? 'Working…' : 'Export Data'}
+                </button>
+                <button onClick={() => downloadDataset(ds, { template: true })} disabled={busy}
+                  title="Blank workbook with the same columns, plus a sheet of the accepted values for each one"
+                  className="flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
+                  <FileText size={12} /> Template
+                </button>
+              </div>
+            );
+          })()}
+
           {(() => {
             const groups = activeTab === 'reports' ? REPORT_TAB_GROUPS : LEDGER_TAB_GROUPS;
             // Derived from the current page rather than stored: deep links,
@@ -987,6 +1017,44 @@ export default function LedgerTab({ ctx }) {
             // without a second piece of state that could disagree with it.
             const activeGroup = groups.find(([, items]) => items.some(([id]) => id === ledgerSubTab)) || groups[0];
             const [activeLabel, activeItems] = activeGroup;
+
+            // Switching page is a real function, called by both rows.
+            // The group buttons previously synthesised a DOM click on the
+            // target page button - which only exists while its group is
+            // already active, so every inactive group tab did nothing.
+            const openPage = (id) => {
+            setLedgerSubTab(id);
+            // Merged "Accounts & Periods" page: load all its sections.
+            if (id === 'accperiods') { fetchCoa(); fetchClosedPeriods(); fetchPaymentMap(); fetchOpeningBalances(); }
+            // Merged "AR & AP" page.
+            if (id === 'araap') { fetchArOutstanding(); fetchArAgeing(); fetchApData(); fetchSuppliers(); }
+            if (id === 'bills') { fetchBills(); fetchSuppliers(); fetchCoa(); }
+            if (id === 'pnl' && !pnlData) fetchPnl();
+            if (id === 'trial') loadTrial();
+            if (id === 'percentagetax') loadPtax();
+            if (id === 'pnlmonthly' && !pnlMonthly) fetchPnlMonthly();
+            if (id === 'balance' && !bsData) fetchBalanceSheet();
+            if (id === 'bsmonthly' && !bsMonthly) fetchBsMonthly();
+            if (id === 'salessummary') fetchSalesSummary();
+            if (id === 'salesline') fetchSalesLineItems();
+            if (id === 'payments') fetchSalesByPayment();
+            if (id === 'arreport' && !arReport) fetchArReport();
+            if (id === 'collections') { if (!collectionReport) fetchCollectionReport(); if (!checkRegister) fetchChecks(); }
+            if (id === 'pricelog') { fetchChangeRequests(); if (!priceChangeLog) fetchPriceChangeLog(); }
+            if (id === 'apreport' && !apReport) fetchApReport();
+            if (id === 'supplierpay' && !supplierPayments) fetchSupplierPayments();
+            if (id === 'checkvouchers' && !checkVouchers) fetchCheckVouchers();
+            // The liquidate modal picks from real bills / receivables,
+            // so those lists have to be present before it can open.
+            if (id === 'advances') { if (!advances) fetchAdvances(); fetchBills(); fetchArOutstanding(); }
+            if (id === 'profitcat') fetchProfitByCategory();
+            if (id === 'menueng') fetchMenuEngineering();
+            if (id === 'variance') fetchCashierVariance();
+            if (id === 'commissions') fetchCommissions();
+            if (id === 'revolving') { fetchRfFunds(); setRfActiveFund(null); setRfTxs([]); }
+            if (id === 'expenses') { fetchExpenseCategories(); fetchExpenses(); }
+            if (id === 'approvals') fetchRequisitionSlips();
+            };
 
             return (
               <div className="bg-surface border border-white/10 rounded-2xl p-1.5">
@@ -996,7 +1064,7 @@ export default function LedgerTab({ ctx }) {
                     return (
                       <button
                         key={groupLabel}
-                        onClick={() => { if (!isActive) document.getElementById(`subtab-${items[0][0]}`)?.click(); }}
+                        onClick={() => { if (!isActive) openPage(items[0][0]); }}
                         className={`relative shrink-0 px-3.5 py-2 text-[11px] font-black uppercase tracking-widest transition ${
                           isActive ? 'text-fg' : 'text-fg/35 hover:text-fg/70'}`}
                       >
@@ -1016,39 +1084,7 @@ export default function LedgerTab({ ctx }) {
                     <button
                       id={`subtab-${id}`}
                       key={id}
-                      onClick={() => {
-                  setLedgerSubTab(id);
-                  // Merged "Accounts & Periods" page: load all its sections.
-                  if (id === 'accperiods') { fetchCoa(); fetchClosedPeriods(); fetchPaymentMap(); fetchOpeningBalances(); }
-                  // Merged "AR & AP" page.
-                  if (id === 'araap') { fetchArOutstanding(); fetchArAgeing(); fetchApData(); fetchSuppliers(); }
-                  if (id === 'bills') { fetchBills(); fetchSuppliers(); fetchCoa(); }
-                  if (id === 'pnl' && !pnlData) fetchPnl();
-                  if (id === 'trial') loadTrial();
-                  if (id === 'percentagetax') loadPtax();
-                  if (id === 'pnlmonthly' && !pnlMonthly) fetchPnlMonthly();
-                  if (id === 'balance' && !bsData) fetchBalanceSheet();
-                  if (id === 'bsmonthly' && !bsMonthly) fetchBsMonthly();
-                  if (id === 'salessummary') fetchSalesSummary();
-                  if (id === 'salesline') fetchSalesLineItems();
-                  if (id === 'payments') fetchSalesByPayment();
-                  if (id === 'arreport' && !arReport) fetchArReport();
-                  if (id === 'collections') { if (!collectionReport) fetchCollectionReport(); if (!checkRegister) fetchChecks(); }
-                  if (id === 'pricelog') { fetchChangeRequests(); if (!priceChangeLog) fetchPriceChangeLog(); }
-                  if (id === 'apreport' && !apReport) fetchApReport();
-                  if (id === 'supplierpay' && !supplierPayments) fetchSupplierPayments();
-                  if (id === 'checkvouchers' && !checkVouchers) fetchCheckVouchers();
-                  // The liquidate modal picks from real bills / receivables,
-                  // so those lists have to be present before it can open.
-                  if (id === 'advances') { if (!advances) fetchAdvances(); fetchBills(); fetchArOutstanding(); }
-                  if (id === 'profitcat') fetchProfitByCategory();
-                  if (id === 'menueng') fetchMenuEngineering();
-                  if (id === 'variance') fetchCashierVariance();
-                  if (id === 'commissions') fetchCommissions();
-                  if (id === 'revolving') { fetchRfFunds(); setRfActiveFund(null); setRfTxs([]); }
-                  if (id === 'expenses') { fetchExpenseCategories(); fetchExpenses(); }
-                  if (id === 'approvals') fetchRequisitionSlips();
-                      }}
+                      onClick={() => openPage(id)}
                       className={`shrink-0 flex items-center gap-2 px-3 py-2 rounded-lg font-bold text-[11px] tracking-wide transition min-h-[36px] ${
                         ledgerSubTab === id
                           ? 'bg-brand text-white shadow-elev-1'
@@ -1303,6 +1339,13 @@ export default function LedgerTab({ ctx }) {
                   <h3 className="text-fg font-black uppercase tracking-wider text-sm flex items-center gap-2">
                     <Wallet size={15} className="text-brand" /> Opening Balances
                   </h3>
+                  {/* The value table: every account with its balance, on the
+                      side that account naturally carries. Useful for handing an
+                      accountant a position without exporting the whole ledger. */}
+                  <button onClick={() => downloadAccountBalances()} disabled={exportBusy === 'account-balances'}
+                    className="mt-2 flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
+                    <Download size={12} /> {exportBusy === 'account-balances' ? 'Working…' : 'Export Account Balances'}
+                  </button>
                   <p className="text-[11px] text-fg/40 mt-1">
                     Carry an existing balance sheet into the books. Balance-sheet accounts only.
                   </p>

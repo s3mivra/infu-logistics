@@ -193,5 +193,44 @@ export function accountBalanceRows(totalsByCode, acctMeta) {
 export const ACCOUNT_BALANCE_COLUMNS =
   ['Account Code', 'Account Name', 'Type', 'Total Debit', 'Total Credit', 'Balance', 'Normal Side'];
 
+// ── VALID VALUES ─────────────────────────────────────────────────────────────
+// The reference sheet that ships WITH a template: for each column that only
+// accepts certain values, what those values actually are.
+//
+// This exists because the alternative is guesswork. Filling a template with a
+// plausible-looking label ("Rent", "Miscellaneous Expense") and having every
+// row rejected because the importer wanted a code is the single most common way
+// a bulk import wastes someone's afternoon - and the error arrives only after
+// they have typed a hundred rows.
+//
+// `sourced` values come from live data (categories an operator created, payment
+// methods they configured) and are filled in by the route; the static ones are
+// enumerations the code itself defines.
+export function buildValidValues({ expenseCategories = [], paymentMethods = [], stockCategories = [], suppliers = [], units = [], statuses = {} } = {}) {
+  const table = [];
+  const add = (dataset, column, values, note = '') => {
+    if (!values || values.length === 0) return;
+    table.push({ dataset, column, values: values.map(String), note });
+  };
+
+  add('inventory', 'Unit', units, 'Base units. kg and L are accepted and stored as g and ml.');
+  add('inventory', 'Category', stockCategories, 'An unrecognised name creates a new stock category.');
+  add('expenses', 'Category Code', expenseCategories.map(c => `${c.code} - ${c.label}`),
+      'Use the CODE (the six digits), not the label.');
+  add('expenses', 'Paid From', paymentMethods, 'Must match a configured payment method exactly.');
+  add('products', 'Category', [], '');
+  add('bills', 'Status', statuses.bill, '');
+  add('purchaseOrders', 'Status', statuses.po, '');
+  add('advances', 'Status', statuses.advance, 'Derived from the amounts; not settable on import.');
+  add('advances', 'Type', statuses.advanceType, '');
+  add('checkVouchers', 'Status', statuses.voucher, '');
+  add('bills', 'Supplier', suppliers, 'Must match an existing supplier name.');
+  add('purchaseOrders', 'Supplier', suppliers, 'Must match an existing supplier name.');
+
+  return table;
+}
+
+export const VALID_VALUE_COLUMNS = ['Dataset', 'Column', 'Accepted Values', 'Notes'];
+
 export const datasetKeys = () => Object.keys(DATASETS);
 export const isImportable = (key) => !!DATASETS[key]?.importable;
