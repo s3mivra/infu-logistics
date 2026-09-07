@@ -53,14 +53,19 @@ const WITHOUT_TOKEN = 'WITHOUT';
 const protectSlashes = (t) => t.replace(/\bw\/o\b/gi, WITHOUT_TOKEN).replace(/\bw\/(?=\s)/gi, WITH_TOKEN);
 const restoreSlashes = (t) => t.split(WITHOUT_TOKEN).join('w/o').split(WITH_TOKEN).join('w/');
 
+// "Fill cup" / "Line cup" say how high to pour, not what goes in. Stripping
+// the phrase leaves the quantity, which is real: 220g of ice per cup is stock
+// the business buys, and dropping the whole cell left it out of every recipe.
+const CUP_MARK = /\b(fill|line)\s+cup\b/gi;
+const stripCupMark = (t) => String(t == null ? '' : t).replace(CUP_MARK, ' ');
+
 // Cells that are measurements of the DRINK rather than an ingredient: bare
-// numbers (cup fill levels), "0.5 cm" foam depths, "220g Fill cup" ice.
+// numbers (cup fill levels) and "0.5 cm" foam depths.
 export function isNoiseCell(text) {
-  const t = clean(text);
+  const t = clean(stripCupMark(text));
   if (!t) return true;
   if (/^[\d\s./]+$/.test(t)) return true;                 // "130", "100 /120"
   if (/^\d+(\.\d+)?\s*cm$/i.test(t)) return true;         // "0.5 cm"
-  if (/\b(fill|line)\s+cup\b/i.test(t)) return true;      // "220g Fill cup"
   return false;
 }
 
@@ -69,6 +74,11 @@ export function isNoiseCell(text) {
 function takeQuantity(segment) {
   const t = clean(segment);
   if (!t) return { qty: null, unit: null, rest: '' };
+  // "No Ice" against a hot cup is a real instruction: none of it. Read as
+  // unparseable it took the paired "100g" for the iced cup down with it.
+  if (/^no\b/i.test(t) && !/\d/.test(t)) {
+    return { qty: 0, unit: null, rest: stripTemperature(t.replace(/^no\b\s*/i, '')) };
+  }
 
   const unitAlt = [...REAL_UNITS, ...SERVING_MEASURES].join('|');
   // A barista range ("30-35ml") is ONE quantity, not two. Collapse it to its
@@ -94,6 +104,10 @@ function takeQuantity(segment) {
     qty: parseFloat(preferred[1]),
     unit: preferred[2].toLowerCase(),
     rest: stripTemperature(rest),
+    // Two real measurements in ONE segment means a separator is missing:
+    // "10ml Earl Grey Syrup  40ml everwhip" is two materials the sheet forgot
+    // to slash apart. ("2 scoops 30g" is one - only the gram is real.)
+    realUnits: matches.filter(m => REAL_UNITS.includes(m[2].toLowerCase())).length,
   };
 }
 
@@ -146,7 +160,7 @@ export function parseIngredientCell(text, { sizeCount = 2 } = {}) {
 
   // Split on the RAW text so the wide gaps survive; each segment is cleaned
   // after its trailing label has been taken off.
-  let rawSegments = protectSlashes(rawText).split('/').map(restoreSlashes).filter(t => clean(t));
+  let rawSegments = protectSlashes(stripCupMark(rawText)).split('/').map(restoreSlashes).filter(t => clean(t));
   if (rawSegments.length >= 2) {
     const last = stripTrailingLabel(rawSegments[rawSegments.length - 1]);
     if (last.label) {
@@ -172,6 +186,7 @@ export function parseIngredientCell(text, { sizeCount = 2 } = {}) {
     }
     // A quantity with no name is normal and unambiguous: the material is the
     // COLUMN ("Espresso", "Hot Water"), and parseDrinkSheet fills it in.
+    if (p.realUnits > 1 && p.rest) out.needsReview = true;
     out.components.push({ qty: p.qty, unit: p.unit, name: p.rest });
     return out;
   }
@@ -197,6 +212,27 @@ export function parseIngredientCell(text, { sizeCount = 2 } = {}) {
   // Otherwise the leading segments are bare quantities and the names trail
   // behind - the Hot / Iced shape: "260ml / 150ml Full Milk".
   const names = named.map(p => p.rest);
+
+  // Quantities and nothing else: "Hot / Iced      30-35ml" is ONE shot that
+  // both cups get, and "No Ice / 100g" is none for the hot cup and 100g for
+  // the iced one. The material is the column. Neither used to produce
+  // anything at all - long black lost its espresso, every drink its ice.
+  if (withQty.length >= 1 && names.length === 0 && parsed.length >= 2) {
+    if (withQty.length === 1) {
+      out.components.push({ qty: withQty[0].qty, unit: withQty[0].unit, name: '' });
+      return out;
+    }
+    if (sizeCount >= 2) {
+      const labels = ['hot', 'iced'];
+      out.variants = withQty.slice(0, 2).map((p, i) => ({
+        variant: labels[i] || `v${i + 1}`, qty: p.qty, unit: p.unit, name: '',
+      }));
+      return out;
+    }
+    out.components = withQty.map(p => ({ qty: p.qty, unit: p.unit, name: '' }));
+    return out;
+  }
+
   if (withQty.length >= 2 && names.length >= 1) {
     // With only one size there is nothing to split between, so "40ml / 40ml
     // Warm water / Oat Milk" lists two things the drink uses together. Read as
@@ -298,7 +334,7 @@ export function parseDrinkSheet(rows) {
 
   // Columns that describe presentation or price rather than an ingredient.
   // SRP belongs here: read as an ingredient it produced a "180" material.
-  const NON_INGREDIENT = /^(cup mark|size|cups|procedure|ice|srp|price|add oz)\s*$/i;
+  const NON_INGREDIENT = /^(cup mark|size|cups|procedure|srp|price|add oz)\s*$/i;
   const findCol = (re, fallback) => {
     const i = (headers || []).findIndex(h => re.test(String(h || '').trim()));
     return i >= 0 ? i : fallback;
@@ -329,22 +365,47 @@ export function parseDrinkSheet(rows) {
     const sizeCount = Math.max(1, [...String(sizeCell).matchAll(VOLUME_RE)].length);
 
     const ingredients = [];
+    // A section can carry the same column twice - "Espresso" for the hot cup
+    // and "Espresso" again for the iced one. When both cells say the same
+    // thing and neither names a temperature, they are the one shot written
+    // twice, not two: counting both gave a truffle mocha 65ml of espresso.
+    const seenColumnCells = new Set();
     for (let c = 2; c < headers.length; c++) {
       const columnName = headers[c];
-      if (!columnName || NON_INGREDIENT.test(columnName)) continue;
+      if (columnName && NON_INGREDIENT.test(columnName)) continue;
       const parsed = parseIngredientCell(rawCells[c], { sizeCount });
       if (parsed.components.length === 0 && parsed.variants.length === 0) continue;
+      // Some sections leave a column unheaded - the matcha foams sit under a
+      // blank header - and skipping those threw the whole foam away. Such a
+      // cell is usable only where it names its own materials; a bare quantity
+      // there has nothing to identify it.
+      if (!columnName) {
+        if ([...parsed.components, ...parsed.variants].some(x => !x.name)) continue;
+        parsed.column = parsed.label || 'Other';
+      }
       // Some sections express the Hot/Iced split as two SEPARATE columns of the
       // same name ("Espresso" twice, one cell reading "Hot 30-35ml" and the
       // other "Iced 30-35ml") rather than as one slashed cell. The temperature
       // is stripped from the material name - correctly, it is not part of it -
       // so without this hint the two cells look like one ingredient listed
       // twice, and the recipe would double the espresso.
-      const tempHint = /^\s*hot\b/i.test(cells[c]) ? 'hot'
+      // A cell that names BOTH ("Hot / Iced   30-35ml") is not pointing at one
+      // temperature - it is saying the amount is the same either way.
+      const bothTemps = /\bhot\b/i.test(cells[c]) && /\biced?\b/i.test(cells[c]);
+      const tempHint = bothTemps ? ''
+        : /^\s*hot\b/i.test(cells[c]) ? 'hot'
         : /^\s*iced?\b/i.test(cells[c]) ? 'iced' : '';
       // "Hot 30-35ml" in the Espresso column means 32.5ml OF ESPRESSO - the
       // cell carries the amount and the column carries the material.
-      const named = (x) => (x.name ? x : { ...x, name: columnName });
+      // The column name is a material too, so it gets the same treatment:
+      // a "Hot Water" column is the water item, not a separate one.
+      const columnMaterial = stripTemperature(columnName) || columnName || 'Other';
+      const named = (x) => (x.name ? x : { ...x, name: columnMaterial });
+      if (!tempHint) {
+        const key = `${String(columnName).toLowerCase().trim()}|${parsed.raw.toLowerCase()}`;
+        if (seenColumnCells.has(key)) continue;
+        seenColumnCells.add(key);
+      }
       ingredients.push({
         column: columnName,
         tempHint,

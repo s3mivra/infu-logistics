@@ -15,9 +15,17 @@ import {
 const one = (text) => parseIngredientCell(text).components[0];
 
 describe('isNoiseCell', () => {
-  it('rejects cup fill levels and foam depths, which are not ingredients', () => {
-    ['130', '100 /120', '0.5 cm', '1.5 cm', '220g Fill cup', '100g Line cup', '', '   ']
+  it('rejects bare numbers and foam depths, which are not ingredients', () => {
+    ['130', '100 /120', '0.5 cm', '1.5 cm', '', '   ']
       .forEach(t => expect(isNoiseCell(t)).toBe(true));
+  });
+
+  it('keeps the ice, which is stock the business buys', () => {
+    // "Fill cup" is how high to pour, not what goes in - but 220g of ice per
+    // cup is real consumption, and dropping the cell left it out of every
+    // recipe in the book.
+    ['220g Fill cup', '100g Line cup', 'No Ice /  100g Fill cup']
+      .forEach(t => expect(isNoiseCell(t)).toBe(false));
   });
 
   it('keeps anything naming a real material', () => {
@@ -142,6 +150,36 @@ describe('parseIngredientCell - multi-component cells', () => {
     expect(r.components).toEqual([{ qty: 240, unit: 'ml', name: 'Biscoff Based' }]);
     // Which build the menu sells is the operator's call, not the parser's.
     expect(r.needsReview).toBe(true);
+  });
+
+  it('reads one shot written against both temperatures as one shot', () => {
+    // "Hot / Iced      30-35ml" in the Espresso column: the same single shot
+    // whichever cup it goes in. This used to produce nothing at all, so a
+    // long black imported with no espresso in it.
+    const r = parseIngredientCell('Hot / Iced                30-35ml', { sizeCount: 2 });
+    expect(r.components).toEqual([{ qty: 32.5, unit: 'ml', name: '' }]);
+    expect(r.variants).toHaveLength(0);
+  });
+
+  it('reads "No Ice" as none of it, and keeps the ice for the iced cup', () => {
+    const r = parseIngredientCell('No Ice /  100g Fill cup', { sizeCount: 2 });
+    expect(r.variants).toEqual([
+      { variant: 'hot', qty: 0, unit: null, name: '' },
+      { variant: 'iced', qty: 100, unit: 'g', name: '' },
+    ]);
+  });
+
+  it('flags a cell whose separator is missing', () => {
+    // Two real measurements in one segment: the sheet forgot the slash, so
+    // the two materials cannot be told apart.
+    const r = parseIngredientCell('10ml Mxlgy Earl Grey Syrup  40ml everwhip      Earl Grey Foam');
+    expect(r.needsReview).toBe(true);
+  });
+
+  it('does not flag a serving measure written alongside a real one', () => {
+    const r = parseIngredientCell('2 scoops 30g      Dark Chocolate Powder');
+    expect(r.components).toEqual([{ qty: 30, unit: 'g', name: 'Dark Chocolate Powder' }]);
+    expect(r.needsReview).toBe(false);
   });
 
   it('does not read a drizzle as part of the material name', () => {
