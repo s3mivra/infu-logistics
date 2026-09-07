@@ -253,11 +253,20 @@ export function parseDrinkSheet(rows) {
       if (!columnName || NON_INGREDIENT.test(columnName)) continue;
       const parsed = parseIngredientCell(cells[c]);
       if (parsed.components.length === 0 && parsed.variants.length === 0) continue;
+      // Some sections express the Hot/Iced split as two SEPARATE columns of the
+      // same name ("Espresso" twice, one cell reading "Hot 30-35ml" and the
+      // other "Iced 30-35ml") rather than as one slashed cell. The temperature
+      // is stripped from the material name - correctly, it is not part of it -
+      // so without this hint the two cells look like one ingredient listed
+      // twice, and the recipe would double the espresso.
+      const tempHint = /^\s*hot\b/i.test(cells[c]) ? 'hot'
+        : /^\s*iced?\b/i.test(cells[c]) ? 'iced' : '';
       // "Hot 30-35ml" in the Espresso column means 32.5ml OF ESPRESSO - the
       // cell carries the amount and the column carries the material.
       const named = (x) => (x.name ? x : { ...x, name: columnName });
       ingredients.push({
         column: columnName,
+        tempHint,
         ...parsed,
         components: parsed.components.map(named),
         variants: parsed.variants.map(named),
@@ -275,6 +284,115 @@ export function parseDrinkSheet(rows) {
   }
 
   return drinks;
+}
+
+// ── SIZES ────────────────────────────────────────────────────────────────────
+// The Size cell packs volumes and temperatures into one string, each
+// slash-separated and paired positionally:
+//
+//   "12oz / 16oz Hot / Iced"  ->  12oz Hot, 16oz Iced
+//   "16oz Iced"               ->  16oz Iced
+//   "16oz"                    ->  16oz
+//
+// Reading it as one size loses the fact that a hot 12oz and an iced 16oz are
+// different drinks with different recipes - which is exactly what the paired
+// "260ml / 150ml" ingredient cells are describing. Volume order matches
+// variant order (hot first), so size[0] takes the hot quantity and size[1] the
+// iced one.
+const VOLUME_RE = /(\d+(?:\.\d+)?)\s*(oz|ml|l)\b/gi;
+const TEMP_RE = /\b(hot|iced|cold|warm)\b/gi;
+
+export function parseSizes(sizeCell) {
+  const raw = clean(sizeCell);
+  if (!raw) return [];
+  const volumes = [...raw.matchAll(VOLUME_RE)].map(m => `${m[1]}${m[2].toLowerCase()}`);
+  const temps = [...raw.matchAll(TEMP_RE)].map(m => m[1][0].toUpperCase() + m[1].slice(1).toLowerCase());
+  if (volumes.length === 0) return [];
+
+  return volumes.map((volume, i) => {
+    // One temperature against several volumes applies to all of them; more
+    // volumes than temperatures leaves the extras untemped rather than
+    // borrowing a label that was not written.
+    const temp = temps.length === 1 && volumes.length > 1 ? temps[0] : temps[i];
+    return {
+      name: temp ? `${volume} ${temp}` : volume,
+      volume, temp: temp || '',
+      // Which slash-separated ingredient quantity belongs to this size.
+      variantIndex: i,
+    };
+  });
+}
+
+/**
+ * Turn one parsed drink into the product shape the importer expects.
+ *
+ * A drink with two sizes becomes two entries under Extra Sizes, each carrying
+ * only the quantities for its own temperature. Putting both into one recipe
+ * would silently double every ingredient.
+ */
+export function buildProductDraft(drink) {
+  const sizes = parseSizes(drink?.sizes);
+
+  // Ingredients that do not vary by temperature apply to every size.
+  const shared = [];
+  const perVariant = new Map();
+  const addVariant = (idx, row) => {
+    if (!perVariant.has(idx)) perVariant.set(idx, []);
+    perVariant.get(idx).push(row);
+  };
+  for (const ing of (drink?.ingredients || [])) {
+    for (const c of ing.components) {
+      if (!(c.qty > 0) || !c.name) continue;
+      const row = { name: c.name, qty: c.qty, unit: c.unit };
+      // A cell that named its own temperature belongs to that size only. Left
+      // in `shared` it would be added to BOTH sizes, so a drink with separate
+      // Hot and Iced espresso columns would get two shots in every cup.
+      if (ing.tempHint === 'hot') addVariant(0, row);
+      else if (ing.tempHint === 'iced') addVariant(1, row);
+      else shared.push(row);
+    }
+    for (const v of ing.variants) {
+      if (!(v.qty > 0) || !v.name) continue;
+      addVariant(v.variant === 'iced' ? 1 : 0, { name: v.name, qty: v.qty, unit: v.unit });
+    }
+  }
+
+  const recipeFor = (variantIndex) => [
+    ...shared,
+    ...(perVariant.get(variantIndex) || []),
+  ];
+
+  // No size cell at all: one recipe, everything folded together.
+  if (sizes.length === 0) {
+    return {
+      name: drink?.name || '', category: drink?.section || 'Uncategorized',
+      baseSizeName: '', sizes: [],
+      baseRecipe: [...shared, ...(perVariant.get(0) || [])],
+      needsReview: !!drink?.needsReview,
+    };
+  }
+
+  // One size: it is the base size, named so an operator sees "16oz Iced"
+  // rather than a blank field.
+  if (sizes.length === 1) {
+    return {
+      name: drink?.name || '', category: drink?.section || 'Uncategorized',
+      baseSizeName: sizes[0].name, sizes: [],
+      baseRecipe: recipeFor(0),
+      needsReview: !!drink?.needsReview,
+    };
+  }
+
+  // Several: each becomes its own extra size with its own recipe.
+  return {
+    name: drink?.name || '', category: drink?.section || 'Uncategorized',
+    baseSizeName: sizes[0].name,
+    baseRecipe: recipeFor(0),
+    sizes: sizes.slice(1).map(sz => ({
+      name: sz.name, sizeCode: sz.volume, price: 0, recipe: recipeFor(sz.variantIndex),
+    })),
+    needsReview: !!drink?.needsReview,
+  };
 }
 
 // Every distinct material named across parsed drinks and bulk recipes, so the

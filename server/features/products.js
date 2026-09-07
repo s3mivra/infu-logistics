@@ -2,7 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
-import { parseBulkRecipes, parseDrinkSheet, collectMaterials } from '../lib/recipeImport.js';
+import { parseBulkRecipes, parseDrinkSheet, collectMaterials, buildProductDraft } from '../lib/recipeImport.js';
 import { splitUpdate } from '../lib/changeApproval.js';
 import { hasPermission } from '../lib/authz.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
@@ -1003,8 +1003,14 @@ app.post('/api/products/recipe-sheet/parse', verifyToken, requireStaff, requireP
       };
     });
 
+    // The import-ready shape, built here rather than in the browser, so that the
+    // sizes a sheet describes ("12oz / 16oz Iced" -> two sizes, each with its
+    // own quantities) survive instead of being flattened into one recipe.
+    const drafts = drinks.map(buildProductDraft);
+
     res.json({
       success: true,
+      drafts,
       counts: {
         bulkRecipes: bulkRecipes.length,
         drinks: drinks.length,
@@ -1048,6 +1054,9 @@ app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res
 
     const results = [];
     let created = 0, updated = 0;
+    // Categories referenced by the sheet but not yet on the menu.
+    const seenCategories = new Set();
+    const createdCategories = [];
 
     for (const row of rows) {
       const name = String(row?.name || '').trim();
@@ -1057,43 +1066,90 @@ app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res
         continue;
       }
       try {
-        const recipe = [];
         const unmatched = [];
-        for (const ing of (Array.isArray(row.ingredients) ? row.ingredients : [])) {
-          const ingName = String(ing?.name || '').trim();
-          if (!ingName) continue;
-          const item = matchIngredient(ingName, ing.unit);
-          if (!item) { unmatched.push(ingName); continue; }
-          const baseQty = displayToBase(Number(ing.qty) || 0, ing.unit || item.unit);
-          if (!(baseQty > 0)) continue;
-          recipe.push({
-            invId: String(item._id), name: item.itemName, qty: baseQty,
-            cost: item.unitCost || 0, unit: effectiveDisplay(item).displayUnit,
-          });
-        }
+        // One resolver for the base recipe AND every size. A hot 12oz and an
+        // iced 16oz are different drinks with different quantities, so each
+        // size carries its own recipe rather than sharing the base one.
+        const resolveRecipe = (list) => {
+          const out = [];
+          for (const ing of (Array.isArray(list) ? list : [])) {
+            const ingName = String(ing?.name || '').trim();
+            if (!ingName) continue;
+            const item = matchIngredient(ingName, ing.unit);
+            if (!item) { unmatched.push(ingName); continue; }
+            const baseQty = displayToBase(Number(ing.qty) || 0, ing.unit || item.unit);
+            if (!(baseQty > 0)) continue;
+            // The unit has to be the item's DISPLAY unit. The editor divides
+            // the stored base quantity by the item's pack size and labels it
+            // with this unit, so importing a raw "ml" against a litre-tracked
+            // item made 150ml of milk read as "150 L".
+            const eff = effectiveDisplay(item);
+            out.push({
+              invId: String(item._id), name: item.itemName, qty: baseQty,
+              cost: item.unitCost || 0, unit: eff.displayUnit,
+            });
+          }
+          return out;
+        };
+        const recipe = resolveRecipe(row.ingredients);
+        const sizes = (Array.isArray(row.sizes) ? row.sizes : [])
+          .filter(sz => String(sz?.name || '').trim())
+          .map(sz => ({
+            sizeCode: sz.sizeCode || '',
+            name: String(sz.name).trim(),
+            price: Number(sz.price) || 0,
+            // Either spelling: the parsed drafts call it `recipe`, a
+            // hand-built spreadsheet import calls it `ingredients`.
+            recipe: resolveRecipe(sz.recipe || sz.ingredients),
+          }));
 
         const category = String(row.category || 'Uncategorized').trim();
+        // A product carries its category as a STRING, but the menu is built
+        // from Category documents. Setting one without the other filed
+        // products under a category that did not exist anywhere in the UI.
+        if (category && !seenCategories.has(category.toLowerCase())) {
+          seenCategories.add(category.toLowerCase());
+          const exists = await Category.findOne({
+            businessType: BUSINESS_TYPE, ...tenantScope(req),
+            name: new RegExp(`^${escapeRegex(category)}$`, 'i'),
+          }).lean();
+          if (!exists) {
+            await Category.create({ businessType: BUSINESS_TYPE, ...tenantScope(req), name: category });
+            createdCategories.push(category);
+          }
+        }
         const existing = await Product.findOne({
           businessType: BUSINESS_TYPE, ...tenantScope(req),
           name: new RegExp(`^${escapeRegex(name)}$`, 'i'), isArchived: { $ne: true },
         });
 
+        // The size the base recipe belongs to ("12oz Hot"), so the field is
+        // not left blank on a product that plainly has one.
+        const baseSize = String(row.baseSize || '').trim();
+        const sizeLines = sizes.reduce((t, sz) => t + sz.recipe.length, 0);
+
         if (existing) {
           existing.basePrice = srp;
           existing.category = category;
           existing.baseRecipe = recipe;
+          if (baseSize) existing.baseSize = baseSize;
+          // Only overwrite sizes when the import actually carries some -
+          // otherwise re-importing a sheet without a size column would wipe
+          // sizes an operator had set up by hand.
+          if (sizes.length) existing.sizes = sizes;
           await existing.save();
           updated++;
-          results.push({ name, ok: true, action: 'updated', matched: recipe.length, unmatched });
+          results.push({ name, ok: true, action: 'updated', matched: recipe.length + sizeLines, sizes: sizes.length, unmatched });
         } else {
           const catPrefix = getCategoryPrefix(category);
           const productCode = await generateNextSequence(Product, catPrefix, 'productCode');
           await Product.create({
             businessType: BUSINESS_TYPE, ...tenantScope(req),
             productCode, name, category, basePrice: srp, baseRecipe: recipe,
+            baseSize, sizes,
           });
           created++;
-          results.push({ name, ok: true, action: 'created', matched: recipe.length, unmatched });
+          results.push({ name, ok: true, action: 'created', matched: recipe.length + sizeLines, sizes: sizes.length, unmatched });
         }
       } catch (rowErr) {
         results.push({ name, ok: false, error: rowErr.message });
@@ -1102,7 +1158,7 @@ app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res
 
     await logAudit(req, { action: 'import-menu', entity: 'Product', entityId: 'bulk', after: { created, updated, rows: results.length } });
     emitToAll('menuUpdated');
-    res.json({ success: true, created, updated, results });
+    res.json({ success: true, created, updated, createdCategories, results });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

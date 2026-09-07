@@ -8,6 +8,8 @@ import bcrypt from 'bcrypt';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 
+let orderSeq = 0;
+
 let app, stop, superToken, cashierToken, clientA, clientB;
 
 const auth = (t) => ({ Authorization: `Bearer ${t}` });
@@ -17,14 +19,18 @@ const rowFor = (b, name) => b.clients.find(c => c.name === name);
 
 const mkClient = async (username, name) => {
   const c = await mongoose.model('ClientAccount').create({
-    clientCode: `CUS-1000-A${Math.floor(Math.random() * 9000 + 1000)}`,
+    clientCode: `CUS-1000-A${String(++orderSeq).padStart(4, '0')}`,
     username, password: await bcrypt.hash('pw1234', 4), name, paymentMethod: 'GCash',
   });
   return String(c._id);
 };
 
 const mkOrder = (attrs) => mongoose.model('Order').create({
-  orderNumber: 70000 + Math.floor(Math.random() * 9999),
+  // A counter, not a random number. `70000 + random(9999)` has only 9,999
+  // possible values, and this file creates several orders per run - the
+  // duplicate-key failure it eventually produces looks like a real bug in
+  // the code under test, which is the worst kind of flake.
+  orderNumber: `CLT-${String(++orderSeq).padStart(6, '0')}`,
   status: 'Completed', paymentMethod: 'GCash', total: 100,
   arSettled: false, createdAt: new Date(), businessType: 'log', ...attrs,
 });

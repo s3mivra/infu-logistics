@@ -48,6 +48,7 @@ import registerBills from './features/bills.js';
 import registerCheckVouchers from './features/check-vouchers.js';
 import registerAdvances from './features/advances.js';
 import registerDataExport from './features/data-export.js';
+import registerFixedAssets from './features/fixed-assets.js';
 import registerRequisitions from './features/requisitions.js';
 import registerProduction from './features/production.js';
 import registerCollections from './features/collections.js';
@@ -2386,6 +2387,20 @@ const PurchaseOrderSchema = new mongoose.Schema({
   expectedDate: { type: Date },
   notes:        { type: String, default: '' },
   lines: [{
+    // What is actually being bought. Every line used to be treated as stock,
+    // so a PO for an espresso machine landed in Inventory - where a recipe
+    // could consume it - and booked a TRADE payable for a non-trade purchase.
+    //   inventory   goods to sell or consume  DR 130000 / CR 220000 (trade)
+    //   fixedAsset  equipment                 DR 1401xx / CR 225100 (non-trade)
+    //   expense     a service                 DR expense / CR 225200 (non-trade)
+    purchaseType: { type: String, enum: ['inventory', 'fixedAsset', 'expense'], default: 'inventory' },
+    // Which account the non-inventory kinds land in. Ignored for inventory.
+    assetAccountCode:   { type: String, default: '' },   // 1401xx for fixedAsset
+    expenseAccountCode: { type: String, default: '' },   // any expense account
+    // Depreciation terms, captured at purchase so the asset register can be
+    // created on receipt rather than chased up afterwards.
+    usefulLifeMonths: { type: Number, default: null },
+    salvageValue:     { type: Number, default: 0 },
     invId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
     itemName:    { type: String, default: '' },
     itemCode:    { type: String, default: '' },
@@ -2397,6 +2412,18 @@ const PurchaseOrderSchema = new mongoose.Schema({
     productionDate: { type: Date, default: null },          // for goods with no real expiry (beans, etc.)
     receivedQty: { type: Number, default: null },           // null until reconciled
   }],
+  // Paid before the goods arrive. That is NOT a payable - nothing is owed,
+  // the supplier owes US delivery - so it books a supplier advance (170200)
+  // instead, and receiving liquidates the advance rather than crediting A/P.
+  // Recording it as a payable would overstate both what we owe and, once the
+  // cash also left, what we hold.
+  prepaid:        { type: Boolean, default: false },
+  prepaidAmount:  { type: Number, default: 0 },
+  prepaidDate:    { type: Date, default: null },
+  prepaidFromAccount: { type: String, default: '' },
+  // The Advance this PO was paid through, so receiving can liquidate it.
+  advanceId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Advance', default: null },
+  advanceNumber:  { type: String, default: '' },
   estTotal:     { type: Number, default: 0 },
   actualTotal:  { type: Number, default: 0 },
   receivedAt:   { type: Date, default: null },
@@ -2583,6 +2610,66 @@ const AdvanceSchema = new mongoose.Schema({
 AdvanceSchema.index({ businessType: 1, date: -1 });
 AdvanceSchema.index({ businessType: 1, type: 1, status: 1 });
 const Advance = mongoose.model('Advance', AdvanceSchema);
+
+// ── FIXED ASSET ──────────────────────────────────────────────────────────────
+// Equipment, furniture, vehicles - what the business owns and writes down over
+// time. Until now 140000 Fixed Assets was a header with no children, so none of
+// this could be recorded and the balance sheet understated what the business
+// owned by however much the fit-out cost.
+//
+// Cost and accumulated depreciation are held separately and posted to paired
+// accounts (1401xx asset / 1501xx contra-asset). Netting them into one number
+// loses the distinction between "we own a P60,000 machine that is half worn
+// out" and "we own a P30,000 machine", which are different facts.
+const FIXED_ASSET_STATUSES = ['Active', 'Fully Depreciated', 'Disposed'];
+// Each class pairs its cost account with its own accumulated-depreciation
+// account, so a class can be read net without unpicking a pooled contra.
+const FIXED_ASSET_CLASSES = {
+  '140100': { name: 'Furniture & Fixtures', accum: '150100' },
+  '140200': { name: 'Machinery & Equipment', accum: '150200' },
+  '140300': { name: 'Computer & IT Equipment', accum: '150300' },
+  '140400': { name: 'Vehicles', accum: '150400' },
+  '140500': { name: 'Leasehold Improvements', accum: '150500' },
+};
+const FixedAssetSchema = new mongoose.Schema({
+  businessType:  { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  assetCode:     { type: String, index: true },
+  branchCode:    { type: String, default: '', index: true },
+  name:          { type: String, required: true },
+  description:   { type: String, default: '' },
+  // Which 1401xx it is carried in; its paired 1501xx is looked up, never stored,
+  // so the two cannot drift apart.
+  accountCode:   { type: String, required: true },
+  acquisitionDate: { type: Date, required: true },
+  acquisitionCost: { type: Number, required: true },
+  salvageValue:  { type: Number, default: 0 },
+  usefulLifeMonths: { type: Number, default: 60 },
+  accumulatedDepreciation: { type: Number, default: 0 },
+  lastDepreciationDate: { type: Date, default: null },
+  status:        { type: String, enum: FIXED_ASSET_STATUSES, default: 'Active', index: true },
+  serialNumber:  { type: String, default: '' },
+  location:      { type: String, default: '' },
+  supplierName:  { type: String, default: '' },
+  referenceNumber: { type: String, default: '' },
+  journalEntryRef: { type: String, default: '' },
+  // Each posting, so a depreciation charge can be traced back to its entry.
+  depreciationHistory: [{
+    amount: { type: Number, required: true },
+    months: { type: Number, default: 0 },
+    throughDate: { type: Date },
+    journalRef: { type: String, default: '' },
+    by: { type: String, default: '' },
+    at: { type: Date, default: Date.now },
+  }],
+  disposedAt:    { type: Date, default: null },
+  disposalProceeds: { type: Number, default: 0 },
+  disposalNote:  { type: String, default: '' },
+  disposalJournalRef: { type: String, default: '' },
+  createdBy:     { type: String, default: '' },
+}, { timestamps: true });
+FixedAssetSchema.index({ businessType: 1, status: 1 });
+const FixedAsset = mongoose.model('FixedAsset', FixedAssetSchema);
 
 // --- API ROUTES ---
 
@@ -3441,6 +3528,10 @@ const ctx = {
   CheckVoucherSchema,
   CheckVoucher,
   ADVANCE_TYPES,
+  FIXED_ASSET_STATUSES,
+  FIXED_ASSET_CLASSES,
+  FixedAssetSchema,
+  FixedAsset,
   ADVANCE_STATUSES,
   ADVANCE_ACCOUNTS,
   AdvanceSchema,
@@ -3508,6 +3599,7 @@ registerBills(ctx);
 registerCheckVouchers(ctx);
 registerAdvances(ctx);
 registerDataExport(ctx);
+registerFixedAssets(ctx);
 registerRequisitions(ctx);
 registerProduction(ctx);
 registerCollections(ctx);

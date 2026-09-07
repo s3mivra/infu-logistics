@@ -97,7 +97,13 @@ export default function registerAdvances(ctx) {
   // deposit is a liability, not a disbursement.
   app.post('/api/advances', verifyToken, ...canPostAcct, async (req, res) => {
     try {
-      const { type, payeeName, payeeId, amount, purpose, sourceAccount, referenceNumber } = req.body || {};
+      const { type, payeeName, payeeId, amount, purpose, sourceAccount, referenceNumber, date } = req.body || {};
+      // When the money actually moved. An advance is usually recorded after
+      // the fact - the cash left on Friday, someone files it on Monday - so
+      // stamping 'now' puts it in the wrong period and the ledger stops
+      // matching the bank. Defaults to today when not supplied.
+      const txnDate = date ? dayStart(date) : new Date();
+      if (Number.isNaN(txnDate.getTime())) return res.status(400).json({ success: false, error: 'Invalid transaction date.' });
       if (!ADVANCE_TYPES.includes(type)) return res.status(400).json({ success: false, error: `type must be one of: ${ADVANCE_TYPES.join(', ')}.` });
       if (!String(payeeName || '').trim()) return res.status(400).json({ success: false, error: 'A payee name is required.' });
       const amt = money(amount);
@@ -118,7 +124,7 @@ export default function registerAdvances(ctx) {
            { accountCode: srcCode, accountName: srcName, debit: 0, credit: amt }];
       assertBalanced(lines, reference);
       await JournalEntry.create({
-        date: new Date(), reference,
+        date: txnDate, reference,
         description: `${inbound ? 'Advance received from' : 'Advance to'} ${payeeName}${purpose ? ` - ${purpose}` : ''}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}`,
         lines, totalDebit: amt, totalCredit: amt,
       });
@@ -134,6 +140,7 @@ export default function registerAdvances(ctx) {
           payeeId: String(payeeId || ''), payeeName,
           amount: amt, purpose: 'other',
           sourceAccount: srcCode, sourceAccountName: srcName,
+          date: txnDate,
           referenceNumber: referenceNumber || '',
           notes: `Advance ${advanceNumber}${purpose ? ` - ${purpose}` : ''}`,
           journalEntryRef: reference, issuedBy: req.user?.name || '',
@@ -148,6 +155,7 @@ export default function registerAdvances(ctx) {
         sourceAccount: srcCode, sourceAccountName: srcName,
         referenceNumber: referenceNumber || '', journalEntryRef: reference,
         checkVoucherRef: voucher?.voucherNumber || '',
+        date: txnDate,
         issuedBy: req.user?.name || '',
       });
 
@@ -182,7 +190,11 @@ export default function registerAdvances(ctx) {
       const outstanding = outstandingOf(advance);
       if (outstanding <= 0) return res.status(409).json({ success: false, error: 'This advance is already fully liquidated.' });
 
-      const { method, amount, expenseAccount, billId, orderId, note, referenceNumber, returnToAccount } = req.body || {};
+      const { method, amount, expenseAccount, billId, orderId, note, referenceNumber, returnToAccount, date } = req.body || {};
+      // Same reasoning as issuing: a liquidation filed on Monday for a
+      // Friday receipt belongs in Friday's period.
+      const txnDate = date ? dayStart(date) : new Date();
+      if (Number.isNaN(txnDate.getTime())) return res.status(400).json({ success: false, error: 'Invalid transaction date.' });
       const validMethods = advance.type === 'customer' ? ['order', 'cash-return'] : ['expense', 'bill', 'cash-return'];
       if (!validMethods.includes(method)) {
         return res.status(400).json({ success: false, error: `method for a ${advance.type} advance must be one of: ${validMethods.join(', ')}.` });
@@ -228,7 +240,7 @@ export default function registerAdvances(ctx) {
            { accountCode: ctl.code, accountName: ctl.name, debit: 0, credit: amt }];
       assertBalanced(lines, reference);
       await JournalEntry.create({
-        date: new Date(), reference,
+        date: txnDate, reference,
         description: `Liquidation of advance ${advance.advanceNumber} (${advance.payeeName}) via ${method}${note ? ` - ${note}` : ''}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}`,
         lines, totalDebit: amt, totalCredit: amt,
       });

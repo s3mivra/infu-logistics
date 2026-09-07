@@ -249,7 +249,13 @@ export default function ProcurementTab({ ctx }) {
   const UNIT_OPTIONS = ['', 'pcs', 'kg', 'L', 'g', 'ml'];
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({ supplier: '', supplierId: '', expectedDate: '', notes: '', lines: [blankLine()] });
+  const [form, setForm] = useState({
+    supplier: '', supplierId: '', expectedDate: '', notes: '', lines: [blankLine()],
+    // Paid before delivery. That is a supplier ADVANCE, not a payable -
+    // nothing is owed, the supplier owes us goods - so the server books it
+    // to 170200 and receiving clears it instead of crediting A/P.
+    prepaid: false, prepaidAmount: '', prepaidDate: '', prepaidFromAccount: '111000',
+  });
   const [saving, setSaving] = useState(false);
 
   const openNewForm = () => {
@@ -629,7 +635,14 @@ export default function ProcurementTab({ ctx }) {
       // approves the slip (Ledger → Approvals).
       const url = editId ? `/api/purchase-orders/${editId}` : '/api/requisition-slips';
       const body = editId
-        ? { supplier: form.supplier, supplierId: form.supplierId || null, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines }
+        ? {
+            supplier: form.supplier, supplierId: form.supplierId || null,
+            expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines,
+            prepaid: !!form.prepaid,
+            prepaidAmount: form.prepaidAmount === '' ? undefined : Number(form.prepaidAmount),
+            prepaidDate: form.prepaidDate || undefined,
+            prepaidFromAccount: form.prepaidFromAccount || undefined,
+          }
         : { type: 'procurement', supplier: form.supplier, supplierId: form.supplierId || null, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines };
       const res = await apiFetch(url, { method: editId ? 'PATCH' : 'POST', body: JSON.stringify(body) });
       const d = await res.json();
@@ -1151,17 +1164,43 @@ export default function ProcurementTab({ ctx }) {
                           <button onClick={() => removeLine(idx)} className="p-1.5 rounded-lg text-fg/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={15} /></button>
                         )}
                       </div>
+                      {/* Labelled, not placeholder-only. A placeholder vanishes
+                          the moment something is typed, so a half-filled line
+                          gave no way to tell qty from unit cost from pack size -
+                          and a date input never shows one at all. Same label
+                          pattern as the storage block below. */}
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        <input value={l.itemName} onChange={e => updateLine(idx, { itemName: e.target.value, invId: null })} placeholder="Item name" className="col-span-2 sm:col-span-3 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
-                        <input type="number" min="0" step="any" value={l.orderedQty} onChange={e => updateLine(idx, { orderedQty: e.target.value })} placeholder="Qty" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
-                        <select value={l.unit} onChange={e => updateLine(idx, { unit: e.target.value })} className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-brand/60">
-                          {UNIT_OPTIONS.map(u => <option key={u || 'none'} value={u}>{u || 'Unit'}</option>)}
-                        </select>
-                        <input type="number" min="0" step="any" value={l.unitCost} onChange={e => updateLine(idx, { unitCost: e.target.value })} placeholder="Unit cost" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
-                        <input type="number" min="0" step="any" value={l.packSize} onChange={e => updateLine(idx, { packSize: e.target.value })} title="Weight / volume per pack, in the selected unit" placeholder="Per-pack size (opt.)" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
-                        <input type="date" value={l.expiryDate} onChange={e => updateLine(idx, { expiryDate: e.target.value })} title="Expiry date (optional)" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg/70 focus:outline-none focus:border-brand/60" />
+                        <div className="col-span-2 sm:col-span-3">
+                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Item Name</p>
+                          <input value={l.itemName} onChange={e => updateLine(idx, { itemName: e.target.value, invId: null })} placeholder="e.g. Alaska Barista Milk" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Qty (packs)</p>
+                          <input type="number" min="0" step="any" value={l.orderedQty} onChange={e => updateLine(idx, { orderedQty: e.target.value })} placeholder="10" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Unit</p>
+                          <select value={l.unit} onChange={e => updateLine(idx, { unit: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-brand/60">
+                            {UNIT_OPTIONS.map(u => <option key={u || 'none'} value={u}>{u || 'Unit'}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Cost per Pack</p>
+                          <input type="number" min="0" step="any" value={l.unitCost} onChange={e => updateLine(idx, { unitCost: e.target.value })} placeholder="500.00" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Size per Pack</p>
+                          <input type="number" min="0" step="any" value={l.packSize} onChange={e => updateLine(idx, { packSize: e.target.value })} title="Weight / volume per pack, in the selected unit" placeholder="1000" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Expiry Date</p>
+                          <input type="date" value={l.expiryDate} onChange={e => updateLine(idx, { expiryDate: e.target.value })} title="Expiry date (optional)" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg/70 focus:outline-none focus:border-brand/60" />
+                        </div>
                         {!l.expiryDate && (
-                          <input type="date" value={l.productionDate || ''} onChange={e => updateLine(idx, { productionDate: e.target.value })} title="Production date - for goods with no real expiry, e.g. beans" placeholder="Production date" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg/70 focus:outline-none focus:border-brand/60" />
+                          <div>
+                            <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Production Date</p>
+                            <input type="date" value={l.productionDate || ''} onChange={e => updateLine(idx, { productionDate: e.target.value })} title="For goods with no real expiry, e.g. beans" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg/70 focus:outline-none focus:border-brand/60" />
+                          </div>
                         )}
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 border-t border-white/8 mt-1">
@@ -1199,6 +1238,54 @@ export default function ProcurementTab({ ctx }) {
                     </div>
                   ))}
                 </div>
+              </div>
+
+              {/* Already paid? Then this is not money owed - it is a
+                  prepayment the supplier still has to deliver against. The
+                  server books it as a supplier advance and clears it on
+                  receipt, so A/P never shows a debt on a settled order. */}
+              <div className="border border-white/10 rounded-xl p-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={!!form.prepaid}
+                    onChange={e => setForm(f => ({ ...f, prepaid: e.target.checked }))} />
+                  <span className="text-[11px] font-black uppercase tracking-wider text-fg/70">Already paid this supplier</span>
+                </label>
+                {form.prepaid && (
+                  <>
+                    <p className="text-[10px] text-fg/35 mt-1.5">
+                      Recorded as an advance to the supplier, not a payable. Receiving the goods clears it.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
+                      <div>
+                        <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Amount Paid</p>
+                        <input type="number" min="0" step="0.01" value={form.prepaidAmount}
+                          onChange={e => setForm(f => ({ ...f, prepaidAmount: e.target.value }))}
+                          placeholder={String(formEstTotal ?? '')}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Date Paid</p>
+                        <input type="date" value={form.prepaidDate}
+                          onChange={e => setForm(f => ({ ...f, prepaidDate: e.target.value }))}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg/70 focus:outline-none focus:border-brand/60" />
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Paid From</p>
+                        <select value={form.prepaidFromAccount}
+                          onChange={e => setForm(f => ({ ...f, prepaidFromAccount: e.target.value }))}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-brand/60">
+                          <option value="111000">Cash on Hand</option>
+                          <option value="112000">Cash in Bank</option>
+                          <option value="113000">E-Wallet</option>
+                          <option value="114000">Petty Cash / Revolving Fund</option>
+                        </select>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-fg/30 mt-1.5">
+                      Leave the amount blank to record the full estimated total.
+                    </p>
+                  </>
+                )}
               </div>
 
               <div>

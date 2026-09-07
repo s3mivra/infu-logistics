@@ -19,7 +19,25 @@ export const ACCOUNTS = {
   '120000': { name: 'Accounts Receivable',        type: 'asset', parent: '100000' },
   '130000': { name: 'Inventory',                  type: 'asset', parent: '100000' },
   '140000': { name: 'Fixed Assets',               type: 'asset', isParent: true, parent: '100000' },
+  // Both 140000 and 150000 were headers with no children, so equipment could
+  // not be recorded at all and the balance sheet understated what the business
+  // owns. Each asset class is paired with its own accumulated-depreciation
+  // account (1401xx <-> 1501xx) so a class can be read net without unpicking
+  // one pooled contra account.
+  '140100': { name: 'Furniture & Fixtures',       type: 'asset', parent: '140000' },
+  '140200': { name: 'Machinery & Equipment',      type: 'asset', parent: '140000' },
+  '140300': { name: 'Computer & IT Equipment',    type: 'asset', parent: '140000' },
+  '140400': { name: 'Vehicles',                   type: 'asset', parent: '140000' },
+  '140500': { name: 'Leasehold Improvements',     type: 'asset', parent: '140000' },
   '150000': { name: 'Accumulated Depreciation',   type: 'asset', isParent: true, parent: '100000' },
+  // Contra-asset: carries a CREDIT balance, which is why it must never be
+  // netted into 140000 - the gross cost and what has been written off are
+  // separately meaningful.
+  '150100': { name: 'Accum. Dep. - Furniture & Fixtures',    type: 'asset', parent: '150000' },
+  '150200': { name: 'Accum. Dep. - Machinery & Equipment',   type: 'asset', parent: '150000' },
+  '150300': { name: 'Accum. Dep. - Computer & IT Equipment', type: 'asset', parent: '150000' },
+  '150400': { name: 'Accum. Dep. - Vehicles',                type: 'asset', parent: '150000' },
+  '150500': { name: 'Accum. Dep. - Leasehold Improvements',  type: 'asset', parent: '150000' },
   '160000': { name: 'Other Assets',               type: 'asset', isParent: true, parent: '100000' },
   // We paid a supplier MORE than a bill required (or ahead of one existing at
   // all) - an asset, since THEY now owe US either a future credit or a cash
@@ -48,8 +66,20 @@ export const ACCOUNTS = {
   '200000': { name: 'Liabilities',                type: 'liability', isParent: true },
   '210000': { name: 'Current Liabilities',        type: 'liability', isParent: true, parent: '200000' },
   '220000': { name: 'Accounts Payable',           type: 'liability', parent: '200000' },
+  // ===== NON-TRADE PAYABLES =====
+  // 220000 Accounts Payable is the TRADE control account - what we owe for
+  // goods bought to sell or consume. Buying an espresso machine or a service
+  // on credit is NOT that: no inventory arrives and nothing is resold. Mirrors
+  // 170000 on the receivable side, so both halves of the balance sheet
+  // separate trade from non-trade the same way.
+  '225000': { name: 'Non-Trade Payables',         type: 'liability', isParent: true, parent: '200000' },
+  '225100': { name: 'Equipment & Asset Purchases Payable', type: 'liability', parent: '225000' },
+  '225200': { name: 'Services & Expenses Payable',         type: 'liability', parent: '225000' },
   '230000': { name: 'Taxes Payable',              type: 'liability', parent: '200000' },
   '240000': { name: 'Payroll Liabilities',        type: 'liability', parent: '200000' },
+  '250100': { name: 'Bank Loan',                  type: 'liability', parent: '250000' },
+  '250200': { name: 'Equipment Financing',        type: 'liability', parent: '250000' },
+  '250300': { name: 'Owner / Related-Party Loan', type: 'liability', parent: '250000' },
   '250000': { name: 'Loans Payable',              type: 'liability', isParent: true, parent: '200000' },
   '260000': { name: 'Other Liabilities',          type: 'liability', parent: '200000' },
   // A client paid MORE than they owed - a liability, since WE now owe THEM

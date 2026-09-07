@@ -4523,6 +4523,15 @@ const updateStatus = async (orderId, newStatus) => {
   const [rsPreview, setRsPreview] = useState(null);    // server parse result
   const [rsBusy, setRsBusy] = useState(false);
   const [rsCreateMissing, setRsCreateMissing] = useState(true);
+  // The workbooks carry no price column - they are recipe sheets - so SRP is
+  // typed here rather than invented. Keyed by product name, then size name
+  // ('' for the base size).
+  const [rsPrices, setRsPrices] = useState({});
+  const setRsPrice = (name, size, value) => setRsPrices(prev => ({
+    ...prev, [name]: { ...(prev[name] || {}), [size]: value },
+  }));
+  // Drafts the server built: base size + extra sizes, each with its own recipe.
+  const rsDrafts = (rsPreview?.drafts || []).filter(d => !d.needsReview);
 
   const openRecipeSheet = async (file) => {
     if (!file) return;
@@ -4545,7 +4554,7 @@ const updateStatus = async (orderId, newStatus) => {
     } finally { setRsBusy(false); }
   };
 
-  const closeRecipeSheet = () => { setRsFile(null); setRsPreview(null); };
+  const closeRecipeSheet = () => { setRsFile(null); setRsPreview(null); setRsPrices({}); };
 
   // Commit: create the stock items that do not exist yet (so recipes have
   // something to link to), then hand the drinks to the existing menu importer,
@@ -4553,7 +4562,7 @@ const updateStatus = async (orderId, newStatus) => {
   const submitRecipeSheet = async () => {
     if (!rsPreview) return;
     const missing = rsPreview.materials.filter(m => !m.matchedInvId);
-    const drinks = rsPreview.drinks.filter(d => !d.needsReview);
+    const drinks = rsDrafts;
     if (drinks.length === 0) return ui.alert('Nothing to import - every drink needs review first.');
 
     const ok = await ui.confirm(
@@ -4580,17 +4589,19 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           }) });
         }
       }
-      // Flatten each drink's parsed cells into the {name, qty, unit} rows the
-      // menu importer expects. A hot/iced variant contributes its hot figure -
-      // the sizes themselves are set up afterwards on the product.
+      // The server already built the import shape, sizes and all: the base
+      // recipe carries the base size's quantities and each extra size carries
+      // its own, so a 12oz Hot and a 16oz Iced no longer collapse into one
+      // recipe holding both milks. Only the prices are added here.
       const rows = drinks.map(d => ({
-        category: d.section || 'Uncategorized',
+        category: d.category || 'Uncategorized',
         name: d.name,
-        srp: 0,
-        ingredients: d.ingredients.flatMap(ing => [
-          ...ing.components.map(c => ({ name: c.name, qty: c.qty, unit: c.unit })),
-          ...ing.variants.slice(0, 1).map(v => ({ name: v.name, qty: v.qty, unit: v.unit })),
-        ]).filter(x => x.name && x.qty > 0),
+        srp: Number(rsPrices[d.name]?.['']) || 0,
+        baseSize: d.baseSizeName || '',
+        ingredients: d.baseRecipe || [],
+        sizes: (d.sizes || []).map(sz => ({
+          ...sz, price: Number(rsPrices[d.name]?.[sz.name]) || 0,
+        })),
       }));
       const res = await apiFetch('/api/products/import-menu', { method: 'POST', body: JSON.stringify({ rows }) });
       const d = await res.json();
@@ -4601,7 +4612,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       ui.alert(
         `Recipe sheet imported.\n\nCreated: ${d.created}\nUpdated: ${d.updated}` +
         (unmatched.length ? `\n\nIngredients not linked (recipe line skipped):\n- ${unmatched.join('\n- ')}` : '') +
-        "\n\nPrices import as 0 - set each drink's price before selling.",
+        "\n\nAny drink left without a price cannot be sold until one is set.",
       );
     } catch { ui.alert('Network error.'); }
     finally { setRsBusy(false); }
@@ -6668,7 +6679,10 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     } catch (err) { console.error('fetchAdvances', err); }
   };
 
-  const ADV_ISSUE_BLANK = { type: 'employee', payeeName: '', amount: '', purpose: '', sourceAccount: '111000', referenceNumber: '' };
+  // date: when the money actually moved. An advance is usually filed after
+  // the fact, so stamping 'now' would put it in the wrong period and the
+  // ledger would stop matching the bank.
+  const ADV_ISSUE_BLANK = { type: 'employee', payeeName: '', amount: '', purpose: '', sourceAccount: '111000', referenceNumber: '', date: '' };
   const [advIssueModal, setAdvIssueModal] = useState(null); // null | {...ADV_ISSUE_BLANK}
   const submitIssueAdvance = async () => {
     const f = advIssueModal;
@@ -6697,7 +6711,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     method: advance.type === 'customer' ? 'order' : 'expense',
     amount: String(advance.outstanding ?? ''),
     expenseAccount: '', returnToAccount: '111000',
-    billId: '', orderId: '', referenceNumber: '', note: '',
+    billId: '', orderId: '', referenceNumber: '', note: '', date: '',
   });
   const submitLiquidateAdvance = async () => {
     const f = advLiqModal;
@@ -6712,7 +6726,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         method: f.method, amount: amt,
         expenseAccount: f.expenseAccount, returnToAccount: f.returnToAccount,
         billId: f.billId || undefined, orderId: f.orderId || undefined,
-        referenceNumber: f.referenceNumber, note: f.note,
+        referenceNumber: f.referenceNumber, note: f.note, date: f.date || undefined,
       }) });
       const d = await res.json();
       if (!d.success) { ui.alert(d.error || 'Failed to liquidate.'); return; }
@@ -7585,6 +7599,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     exportBusy, downloadDataset, downloadAccountBalances,
     downloadMenuImportTemplate, parseMenuImportFile, submitMenuImport,
     rsFile, rsPreview, rsBusy, rsCreateMissing, setRsCreateMissing, openRecipeSheet, closeRecipeSheet, submitRecipeSheet,
+    rsDrafts, rsPrices, setRsPrice,
     spoilageModal, setSpoilageModal, spoilageForm, setSpoilageForm, spoilageLoading, setSpoilageLoading,
     handleRestockSubmit, submitPhysicalCounts,
     // ── Inventory helpers ────────────────────────────────────────────────────

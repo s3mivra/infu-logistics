@@ -118,6 +118,19 @@ export const DATASETS = {
     ],
   },
 
+  fixedAssets: {
+    label: 'Fixed Assets', model: 'FixedAsset', importable: true,
+    sort: { acquisitionDate: -1 },
+    columns: ['Asset Code', 'Name', 'Class', 'Acquired', 'Cost', 'Salvage', 'Life (months)', 'Accum. Depreciation', 'Net Book Value', 'Status', 'Serial', 'Location'],
+    toRow: (a) => [
+      a.assetCode || '', a.name || '', a.accountCode || '', day(a.acquisitionDate),
+      money(a.acquisitionCost), money(a.salvageValue), a.usefulLifeMonths ?? '',
+      money(a.accumulatedDepreciation),
+      money((a.acquisitionCost || 0) - (a.accumulatedDepreciation || 0)),
+      a.status || '', a.serialNumber || '', a.location || '',
+    ],
+  },
+
   // ── Ledger. Export only: importing posted rows would let a spreadsheet
   //    rewrite history, and the balanced-entry guard exists precisely to stop
   //    that happening by accident.
@@ -213,6 +226,9 @@ export function buildValidValues({ expenseCategories = [], paymentMethods = [], 
     table.push({ dataset, column, values: values.map(String), note });
   };
 
+  add('fixedAssets', 'Class', statuses.assetClasses,
+      'Either the code (140200) or the name (Machinery & Equipment).');
+  add('fixedAssets', 'Status', statuses.assetStatus, 'Derived from the numbers; not settable on import.');
   add('inventory', 'Unit', units, 'Base units. kg and L are accepted and stored as g and ml.');
   add('inventory', 'Category', stockCategories, 'An unrecognised name creates a new stock category.');
   add('expenses', 'Category Code', expenseCategories.map(c => `${c.code} - ${c.label}`),

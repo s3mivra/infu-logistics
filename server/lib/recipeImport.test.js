@@ -8,6 +8,8 @@ import {
   parseBulkRecipes,
   parseDrinkSheet,
   collectMaterials,
+  parseSizes,
+  buildProductDraft,
 } from './recipeImport.js';
 
 const one = (text) => parseIngredientCell(text).components[0];
@@ -196,5 +198,106 @@ describe('collectMaterials', () => {
 
   it('is empty for empty input', () => {
     expect(collectMaterials()).toEqual([]);
+  });
+});
+
+describe('parseSizes', () => {
+  it('splits paired volumes and temperatures, in order', () => {
+    // Volume order matches variant order: hot first, then iced.
+    expect(parseSizes('12oz / 16oz Hot / Iced').map(s => s.name)).toEqual(['12oz Hot', '16oz Iced']);
+    expect(parseSizes('8oz / 12oz Hot / Iced').map(s => s.name)).toEqual(['8oz Hot', '12oz Iced']);
+  });
+
+  it('keeps two sizes even when the volumes are identical', () => {
+    // A hot 12oz and an iced 12oz are different drinks with different recipes.
+    expect(parseSizes('12oz / 12oz Hot / Iced').map(s => s.name)).toEqual(['12oz Hot', '12oz Iced']);
+  });
+
+  it('reads a single size, with or without a temperature', () => {
+    expect(parseSizes('16oz Iced').map(s => s.name)).toEqual(['16oz Iced']);
+    expect(parseSizes('2oz Hot').map(s => s.name)).toEqual(['2oz Hot']);
+    expect(parseSizes('16oz').map(s => s.name)).toEqual(['16oz']);
+  });
+
+  it('records which ingredient variant each size takes', () => {
+    const [hot, iced] = parseSizes('12oz / 16oz Hot / Iced');
+    expect(hot.variantIndex).toBe(0);
+    expect(iced.variantIndex).toBe(1);
+  });
+
+  it('applies one temperature across several volumes', () => {
+    expect(parseSizes('8oz / 12oz Iced').map(s => s.name)).toEqual(['8oz Iced', '12oz Iced']);
+  });
+
+  it('is empty when there is no size at all', () => {
+    expect(parseSizes('')).toEqual([]);
+    expect(parseSizes('Hot')).toEqual([]);
+    expect(parseSizes(undefined)).toEqual([]);
+  });
+});
+
+describe('buildProductDraft', () => {
+  const drink = (over = {}) => ({
+    name: 'Latte', section: 'Coffee', sizes: '12oz / 16oz Hot / Iced',
+    ingredients: [
+      { column: 'Espresso', tempHint: '', components: [{ qty: 30, unit: 'ml', name: 'Espresso' }], variants: [] },
+      { column: 'Milk', tempHint: '', components: [], variants: [
+        { variant: 'hot', qty: 200, unit: 'ml', name: 'Steam Milk' },
+        { variant: 'iced', qty: 150, unit: 'ml', name: 'Full Milk' },
+      ] },
+    ],
+    ...over,
+  });
+
+  it('puts the hot quantities on the base size and the iced on an extra size', () => {
+    const p = buildProductDraft(drink());
+    expect(p.baseSizeName).toBe('12oz Hot');
+    expect(p.baseRecipe).toEqual([
+      { name: 'Espresso', qty: 30, unit: 'ml' },
+      { name: 'Steam Milk', qty: 200, unit: 'ml' },
+    ]);
+    expect(p.sizes).toHaveLength(1);
+    expect(p.sizes[0].name).toBe('16oz Iced');
+    expect(p.sizes[0].recipe).toEqual([
+      { name: 'Espresso', qty: 30, unit: 'ml' },
+      { name: 'Full Milk', qty: 150, unit: 'ml' },
+    ]);
+  });
+
+  it('repeats ingredients that do not vary by temperature on every size', () => {
+    const p = buildProductDraft(drink());
+    // Espresso has no variant, so both sizes get it - once each, not twice.
+    expect(p.baseRecipe.filter(r => r.name === 'Espresso')).toHaveLength(1);
+    expect(p.sizes[0].recipe.filter(r => r.name === 'Espresso')).toHaveLength(1);
+  });
+
+  it('routes a temperature-specific COLUMN to its own size only', () => {
+    // Some sections use two same-named columns instead of a slashed cell.
+    // Left shared, the drink would get two shots in every cup.
+    const p = buildProductDraft(drink({
+      ingredients: [
+        { column: 'Espresso', tempHint: 'hot', components: [{ qty: 30, unit: 'ml', name: 'Espresso' }], variants: [] },
+        { column: 'Espresso', tempHint: 'iced', components: [{ qty: 35, unit: 'ml', name: 'Espresso' }], variants: [] },
+      ],
+    }));
+    expect(p.baseRecipe).toEqual([{ name: 'Espresso', qty: 30, unit: 'ml' }]);
+    expect(p.sizes[0].recipe).toEqual([{ name: 'Espresso', qty: 35, unit: 'ml' }]);
+  });
+
+  it('names the base size even when there is only one', () => {
+    const p = buildProductDraft(drink({ sizes: '16oz Iced' }));
+    expect(p.baseSizeName).toBe('16oz Iced');
+    expect(p.sizes).toHaveLength(0);
+    // With one size the iced variant is the only one, so it lands on the base.
+    expect(p.baseRecipe.some(r => r.name === 'Steam Milk')).toBe(true);
+  });
+
+  it('carries the section through as the product category', () => {
+    expect(buildProductDraft(drink()).category).toBe('Coffee');
+    expect(buildProductDraft(drink({ section: '' })).category).toBe('Uncategorized');
+  });
+
+  it('preserves the review flag', () => {
+    expect(buildProductDraft(drink({ needsReview: true })).needsReview).toBe(true);
   });
 });

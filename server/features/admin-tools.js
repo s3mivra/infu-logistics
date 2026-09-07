@@ -112,6 +112,18 @@ export default function registerAdminTools(ctx) {
     STATS_SHARDS,
     ProductStats,
     StockTransfer,
+    CheckVoucher,
+    Advance,
+    FixedAsset,
+    ProductionOrder,
+    CrossTransfer,
+    TransferRequest,
+    ChangeRequest,
+    CollectionReminder,
+    ScheduledShift,
+    DiscountRule,
+    StockCategory,
+    StorageLocation,
     PurchaseOrder,
     Bill,
     PriceTier,
@@ -844,6 +856,7 @@ const PURGE_CATEGORIES = {
   procurement:     { label: 'Procurement (POs & Bills)', defaultOn: true },
   requisitions:    { label: 'Requisition Slips', defaultOn: true },
   eod:             { label: 'End-of-Day Records', defaultOn: true },
+  fixedAssets:     { label: 'Fixed Asset Register', defaultOn: false },
   auditLog:        { label: 'Audit Log', defaultOn: true },
   menu:            { label: 'Menu Setup (Products, Categories, Combos, Add-ons, Modifiers, Price Tiers)', defaultOn: false },
 };
@@ -895,21 +908,45 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
       await del('inventoryMovements', InventoryMovement, false);
       await del('backdateQueue', BackdateQueueItem);
     }
-    if (selected.has('transfers')) await del('stockTransfers', StockTransfer);
+    if (selected.has('transfers')) {
+      await del('stockTransfers', StockTransfer);
+      await del('crossTransfers', CrossTransfer);
+      await del('transferRequests', TransferRequest);
+    }
     if (selected.has('shifts')) {
       await del('shifts', Shift, false);
       await del('clockEntries', ClockEntry);
+      await del('scheduledShifts', ScheduledShift);
     }
     if (selected.has('revolvingFunds')) {
       await del('revolvingFunds', RevolvingFund, false);
       await del('revolvingFundTx', RevolvingFundTx, false);
     }
+    if (selected.has('inventory')) {
+      // The taxonomy and the batches that produced the stock - keeping
+      // them leaves categories and production orders pointing at items
+      // that no longer exist.
+      await del('stockCategories', StockCategory);
+      await del('storageLocations', StorageLocation);
+      await del('productionOrders', ProductionOrder);
+    }
     if (selected.has('procurement')) {
       await del('purchaseOrders', PurchaseOrder, false);
       await del('bills', Bill);
     }
+    if (selected.has('ledger')) {
+      // Issued alongside ledger entries; leaving them behind orphans a
+      // disbursement trail that points at journal entries no longer there.
+      await del('checkVouchers', CheckVoucher);
+      await del('advances', Advance);
+    }
+    if (selected.has('fixedAssets')) await del('fixedAssets', FixedAsset);
     if (selected.has('requisitions')) await del('requisitionSlips', RequisitionSlip);
     if (selected.has('eod')) await del('eodRecords', EODRecord, false);
+    if (selected.has('orders')) {
+      await del('collectionReminders', CollectionReminder);
+      await del('qrSessions', QRSession, false);
+    }
     if (selected.has('auditLog')) await del('auditLog', AuditLog, false);
 
     if (selected.has('menu')) {
@@ -920,6 +957,9 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
       await del('addOns', AddOn, false);
       await del('modifierGroups', ModifierGroup, false);
       await del('priceTiers', PriceTier);
+      await del('discounts', Discount, false);
+      await del('discountRules', DiscountRule);
+      await del('changeRequests', ChangeRequest);
     } else {
       // Products are KEPT, but "Out of Stock" is a manual per-product flag
       // independent of Inventory (see products.js) - it isn't deleted or

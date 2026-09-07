@@ -1,5 +1,6 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Receipt, History, HandCoins, Wallet } from 'lucide-react';
+import { isCancelledRow, isCancelledSheet, partitionCancelledGroups } from '../../shared/backdateCancelled';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
 import ExpensesPage from './ExpensesPage';
@@ -371,11 +372,24 @@ export default function LedgerTab({ ctx }) {
     // last-seen value forward onto the item-only rows that follow. Sheet-level
     // label values (above) seed the default so the label/value template works
     // even though nothing repeats per-row there.
+    // A sale annotated CANCELLED never happened. Importing it books revenue
+    // for nothing, and because it arrives backdated it is easy to miss later.
+    // A stamp in the header block voids the whole sheet; a note beside one
+    // line voids only that line (see shared/backdateCancelled).
+    if (isCancelledSheet(grid, hIdx)) {
+      return { groups: [], skipped: 0, cancelled: 0, cancelledSheet: true, noHeader: false };
+    }
+
     const byTrans = new Map();
     let skipped = 0;
+    let cancelled = 0;
     let curTrans = sheetTrans, curClient = sheetClient, curDate = sheetDate;
     for (let i = hIdx + 1; i < grid.length; i++) {
       const row = grid[i] || [];
+      // Counted separately from `skipped`: a malformed row is a data problem,
+      // a cancelled row is the sheet working as intended. Lumping them
+      // together hides whether the import did the right thing.
+      if (isCancelledRow(row)) { cancelled++; continue; }
       const desc = idx.desc >= 0 ? String(row[idx.desc] ?? '').trim() : '';
       const qty = idx.qty >= 0 ? bdNumify(row[idx.qty]) : 0;
       const rowTrans = idx.transNo >= 0 ? String(row[idx.transNo] ?? '').trim() : '';
@@ -403,7 +417,10 @@ export default function LedgerTab({ ctx }) {
       const itemsTotal = items.reduce((s, x) => s + x.price * x.quantity, 0);
       return { ...g, items, deliveryFee: sheetDeliveryFee, total: itemsTotal + sheetDeliveryFee, needsPaymentMethod };
     });
-    return { groups, skipped, noHeader: false };
+    // A group whose transaction no. or client carries the mark - someone wrote
+    // "INV-1042 CANCELLED" rather than annotating each line.
+    const { kept, cancelled: cancelledGroups } = partitionCancelledGroups(groups);
+    return { groups: kept, skipped, cancelled: cancelled + cancelledGroups.length, noHeader: false };
   };
 
   // Runs the parser across every selected sheet and merges the results into
@@ -413,16 +430,19 @@ export default function LedgerTab({ ctx }) {
   // instead of the ready-to-import preview - we don't know how it was paid.
   const finishBackdateImport = async (wb, sheetNames) => {
     let allGroups = [], totalSkipped = 0, anyHeaderFound = false;
+    let totalCancelled = 0, cancelledSheets = 0;
     setBdParseProgress({ done: 0, total: sheetNames.length });
     let i = 0;
     for (const name of sheetNames) {
       const sheet = wb.Sheets[name];
       if (sheet) {
         const grid = XLSX_sheetToGrid(wb, name);
-        const { groups, skipped, noHeader } = parseBackdateGrid(grid, name);
+        const { groups, skipped, noHeader, cancelled, cancelledSheet } = parseBackdateGrid(grid, name);
         if (!noHeader) anyHeaderFound = true;
         allGroups = allGroups.concat(groups);
         totalSkipped += skipped;
+        totalCancelled += cancelled || 0;
+        if (cancelledSheet) { cancelledSheets++; anyHeaderFound = true; }
       }
       i++;
       // Yield every few sheets so the progress bar actually paints instead of
@@ -434,7 +454,18 @@ export default function LedgerTab({ ctx }) {
     }
     setBdParseProgress(null);
     if (!anyHeaderFound) { ui.alert('Could not find the header row (needs at least a Description and Qty column) in the selected sheet(s).'); return; }
-    if (allGroups.length === 0) { ui.alert('No sale rows found under the header in the selected sheet(s).'); return; }
+    if (allGroups.length === 0) {
+      // Distinguish "nothing importable" from "everything was cancelled" -
+      // the second is the importer working correctly, and saying "no sale rows
+      // found" would send someone hunting for a parsing bug that isn't there.
+      ui.alert(totalCancelled > 0 || cancelledSheets > 0
+        ? `Nothing to import - every sale in the selected sheet(s) is marked cancelled (${cancelledSheets} sheet(s), ${totalCancelled} row(s)).`
+        : 'No sale rows found under the header in the selected sheet(s).');
+      return;
+    }
+    if (totalCancelled > 0 || cancelledSheets > 0) {
+      ui.alert(`Excluded ${totalCancelled} cancelled row(s)${cancelledSheets ? ` and ${cancelledSheets} fully cancelled sheet(s)` : ''} - these are not imported as sales.`);
+    }
 
     const readyGroups = allGroups.filter(g => !g.needsPaymentMethod);
     const queueGroups = allGroups.filter(g => g.needsPaymentMethod);
@@ -3232,6 +3263,12 @@ export default function LedgerTab({ ctx }) {
                       {(cashAndBankAccounts || []).map(a => <option key={a.code} value={a.code}>{a.code} - {a.name}</option>)}
                     </select>
 
+                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Date of Transaction</label>
+                    <input type="date" value={advIssueModal.date}
+                      onChange={e => setAdvIssueModal(f => ({ ...f, date: e.target.value }))}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-1 outline-none focus:border-brand" />
+                    <p className="text-[10px] text-fg/30 mb-4">When the money actually moved. Leave blank for today.</p>
+
                     <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Reference No.</label>
                     <input type="text" value={advIssueModal.referenceNumber}
                       onChange={e => setAdvIssueModal(f => ({ ...f, referenceNumber: e.target.value }))}
@@ -3370,6 +3407,11 @@ export default function LedgerTab({ ctx }) {
                           </>
                         );
                       })()}
+
+                      <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Date of Transaction</label>
+                      <input type="date" value={advLiqModal.date || ''}
+                        onChange={e => setAdvLiqModal(f => ({ ...f, date: e.target.value }))}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
 
                       <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Reference No.</label>
                       <input type="text" value={advLiqModal.referenceNumber}

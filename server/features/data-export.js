@@ -26,6 +26,7 @@ export default function registerDataExport(ctx) {
     ACCOUNTS, CUSTOM_META, acctMeta, EXPENSE_CATEGORIES,
     JournalEntry, Supplier, StockCategory,
     BILL_STATUSES, PO_STATUSES, ADVANCE_STATUSES, ADVANCE_TYPES,
+    FIXED_ASSET_STATUSES, FIXED_ASSET_CLASSES,
   } = ctx;
 
   // Exports carry costs, margins and client terms, so they sit behind the same
@@ -36,7 +37,7 @@ export default function registerDataExport(ctx) {
 
   // Only these models are scoped by businessType; the rest are global to the
   // deployment (see the menu-backup notes - scoping them returns nothing).
-  const SCOPED = new Set(['Inventory', 'Product', 'Order', 'Category', 'Bill', 'CheckVoucher', 'Advance', 'PurchaseOrder']);
+  const SCOPED = new Set(['Inventory', 'Product', 'Order', 'Category', 'Bill', 'CheckVoucher', 'Advance', 'PurchaseOrder', 'FixedAsset']);
 
   const scopeFor = (modelName, req) =>
     (SCOPED.has(modelName) ? { businessType: BUSINESS_TYPE, ...tenantScope(req) } : {});
@@ -85,6 +86,8 @@ export default function registerDataExport(ctx) {
           bill: BILL_STATUSES, po: PO_STATUSES,
           advance: ADVANCE_STATUSES, advanceType: ADVANCE_TYPES,
           voucher: ['Issued', 'Voided'],
+          assetStatus: FIXED_ASSET_STATUSES,
+          assetClasses: Object.entries(FIXED_ASSET_CLASSES).map(([c, v]) => `${c} - ${v.name}`),
         },
       });
 

@@ -282,6 +282,7 @@ export default function ProductsTab({ ctx }) {
     setImportModal, setImportRows, setInvForm, setInvPage, setInvSubTab,
     menuBackupBusy, downloadMenuBackup, menuRestoreModal, setMenuRestoreModal, openMenuRestore, runMenuRestore,
     rsFile, rsPreview, rsBusy, rsCreateMissing, setRsCreateMissing, openRecipeSheet, closeRecipeSheet, submitRecipeSheet,
+    rsDrafts = [], rsPrices = {}, setRsPrice = () => {},
     setIsPosOpen, setIsStatusMenuOpen, setJeForm, setJournalEntries, setLedgerSubTab,
     setNewDiscount, setOrderFilter, setOrdersPage, setPaymentSelections, setPhysicalCounts,
     setPnlRange, setPosActiveAddOns, setPosActiveSize, setPosCart, setPosCashTendered,
@@ -404,6 +405,52 @@ export default function ProductsTab({ ctx }) {
                       </div>
                     ))}
                   </div>
+
+                  {/* Prices. The workbook is a recipe sheet - it has no price
+                      column - so SRP is typed here, per size, before import. */}
+                  {rsDrafts.length > 0 && (
+                    <>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-1.5">
+                        Drinks &amp; prices · {rsDrafts.length} ready
+                      </p>
+                      <div className="max-h-60 overflow-y-auto bg-page-bg border border-white/10 rounded-lg mb-4">
+                        {rsDrafts.map(d => (
+                          <div key={d.name} className="px-3 py-2 border-b border-white/5 last:border-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-fg truncate">{d.name}</p>
+                                <p className="text-[10px] text-fg/40">
+                                  {d.category} · {d.baseSizeName || 'no size'} · {(d.baseRecipe || []).length} ingredient(s)
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <span className="text-[10px] text-fg/40">SRP</span>
+                                <input
+                                  type="number" min="0" step="0.01" placeholder="0.00"
+                                  value={rsPrices[d.name]?.[''] ?? ''}
+                                  onChange={e => setRsPrice(d.name, '', e.target.value)}
+                                  className="w-20 bg-sidebar-bg border border-white/10 rounded px-2 py-1 text-xs text-right tabular-nums text-fg"
+                                />
+                              </div>
+                            </div>
+                            {(d.sizes || []).map(sz => (
+                              <div key={sz.name} className="flex items-center justify-between gap-2 mt-1 pl-3">
+                                <span className="text-[10px] text-fg/50 truncate">
+                                  + {sz.name} <span className="text-fg/30">({(sz.recipe || []).length} ingredient(s))</span>
+                                </span>
+                                <input
+                                  type="number" min="0" step="0.01" placeholder="0.00"
+                                  value={rsPrices[d.name]?.[sz.name] ?? ''}
+                                  onChange={e => setRsPrice(d.name, sz.name, e.target.value)}
+                                  className="w-20 bg-sidebar-bg border border-white/10 rounded px-2 py-1 text-xs text-right tabular-nums text-fg"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
 
                   <label className="flex items-center gap-2 text-[11px] text-fg/60 mb-4 cursor-pointer">
                     <input type="checkbox" checked={rsCreateMissing} onChange={e => setRsCreateMissing(e.target.checked)} />

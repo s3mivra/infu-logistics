@@ -5,6 +5,7 @@ import { title, lower, freeText, squish } from '../lib/normalize.js';
 
 import { captureError } from '../lib/errorLog.js';
 import { addBatch, soonestExpiry } from '../lib/expiry.js';
+import { dayStart } from '../lib/reportRange.js';
 
 export default function registerPurchaseOrders(ctx) {
   const {
@@ -13,6 +14,13 @@ export default function registerPurchaseOrders(ctx) {
     mongoose,
     mkSeqRef,
     tenantScope,
+    acctMeta,
+    assertBalanced,
+    currentBranchCode,
+    FixedAsset,
+    FIXED_ASSET_CLASSES,
+    Advance,
+    CheckVoucher,
     logAudit,
     PurchaseOrder,
     PO_STATUSES,
@@ -89,7 +97,10 @@ export default function registerPurchaseOrders(ctx) {
   // POST /api/purchase-orders  { supplier, expectedDate, notes, lines:[{invId,itemName,itemCode,unit,orderedQty,unitCost}] }
   app.post('/api/purchase-orders', verifyToken, ...canManageProc, async (req, res) => {
     try {
-      const { supplier = '', supplierId = null, expectedDate = null, notes = '', lines = [] } = req.body || {};
+      const {
+        supplier = '', supplierId = null, expectedDate = null, notes = '', lines = [],
+        prepaid = false, prepaidAmount, prepaidDate, prepaidFromAccount,
+      } = req.body || {};
       // Link to the supplier record when one is given, and prefer its canonical
       // name over the free-text field. The PO schema has always had supplierId;
       // the create route was silently dropping it, which left every payable
@@ -117,8 +128,27 @@ export default function registerPurchaseOrders(ctx) {
         createdBy: req.user?.name || '',
         ...tenantScope(req),
       });
-      logAudit?.(req, { action: 'create', entity: 'purchase_order', entityId: poNumber, after: { lines: clean.length, estTotal: po.estTotal } });
-      res.status(201).json({ success: true, purchaseOrder: po.toObject() });
+
+      // Paid before delivery: book a supplier ADVANCE, not a payable. Nothing
+      // is owed - the supplier owes us goods - so crediting A/P would overstate
+      // what we owe while the cash has already gone out.
+      let advance = null;
+      if (prepaid) {
+        const amt = money(prepaidAmount ?? po.estTotal);
+        if (amt > 0) {
+          advance = await createSupplierAdvanceForPO(req, po, amt, prepaidDate, prepaidFromAccount);
+          po.prepaid = true;
+          po.prepaidAmount = amt;
+          po.prepaidDate = advance.date;
+          po.prepaidFromAccount = advance.sourceAccount;
+          po.advanceId = advance._id;
+          po.advanceNumber = advance.advanceNumber;
+          await po.save();
+        }
+      }
+
+      logAudit?.(req, { action: 'create', entity: 'purchase_order', entityId: poNumber, after: { lines: clean.length, estTotal: po.estTotal, prepaid: !!advance } });
+      res.status(201).json({ success: true, purchaseOrder: po.toObject(), advance: advance ? { _id: advance._id, advanceNumber: advance.advanceNumber, amount: advance.amount } : null });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
@@ -162,6 +192,125 @@ export default function registerPurchaseOrders(ctx) {
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
+  // A PO paid before delivery becomes a supplier advance (170200), not a
+  // payable. It is an ASSET while it stands - the supplier owes us goods - and
+  // receiving liquidates it rather than crediting A/P a second time.
+  //
+  //   pay now   DR 170200 Advances to Suppliers   CR cash
+  //   receive   DR 130000 Inventory               CR 170200  (liquidation)
+  //
+  // Booking it as a payable instead would show money owed on an order already
+  // settled, and once the cash also left, understate what we hold.
+  const createSupplierAdvanceForPO = async (req, po, amount, when, fromAccount) => {
+    const isCashLike = (c) => /^(111|112|113|114)/.test(String(c || ''));
+    const srcCode = (acctMeta(fromAccount) && isCashLike(fromAccount)) ? fromAccount : '111000';
+    const srcName = acctMeta(srcCode)?.name || 'Cash on Hand';
+    const txnDate = when ? dayStart(when) : new Date();
+
+    const advanceNumber = await mkSeqRef('ADV');
+    const reference = await mkSeqRef('ADV-JE');
+    const lines = [
+      { accountCode: '170200', accountName: acctMeta('170200')?.name || 'Advances to Suppliers', debit: amount, credit: 0 },
+      { accountCode: srcCode, accountName: srcName, debit: 0, credit: amount },
+    ];
+    assertBalanced(lines, reference);
+    await JournalEntry.create({
+      date: txnDate, reference,
+      description: `Prepayment on ${po.poNumber}${po.supplier ? ` to ${po.supplier}` : ''}`,
+      supplierId: po.supplierId ? String(po.supplierId) : null,
+      supplierName: po.supplier || '',
+      lines, totalDebit: amount, totalCredit: amount,
+    });
+
+    const voucherNumber = await mkSeqRef('CV');
+    await CheckVoucher.create({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
+      voucherNumber, branchCode: await currentBranchCode(),
+      payeeType: 'supplier', payeeId: String(po.supplierId || ''), payeeName: po.supplier || '',
+      amount, purpose: 'other', date: txnDate,
+      sourceAccount: srcCode, sourceAccountName: srcName,
+      referenceNumber: po.poNumber || '',
+      notes: `Prepayment on ${po.poNumber}`,
+      journalEntryRef: reference, issuedBy: req.user?.name || '',
+    });
+
+    return Advance.create({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
+      advanceNumber, branchCode: await currentBranchCode(),
+      type: 'supplier', payeeName: po.supplier || 'Supplier',
+      payeeId: String(po.supplierId || ''),
+      amount, purpose: `Prepayment on ${po.poNumber}`,
+      account: '170200', sourceAccount: srcCode, sourceAccountName: srcName,
+      referenceNumber: po.poNumber || '', journalEntryRef: reference,
+      checkVoucherRef: voucherNumber, date: txnDate,
+      issuedBy: req.user?.name || '',
+    });
+  };
+
+  // Receiving something that is NOT stock.
+  //
+  //   fixedAsset  DR 1401xx asset            CR 225100 non-trade payable
+  //               and the asset register entry is created here, so equipment
+  //               bought on a PO is depreciable from day one instead of being
+  //               re-keyed by hand later (or forgotten).
+  //   expense     DR the expense account     CR 225200 non-trade payable
+  //
+  // Both credit a NON-TRADE payable. 220000 is what we owe for goods to sell
+  // or consume; owing for a machine is a different obligation and the balance
+  // sheet should not merge them.
+  const postNonInventoryReceipt = async (req, line, kind, lineCost, delta, po) => {
+    const rcvRef = await mkSeqRef('PO-RCV');
+    const nameOf = (c, f) => acctMeta(c)?.name || f || c;
+    const label = line.itemName || line.itemCode || 'item';
+
+    let debitCode;
+    let credCode;
+    if (kind === 'fixedAsset') {
+      debitCode = line.assetAccountCode;
+      if (!FIXED_ASSET_CLASSES[debitCode]) return null;   // unroutable: leave it PO-only
+      credCode = '225100';
+    } else {
+      debitCode = line.expenseAccountCode;
+      const meta = acctMeta(debitCode);
+      if (!meta || meta.type !== 'expense' || meta.isParent) return null;
+      credCode = '225200';
+    }
+    // Prepaid overrides the payable on every kind: the obligation was settled
+    // in cash up front, so what clears is the advance.
+    if (po?.prepaid) credCode = '170200';
+
+    const lines = [
+      { accountCode: debitCode, accountName: nameOf(debitCode), debit: lineCost, credit: 0 },
+      { accountCode: credCode, accountName: nameOf(credCode), debit: 0, credit: lineCost },
+    ];
+    assertBalanced(lines, rcvRef);
+    await JournalEntry.create({
+      reference: rcvRef,
+      description: `Received ${delta} x ${label} on ${po?.poNumber || 'PO'}${po?.supplier ? ` from ${po.supplier}` : ''} (${kind === 'fixedAsset' ? 'fixed asset' : 'expense'})`,
+      supplierId: po?.supplierId ? String(po.supplierId) : null,
+      supplierName: po?.supplier || '',
+      lines, totalDebit: lineCost, totalCredit: lineCost,
+    });
+
+    if (kind === 'fixedAsset' && FixedAsset) {
+      const assetCode = await mkSeqRef('FA');
+      await FixedAsset.create({
+        businessType: BUSINESS_TYPE, ...tenantScope(req),
+        assetCode, branchCode: await currentBranchCode(),
+        name: label, description: `Received on ${po?.poNumber || 'PO'}`,
+        accountCode: debitCode,
+        acquisitionDate: new Date(), acquisitionCost: lineCost,
+        salvageValue: Math.max(0, Number(line.salvageValue) || 0),
+        // A sensible default beats leaving it null and silently never
+        // depreciating; it is editable on the asset afterwards.
+        usefulLifeMonths: Number(line.usefulLifeMonths) > 0 ? Number(line.usefulLifeMonths) : 60,
+        supplierName: po?.supplier || '', referenceNumber: po?.poNumber || '',
+        journalEntryRef: rcvRef, createdBy: req.user?.name || '',
+      });
+    }
+    return { rcvRef };
+  };
+
   // ── RECEIPT POSTING ───────────────────────────────────────────────────────────
   // Moves a delivery's quantities into Inventory (weighted-average cost) and
   // books the matching journal entry. Only lines linked to a real Inventory item
@@ -170,9 +319,23 @@ export default function registerPurchaseOrders(ctx) {
   // Unit model: a PO line is priced and counted in PACKS, while Inventory holds
   // BASE units (ml/g/pcs). basePerPack = line.packSize × item.unitMultiplier, so
   // 10 packs of 1L milk with unitMultiplier 1000 posts 10,000 ml at ₱0.08/ml.
+  //
+  // A line is routed by its purchaseType. Only `inventory` touches stock; the
+  // other two never should - an espresso machine in Inventory is both an
+  // overstated stock figure and something a recipe could consume.
   const postReceiptToStock = async (req, deltas, po) => {
     let totalCost = 0;
     for (const { line, delta, expiryDate, productionDate } of deltas) {
+      const kind = line.purchaseType || 'inventory';
+
+      if (kind !== 'inventory') {
+        const lineCost = money(delta * (Number(line.unitCost) || 0));
+        if (lineCost <= 0) continue;
+        const out = await postNonInventoryReceipt(req, line, kind, lineCost, delta, po);
+        if (out) totalCost = money(totalCost + lineCost);
+        continue;
+      }
+
       if (!line.invId || !mongoose.Types.ObjectId.isValid(String(line.invId))) continue;
       const item = await Inventory.findById(line.invId);
       if (!item) continue;
@@ -227,14 +390,42 @@ export default function registerPurchaseOrders(ctx) {
           // supplier?" without parsing descriptions.
           supplierId: po?.supplierId ? String(po.supplierId) : null,
           supplierName: po?.supplier || '',
+          // On a PREPAID order the money already left and sits as a supplier
+          // advance, so receiving clears that advance rather than creating a
+          // payable - crediting A/P here would show money owed on an order
+          // already settled.
           lines: [
-            { accountCode: '130000', accountName: 'Inventory Asset',    debit: lineCost, credit: 0 },
-            { accountCode: '220000', accountName: 'Accounts Payable',   debit: 0, credit: lineCost },
+            { accountCode: '130000', accountName: 'Inventory Asset', debit: lineCost, credit: 0 },
+            po?.prepaid
+              ? { accountCode: '170200', accountName: acctMeta('170200')?.name || 'Advances to Suppliers', debit: 0, credit: lineCost }
+              : { accountCode: '220000', accountName: 'Accounts Payable', debit: 0, credit: lineCost },
           ],
           totalDebit: lineCost,
           totalCredit: lineCost,
         });
         totalCost = money(totalCost + lineCost);
+      }
+    }
+    // The advance record must track the ledger. The journal entries above
+    // already credited 170200; without this the Advances screen would keep
+    // showing the full prepayment outstanding on an order that has arrived.
+    if (po?.prepaid && po.advanceId && totalCost > 0 && Advance) {
+      const adv = await Advance.findById(po.advanceId);
+      if (adv && adv.status !== 'Cancelled') {
+        const remaining = money(adv.amount - (adv.liquidatedAmount || 0));
+        // Capped at what is left: an over-delivery must not write the advance
+        // negative, and anything beyond the prepayment is a genuine payable
+        // the supplier can still bill for.
+        const applied = Math.min(money(totalCost), remaining);
+        if (applied > 0) {
+          adv.liquidatedAmount = money((adv.liquidatedAmount || 0) + applied);
+          adv.status = adv.liquidatedAmount >= adv.amount - 0.005 ? 'Liquidated' : 'Partially Liquidated';
+          adv.liquidations.push({
+            amount: applied, method: 'bill', reference: po.poNumber || '',
+            note: `Goods received on ${po.poNumber}`, by: req.user?.name || '',
+          });
+          await adv.save();
+        }
       }
     }
     return { totalCost };

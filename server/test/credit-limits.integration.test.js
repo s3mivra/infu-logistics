@@ -8,6 +8,8 @@ import bcrypt from 'bcrypt';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 
+let orderSeq = 0;
+
 let app, stop, superToken, clientToken, clientId, productId;
 
 const daysAgo = (n) => new Date(Date.now() - n * 86400000);
@@ -31,7 +33,8 @@ const placeOrder = (total, method = 'GCash') =>
 const owe = async (amount, ageDays = 1) => {
   const Order = mongoose.model('Order');
   await Order.create({
-    orderNumber: 80000 + Math.floor(Math.random() * 9999),
+    // Sequential, not random - see the note in clients.integration.test.js.
+    orderNumber: `CRD-${String(++orderSeq).padStart(6, '0')}`,
     customerName: 'Credit Client', clientAccountId: String(clientId),
     status: 'Completed', paymentMethod: 'GCash', total: amount,
     arSettled: false, createdAt: daysAgo(ageDays), businessType: 'log',
