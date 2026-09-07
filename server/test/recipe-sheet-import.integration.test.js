@@ -36,9 +36,13 @@ beforeEach(async () => {
 // Straight from the workbook: two volumes, two temperatures, and paired
 // hot/iced quantities in the milk column.
 const sheet = [
-  [' INFU COFFEE ', '', '', '', '', ''],
-  ['SIGNATURE COFFEE', 'CUP MARK', 'Size', 'Cups', 'Espresso', 'H20 & Milk'],
-  ['LATTE', 'L', '12oz / 16oz Hot / Iced', 'DW / PET', '30ml', '260ml / 170ml Full Milk'],
+  [' INFU COFFEE ', '', '', '', '', '', '', ''],
+  ['SIGNATURE COFFEE', 'CUP MARK', 'Size', 'Cups', 'Espresso', 'H20 & Milk', 'Foam', 'SRP'],
+  ['LATTE', 'L', '12oz / 16oz Hot / Iced', 'DW / PET', '30ml', '260ml / 170ml Full Milk', '', '130/150'],
+  // A foam built from three things, with the foam's own name at the end of the
+  // cell after a wide gap. This shape used to be skipped as "ambiguous".
+  ['SEASALT', 'SS', '12oz / 16oz Hot / Iced', 'DW / PET', '30ml', '260ml / 150ml    Full Milk',
+   '10ml Sea Salt / 20ml full cream / 20ml Full Milk          SeaSalt Foam', '180'],
 ];
 
 const parse = () => auth('post', '/api/products/recipe-sheet/parse').send({ sheets: { 'DRINKS': sheet } });
@@ -61,9 +65,42 @@ describe('the draft the review screen is built from', () => {
     expect(d.baseRecipe.filter(r => /milk/i.test(r.name))).toHaveLength(1);
   }, 30000);
 
-  it('carries no price, because the workbook has no price column', async () => {
+  it('reads one price per size out of the SRP column', async () => {
     const { body } = await parse();
-    expect(body.drafts[0].srp).toBeUndefined();
+    const d = body.drafts.find(x => x.name === 'LATTE');
+    expect(d.srp).toBe(130);
+    expect(d.sizes[0].price).toBe(150);
+  }, 30000);
+
+  it('applies a single price to every size', async () => {
+    const { body } = await parse();
+    const d = body.drafts.find(x => x.name === 'SEASALT');
+    expect(d.srp).toBe(180);
+    expect(d.sizes[0].price).toBe(180);
+  }, 30000);
+
+  it('does not import the price column as a material', async () => {
+    const { body } = await parse();
+    expect(body.materials.map(m => m.name)).not.toContain('130/150');
+    expect(body.materials.some(m => /^\d+$/.test(m.name))).toBe(false);
+  }, 30000);
+
+  it('reads a three-part foam instead of skipping the drink', async () => {
+    const { body } = await parse();
+    const d = body.drafts.find(x => x.name === 'SEASALT');
+    // The complaint: eight drinks were skipped for having a foam like this.
+    expect(d.needsReview).toBe(false);
+    // "SeaSalt Foam" is what the cell builds, not a material.
+    expect(d.baseRecipe.map(r => r.name)).not.toContain('Full Milk SeaSalt Foam');
+  }, 30000);
+
+  it('sums a material named by two columns into one line', async () => {
+    const { body } = await parse();
+    const d = body.drafts.find(x => x.name === 'SEASALT');
+    // 260ml in the milk column + 20ml in the foam.
+    const milk = d.baseRecipe.filter(r => r.name === 'Full Milk');
+    expect(milk).toHaveLength(1);
+    expect(milk[0].qty).toBe(280);
   }, 30000);
 });
 
@@ -73,10 +110,10 @@ describe('importing that draft', () => {
     const d = body.drafts.find(x => x.name === 'LATTE');
     return auth('post', '/api/products/import-menu').send({
       rows: [{
-        name: d.name, category: d.category, srp: 150,
+        name: d.name, category: d.category, srp: d.srp,
         baseSize: d.baseSizeName,
         ingredients: d.baseRecipe,
-        sizes: d.sizes.map(s => ({ ...s, price: 170 })),
+        sizes: d.sizes,
         ...over,
       }],
     });
@@ -96,10 +133,10 @@ describe('importing that draft', () => {
     await importDraft();
     const p = await M('Product').findOne({ name: 'LATTE' }).lean();
     expect(p.baseSize).toBe('12oz Hot');
-    expect(p.basePrice).toBe(150);
+    expect(p.basePrice).toBe(130);   // straight from the sheet
     expect(p.sizes).toHaveLength(1);
     expect(p.sizes[0].name).toBe('16oz Iced');
-    expect(p.sizes[0].price).toBe(170);
+    expect(p.sizes[0].price).toBe(150);
     expect(p.sizes[0].recipe.find(r => /milk/i.test(r.name)).qty).toBe(170);
   }, 30000);
 

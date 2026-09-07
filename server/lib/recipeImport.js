@@ -34,13 +34,15 @@ const TEMPERATURE_ONLY = /^(hot|iced|ice|cold|warm)$/i;
 const TEMPERATURE_WATER = /^(hot|iced|ice|cold|warm)\s+water$/i;
 // A serving measure with no number in front of it ("dash Nutmeg Powder", left
 // behind once "1g" is consumed) describes the portion, not the material.
-const LEADING_MEASURE = /^(scoops?|pcs?|pieces?|dash)\b\s*/i;
+const LEADING_MEASURE = /^(scoops?|pcs?|pieces?|dash|drizzle)\b\s*/i;
 function stripTemperature(name) {
   let out = clean(name);
   let prev;
   do { prev = out; out = clean(out.replace(LEADING_MEASURE, '')); } while (out !== prev);
   if (TEMPERATURE_ONLY.test(out)) return '';
   if (TEMPERATURE_WATER.test(out)) return 'water';
+  // The sheets write plain water three ways. One material, one stock item.
+  if (/^(h20|h2o|water)$/i.test(out)) return 'water';
   return out;
 }
 
@@ -95,25 +97,73 @@ function takeQuantity(segment) {
   };
 }
 
+// The sheets separate a quantity from its material with a WIDE run of spaces,
+// and a multi-part cell ends with the name of the thing being built:
+//
+//   "20ml everwhip          Rocksalted Cheese Foam"
+//
+// "everwhip" is the material; "Rocksalted Cheese Foam" is the label for the
+// whole cell. Read naively the last material became "everwhip Rocksalted
+// Cheese Foam" - a material that does not exist in stock, so the line was
+// dropped and the foam silently lost three of its ingredients.
+//
+// Only strip when the text BEFORE the gap already carries a quantity AND a
+// name of its own. "150ml        Breve Milk" has only a quantity in front, so
+// there the trailing text IS the material and must be kept.
+const WIDE_GAP = /\s{3,}/;
+function stripTrailingLabel(rawSegment) {
+  const parts = String(rawSegment == null ? '' : rawSegment).split(WIDE_GAP).filter(x => clean(x));
+  if (parts.length < 2) return { text: rawSegment, label: '' };
+  const head = clean(parts[0]);
+  const q = takeQuantity(head);
+  if (q.qty == null || !q.rest) return { text: rawSegment, label: '' };
+  return { text: head, label: clean(parts.slice(1).join(' ')) };
+}
+
 /**
  * Parse one free-text ingredient cell.
  *
- * Returns { components, variants, needsReview, raw }.
+ * Returns { components, variants, needsReview, raw, label }.
  *  - `components` are separate materials used together in the same drink.
  *  - `variants` express the Hot/Iced split of the SAME position.
  * Only one of the two is ever populated.
+ *
+ * `sizeCount` is how many sizes the drink has. A Hot/Iced split is only
+ * possible when there are two of them; on a single-size drink "30ml A / 30ml B"
+ * can only mean two materials used together.
  */
-export function parseIngredientCell(text) {
-  const raw = clean(text);
-  const out = { components: [], variants: [], needsReview: false, raw };
+// "w/o espresso 240ml Biscoff Based" and "w/ espresso 220ml Biscoff Based"
+// are the SAME material in two builds of the drink, not two materials. The
+// qualifier is taken off the name and the drink is flagged, because which
+// build the menu sells is a decision only the operator can make.
+const BUILD_QUALIFIER = /\bw\/o?\s+\S+/i;
+
+export function parseIngredientCell(text, { sizeCount = 2 } = {}) {
+  const rawText = String(text == null ? '' : text);
+  const raw = clean(rawText);
+  const out = { components: [], variants: [], needsReview: false, raw, label: '' };
   if (!raw || isNoiseCell(raw)) return out;
 
-  const segments = protectSlashes(raw).split('/').map(t => clean(restoreSlashes(t))).filter(Boolean);
+  // Split on the RAW text so the wide gaps survive; each segment is cleaned
+  // after its trailing label has been taken off.
+  let rawSegments = protectSlashes(rawText).split('/').map(restoreSlashes).filter(t => clean(t));
+  if (rawSegments.length >= 2) {
+    const last = stripTrailingLabel(rawSegments[rawSegments.length - 1]);
+    if (last.label) {
+      rawSegments[rawSegments.length - 1] = last.text;
+      out.label = last.label;
+    }
+  }
+  const segments = rawSegments.map(clean).filter(Boolean);
   const parsed = segments.map(takeQuantity);
 
   // Single segment: the simple, confident case.
   if (parsed.length === 1) {
     const p = parsed[0];
+    if (BUILD_QUALIFIER.test(p.rest)) {
+      p.rest = clean(p.rest.replace(BUILD_QUALIFIER, ''));
+      out.needsReview = true;
+    }
     if (p.qty == null) {
       // A name with no quantity cannot be costed - someone has to supply it.
       out.needsReview = true;
@@ -134,10 +184,13 @@ export function parseIngredientCell(text) {
   // materials combined in one drink, e.g. a foam built from three things.
   if (everySegmentComplete) {
     out.components = parsed.map(p => ({ qty: p.qty, unit: p.unit, name: p.rest }));
-    // Two complete segments in the same unit are genuinely ambiguous: they may
-    // be two materials, or the Hot/Iced split of two different milks. A human
-    // has to decide.
-    out.needsReview = true;
+    // Three or more cannot be a Hot/Iced split - there are only two
+    // temperatures - so a foam built from three things is not ambiguous at
+    // all. Flagging it skipped whole drinks that parse perfectly well.
+    //
+    // A PAIR is ambiguous only when the drink actually has two sizes to split
+    // between; on a single-size drink the two materials are simply both used.
+    out.needsReview = parsed.length === 2 && sizeCount >= 2;
     return out;
   }
 
@@ -145,6 +198,18 @@ export function parseIngredientCell(text) {
   // behind - the Hot / Iced shape: "260ml / 150ml Full Milk".
   const names = named.map(p => p.rest);
   if (withQty.length >= 2 && names.length >= 1) {
+    // With only one size there is nothing to split between, so "40ml / 40ml
+    // Warm water / Oat Milk" lists two things the drink uses together. Read as
+    // a temperature split the second was thrown away entirely - every matcha
+    // lost its oat milk, and the seasalt einspanner its spanish milk.
+    if (sizeCount < 2) {
+      out.components = withQty.map((p, i) => ({
+        qty: p.qty, unit: p.unit,
+        name: names.length === 1 ? names[0] : (names[i] || names[names.length - 1]),
+      })).filter(c => c.name);
+      out.needsReview = withQty.length > names.length && names.length > 1;
+      return out;
+    }
     const labels = ['hot', 'iced'];
     out.variants = withQty.slice(0, 2).map((p, i) => ({
       variant: labels[i] || `v${i + 1}`,
@@ -231,11 +296,20 @@ export function parseDrinkSheet(rows) {
   let headers = null;
   let section = '';
 
-  // Columns that describe presentation rather than an ingredient.
-  const NON_INGREDIENT = /^(cup mark|size|cups|procedure|ice)\s*$/i;
+  // Columns that describe presentation or price rather than an ingredient.
+  // SRP belongs here: read as an ingredient it produced a "180" material.
+  const NON_INGREDIENT = /^(cup mark|size|cups|procedure|ice|srp|price|add oz)\s*$/i;
+  const findCol = (re, fallback) => {
+    const i = (headers || []).findIndex(h => re.test(String(h || '').trim()));
+    return i >= 0 ? i : fallback;
+  };
 
   for (const row of rows || []) {
-    const cells = (row || []).map(clean);
+    // Both forms are needed: the cleaned cells to read structure, and the raw
+    // ones for the ingredient parser, which uses the sheet's wide space runs
+    // to tell a material from the label of the thing being built.
+    const rawCells = (row || []).map(c => String(c == null ? '' : c));
+    const cells = rawCells.map(clean);
     const name = cells[0];
 
     if (clean(cells[1]).toLowerCase() === 'cup mark') {
@@ -247,11 +321,18 @@ export function parseDrinkSheet(rows) {
     // A title banner row ("INFU COFFEE") has nothing else on it.
     if (cells.slice(1).every(c => !c)) continue;
 
+    // Column positions come from the header row, not fixed indexes: the
+    // sections do not agree on column order, and SRP sits at the far right.
+    const sizeCol = findCol(/^size$/i, 2);
+    const srpCol = findCol(/^(srp|price)$/i, -1);
+    const sizeCell = cells[sizeCol] || '';
+    const sizeCount = Math.max(1, [...String(sizeCell).matchAll(VOLUME_RE)].length);
+
     const ingredients = [];
     for (let c = 2; c < headers.length; c++) {
       const columnName = headers[c];
       if (!columnName || NON_INGREDIENT.test(columnName)) continue;
-      const parsed = parseIngredientCell(cells[c]);
+      const parsed = parseIngredientCell(rawCells[c], { sizeCount });
       if (parsed.components.length === 0 && parsed.variants.length === 0) continue;
       // Some sections express the Hot/Iced split as two SEPARATE columns of the
       // same name ("Espresso" twice, one cell reading "Hot 30-35ml" and the
@@ -267,6 +348,9 @@ export function parseDrinkSheet(rows) {
       ingredients.push({
         column: columnName,
         tempHint,
+        // What the cell as a whole builds ("Rocksalted Cheese Foam"), when it
+        // named itself. Kept for the review screen, never as a material.
+        label: parsed.label || '',
         ...parsed,
         components: parsed.components.map(named),
         variants: parsed.variants.map(named),
@@ -277,7 +361,9 @@ export function parseDrinkSheet(rows) {
       name,
       cupMark: cells[1] || '',
       section,
-      sizes: cells[2] || '',
+      sizes: sizeCell,
+      // "130/150" is one price per size, "180" one price for the drink.
+      prices: parsePrices(srpCol >= 0 ? cells[srpCol] : ''),
       ingredients,
       needsReview: ingredients.some(i => i.needsReview),
     });
@@ -301,6 +387,17 @@ export function parseDrinkSheet(rows) {
 // iced one.
 const VOLUME_RE = /(\d+(?:\.\d+)?)\s*(oz|ml|l)\b/gi;
 const TEMP_RE = /\b(hot|iced|cold|warm)\b/gi;
+
+// The SRP cell carries one price per size, in the same order as the sizes:
+// "130/150" is 130 for the 8oz hot and 150 for the 12oz iced; "180" is one
+// price for the whole drink. Ignoring it made every imported drink cost 0.
+export function parsePrices(srpCell) {
+  const raw = clean(srpCell);
+  if (!raw) return [];
+  return raw.split('/')
+    .map(t => parseFloat(clean(t).replace(/[^\d.]/g, '')))
+    .filter(n => Number.isFinite(n) && n >= 0);
+}
 
 export function parseSizes(sizeCell) {
   const raw = clean(sizeCell);
@@ -332,6 +429,9 @@ export function parseSizes(sizeCell) {
  */
 export function buildProductDraft(drink) {
   const sizes = parseSizes(drink?.sizes);
+  const prices = Array.isArray(drink?.prices) ? drink.prices : [];
+  // One price against several sizes applies to all of them.
+  const priceFor = (i) => (prices.length === 1 ? prices[0] : (prices[i] ?? 0)) || 0;
 
   // Ingredients that do not vary by temperature apply to every size.
   const shared = [];
@@ -353,21 +453,45 @@ export function buildProductDraft(drink) {
     }
     for (const v of ing.variants) {
       if (!(v.qty > 0) || !v.name) continue;
+      // A cell that already declared its temperature ("HOT 130ml / 130ml
+      // Breve Milk / Spanish Milk") is not splitting hot from iced - it is
+      // listing two materials the HOT drink uses together. Reading the pair as
+      // a temperature split gave the hot cup the Breve and the iced cup the
+      // Spanish, when each cup takes both.
+      if (ing.tempHint === 'hot' || ing.tempHint === 'iced') {
+        addVariant(ing.tempHint === 'iced' ? 1 : 0, { name: v.name, qty: v.qty, unit: v.unit });
+        continue;
+      }
       addVariant(v.variant === 'iced' ? 1 : 0, { name: v.name, qty: v.qty, unit: v.unit });
     }
   }
 
-  const recipeFor = (variantIndex) => [
+  // One material named by two columns - truffle oil in the syrup AND in the
+  // foam, spanish milk in the base AND in the foam - is one recipe line for
+  // the total. Two lines for the same stock item read as a mistake on the
+  // product editor and made the sheet look mis-parsed.
+  const mergeLines = (rows) => {
+    const byKey = new Map();
+    for (const r of rows) {
+      const key = `${String(r.name).toLowerCase().trim()}|${String(r.unit || '').toLowerCase()}`;
+      const hit = byKey.get(key);
+      if (hit) hit.qty = Math.round((hit.qty + r.qty) * 1000) / 1000;
+      else byKey.set(key, { ...r });
+    }
+    return [...byKey.values()];
+  };
+
+  const recipeFor = (variantIndex) => mergeLines([
     ...shared,
     ...(perVariant.get(variantIndex) || []),
-  ];
+  ]);
 
   // No size cell at all: one recipe, everything folded together.
   if (sizes.length === 0) {
     return {
       name: drink?.name || '', category: drink?.section || 'Uncategorized',
-      baseSizeName: '', sizes: [],
-      baseRecipe: [...shared, ...(perVariant.get(0) || [])],
+      baseSizeName: '', sizes: [], srp: priceFor(0),
+      baseRecipe: mergeLines([...shared, ...(perVariant.get(0) || [])]),
       needsReview: !!drink?.needsReview,
     };
   }
@@ -377,7 +501,7 @@ export function buildProductDraft(drink) {
   if (sizes.length === 1) {
     return {
       name: drink?.name || '', category: drink?.section || 'Uncategorized',
-      baseSizeName: sizes[0].name, sizes: [],
+      baseSizeName: sizes[0].name, sizes: [], srp: priceFor(0),
       baseRecipe: recipeFor(0),
       needsReview: !!drink?.needsReview,
     };
@@ -386,10 +510,11 @@ export function buildProductDraft(drink) {
   // Several: each becomes its own extra size with its own recipe.
   return {
     name: drink?.name || '', category: drink?.section || 'Uncategorized',
-    baseSizeName: sizes[0].name,
+    baseSizeName: sizes[0].name, srp: priceFor(0),
     baseRecipe: recipeFor(0),
-    sizes: sizes.slice(1).map(sz => ({
-      name: sz.name, sizeCode: sz.volume, price: 0, recipe: recipeFor(sz.variantIndex),
+    sizes: sizes.slice(1).map((sz, i) => ({
+      name: sz.name, sizeCode: sz.volume, price: priceFor(i + 1),
+      recipe: recipeFor(sz.variantIndex),
     })),
     needsReview: !!drink?.needsReview,
   };

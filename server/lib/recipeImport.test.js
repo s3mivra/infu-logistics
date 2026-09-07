@@ -93,13 +93,60 @@ describe('parseIngredientCell - hot / iced variants', () => {
 });
 
 describe('parseIngredientCell - multi-component cells', () => {
-  it('returns each component and flags the cell for review', () => {
+  it('reads a foam build as its three materials, with nothing to confirm', () => {
     const r = parseIngredientCell('0.7ml Truffle Oil / 20ml full cream / 20ml everwhip Truffle Foam');
     expect(r.components).toHaveLength(3);
     expect(r.components[0]).toEqual({ qty: 0.7, unit: 'ml', name: 'Truffle Oil' });
     expect(r.components[1]).toEqual({ qty: 20, unit: 'ml', name: 'full cream' });
-    // Ambiguous by nature, so a human confirms rather than the parser guessing.
+    // Three parts cannot be a Hot/Iced split - there are only two
+    // temperatures - so there is nothing ambiguous here. Flagging it skipped
+    // eight perfectly readable drinks.
+    expect(r.needsReview).toBe(false);
+  });
+
+  it('takes the label of the thing being built off the last material', () => {
+    // The wide gap is how the sheet separates the two.
+    const r = parseIngredientCell('15g Rocksalted Cheese / 20ml full cream / 20ml everwhip          Rocksalted Cheese Foam');
+    expect(r.components.map(c => c.name)).toEqual(['Rocksalted Cheese', 'full cream', 'everwhip']);
+    expect(r.label).toBe('Rocksalted Cheese Foam');
+  });
+
+  it('keeps a trailing material that is not a label', () => {
+    // Nothing but a quantity precedes the gap, so "Breve Milk" IS the material.
+    const r = parseIngredientCell('260ml / 150ml          Breve Milk', { sizeCount: 2 });
+    expect(r.variants.map(v => v.name)).toEqual(['Breve Milk', 'Breve Milk']);
+    expect(r.label).toBe('');
+  });
+
+  it('reads a pair on a single-size drink as two materials, not hot and iced', () => {
+    // A 12oz iced-only matcha has nothing to split between, and reading this
+    // as a temperature split threw the oat milk away.
+    const r = parseIngredientCell('40ml / 40ml     Warm water/ Oat Milk', { sizeCount: 1 });
+    expect(r.variants).toHaveLength(0);
+    expect(r.components).toEqual([
+      { qty: 40, unit: 'ml', name: 'water' },
+      { qty: 40, unit: 'ml', name: 'Oat Milk' },
+    ]);
+  });
+
+  it('still splits that pair by temperature when the drink has two sizes', () => {
+    const r = parseIngredientCell('200ml / 150ml     Steam Milk / Warm Milk', { sizeCount: 2 });
+    expect(r.variants).toEqual([
+      { variant: 'hot', qty: 200, unit: 'ml', name: 'Steam Milk' },
+      { variant: 'iced', qty: 150, unit: 'ml', name: 'Warm Milk' },
+    ]);
+  });
+
+  it('treats a w/ or w/o build as one material needing a decision', () => {
+    const r = parseIngredientCell('w/o espresso 240ml      Biscoff Based');
+    expect(r.components).toEqual([{ qty: 240, unit: 'ml', name: 'Biscoff Based' }]);
+    // Which build the menu sells is the operator's call, not the parser's.
     expect(r.needsReview).toBe(true);
+  });
+
+  it('does not read a drizzle as part of the material name', () => {
+    const r = parseIngredientCell('10ml Drizzle          Caramel Sauce');
+    expect(r.components[0].name).toBe('Caramel Sauce');
   });
 
   it('always keeps the original text for review', () => {

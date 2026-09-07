@@ -55,15 +55,18 @@ describe('parsing the workbook', () => {
     expect(bulk.ingredients.find(i => i.name === 'Alaska Barista Milk').costPerUnit).toBeCloseTo(0.082, 4);
   });
 
-  it('flags the ambiguous drink and leaves the clean one alone', async () => {
+  it('reads a three-part foam cell rather than skipping the drink', async () => {
     const res = await post({ sheets: { 'SIGNATURE': drinkSheet } });
     const seasalt = res.body.drinks.find(d => d.name === 'SEASALT');
     const truffle = res.body.drinks.find(d => d.name === 'TRUFFLE MOCHA');
 
     expect(seasalt.needsReview).toBe(false);
-    // Three components in one cell is genuinely ambiguous - a human decides.
-    expect(truffle.needsReview).toBe(true);
-    expect(res.body.counts.drinksNeedingReview).toBe(1);
+    // "0.7ml Truffle Oil / 20ml full cream / 20ml everwhip" is a foam built
+    // from three things, not a Hot/Iced split - there are only two
+    // temperatures, so three parts can only be three materials. Treating it as
+    // ambiguous skipped eight of this workbook's drinks.
+    expect(truffle.needsReview).toBe(false);
+    expect(res.body.counts.drinksNeedingReview).toBe(0);
   });
 
   it('reads a quantity-only cell as its column material', async () => {

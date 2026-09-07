@@ -4523,9 +4523,9 @@ const updateStatus = async (orderId, newStatus) => {
   const [rsPreview, setRsPreview] = useState(null);    // server parse result
   const [rsBusy, setRsBusy] = useState(false);
   const [rsCreateMissing, setRsCreateMissing] = useState(true);
-  // The workbooks carry no price column - they are recipe sheets - so SRP is
-  // typed here rather than invented. Keyed by product name, then size name
-  // ('' for the base size).
+  // SRP comes from the sheet's price column when it has one ("130/150" is one
+  // price per size) and is typed here when it does not. Keyed by product name,
+  // then size name ('' for the base size).
   const [rsPrices, setRsPrices] = useState({});
   const setRsPrice = (name, size, value) => setRsPrices(prev => ({
     ...prev, [name]: { ...(prev[name] || {}), [size]: value },
@@ -4548,6 +4548,14 @@ const updateStatus = async (orderId, newStatus) => {
       const d = await res.json();
       if (!d.success) { ui.alert(d.error || 'Could not read that workbook.'); return; }
       setRsPreview(d);
+      // Prefill the price boxes from the sheet, so an operator confirms the
+      // numbers rather than re-typing all of them.
+      const seeded = {};
+      for (const dr of (d.drafts || [])) {
+        seeded[dr.name] = { '': dr.srp ? String(dr.srp) : '' };
+        for (const sz of (dr.sizes || [])) seeded[dr.name][sz.name] = sz.price ? String(sz.price) : '';
+      }
+      setRsPrices(seeded);
     } catch (err) {
       console.error('openRecipeSheet', err);
       ui.alert('Could not read that file. Pick the .xlsx recipe workbook.');
