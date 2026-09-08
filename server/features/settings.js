@@ -3,6 +3,7 @@
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
 import { isValidBranchCode } from '../lib/branchCode.js';
+import { moduleStates, MODULE_KEYS, truthy } from '../lib/optionalModules.js';
 
 export default function registerSettings(ctx) {
   const {
@@ -231,6 +232,15 @@ app.get('/api/settings/public', async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
+// Which optional accounting modules this business uses. Read by the sidebar so
+// a module that is off does not appear at all - a screen that posts into books
+// nobody reads is worse than no screen.
+app.get('/api/settings/modules', verifyToken, requireStaff, async (req, res) => {
+  try {
+    res.json({ success: true, modules: await moduleStates(Settings) });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 app.get('/api/settings', verifyToken, requireStaff, async (req, res) => {
   try {
     const rows = await Settings.find().lean();
@@ -375,8 +385,17 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
       return res.json({ success: true, setting: saved });
     }
 
-    const setting = await Settings.findOneAndUpdate({ key: req.params.key }, { value }, { upsert: true, returnDocument: 'after' });
-    emitToAll('settingsUpdated', { key: req.params.key, value });
+    // A module switch is stored as a real boolean whatever the form posted, so
+    // every reader gets the same answer without each one re-deciding what
+    // "false" means.
+    const stored = MODULE_KEYS.has(req.params.key) ? truthy(value, false) : value;
+    const setting = await Settings.findOneAndUpdate({ key: req.params.key }, { value: stored }, { upsert: true, returnDocument: 'after' });
+    emitToAll('settingsUpdated', { key: req.params.key, value: stored });
+
+    if (MODULE_KEYS.has(req.params.key)) {
+      await logAudit(req, { action: 'update', entity: 'Settings', entityId: req.params.key, after: { enabled: stored } });
+      return res.json({ success: true, setting, modules: await moduleStates(Settings) });
+    }
 
     if (VAT_KEYS.has(req.params.key)) {
       const updated = await restampOpenOrdersVat();

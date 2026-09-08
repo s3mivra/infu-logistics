@@ -33,6 +33,7 @@ export default function registerAdvances(ctx) {
     acctMeta,
     mkSeqRef,
     currentBranchCode,
+    periodLockFor,
     verifyToken,
     requireStaff,
     requirePermission,
@@ -104,6 +105,10 @@ export default function registerAdvances(ctx) {
       // matching the bank. Defaults to today when not supplied.
       const txnDate = date ? dayStart(date) : new Date();
       if (Number.isNaN(txnDate.getTime())) return res.status(400).json({ success: false, error: 'Invalid transaction date.' });
+      // The transaction date is the whole point of this field, so it is also
+      // the way into a month that has already been closed and reported.
+      const lock = await periodLockFor(txnDate);
+      if (lock) return res.status(423).json({ success: false, error: `Period ${lock.year}-${String(lock.month).padStart(2, '0')} is closed. Reopen the period first.` });
       if (!ADVANCE_TYPES.includes(type)) return res.status(400).json({ success: false, error: `type must be one of: ${ADVANCE_TYPES.join(', ')}.` });
       if (!String(payeeName || '').trim()) return res.status(400).json({ success: false, error: 'A payee name is required.' });
       const amt = money(amount);
@@ -195,6 +200,10 @@ export default function registerAdvances(ctx) {
       // Friday receipt belongs in Friday's period.
       const txnDate = date ? dayStart(date) : new Date();
       if (Number.isNaN(txnDate.getTime())) return res.status(400).json({ success: false, error: 'Invalid transaction date.' });
+      // The transaction date is the whole point of this field, so it is also
+      // the way into a month that has already been closed and reported.
+      const lock = await periodLockFor(txnDate);
+      if (lock) return res.status(423).json({ success: false, error: `Period ${lock.year}-${String(lock.month).padStart(2, '0')} is closed. Reopen the period first.` });
       const validMethods = advance.type === 'customer' ? ['order', 'cash-return'] : ['expense', 'bill', 'cash-return'];
       if (!validMethods.includes(method)) {
         return res.status(400).json({ success: false, error: `method for a ${advance.type} advance must be one of: ${validMethods.join(', ')}.` });

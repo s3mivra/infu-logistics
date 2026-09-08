@@ -39,6 +39,11 @@ export default function CommandPalette({ open, onClose }) {
     { id: 'pricing',     label: 'Pricing Control',   hint: 'Prices and margins',      perm: 'products.manage',  mode: 'negotium' },
     { id: 'history',     label: 'Shifts & Cash',     hint: 'Shift history, X-reading', perm: null, superOnly: true, mode: 'negotium' },
     { id: 'audit',       label: 'Audit Report',      hint: 'Who changed what',        perm: 'audit.view',       mode: 'negotium' },
+    { id: 'fixedassets', label: 'Fixed Assets',      hint: 'Register, depreciation',  perm: 'accounting.view',  mode: 'negotium' },
+    { id: 'production',  label: 'Production',         hint: 'Bulk recipes, batches',   perm: 'inventory.view',   mode: 'negotium' },
+    { id: 'bankrec',     label: 'Bank Reconciliation', hint: 'Match the statement',    perm: 'accounting.view',  mode: 'negotium' },
+    { id: 'wht',         label: 'Withholding Tax',   hint: 'Held for the BIR',        perm: 'accounting.view',  mode: 'negotium' },
+    { id: 'payroll',     label: 'Payroll',           hint: 'Runs and payslips',       perm: 'accounting.view',  mode: 'negotium' },
     { id: 'settings',    label: 'Settings',          hint: 'Preferences, appearance', perm: null,               mode: 'negotium' },
   ].filter(c => (c.superOnly ? isSuperAdmin : allow(c.perm)))), [isSuperAdmin, can]);   // eslint-disable-line react-hooks/exhaustive-deps
 

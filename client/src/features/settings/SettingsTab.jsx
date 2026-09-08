@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { SlidersHorizontal, QrCode, Clock, DollarSign, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type, X } from 'lucide-react';
 import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
 
@@ -121,8 +121,36 @@ export default function SettingsTab({ ctx }) {
     systemSettings = {}, toggleQROrders, toggleAutoClose, toggleImages,
     toggleRequireCashShift,
     isSuperAdmin, setChangePwModal, setChangePwError, BIZ_NAME, activeAdmin,
-    saveSetting,
+    saveSetting, apiFetch,
   } = ctx;
+
+  // Optional accounting modules. VAT already worked as a switch; these follow
+  // the same shape rather than inventing a second mechanism. A module that is
+  // off is off end to end - its routes refuse and its screen never appears.
+  const [modules, setModules] = useState([]);
+  const [moduleBusy, setModuleBusy] = useState('');
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const d = await (await apiFetch('/api/settings/modules')).json();
+        if (alive && d.success) setModules(d.modules || []);
+      } catch { /* the card simply does not render */ }
+    })();
+    return () => { alive = false; };
+  }, [apiFetch]);
+
+  const toggleModule = async (mod) => {
+    setModuleBusy(mod.key);
+    try {
+      const res = await apiFetch(`/api/settings/${mod.key}`, {
+        method: 'PATCH', body: JSON.stringify({ value: !mod.enabled }),
+      });
+      const d = await res.json();
+      if (d.success && d.modules) setModules(d.modules);
+    } catch { /* leave the switch where it was */ }
+    finally { setModuleBusy(''); }
+  };
 
   const qrOn    = systemSettings.isAcceptingQROrders !== false;
   const autoOn  = systemSettings.autoCloseEnabled !== false;
@@ -475,6 +503,41 @@ export default function SettingsTab({ ctx }) {
                   </p>
                 </div>
               </div>
+            </div>
+          </Card>
+        )}
+
+        {/* Not every business needs every one of these. A cafe on percentage
+            tax withholds nothing and pays three people in cash; a company with
+            staff and a landlord needs both. Off by default, because an unused
+            module on the sidebar is noise. */}
+        {isSuperAdmin && modules.length > 0 && (
+          <Card title="Accounting modules">
+            <div className="divide-y divide-white/5">
+              {modules.map(mod => (
+                <div key={mod.key} className="px-4 py-4 flex items-start gap-4">
+                  <div className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${
+                    mod.enabled ? 'text-brand bg-brand/15 border-brand/30' : 'text-fg/30 bg-white/5 border-white/10'
+                  }`}>
+                    <FileText size={16} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="font-bold text-fg text-sm">{mod.label}</p>
+                        <p className="text-fg/60 text-xs mt-0.5 leading-snug">{mod.blurb}</p>
+                      </div>
+                      <Toggle on={mod.enabled} disabled={moduleBusy === mod.key}
+                        onChange={() => toggleModule(mod)} />
+                    </div>
+                    {!mod.enabled && (
+                      <p className="text-[10px] text-fg/40 mt-2 leading-relaxed">
+                        Switched off: its screen is hidden and nothing posts to its accounts.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           </Card>
         )}

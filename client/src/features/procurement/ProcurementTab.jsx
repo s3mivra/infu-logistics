@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, ChevronDown, Search, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download, Sparkles, Box } from 'lucide-react';
+import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, ChevronDown, Search, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download, Sparkles, Box, Upload } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 
@@ -88,6 +88,34 @@ export default function ProcurementTab({ ctx }) {
   const can = ctx.can || (() => true);
   const canManage = can('procurement.manage');
   const canDelete = can('procurement.delete');
+
+  const [supplierImporting, setSupplierImporting] = useState(false);
+  const downloadDataset = ctx.downloadDataset;
+
+  // Read the sheet in the browser and hand the rows to the server, same shape
+  // the expense and fixed-asset importers use.
+  const importSuppliers = async (file) => {
+    if (!file) return;
+    setSupplierImporting(true);
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+      if (rows.length === 0) { ui.alert('That sheet has no rows.'); return; }
+      if (!(await ui.confirm(`Import ${rows.length} supplier(s)? Existing names are left alone.`))) return;
+
+      const d = await (await apiFetch('/api/suppliers/import', {
+        method: 'POST', body: JSON.stringify({ rows }),
+      })).json();
+      if (!d.success) { ui.alert(d.error || 'Import failed.'); return; }
+      const bad = (d.skipped || []).map(x => `Row ${x.row}: ${x.error}`);
+      ui.alert(`Added ${d.created} supplier(s).` + (bad.length ? `\n\nNot added:\n- ${bad.join('\n- ')}` : ''));
+      fetchSuppliers?.();
+    } catch (err) {
+      console.error('supplier import', err);
+      ui.alert('Could not read that file. Use the downloaded template.');
+    } finally { setSupplierImporting(false); }
+  };
 
   const [subTab, setSubTab] = useState('orders');   // 'orders' | 'receiving' | 'suppliers'
   const [pos, setPos] = useState([]);
@@ -782,9 +810,28 @@ export default function ProcurementTab({ ctx }) {
           </div>
         )}
         {subTab === 'suppliers' && canManage && (
-          <button onClick={() => openSupplierForm()} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
-            <Plus size={16} /> New Supplier
-          </button>
+          <>
+            {/* The template and the export were already here; there was no way
+                to put a filled-in sheet BACK, which makes a template a dead
+                end - it invites an evening of typing that nothing can read. */}
+            <button onClick={() => downloadDataset?.('suppliers')}
+              className="flex items-center gap-2 bg-brand/10 hover:bg-brand/20 text-brand font-bold text-sm px-4 py-2.5 rounded-xl transition">
+              <Download size={16} /> Export
+            </button>
+            <button onClick={() => downloadDataset?.('suppliers', { template: true })}
+              title="Blank workbook with the same columns, plus a sheet of the accepted values"
+              className="flex items-center gap-2 border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 font-bold text-sm px-4 py-2.5 rounded-xl transition">
+              <FileText size={16} /> Template
+            </button>
+            <label className={`flex items-center gap-2 border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 font-bold text-sm px-4 py-2.5 rounded-xl transition ${supplierImporting ? 'opacity-40 pointer-events-none' : 'cursor-pointer'}`}>
+              <Upload size={16} /> {supplierImporting ? 'Reading…' : 'Import'}
+              <input type="file" accept=".xlsx,.xls,.csv" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; importSuppliers(f); }} />
+            </label>
+            <button onClick={() => openSupplierForm()} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
+              <Plus size={16} /> New Supplier
+            </button>
+          </>
         )}
       </div>
 

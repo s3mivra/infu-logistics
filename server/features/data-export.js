@@ -136,10 +136,36 @@ export default function registerDataExport(ctx) {
       const def = DATASETS[key];
       if (!def) return res.status(404).json({ success: false, error: `Unknown dataset "${key}".` });
 
-      // template=1 returns the headers with no rows. Deliberately the same
-      // endpoint: a template that came from somewhere else could drift.
+      // template=1 returns the sheet to FILL IN, which is not the same list
+      // as the sheet that comes OUT. An export carries codes the system
+      // assigned and balances it derived; a template has to carry what a
+      // person must supply. Handing someone the export columns meant they
+      // filled in fields nothing reads and never saw the ones that are
+      // required - see the note at the top of lib/dataSets.js.
       if (req.query.template === '1') {
-        return res.json({ success: true, dataset: key, label: def.label, columns: def.columns, rows: [], template: true });
+        const spec = def.importSpec;
+        if (!spec) {
+          // Export-only dataset. Still answer, so a caller that asks gets the
+          // headers rather than an error, but say plainly there is no import.
+          return res.json({
+            success: true, dataset: key, label: def.label, columns: def.columns,
+            rows: [], template: true, importable: false,
+            note: `${def.label} is export-only - there is no import for it.`,
+          });
+        }
+        return res.json({
+          success: true, dataset: key, label: def.label, template: true, importable: true,
+          columns: spec.columns.map(c => c.name),
+          // One filled-in row, so the shape of a real entry is visible rather
+          // than described. The client writes it as an example and says so.
+          example: spec.columns.map(c => c.example ?? ''),
+          intro: spec.intro || '',
+          endpoint: spec.endpoint,
+          fields: spec.columns.map(c => ({
+            name: c.name, required: !!c.required, note: c.note || '', example: c.example ?? '',
+          })),
+          rows: [],
+        });
       }
 
       let Model;

@@ -1,12 +1,13 @@
 ﻿import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network, Factory } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network, Factory, Landmark, Receipt } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
 import { usePaymentMethods } from '../../shared/usePaymentMethods';
 import { buildReceiptHTML as buildSharedReceipt, printReceiptHTML, resolveLetterhead } from '../../shared/receiptTemplate';
 import { buildEscposReceiptBytes, sleep as escposSleep, readPrinterMode, writePrinterMode } from '../../shared/escpos';
+import { useModules } from '../finance-modules/useModules';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import { queueOrder, requestNotificationPermission, notify, queueClock, getQueuedClock, flushClockQueue } from '../../shared/pwa';
 import * as auth from '../auth/auth';
@@ -50,6 +51,10 @@ const SettingsTab   = lazy(() => import('../settings/SettingsTab'));
 const ClientsTab    = lazy(() => import('../clients/ClientsTab'));
 const HubTab        = lazy(() => import('../hub/HubTab'));
 const ProductionTab = lazy(() => import('../production/ProductionTab'));
+const FixedAssetsTab = lazy(() => import('../fixed-assets/FixedAssetsTab'));
+const BankReconciliationTab = lazy(() => import('../finance-modules/BankReconciliationTab'));
+const WithholdingTaxTab = lazy(() => import('../finance-modules/WithholdingTaxTab'));
+const PayrollTab = lazy(() => import('../finance-modules/PayrollTab'));
 
 // Small fallback shown while a tab chunk loads.
 const TabFallback = () => (
@@ -1359,6 +1364,11 @@ export default function AdminDashboard() {
   };
   
   const [jeForm, setJeForm] = useState({
+    // An adjusting entry belongs to the period it corrects, not to the day it
+    // was typed. The API has always accepted a date - and locks closed months
+    // against it - but the form never offered a box, so every manual entry was
+    // stamped "now" and a correction to last month landed in this one.
+    date: new Date().toISOString().slice(0, 10),
     description: '',
     lines: [
       { accountCode: '', accountName: '', debit: '', credit: '' },
@@ -2975,13 +2985,22 @@ const updateStatus = async (orderId, newStatus) => {
   };
   // Per-client ageing is server-computed so the buckets, the credit limits and
   // the order-time enforcement all read from one rule set.
-  const fetchExpenses = async () => {
+  // Memoised, and it has to be.
+  //
+  // The Expenses page runs this from a useEffect keyed on the function itself.
+  // As a plain function it got a new identity on every render of this
+  // component, so the effect re-fired, fetched, called setExpenseList, which
+  // re-rendered, which made a new identity again - a loop that re-fetched the
+  // expense list continuously for as long as the page was open. That is the
+  // "stutter" on the expense screen, and it also meant the server was being
+  // hit several times a second by one idle browser tab.
+  const fetchExpenses = useCallback(async () => {
     try {
       const res = await apiFetch('/api/expenses');
       const d = await res.json();
       if (d.success) setExpenseList({ expenses: d.expenses || [], byCategory: d.byCategory || [], total: d.total || 0 });
     } catch (err) { console.error('fetchExpenses', err); }
-  };
+  }, [apiFetch]);
   const fetchSuppliers = async () => {
     try {
       const res = await apiFetch('/api/suppliers');
@@ -3206,14 +3225,18 @@ const updateStatus = async (orderId, newStatus) => {
   };
   // ────────────────────────────────────────────────────────────────────────────
 
-  const fetchExpenseCategories = async () => {
+  // Same reason as fetchExpenses: the page's effect depends on this identity.
+  // Its own early return kept it from looping on its own, but it still made
+  // the effect re-run every render, which is what dragged fetchExpenses round
+  // with it.
+  const fetchExpenseCategories = useCallback(async () => {
     if (activeAdmin?.role !== 'superadmin' || expenseCategories.length > 0) return;
     try {
       const res = await apiFetch(`/api/expenses/categories`);
       const data = await res.json();
       if (data.success) setExpenseCategories(data.categories);
     } catch (err) { console.error('fetchExpenseCategories', err); }
-  };
+  }, [apiFetch, activeAdmin?.role, expenseCategories.length]);
   const submitExpense = async () => {
     if (expenseSubmitting) return;
     if (!expenseForm.amount || parseFloat(expenseForm.amount) <= 0) return ui.alert('Enter a valid amount.');
@@ -4668,14 +4691,21 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   };
 
   // ── GENERIC DATA EXPORT ────────────────────────────────────────────────────
-  // One helper for every dataset, backed by /api/export/:dataset. Downloading
-  // the TEMPLATE is the same call with template=1, so the columns a user fills
-  // in are by construction the columns the exporter produces - the two cannot
-  // drift apart and leave someone with a spreadsheet the importer rejects.
+  // One helper for every dataset, backed by /api/export/:dataset.
   //
-  // Every template workbook also carries a "Valid Values" sheet: the accepted
-  // values for each constrained column. Without it the first sign that "Rent"
-  // should have been "630000" is a hundred rejected rows.
+  // A TEMPLATE is not an empty export. The export carries what the system
+  // knows - codes it assigned, balances it derived, statuses it computed - and
+  // an import needs what a PERSON must supply, which is a different list. The
+  // server decides that (see importSpec in lib/dataSets.js); this writes it out
+  // as a workbook of four sheets:
+  //
+  //   Data          the columns to fill in, with one example row
+  //   How to fill   every field, whether it is required, and what it means
+  //   Valid Values  the accepted values for each constrained column
+  //   Accounts      account codes and names, where a column asks for one
+  //
+  // Without the second sheet the first sign that "Rent" should have been
+  // "630000" is a hundred rejected rows.
   const [exportBusy, setExportBusy] = useState('');
   const downloadDataset = async (dataset, { template = false, start, end, label } = {}) => {
     setExportBusy(dataset);
@@ -4690,10 +4720,29 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
       const XLSX = await import('xlsx');
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([d.columns, ...d.rows]), 'Data');
 
-      // The valid-value sheet rides along with templates, where it is needed.
+      if (template && d.importable === false) {
+        ui.alert(d.note || `${d.label} is export-only - there is no import for it.`);
+        return;
+      }
+
+      // A template ships one worked example rather than a bare header row: the
+      // shape of a real entry is easier to copy than to describe.
+      const dataRows = template && d.example ? [d.example] : d.rows;
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([d.columns, ...dataRows]), 'Data');
+
       if (template) {
+        // What each column means, and which ones cannot be left blank.
+        if (Array.isArray(d.fields) && d.fields.length) {
+          const guide = [
+            ['Column', 'Required?', 'What to put', 'Example'],
+            ...d.fields.map(f => [f.name, f.required ? 'REQUIRED' : 'optional', f.note || '', String(f.example ?? '')]),
+          ];
+          if (d.intro) { guide.push([], ['Note', d.intro]); }
+          guide.push([], ['Row 2 of the Data sheet is an example - replace it or delete it before importing.']);
+          XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(guide), 'How to fill');
+        }
+
         try {
           const vv = await (await apiFetch('/api/export/valid-values')).json();
           if (vv.success) {
@@ -4703,6 +4752,22 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([vv.columns, ...rows]), 'Valid Values');
           }
         } catch { /* the template is still usable without it */ }
+
+        // Any template with an account column needs the account list beside
+        // it. Typing a code from memory is how a bill ends up charged to the
+        // wrong place, or rejected outright.
+        const wantsAccount = (d.columns || []).some(c => /account|categoryCode|class/i.test(String(c)));
+        if (wantsAccount) {
+          try {
+            const acc = await (await apiFetch('/api/export/account-balances')).json();
+            if (acc.success) {
+              const codeIdx = acc.columns.findIndex(c => /code/i.test(String(c)));
+              const nameIdx = acc.columns.findIndex(c => /name/i.test(String(c)));
+              const rows = (acc.rows || []).map(r => [r[codeIdx >= 0 ? codeIdx : 0], r[nameIdx >= 0 ? nameIdx : 1]]);
+              XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Code', 'Account'], ...rows]), 'Accounts');
+            }
+          } catch { /* the template is still usable without it */ }
+        }
       }
 
       const stamp = new Date().toISOString().slice(0, 10);
@@ -7244,6 +7309,10 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   const isSuperAdmin = activeAdmin?.role === 'superadmin';
   // Granular permission check for UI gating (server still enforces). Superadmin ⇒ all.
   const can = (perm) => isSuperAdmin || auth.can(perm);
+  // Optional accounting modules. Until the server answers, everything reads as
+  // off: showing a tab and then taking it away looks like a glitch, showing it
+  // a moment late does not.
+  const { isOn: moduleOn } = useModules(apiFetch);
   // Void / refund are allowed for superadmin OR admin (case-insensitive).
   const canVoidRefund = ['superadmin', 'admin'].includes(String(activeAdmin?.role || '').toLowerCase());
 
@@ -7314,8 +7383,13 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           { id: 'orders', label: 'Orders & POS', icon: ShoppingCart, perm: 'orders.view' },
           { id: 'inventory', label: 'Inventory & Stock', icon: Package, perm: 'inventory.view' },
           { id: 'hub', label: 'Hub', icon: Network, perm: 'inventory.view' },
-          // Logistics-only: raw materials → finished item, approval-gated.
-          ...(BUSINESS_TYPE === 'log' ? [{ id: 'production', label: 'Production', icon: Factory, perm: 'inventory.view' }] : []),
+          // Raw materials -> finished item, approval-gated. Was logistics-only,
+          // which hid it from exactly the business that needs it most: a cafe
+          // makes its own Spanish Milk, Breve Milk, Biscoff Based and cold brew
+          // from bought-in stock, and those in turn are recipe materials. With
+          // no way to file a batch they sat at zero cost and zero quantity, so
+          // every drink built on them was uncostable and unsellable.
+          { id: 'production', label: 'Production', icon: Factory, perm: 'inventory.view' },
           { id: 'procurement', label: 'Procurement', icon: Truck, perm: 'procurement.view' },
           { id: 'clients', label: 'Clients', icon: Users, perm: 'orders.view' },
           { id: 'products', label: 'Menu Setup', icon: ChefHat, perm: 'products.view' },
@@ -7354,6 +7428,13 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             { id: 'pricing',   label: 'Pricing Control', icon: DollarSign,  show: can('products.manage') },
             { id: 'history',   label: 'Shifts & Cash',   icon: Clock,       show: isSuperAdmin },
             { id: 'audit',     label: 'Audit Report',    icon: ShieldCheck, show: can('audit.view') },
+            { id: 'fixedassets', label: 'Fixed Assets',  icon: Building2,   show: can('accounting.view') },
+            // Optional modules: each appears only where the business has
+            // switched it on. A cafe on percentage tax withholds nothing, and
+            // a screen it can never use is noise on the sidebar.
+            { id: 'bankrec',   label: 'Bank Reconciliation', icon: Landmark, show: can('accounting.view') && moduleOn('bankReconciliation') },
+            { id: 'wht',       label: 'Withholding Tax', icon: Receipt,   show: can('accounting.view') && moduleOn('withholdingTax') },
+            { id: 'payroll',   label: 'Payroll',         icon: Users,     show: can('accounting.view') && moduleOn('payroll') },
           ].filter(it => it.show);
           if (mgmtItems.length === 0 && !isSuperAdmin) return null;
           return (
@@ -7953,6 +8034,14 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
 {/* --- AUDIT REPORT --- */}
       {activeTab === 'audit' && <Suspense fallback={<TabFallback />}><AuditTab ctx={ctx} /></Suspense>}
+
+{/* --- FIXED ASSETS (register, depreciation, disposal) --- */}
+      {activeTab === 'fixedassets' && <Suspense fallback={<TabFallback />}><FixedAssetsTab /></Suspense>}
+
+{/* --- OPTIONAL ACCOUNTING MODULES --- */}
+      {activeTab === 'bankrec' && <Suspense fallback={<TabFallback />}><BankReconciliationTab /></Suspense>}
+      {activeTab === 'wht' && <Suspense fallback={<TabFallback />}><WithholdingTaxTab /></Suspense>}
+      {activeTab === 'payroll' && <Suspense fallback={<TabFallback />}><PayrollTab /></Suspense>}
 
 {/* --- MENU SETUP (PRODUCTS/CATEGORIES) --- */}
       {activeTab === 'products' && <Suspense fallback={<TabFallback />}><ProductsTab ctx={ctx} /></Suspense>}

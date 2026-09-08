@@ -243,11 +243,18 @@ describe('export and template', () => {
     expect(res.body.rows[0]).toContain(60000);
   });
 
-  it('offers a template with the same columns', async () => {
+  it('offers a template asking for what has to be typed in', async () => {
     const t = await auth('get', '/api/export/fixedAssets?template=1');
     const d = await auth('get', '/api/export/fixedAssets');
-    expect(t.body.columns).toEqual(d.body.columns);
-    expect(t.body.rows).toHaveLength(0);
+
+    // The export reports what the asset is worth now; the template asks what
+    // it cost and how long it lasts. Handing someone the export columns
+    // invites them to fill in a net book value nobody reads, and leaves out
+    // the useful life, without which nothing can be depreciated.
+    expect(d.body.columns).toContain('Net Book Value');
+    expect(t.body.columns).not.toContain('Net Book Value');
+    expect(t.body.columns).toContain('usefulLifeMonths');
+    expect(t.body.fields.find(f => f.name === 'usefulLifeMonths').required).toBe(true);
   });
 
   it('tells the template which classes are accepted', async () => {
@@ -255,5 +262,80 @@ describe('export and template', () => {
     const cls = vv.body.table.find(t => t.dataset === 'fixedAssets' && t.column === 'Class');
     expect(cls.values.some(v => v.includes('140200'))).toBe(true);
     expect(cls.note).toMatch(/code|name/i);
+  });
+});
+
+// Everything the Fixed Assets screen reads. These are not extra assertions on
+// the arithmetic - that is covered above and in depreciation.test.js - they
+// pin the SHAPE of the responses. Rename `className` or drop `due` and the
+// register still returns 200 while the screen quietly shows blank columns.
+describe('what the screen reads off these responses', () => {
+  it('names every asset class with its paired contra account', async () => {
+    const res = await auth('get', '/api/fixed-assets/classes');
+    expect(res.status).toBe(200);
+    const eq = res.body.classes.find(c => c.code === '140200');
+    expect(eq).toMatchObject({ code: '140200', name: 'Machinery & Equipment', accumCode: '150200' });
+    expect(eq.accumName).toBeTruthy();   // the picker shows it, so it must exist
+  });
+
+  it('decorates each row with the figures the table shows', async () => {
+    await acquire();
+    const { body } = await auth('get', '/api/fixed-assets');
+    const a = body.assets[0];
+    expect(a.className).toBe('Machinery & Equipment');
+    expect(a.netBookValue).toBe(60000);
+    expect(a.monthlyDepreciation).toBe(900);
+    expect(a.depreciableBase).toBe(54000);
+    expect(a.status).toBe('Active');
+    // The "Depreciate" button only appears when something is owed, so the row
+    // has to say how much and over how many months.
+    expect(a.due).toMatchObject({ months: expect.any(Number), amount: expect.any(Number) });
+  });
+
+  it('reports what is owed across the register, for the month-end banner', async () => {
+    await acquire();
+    const { body } = await auth('get', '/api/fixed-assets');
+    expect(body.totals).toMatchObject({
+      count: 1, cost: 60000, accumulatedDepreciation: 0, netBookValue: 60000,
+      dueNow: expect.any(Number),
+    });
+  });
+
+  it('returns a forward schedule for the expanded row', async () => {
+    const { body: created } = await acquire();
+    const { body } = await auth('get', `/api/fixed-assets/${created.asset._id}`);
+    expect(body.schedule.length).toBeGreaterThan(0);
+    expect(body.schedule[0]).toMatchObject({
+      period: 1, charge: 900, accumulated: 900, netBookValue: 59100,
+    });
+    // It stops at the salvage floor rather than running to zero.
+    const last = body.schedule[body.schedule.length - 1];
+    expect(last.netBookValue).toBeGreaterThanOrEqual(6000);
+  });
+
+  it('filters by status and class, which is what the two pickers send', async () => {
+    await acquire();
+    await acquire({ name: 'Delivery Van', accountCode: '140400', acquisitionCost: 500000, salvageValue: 0 });
+
+    const byClass = await auth('get', '/api/fixed-assets?accountCode=140400');
+    expect(byClass.body.assets).toHaveLength(1);
+    expect(byClass.body.assets[0].name).toBe('Delivery Van');
+
+    const byStatus = await auth('get', '/api/fixed-assets?status=Disposed');
+    expect(byStatus.body.assets).toHaveLength(0);
+  });
+
+  it('reports the rows it could not import, so the screen can list them', async () => {
+    const res = await auth('post', '/api/fixed-assets/import').send({
+      rows: [
+        { name: 'Chest Freezer', class: 'Machinery & Equipment', acquisitionCost: 25000, usefulLifeMonths: 60 },
+        { name: 'Nonsense', class: 'Not A Class', acquisitionCost: 1000, usefulLifeMonths: 12 },
+      ],
+    });
+    expect(res.body.created).toBe(1);
+    expect(res.body.skipped).toHaveLength(1);
+    // Row number and reason both shown to whoever filled the sheet in.
+    expect(res.body.skipped[0].row).toBe(2);
+    expect(res.body.skipped[0].error).toMatch(/class/i);
   });
 });

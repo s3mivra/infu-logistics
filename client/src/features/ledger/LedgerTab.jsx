@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Receipt, History, HandCoins, Wallet } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, Upload, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Receipt, History, HandCoins, Wallet } from 'lucide-react';
 import { isCancelledRow, isCancelledSheet, partitionCancelledGroups } from '../../shared/backdateCancelled';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
@@ -949,6 +949,35 @@ export default function LedgerTab({ ctx }) {
   // strip of 17 (reports) / 12 (ledger) buttons, which meant scrolling blind to
   // find anything. Grouping by what the page is FOR lets the whole set wrap and
   // stay visible at once.
+  // Bills import. The sheet is read in the browser and the rows handed to the
+  // server, same as every other importer here.
+  const [billImporting, setBillImporting] = useState(false);
+  const importBills = async (file) => {
+    if (!file) return;
+    setBillImporting(true);
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+      if (rows.length === 0) { ui.alert('That sheet has no rows.'); return; }
+      const ok = await ui.confirm(
+        `Import ${rows.length} bill(s)?\n\nThey arrive as Pending and post nothing - approve each one to book the payable.`,
+      );
+      if (!ok) return;
+      const d = await (await apiFetch('/api/bills/import', {
+        method: 'POST', body: JSON.stringify({ rows }),
+      })).json();
+      if (!d.success) { ui.alert(d.error || 'Import failed.'); return; }
+      const bad = (d.skipped || []).map(x => `Row ${x.row}: ${x.error}`);
+      ui.alert(`Added ${d.created} bill(s), ${d.totalAmount?.toLocaleString?.('en-PH') ?? d.totalAmount} in total.\n\n${d.note}`
+        + (bad.length ? `\n\nNot added:\n- ${bad.join('\n- ')}` : ''));
+      fetchBills?.();
+    } catch (err) {
+      console.error('bill import', err);
+      ui.alert('Could not read that file. Use the downloaded template.');
+    } finally { setBillImporting(false); }
+  };
+
   const REPORT_TAB_GROUPS = [
     ['Sales', [
       ['salessummary',  'Sales Summary',          BarChart3],
@@ -1001,6 +1030,10 @@ export default function LedgerTab({ ctx }) {
       // can check "is my request still pending"), not anyone else's. Approve or
       // Reject still require requisitions.approve regardless.
       ['approvals',  'Approvals',           ShieldCheck],
+      // Tenancy Health had a panel but no way in - the only diagnostic that
+      // answers "is every document stamped with this server's business type",
+      // which is what a mis-scoped report looks like from the outside.
+      ['tenancy',    'Tenancy Health',      ShieldCheck],
     ]],
   ];
 
@@ -1037,6 +1070,17 @@ export default function LedgerTab({ ctx }) {
                   className="flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
                   <FileText size={12} /> Template
                 </button>
+                {/* An importer only where one exists. A template with no way
+                    back in is a dead end, and the Bills page is where a
+                    business arrives on day one holding a drawer of unpaid
+                    invoices. */}
+                {ledgerSubTab === 'bills' && (
+                  <label className={`flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition ${billImporting ? 'opacity-40 pointer-events-none' : 'cursor-pointer'}`}>
+                    <Upload size={12} /> {billImporting ? 'Reading…' : 'Import'}
+                    <input type="file" accept=".xlsx,.xls,.csv" className="hidden"
+                      onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; importBills(f); }} />
+                  </label>
+                )}
               </div>
             );
           })()}
@@ -1563,6 +1607,12 @@ export default function LedgerTab({ ctx }) {
             <div className="bg-surface border border-white/10 rounded-xl p-6 h-fit">
               <h3 className="text-xl font-bold mb-4 text-accent border-b border-white/10 pb-2">New Journal Entry</h3>
               <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] text-fg/80 font-bold uppercase block mb-1">Entry date</label>
+                  <input type="date" value={jeForm.date || ''} onChange={e => setJeForm({...jeForm, date: e.target.value})}
+                    className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none" />
+                  <p className="text-[9px] text-fg/40 mt-1">The period this entry belongs to. A closed month will refuse it.</p>
+                </div>
                 <input type="text" placeholder="Description / Memo" value={jeForm.description} onChange={e => setJeForm({...jeForm, description: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none" />
                 {jeForm.lines.map((line, idx) => (
                   <div key={idx} className="bg-accent p-3 rounded border border-gray-700 space-y-2 relative">
@@ -1601,9 +1651,22 @@ export default function LedgerTab({ ctx }) {
                     Credits: {jeForm.lines.reduce((s, l) => s + Number(l.credit||0), 0)}
                   </div>
                   <button onClick={async () => {
-                    await apiFetch(`/api/journal`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(jeForm) });
-                    setJeForm({ description: '', lines: [{accountCode:'', accountName:'', debit:'', credit:''}, {accountCode:'', accountName:'', debit:'', credit:''}] });
-                    fetchERPData();
+                    // The reply was being thrown away: an entry the server
+                    // refused - unbalanced, or dated into a closed month -
+                    // cleared the form and said nothing, so it looked posted
+                    // when nothing had been written at all.
+                    try {
+                      const res = await apiFetch(`/api/journal`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(jeForm) });
+                      const d = await res.json();
+                      if (!d.success) { ui.alert(d.error || 'The entry was not posted.'); return; }
+                      setJeForm({
+                        date: new Date().toISOString().slice(0, 10),
+                        description: '',
+                        lines: [{accountCode:'', accountName:'', debit:'', credit:''}, {accountCode:'', accountName:'', debit:'', credit:''}],
+                      });
+                      ui.toast('Entry posted.', { tone: 'success' });
+                      fetchERPData();
+                    } catch { ui.alert('Network error - nothing was posted.'); }
                   }} className="bg-accent text-white font-bold py-2 px-4 rounded hover:bg-page-bg hover:text-accent transition shadow-lg shadow-accent/20">Post Entry</button>
                 </div>
               </div>
@@ -4397,46 +4460,6 @@ export default function LedgerTab({ ctx }) {
           )}
 
           {/* ===== PURCHASE ORDER SUGGESTION ===== */}
-          {ledgerSubTab === 'po' && (
-            <div className="space-y-4 animate-fade-in">
-              <div className="flex justify-between items-center flex-wrap gap-2">
-                <p className="text-xs text-fg/40">Suggested reorder quantities to cover ~7 days, based on 30-day usage + low-stock flags.</p>
-                <div className="flex gap-2">
-                  {purchaseOrder && (purchaseOrder.lines||[]).length > 0 && <button onClick={exportPurchaseOrderPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 text-fg/60 rounded-xl font-bold text-sm hover:bg-white/10 transition"><Download size={14}/> PDF</button>}
-                  <button onClick={fetchPurchaseOrder} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Generate</button>
-                </div>
-              </div>
-              {!purchaseOrder ? (
-                <p className="text-fg/60 text-sm text-center p-6 font-bold">Click Generate to build a purchase order.</p>
-              ) : (purchaseOrder.lines||[]).length === 0 ? (
-                <p className="text-green-400/70 text-sm text-center p-6 font-bold">✓ Stock levels are healthy - nothing to reorder.</p>
-              ) : (
-                <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
-                  <div className="px-5 py-3 border-b border-white/10 flex justify-between items-center">
-                    <h3 className="text-sm font-black text-fg uppercase tracking-wider">Suggested Purchase Order</h3>
-                    <span className="text-sm font-black text-brand tabular-nums">Est. ₱{(purchaseOrder.totalEstCost||0).toFixed(2)}</span>
-                  </div>
-                  <table className="w-full text-left text-xs min-w-[520px]">
-                    <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
-                      <tr><th className="px-5 py-3">Item</th><th className="px-5 py-3 text-right">On Hand</th><th className="px-5 py-3 text-right">Daily Use</th><th className="px-5 py-3 text-right">Order Qty</th><th className="px-5 py-3 text-right">Est. Cost</th></tr>
-                    </thead>
-                    <tbody>
-                      {poPage.pageItems.map((l,i) => (
-                        <tr key={i} className={`border-b border-white/5 ${i%2?'bg-white/[0.015]':''}`}>
-                          <td className="px-5 py-2.5 font-bold text-fg">{l.itemName} {l.lowStock && <span className="text-[9px] bg-red-500 text-white px-1.5 py-0.5 rounded uppercase ml-1">Low</span>}</td>
-                          <td className="px-5 py-2.5 text-right text-fg/70 tabular-nums">{l.currentStock} {l.displayUnit}</td>
-                          <td className="px-5 py-2.5 text-right text-fg/50 tabular-nums">{l.avgDailyUse} {l.displayUnit}</td>
-                          <td className="px-5 py-2.5 text-right text-brand font-black tabular-nums">{l.suggestedOrder} {l.displayUnit}</td>
-                          <td className="px-5 py-2.5 text-right text-fg/70 tabular-nums">₱{l.estCost.toFixed(2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <div className="px-3"><Pager {...poPage} label="items" /></div>
-                </div>
-              )}
-            </div>
-          )}
 
           {/* ===== REVOLVING FUNDS SUB-TAB ===== */}
           {ledgerSubTab === 'expenses' && <ExpensesPage />}
@@ -5066,79 +5089,6 @@ export default function LedgerTab({ ctx }) {
           })()}
 
           {/* ── AUDIT LOG ──────────────────────────────────────────────────── */}
-          {ledgerSubTab === 'audit' && (
-            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-xl font-black text-fg flex items-center gap-2"><ShieldCheck size={18} className="text-brand"/> Audit Log</h3>
-                  <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-1">Forensic trail of edits, voids, deletes</p>
-                </div>
-                <div className="flex gap-2 flex-wrap">
-                  <select value={auditLogFilter.entity}
-                    onChange={e => setAuditLogFilter({...auditLogFilter, entity: e.target.value})}
-                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs font-bold outline-none focus:border-brand/60">
-                    <option value="">All Entities</option>
-                    <option value="PRODUCT">Product</option>
-                    <option value="ORDER">Order</option>
-                    <option value="INVENTORY">Inventory</option>
-                    <option value="ACCOUNT">Account</option>
-                    <option value="PERIOD">Period</option>
-                    <option value="JOURNALENTRY">Journal Entry</option>
-                  </select>
-                  <input type="text" placeholder="Actor name" value={auditLogFilter.actor}
-                    onChange={e => setAuditLogFilter({...auditLogFilter, actor: e.target.value})}
-                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs outline-none focus:border-brand/60"/>
-                  <button onClick={() => fetchAuditLog(1)} className="bg-brand text-white font-black px-4 py-2 rounded-lg uppercase tracking-widest text-xs hover:bg-brand/90 transition">
-                    Query
-                  </button>
-                  {auditLogEntries && auditLogEntries.length > 0 && (
-                    <button onClick={exportAuditLogPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-4 py-2 rounded-lg font-black uppercase tracking-widest text-xs transition"><Download size={12}/> PDF</button>
-                  )}
-                </div>
-              </div>
-
-              {(auditLogEntries || []).length === 0 ? (
-                <p className="text-fg/40 text-sm italic text-center py-8">No audit entries match. Click Query to load.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="text-fg/40 border-b border-white/10 text-[10px] uppercase tracking-widest">
-                        <th className="pb-2">When</th>
-                        <th className="pb-2">Actor</th>
-                        <th className="pb-2">Action</th>
-                        <th className="pb-2">Reference</th>
-                        <th className="pb-2">Details</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {auditLogEntries.map((e, idx) => (
-                        <tr key={e._id || idx} className="border-b border-white/5 hover:bg-page-bg/30">
-                          <td className="py-2 text-fg/60 text-xs whitespace-nowrap">{new Date(e.timestamp).toLocaleString()}</td>
-                          <td className="py-2 text-fg font-bold text-xs">{e.userId}</td>
-                          <td className="py-2 text-brand font-bold text-xs">{e.action}</td>
-                          <td className="py-2 text-fg/60 text-xs font-mono">{e.targetReference}</td>
-                          <td className="py-2 text-fg/40 text-[10px] max-w-md truncate" title={JSON.stringify(e.details)}>
-                            {e.details ? JSON.stringify(e.details).slice(0, 80) + (JSON.stringify(e.details).length > 80 ? '…' : '') : '-'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {auditLogPages > 1 && (
-                <div className="flex justify-between items-center border-t border-white/10 pt-3">
-                  <button onClick={() => fetchAuditLog(Math.max(1, auditLogPage - 1))} disabled={auditLogPage === 1}
-                    className="px-4 py-1.5 rounded-lg bg-white/5 text-fg/60 text-xs font-bold uppercase tracking-widest disabled:opacity-30 hover:bg-white/10 transition">← Prev</button>
-                  <span className="text-fg/40 text-xs font-bold tracking-widest">PAGE {auditLogPage} / {auditLogPages}</span>
-                  <button onClick={() => fetchAuditLog(Math.min(auditLogPages, auditLogPage + 1))} disabled={auditLogPage === auditLogPages}
-                    className="px-4 py-1.5 rounded-lg bg-white/5 text-fg/60 text-xs font-bold uppercase tracking-widest disabled:opacity-30 hover:bg-white/10 transition">Next →</button>
-                </div>
-              )}
-            </div>
-          )}
 
           {/* ── TENANCY HEALTH + MY PERMISSIONS ───────────────────────────── */}
           {/* ── BACKDATE SALES (superadmin only) ──────────────────────────── */}

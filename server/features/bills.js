@@ -116,6 +116,83 @@ export default function registerBills(ctx) {
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
+  // Bulk entry of bills that already exist on paper.
+  //
+  // This is a cutover tool: the day you go live you have a drawer of unpaid
+  // supplier invoices, and typing them one at a time is the slowest part of
+  // starting. Each row becomes a PENDING bill - deliberately not approved, so
+  // nothing posts to the ledger until a person has looked at it. Approving in
+  // bulk would book a drawer of payables sight unseen, and a typo in a
+  // spreadsheet would become a liability nobody entered on purpose.
+  //
+  // A row that fails is reported and skipped; one bad supplier name should not
+  // lose the other thirty-nine invoices.
+  const BILL_IMPORT_MAX_ROWS = 500;
+  app.post('/api/bills/import', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+      if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to import.' });
+      if (rows.length > BILL_IMPORT_MAX_ROWS) {
+        return res.status(400).json({ success: false, error: `Too many rows (${rows.length}) - import at most ${BILL_IMPORT_MAX_ROWS} at a time.` });
+      }
+
+      // Suppliers are matched by name, because that is what an invoice carries.
+      // One read, not one per row.
+      const suppliers = await Supplier.find(tenantScope(req), { name: 1 }).lean();
+      const byName = new Map(suppliers.map(s => [String(s.name || '').toLowerCase().trim(), s]));
+
+      const created = [];
+      const skipped = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i] || {};
+        try {
+          const supplierName = String(r.supplier ?? r.supplierName ?? r.Supplier ?? '').trim();
+          if (!supplierName) throw new Error('Supplier is required.');
+          const supplier = byName.get(supplierName.toLowerCase());
+          if (!supplier) throw new Error(`No supplier named "${supplierName}" - add them first, or import the supplier list.`);
+
+          const amt = Math.round((Number(r.amount ?? r.Amount) || 0) * 100) / 100;
+          if (!(amt > 0)) throw new Error('Amount must be positive.');
+
+          const description = String(r.description ?? r.Description ?? '').trim();
+          if (!description) throw new Error('A description is required - what is this bill for?');
+
+          // Which account gets debited when someone approves it. Without this
+          // the bill cannot be approved later, so it is required at import
+          // rather than discovered as a dead end weeks afterwards.
+          const accountCode = String(r.expenseAccountCode ?? r.account ?? r.Account ?? '').trim();
+          if (!accountCode || !acctMeta(accountCode)) {
+            throw new Error(`"${accountCode || '(blank)'}" is not an account. Give the expense or asset account this bill should be charged to.`);
+          }
+
+          const rawDue = r.dueDate ?? r['Due Date'] ?? r.due;
+          const dueDate = rawDue ? new Date(rawDue) : null;
+          if (dueDate && Number.isNaN(dueDate.getTime())) throw new Error('Invalid due date.');
+
+          const billNumber = await mkSeqRef('BILL');
+          await Bill.create({
+            businessType: BUSINESS_TYPE, ...tenantScope(req),
+            billNumber, supplierId: supplier._id, supplierName: supplier.name,
+            source: 'Manual', description: description.slice(0, 500), amount: amt,
+            expenseAccountCode: accountCode, dueDate,
+            createdBy: req.user?.name || '',
+          });
+          created.push({ row: i + 1, billNumber, supplier: supplier.name, amount: amt });
+        } catch (e) {
+          skipped.push({ row: i + 1, error: e.message, data: r });
+        }
+      }
+
+      await logAudit(req, { action: 'import', entity: 'Bill', entityId: 'bulk', after: { created: created.length, skipped: skipped.length } });
+      res.json({
+        success: true, created: created.length, skipped, bills: created,
+        totalAmount: Math.round(created.reduce((s, b) => s + b.amount, 0) * 100) / 100,
+        // Said plainly, because "imported" reads as "done" otherwise.
+        note: 'Imported as Pending. Nothing has posted to the ledger - approve each bill to book the payable.',
+      });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
   // ── APPROVE ──────────────────────────────────────────────────────────────────
   // For source:'Manual' bills this is what actually books the liability
   // (DR expenseAccountCode / CR 220000 Accounts Payable) - see the BillSchema

@@ -22,9 +22,16 @@ export default function registerFixedAssets(ctx) {
   const {
     app, mongoose, IS_PROD, log, BUSINESS_TYPE, tenantScope, logAudit,
     FixedAsset, FIXED_ASSET_CLASSES, JournalEntry,
-    assertBalanced, acctMeta, mkSeqRef, currentBranchCode,
+    assertBalanced, acctMeta, mkSeqRef, currentBranchCode, periodLockFor,
     verifyToken, requireStaff, requirePermission,
   } = ctx;
+
+  // A closed month is closed to assets too: an asset acquired into a reported
+  // month moves that month's balance sheet after it was signed off.
+  const closedPeriod = async (date) => {
+    const lock = await periodLockFor(date || new Date());
+    return lock ? `Period ${lock.year}-${String(lock.month).padStart(2, '0')} is closed. Reopen the period first.` : null;
+  };
 
   const canView = [requireStaff, requirePermission('accounting.view')];
   const canPost = [requireStaff, requirePermission('accounting.manage')];
@@ -116,6 +123,8 @@ export default function registerFixedAssets(ctx) {
       if (!Number.isFinite(life) || life <= 0) return res.status(400).json({ success: false, error: 'Useful life must be a positive number of months.' });
 
       const acqDate = acquisitionDate ? dayStart(acquisitionDate) : new Date();
+      const locked = await closedPeriod(acqDate);
+      if (locked) return res.status(423).json({ success: false, error: locked });
       // Bought on credit, the other side is a payable rather than cash.
       const credCode = onAccount ? '220000'
         : (acctMeta(paidFromAccount) && isCashLike(paidFromAccount)) ? paidFromAccount : '111000';
@@ -321,6 +330,8 @@ export default function registerFixedAssets(ctx) {
 
           const acqDate = r.acquisitionDate ? dayStart(r.acquisitionDate) : new Date();
           if (Number.isNaN(acqDate.getTime())) throw new Error('Invalid acquisition date.');
+          const rowLocked = await closedPeriod(acqDate);
+          if (rowLocked) throw new Error(rowLocked);
 
           const assetCode = await mkSeqRef('FA');
           const reference = await mkSeqRef('FA-ACQ');

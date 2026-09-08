@@ -1,5 +1,6 @@
 ﻿import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { Users, Search, ChevronDown, ChevronRight, RefreshCw, AlertCircle } from 'lucide-react';
+import { Users, Search, ChevronDown, ChevronRight, RefreshCw, AlertCircle, Upload, FileText, Download } from 'lucide-react';
+import * as ui from '../../shared/ui';
 import { io } from 'socket.io-client';
 import { useDashboard } from '../dashboard/DashboardContext';
 
@@ -21,7 +22,8 @@ if (typeof window !== 'undefined') {
 const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 
 export default function ClientsTab() {
-  const { apiFetch } = useDashboard();
+  const { apiFetch, downloadDataset } = useDashboard();
+  const [importing, setImporting] = useState(false);
   const [data, setData] = useState({ clients: [], showMoney: false, mode: 'off' });
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState('');
@@ -87,6 +89,46 @@ export default function ClientsTab() {
 
   const overLimitCount = data.clients.filter(c => c.overLimit).length;
 
+  // Bulk import. No credentials come out of the sheet - each client gets an
+  // onboarding link and chooses its own username and password, so a
+  // spreadsheet never decides who can sign in as whom.
+  const importClients = async (file) => {
+    if (!file) return;
+    setImporting(true);
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+      if (rows.length === 0) { ui.alert('That sheet has no rows.'); return; }
+      const ok = await ui.confirm(
+        `Import ${rows.length} client(s)?` + '\n\n' +
+        'No passwords are set. Each one gets a 7-day link and picks their own username and password.',
+      );
+      if (!ok) return;
+
+      const d = await (await apiFetch('/api/client-accounts/import', {
+        method: 'POST', body: JSON.stringify({ rows }),
+      })).json();
+      if (!d.success) { ui.alert(d.error || 'Import failed.'); return; }
+
+      // The links are the only way into these accounts, so they are shown
+      // rather than buried - the operator has to send them on.
+      const links = (d.clients || [])
+        .map(c => `${c.name}: ${window.location.origin}${c.onboardingPath}`)
+        .join('\n');
+      const bad = (d.skipped || []).map(x => `Row ${x.row}: ${x.error}`);
+      ui.alert(
+        `Added ${d.created} client(s).` + '\n\n' + d.note +
+        (links ? '\n\nOnboarding links (send these on):\n' + links : '') +
+        (bad.length ? '\n\nNot added:\n- ' + bad.join('\n- ') : ''),
+      );
+      load();
+    } catch (err) {
+      console.error('client import', err);
+      ui.alert('Could not read that file. Use the downloaded template.');
+    } finally { setImporting(false); }
+  };
+
   return (
     <div className="p-4 sm:p-6 space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -110,6 +152,20 @@ export default function ClientsTab() {
             className="bg-surface border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-fg text-sm placeholder-white/25 outline-none focus:border-brand/60 transition w-full sm:w-64"
           />
         </div>
+        <button onClick={() => downloadDataset?.('clients')}
+          className="flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition">
+          <Download size={13} /> Export
+        </button>
+        <button onClick={() => downloadDataset?.('clients', { template: true })}
+          title="Blank workbook with the same columns"
+          className="flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition">
+          <FileText size={13} /> Template
+        </button>
+        <label className={`flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition ${importing ? 'opacity-40 pointer-events-none' : 'cursor-pointer'}`}>
+          <Upload size={13} /> {importing ? 'Reading…' : 'Import'}
+          <input type="file" accept=".xlsx,.xls,.csv" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; importClients(f); }} />
+        </label>
         <button onClick={load} disabled={loading}
           className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/40 hover:text-fg flex items-center justify-center transition disabled:opacity-40"
           aria-label="Refresh clients">

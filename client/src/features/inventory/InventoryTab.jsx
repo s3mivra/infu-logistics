@@ -41,7 +41,7 @@ export default function InventoryTab({ ctx }) {
     currentInventory, currentOrders, currentPage, currentPricingProducts, currentProducts,
     dailyMovement, deleteAddOn, deleteCategory, deleteInventory, deleteProduct,
     departmentFilter, discountForm, discountInputs, discountList, discounts,
-    displayOrders, downloadImportTemplate, downloadJournalCsv, editInvForm, editInvModal,
+    displayOrders, downloadImportTemplate, downloadDataset, downloadJournalCsv, editInvForm, editInvModal,
     editInvSubmitting, editPriceId, editPriceVal, editingCategory, editingProduct,
     effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
@@ -255,6 +255,11 @@ export default function InventoryTab({ ctx }) {
                 </label>
                 <button onClick={downloadImportTemplate} title="Download CSV template" className="text-[10px] bg-accent border border-white hover:bg-brand-dark text-white px-2.5 py-1.5 rounded font-bold uppercase tracking-wider transition min-h-[32px]">
                   Template
+                </button>
+                {/* PDF is for printing and signing; the spreadsheet is for
+                    working with. Both, because they are not the same job. */}
+                <button onClick={() => downloadDataset?.('inventory')} className="text-[10px] bg-accent border border-white text-white px-3 py-1.5 rounded hover:bg-brand-dark transition font-bold uppercase tracking-wider min-h-[32px]">
+                  Export Excel
                 </button>
                 <button onClick={exportInventoryToPDF} className="text-[10px] bg-accent border border-white text-white px-3 py-1.5 rounded hover:bg-brand-dark transition font-bold uppercase tracking-wider min-h-[32px]">
                   Export PDF

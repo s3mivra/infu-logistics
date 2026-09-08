@@ -56,18 +56,25 @@ describe('the catalogue of what can be exported', () => {
   });
 });
 
-describe('the template is the export with no rows', () => {
-  it('returns the same columns whether or not data exists', async () => {
+describe('the template is the sheet to fill in, not an empty export', () => {
+  it('asks for what a person must supply, not what the system derives', async () => {
     await M('Inventory').create({ itemCode: 'RM-1', itemName: 'Beans', unit: 'g', stockQty: 100, unitCost: 1 });
 
     const withData = await get('/api/export/inventory');
     const template = await get('/api/export/inventory?template=1');
 
-    // The property that stops template/export drift.
-    expect(template.body.columns).toEqual(withData.body.columns);
-    expect(template.body.rows).toHaveLength(0);
-    expect(withData.body.rows).toHaveLength(1);
     expect(template.body.template).toBe(true);
+    expect(withData.body.rows).toHaveLength(1);
+
+    // These are the two lists, and they are deliberately different. The export
+    // carries Total Value, which is derived and cannot be typed in; the
+    // template asks for unitCost, which is what someone actually has to know.
+    expect(withData.body.columns).toContain('Total Value');
+    expect(template.body.columns).not.toContain('Total Value');
+    expect(template.body.columns).toContain('unitCost');
+
+    // And it says which are required, so nothing is guessed at.
+    expect(template.body.fields.some(f => f.required)).toBe(true);
   });
 
   it('exports the actual values, not just headers', async () => {

@@ -51,6 +51,8 @@ import registerDataExport from './features/data-export.js';
 import registerFixedAssets from './features/fixed-assets.js';
 import registerRequisitions from './features/requisitions.js';
 import registerProduction from './features/production.js';
+import registerBankReconciliation from './features/bank-reconciliation.js';
+import registerPayroll from './features/payroll.js';
 import registerCollections from './features/collections.js';
 import registerChangeRequests from './features/change-requests.js';
 import registerNotifications from './features/notifications.js';
@@ -2358,6 +2360,11 @@ const SupplierSchema = new mongoose.Schema({
     unitCost:  { type: Number, required: true },
     notes:     { type: String, default: '' },
   }],
+  // What this supplier's invoices say about when they expect to be paid
+  // ("30 days", "COD"). The data export already had a Terms column and the
+  // schema never declared the field, so Mongoose silently dropped whatever
+  // was written to it and the column came back empty every time.
+  paymentTerms:  { type: String, default: '' },
   // Running credit balance from overpaying this supplier - an ASSET (they
   // owe it back to us), separate from whatever they're currently owed on
   // open bills. Grows when a bill payment exceeds what was actually due;
@@ -2670,6 +2677,109 @@ const FixedAssetSchema = new mongoose.Schema({
 }, { timestamps: true });
 FixedAssetSchema.index({ businessType: 1, status: 1 });
 const FixedAsset = mongoose.model('FixedAsset', FixedAssetSchema);
+
+// --- BANK RECONCILIATION ---
+// One statement, for one bank account, for one period.
+//
+// The ledger says what the business THINKS is in the bank; the statement says
+// what the bank says. They disagree for legitimate reasons - a cheque written
+// but not yet presented, a deposit in transit, a bank charge nobody has booked
+// - and reconciling is the act of explaining every peso of that difference.
+// The moment it cannot be explained, something is wrong: a missed entry, a
+// duplicate, or money gone.
+const BankReconciliationSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  branchCode:   { type: String, default: '', index: true },
+  reference:    { type: String, index: true },              // BREC-2026-000001
+  accountCode:  { type: String, required: true, index: true },
+  accountName:  { type: String, default: '' },
+  statementDate: { type: Date, required: true, index: true },
+  // What the bank's own statement says the closing balance is. Typed in from
+  // the statement, never computed - it is the outside fact being reconciled TO.
+  statementBalance: { type: Number, required: true },
+  // The ledger balance for the same account as at the same date, captured when
+  // the reconciliation is opened so a later posting cannot silently move it.
+  ledgerBalance: { type: Number, default: 0 },
+  // Journal lines the operator has ticked off against the statement.
+  clearedLines: [{
+    journalEntryId: { type: mongoose.Schema.Types.ObjectId, ref: 'JournalEntry' },
+    reference: { type: String, default: '' },
+    date:      { type: Date },
+    debit:     { type: Number, default: 0 },
+    credit:    { type: Number, default: 0 },
+    clearedAt: { type: Date, default: Date.now },
+    clearedBy: { type: String, default: '' },
+  }],
+  status: { type: String, enum: ['Open', 'Reconciled'], default: 'Open', index: true },
+  reconciledAt: { type: Date, default: null },
+  reconciledBy: { type: String, default: '' },
+  notes:        { type: String, default: '' },
+  createdBy:    { type: String, default: '' },
+}, { timestamps: true });
+BankReconciliationSchema.index({ businessType: 1, accountCode: 1, statementDate: -1 });
+const BankReconciliation = mongoose.model('BankReconciliation', BankReconciliationSchema);
+
+// --- PAYROLL ---
+// One pay period, and what each person earned and had deducted.
+//
+// Gross pay is the expense - it is what the work cost the business. What the
+// employee actually receives is less, because the statutory deductions are
+// withheld from THEIR money and held until each agency is paid. Booking only
+// the net would understate wages and hide three separate liabilities that are
+// remitted to three separate agencies on three separate schedules.
+//
+//   DR 610000 Salaries & Wages   gross
+//   CR 240100 SSS Payable        employee share
+//   CR 240200 PhilHealth Payable employee share
+//   CR 240300 Pag-IBIG Payable   employee share
+//   CR 230200 Withholding Tax    tax on compensation
+//   CR 240400 Net Pay Payable    what is left to hand over
+const PAYROLL_RUN_STATUSES = ['Draft', 'Approved', 'Paid'];
+const PayrollRunSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  branchCode:   { type: String, default: '', index: true },
+  reference:    { type: String, index: true },              // PAY-2026-000001
+  periodStart:  { type: Date, required: true, index: true },
+  periodEnd:    { type: Date, required: true, index: true },
+  payDate:      { type: Date, required: true },
+  lines: [{
+    employeeName: { type: String, required: true },
+    employeeId:   { type: String, default: '' },
+    grossPay:     { type: Number, default: 0 },
+    sss:          { type: Number, default: 0 },
+    philhealth:   { type: Number, default: 0 },
+    pagibig:      { type: Number, default: 0 },
+    withholdingTax: { type: Number, default: 0 },
+    otherDeductions: { type: Number, default: 0 },
+    // Derived, but stored: a payslip is a record of what was actually paid,
+    // and recomputing it later from rates that have since changed would make
+    // the payslip disagree with the bank.
+    netPay:       { type: Number, default: 0 },
+    notes:        { type: String, default: '' },
+  }],
+  totals: {
+    gross: { type: Number, default: 0 },
+    sss: { type: Number, default: 0 },
+    philhealth: { type: Number, default: 0 },
+    pagibig: { type: Number, default: 0 },
+    withholdingTax: { type: Number, default: 0 },
+    otherDeductions: { type: Number, default: 0 },
+    net: { type: Number, default: 0 },
+  },
+  status: { type: String, enum: PAYROLL_RUN_STATUSES, default: 'Draft', index: true },
+  journalEntryRef: { type: String, default: '' },
+  paymentJournalRef: { type: String, default: '' },
+  paidFromAccount: { type: String, default: '' },
+  approvedBy: { type: String, default: '' },
+  approvedAt: { type: Date, default: null },
+  paidAt:     { type: Date, default: null },
+  notes:      { type: String, default: '' },
+  createdBy:  { type: String, default: '' },
+}, { timestamps: true });
+PayrollRunSchema.index({ businessType: 1, status: 1, periodEnd: -1 });
+const PayrollRun = mongoose.model('PayrollRun', PayrollRunSchema);
 
 // --- API ROUTES ---
 
@@ -3530,6 +3640,9 @@ const ctx = {
   ADVANCE_TYPES,
   FIXED_ASSET_STATUSES,
   FIXED_ASSET_CLASSES,
+  BankReconciliation,
+  PayrollRun,
+  PAYROLL_RUN_STATUSES,
   FixedAssetSchema,
   FixedAsset,
   ADVANCE_STATUSES,
@@ -3600,6 +3713,8 @@ registerCheckVouchers(ctx);
 registerAdvances(ctx);
 registerDataExport(ctx);
 registerFixedAssets(ctx);
+registerBankReconciliation(ctx);
+registerPayroll(ctx);
 registerRequisitions(ctx);
 registerProduction(ctx);
 registerCollections(ctx);

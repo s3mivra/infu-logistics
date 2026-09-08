@@ -462,6 +462,91 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
   }
 });
 
+// Bulk onboarding of a client list from the downloaded template.
+//
+// Deliberately does NOT take usernames or passwords from the sheet. Handing a
+// spreadsheet the power to mint logins means credentials living in a file that
+// gets emailed around, and one column of copy-paste deciding who can sign in
+// as whom. Each imported client instead gets an unusable password and its own
+// onboarding link, and chooses its own username and password when it redeems
+// it - the same path a client invited one at a time already takes.
+//
+// So this creates the RECORD - the name, the credit terms, the contact details
+// - and hands back a link per client. Nobody can log in until they have used
+// theirs.
+const CLIENT_IMPORT_MAX_ROWS = 500;
+app.post('/api/client-accounts/import', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to import.' });
+    if (rows.length > CLIENT_IMPORT_MAX_ROWS) {
+      return res.status(400).json({ success: false, error: `Too many rows (${rows.length}) - import at most ${CLIENT_IMPORT_MAX_ROWS} at a time.` });
+    }
+
+    // One read rather than a findOne per row.
+    const existing = await ClientAccount.find({}, { name: 1 }).lean();
+    const seen = new Set(existing.map(c => String(c.name || '').toLowerCase()));
+
+    const created = [];
+    const skipped = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i] || {};
+      try {
+        const cleanName = title(r.name ?? r.Name ?? '');
+        if (!cleanName) throw new Error('Client name is required.');
+        if (seen.has(cleanName.toLowerCase())) throw new Error(`"${cleanName}" already exists.`);
+        seen.add(cleanName.toLowerCase());
+
+        const emailVal = cleanEmail(r.email ?? r.Email ?? '');
+        if (emailVal === null) throw new Error('Email is not a valid address.');
+
+        const clientCode = await generateNextSequence(ClientAccount, 'CUS-1000', 'clientCode');
+        // Unusable until they onboard: a random hash nobody holds the input to.
+        const password = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
+        const token = crypto.randomBytes(24).toString('hex');
+
+        const segments = String(r.segments ?? r.Segments ?? '')
+          .split(',').map(x => x.trim()).filter(Boolean);
+
+        const client = await ClientAccount.create({
+          clientCode,
+          // A placeholder that cannot be typed at a login box; replaced by the
+          // client's own choice when they redeem the link.
+          username: `_pending_${clientCode.toLowerCase()}`,
+          password, name: cleanName,
+          paymentMethod: String(r.paymentMethod ?? r['Payment Method'] ?? 'Cash').trim() || 'Cash',
+          creditLimit: parseCreditLimit(r.creditLimit ?? r['Credit Limit']),
+          creditTermsDays: parseTermsDays(r.creditTermsDays ?? r['Credit Terms (days)']),
+          segments: [...new Set(segments)],
+          phone: cleanPhone(r.phone ?? r.Phone ?? ''),
+          email: emailVal,
+          contactNotes: String(r.contactNotes ?? r.Notes ?? '').trim().slice(0, 1000),
+          onboardingToken: token,
+          onboardingTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        });
+
+        created.push({
+          row: i + 1, clientCode: client.clientCode, name: client.name,
+          // The operator sends this on; it is the only way into the account.
+          // The route the app actually serves - see App.jsx. Getting this
+          // wrong hands the operator a list of links that all 404.
+          onboardingPath: `/client-onboard/${token}`,
+        });
+      } catch (e) {
+        skipped.push({ row: i + 1, error: e.message, data: r });
+      }
+    }
+
+    await logAudit(req, { action: 'import', entity: 'ClientAccount', entityId: 'bulk', after: { created: created.length, skipped: skipped.length } });
+    res.json({
+      success: true, created: created.length, skipped, clients: created,
+      note: 'No passwords were set. Each client has a 7-day onboarding link and picks their own username and password.',
+    });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const { username, password, name, paymentMethod, isActive, creditLimit, creditTermsDays, segments, phone, email, contactNotes } = req.body;

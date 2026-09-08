@@ -4,6 +4,7 @@
 import { ageingBuckets, ageingByClient, resolveCreditLimit, resolveClientKey, arBalance, withArBalance, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
+import { isModuleEnabled } from '../lib/optionalModules.js';
 
 export default function registerFinance(ctx) {
   const {
@@ -414,6 +415,18 @@ app.get('/api/reports/trial-balance', verifyToken, ...canViewAcct, async (req, r
 // better than "Utilities Expense"). Parents are excluded - posting to a rollup
 // double-counts it against its own children - and so is COGS, which is driven
 // by sales, not by someone filing a receipt.
+// Withholding only applies where the business has switched the module on. A
+// rate sent by a client that has it off is ignored rather than rejected: the
+// expense is still a valid expense, it just is not withheld against.
+async function resolveWithholdingRate(rate) {
+  const pct = Number(rate);
+  if (!Number.isFinite(pct) || pct <= 0) return 0;
+  if (!(await isModuleEnabled(Settings, 'withholdingTax'))) return 0;
+  // The BIR's expanded-withholding rates run from 1% to 15%; anything outside
+  // that is a typo (a 500 in the percent box), not a rate.
+  return Math.min(15, pct);
+}
+
 const expenseCategoryList = () => {
   const friendly = new Map(EXPENSE_CATEGORIES.map(c => [c.code, c.label]));
   const rows = [];
@@ -496,7 +509,15 @@ app.get('/api/expenses', verifyToken, ...canViewAcct, async (req, res) => {
 // { ok:true, je } or { ok:false, error } instead of throwing/writing to
 // `res` itself, so the importer can collect one error per row without a bad
 // row aborting the whole batch.
-async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, description, vendor, refNo, date }) {
+async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, description, vendor, refNo, date, withholdingRate, withholdingAccount }) {
+  // A closed month is closed to expenses too. Without this an expense dated
+  // into a reported month posted freely, and the month's figures moved after
+  // they had been signed off - the manual journal route guarded against
+  // exactly this, and the expense form went around it.
+  const periodLock = await periodLockFor(date || new Date());
+  if (periodLock) {
+    return { ok: false, error: `Period ${periodLock.year}-${String(periodLock.month).padStart(2, '0')} is closed. Reopen the period first.` };
+  }
   const amt = parseFloat(amount);
   if (!amt || amt <= 0) return { ok: false, error: 'Amount must be > 0.' };
   // Validated against the same derived set the picker offers. Checking the
@@ -523,10 +544,29 @@ async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, de
   const entryDate = date ? new Date(date) : new Date();
   if (date && Number.isNaN(entryDate.getTime())) return { ok: false, error: 'Invalid date.' };
 
+  // Withholding tax, when this business withholds (the module is off by
+  // default). The expense is the FULL amount - the service was worth what it
+  // was worth - but the supplier is paid less, and the difference is money the
+  // business is holding on the BIR's behalf until it is remitted. Booking the
+  // expense net instead would understate costs and lose the liability.
+  //
+  //   DR expense           10,000   (the full value received)
+  //   CR withholding tax      500   (held, owed to the BIR)
+  //   CR cash               9,500   (what the supplier actually got)
+  const whRate = await resolveWithholdingRate(withholdingRate);
+  const whAccount = String(withholdingAccount || '230100');
+  if (whRate > 0 && !acctMeta(whAccount)) return { ok: false, error: 'Invalid withholding tax account.' };
+  const withheld = whRate > 0 ? Math.round(amt * whRate) / 100 : 0;
+  if (withheld > amt) return { ok: false, error: 'Withholding cannot exceed the amount.' };
+  const netPaid = Math.round((amt - withheld) * 100) / 100;
+
   const lines = [
     { accountCode: categoryCode, accountName: acct.name, debit: amt, credit: 0 },
-    { accountCode: credAcct.code, accountName: credAcct.name, debit: 0, credit: amt },
   ];
+  if (withheld > 0) {
+    lines.push({ accountCode: whAccount, accountName: acctMeta(whAccount)?.name || 'Withholding Tax Payable', debit: 0, credit: withheld });
+  }
+  lines.push({ accountCode: credAcct.code, accountName: credAcct.name, debit: 0, credit: netPaid });
   assertBalanced(lines, reference);
 
   // Expenses aren't their own collection (see the GET route above) - vendor
@@ -543,6 +583,59 @@ async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, de
   });
   return { ok: true, je };
 }
+
+// What has been withheld and not yet remitted.
+//
+// This is the number that has to be paid over to the BIR, and the one an
+// auditor asks about first: tax deducted from someone else's money that the
+// business is holding. Grouped by month because that is how it is remitted.
+app.get('/api/reports/withholding-tax', verifyToken, ...canViewAcct, async (req, res) => {
+  try {
+    if (!(await isModuleEnabled(Settings, 'withholdingTax'))) {
+      return res.status(404).json({ success: false, error: 'Withholding Tax is not switched on for this business. Turn it on in Settings first.' });
+    }
+    const start = req.query.start ? dayStart(req.query.start) : new Date(0);
+    const end = req.query.end ? dayEnd(req.query.end) : new Date();
+
+    const rows = await JournalEntry.aggregate([
+      { $match: { date: { $gte: start, $lte: end } } },
+      { $unwind: '$lines' },
+      { $match: { 'lines.accountCode': { $in: ['230100', '230200'] } } },
+      { $group: {
+        _id: {
+          ym: { $dateToString: { format: '%Y-%m', date: '$date' } },
+          code: '$lines.accountCode',
+        },
+        withheld: { $sum: { $ifNull: ['$lines.credit', 0] } },
+        remitted: { $sum: { $ifNull: ['$lines.debit', 0] } },
+        entries: { $push: { reference: '$reference', description: '$description', date: '$date', amount: '$lines.credit' } },
+      } },
+      { $sort: { '_id.ym': -1 } },
+    ]);
+
+    const periods = rows.map(r => ({
+      month: r._id.ym,
+      accountCode: r._id.code,
+      accountName: acctMeta(r._id.code)?.name || r._id.code,
+      withheld: +(r.withheld || 0).toFixed(2),
+      remitted: +(r.remitted || 0).toFixed(2),
+      // What is still held. A positive number here is money owed to the BIR.
+      outstanding: +((r.withheld || 0) - (r.remitted || 0)).toFixed(2),
+      entries: (r.entries || []).filter(e => e.amount > 0),
+    }));
+
+    res.json({
+      success: true,
+      period: { start, end },
+      periods,
+      totals: {
+        withheld: +periods.reduce((s, p) => s + p.withheld, 0).toFixed(2),
+        remitted: +periods.reduce((s, p) => s + p.remitted, 0).toFixed(2),
+        outstanding: +periods.reduce((s, p) => s + p.outstanding, 0).toFixed(2),
+      },
+    });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
 
 app.post('/api/expenses', verifyToken, ...canPostAcct, async (req, res) => {
   try {

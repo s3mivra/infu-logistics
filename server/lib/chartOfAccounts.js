@@ -75,8 +75,21 @@ export const ACCOUNTS = {
   '225000': { name: 'Non-Trade Payables',         type: 'liability', isParent: true, parent: '200000' },
   '225100': { name: 'Equipment & Asset Purchases Payable', type: 'liability', parent: '225000' },
   '225200': { name: 'Services & Expenses Payable',         type: 'liability', parent: '225000' },
-  '230000': { name: 'Taxes Payable',              type: 'liability', parent: '200000' },
-  '240000': { name: 'Payroll Liabilities',        type: 'liability', parent: '200000' },
+  '230000': { name: 'Taxes Payable',              type: 'liability', isParent: true, parent: '200000' },
+  // Tax withheld from someone else's money and held until it is remitted. It
+  // is never the business's own expense - the supplier or employee was paid
+  // less by exactly this much - so it sits as a liability from the moment it
+  // is deducted until the BIR is paid.
+  '230100': { name: 'Withholding Tax Payable - Expanded',     type: 'liability', parent: '230000' },
+  '230200': { name: 'Withholding Tax Payable - Compensation', type: 'liability', parent: '230000' },
+  '240000': { name: 'Payroll Liabilities',        type: 'liability', isParent: true, parent: '200000' },
+  // Each statutory deduction is held separately: they are remitted to three
+  // different agencies on three different schedules, and one pooled balance
+  // cannot tell you which of them is short.
+  '240100': { name: 'SSS Payable',                type: 'liability', parent: '240000' },
+  '240200': { name: 'PhilHealth Payable',         type: 'liability', parent: '240000' },
+  '240300': { name: 'Pag-IBIG Payable',           type: 'liability', parent: '240000' },
+  '240400': { name: 'Net Pay Payable',            type: 'liability', parent: '240000' },
   '250100': { name: 'Bank Loan',                  type: 'liability', parent: '250000' },
   '250200': { name: 'Equipment Financing',        type: 'liability', parent: '250000' },
   '250300': { name: 'Owner / Related-Party Loan', type: 'liability', parent: '250000' },

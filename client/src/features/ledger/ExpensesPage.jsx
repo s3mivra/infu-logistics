@@ -1,4 +1,5 @@
 ﻿import { useEffect } from 'react';
+import { useModules } from '../finance-modules/useModules';
 import { Check, Plus, Receipt, Download, Upload, X, AlertTriangle } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
 
@@ -16,7 +17,14 @@ export default function ExpensesPage() {
     expenseCategories, expenseForm, setExpenseForm, expenseSubmitting, submitExpense,
     expenseList, fetchExpenses, fetchExpenseCategories, exportExpensesPDF,
     downloadExpenseImportTemplate, parseExpenseImportExcel, expenseImportPreview, setExpenseImportPreview, expenseImporting, submitExpenseImport,
+    apiFetch,
   } = useDashboard();
+
+  // The withholding box only appears where the business actually withholds.
+  const { isOn } = useModules(apiFetch);
+  const withholdingOn = isOn('withholdingTax');
+  const grossAmt = Number(expenseForm.amount) || 0;
+  const withheldAmt = Math.round(grossAmt * (Number(expenseForm.withholdingRate) || 0)) / 100;
 
   useEffect(() => {
     fetchExpenseCategories?.();
@@ -111,14 +119,41 @@ export default function ExpensesPage() {
               className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
           </div>
           <div>
+            {/* The supplier's own document number. The importer already carried
+                this column and the ledger already displayed it - the form was
+                the only way in that could not supply it, so an expense typed by
+                hand could never be traced back to the invoice it came from. */}
+            <label className="text-[10px] text-fg/80 font-bold uppercase block mb-1">Invoice / OR no. (optional)</label>
+            <input type="text" placeholder="e.g. SI-004821" value={expenseForm.refNo || ''} onChange={e => set({ refNo: e.target.value })}
+              className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+          </div>
+          <div>
             <label className="text-[10px] text-fg/80 font-bold uppercase block mb-1">Date</label>
             <input type="date" value={expenseForm.date} onChange={e => set({ date: e.target.value })}
               className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60" />
           </div>
+          {withholdingOn && (
+            <div>
+              <label className="text-[10px] text-fg/80 font-bold uppercase block mb-1">Withhold (%)</label>
+              <input type="number" min="0" max="15" step="0.5" placeholder="0"
+                value={expenseForm.withholdingRate || ''} onChange={e => set({ withholdingRate: e.target.value })}
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+              <p className="text-[9px] text-fg/40 mt-1 leading-snug">
+                Rent is usually 5%, professional fees 10%. Leave blank if you do not withhold on this one.
+              </p>
+            </div>
+          )}
           <div className="sm:col-span-2 lg:col-span-3 flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
             <p className="text-[10px] text-fg/60 italic flex-1">
               A balanced journal entry is created automatically:{' '}
-              <span className="text-fg/80">DR Expense / CR {expenseForm.paymentMethod}</span>
+              {withheldAmt > 0 ? (
+                <span className="text-fg/80">
+                  DR Expense {peso(grossAmt)} / CR Withholding Tax {peso(withheldAmt)} / CR {expenseForm.paymentMethod} {peso(grossAmt - withheldAmt)}
+                  {' '}— the supplier receives the net; the tax is held until the BIR is paid.
+                </span>
+              ) : (
+                <span className="text-fg/80">DR Expense / CR {expenseForm.paymentMethod}</span>
+              )}
             </p>
             <button onClick={submitExpense} disabled={expenseSubmitting}
               className="sm:w-auto w-full px-8 py-3.5 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active-press transition shadow-elev-2 disabled:opacity-50 min-h-[52px] flex items-center justify-center gap-2">

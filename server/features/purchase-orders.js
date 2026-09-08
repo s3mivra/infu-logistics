@@ -625,6 +625,63 @@ export default function registerPurchaseOrders(ctx) {
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
+  // Bulk onboarding from the downloaded template. A supplier list is the first
+  // thing a business already has on paper, and typing forty of them one at a
+  // time is the reason people give up on a new system in week one.
+  //
+  // A row that fails is reported and skipped rather than aborting the batch:
+  // one bad email should not lose thirty-nine good suppliers. Existing names
+  // are skipped rather than overwritten - re-importing a corrected sheet is a
+  // normal thing to do, and clobbering a supplier someone has since edited by
+  // hand would quietly undo their work.
+  const SUPPLIER_IMPORT_MAX_ROWS = 500;
+  app.post('/api/suppliers/import', verifyToken, ...canManageProc, async (req, res) => {
+    try {
+      const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+      if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to import.' });
+      if (rows.length > SUPPLIER_IMPORT_MAX_ROWS) {
+        return res.status(400).json({ success: false, error: `Too many rows (${rows.length}) - import at most ${SUPPLIER_IMPORT_MAX_ROWS} at a time.` });
+      }
+
+      // One read instead of a findOne per row: a 500-row sheet was otherwise
+      // 500 sequential round trips before a single supplier was written.
+      const existing = await Supplier.find(tenantScope(req), { name: 1 }).lean();
+      const seen = new Set(existing.map(s => String(s.name || '').toLowerCase()));
+
+      const created = [];
+      const skipped = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i] || {};
+        try {
+          // Accept the template's own column headings as well as the field
+          // names, because the person filling it in reads the heading.
+          const cleanName = title(r.name ?? r.Name ?? r['Supplier Name']);
+          if (!cleanName) throw new Error('Supplier name is required.');
+          if (seen.has(cleanName.toLowerCase())) throw new Error(`"${cleanName}" already exists.`);
+          seen.add(cleanName.toLowerCase());
+
+          const supplierCode = await mkSeqRef('SUP');
+          await Supplier.create({
+            supplierCode, name: cleanName,
+            contactPerson: title(r.contactPerson ?? r.Contact ?? '').slice(0, 200),
+            phone: squish(r.phone ?? r.Phone ?? '').slice(0, 40),
+            email: lower(r.email ?? r.Email ?? '').slice(0, 200),
+            address: freeText(r.address ?? r.Address ?? '').slice(0, 300),
+            paymentTerms: freeText(r.paymentTerms ?? r.Terms ?? '').slice(0, 100),
+            notes: freeText(r.notes ?? r.Notes ?? '').slice(0, 1000),
+            ...tenantScope(req),
+          });
+          created.push({ row: i + 1, supplierCode, name: cleanName });
+        } catch (e) {
+          skipped.push({ row: i + 1, error: e.message, data: r });
+        }
+      }
+
+      logAudit?.(req, { action: 'import', entity: 'supplier', entityId: 'bulk', after: { created: created.length, skipped: skipped.length } });
+      res.json({ success: true, created: created.length, skipped, suppliers: created });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
   app.patch('/api/suppliers/:id', verifyToken, ...canManageProc, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });

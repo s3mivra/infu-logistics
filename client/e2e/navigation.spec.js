@@ -16,6 +16,9 @@ const TABS = [
   'Pricing Control',
   'Shifts & Cash',
   'Audit Report',
+  'Fixed Assets',
+  // The optional modules only appear where they are switched on, so they are
+  // not in this sweep - a tab that is deliberately absent is not a failure.
 ];
 
 test('every dashboard tab opens without runtime errors', async ({ page }) => {
