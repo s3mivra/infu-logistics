@@ -942,7 +942,7 @@ export default function InventoryTab({ ctx }) {
             })()}
           </div>
           {invSubTab === 'live' && (<>
-          {/* ALERTS ROW — full width, only shown when items exist */}
+          {/* ALERTS ROW - full width, only shown when items exist */}
           {(() => {
             const lowItems = inventory.filter(i => { const t = i.effectiveThreshold != null ? i.effectiveThreshold : (i.lowStockThreshold || 0); return t > 0 && i.stockQty <= t; });
             const today = new Date(); today.setHours(0,0,0,0);
@@ -1014,7 +1014,7 @@ export default function InventoryTab({ ctx }) {
             );
           })()}
 
-          {/* RECEIVE INVENTORY — full width, bento grid inside */}
+          {/* RECEIVE INVENTORY - full width, bento grid inside */}
           <div className="bg-surface border border-white/10 rounded-2xl overflow-hidden">
 
             {/* Header */}
@@ -1054,7 +1054,7 @@ export default function InventoryTab({ ctx }) {
                     {inventory.some(i => i.itemName.toLowerCase() === invForm.itemName.toLowerCase().trim()) && (
                       <div className="mt-1.5 flex items-center gap-1.5 bg-accent/10 border border-accent/20 rounded-md px-2 py-1">
                         <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse flex-shrink-0" />
-                        <p className="text-[10px] text-accent font-black uppercase tracking-wide">Restock — existing item</p>
+                        <p className="text-[10px] text-accent font-black uppercase tracking-wide">Restock - existing item</p>
                       </div>
                     )}
                   </div>
@@ -1232,7 +1232,7 @@ export default function InventoryTab({ ctx }) {
                     {String(invForm.creditAccount || '').startsWith('220') && !invForm.revolvingFundId && (
                       <>
                         <p className="text-[9px] text-yellow-400/70 mt-1.5 bg-yellow-500/8 border border-yellow-500/15 rounded-md px-2 py-1">
-                          Goods on credit — settle later via AP payment.
+                          Goods on credit - settle later via AP payment.
                         </p>
                         <select
                           value={invForm.supplierId || ''}
@@ -1257,7 +1257,7 @@ export default function InventoryTab({ ctx }) {
                         <p className={`text-[9px] mt-1.5 rounded-md px-2 py-1 border ${short ? 'text-red-400 bg-red-500/8 border-red-500/20' : 'text-fg/50 bg-white/[0.03] border-white/10'}`}>
                           {short
                             ? `Cost ₱${cost.toFixed(2)} exceeds the ₱${(f.currentBalance || 0).toFixed(2)} left in ${f.name}.`
-                            : `Draws ₱${cost.toFixed(2)} from ${f?.name || 'the fund'} — its balance and its own transaction log both move.`}
+                            : `Draws ₱${cost.toFixed(2)} from ${f?.name || 'the fund'} - its balance and its own transaction log both move.`}
                         </p>
                       );
                     })()}

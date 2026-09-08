@@ -11,7 +11,7 @@ import * as ui from '../../shared/ui';
 // so a 2307 can be filled in per supplier.
 
 const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '—');
+const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-');
 const monthName = (ym) => {
   const [y, m] = String(ym || '').split('-');
   if (!y || !m) return ym;
@@ -60,7 +60,7 @@ export default function WithholdingTaxTab() {
       </div>
 
       <p className="text-xs text-fg/50 leading-relaxed max-w-3xl">
-        Tax deducted from a supplier's payment is never the business's own expense — the supplier was paid
+        Tax deducted from a supplier's payment is never the business's own expense - the supplier was paid
         less by exactly this much. It sits as a liability from the moment it is withheld until the BIR is
         paid. Set the rate on an expense when you file it.
       </p>
@@ -83,7 +83,7 @@ export default function WithholdingTaxTab() {
           <AlertCircle size={13} className="shrink-0 mt-0.5" />
           <span>
             {peso(t.outstanding)} is being held on the BIR's behalf. Record the remittance as a journal
-            entry debiting the withholding account and crediting cash — this screen will then show it as
+            entry debiting the withholding account and crediting cash - this screen will then show it as
             settled.
           </span>
         </p>
@@ -138,7 +138,7 @@ export default function WithholdingTaxTab() {
                     </tbody>
                   </table>
                   <p className="px-4 py-2 text-[10px] text-fg/35 border-t border-white/5">
-                    One row per withholding — enough to fill in a 2307 for each supplier.
+                    One row per withholding - enough to fill in a 2307 for each supplier.
                   </p>
                 </div>
               )}

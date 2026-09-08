@@ -119,7 +119,7 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
                   <div className="min-w-0">
                     <p className="font-bold text-fg text-sm truncate">{sale.name}</p>
                     <p className="text-[10px] text-fg/40 flex items-center gap-1 mt-0.5">
-                      <Calendar size={9} />{fmtDate(sale.startsAt)} – {fmtDate(sale.endsAt)}
+                      <Calendar size={9} />{fmtDate(sale.startsAt)} - {fmtDate(sale.endsAt)}
                       <span className="mx-1">·</span>{sale.rules?.length || 0} rule{sale.rules?.length !== 1 ? 's' : ''}
                     </p>
                   </div>
@@ -181,7 +181,7 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
 
                 <select className={`w-full ${inputCls} text-xs`} value={ruleForm.productId} onChange={e => setRuleForm(r => ({ ...r, productId: e.target.value }))}>
                   <option value="">
-                    {ruleForm.ruleType === 'threshold' ? '— Select discounted product —' : '— Select product —'}
+                    {ruleForm.ruleType === 'threshold' ? '- Select discounted product -' : '- Select product -'}
                   </option>
                   {products.filter(p => !p.isArchived).map(p => (
                     <option key={p._id} value={p._id}>{p.name}{p.basePrice ? ` (${fmt(p.basePrice)})` : ''}</option>
@@ -622,7 +622,7 @@ export default function ProductsTab({ ctx }) {
                 <select aria-label="Filter by stock" value={prodFilters.stock} onChange={e => setFilter('stock', e.target.value)} className={selectCls}>
                   <option value="all">Any stock</option>
                   <option value="in">In stock (&gt;5)</option>
-                  <option value="low">Low stock (1–5)</option>
+                  <option value="low">Low stock (1-5)</option>
                   <option value="out">Out of stock</option>
                   <option value="untracked">No recipe linked</option>
                 </select>
@@ -640,8 +640,8 @@ export default function ProductsTab({ ctx }) {
                 </select>
 
                 <select aria-label="Sort products" value={prodFilters.sort} onChange={e => setFilter('sort', e.target.value)} className={selectCls}>
-                  <option value="name">Name A–Z</option>
-                  <option value="name-desc">Name Z–A</option>
+                  <option value="name">Name A-Z</option>
+                  <option value="name-desc">Name Z-A</option>
                   <option value="price">Price low → high</option>
                   <option value="price-desc">Price high → low</option>
                   <option value="category">Category</option>
@@ -1448,7 +1448,7 @@ export default function ProductsTab({ ctx }) {
                   <div key={g._id} className="bg-page-bg border border-white/10 rounded-xl p-3 flex justify-between items-start">
                     <div className="min-w-0">
                       <p className="font-bold text-fg text-sm">{g.name} {g.isRequired && <span className="text-[9px] bg-red-900/40 text-red-400 px-1.5 py-0.5 rounded uppercase ml-1">Required</span>}</p>
-                      <p className="text-[11px] text-fg/40 mt-0.5">Pick {g.minSelect}{g.maxSelect > g.minSelect ? `–${g.maxSelect}` : ''} · {(g.options||[]).map(o => o.name + (o.price ? ` (+₱${o.price})` : '')).join(', ')}</p>
+                      <p className="text-[11px] text-fg/40 mt-0.5">Pick {g.minSelect}{g.maxSelect > g.minSelect ? `-${g.maxSelect}` : ''} · {(g.options||[]).map(o => o.name + (o.price ? ` (+₱${o.price})` : '')).join(', ')}</p>
                     </div>
                     <div className="flex gap-1 shrink-0 ml-2">
                       <button onClick={() => editModifierGroup(g)} className="text-blue-300 hover:text-fg hover:bg-blue-600 text-xs font-bold px-2 py-1 bg-blue-900/30 rounded transition">Edit</button>

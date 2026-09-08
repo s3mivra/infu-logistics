@@ -326,7 +326,7 @@ export default function registerRequisitions(ctx) {
       const po = await PurchaseOrder.create({
         poNumber, supplier: slip.supplier, supplierId: slip.supplierId || null,
         status: 'Ordered', expectedDate: slip.expectedDate,
-        notes: `${slip.notes || ''}${slip.notes ? ' — ' : ''}Requisition ${slip.slipNumber}`.trim(),
+        notes: `${slip.notes || ''}${slip.notes ? ' - ' : ''}Requisition ${slip.slipNumber}`.trim(),
         lines: slip.lines.map(l => ({
           invId: l.invId, itemName: l.itemName, itemCode: l.itemCode, unit: l.unit, packSize: l.packSize,
           orderedQty: l.orderedQty, unitCost: l.unitCost, expiryDate: l.expiryDate, productionDate: l.productionDate,

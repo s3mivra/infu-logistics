@@ -149,7 +149,7 @@ export default function ExpensesPage() {
               {withheldAmt > 0 ? (
                 <span className="text-fg/80">
                   DR Expense {peso(grossAmt)} / CR Withholding Tax {peso(withheldAmt)} / CR {expenseForm.paymentMethod} {peso(grossAmt - withheldAmt)}
-                  {' '}— the supplier receives the net; the tax is held until the BIR is paid.
+                  {' '}- the supplier receives the net; the tax is held until the BIR is paid.
                 </span>
               ) : (
                 <span className="text-fg/80">DR Expense / CR {expenseForm.paymentMethod}</span>

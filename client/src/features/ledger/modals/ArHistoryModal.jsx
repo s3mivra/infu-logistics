@@ -12,7 +12,7 @@ export default function ArHistoryModal() {
 
   const { order, payments, totalPaid, balance } = arHistory;
   const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const day = (d) => (d ? new Date(d).toLocaleDateString() : '—');
+  const day = (d) => (d ? new Date(d).toLocaleDateString() : '-');
 
   return (
     <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in"
@@ -76,9 +76,9 @@ export default function ArHistoryModal() {
                           </span>
                         )}
                       </td>
-                      <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand px-2 py-1 rounded">{p.paymentMethod || '—'}</span></td>
+                      <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand px-2 py-1 rounded">{p.paymentMethod || '-'}</span></td>
                       <td className="py-2.5 text-fg/50 text-xs">
-                        {p.referenceNumber || <span className="text-fg/20">—</span>}
+                        {p.referenceNumber || <span className="text-fg/20">-</span>}
                         {p.note && <span className="block text-[9px] text-fg/30 italic">{p.note}</span>}
                       </td>
                       <td className="py-2.5 text-right tabular-nums font-bold text-green-400">{peso(p.amount)}</td>

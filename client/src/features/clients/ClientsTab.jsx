@@ -239,7 +239,7 @@ export default function ClientsTab() {
                     <td colSpan={data.showMoney ? 7 : 4} className="px-4 py-3">
                       {data.showMoney && c.aged && (
                         <div className="flex flex-wrap gap-2 mb-3">
-                          {[['Current', c.aged.current], ['31–60', c.aged.d31_60], ['61–90', c.aged.d61_90], ['91+', c.aged.d90_plus]].map(([lbl, amt]) => (
+                          {[['Current', c.aged.current], ['31-60', c.aged.d31_60], ['61-90', c.aged.d61_90], ['91+', c.aged.d90_plus]].map(([lbl, amt]) => (
                             <span key={lbl} className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs">
                               <span className="text-fg/70 font-bold">{lbl}</span>
                               <span className={`font-black tabular-nums ml-2 ${amt > 0 ? 'text-fg' : 'text-fg/60'}`}>{peso(amt)}</span>

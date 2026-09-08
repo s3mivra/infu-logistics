@@ -13,7 +13,7 @@ import * as ui from '../../shared/ui';
 // approving the payroll and handing over the money happen on different days.
 
 const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '—');
+const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-');
 const inputCls = 'w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg focus:border-brand/50 focus:outline-none';
 const numCls = 'w-full bg-page-bg border border-white/10 rounded px-2 py-1.5 text-xs text-right tabular-nums text-fg focus:border-brand/50 focus:outline-none';
 
@@ -58,7 +58,7 @@ export default function PayrollTab() {
   const act = async (run, what) => {
     const label = what === 'approve' ? 'Approve' : 'Pay out';
     const detail = what === 'approve'
-      ? `Post ${peso(run.totals.gross)} of wages to the books?\n\nThe deductions are held for SSS, PhilHealth, Pag-IBIG and the BIR. No cash moves yet — ${peso(run.totals.net)} becomes owed to staff.`
+      ? `Post ${peso(run.totals.gross)} of wages to the books?\n\nThe deductions are held for SSS, PhilHealth, Pag-IBIG and the BIR. No cash moves yet - ${peso(run.totals.net)} becomes owed to staff.`
       : `Pay out ${peso(run.totals.net)} to ${run.lines.length} employee(s)?\n\nThis discharges what is owed to them. The deductions stay held until each agency is paid.`;
     if (!(await ui.confirm(detail))) return;
     try {
@@ -149,7 +149,7 @@ export default function PayrollTab() {
                 return (
                   <tr key={r._id} className="border-b border-white/5 hover:bg-white/[0.02]">
                     <td className="px-3 py-2.5 font-bold text-fg">{r.reference}</td>
-                    <td className="px-3 py-2.5 text-fg/60">{shortDate(r.periodStart)} – {shortDate(r.periodEnd)}</td>
+                    <td className="px-3 py-2.5 text-fg/60">{shortDate(r.periodStart)} - {shortDate(r.periodEnd)}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-fg/60">{r.lines?.length || 0}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-fg">{peso(r.totals?.gross)}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-amber-400/80">{peso(deductions)}</td>
@@ -248,7 +248,7 @@ function DraftModal({ apiFetch, onClose, onDone }) {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="font-black text-fg text-lg">New payroll run</h2>
-            <p className="text-xs text-fg/50">A draft posts nothing — check it against the timesheets, then approve.</p>
+            <p className="text-xs text-fg/50">A draft posts nothing - check it against the timesheets, then approve.</p>
           </div>
           <button onClick={onClose} className="text-fg/40 hover:text-fg transition"><X size={18} /></button>
         </div>
@@ -261,7 +261,7 @@ function DraftModal({ apiFetch, onClose, onDone }) {
           <label className="block">
             <span className="block text-[9px] font-black uppercase tracking-widest text-fg/40 mb-1">Period end</span>
             <input type="date" className={inputCls} value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} />
-            <span className="block text-[10px] text-fg/35 mt-1">The wages are dated here — that is the month they belong to.</span>
+            <span className="block text-[10px] text-fg/35 mt-1">The wages are dated here - that is the month they belong to.</span>
           </label>
           <label className="block">
             <span className="block text-[9px] font-black uppercase tracking-widest text-fg/40 mb-1">Pay date</span>
@@ -357,7 +357,7 @@ function RunDetail({ run, apiFetch, onBack }) {
           <FileText size={17} /> {fresh.reference}
         </h1>
         <p className="text-xs text-fg/50">
-          {shortDate(fresh.periodStart)} – {shortDate(fresh.periodEnd)} · paid {shortDate(fresh.payDate)} · {fresh.status}
+          {shortDate(fresh.periodStart)} - {shortDate(fresh.periodEnd)} · paid {shortDate(fresh.payDate)} · {fresh.status}
         </p>
       </div>
 

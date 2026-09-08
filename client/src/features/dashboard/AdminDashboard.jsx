@@ -1010,7 +1010,7 @@ export default function AdminDashboard() {
         const lines = data.pendingApproval
           .map(c => `${c.label}: ₱${Number(c.oldValue || 0).toFixed(2)} → ₱${Number(c.newValue || 0).toFixed(2)}`)
           .join('\n');
-        ui.alert(`Sent for approval — not applied yet:\n${lines}`);
+        ui.alert(`Sent for approval - not applied yet:\n${lines}`);
       }
       return data;
     } catch { return null; }
@@ -1952,7 +1952,14 @@ export default function AdminDashboard() {
     }
     
     const productCategory = categories.find(c => c.name === posSelectedProduct.category);
-    const department = productCategory?.department || 'Kitchen';
+    // The fallback fires when the product's category is not in the loaded
+    // list - it was renamed, deleted, or the list has not arrived yet. Hard
+    // coding 'Kitchen' there stamped the item for a station a logistics
+    // deployment does not have, so it showed under neither the Logistics nor
+    // the Warehouse filter and nobody picked it. A category that IS found
+    // already carries the right department; the schema defaults it per
+    // business type.
+    const department = productCategory?.department || DEFAULT_DEPARTMENT;
 
     const newItem = {
       productId: posSelectedProduct._id,
@@ -3758,7 +3765,16 @@ const updateStatus = async (orderId, newStatus) => {
       console.error(err);
     }
   };
-  const [qrSessionId, setQrSessionId] = useState(''); // Add this to your states at the top if needed
+  const [qrSessionId, setQrSessionId] = useState('');
+  // When the displayed code stops working, and why it was replaced.
+  //
+  // A session is single use: it is burned the moment the customer's order
+  // arrives, and it lapses after ten idle minutes. Neither of those used to
+  // reach the screen still showing it, so the next person to walk up scanned a
+  // code that had already been spent and got nothing. These two let the modal
+  // notice and put a live code up on its own.
+  const [qrExpiresAt, setQrExpiresAt] = useState(null);
+  const [qrReplacedBecause, setQrReplacedBecause] = useState('');
 
   // Logistics: copy the client portal link instead of generating a table QR.
   const handleCopyPortalLink = async () => {
@@ -3770,6 +3786,37 @@ const updateStatus = async (orderId, newStatus) => {
       window.prompt('Copy the client portal link:', link);
     }
   };
+
+  // A code that has been used, or has run out, is replaced by a live one.
+  //
+  // Deliberately driven by the order arriving rather than by polling: the
+  // socket already carries every new order to this screen, and asking the
+  // server every few seconds whether a code had been scanned would be a
+  // request storm for something the app is already being told.
+  useEffect(() => {
+    if (!showQR || !autoTableId) return undefined;
+
+    const replace = (why) => { setQrReplacedBecause(why); handleShowQR(); };
+
+    const onUsed = (order) => {
+      if (order?.table !== autoTableId) return;
+      replace('That code was used for the order that just came in.');
+    };
+    socket.on('newOrder', onUsed);
+
+    // The ten-minute lapse. Checked once a second so the countdown on screen
+    // is honest, which is the point of showing it at all.
+    const tick = setInterval(() => {
+      if (qrExpiresAt && Date.now() >= qrExpiresAt) {
+        replace('That code timed out after ten idle minutes.');
+      }
+    }, 1000);
+
+    return () => { socket.off('newOrder', onUsed); clearInterval(tick); };
+    // handleShowQR is stable enough for this - it only reads apiFetch - and
+    // adding it would re-subscribe on every render of a 6,000-line component.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showQR, autoTableId, qrExpiresAt]);
 
   const handleShowQR = async () => {
     try {
@@ -3785,6 +3832,7 @@ const updateStatus = async (orderId, newStatus) => {
       if (data.success) {
         setAutoTableId(newTable);
         setQrSessionId(data.sessionId);
+        setQrExpiresAt(data.expiresAt ? new Date(data.expiresAt).getTime() : null);
         setShowQR(true);
       }
     } catch (err) {
@@ -5457,7 +5505,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     if (!invItem) return;
     const pack = packInfo(invItem);
     const packBase = pack.packBase || 1;         // base units per display unit (e.g. 377 for a 377g can)
-    // Logistics sells per piece — always label ingredients as "pcs" so qty=1 means 1 package/unit.
+    // Logistics sells per piece - always label ingredients as "pcs" so qty=1 means 1 package/unit.
     // qty below is ONE PACK in base units, so the label has to be the pack's
     // own label ("377g"), not the raw display unit - otherwise a 377g can
     // reads as "1 kg".
@@ -7954,7 +8002,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       {showQR && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-surface p-6 md:p-8 rounded-xl border border-gray-700 shadow-2xl flex flex-col items-center max-w-sm w-full relative max-h-[95vh] overflow-y-auto custom-scrollbar">
-            <button onClick={() => setShowQR(false)} className="absolute top-4 right-4 text-gray-400 hover:text-fg font-bold text-2xl shrink-0">✕</button>
+            <button onClick={() => { setShowQR(false); setQrReplacedBecause(''); }} className="absolute top-4 right-4 text-gray-400 hover:text-fg font-bold text-2xl shrink-0">✕</button>
             <h2 className="text-2xl font-bold mb-1 text-fg shrink-0">Customer QR</h2>
             <div className="bg-page-bg px-6 py-2 rounded-full border border-gray-700 mb-6 mt-2 flex items-center gap-2 shrink-0">
               <span className="text-gray-400 text-sm font-bold uppercase tracking-wider">Session ID:</span>
@@ -7975,14 +8023,25 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
               />
             </div>
             
-            <button 
-              onClick={(e) => { e.preventDefault(); handleShowQR(); }} 
-              className="mt-6 w-full bg-surface border border-accent text-accent font-bold py-3 rounded-md hover:bg-accent hover:text-fg transition uppercase tracking-widest text-sm shrink-0"
+            {/* One code, one customer. It is replaced the moment it is spent
+                or times out, so what is on screen is always scannable. */}
+            {qrReplacedBecause && (
+              <p className="mt-4 w-full text-center text-[11px] text-green-400 bg-green-400/10 border border-green-400/20 rounded-lg px-3 py-2 shrink-0">
+                {qrReplacedBecause} This is a fresh one.
+              </p>
+            )}
+            <p className="mt-4 text-[11px] text-gray-400 text-center shrink-0">
+              Single use. It replaces itself when the order comes in, or after ten idle minutes.
+            </p>
+
+            <button
+              onClick={(e) => { e.preventDefault(); setQrReplacedBecause(''); handleShowQR(); }}
+              className="mt-4 w-full bg-surface border border-accent text-accent font-bold py-3 rounded-md hover:bg-accent hover:text-fg transition uppercase tracking-widest text-sm shrink-0"
             >
               Generate Next QR
             </button>
-            <button 
-              onClick={() => setShowQR(false)} 
+            <button
+              onClick={() => { setShowQR(false); setQrReplacedBecause(''); }}
               className="mt-3 w-full bg-page-bg border border-gray-600 text-accent font-bold py-3 rounded-md hover:bg-accent hover:text-fg transition text-sm shrink-0"
             >
               Close

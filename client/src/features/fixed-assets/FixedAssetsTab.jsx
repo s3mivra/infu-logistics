@@ -16,7 +16,7 @@ import * as ui from '../../shared/ui';
 // machine, and netting them loses that.
 
 const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '—');
+const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-');
 const today = () => new Date().toISOString().slice(0, 10);
 
 const STATUS_TONE = {
@@ -315,7 +315,7 @@ function FragmentRow({ a, expanded, rows, busy, onToggle, onDepreciate, onDispos
         <td className="px-3 py-2.5 text-right tabular-nums">
           {a.due?.amount > 0
             ? <span className="text-brand font-bold">{peso(a.due.amount)}<span className="text-fg/35 font-normal"> · {a.due.months}mo</span></span>
-            : <span className="text-fg/25">—</span>}
+            : <span className="text-fg/25">-</span>}
         </td>
         <td className="px-3 py-2.5">
           <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded ${STATUS_TONE[a.status] || 'text-fg/40 bg-white/5'}`}>
@@ -456,7 +456,7 @@ function AcquireModal({ classes, apiFetch, onClose, onDone }) {
 
         <label className="sm:col-span-2 flex items-center gap-2 text-[11px] text-fg/70 cursor-pointer">
           <input type="checkbox" checked={f.onAccount} onChange={e => set('onAccount', e.target.checked)} />
-          Bought on account — the other side is a payable (225100 Non-Trade), not cash
+          Bought on account - the other side is a payable (225100 Non-Trade), not cash
         </label>
 
         <Field label="Supplier"><input className={inputCls} value={f.supplierName} onChange={e => set('supplierName', e.target.value)} placeholder="Optional" /></Field>
@@ -544,7 +544,7 @@ function DisposeModal({ asset, apiFetch, onClose, onDone }) {
 
       <p className={`mt-3 text-[11px] font-bold ${diff > 0 ? 'text-green-400' : diff < 0 ? 'text-red-400' : 'text-fg/50'}`}>
         {diff > 0 ? `Gain of ${peso(diff)}` : diff < 0 ? `Loss of ${peso(-diff)}` : 'No gain or loss'}
-        <span className="text-fg/40 font-normal"> — proceeds against a net book value of {peso(nbv)}.</span>
+        <span className="text-fg/40 font-normal"> - proceeds against a net book value of {peso(nbv)}.</span>
       </p>
 
       <ModalActions onClose={onClose} onSubmit={submit} busy={saving} label="Dispose" danger />

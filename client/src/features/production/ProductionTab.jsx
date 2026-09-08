@@ -396,7 +396,7 @@ export default function ProductionTab({ ctx }) {
                     </span>
                   </p>
                   <p className="text-[10px] text-fg/40 mt-0.5">
-                    {o.outputType === 'new' ? 'New product' : 'Adds to existing item'} · filed by {o.requestedBy || '—'}
+                    {o.outputType === 'new' ? 'New product' : 'Adds to existing item'} · filed by {o.requestedBy || '-'}
                     {o.batchNumber && <span className="font-mono text-accent"> · {o.batchNumber}</span>}
                   </p>
                 </div>

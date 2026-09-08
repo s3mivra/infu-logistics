@@ -34,7 +34,7 @@ export default function PriceHistoryModal() {
           {pricePending?.length > 0 && (
             <div className="mb-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3">
               <p className="text-[10px] font-black uppercase tracking-widest text-yellow-400 mb-2">
-                Awaiting Approval — not applied yet
+                Awaiting Approval - not applied yet
               </p>
               <ul className="space-y-2">
                 {pricePending.map(r => (
@@ -60,7 +60,7 @@ export default function PriceHistoryModal() {
             <p className="text-gray-500 text-sm text-center py-8">Loading…</p>
           ) : priceHistory.length === 0 ? (
             pricePending?.length > 0
-              ? <p className="text-gray-500 text-sm text-center py-8">No changes applied yet — the request above is still waiting.</p>
+              ? <p className="text-gray-500 text-sm text-center py-8">No changes applied yet - the request above is still waiting.</p>
               : <p className="text-gray-500 text-sm text-center py-8">No price or cost changes recorded yet - still at its original price.</p>
           ) : (
             <ul className="space-y-2">
@@ -86,7 +86,7 @@ export default function PriceHistoryModal() {
                       approver just names them. */}
                   {h.viaApproval
                     ? <p className="text-[10px] text-gray-600 mt-1">
-                        requested by {h.requestedBy || '—'} · approved by {h.approvedBy || '—'}
+                        requested by {h.requestedBy || '-'} · approved by {h.approvedBy || '-'}
                         <span className="ml-1.5 text-[9px] font-black uppercase bg-green-500/15 text-green-500 px-1.5 py-0.5 rounded">reviewed</span>
                       </p>
                     : h.changedBy && <p className="text-[10px] text-gray-600 mt-1">by {h.changedBy}</p>}

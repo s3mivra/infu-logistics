@@ -188,7 +188,10 @@ app.post('/api/sessions/generate', verifyToken, requireStaff, async (req, res) =
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // Expires in exactly 10 minutes
     
     await QRSession.create({ sessionId, table, expiresAt });
-    res.json({ success: true, sessionId, table });
+    // expiresAt goes back too, so the screen showing the code can count down to
+    // it and mint a replacement rather than displaying a dead QR to whoever
+    // walks up next.
+    res.json({ success: true, sessionId, table, expiresAt });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

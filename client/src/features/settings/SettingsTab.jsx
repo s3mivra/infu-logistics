@@ -794,7 +794,7 @@ export default function SettingsTab({ ctx }) {
                 </div>
               </>
             )}
-            {/* Print Logo — separate logo used on receipts/billing docs. Toggle ON = use uploaded print logo; OFF = use business logo. */}
+            {/* Print Logo - separate logo used on receipts/billing docs. Toggle ON = use uploaded print logo; OFF = use business logo. */}
             <div className="px-4 py-4 border-t border-white/5">
               <div className="flex items-start gap-4">
                 <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">

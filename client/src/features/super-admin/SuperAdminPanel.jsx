@@ -1772,7 +1772,7 @@ export default function SuperAdminPanel() {
                     ['Total on disk', fmtBytes(storage.database.totalBytes)],
                     ['Documents', (storage.database.objects || 0).toLocaleString()],
                     ['Growing /year', fmtBytes(storage.growth.projectedBytesPerYear)],
-                    ['Fastest growing', storage.growth.fastestGrowing || '—'],
+                    ['Fastest growing', storage.growth.fastestGrowing || '-'],
                   ].map(([label, val]) => (
                     <div key={label} className="bg-page-bg border border-white/10 rounded-lg p-2.5">
                       <p className="text-[9px] font-black uppercase tracking-widest text-fg/40">{label}</p>
@@ -1802,11 +1802,11 @@ export default function SuperAdminPanel() {
                           <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{c.docs.toLocaleString()}</td>
                           <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{fmtBytes(c.bytes)}</td>
                           <td className="py-2 pl-3 text-right tabular-nums text-fg/50">
-                            {c.docsPerDay > 0 ? `${c.docsPerDay.toLocaleString()}` : '—'}
+                            {c.docsPerDay > 0 ? `${c.docsPerDay.toLocaleString()}` : '-'}
                           </td>
                           <td className={`py-2 pl-3 text-right tabular-nums font-bold ${
                             c.projectedBytesPerYear > 50 * 1024 * 1024 ? 'text-amber-400' : 'text-fg/50'}`}>
-                            {c.projectedBytesPerYear > 0 ? fmtBytes(c.projectedBytesPerYear) : '—'}
+                            {c.projectedBytesPerYear > 0 ? fmtBytes(c.projectedBytesPerYear) : '-'}
                           </td>
                         </tr>
                       ))}
@@ -2461,7 +2461,7 @@ export default function SuperAdminPanel() {
                         </div>
                         {off !== null && (
                           <span className={`text-[10px] font-bold tabular-nums w-14 text-right flex-shrink-0 ${off > 0 ? 'text-brand' : off < 0 ? 'text-red-400' : 'text-fg/30'}`}>
-                            {off > 0 ? `-${off}%` : off < 0 ? `+${Math.abs(off)}%` : '—'}
+                            {off > 0 ? `-${off}%` : off < 0 ? `+${Math.abs(off)}%` : '-'}
                           </span>
                         )}
                         <div className="relative w-32 flex-shrink-0">

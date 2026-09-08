@@ -842,9 +842,9 @@ export default function LedgerTab({ ctx }) {
   // the on-screen table, the preview modal) read the same way for the new
   // 'new-fund' type instead of it falling through to "Procurement" by accident.
   const reqTypeLabel = (t) => t === 'petty-cash' ? 'Petty Cash' : t === 'new-fund' ? 'New Fund' : t === 'fund-replenish' ? 'Fund Replenish' : 'Procurement';
-  const reqSummary = (s) => s.type === 'petty-cash' ? `${s.fundName} — ${s.description}`
-    : s.type === 'new-fund' ? `Open "${s.fundName}"${s.description ? ` — ${s.description}` : ''}`
-    : s.type === 'fund-replenish' ? `Top up ${s.fundName}${s.description ? ` — ${s.description}` : ''}`
+  const reqSummary = (s) => s.type === 'petty-cash' ? `${s.fundName} - ${s.description}`
+    : s.type === 'new-fund' ? `Open "${s.fundName}"${s.description ? ` - ${s.description}` : ''}`
+    : s.type === 'fund-replenish' ? `Top up ${s.fundName}${s.description ? ` - ${s.description}` : ''}`
     : `${s.supplier || 'No supplier'} (${(s.lines || []).length} item(s))`;
   // fund-replenish's amount is 0 when the filer left it blank ("top up to
   // full" - resolved from the fund's actual shortfall at approval time), so
@@ -1489,7 +1489,7 @@ export default function LedgerTab({ ctx }) {
                     <div className="flex justify-between border-t border-white/10 pt-1 mt-1">
                       <span className="text-fg/70 font-bold">{diff === 0 ? 'Balanced' : "To Owner's Capital"}</span>
                       <span className={`tabular-nums font-black ${diff === 0 ? 'text-green-400' : 'text-brand'}`}>
-                        {diff === 0 ? '—' : peso(Math.abs(diff))}
+                        {diff === 0 ? '-' : peso(Math.abs(diff))}
                       </span>
                     </div>
                   </div>
@@ -2291,19 +2291,19 @@ export default function LedgerTab({ ctx }) {
                               <td className="py-2.5 text-right tabular-nums text-fg/40">₱{Number(c.oldValue || 0).toFixed(2)}</td>
                               <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{Number(c.newValue || 0).toFixed(2)}</td>
                               <td className={`py-2.5 text-right tabular-nums font-bold ${c.delta > 0 ? 'text-red-400' : c.delta < 0 ? 'text-green-400' : 'text-fg/30'}`}>
-                                {c.percent === null ? '—' : `${c.percent > 0 ? '+' : ''}${c.percent}%`}
+                                {c.percent === null ? '-' : `${c.percent > 0 ? '+' : ''}${c.percent}%`}
                               </td>
                               <td className="py-2.5 pl-3 text-xs">
                                 {c.viaApproval ? (
                                   <>
-                                    <span className="text-fg/70">{c.requestedBy || '—'}</span>
-                                    <span className="block text-[9px] text-green-500">approved by {c.approvedBy || '—'}</span>
+                                    <span className="text-fg/70">{c.requestedBy || '-'}</span>
+                                    <span className="block text-[9px] text-green-500">approved by {c.approvedBy || '-'}</span>
                                   </>
                                 ) : (
-                                  <span className="text-fg/70">{c.changedBy || '—'}</span>
+                                  <span className="text-fg/70">{c.changedBy || '-'}</span>
                                 )}
                               </td>
-                              <td className="py-2.5 text-fg/40 text-xs italic max-w-[200px] truncate" title={c.reason}>{c.reason || '—'}</td>
+                              <td className="py-2.5 text-fg/40 text-xs italic max-w-[200px] truncate" title={c.reason}>{c.reason || '-'}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -2349,9 +2349,9 @@ export default function LedgerTab({ ctx }) {
                 <>
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                     {[
-                      { label: 'Current', sub: '0–30d', amt: arReport.totals.current, cls: 'text-green-400 bg-green-500/10 border-green-500/20' },
-                      { label: '31–60',   sub: 'days',  amt: arReport.totals.d31_60,  cls: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' },
-                      { label: '61–90',   sub: 'days',  amt: arReport.totals.d61_90,  cls: 'text-orange-400 bg-orange-500/10 border-orange-500/20' },
+                      { label: 'Current', sub: '0-30d', amt: arReport.totals.current, cls: 'text-green-400 bg-green-500/10 border-green-500/20' },
+                      { label: '31-60',   sub: 'days',  amt: arReport.totals.d31_60,  cls: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' },
+                      { label: '61-90',   sub: 'days',  amt: arReport.totals.d61_90,  cls: 'text-orange-400 bg-orange-500/10 border-orange-500/20' },
                       { label: '91+',     sub: 'days',  amt: arReport.totals.d90_plus,cls: 'text-red-400 bg-red-500/10 border-red-500/20' },
                       { label: 'Total',   sub: `${arReport.totals.count} invoice(s)`, amt: arReport.totals.total, cls: 'text-brand bg-brand/10 border-brand/25' },
                     ].map(b => (
@@ -2378,8 +2378,8 @@ export default function LedgerTab({ ctx }) {
                         <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
                           <th className="text-left py-2.5 px-4">Client</th>
                           <th className="text-right py-2.5">Current</th>
-                          <th className="text-right py-2.5">31–60</th>
-                          <th className="text-right py-2.5">61–90</th>
+                          <th className="text-right py-2.5">31-60</th>
+                          <th className="text-right py-2.5">61-90</th>
                           <th className="text-right py-2.5">91+</th>
                           <th className="text-right py-2.5 px-4">Total</th>
                         </tr>
@@ -2518,7 +2518,7 @@ export default function LedgerTab({ ctx }) {
                             <tr key={c.paymentId} className={`border-b border-white/5 hover:bg-white/5 transition ${c.status === 'Bounced' ? 'bg-red-500/5' : ''}`}>
                               <td className="py-2.5 font-black text-fg tabular-nums">{c.checkNumber}</td>
                               <td className="py-2.5 text-fg/60 text-xs">
-                                {c.checkBank || <span className="text-fg/20">—</span>}
+                                {c.checkBank || <span className="text-fg/20">-</span>}
                                 {c.checkDrawer && <span className="block text-[9px] text-fg/35">{c.checkDrawer}</span>}
                               </td>
                               <td className="py-2.5 text-fg/70 text-xs">{c.client}</td>
@@ -2528,7 +2528,7 @@ export default function LedgerTab({ ctx }) {
                                   <span className={c.postDated ? 'text-yellow-400 font-bold' : 'text-fg/60'}>
                                     {new Date(c.checkDate).toLocaleDateString()}
                                   </span>
-                                ) : <span className="text-fg/20">—</span>}
+                                ) : <span className="text-fg/20">-</span>}
                                 {c.postDated && <span className="block text-[9px] text-yellow-500/70">post-dated</span>}
                                 {/* A check sitting with the bank for a week+ is
                                     worth chasing. */}
@@ -2698,9 +2698,9 @@ export default function LedgerTab({ ctx }) {
                             </td>
                             <td className="py-2.5 text-fg font-bold">{r.orderNumber}</td>
                             <td className="py-2.5 text-fg/70">{r.client}</td>
-                            <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand px-2 py-1 rounded">{r.depositedTo || '—'}</span></td>
+                            <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand px-2 py-1 rounded">{r.depositedTo || '-'}</span></td>
                             <td className="py-2.5 text-fg/50 text-xs">
-                              {r.referenceNumber || <span className="text-fg/20">—</span>}
+                              {r.referenceNumber || <span className="text-fg/20">-</span>}
                               {r.note && <span className="block text-[9px] text-fg/30 italic">{r.note}</span>}
                             </td>
                             <td className="py-2.5 text-right tabular-nums font-black text-green-400">₱{r.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
@@ -2748,8 +2748,8 @@ export default function LedgerTab({ ctx }) {
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                     {[
                       { label: 'Not Yet Due', sub: '', amt: apReport.totals.current, color: 'text-green-400', bg: 'bg-green-500/10 border-green-500/20' },
-                      { label: '1–30', sub: 'days late', amt: apReport.totals.d31_60, color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' },
-                      { label: '31–60', sub: 'days late', amt: apReport.totals.d61_90, color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20' },
+                      { label: '1-30', sub: 'days late', amt: apReport.totals.d31_60, color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' },
+                      { label: '31-60', sub: 'days late', amt: apReport.totals.d61_90, color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20' },
                       { label: '61+', sub: 'days late', amt: apReport.totals.d90_plus, color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20' },
                       { label: 'Total', sub: `${apReport.totals.count} bill(s)`, amt: apReport.totals.total, color: 'text-brand', bg: 'bg-brand/10 border-brand/25' },
                     ].map(b => (
@@ -2786,7 +2786,7 @@ export default function LedgerTab({ ctx }) {
                     <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
                       <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">No Due Date Set</p>
                       <p className="text-lg font-black tabular-nums text-fg/70">₱{apReport.totals.undated.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                      <p className="text-[9px] text-fg/40 mt-0.5">Can't be aged — set terms on these bills so they stop hiding from the buckets.</p>
+                      <p className="text-[9px] text-fg/40 mt-0.5">Can't be aged - set terms on these bills so they stop hiding from the buckets.</p>
                     </div>
                   )}
 
@@ -2797,8 +2797,8 @@ export default function LedgerTab({ ctx }) {
                         <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
                           <th className="text-left py-2.5 px-4">Supplier</th>
                           <th className="text-right py-2.5">Not Due</th>
-                          <th className="text-right py-2.5">1–30</th>
-                          <th className="text-right py-2.5">31–60</th>
+                          <th className="text-right py-2.5">1-30</th>
+                          <th className="text-right py-2.5">31-60</th>
                           <th className="text-right py-2.5">61+</th>
                           <th className="text-right py-2.5 px-4">Total</th>
                         </tr>
@@ -2839,7 +2839,7 @@ export default function LedgerTab({ ctx }) {
                               {b.poNumber && <span className="block text-[9px] text-fg/30">{b.poNumber}</span>}
                             </td>
                             <td className="py-2.5 text-fg/70 text-xs">{b.supplier}</td>
-                            <td className="py-2.5 text-fg/50 text-xs max-w-[220px] truncate" title={b.description}>{b.description || '—'}</td>
+                            <td className="py-2.5 text-fg/50 text-xs max-w-[220px] truncate" title={b.description}>{b.description || '-'}</td>
                             <td className="py-2.5 text-xs">
                               {b.dueDate ? (
                                 b.overdue
@@ -2946,10 +2946,10 @@ export default function LedgerTab({ ctx }) {
                             <td className="py-2.5 text-fg/50 text-xs">{new Date(p.date).toLocaleDateString()}</td>
                             <td className="py-2.5 text-fg/70 text-xs">{p.supplier}</td>
                             <td className="py-2.5 text-fg/50 text-xs">
-                              {p.reference || '—'}
+                              {p.reference || '-'}
                               {p.description && <span className="block text-[9px] text-fg/30 italic max-w-[240px] truncate" title={p.description}>{p.description}</span>}
                             </td>
-                            <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand px-2 py-1 rounded">{p.paidFrom || '—'}</span></td>
+                            <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand px-2 py-1 rounded">{p.paidFrom || '-'}</span></td>
                             <td className="py-2.5 text-right tabular-nums font-black text-red-400">₱{p.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                           </tr>
                         ))}
@@ -3050,7 +3050,7 @@ export default function LedgerTab({ ctx }) {
                       {checkVouchers.map(v => (
                         <tr key={v._id} className={`border-b border-white/5 hover:bg-white/5 transition ${v.status === 'Voided' ? 'opacity-50' : ''}`}>
                           <td className="py-2.5 text-fg font-bold text-xs">
-                            {v.voucherNumber || '—'}
+                            {v.voucherNumber || '-'}
                             {/* Voucher numbers restart per branch, so the number
                                 alone is ambiguous once a business runs more than
                                 one inventory. */}
@@ -3062,8 +3062,8 @@ export default function LedgerTab({ ctx }) {
                             <span className="ml-1.5 text-[9px] font-black uppercase text-fg/30">{v.payeeType}</span>
                           </td>
                           <td className="py-2.5 text-fg/50 text-xs">{v.purpose}</td>
-                          <td className="py-2.5 text-fg/50 text-xs">{v.sourceAccountName || v.sourceAccount || '—'}</td>
-                          <td className="py-2.5 text-fg/50 text-xs">{v.referenceNumber || '—'}</td>
+                          <td className="py-2.5 text-fg/50 text-xs">{v.sourceAccountName || v.sourceAccount || '-'}</td>
+                          <td className="py-2.5 text-fg/50 text-xs">{v.referenceNumber || '-'}</td>
                           <td className={`py-2.5 text-right tabular-nums font-black ${v.status === 'Voided' ? 'text-fg/40 line-through' : 'text-fg'}`}>
                             {peso(v.amount)}
                           </td>
@@ -3242,11 +3242,11 @@ export default function LedgerTab({ ctx }) {
                               <span className={`text-[9px] font-black uppercase px-2 py-1 rounded ${typeCls}`}>{a.type}</span>
                             </td>
                             <td className="py-2.5 text-fg/70 text-xs">{a.payeeName}</td>
-                            <td className="py-2.5 text-fg/40 text-xs max-w-[180px] truncate" title={a.purpose || ''}>{a.purpose || '—'}</td>
+                            <td className="py-2.5 text-fg/40 text-xs max-w-[180px] truncate" title={a.purpose || ''}>{a.purpose || '-'}</td>
                             <td className="py-2.5 text-fg/50 text-xs">{new Date(a.date).toLocaleDateString()}</td>
                             <td className="py-2.5 text-right tabular-nums text-fg/70">{peso(a.amount)}</td>
                             <td className={`py-2.5 text-right tabular-nums font-black ${a.outstanding > 0 ? 'text-amber-400' : 'text-fg/25'}`}>
-                              {a.outstanding > 0 ? peso(a.outstanding) : '—'}
+                              {a.outstanding > 0 ? peso(a.outstanding) : '-'}
                             </td>
                             <td className="py-2.5 pl-3">
                               <span className={`text-[9px] font-black uppercase px-2 py-1 rounded whitespace-nowrap ${stCls}`}
@@ -3559,9 +3559,9 @@ export default function LedgerTab({ ctx }) {
                 // must not keep sitting in a bucket at its original value.
                 const ab = agingBuckets(arOutstanding.orders, o => o.createdAt, o => (o.balance ?? o.total));
                 const buckets = [
-                  { label: 'Current', sub: '0–30 days', amt: ab.c,    color: 'text-green-400',  bg: 'bg-green-500/10 border-green-500/20' },
-                  { label: '31–60',   sub: 'days',       amt: ab.d60,  color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' },
-                  { label: '61–90',   sub: 'days',       amt: ab.d90,  color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20' },
+                  { label: 'Current', sub: '0-30 days', amt: ab.c,    color: 'text-green-400',  bg: 'bg-green-500/10 border-green-500/20' },
+                  { label: '31-60',   sub: 'days',       amt: ab.d60,  color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' },
+                  { label: '61-90',   sub: 'days',       amt: ab.d90,  color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20' },
                   { label: '91+',     sub: 'days',       amt: ab.over, color: 'text-red-400',    bg: 'bg-red-500/10 border-red-500/20' },
                 ];
                 return (
@@ -3594,8 +3594,8 @@ export default function LedgerTab({ ctx }) {
                       <tr className="text-fg/60 text-[10px] uppercase tracking-widest border-b border-white/10">
                         <th className="text-left py-2.5 px-4">Client</th>
                         <th className="text-right py-2.5">Current</th>
-                        <th className="text-right py-2.5">31–60</th>
-                        <th className="text-right py-2.5">61–90</th>
+                        <th className="text-right py-2.5">31-60</th>
+                        <th className="text-right py-2.5">61-90</th>
                         <th className="text-right py-2.5">91+</th>
                         <th className="text-right py-2.5">Total</th>
                         <th className="text-right py-2.5" title="Everything on account including orders still in flight - this is what the credit limit spends">Committed</th>
@@ -3910,9 +3910,9 @@ export default function LedgerTab({ ctx }) {
               {apCreditEntries.length > 0 && (() => {
                 const ab = agingBuckets(apCreditEntries, e => e.date, e => e.outstandingAmt);
                 const buckets = [
-                  { label: 'Current', sub: '0–30 days', amt: ab.c,    color: 'text-green-400',  bg: 'bg-green-500/10 border-green-500/20' },
-                  { label: '31–60',   sub: 'days',       amt: ab.d60,  color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' },
-                  { label: '61–90',   sub: 'days',       amt: ab.d90,  color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20' },
+                  { label: 'Current', sub: '0-30 days', amt: ab.c,    color: 'text-green-400',  bg: 'bg-green-500/10 border-green-500/20' },
+                  { label: '31-60',   sub: 'days',       amt: ab.d60,  color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' },
+                  { label: '61-90',   sub: 'days',       amt: ab.d90,  color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20' },
                   { label: '91+',     sub: 'days',       amt: ab.over, color: 'text-red-400',    bg: 'bg-red-500/10 border-red-500/20' },
                 ];
                 return (
@@ -5395,7 +5395,7 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
-          {/* ── BACKDATE QUEUE — COMPLETE ── supply the missing payment method, then post */}
+          {/* ── BACKDATE QUEUE - COMPLETE ── supply the missing payment method, then post */}
           {bdQueueResolve && !bdSheetPicker && !bdImportPreview && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !bdQueueSaving && setBdQueueResolve(null)}>
               <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -5447,7 +5447,7 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
-          {/* ── BACKDATE IMPORT — OPTIONS (sheet selection + the same settings the manual entry form asks for) ── */}
+          {/* ── BACKDATE IMPORT - OPTIONS (sheet selection + the same settings the manual entry form asks for) ── */}
           {bdSheetPicker && !bdImportPreview && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !bdImporting && setBdSheetPicker(null)}>
               <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -5729,7 +5729,7 @@ export default function LedgerTab({ ctx }) {
                             <span className="font-mono tabular-nums">
                               <span className="text-fg/60">{peso(reqSlipFundBalance)}</span>
                               <span className="text-fg/30 mx-1">→</span>
-                              <span className="text-fg font-bold">{willBe !== null ? peso(willBe) : '—'}</span>
+                              <span className="text-fg font-bold">{willBe !== null ? peso(willBe) : '-'}</span>
                             </span>
                           </div>
                         )}
@@ -5766,7 +5766,7 @@ export default function LedgerTab({ ctx }) {
                   <div className="border-t border-white/10 pt-4 space-y-4">
                     <div>
                       <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-1">Prepared By</p>
-                      <p className="text-fg font-black text-sm border-b border-white/20 pb-1.5">{reqSlipPreview.preparedBy || '—'}</p>
+                      <p className="text-fg font-black text-sm border-b border-white/20 pb-1.5">{reqSlipPreview.preparedBy || '-'}</p>
                     </div>
                     <div>
                       <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-1">Approved By</p>

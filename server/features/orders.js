@@ -580,7 +580,12 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
         allIds.length ? Product.find({ _id: { $in: allIds } }, { _id: 1, category: 1, productCode: 1 }).lean() : [],
         Category.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }, { name: 1, department: 1 }).lean()
       ]);
-      const catDeptMap = Object.fromEntries(cats.map(c => [c.name, c.department || 'Kitchen']));
+      // The empty fallback matters only for a category document written
+      // without the schema default - a hand-written migration, say. Normally
+      // CategorySchema.department already resolves to Logistics on a log
+      // deployment, so this is a belt-and-braces guard rather than the fix for
+      // anything currently reachable.
+      const catDeptMap = Object.fromEntries(cats.map(c => [c.name, c.department || '']));
       const prodCatMap = Object.fromEntries(prods.map(p => [p._id.toString(), p.category]));
       const prodCodeMap = Object.fromEntries(prods.map(p => [p._id.toString(), p.productCode]));
       const defaultDept = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';

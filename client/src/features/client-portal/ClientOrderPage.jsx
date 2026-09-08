@@ -1761,7 +1761,7 @@ export default function ClientOrderPage() {
                 <CreditCard size={13} />
                 Payment Method
               </div>
-              {/* Styled pill grid — groups come from the live COA-derived list
+              {/* Styled pill grid - groups come from the live COA-derived list
                   (see usePaymentMethods), so a sub-account added in the
                   Payment Routing screen (Admin → Accounts & Periods) shows up
                   here without a redeploy. 'Credit' is a portal-only
@@ -1790,7 +1790,7 @@ export default function ClientOrderPage() {
                   </div>
                 </div>
               ))}
-              {/* Pay Now button — only shown when a QR image is uploaded */}
+              {/* Pay Now button - only shown when a QR image is uploaded */}
               {portal.paymentQrImage && (
                 <button
                   onClick={() => setShowQr(true)}
@@ -1801,7 +1801,7 @@ export default function ClientOrderPage() {
                   }`}
                 >
                   <QrCode size={14} />
-                  {qrScanned ? 'Show QR again' : 'Pay Now — Scan QR'}
+                  {qrScanned ? 'Show QR again' : 'Pay Now - Scan QR'}
                 </button>
               )}
 

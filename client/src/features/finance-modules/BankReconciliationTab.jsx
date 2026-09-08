@@ -13,7 +13,7 @@ import * as ui from '../../shared/ui';
 // entry, a duplicate, or money gone.
 
 const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '—');
+const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-');
 const today = () => new Date().toISOString().slice(0, 10);
 const inputCls = 'w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg focus:border-brand/50 focus:outline-none';
 
@@ -76,7 +76,7 @@ export default function BankReconciliationTab() {
       </div>
 
       <p className="text-xs text-fg/50 leading-relaxed max-w-3xl">
-        The ledger and the bank never agree on the day, and they are not supposed to — a cheque written
+        The ledger and the bank never agree on the day, and they are not supposed to - a cheque written
         on the 28th clears on the 3rd. Reconciling accounts for every peso of that gap. What cannot be
         explained is the finding: a missed entry, a duplicate, or money gone.
       </p>
@@ -172,7 +172,7 @@ function StartModal({ accounts, apiFetch, onClose, onDone }) {
             <select className={inputCls} value={accountCode} onChange={e => setAccountCode(e.target.value)}>
               {accounts.length === 0 && <option value="112000">112000 · Cash in Bank</option>}
               {accounts.map(a => (
-                <option key={a.code} value={a.code}>{a.code} · {a.name} — {peso(a.balance)} per books</option>
+                <option key={a.code} value={a.code}>{a.code} · {a.name} - {peso(a.balance)} per books</option>
               ))}
             </select>
           </Field>
@@ -318,7 +318,7 @@ function Worksheet({ id, onBack, apiFetch }) {
           </div>
           <Row label="Balance per books" value={rec.ledgerBalance} />
           <div className={`border-t pt-1.5 ${live.reconciles ? 'border-green-400/30' : 'border-red-400/30'}`}>
-            <Row label={live.reconciles ? 'Difference — accounted for' : 'Unexplained difference'}
+            <Row label={live.reconciles ? 'Difference - accounted for' : 'Unexplained difference'}
               value={live.difference} bold
               tone={live.reconciles ? 'text-green-400' : 'text-red-400'} />
           </div>
@@ -329,7 +329,7 @@ function Worksheet({ id, onBack, apiFetch }) {
             <AlertCircle size={13} className="shrink-0 mt-0.5" />
             <span>
               Still out by {peso(Math.abs(live.difference))}. Tick the items the statement shows. If something
-              on the statement is not in the ledger at all — a bank charge, interest — book it as its own
+              on the statement is not in the ledger at all - a bank charge, interest - book it as its own
               entry first; this screen deliberately will not adjust the books for you.
             </span>
           </p>

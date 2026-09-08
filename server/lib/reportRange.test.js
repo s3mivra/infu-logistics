@@ -45,7 +45,7 @@ describe('reportRange.validateDateRange', () => {
 
 describe('day boundaries use one consistent (local) basis', () => {
   // Regression: start was parsed as UTC midnight while the end used local
-  // setHours, so in UTC+8 a one-day report actually covered local 08:00–23:59
+  // setHours, so in UTC+8 a one-day report actually covered local 08:00-23:59
   // and silently dropped every sale made between midnight and 8am.
   it('starts at local midnight, not UTC midnight', () => {
     const { startDate } = validateDateRange('2026-07-26', '2026-07-26');

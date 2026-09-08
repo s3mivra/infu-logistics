@@ -12,7 +12,7 @@ export default function TierPriceHistoryModal() {
 
   const isPercent = tierPriceHistory.some(h => h.type === 'percent') || (tierPriceHistory.length === 0 && !tierPriceHistoryCtx?.productName);
   const fmt = (v) => v === null || v === undefined
-    ? '—'
+    ? '-'
     : isPercent ? `${v}%` : `₱${Number(v).toFixed(2)}`;
 
   return (
@@ -37,7 +37,7 @@ export default function TierPriceHistoryModal() {
           {tierPriceHistoryLoading ? (
             <p className="text-gray-500 text-sm text-center py-8">Loading…</p>
           ) : tierPriceHistory.length === 0 ? (
-            <p className="text-gray-500 text-sm text-center py-8">No changes recorded yet — still at its original {isPercent ? 'rate' : 'price'}.</p>
+            <p className="text-gray-500 text-sm text-center py-8">No changes recorded yet - still at its original {isPercent ? 'rate' : 'price'}.</p>
           ) : (
             <ul className="space-y-2">
               {tierPriceHistory.map((h, i) => (
