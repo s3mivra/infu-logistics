@@ -828,6 +828,15 @@ export default function AdminDashboard() {
     return response;
   }, []);
 
+  // Optional accounting modules, read once and shared: the sidebar decides
+  // whether to show a tab and the tab needs the same answer.
+  //
+  // It has to live UP HERE, with the other unconditional hooks. Called further
+  // down - past `if (!isAuthenticated) return <login/>` - its hooks ran only
+  // once someone was logged in, so the hook count changed between the logged
+  // out and logged in renders and React threw #310 at the moment of login.
+  const { isOn: moduleOn } = useModules(apiFetch, { enabled: isAuthenticated });
+
   // COA-derived tender list (see usePaymentMethods) - the POS's own copy of
   // the same live list the client portal reads, riding this dashboard's
   // already-open socket rather than a second connection. Declared here,
@@ -7309,10 +7318,6 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   const isSuperAdmin = activeAdmin?.role === 'superadmin';
   // Granular permission check for UI gating (server still enforces). Superadmin ⇒ all.
   const can = (perm) => isSuperAdmin || auth.can(perm);
-  // Optional accounting modules. Until the server answers, everything reads as
-  // off: showing a tab and then taking it away looks like a glitch, showing it
-  // a moment late does not.
-  const { isOn: moduleOn } = useModules(apiFetch);
   // Void / refund are allowed for superadmin OR admin (case-insensitive).
   const canVoidRefund = ['superadmin', 'admin'].includes(String(activeAdmin?.role || '').toLowerCase());
 
