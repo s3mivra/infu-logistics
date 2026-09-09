@@ -20,6 +20,11 @@ const ENV_BILLING = {
   accountNo: import.meta.env.VITE_BILLING_ACCOUNT_NO || '',
 };
 
+// The portal's support destination. `portalSupportLink` overrides it, exactly
+// as it does on the receipt - a statement and a receipt printed the same day
+// must not disagree about where to send payment proof.
+const FB_LINK_ENV = import.meta.env.VITE_FB_LINK || '';
+
 const pick = (...vals) => { for (const v of vals) { const s = String(v ?? '').trim(); if (s) return s; } return ''; };
 const esc = (v) => String(v ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const money = (n) => Number(n || 0).toFixed(2);
@@ -39,7 +44,7 @@ export function resolveBillingLetterhead(settings = {}) {
   const phone = pick(s.portalCompanyPhone, ENV_BILLING.phone);
   const email = pick(s.portalCompanyEmail, ENV_BILLING.email);
   const announcement = pick(s.portalAnnouncement);
-  const supportLink = pick(s.portalSupportLink);
+  const supportLink = pick(s.portalSupportLink, FB_LINK_ENV);
   const accountName = pick(ENV_BILLING.accountName, companyName);
   // Deposit / payment line: prefer the admin-entered payment instructions, else
   // build one from the env bank details.
