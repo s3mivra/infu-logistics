@@ -88,7 +88,7 @@ const MenuItemCard = memo(({ product, onAdd }) => {
           <p className="text-fg/65 font-bold text-[10px] line-through">₱{(product.basePrice || 0).toFixed(2)}</p>
         </div>
       ) : (
-        <p className="text-brand font-black text-sm mt-2">
+        <p className="text-brand-text font-black text-sm mt-2">
           ₱{(product.basePrice || 0).toFixed(2)}
           {product.sizes?.length > 0 && <span className="text-fg/65 font-normal text-xs ml-1">& up</span>}
         </p>
@@ -609,10 +609,10 @@ export default function CustomerMenu() {
     return (
       <div className="min-h-screen bg-page-bg flex flex-col items-center justify-center p-4">
         <div className="w-16 h-16 rounded-2xl bg-brand/20 border border-brand/20 flex items-center justify-center mb-8">
-          <Coffee size={28} className="text-brand" />
+          <Coffee size={28} className="text-brand-text" />
         </div>
         <div className="w-10 h-10 border-2 border-brand border-t-transparent rounded-full animate-spin mb-6" />
-        <p className="text-brand/60 text-xs font-bold tracking-widest uppercase animate-pulse">Securing Session…</p>
+        <p className="text-brand-text/85 text-xs font-bold tracking-widest uppercase animate-pulse">Securing Session…</p>
       </div>
     );
   }
@@ -636,7 +636,7 @@ export default function CustomerMenu() {
       <div className="min-h-screen bg-page-bg flex flex-col items-center justify-center p-6">
         <div className="bg-sidebar-bg border border-brand/20 p-10 rounded-3xl max-w-sm w-full text-center animate-fade-in">
           <div className="w-20 h-20 rounded-full bg-brand/20 flex items-center justify-center mx-auto mb-6">
-            <CheckCircle size={36} className="text-brand" />
+            <CheckCircle size={36} className="text-brand-text" />
           </div>
           <h2 className="text-3xl font-black text-fg mb-3 uppercase tracking-widest">Thank You!</h2>
           <p className="text-fg/75 font-medium mb-8">We hope you enjoy your order. Come back soon!</p>
@@ -664,7 +664,7 @@ export default function CustomerMenu() {
               <>
                 <div className="text-6xl mb-6 animate-pulse">📡</div>
                 <h1 className="text-2xl font-black text-fg mb-3 uppercase tracking-widest">Sending Order…</h1>
-                <p className="text-fg/75 text-sm leading-relaxed">Please proceed to the cashier to confirm payment of <span className="text-brand font-bold">₱{(lockedOrder.total||0).toFixed(2)}</span>.</p>
+                <p className="text-fg/75 text-sm leading-relaxed">Please proceed to the cashier to confirm payment of <span className="text-brand-text font-bold">₱{(lockedOrder.total||0).toFixed(2)}</span>.</p>
               </>
             )}
             {lockedOrder?.status === 'Preparing' && (() => {
@@ -676,7 +676,7 @@ export default function CustomerMenu() {
               return (
                 <>
                   <div className="text-6xl mb-4 inline-block animate-spin" style={{animationDuration:'3s'}}>🍳</div>
-                  <h1 className="text-2xl font-black text-brand mb-2 uppercase tracking-widest">
+                  <h1 className="text-2xl font-black text-brand-text mb-2 uppercase tracking-widest">
                     {hasPartial ? 'Partially Served' : 'Now Preparing'}
                   </h1>
                   {totalCount > 0 && (
@@ -721,7 +721,7 @@ export default function CustomerMenu() {
             )}
             <div className="mt-8 pt-5 border-t border-white/5 flex justify-between items-center">
               <span className="text-fg/65 font-bold text-xs uppercase tracking-widest">Order ID</span>
-              <span className="bg-white/5 border border-white/10 px-3 py-1 rounded-lg text-brand font-mono font-bold text-sm">{lockedOrder?.orderNumber}</span>
+              <span className="bg-white/5 border border-white/10 px-3 py-1 rounded-lg text-brand-text font-mono font-bold text-sm">{lockedOrder?.orderNumber}</span>
             </div>
           </div>
         </div>
@@ -802,7 +802,7 @@ export default function CustomerMenu() {
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in">
           <div className="bg-sidebar-bg border border-brand/30 p-10 rounded-3xl text-center max-w-xs w-full mx-4">
             <div className="w-16 h-16 rounded-full bg-brand/20 flex items-center justify-center mx-auto mb-5">
-              <CheckCircle size={32} className="text-brand" />
+              <CheckCircle size={32} className="text-brand-text" />
             </div>
             <h2 className="text-2xl font-black text-fg mb-2 uppercase tracking-widest">Order Sent!</h2>
             <p className="text-fg/75 text-sm">Your order is on its way to {SEND_TARGET.toLowerCase()}.</p>
@@ -827,7 +827,7 @@ export default function CustomerMenu() {
             >
               <ShoppingCart size={15} />
               <span>₱{total.toFixed(2)}</span>
-              <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-white text-brand rounded-full text-[10px] font-black flex items-center justify-center">
+              <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-white text-brand-text rounded-full text-[10px] font-black flex items-center justify-center">
                 {cart.reduce((s, i) => s + i.quantity, 0)}
               </span>
             </button>
@@ -875,7 +875,7 @@ export default function CustomerMenu() {
         {/* Combos / Promos */}
         {combos.filter(c => c.isActive !== false).length > 0 && (activeCategory === 'All') && (
           <div className="mb-10">
-            <h2 className="text-base font-black text-brand mb-4 uppercase tracking-widest px-0.5">Combos &amp; Promos</h2>
+            <h2 className="text-base font-black text-brand-text mb-4 uppercase tracking-widest px-0.5">Combos &amp; Promos</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {combos.filter(c => c.isActive !== false).map(c => (
                 <div key={c._id} onClick={() => addComboToCart(c)}
@@ -883,7 +883,7 @@ export default function CustomerMenu() {
                   <h3 className="font-black text-fg text-sm leading-tight">{c.name}</h3>
                   {c.description && <p className="text-fg/70 text-xs mt-0.5 line-clamp-1">{c.description}</p>}
                   <p className="text-fg/65 text-[10px] mt-1 line-clamp-2">{(c.items||[]).map(i => `${i.quantity>1?i.quantity+'× ':''}${i.name}`).join(' + ')}</p>
-                  <p className="text-brand font-black text-base mt-auto pt-2">₱{Number(c.price).toFixed(2)}</p>
+                  <p className="text-brand-text font-black text-base mt-auto pt-2">₱{Number(c.price).toFixed(2)}</p>
                 </div>
               ))}
             </div>
@@ -972,11 +972,11 @@ export default function CustomerMenu() {
                             <Minus size={13} />
                           </button>
                           <span className="text-fg font-bold w-6 text-center text-sm">{item.quantity}</span>
-                          <button onClick={() => updateQuantity(item.cartItemId, 1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-fg/60 hover:text-brand hover:bg-white/10 transition">
+                          <button onClick={() => updateQuantity(item.cartItemId, 1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-fg/60 hover:text-brand-text hover:bg-white/10 transition">
                             <Plus size={13} />
                           </button>
                         </div>
-                        <span className="text-brand font-black text-base">₱{rowTotal.toFixed(2)}</span>
+                        <span className="text-brand-text font-black text-base">₱{rowTotal.toFixed(2)}</span>
                       </div>
                     </div>
                   </div>
@@ -1046,7 +1046,7 @@ export default function CustomerMenu() {
                           <input type="radio" name="size" className="accent-brand" checked={selectedSize?.name === size.name} onChange={() => setSelectedSize(size)} />
                           <span className="font-bold text-fg capitalize text-sm">{size.displayName}</span>
                         </div>
-                        <span className="text-brand font-bold text-sm">₱{size.price.toFixed(2)}</span>
+                        <span className="text-brand-text font-bold text-sm">₱{size.price.toFixed(2)}</span>
                       </label>
                     ))}
                   </div>
@@ -1064,7 +1064,7 @@ export default function CustomerMenu() {
                           <input type="radio" name="size" className="accent-brand" checked={selectedSize?.name === size.name} onChange={() => setSelectedSize(size)} />
                           <span className="font-bold text-fg capitalize text-sm">{size.displayName}</span>
                         </div>
-                        <span className="text-brand font-bold text-sm">₱{size.price.toFixed(2)}</span>
+                        <span className="text-brand-text font-bold text-sm">₱{size.price.toFixed(2)}</span>
                       </label>
                     ))}
                   </div>
@@ -1080,7 +1080,7 @@ export default function CustomerMenu() {
                           <input type="radio" name="size" className="accent-brand" checked={selectedSize?.name === size.name} onChange={() => setSelectedSize(size)} />
                           <span className="font-bold text-fg text-sm">{size.displayName}</span>
                         </div>
-                        <span className="text-brand font-bold text-sm">₱{size.price.toFixed(2)}</span>
+                        <span className="text-brand-text font-bold text-sm">₱{size.price.toFixed(2)}</span>
                       </label>
                     ))}
                   </div>
@@ -1117,7 +1117,7 @@ export default function CustomerMenu() {
                                 </div>
                                 <span className="font-bold text-fg text-sm">{opt.name}</span>
                               </div>
-                              {opt.price > 0 && <span className="text-brand font-bold text-sm">+₱{opt.price.toFixed(2)}</span>}
+                              {opt.price > 0 && <span className="text-brand-text font-bold text-sm">+₱{opt.price.toFixed(2)}</span>}
                             </label>
                           );
                         })}
@@ -1137,7 +1137,7 @@ export default function CustomerMenu() {
                           <input type="checkbox" className="accent-brand" checked={selectedAddOns.some(a => a.name === addOn.name)} onChange={() => toggleAddOn(addOn)} />
                           <span className="font-bold text-fg text-sm">{addOn.name}</span>
                         </div>
-                        <span className="text-brand font-bold text-sm">+₱{addOn.price.toFixed(2)}</span>
+                        <span className="text-brand-text font-bold text-sm">+₱{addOn.price.toFixed(2)}</span>
                       </label>
                     ))}
                   </div>

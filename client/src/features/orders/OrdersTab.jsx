@@ -12,7 +12,7 @@ function IconSelect({ value, onChange, options, className = '' }) {
     <div className={`relative ${className}`}>
       <button type="button" onClick={() => setOpen(o => !o)}
         className="w-full flex items-center gap-2 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg/80 font-bold text-sm outline-none focus:border-brand/60 transition">
-        {selected?.Icon && <selected.Icon size={16} className="text-brand shrink-0" />}
+        {selected?.Icon && <selected.Icon size={16} className="text-brand-text shrink-0" />}
         <span className="flex-1 text-left truncate">{selected?.label}</span>
         <ChevronDown size={14} className={`text-fg/70 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
       </button>
@@ -164,7 +164,7 @@ export default function OrdersTab({ ctx }) {
                   {/* Header */}
                   <div className="px-4 py-3 border-b border-white/10 bg-page-bg/60 shrink-0 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
-                      <ShoppingCart size={18} className="text-brand" />
+                      <ShoppingCart size={18} className="text-brand-text" />
                       <span className="font-black text-fg tracking-widest uppercase text-sm">POS Register</span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -229,7 +229,7 @@ export default function OrdersTab({ ctx }) {
                                 <button key={c._id} onClick={() => addComboToPosCart(c)}
                                   className="shrink-0 w-28 bg-brand/10 border border-brand/30 rounded-xl p-2.5 text-left hover:bg-brand/20 active-press transition">
                                   <p className="text-[11px] font-black text-fg leading-tight line-clamp-2">{c.name}</p>
-                                  <p className="text-brand font-black text-sm mt-1 tabular-nums">₱{Number(c.price).toFixed(2)}</p>
+                                  <p className="text-brand-text font-black text-sm mt-1 tabular-nums">₱{Number(c.price).toFixed(2)}</p>
                                   <p className="text-[8px] text-fg/70 uppercase tracking-wide mt-0.5">{(c.items||[]).length} items</p>
                                 </button>
                               ))}
@@ -287,7 +287,7 @@ export default function OrdersTab({ ctx }) {
                                   <span className="text-fg/65 font-bold text-[10px] tabular-nums line-through">₱{Number(p.basePrice || 0).toFixed(2)}</span>
                                 </div>
                               ) : (
-                                <span className="text-brand font-black mt-auto pt-1 text-sm tabular-nums">₱{Number(p.basePrice || p.price || 0).toFixed(2)}</span>
+                                <span className="text-brand-text font-black mt-auto pt-1 text-sm tabular-nums">₱{Number(p.basePrice || p.price || 0).toFixed(2)}</span>
                               )}
                             </button>
                             );
@@ -354,8 +354,8 @@ export default function OrdersTab({ ctx }) {
                       const best = pcts.length ? Math.max(...pcts) : 0;
                       return best > 0 ? (
                         <div className="flex items-center gap-1.5 bg-accent/10 border border-accent/20 rounded-lg px-2.5 py-1.5">
-                          <Tag size={11} className="text-accent flex-shrink-0" />
-                          <span className="text-[10px] text-accent font-bold">Pricing applied - up to {best}% off for this client</span>
+                          <Tag size={11} className="text-brand-text flex-shrink-0" />
+                          <span className="text-[10px] text-brand-text font-bold">Pricing applied - up to {best}% off for this client</span>
                         </div>
                       ) : null;
                     })()}
@@ -364,7 +364,7 @@ export default function OrdersTab({ ctx }) {
                     {(stockLocations || []).filter(l => l.isActive !== false).length > 1 && (
                       <select value={posBranch} onChange={e => setPosBranch(e.target.value)}
                         title="Which branch is this sale for? (Analytics can compare branches once orders are tagged)"
-                        className="w-full bg-brand/10 border border-brand/30 rounded-xl px-3 py-2 text-brand font-bold text-xs uppercase tracking-wider outline-none focus:border-brand/60 transition">
+                        className="w-full bg-brand/10 border border-brand/30 rounded-xl px-3 py-2 text-brand-text font-bold text-xs uppercase tracking-wider outline-none focus:border-brand/60 transition">
                         <option value="">No Branch Set</option>
                         {stockLocations.filter(l => l.isActive !== false).map(l => (
                           <option key={l._id} value={l.name}>{l.name}</option>
@@ -461,9 +461,9 @@ export default function OrdersTab({ ctx }) {
                           </div>
                           <div className="flex flex-col items-end gap-1 shrink-0">
                             {lineDisc > 0 && <p className="text-[10px] text-success font-bold tabular-nums">-₱{lineDisc.toFixed(2)}</p>}
-                            <p className="font-black text-brand text-sm tabular-nums">₱{lineTotal.toFixed(2)}</p>
+                            <p className="font-black text-brand-text text-sm tabular-nums">₱{lineTotal.toFixed(2)}</p>
                             <button onClick={() => setPosCart(posCart.filter((_, i) => i !== idx))}
-                              className="w-8 h-8 flex items-center justify-center text-red-400/60 hover:text-danger hover:bg-red-500/10 rounded-lg transition active:scale-90">
+                              className="w-8 h-8 flex items-center justify-center text-danger/80 hover:text-danger hover:bg-red-500/10 rounded-lg transition active:scale-90">
                               <Trash2 size={13}/>
                             </button>
                           </div>
@@ -555,11 +555,11 @@ export default function OrdersTab({ ctx }) {
                           <label className="text-xs font-bold text-fg mb-2 block uppercase tracking-wider">Size Selection</label>
                           <div className="grid grid-cols-2 gap-3">
                             {/* FIX: Now correctly displays the Base Price instead of +P0 */}
-                            <button onClick={() => setPosActiveSize(null)} className={`py-3 rounded-lg font-bold text-sm border transition ${posActiveSize === null ? 'bg-accent/20 border-accent text-accent' : 'bg-page-bg border-gray-700 text-fg hover:border-gray-500'}`}>
+                            <button onClick={() => setPosActiveSize(null)} className={`py-3 rounded-lg font-bold text-sm border transition ${posActiveSize === null ? 'bg-accent/20 border-accent text-brand-text' : 'bg-page-bg border-gray-700 text-fg hover:border-gray-500'}`}>
                               {posSelectedProduct.baseSize || 'Regular'} <span className="block text-xs mt-1 opacity-70">₱{Number(posSelectedProduct.basePrice || posSelectedProduct.price || 0).toFixed(2)}</span>
                             </button>
                             {(posSelectedProduct.sizes || []).map((s, idx) => (
-                              <button key={idx} onClick={() => setPosActiveSize(idx)} className={`py-3 rounded-lg font-bold text-sm border transition ${posActiveSize === idx ? 'bg-accent/20 border-accent text-accent' : 'bg-page-bg border-gray-700 text-fg hover:border-gray-500'}`}>
+                              <button key={idx} onClick={() => setPosActiveSize(idx)} className={`py-3 rounded-lg font-bold text-sm border transition ${posActiveSize === idx ? 'bg-accent/20 border-accent text-brand-text' : 'bg-page-bg border-gray-700 text-fg hover:border-gray-500'}`}>
                                 {s.name} <span className="block text-xs mt-1 opacity-70">₱{Number(s.price).toFixed(2)}</span>
                               </button>
                             ))}
@@ -582,7 +582,7 @@ export default function OrdersTab({ ctx }) {
                                       }} className="w-5 h-5 accent-accent rounded" />
                                       <span className={`text-sm font-bold ${isSelected ? 'text-fg' : 'text-fg'}`}>{addon.name}</span>
                                     </div>
-                                    <span className="text-xs text-accent font-black">+₱{addon.price}</span>
+                                    <span className="text-xs text-brand-text font-black">+₱{addon.price}</span>
                                   </label>
                                 );
                               })}
@@ -594,14 +594,14 @@ export default function OrdersTab({ ctx }) {
                       <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-800 shrink-0">
                         <span className="text-xs font-bold text-fg uppercase tracking-wider">Quantity</span>
                         <div className="flex items-center gap-3">
-                          <button onClick={() => setPosItemQty(q => Math.max(1, q - 1))} className="w-9 h-9 rounded-lg bg-page-bg border border-gray-700 text-fg text-lg font-black hover:border-accent hover:text-accent transition flex items-center justify-center">−</button>
+                          <button onClick={() => setPosItemQty(q => Math.max(1, q - 1))} className="w-9 h-9 rounded-lg bg-page-bg border border-gray-700 text-fg text-lg font-black hover:border-accent hover:text-brand-text transition flex items-center justify-center">−</button>
                           <span className="w-8 text-center text-fg font-black text-lg">{posItemQty}</span>
-                          <button onClick={() => setPosItemQty(q => q + 1)} className="w-9 h-9 rounded-lg bg-page-bg border border-gray-700 text-fg text-lg font-black hover:border-accent hover:text-accent transition flex items-center justify-center">+</button>
+                          <button onClick={() => setPosItemQty(q => q + 1)} className="w-9 h-9 rounded-lg bg-page-bg border border-gray-700 text-fg text-lg font-black hover:border-accent hover:text-brand-text transition flex items-center justify-center">+</button>
                         </div>
                       </div>
 
                       <div className="flex gap-3 mt-3 shrink-0">
-                        <button onClick={() => setPosSelectedProduct(null)} className="flex-1 py-4 bg-page-bg border border-gray-700 text-fg hover:text-accent font-bold rounded-xl uppercase tracking-wider text-xs transition">Cancel</button>
+                        <button onClick={() => setPosSelectedProduct(null)} className="flex-1 py-4 bg-page-bg border border-gray-700 text-fg hover:text-brand-text font-bold rounded-xl uppercase tracking-wider text-xs transition">Cancel</button>
                         <button onClick={confirmPosItem} className="flex-1 py-4 bg-accent text-on-brand hover:bg-brand-dark font-black rounded-xl uppercase tracking-wider text-xs shadow-lg shadow-accent/20 transition">Add to Cart</button>
                       </div>
                     </div>
@@ -647,7 +647,7 @@ export default function OrdersTab({ ctx }) {
                     <div className="relative">
                       <button 
                         onClick={() => setIsStatusMenuOpen(!isStatusMenuOpen)}
-                        className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-lg font-bold uppercase tracking-wider text-xs hover:bg-transparent hover:text-brand transition shadow-md"
+                        className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-lg font-bold uppercase tracking-wider text-xs hover:bg-transparent hover:text-brand-text transition shadow-md"
                       >
                         <Menu size={16} /> {orderFilter}
                       </button>
@@ -666,7 +666,7 @@ export default function OrdersTab({ ctx }) {
                               <button
                                 key={filter}
                                 onClick={() => { setOrderFilter(filter); setIsStatusMenuOpen(false); if (filter === 'Parked') fetchParked(); }}
-                                className={`px-4 py-3 text-left text-sm font-bold transition hover:bg-white/5 ${orderFilter === filter ? 'bg-brand/10 text-brand border-l-4 border-brand' : 'text-fg/70 border-l-4 border-transparent'} ${showBadge ? 'flex items-center justify-between' : ''}`}
+                                className={`px-4 py-3 text-left text-sm font-bold transition hover:bg-white/5 ${orderFilter === filter ? 'bg-brand/10 text-brand-text border-l-4 border-brand' : 'text-fg/70 border-l-4 border-transparent'} ${showBadge ? 'flex items-center justify-between' : ''}`}
                               >
                                 {filter}
                                 {showBadge && <span className={`text-[10px] ${badgeCls} px-1.5 py-0.5 rounded-full`}>{badge}</span>}
@@ -679,7 +679,7 @@ export default function OrdersTab({ ctx }) {
 
                     <button
                       onClick={() => setIsPosOpen(true)}
-                      className="px-6 py-2 bg-transparent text-brand border border-brand/40 rounded-lg text-sm font-black uppercase tracking-widest hover:bg-brand hover:text-page-bg transition shadow-md whitespace-nowrap flex items-center gap-2"
+                      className="px-6 py-2 bg-transparent text-brand-text border border-brand/40 rounded-lg text-sm font-black uppercase tracking-widest hover:bg-brand hover:text-on-brand transition shadow-md whitespace-nowrap flex items-center gap-2"
                     >
                       <Plus size={16} /> Manual Order
                     </button>
@@ -730,7 +730,7 @@ export default function OrdersTab({ ctx }) {
                   {displayOrders.length === 0 ? (
                     <div className="col-span-full flex flex-col items-center justify-center py-20 px-6 text-center">
                       <div className="w-16 h-16 rounded-2xl bg-surface-2 border border-white/5 flex items-center justify-center mb-5">
-                        <ShoppingCart size={28} className="text-brand/60" />
+                        <ShoppingCart size={28} className="text-brand-text/85" />
                       </div>
                       <p className="text-fg/80 font-black uppercase tracking-widest text-sm mb-1.5">
                         No orders in {departmentFilter === 'All' ? 'any' : departmentFilter} queue
@@ -740,7 +740,7 @@ export default function OrdersTab({ ctx }) {
                       </p>
                       <button
                         onClick={() => setIsPosOpen(true)}
-                        className="px-6 py-2.5 bg-brand text-page-bg rounded-lg text-xs font-black uppercase tracking-widest hover:bg-brand-dark transition shadow-md flex items-center gap-2"
+                        className="px-6 py-2.5 bg-brand text-on-brand rounded-lg text-xs font-black uppercase tracking-widest hover:bg-brand-dark transition shadow-md flex items-center gap-2"
                       >
                         <Plus size={15} /> Start a Manual Order
                       </button>
@@ -828,7 +828,7 @@ export default function OrdersTab({ ctx }) {
                               </button>
                             )}
                             {BUSINESS_TYPE === 'log' && (
-                              <button onClick={() => printDeliveryReceipt(order)} className="p-1.5 bg-white/5 text-brand/70 rounded-lg hover:bg-brand/10 hover:text-brand transition" title="Print Delivery Receipt (2 copies: original + duplicate)">
+                              <button onClick={() => printDeliveryReceipt(order)} className="p-1.5 bg-white/5 text-brand/70 rounded-lg hover:bg-brand/10 hover:text-brand-text transition" title="Print Delivery Receipt (2 copies: original + duplicate)">
                                 <Truck size={13} />
                               </button>
                             )}
@@ -881,7 +881,7 @@ export default function OrdersTab({ ctx }) {
                                 if (departmentFilter !== 'All' && departmentFilter !== dept) return null;
                                 return (
                                   <div key={dept} className="bg-white rounded-lg p-2.5 border border-white/5">
-                                    <h4 className="text-[9px] uppercase text-accent font-black mb-2 tracking-widest">{dept}</h4>
+                                    <h4 className="text-[9px] uppercase text-brand-text font-black mb-2 tracking-widest">{dept}</h4>
                                     {deptItems.map(item => (
                                       <div key={item.originalIdx} className="mb-2 last:mb-0">
                                         {/* Name always gets the FULL row width - a long product name
@@ -915,7 +915,7 @@ export default function OrdersTab({ ctx }) {
                                                   </button>
                                                 )}
                                                 {item.itemStatus === 'Finished' && departmentFilter !== 'All' && (
-                                                  <span className="text-accent text-[10px] font-black uppercase flex items-center gap-0.5"><CheckCircle size={10} /> Done</span>
+                                                  <span className="text-brand-text text-[10px] font-black uppercase flex items-center gap-0.5"><CheckCircle size={10} /> Done</span>
                                                 )}
                                                 {item.itemStatus === 'Delivered' && (
                                                   <span className="text-green-500/50 text-[10px] font-black uppercase flex items-center gap-0.5"><Check size={9} /> Given</span>
@@ -952,7 +952,7 @@ export default function OrdersTab({ ctx }) {
                                                       </div>
                                                     )}
                                                     <div className="flex items-center gap-1.5">
-                                                      <span className={`font-mono font-bold text-sm ${effPct > 0 ? 'text-accent' : 'text-black'}`}>
+                                                      <span className={`font-mono font-bold text-sm ${effPct > 0 ? 'text-brand-text' : 'text-black'}`}>
                                                         P{(lineGross * (1 - effPct / 100)).toFixed(2)}
                                                       </span>
                                                       {canEditPct && (
@@ -977,7 +977,7 @@ export default function OrdersTab({ ctx }) {
                                         {item.isCombo && (item.comboItems || []).length > 0 && (
                                           <div className="pl-5 mt-1 space-y-0.5">
                                             {item.comboItems.map((c, cIdx) => (
-                                              <div key={cIdx} className="flex items-center gap-1 text-[10px] text-brand">
+                                              <div key={cIdx} className="flex items-center gap-1 text-[10px] text-brand-text">
                                                 <ChevronRight size={8} className="flex-shrink-0" /> {c.quantity > 1 ? `${c.quantity}× ` : ''}{c.name}{c.sizeName ? ` (${c.sizeName})` : ''}
                                               </div>
                                             ))}
@@ -1194,7 +1194,7 @@ export default function OrdersTab({ ctx }) {
                                           <>
                                             <button
                                               onClick={() => setScpwdOpen(prev => ({ ...prev, [order._id]: !prev[order._id] }))}
-                                              className="text-[9px] uppercase tracking-wider text-accent font-black flex items-center gap-1 hover:opacity-80 transition"
+                                              className="text-[9px] uppercase tracking-wider text-brand-text font-black flex items-center gap-1 hover:opacity-80 transition"
                                             >
                                               SC/PWD (per item) {scpwdOpen[order._id] ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
                                             </button>
@@ -1211,7 +1211,7 @@ export default function OrdersTab({ ctx }) {
                                                     <span className="block text-[11px] text-black font-semibold leading-snug">{item.quantity}x {item.name}</span>
                                                     <div className="flex items-center justify-end gap-1.5 mt-1">
                                                       {item.discountPercent > 0 && (
-                                                        <span className="text-accent font-mono text-[10px] whitespace-nowrap font-bold">-{item.discountPercent}%</span>
+                                                        <span className="text-brand-text font-mono text-[10px] whitespace-nowrap font-bold">-{item.discountPercent}%</span>
                                                       )}
                                                       <select
                                                         className="bg-white border border-black rounded text-[10px] text-black outline-none px-1.5 py-1 h-7 cursor-pointer w-[92px]"
@@ -1237,7 +1237,7 @@ export default function OrdersTab({ ctx }) {
                               })()}
                               <div className="flex justify-between font-black text-base pt-1 border-t border-gray">
                                 <span className="text-black">Total</span>
-                                <span className="text-accent font-mono tracking-wider">P{displayTotal.toFixed(2)}</span>
+                                <span className="text-brand-text font-mono tracking-wider">P{displayTotal.toFixed(2)}</span>
                               </div>
                             </div>)}
 
@@ -1381,7 +1381,7 @@ export default function OrdersTab({ ctx }) {
                                         <button
                                           onClick={() => setPayQrOpen(true)}
                                           title="Show the payment QR for the customer to scan"
-                                          className="flex items-center justify-center gap-1.5 w-full px-3 py-2 rounded-lg bg-brand/15 text-brand hover:bg-brand/25 font-bold text-xs uppercase tracking-wider transition min-h-[38px]"
+                                          className="flex items-center justify-center gap-1.5 w-full px-3 py-2 rounded-lg bg-brand/15 text-brand-text hover:bg-brand/25 font-bold text-xs uppercase tracking-wider transition min-h-[38px]"
                                         >
                                           <QrCode size={13} /> Show Pay QR
                                         </button>

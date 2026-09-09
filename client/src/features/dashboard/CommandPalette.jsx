@@ -116,10 +116,10 @@ export default function CommandPalette({ open, onClose }) {
               }`}
             >
               <span className="min-w-0 flex-1">
-                <span className={`block text-sm font-bold ${i === sel ? 'text-brand' : 'text-fg'}`}>{c.label}</span>
+                <span className={`block text-sm font-bold ${i === sel ? 'text-brand-text' : 'text-fg'}`}>{c.label}</span>
                 {c.hint && <span className="block text-fg/70 text-xs mt-0.5">{c.hint}</span>}
               </span>
-              {i === sel && <CornerDownLeft size={13} className="text-brand/60 shrink-0" />}
+              {i === sel && <CornerDownLeft size={13} className="text-brand-text/85 shrink-0" />}
             </button>
           ))}
         </div>

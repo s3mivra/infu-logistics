@@ -63,7 +63,7 @@ export default function SettleArModal() {
                 figure reconciles against the original sale. */}
             <div className="bg-white/5 rounded-xl p-3 border border-white/10">
               <p className="text-fg/70 text-[10px] font-bold uppercase">Still Outstanding</p>
-              <p className="text-3xl text-brand font-black tabular-nums">{peso(outstanding)}</p>
+              <p className="text-3xl text-brand-text font-black tabular-nums">{peso(outstanding)}</p>
               {paid > 0 && (
                 <p className="text-[10px] text-fg/70 mt-1 tabular-nums">
                   {peso(paid)} already collected of {peso(face)} invoiced

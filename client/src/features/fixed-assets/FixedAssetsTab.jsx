@@ -170,7 +170,7 @@ export default function FixedAssetsTab() {
         </h1>
 
         <button onClick={() => downloadDataset?.('fixedAssets')} disabled={busyExport}
-          className="flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
+          className="flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand-text px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
           <Download size={12} /> {busyExport ? 'Working…' : 'Export'}
         </button>
         <button onClick={() => downloadDataset?.('fixedAssets', { template: true })} disabled={busyExport}
@@ -196,7 +196,7 @@ export default function FixedAssetsTab() {
           ['At cost', peso(totals.cost), 'text-fg'],
           ['Depreciated', peso(totals.accumulatedDepreciation), 'text-warning'],
           ['Net book value', peso(totals.netBookValue), 'text-success'],
-          ['Due now', peso(totals.dueNow), totals.dueNow > 0 ? 'text-brand' : 'text-fg/70'],
+          ['Due now', peso(totals.dueNow), totals.dueNow > 0 ? 'text-brand-text' : 'text-fg/70'],
         ].map(([label, val, cls]) => (
           <div key={label} className="bg-sidebar-bg border border-white/10 rounded-xl p-3">
             <p className="text-[9px] font-black uppercase tracking-widest text-fg/70">{label}</p>
@@ -209,7 +209,7 @@ export default function FixedAssetsTab() {
           they are history, not part of what the business currently owns. */}
       {totals.dueNow > 0 && (
         <div className="flex flex-wrap items-center gap-2 bg-brand/10 border border-brand/20 rounded-xl px-4 py-3">
-          <AlertCircle size={14} className="text-brand shrink-0" />
+          <AlertCircle size={14} className="text-brand-text shrink-0" />
           <p className="text-xs text-fg/80 mr-auto">
             {peso(totals.dueNow)} of depreciation is owed. It is charged in whole months, so a part-month waits.
           </p>
@@ -314,7 +314,7 @@ function FragmentRow({ a, expanded, rows, busy, onToggle, onDepreciate, onDispos
         <td className="px-3 py-2.5 text-right tabular-nums font-bold text-fg">{peso(a.netBookValue)}</td>
         <td className="px-3 py-2.5 text-right tabular-nums">
           {a.due?.amount > 0
-            ? <span className="text-brand font-bold">{peso(a.due.amount)}<span className="text-fg/70 font-normal"> · {a.due.months}mo</span></span>
+            ? <span className="text-brand-text font-bold">{peso(a.due.amount)}<span className="text-fg/70 font-normal"> · {a.due.months}mo</span></span>
             : <span className="text-fg/65">-</span>}
         </td>
         <td className="px-3 py-2.5">
@@ -326,7 +326,7 @@ function FragmentRow({ a, expanded, rows, busy, onToggle, onDepreciate, onDispos
           <div className="flex items-center justify-end gap-1.5">
             {!disposed && a.due?.amount > 0 && (
               <button onClick={onDepreciate} disabled={busy}
-                className="text-[9px] bg-brand/10 hover:bg-brand/20 text-brand px-2 py-1 rounded font-bold uppercase tracking-wider transition disabled:opacity-40">
+                className="text-[9px] bg-brand/10 hover:bg-brand/20 text-brand-text px-2 py-1 rounded font-bold uppercase tracking-wider transition disabled:opacity-40">
                 {busy ? '…' : 'Depreciate'}
               </button>
             )}

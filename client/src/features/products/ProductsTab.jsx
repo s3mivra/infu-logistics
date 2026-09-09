@@ -26,7 +26,7 @@ function RuleRow({ rule, products, onRemove }) {
   return (
     <div className="flex items-start gap-2 bg-surface border border-white/8 rounded-lg px-3 py-2 text-xs">
       <div className="flex-1 min-w-0">
-        <span className="font-bold text-brand">{RULE_TYPE_LABELS[rule.ruleType]}</span>
+        <span className="font-bold text-brand-text">{RULE_TYPE_LABELS[rule.ruleType]}</span>
         {rule.ruleType === 'fixed_price' && prod && <span className="text-fg/60 ml-2">{prod.name} → {fmt(rule.salePrice)}</span>}
         {rule.ruleType === 'percent_off' && prod && <span className="text-fg/60 ml-2">{prod.name} → {rule.discountPercent}% off</span>}
         {rule.ruleType === 'threshold' && <span className="text-fg/60 ml-2">Order ≥ {fmt(rule.thresholdAmount)} → {prod?.name || 'product'} gets {rule.discountPercent}% off</span>}
@@ -327,7 +327,7 @@ export default function ProductsTab({ ctx }) {
                 <span className="text-xs font-bold text-fg/70">
                   {prodFiltersActive ? `${filteredProducts.length} of ${products.length}` : `${products.length} item${products.length === 1 ? '' : 's'}`}
                 </span>
-                <button onClick={exportMenuItemsPDF} className="text-[10px] bg-brand/10 hover:bg-brand/20 text-brand px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">Export PDF</button>
+                <button onClick={exportMenuItemsPDF} className="text-[10px] bg-brand/10 hover:bg-brand/20 text-brand-text px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">Export PDF</button>
               </div>
             </div>
 
@@ -342,7 +342,7 @@ export default function ProductsTab({ ctx }) {
                 <p className="text-[10px] text-fg/70 mt-0.5">Download the whole menu, restore it after a rebuild.</p>
               </div>
               <button onClick={() => downloadMenuBackup(false)} disabled={menuBackupBusy}
-                className="flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
+                className="flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand-text px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
                 <Download size={12} /> {menuBackupBusy ? 'Working…' : 'Download'}
               </button>
               <label className={`flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition ${menuBackupBusy ? 'opacity-40 pointer-events-none' : 'cursor-pointer'}`}>
@@ -649,7 +649,7 @@ export default function ProductsTab({ ctx }) {
 
                 {prodFiltersActive && (
                   <button type="button" onClick={resetProdFilters}
-                    className="px-3 py-1.5 rounded-lg text-xs font-bold text-brand bg-brand/10 border border-brand/30 hover:bg-brand/20 transition flex items-center gap-1">
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold text-brand-text bg-brand/10 border border-brand/30 hover:bg-brand/20 transition flex items-center gap-1">
                     <X size={12} /> Clear filters
                   </button>
                 )}
@@ -763,19 +763,19 @@ export default function ProductsTab({ ctx }) {
                 <button 
                   onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
                   disabled={currentPage === 1}
-                  className={`px-6 py-2 rounded-lg font-bold uppercase tracking-wider text-xs transition ${currentPage === 1 ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-gray-700 text-fg hover:border-accent hover:text-accent'}`}
+                  className={`px-6 py-2 rounded-lg font-bold uppercase tracking-wider text-xs transition ${currentPage === 1 ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-gray-700 text-fg hover:border-accent hover:text-brand-text'}`}
                 >
                   <span className="flex items-center gap-1"><ChevronLeft size={12} /> Previous</span>
                 </button>
                 
                 <span className="text-fg/70 text-sm font-bold tracking-widest">
-                  PAGE <span className="text-accent text-lg">{currentPage}</span> OF {totalPages}
+                  PAGE <span className="text-brand-text text-lg">{currentPage}</span> OF {totalPages}
                 </span>
                 
                 <button 
                   onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
                   disabled={currentPage === totalPages}
-                  className={`px-6 py-2 rounded-lg font-bold uppercase tracking-wider text-xs transition ${currentPage === totalPages ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-gray-700 text-fg hover:border-accent hover:text-accent'}`}
+                  className={`px-6 py-2 rounded-lg font-bold uppercase tracking-wider text-xs transition ${currentPage === totalPages ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-gray-700 text-fg hover:border-accent hover:text-brand-text'}`}
                 >
                   <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                 </button>
@@ -830,7 +830,7 @@ export default function ProductsTab({ ctx }) {
                       <span className="text-[10px] uppercase font-bold text-fg/70 tracking-wider">Routes to: {c.department || DEFAULT_DEPARTMENT}</span>
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => { setEditingCategory(c); setCatForm({ name: c.name, department: c.department || DEFAULT_DEPARTMENT }); }} className="text-fg/70 hover:text-brand p-1.5 rounded"><Edit size={16} /></button>
+                      <button onClick={() => { setEditingCategory(c); setCatForm({ name: c.name, department: c.department || DEFAULT_DEPARTMENT }); }} className="text-fg/70 hover:text-brand-text p-1.5 rounded"><Edit size={16} /></button>
                       <button onClick={() => deleteCategory(c._id)} className="text-danger hover:text-red-300 p-1.5 rounded"><Trash2 size={16} /></button>
                     </div>
                   </div>
@@ -917,10 +917,17 @@ export default function ProductsTab({ ctx }) {
                       <div className="w-16 h-16 bg-white/5 border border-white/10 rounded-lg flex items-center justify-center text-xs text-fg/65 font-bold">None</div>
                     )}
                     <div className="flex flex-col gap-2 min-w-0">
-                      <input type="file" accept="image/*" onChange={handleImageUpload} className="max-w-full text-sm text-fg/70 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-bold file:bg-accent file:text-on-brand hover:file:bg-accent/80 cursor-pointer transition" />
+                      {/* The browser's own file control ("Choose File - no file
+                          chosen") was the one native widget left on screen and
+                          looked nothing like the rest of the form. The input is
+                          hidden inside its label so the label IS the button. */}
+                      <label className="self-start cursor-pointer text-sm font-bold bg-accent hover:bg-accent/80 text-on-brand rounded-xl py-2 px-4 transition">
+                        {formData.image ? 'Replace image' : 'Choose image'}
+                        <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                      </label>
                       {formData.image && (
                         <button type="button" onClick={() => setFormData({ ...formData, image: '', imageUrl: '' })}
-                          className="self-start text-sm font-bold bg-red-500 rounded-xl py-2 px-4 text-white hover:text-white/60 transition">
+                          className="self-start text-sm font-bold border border-white/15 text-danger hover:bg-red-500/10 rounded-xl py-2 px-4 transition">
                           Remove image
                         </button>
                       )}
@@ -941,16 +948,16 @@ export default function ProductsTab({ ctx }) {
                 <div className="bg-surface-2 p-4 rounded-xl border border-white/10 mt-6">
                   <label className="block text-sm font-black text-fg/80 mb-3 uppercase tracking-wider">Base Size / Standard Recipe</label>
                   <div className="flex gap-2 mb-2">
-                    <input type="text" placeholder="Size Name (e.g. Regular)" value={formData.baseSize || ''} onChange={e => setFormData({...formData, baseSize: e.target.value})} className="w-1/2 bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand font-bold placeholder-white/20" />
+                    <input type="text" placeholder="Size name" value={formData.baseSize || ''} onChange={e => setFormData({...formData, baseSize: e.target.value})} className="w-1/2 bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand font-bold placeholder-white/20" />
                     <div className="w-1/2 relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/70 font-bold">₱</span>
-                      <input type="number" step="0.01" placeholder="Selling Price" value={formData.basePrice} onChange={e => setFormData({...formData, basePrice: parseFloat(e.target.value) || 0})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pl-8 text-fg outline-none focus:border-brand font-bold" />
+                      <input type="number" step="0.01" placeholder="Price" value={formData.basePrice} onChange={e => setFormData({...formData, basePrice: parseFloat(e.target.value) || 0})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pl-8 text-fg outline-none focus:border-brand font-bold" />
                     </div>
                   </div>
                   {/* Per-product discount - applies only to this product's line, not the whole order. */}
                   <div className="flex items-center gap-2 mb-1">
                     <div className="relative w-1/2">
-                      <input type="number" min="0" max="100" step="0.01" placeholder="Product Discount" value={formData.discountPercent || ''} onChange={e => setFormData({...formData, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pr-7 text-fg outline-none focus:border-brand font-bold placeholder-white/20" />
+                      <input type="number" min="0" max="100" step="0.01" placeholder="Discount" value={formData.discountPercent || ''} onChange={e => setFormData({...formData, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pr-7 text-fg outline-none focus:border-brand font-bold placeholder-white/20" />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/70 font-bold">%</span>
                     </div>
                     {formData.discountPercent > 0 && (
@@ -1003,7 +1010,7 @@ export default function ProductsTab({ ctx }) {
                       <button type="button"
                         disabled={!clientAccounts?.length}
                         onClick={() => setFormData({ ...formData, clientDiscounts: [...(formData.clientDiscounts || []), { clientId: '', percent: 0 }] })}
-                        className="text-[11px] font-black text-brand hover:text-fg transition disabled:opacity-40">+ Add client</button>
+                        className="text-[11px] font-black text-brand-text hover:text-fg transition disabled:opacity-40">+ Add client</button>
                     </div>
                     {(!clientAccounts || clientAccounts.length === 0) && (
                       <p className="text-[10px] text-fg/65 italic">No client accounts yet - create one in the Client Accounts panel to assign a special discount.</p>
@@ -1053,7 +1060,7 @@ export default function ProductsTab({ ctx }) {
                       <button type="button"
                         disabled={!clientAccounts?.length}
                         onClick={() => setFormData({ ...formData, clientBulkBreaks: [...(formData.clientBulkBreaks || []), { clientId: '', minQty: 1, price: 0 }] })}
-                        className="text-[11px] font-black text-brand hover:text-fg transition disabled:opacity-40">+ Add break</button>
+                        className="text-[11px] font-black text-brand-text hover:text-fg transition disabled:opacity-40">+ Add break</button>
                     </div>
                     {(!formData.clientBulkBreaks || formData.clientBulkBreaks.length === 0) && (
                       <p className="text-[10px] text-fg/65 italic">
@@ -1115,7 +1122,7 @@ export default function ProductsTab({ ctx }) {
                       <label className="text-xs font-black text-fg/70 uppercase tracking-wider">Segment Overrides</label>
                       <button type="button"
                         onClick={() => setFormData({ ...formData, segmentDiscounts: [...(formData.segmentDiscounts || []), { segment: '', percent: 0 }] })}
-                        className="text-[11px] font-black text-brand hover:text-fg transition">+ Add segment</button>
+                        className="text-[11px] font-black text-brand-text hover:text-fg transition">+ Add segment</button>
                     </div>
                     {(!formData.segmentDiscounts || formData.segmentDiscounts.length === 0) && (
                       <p className="text-[10px] text-fg/65 italic">
@@ -1172,7 +1179,7 @@ export default function ProductsTab({ ctx }) {
                       <label className="text-xs font-black text-fg/70 uppercase tracking-wider">Bulk Quantity Breaks</label>
                       <button type="button"
                         onClick={() => setFormData({ ...formData, bulkBreaks: [...(formData.bulkBreaks || []), { minQty: 1, percent: 0 }] })}
-                        className="text-[11px] font-black text-brand hover:text-fg transition">+ Add break</button>
+                        className="text-[11px] font-black text-brand-text hover:text-fg transition">+ Add break</button>
                     </div>
                     {(!formData.bulkBreaks || formData.bulkBreaks.length === 0) && (
                       <p className="text-[10px] text-fg/65 italic">No bulk breaks yet - e.g. "buy 10+, get 10% off".</p>
@@ -1214,7 +1221,7 @@ export default function ProductsTab({ ctx }) {
                     return baseCost > 0 ? (
                       <div className="flex justify-between items-center text-[10px] px-1 mb-3">
                         <span className={parseFloat(baseMargin) >= 30 ? "text-success font-black" : "text-warning font-black"}>Margin: {baseMargin}%</span>
-                        <button type="button" onClick={() => setFormData({...formData, basePrice: parseFloat(suggestedBasePrice)})} className="text-fg/60 hover:text-brand font-bold transition">Set 30% Margin (₱{suggestedBasePrice})</button>
+                        <button type="button" onClick={() => setFormData({...formData, basePrice: parseFloat(suggestedBasePrice)})} className="text-fg/60 hover:text-brand-text font-bold transition">Set 30% Margin (₱{suggestedBasePrice})</button>
                       </div>
                     ) : <div className="mb-3"></div>;
                   })()}
@@ -1243,7 +1250,7 @@ export default function ProductsTab({ ctx }) {
                       <div className="text-[10px] text-white uppercase font-black mb-2 tracking-widest flex items-center gap-1"><Plus size={12}/> Tap to Add Material</div>
                       <div className="max-h-32 overflow-y-auto bg-white border border-white/10 rounded-lg custom-scrollbar p-1">
                         {inventory.length === 0 ? (
-                          <p className="p-2 text-xs text-accent italic font-medium">No inventory available.</p>
+                          <p className="p-2 text-xs text-brand-text italic font-medium">No inventory available.</p>
                         ) : (
                           inventory.map(inv => {
                             // packInfo already works out BOTH the pack label
@@ -1254,7 +1261,7 @@ export default function ProductsTab({ ctx }) {
                             const dispUnit = BUSINESS_TYPE === 'log' ? 'pcs' : pack.label;
                             const packCost = pack.cost || 0;
                             return (
-                            <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, null)} className="w-full text-left px-3 py-2 text-xs text-accent font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
+                            <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, null)} className="w-full text-left px-3 py-2 text-xs text-brand-text font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
                               <span className="truncate pr-2">{inv.itemName}</span>
                               <span className="text-black shrink-0 font-mono">₱{packCost.toFixed(2)}/{dispUnit}</span>
                             </button>
@@ -1270,7 +1277,7 @@ export default function ProductsTab({ ctx }) {
                 <div className="border-t border-white/10 pt-5 mt-4">
                   <div className="flex justify-between items-center mb-4">
                     <label className="text-sm font-black text-fg/80 uppercase tracking-wider">Extra Sizes (Small, Large)</label>
-                    <button type="button" onClick={addSize} className="text-xs bg-white/10 px-3 py-1.5 rounded-xl font-bold text-fg/70 border border-white/10 hover:bg-brand/20 hover:text-brand hover:border-brand/30 transition flex items-center gap-1"><Plus size={14}/> Add Size</button>
+                    <button type="button" onClick={addSize} className="text-xs bg-white/10 px-3 py-1.5 rounded-xl font-bold text-fg/70 border border-white/10 hover:bg-brand/20 hover:text-brand-text hover:border-brand/30 transition flex items-center gap-1"><Plus size={14}/> Add Size</button>
                   </div>
 
                   {(formData.sizes || []).map((size, idx) => (
@@ -1329,7 +1336,7 @@ export default function ProductsTab({ ctx }) {
                               const dispUnit = BUSINESS_TYPE === 'log' ? 'pcs' : pack.label;
                               const packCost = pack.cost || 0;
                               return (
-                              <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, idx)} className="w-full text-left px-3 py-2 text-xs text-accent font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
+                              <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, idx)} className="w-full text-left px-3 py-2 text-xs text-brand-text font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
                                 <span className="truncate pr-2">{inv.itemName}</span>
                                 <span className="text-fg shrink-0 font-mono">₱{packCost.toFixed(2)}/{dispUnit}</span>
                               </button>
@@ -1364,7 +1371,7 @@ export default function ProductsTab({ ctx }) {
                           />
                           <div className="flex flex-col">
                              <span className="text-sm font-bold text-fg leading-tight">{addon.name}</span>
-                             <span className="text-[10px] text-accent font-black uppercase tracking-widest">+₱{addon.price}</span>
+                             <span className="text-[10px] text-brand-text font-black uppercase tracking-widest">+₱{addon.price}</span>
                           </div>
                         </label>
                       );
@@ -1515,7 +1522,7 @@ export default function ProductsTab({ ctx }) {
                 ) : combos.map(c => (
                   <div key={c._id} className="bg-page-bg border border-white/10 rounded-xl p-3 flex justify-between items-start">
                     <div className="min-w-0">
-                      <p className="font-bold text-fg text-sm">{c.name} <span className="text-brand font-black ml-1">₱{Number(c.price).toFixed(2)}</span></p>
+                      <p className="font-bold text-fg text-sm">{c.name} <span className="text-brand-text font-black ml-1">₱{Number(c.price).toFixed(2)}</span></p>
                       <p className="text-[11px] text-fg/70 mt-0.5">{(c.items||[]).map(i => `${i.quantity>1?i.quantity+'× ':''}${i.name}${i.sizeName?` (${i.sizeName})`:''}`).join(' + ')}</p>
                     </div>
                     <div className="flex gap-1 shrink-0 ml-2">

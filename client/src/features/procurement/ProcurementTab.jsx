@@ -785,7 +785,7 @@ export default function ProcurementTab({ ctx }) {
       <div className="flex items-center justify-between gap-3 mb-5 flex-wrap">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-brand/15 border border-brand/30 flex items-center justify-center">
-            <Truck size={19} className="text-brand" />
+            <Truck size={19} className="text-brand-text" />
           </div>
           <div>
             <h1 className="text-xl font-black text-fg leading-none">Procurement</h1>
@@ -794,20 +794,20 @@ export default function ProcurementTab({ ctx }) {
         </div>
         {subTab === 'orders' && canManage && (
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={downloadPoTemplate} title="Download a blank template with the expected headers" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition">
+            <button onClick={downloadPoTemplate} title="Download a blank template with the expected headers" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-xs uppercase tracking-wider px-4 py-2.5 rounded-xl transition">
               <FileText size={15} /> Template
             </button>
-            <button onClick={exportProcurementHistoryPDF} title="Export all purchase orders to PDF" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition">
+            <button onClick={exportProcurementHistoryPDF} title="Export all purchase orders to PDF" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-xs uppercase tracking-wider px-4 py-2.5 rounded-xl transition">
               <Download size={15} /> Export PDF
             </button>
-            <label className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition cursor-pointer">
+            <label className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold text-xs uppercase tracking-wider px-4 py-2.5 rounded-xl transition cursor-pointer">
               <Download size={15} className="rotate-180" /> Import Excel
               <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => { parsePoExcel(e.target.files?.[0]); e.target.value = ''; }} />
             </label>
-            <button onClick={buildSuggestedPo} disabled={suggesting} title="Auto-draft a PO from sales velocity - items below their reorder point" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 text-brand font-bold text-sm px-4 py-2.5 rounded-xl transition">
+            <button onClick={buildSuggestedPo} disabled={suggesting} title="Auto-draft a PO from sales velocity - items below their reorder point" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 text-brand-text font-bold text-xs uppercase tracking-wider px-4 py-2.5 rounded-xl transition">
               {suggesting ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} Suggested PO
             </button>
-            <button onClick={openNewForm} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
+            <button onClick={openNewForm} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-on-brand font-bold text-xs uppercase tracking-wider px-4 py-2.5 rounded-xl transition shadow-sm">
               <Plus size={16} /> New PO
             </button>
           </div>
@@ -818,7 +818,7 @@ export default function ProcurementTab({ ctx }) {
                 to put a filled-in sheet BACK, which makes a template a dead
                 end - it invites an evening of typing that nothing can read. */}
             <button onClick={() => downloadDataset?.('suppliers')}
-              className="flex items-center gap-2 bg-brand/10 hover:bg-brand/20 text-brand font-bold text-sm px-4 py-2.5 rounded-xl transition">
+              className="flex items-center gap-2 bg-brand/10 hover:bg-brand/20 text-brand-text font-bold text-sm px-4 py-2.5 rounded-xl transition">
               <Download size={16} /> Export
             </button>
             <button onClick={() => downloadDataset?.('suppliers', { template: true })}
@@ -851,7 +851,7 @@ export default function ProcurementTab({ ctx }) {
           <button key={id} onClick={() => setSubTab(id)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition shrink-0 ${subTab === id ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/75 hover:text-fg'}`}>
             <Icon size={15} /> {label}
-            {badge > 0 && <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${subTab === id ? 'bg-white/20' : 'bg-brand/20 text-brand'}`}>{badge}</span>}
+            {badge > 0 && <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${subTab === id ? 'bg-white/20' : 'bg-brand/20 text-brand-text'}`}>{badge}</span>}
           </button>
         ))}
       </div>
@@ -915,7 +915,7 @@ export default function ProcurementTab({ ctx }) {
             <button onClick={() => setShowPriceCompare(v => !v)}
               className="w-full flex items-center justify-between gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 hover:bg-white/10 transition">
               <span className="flex items-center gap-2 text-sm font-black text-fg">
-                <Sparkles size={14} className="text-brand" /> Compare Prices - {priceComparison.length} item{priceComparison.length === 1 ? '' : 's'} catalogued
+                <Sparkles size={14} className="text-brand-text" /> Compare Prices - {priceComparison.length} item{priceComparison.length === 1 ? '' : 's'} catalogued
               </span>
               {showPriceCompare ? <ChevronDown size={16} className="text-fg/70" /> : <ChevronRight size={16} className="text-fg/70" />}
             </button>
@@ -956,7 +956,7 @@ export default function ProcurementTab({ ctx }) {
             <div key={s._id} className={`bg-white/5 border border-white/10 rounded-2xl overflow-hidden ${s.isActive === false ? 'opacity-50' : ''}`}>
               <div className="px-4 py-3.5 flex items-start gap-3">
                 <div className="w-9 h-9 rounded-lg bg-brand/15 border border-brand/30 flex items-center justify-center shrink-0">
-                  <Building2 size={16} className="text-brand" />
+                  <Building2 size={16} className="text-brand-text" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -971,7 +971,7 @@ export default function ProcurementTab({ ctx }) {
                   </div>
                   {s.notes && <p className="text-fg/75 text-xs mt-1">{s.notes}</p>}
                   <button onClick={() => setExpandedSupplierId(isOpen ? null : s._id)}
-                    className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-brand/80 hover:text-brand transition">
+                    className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-brand/80 hover:text-brand-text transition">
                     <Box size={12} />
                     {catalog.length === 0 ? 'No products linked yet' : `Supplies ${catalog.length} item${catalog.length === 1 ? '' : 's'}`}
                     {purchaseHistory.length > 0 && ` · ${money(s.totalSpend)} bought`}
@@ -999,7 +999,7 @@ export default function ProcurementTab({ ctx }) {
                       {catalog.map(p => (
                         <div key={p._id} className="flex items-center justify-between gap-3 bg-white rounded-lg px-2.5 py-1.5 text-xs">
                           <div className="min-w-0">
-                            <span className="text-accent font-bold truncate block">{p.itemName}</span>
+                            <span className="text-brand-text font-bold truncate block">{p.itemName}</span>
                             {p.notes && <span className="text-black text-[10px] block truncate">{p.notes}</span>}
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
@@ -1025,8 +1025,8 @@ export default function ProcurementTab({ ctx }) {
                         </datalist>
                         <p className="text-[10px] font-bold uppercase tracking-wider">
                           {catalogForm.invId
-                            ? <span className="text-brand">★ Linked to inventory item</span>
-                            : <span className="text-brand">New / unstocked item - quote only</span>}
+                            ? <span className="text-brand-text">★ Linked to inventory item</span>
+                            : <span className="text-brand-text">New / unstocked item - quote only</span>}
                         </p>
                         <div className="grid grid-cols-3 gap-2">
                           <input value={catalogForm.unit} onChange={e => setCatalogForm(f => ({ ...f, unit: e.target.value }))}
@@ -1113,7 +1113,7 @@ export default function ProcurementTab({ ctx }) {
                       return (
                         <div key={key} className="flex items-center gap-3 bg-white rounded-lg px-3 py-2">
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold text-accent truncate">{l.itemName}</p>
+                            <p className="text-sm font-bold text-brand-text truncate">{l.itemName}</p>
                             <p className="text-black text-xs">
                               Ordered: {l.orderedQty} {l.unit} @ {money(l.unitCost)}
                               {alreadyIn > 0 && <span className="text-emerald-400/70"> · Received so far: {alreadyIn}</span>}
@@ -1146,7 +1146,7 @@ export default function ProcurementTab({ ctx }) {
                   <div className="flex items-center justify-end gap-2">
                     <button onClick={() => setReceiveId(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-white hover:text-white/80 transition">Cancel</button>
                     <button onClick={() => submitReceive(po)} disabled={receiving || missingLines.length === 0}
-                      className="flex items-center gap-2 bg-white hover:bg-white/90 disabled:opacity-50 text-accent font-bold text-sm px-4 py-2 rounded-xl transition">
+                      className="flex items-center gap-2 bg-white hover:bg-white/90 disabled:opacity-50 text-brand-text font-bold text-sm px-4 py-2 rounded-xl transition">
                       {receiving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Confirm Received
                     </button>
                   </div>
@@ -1166,7 +1166,7 @@ export default function ProcurementTab({ ctx }) {
               <h2 className="font-black text-fg text-lg">
                 {editId ? 'Edit Purchase Order' : 'New Purchase Order'}
                 {suggestedQueueTotal > 0 && (
-                  <span className="ml-2 text-xs font-bold text-brand align-middle">
+                  <span className="ml-2 text-xs font-bold text-brand-text align-middle">
                     Draft {suggestedQueueTotal - suggestedQueue.length} of {suggestedQueueTotal} (grouped by supplier)
                   </span>
                 )}
@@ -1199,7 +1199,7 @@ export default function ProcurementTab({ ctx }) {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-[11px] font-black uppercase tracking-wider text-fg/70">Line Items</label>
-                  <button onClick={addLine} className="flex items-center gap-1 text-brand text-xs font-bold hover:text-brand/80 transition"><Plus size={13} /> Add line</button>
+                  <button onClick={addLine} className="flex items-center gap-1 text-brand-text text-xs font-bold hover:text-brand/80 transition"><Plus size={13} /> Add line</button>
                 </div>
                 <div className="space-y-2">
                   {form.lines.map((l, idx) => (
@@ -1344,7 +1344,7 @@ export default function ProcurementTab({ ctx }) {
               </div>
             </div>
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-white/10">
-              <span className="text-sm font-black text-fg">Estimated total: <span className="text-brand">{money(formEstTotal)}</span></span>
+              <span className="text-sm font-black text-fg">Estimated total: <span className="text-brand-text">{money(formEstTotal)}</span></span>
               <div className="flex items-center gap-2">
                 <button onClick={() => !saving && closeForm()} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/75 hover:text-fg transition">{suggestedQueue.length > 0 ? 'Cancel remaining' : 'Cancel'}</button>
                 <button onClick={saveDraft} disabled={saving} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-on-brand font-bold text-sm px-5 py-2 rounded-xl transition">
@@ -1433,7 +1433,7 @@ export default function ProcurementTab({ ctx }) {
 
               {!loadingStatement && statement && (
                 <>
-                  <p className="text-sm font-bold text-fg">Opening balance: <span className="text-brand">{money(statement.openingBalance)}</span></p>
+                  <p className="text-sm font-bold text-fg">Opening balance: <span className="text-brand-text">{money(statement.openingBalance)}</span></p>
                   <div className="max-h-[45vh] overflow-y-auto border border-white/10 rounded-xl">
                     <table className="w-full text-xs">
                       <thead className="bg-white/5 text-fg/75 sticky top-0">
@@ -1463,7 +1463,7 @@ export default function ProcurementTab({ ctx }) {
                       </tbody>
                     </table>
                   </div>
-                  <p className="text-right text-sm font-black text-fg">Closing balance: <span className="text-brand">{money(statement.closingBalance)}</span></p>
+                  <p className="text-right text-sm font-black text-fg">Closing balance: <span className="text-brand-text">{money(statement.closingBalance)}</span></p>
                 </>
               )}
             </div>
@@ -1494,7 +1494,7 @@ export default function ProcurementTab({ ctx }) {
                       <span className="font-black text-fg text-sm">{p.supplier || 'Unknown supplier'}</span>
                       <div className="flex items-center gap-2 text-[11px] text-fg/70 font-bold">
                         {p.poNo && <span>PO {p.poNo}</span>}
-                        <span className="text-brand">{money(total)}</span>
+                        <span className="text-brand-text">{money(total)}</span>
                       </div>
                     </div>
                     <div className="space-y-0.5">

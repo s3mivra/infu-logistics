@@ -22,7 +22,7 @@ function Toggle({ on, onChange, disabled }) {
 }
 
 function SettingRow({ icon: Icon, title, desc, children, tone = 'default' }) {
-  const iconTone = tone === 'default' ? 'text-brand bg-brand/15 border-brand/30' : 'text-fg/75 bg-white/5 border-white/10';
+  const iconTone = tone === 'default' ? 'text-brand-text bg-brand/15 border-brand/30' : 'text-fg/75 bg-white/5 border-white/10';
   return (
     <div className="flex items-center gap-4 px-4 py-4">
       <div className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${iconTone}`}>
@@ -237,7 +237,7 @@ export default function SettingsTab({ ctx }) {
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <div className="w-10 h-10 rounded-xl bg-brand/15 border border-brand/30 flex items-center justify-center">
-          <SlidersHorizontal size={19} className="text-brand" />
+          <SlidersHorizontal size={19} className="text-brand-text" />
         </div>
         <div>
           <h1 className="text-xl font-black text-fg leading-none">Settings</h1>
@@ -284,7 +284,7 @@ export default function SettingsTab({ ctx }) {
           <Card title="Branding">
             <div className="px-4 py-4">
               <div className="flex items-start gap-4">
-                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand-text bg-brand/15 border-brand/30">
                   <ImageIcon size={16} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -323,7 +323,7 @@ export default function SettingsTab({ ctx }) {
                             className={`w-8 h-8 rounded-lg border-2 transition hover:scale-110 flex items-center justify-center ${!systemSettings.logoColor ? 'border-brand bg-brand/10' : 'border-white/20 bg-white/5'}`}
                             title="No background color"
                           >
-                            <X size={14} className={!systemSettings.logoColor ? 'text-brand' : 'text-fg/65'} />
+                            <X size={14} className={!systemSettings.logoColor ? 'text-brand-text' : 'text-fg/65'} />
                           </button>
                           {['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#8b5cf6','#ec4899','#6b7280','#1e293b'].map(color => (
                             <button
@@ -360,7 +360,7 @@ export default function SettingsTab({ ctx }) {
                 customer to scan (GCash/Maya/bank QR). */}
             <div className="px-4 py-4 border-t border-white/5">
               <div className="flex items-start gap-4">
-                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand-text bg-brand/15 border-brand/30">
                   <QrCode size={16} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -398,7 +398,7 @@ export default function SettingsTab({ ctx }) {
           <Card title="VAT">
             <div className="px-4 py-4">
               <div className="flex items-start gap-4">
-                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand-text bg-brand/15 border-brand/30">
                   <Receipt size={16} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -535,7 +535,7 @@ export default function SettingsTab({ ctx }) {
               {modules.map(mod => (
                 <div key={mod.key} className="px-4 py-4 flex items-start gap-4">
                   <div className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${
-                    mod.enabled ? 'text-brand bg-brand/15 border-brand/30' : 'text-fg/65 bg-white/5 border-white/10'
+                    mod.enabled ? 'text-brand-text bg-brand/15 border-brand/30' : 'text-fg/65 bg-white/5 border-white/10'
                   }`}>
                     <FileText size={16} />
                   </div>
@@ -564,7 +564,7 @@ export default function SettingsTab({ ctx }) {
           <Card title="Credit Limits">
             <div className="px-4 py-4">
               <div className="flex items-start gap-4">
-                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand-text bg-brand/15 border-brand/30">
                   <CreditCard size={16} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -636,7 +636,7 @@ export default function SettingsTab({ ctx }) {
 
             {/* Welcome & announcements */}
             <div className="flex items-start gap-4 px-4 py-4">
-              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand-text bg-brand/15 border-brand/30">
                 <Package size={16} />
               </div>
               <div className="flex-1 min-w-0 space-y-3">
@@ -659,7 +659,7 @@ export default function SettingsTab({ ctx }) {
 
             {/* Support & payment */}
             <div className="flex items-start gap-4 px-4 py-4">
-              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand-text bg-brand/15 border-brand/30">
                 <MessageSquare size={16} />
               </div>
               <div className="flex-1 min-w-0 space-y-3">
@@ -682,7 +682,7 @@ export default function SettingsTab({ ctx }) {
 
             {/* Order slip letterhead */}
             <div className="flex items-start gap-4 px-4 py-4">
-              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand-text bg-brand/15 border-brand/30">
                 <FileText size={16} />
               </div>
               <div className="flex-1 min-w-0 space-y-3">
@@ -722,7 +722,7 @@ export default function SettingsTab({ ctx }) {
           <Card title="Printer Settings">
             {BUSINESS_TYPE === 'log' ? (
               <div className="flex items-start gap-4 px-4 py-4">
-                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand-text bg-brand/15 border-brand/30">
                   <Printer size={16} />
                 </div>
                 <div className="flex-1 min-w-0 space-y-3">
@@ -815,7 +815,7 @@ export default function SettingsTab({ ctx }) {
             {/* Print Logo - separate logo used on receipts/billing docs. Toggle ON = use uploaded print logo; OFF = use business logo. */}
             <div className="px-4 py-4 border-t border-white/5">
               <div className="flex items-start gap-4">
-                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+                <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand-text bg-brand/15 border-brand/30">
                   <ImageIcon size={16} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -874,7 +874,7 @@ export default function SettingsTab({ ctx }) {
         <Card title="This Device">
           <div className="px-4 py-4">
             <div className="flex items-start gap-4">
-              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand bg-brand/15 border-brand/30">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand-text bg-brand/15 border-brand/30">
                 <Palette size={16} />
               </div>
               <div className="flex-1 min-w-0">
@@ -996,7 +996,7 @@ export default function SettingsTab({ ctx }) {
         {/* Business info (read-only) */}
         <Card title="Business">
           <SettingRow icon={Building2} title={BIZ_NAME || 'Business'} desc={`Mode: ${BUSINESS_TYPE === 'log' ? 'Logistics' : 'Food & Beverage'} · Non-VAT registered`} tone="muted">
-            <span className="text-[10px] font-black uppercase tracking-widest bg-brand/15 border border-brand/30 text-brand px-2 py-1 rounded-full">
+            <span className="text-[10px] font-black uppercase tracking-widest bg-brand/15 border border-brand/30 text-brand-text px-2 py-1 rounded-full">
               {BUSINESS_TYPE.toUpperCase()}
             </span>
           </SettingRow>

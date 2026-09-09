@@ -167,7 +167,7 @@ export default function PayrollTab() {
                         </button>
                         {r.status === 'Draft' && (
                           <button onClick={() => act(r, 'approve')}
-                            className="flex items-center gap-1 text-[9px] bg-brand/10 hover:bg-brand/20 text-brand px-2 py-1 rounded font-bold uppercase tracking-wider transition">
+                            className="flex items-center gap-1 text-[9px] bg-brand/10 hover:bg-brand/20 text-brand-text px-2 py-1 rounded font-bold uppercase tracking-wider transition">
                             <Check size={10} /> Approve
                           </button>
                         )}

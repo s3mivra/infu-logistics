@@ -117,7 +117,7 @@ export default function BankReconciliationTab() {
                   </td>
                   <td className="px-3 py-2.5 text-right">
                     <button onClick={() => setOpenId(r._id)}
-                      className="text-[9px] bg-brand/10 hover:bg-brand/20 text-brand px-2.5 py-1 rounded font-bold uppercase tracking-wider transition">
+                      className="text-[9px] bg-brand/10 hover:bg-brand/20 text-brand-text px-2.5 py-1 rounded font-bold uppercase tracking-wider transition">
                       {r.status === 'Reconciled' ? 'View' : 'Reconcile'}
                     </button>
                   </td>

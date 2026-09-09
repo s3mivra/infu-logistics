@@ -13,7 +13,7 @@ import { useDashboard } from '../dashboard/DashboardContext';
 const SEVERITY = {
   critical: { Icon: AlertCircle,    dot: 'bg-red-500',    text: 'text-danger',    ring: 'border-red-500/30' },
   warn:     { Icon: AlertTriangle,  dot: 'bg-yellow-500', text: 'text-warning', ring: 'border-yellow-500/30' },
-  info:     { Icon: Info,           dot: 'bg-brand',      text: 'text-brand',      ring: 'border-brand/30' },
+  info:     { Icon: Info,           dot: 'bg-brand',      text: 'text-brand-text',      ring: 'border-brand/30' },
 };
 
 // How often to refresh while the tab is open. Deliberately slow - none of these
@@ -126,15 +126,15 @@ export default function NotificationBell({ align = 'right', full = false }) {
           data.criticalCount > 0
             ? 'bg-red-500 text-white border-red-500 hover:bg-red-500/60'
             : count > 0
-              ? 'bg-yellow-500 text-white border-yellow-500 hover:bg-yellow-500/60'
-              : 'bg-white text-black border-white hover:bg-white/60'
+              ? 'bg-amber-400 text-black border-amber-400 hover:bg-amber-300'
+              : 'bg-white/5 text-fg/75 border-white/10 hover:bg-white/10 hover:text-fg'
         }`}
       >
         <Bell size={20} />
+        {/* Sits on the button, so it takes the button's own foreground -
+            a fixed white here was unreadable on the amber state. */}
         {count > 0 && (
-          <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[16px] font-black flex items-center justify-center text-white ${
-            data.criticalCount > 0 ? 'bg-transparent' : 'bg-transparent'
-          }`}>
+          <span className="min-w-[18px] h-[18px] px-1 rounded-full text-[16px] font-black flex items-center justify-center">
             {badge}
           </span>
         )}

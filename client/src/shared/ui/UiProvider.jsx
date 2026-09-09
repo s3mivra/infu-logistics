@@ -8,7 +8,7 @@ import { __register, __unregister } from './index';
 // client portal, not just the admin dashboard.
 
 const TONE = {
-  info:    { bar: 'bg-brand',       text: 'text-brand',       icon: 'ℹ' },
+  info:    { bar: 'bg-brand',       text: 'text-brand-text',       icon: 'ℹ' },
   success: { bar: 'bg-green-500',   text: 'text-success',   icon: '✓' },
   warn:    { bar: 'bg-yellow-500',  text: 'text-warning',  icon: '!' },
   error:   { bar: 'bg-red-500',     text: 'text-danger',     icon: '✕' },
@@ -76,7 +76,7 @@ function UndoToast({ req, onDone }) {
         <p className="text-fg text-sm font-bold leading-5 break-words flex-1">{req.message}</p>
         <button
           onClick={undo}
-          className="shrink-0 text-xs font-black uppercase tracking-wider bg-brand/15 border border-brand/30 text-brand px-3 py-1.5 rounded-lg hover:bg-brand hover:text-on-brand transition"
+          className="shrink-0 text-xs font-black uppercase tracking-wider bg-brand/15 border border-brand/30 text-brand-text px-3 py-1.5 rounded-lg hover:bg-brand hover:text-on-brand transition"
         >
           Undo{left > 0 ? ` ${Math.max(0, left)}` : ''}
         </button>

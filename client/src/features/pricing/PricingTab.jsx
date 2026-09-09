@@ -141,8 +141,8 @@ export default function PricingTab({ ctx }) {
           {/* LEFT COLUMN: Read-Only Pricing Table */}
           <div className="flex-1 bg-surface border border-white/10 rounded-xl p-6 overflow-y-auto custom-scrollbar min-h-[400px] lg:min-h-0 lg:h-full">
             <div className="flex items-center justify-between mb-4 border-b border-white/10 pb-2">
-              <h3 className="text-xl font-bold text-accent">Product Pricing Masterlist</h3>
-              <button onClick={exportPricingMasterlistPDF} className="text-[10px] bg-accent/10 hover:bg-accent/20 text-accent px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">Export PDF</button>
+              <h3 className="text-xl font-bold text-brand-text">Product Pricing Masterlist</h3>
+              <button onClick={exportPricingMasterlistPDF} className="text-[10px] bg-accent/10 hover:bg-accent/20 text-brand-text px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">Export PDF</button>
             </div>
 
             {/* Filter bar */}
@@ -173,7 +173,7 @@ export default function PricingTab({ ctx }) {
 
             {/* Added overflow-x wrapper so it scrolls sideways on small screens instead of breaking the layout */}
             <div className="overflow-x-auto pr-2">
-              <table className="w-full text-left text-sm min-w-[700px]">
+              <table className="w-full text-left text-sm min-w-[880px]">
                 <thead>
                   <tr className="text-fg/80 border-b border-gray-800">
                     <th className="pb-3 uppercase tracking-wider text-xs">Product Name</th>
@@ -234,7 +234,7 @@ export default function PricingTab({ ctx }) {
                       <td className={`py-2 text-right text-fg ${row.name !== '' ? 'pt-4' : ''}`}>{row.size}</td>
 
                       {/* --- INLINE EDITING UI --- */}
-                      <td className={`py-2 text-right font-mono font-bold text-accent ${row.name !== '' ? 'pt-4' : ''}`}>
+                      <td className={`py-2 text-right font-mono font-bold text-brand-text ${row.name !== '' ? 'pt-4' : ''}`}>
                         {editPriceId === row.id ? (
                           <div className="flex justify-end items-center gap-2">
                             <input
@@ -256,11 +256,11 @@ export default function PricingTab({ ctx }) {
                               onClick={() => { setEditPriceId(row.id); setEditPriceVal(row.price); }}
                             >
                               P{Number(row.price).toFixed(2)}
-                              <span className="text-[10px] text-fg/70 group-hover:text-accent">✎</span>
+                              <span className="text-[10px] text-fg/70 group-hover:text-brand-text">✎</span>
                             </div>
                             {row.isBase && (
                               <button onClick={() => fetchPriceHistory(row.product)} title="Price history"
-                                className="text-fg/70 hover:text-accent p-1 rounded hover:bg-white/10 transition">
+                                className="text-fg/70 hover:text-brand-text p-1 rounded hover:bg-white/10 transition">
                                 <History size={12} />
                               </button>
                             )}
@@ -363,17 +363,17 @@ export default function PricingTab({ ctx }) {
                 <button
                   onClick={() => setLocalPage(prev => Math.max(prev - 1, 1))}
                   disabled={localPage === 1}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${localPage === 1 ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${localPage === 1 ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-brand-text'}`}
                 >
                   <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                 </button>
                 <span className="text-fg/70 text-xs font-bold tracking-widest">
-                  PAGE <span className="text-accent text-sm">{localPage}</span> OF {localTotalPages}
+                  PAGE <span className="text-brand-text text-sm">{localPage}</span> OF {localTotalPages}
                 </span>
                 <button
                   onClick={() => setLocalPage(prev => Math.min(prev + 1, localTotalPages))}
                   disabled={localPage === localTotalPages}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${localPage === localTotalPages ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${localPage === localTotalPages ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-brand-text'}`}
                 >
                   <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                 </button>
@@ -384,7 +384,7 @@ export default function PricingTab({ ctx }) {
           {/* RIGHT COLUMN: Discount CRUD */}
           {/* Changed width breaks to lg:w-80 so it perfectly fits beside the table on tablets */}
           <div className="w-full lg:w-80 xl:w-96 bg-surface border border-white/10 rounded-xl p-6 min-h-[400px] lg:min-h-0 lg:h-full overflow-y-auto custom-scrollbar flex flex-col">
-            <h3 className="text-xl font-bold mb-4 text-accent border-b border-white/10 pb-2">Discount Rules</h3>
+            <h3 className="text-xl font-bold mb-4 text-brand-text border-b border-white/10 pb-2">Discount Rules</h3>
             
             <div className="flex-1 overflow-y-auto mb-6 pr-2 scrollbar-thin scrollbar-thumb-gray-700">
               <div className="space-y-3">
@@ -450,16 +450,16 @@ export default function PricingTab({ ctx }) {
         {BUSINESS_TYPE === 'log' && priceTiers && priceTiers.length > 0 && (
           <div className="bg-surface border border-white/10 rounded-xl p-6 mt-6">
             <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-4 flex-wrap gap-2">
-              <h3 className="text-xl font-bold text-accent flex items-center gap-2">
+              <h3 className="text-xl font-bold text-brand-text flex items-center gap-2">
                 <Tag size={18} /> Market Segment Pricing
               </h3>
               <div className="flex items-center gap-2">
-              <button onClick={exportPriceTiersPDF} className="text-[10px] bg-accent/10 hover:bg-accent/20 text-accent px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition shrink-0">Export PDF</button>
+              <button onClick={exportPriceTiersPDF} className="text-[10px] bg-accent/10 hover:bg-accent/20 text-brand-text px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition shrink-0">Export PDF</button>
               {/* Bulk pricing round-trip: download the sheet (Code, Product, one
                   column per tier prefilled with its current rate), edit prices
                   offline, import it back. See exportPriceTiersExcel /
                   parsePriceTierExcel in AdminDashboard.jsx for the full logic. */}
-              <button onClick={exportPriceTiersExcel} className="text-[10px] bg-accent/10 hover:bg-accent/20 text-accent px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition shrink-0">Download Excel</button>
+              <button onClick={exportPriceTiersExcel} className="text-[10px] bg-accent/10 hover:bg-accent/20 text-brand-text px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition shrink-0">Download Excel</button>
               <label className="text-[10px] bg-accent text-on-brand px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition shrink-0 cursor-pointer hover:bg-accent/90">
                 Import Excel
                 <input type="file" accept=".xlsx,.xls" className="hidden"
@@ -531,7 +531,7 @@ export default function PricingTab({ ctx }) {
 
                         if (editTierCell === cellId) {
                           return (
-                            <td key={t._id} className="py-3 px-3 text-right font-mono font-bold text-accent align-top border-r border-white/10 last:border-r-0">
+                            <td key={t._id} className="py-3 px-3 text-right font-mono font-bold text-brand-text align-top border-r border-white/10 last:border-r-0">
                               <div className="flex justify-end items-center gap-2">
                                 {isPerProduct ? (
                                   <div className="relative w-20">
@@ -566,7 +566,7 @@ export default function PricingTab({ ctx }) {
                                 <button onClick={() => setEditTierCell(null)} title="Cancel" className="text-danger hover:text-red-300">✕</button>
                                 <button
                                   onClick={() => fetchTierPriceHistory(t._id, isPerProduct ? p._id : null, t.name, isPerProduct ? p.name : null, isPerProduct ? price : t.percent)}
-                                  title="Price history" className="text-fg/65 hover:text-accent"
+                                  title="Price history" className="text-fg/65 hover:text-brand-text"
                                 ><History size={13} /></button>
                               </div>
 
@@ -580,7 +580,7 @@ export default function PricingTab({ ctx }) {
                                       <span className="text-fg/60 font-normal">{b.minQty}+ units</span>
                                       <span className="flex items-center gap-1.5">
                                         <span className="font-bold text-fg tabular-nums">₱{Number(b.price).toFixed(2)}</span>
-                                        <button onClick={() => removeTierBulkBreak(t._id, p._id, b.minQty)} title="Remove this break" className="text-red-400/60 hover:text-danger">✕</button>
+                                        <button onClick={() => removeTierBulkBreak(t._id, p._id, b.minQty)} title="Remove this break" className="text-danger/80 hover:text-danger">✕</button>
                                       </span>
                                     </div>
                                   ))}
@@ -602,7 +602,7 @@ export default function PricingTab({ ctx }) {
                                     <button
                                       onClick={() => { addTierBulkBreak(t._id, p._id, newBreakQty, newBreakPrice); setNewBreakQty(''); setNewBreakPrice(''); }}
                                       title="Add quantity break"
-                                      className="text-accent hover:text-fg shrink-0"
+                                      className="text-brand-text hover:text-fg shrink-0"
                                     ><Plus size={14} /></button>
                                   </div>
                                 </div>
@@ -620,12 +620,12 @@ export default function PricingTab({ ctx }) {
                               {price === null ? (
                                 <span className="text-fg/60 text-xs">not set</span>
                               ) : (
-                                <span className={off > 0 ? (isPerProduct ? 'text-accent font-bold' : 'text-fg/70 font-bold') : 'text-fg/70'}>
+                                <span className={off > 0 ? (isPerProduct ? 'text-brand-text font-bold' : 'text-fg/70 font-bold') : 'text-fg/70'}>
                                   ₱{price.toFixed(2)}
                                   {off > 0 && <span className="text-[9px] text-fg/65 ml-1">-{off}%</span>}
                                 </span>
                               )}
-                              <span className="text-[10px] text-fg/70 group-hover:text-accent">✎</span>
+                              <span className="text-[10px] text-fg/70 group-hover:text-brand-text">✎</span>
                             </div>
                             {/* Collapsed-view breaks, e.g. "20+  ₱550" - the same
                                 shape as the edit form above, just read-only. */}
@@ -652,17 +652,17 @@ export default function PricingTab({ ctx }) {
                 <button
                   onClick={() => setTierPage(prev => Math.max(prev - 1, 1))}
                   disabled={tierPage === 1}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${tierPage === 1 ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${tierPage === 1 ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-brand-text'}`}
                 >
                   <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                 </button>
                 <span className="text-fg/70 text-xs font-bold tracking-widest">
-                  PAGE <span className="text-accent text-sm">{tierPage}</span> OF {tierTotalPages}
+                  PAGE <span className="text-brand-text text-sm">{tierPage}</span> OF {tierTotalPages}
                 </span>
                 <button
                   onClick={() => setTierPage(prev => Math.min(prev + 1, tierTotalPages))}
                   disabled={tierPage === tierTotalPages}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${tierPage === tierTotalPages ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${tierPage === tierTotalPages ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-brand-text'}`}
                 >
                   <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                 </button>

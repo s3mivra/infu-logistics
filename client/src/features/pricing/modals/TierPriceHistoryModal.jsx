@@ -21,8 +21,8 @@ export default function TierPriceHistoryModal() {
         <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-3 flex-shrink-0">
           <div>
             <h2 className="text-xl font-bold text-fg flex items-center gap-2">
-              <History size={18} className="text-accent" /> Price History:{' '}
-              <span className="text-accent">{tierPriceHistoryCtx?.tierName}</span>
+              <History size={18} className="text-brand-text" /> Price History:{' '}
+              <span className="text-brand-text">{tierPriceHistoryCtx?.tierName}</span>
               {tierPriceHistoryCtx?.productName && <span className="text-fg/75"> · {tierPriceHistoryCtx.productName}</span>}
             </h2>
             <p className="text-[10px] text-fg/70 mt-0.5">
@@ -47,7 +47,7 @@ export default function TierPriceHistoryModal() {
                       As of {new Date(h.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                       <span className="text-fg/70 font-normal normal-case ml-1.5">{new Date(h.date).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
                     </span>
-                    <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-accent/20 text-accent">
+                    <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-accent/20 text-brand-text">
                       {h.type === 'price' ? 'Price' : 'Rate'}
                     </span>
                   </div>

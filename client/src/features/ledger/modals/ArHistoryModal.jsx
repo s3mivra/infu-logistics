@@ -38,7 +38,7 @@ export default function ArHistoryModal() {
             </div>
             <div className={`rounded-xl p-3 border ${balance > 0.01 ? 'bg-brand/10 border-brand/25' : 'bg-white/5 border-white/10'}`}>
               <p className="text-fg/70 text-[10px] font-bold uppercase">Balance</p>
-              <p className={`text-xl font-black tabular-nums ${balance > 0.01 ? 'text-brand' : 'text-fg/70'}`}>{peso(balance)}</p>
+              <p className={`text-xl font-black tabular-nums ${balance > 0.01 ? 'text-brand-text' : 'text-fg/70'}`}>{peso(balance)}</p>
             </div>
           </div>
 
@@ -76,7 +76,7 @@ export default function ArHistoryModal() {
                           </span>
                         )}
                       </td>
-                      <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand px-2 py-1 rounded">{p.paymentMethod || '-'}</span></td>
+                      <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand-text px-2 py-1 rounded">{p.paymentMethod || '-'}</span></td>
                       <td className="py-2.5 text-fg/75 text-xs">
                         {p.referenceNumber || <span className="text-fg/60">-</span>}
                         {p.note && <span className="block text-[9px] text-fg/65 italic">{p.note}</span>}

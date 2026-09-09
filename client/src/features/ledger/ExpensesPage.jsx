@@ -40,7 +40,7 @@ export default function ExpensesPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="bg-surface border border-white/10 rounded-xl px-5 py-4">
           <p className="text-fg/80 text-[10px] font-bold uppercase tracking-widest">Spent This Month</p>
-          <p className="text-3xl text-brand font-black tabular-nums mt-1">{peso(expenseList?.total)}</p>
+          <p className="text-3xl text-brand-text font-black tabular-nums mt-1">{peso(expenseList?.total)}</p>
           <p className="text-fg/60 text-[10px] mt-1">{(expenseList?.expenses || []).length} recent entries shown</p>
         </div>
         <div className="sm:col-span-2 bg-surface border border-white/10 rounded-xl px-5 py-4">
@@ -63,7 +63,7 @@ export default function ExpensesPage() {
       {/* Entry form - same fields as the old modal, laid out for a page. */}
       <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
         <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2 flex-wrap">
-          <Plus size={14} className="text-brand" />
+          <Plus size={14} className="text-brand-text" />
           <h3 className="text-sm font-black text-fg uppercase tracking-wider">Add Expense</h3>
           <span className="text-[10px] text-fg/80 font-bold uppercase tracking-widest mr-auto">Operating cost entry</span>
           {/* Bulk round-trip: download the sheet (Ref No./Date/Category/Total
@@ -74,7 +74,7 @@ export default function ExpensesPage() {
           <button onClick={downloadExpenseImportTemplate} className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition">
             <Download size={11} /> Template
           </button>
-          <label className="flex items-center gap-1.5 bg-brand/15 hover:bg-brand/25 text-brand px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition cursor-pointer">
+          <label className="flex items-center gap-1.5 bg-brand/15 hover:bg-brand/25 text-brand-text px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition cursor-pointer">
             <Upload size={11} /> Import Excel
             <input type="file" accept=".xlsx,.xls" className="hidden"
               onChange={e => { const f = e.target.files?.[0]; if (f) parseExpenseImportExcel(f); e.target.value = ''; }} />
@@ -212,7 +212,7 @@ export default function ExpensesPage() {
           <div className="bg-surface border border-white/10 rounded-2xl w-full max-w-4xl max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
               <div>
-                <h2 className="font-black text-fg text-lg flex items-center gap-2"><Upload size={16} className="text-brand" /> Import Preview</h2>
+                <h2 className="font-black text-fg text-lg flex items-center gap-2"><Upload size={16} className="text-brand-text" /> Import Preview</h2>
                 <p className="text-fg/70 text-xs mt-0.5">
                   <span className="text-success font-bold">{expenseImportPreview.readyCount} ready</span>
                   {expenseImportPreview.warnCount > 0 && <> · <span className="text-warning font-bold">{expenseImportPreview.warnCount} with warnings</span></>}

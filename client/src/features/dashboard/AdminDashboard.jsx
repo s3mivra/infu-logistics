@@ -184,7 +184,7 @@ function MidnightCountdown() {
     const id = setInterval(() => setT(calc()), 1000);
     return () => clearInterval(id);
   }, []);
-  return <span className="text-brand font-black text-xs">{t}</span>;
+  return <span className="text-brand-text font-black text-xs">{t}</span>;
 }
 
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Kasa Lokal').toUpperCase();
@@ -7169,7 +7169,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     return (
       <div className="min-h-screen bg-page-bg flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-fg/60">
-          <RefreshCw size={32} className="animate-spin text-brand" />
+          <RefreshCw size={32} className="animate-spin text-brand-text" />
           <span className="text-sm">Restoring session…</span>
         </div>
       </div>
@@ -7182,9 +7182,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         <div className="hidden lg:flex lg:w-1/2 bg-surface border-r border-white/5 items-center justify-center">
           <div className="text-center p-12">
             <div className="w-24 h-24 bg-brand/20 border border-brand/30 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-2xl shadow-brand/30">
-              <Lock size={40} className="text-brand" />
+              <Lock size={40} className="text-brand-text" />
             </div>
-            <p className="text-5xl font-black text-brand tracking-tight leading-none mb-3">{BIZ_NAME}</p>
+            <p className="text-5xl font-black text-brand-text tracking-tight leading-none mb-3">{BIZ_NAME}</p>
             <p className="text-fg/65 font-bold uppercase tracking-[0.3em] text-sm">SEMIVRA LIBELLUS</p>
             <p className="text-fg/15 text-xs mt-12 font-medium">Restaurant POS &amp; Management System</p>
           </div>
@@ -7195,7 +7195,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             ? <img src={systemSettings.businessLogo || localStorage.getItem('branding.logo')} alt="" className="max-h-16 max-w-[200px] object-contain mx-auto mb-4" />
             : (
               <div className="lg:hidden w-14 h-14 bg-brand/20 border border-brand/30 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-brand/20">
-                <Lock size={24} className="text-brand" />
+                <Lock size={24} className="text-brand-text" />
               </div>
             )}
           <h2 className="text-2xl font-black text-fg tracking-widest mb-1 uppercase">System Locked</h2>
@@ -7229,7 +7229,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           />
           {requireCashShift && (
             <div className="relative mb-1">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-brand font-black text-lg pointer-events-none">₱</span>
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-text font-black text-lg pointer-events-none">₱</span>
               <input
                 type="number"
                 aria-label="Starting Cash in Philippine Pesos"
@@ -7398,7 +7398,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     return (
       <div className="min-h-screen bg-page-bg flex flex-col items-center justify-center p-6 text-center">
         <div className="w-20 h-20 bg-brand/15 border border-brand/30 rounded-3xl flex items-center justify-center mb-6">
-          <Clock size={40} className="text-brand" />
+          <Clock size={40} className="text-brand-text" />
         </div>
         <h1 className="text-fg text-2xl font-black mb-1">Clock in to start</h1>
         <p className="text-fg/75 text-sm mb-8 max-w-xs">Hi {activeAdmin?.name} - you must clock in before taking orders or using the system.</p>
@@ -7424,17 +7424,17 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             {systemSettings.businessLogo
               ? <img src={systemSettings.businessLogo} alt="" className="w-12 h-12 object-cover" style={{ borderRadius: systemSettings.logoRadius || '10px', ...(systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor } : {}) }} />
               : <div
-                  className={`w-12 h-12 flex items-center justify-center font-black text-sm select-none ${systemSettings.logoColor ? '' : 'bg-brand/20 text-brand'}`}
+                  className={`w-12 h-12 flex items-center justify-center font-black text-sm select-none ${systemSettings.logoColor ? '' : 'bg-brand/20 text-brand-text'}`}
                   style={{ borderRadius: systemSettings.logoRadius || '10px', ...(systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor, color: '#fff' } : {}) }}
                 >{BIZ_NAME.charAt(0)}</div>
             }
           </div>
-          <p className="text-[22px] font-black text-brand tracking-tight leading-[1.1] break-words drop-shadow-sm min-w-0 flex-1">{BIZ_NAME}</p>
+          <p className="text-[22px] font-black text-brand-text tracking-tight leading-[1.1] break-words drop-shadow-sm min-w-0 flex-1">{BIZ_NAME}</p>
         </div>
 
         {/* Row 2: SEMIVRA NEGOTIUM · */}
         <p className="text-[9px] text-fg/75 font-bold uppercase tracking-[0.2em]">
-          SEMIVRA <span className="text-brand">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span> ·
+          SEMIVRA <span className="text-brand-text">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span> ·
         </p>
 
         {/* Row 3: Operations / Management */}
@@ -7444,7 +7444,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
         {/* Row 4: VAT pill + bell */}
         <div className="flex items-center justify-between mt-2">
-          <span className="text-[8px] font-black bg-brand/10 border border-brand/30 text-brand px-2 py-0.5 rounded-full uppercase tracking-widest">{vatRegLabel}</span>
+          <span className="text-[8px] font-black bg-brand/10 border border-brand/30 text-brand-text px-2 py-0.5 rounded-full uppercase tracking-widest">{vatRegLabel}</span>
           <div className="hidden md:block">
             <NotificationBell align="left" />
           </div>
@@ -7536,7 +7536,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
                   onClick={() => { closeFn?.(); navigate('/admin/admin-panel'); }}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm text-fg/75 hover:text-fg hover:bg-white/5"
                 >
-                  <ShieldCheck size={16} className="text-brand shrink-0" />
+                  <ShieldCheck size={16} className="text-brand-text shrink-0" />
                   <span className="whitespace-nowrap">Admin Panel</span>
                   <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand border border-brand text-on-brand px-1.5 py-0.5 rounded">Super</span>
                 </button>
@@ -7598,14 +7598,14 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
               {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
               {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
             </button>
-            <button onClick={e => { e.preventDefault(); (BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR()); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand/60 hover:text-brand hover:bg-brand/10 transition font-bold text-sm">
+            <button onClick={e => { e.preventDefault(); (BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR()); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text/85 hover:text-brand-text hover:bg-brand/10 transition font-bold text-sm">
               <QrCode size={15} />
               {BUSINESS_TYPE === 'log' ? 'Portal' : 'Show QR'}
             </button>
             {/* Logistics: a guest walk-in QR (below Portal) - a customer with no
                 account scans it to order on the spot, same guest menu flow as fb. */}
             {BUSINESS_TYPE === 'log' && (
-              <button onClick={e => { e.preventDefault(); handleShowQR(); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand/60 hover:text-brand hover:bg-brand/10 transition font-bold text-sm">
+              <button onClick={e => { e.preventDefault(); handleShowQR(); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text/85 hover:text-brand-text hover:bg-brand/10 transition font-bold text-sm">
                 <QrCode size={15} />
                 Guest QR
               </button>
@@ -7613,7 +7613,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             {/* Install as app (only when the browser offers it) */}
             {installable && (
               <button onClick={() => { install(); closeFn?.(); }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand hover:text-brand hover:bg-brand/10 transition font-bold text-sm">
+                className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text hover:text-brand-text hover:bg-brand/10 transition font-bold text-sm">
                 <Download size={15} />
                 Install App
               </button>
@@ -7627,7 +7627,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         <div className="px-3 py-2 border-t border-white/5 mt-1">
           <div className="flex items-center gap-3 p-2 rounded-xl bg-white/5">
             <div className="w-8 h-8 rounded-lg bg-brand/20 border border-brand/30 flex items-center justify-center flex-shrink-0">
-              <span className="text-brand font-black text-xs">{activeAdmin?.name?.charAt(0)?.toUpperCase()}</span>
+              <span className="text-brand-text font-black text-xs">{activeAdmin?.name?.charAt(0)?.toUpperCase()}</span>
             </div>
             <div className="min-w-0">
               <p className="text-fg/60 text-xs font-bold truncate">{activeAdmin?.name}</p>
@@ -7964,9 +7964,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <p className="font-black text-fg text-sm uppercase tracking-widest truncate">{BIZ_NAME}</p>
-              <span className="text-[8px] font-black bg-brand/20 border border-brand/30 text-brand px-1.5 py-0.5 rounded-full uppercase tracking-widest flex-shrink-0">NON-VAT</span>
+              <span className="text-[8px] font-black bg-brand/20 border border-brand/30 text-brand-text px-1.5 py-0.5 rounded-full uppercase tracking-widest flex-shrink-0">NON-VAT</span>
             </div>
-            <p className="text-brand text-[10px] font-bold uppercase truncate">{activeAdmin?.name} · {navMode === 'libellus' ? 'Operations' : 'Management'}</p>
+            <p className="text-brand-text text-[10px] font-bold uppercase truncate">{activeAdmin?.name} · {navMode === 'libellus' ? 'Operations' : 'Management'}</p>
           </div>
           {/* min-w-0 + overflow-x lets this action group scroll internally on a
               very narrow phone (≤320px) rather than pushing the whole page wider;
@@ -7985,7 +7985,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
               <Search size={13} /><span className="hidden sm:inline">Jump</span>
             </button>
             <div className="shrink-0"><NotificationBell /></div>
-            <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="shrink-0 flex items-center gap-1.5 bg-brand/20 text-brand border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
+            <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="shrink-0 flex items-center gap-1.5 bg-brand/20 text-brand-text border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
               <QrCode size={13} /> {BUSINESS_TYPE === 'log' ? 'Portal' : 'QR'}
             </button>
             <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="shrink-0 flex items-center gap-1.5 bg-white/5 text-fg/75 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
@@ -8033,7 +8033,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             <h2 className="text-2xl font-bold mb-1 text-fg shrink-0">Customer QR</h2>
             <div className="bg-page-bg px-6 py-2 rounded-full border border-gray-700 mb-6 mt-2 flex items-center gap-2 shrink-0">
               <span className="text-fg/70 text-sm font-bold uppercase tracking-wider">Session ID:</span>
-              <span className="text-accent font-black text-lg">{autoTableId}</span>
+              <span className="text-brand-text font-black text-lg">{autoTableId}</span>
             </div>
             
             {/* FIX: Added shrink-0, p-4, and removed overflow-hidden so the QR never gets squished! */}
@@ -8063,13 +8063,13 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
             <button
               onClick={(e) => { e.preventDefault(); setQrReplacedBecause(''); handleShowQR(); }}
-              className="mt-4 w-full bg-surface border border-accent text-accent font-bold py-3 rounded-md hover:bg-accent hover:text-fg transition uppercase tracking-widest text-sm shrink-0"
+              className="mt-4 w-full bg-surface border border-accent text-brand-text font-bold py-3 rounded-md hover:bg-accent hover:text-fg transition uppercase tracking-widest text-sm shrink-0"
             >
               Generate Next QR
             </button>
             <button
               onClick={() => { setShowQR(false); setQrReplacedBecause(''); }}
-              className="mt-3 w-full bg-page-bg border border-gray-600 text-accent font-bold py-3 rounded-md hover:bg-accent hover:text-fg transition text-sm shrink-0"
+              className="mt-3 w-full bg-page-bg border border-gray-600 text-brand-text font-bold py-3 rounded-md hover:bg-accent hover:text-fg transition text-sm shrink-0"
             >
               Close
             </button>

@@ -19,7 +19,7 @@ export default function PriceTierImportModal() {
       <div className="bg-surface border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-2xl shadow-elev-3 flex flex-col max-h-[90vh] animate-scale-in">
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-accent/15 text-accent flex items-center justify-center shrink-0"><FileSpreadsheet size={17}/></div>
+            <div className="w-9 h-9 rounded-xl bg-accent/15 text-brand-text flex items-center justify-center shrink-0"><FileSpreadsheet size={17}/></div>
             <div>
               <h2 className="text-fg font-black text-lg">Import Price Tiers</h2>
               <p className="text-fg/70 text-xs mt-0.5">{tiers.length} tier column{tiers.length === 1 ? '' : 's'} · {totalPrices} price{totalPrices === 1 ? '' : 's'} to set</p>
@@ -44,7 +44,7 @@ export default function PriceTierImportModal() {
                 <div className="flex items-center gap-2">
                   <span className="text-fg font-black text-sm">{t.name}</span>
                   {!t.tierId && (
-                    <span className="text-[9px] font-black uppercase tracking-wider bg-brand/15 text-brand px-1.5 py-0.5 rounded">New Tier</span>
+                    <span className="text-[9px] font-black uppercase tracking-wider bg-brand/15 text-brand-text px-1.5 py-0.5 rounded">New Tier</span>
                   )}
                   {t.tierId && t.wasPercent && (
                     <span className="text-[9px] font-black uppercase tracking-wider bg-yellow-500/15 text-warning px-1.5 py-0.5 rounded" title="This tier currently uses a flat % rate - importing prices switches it to a per-product price list.">

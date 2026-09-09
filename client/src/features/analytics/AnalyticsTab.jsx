@@ -122,7 +122,7 @@ export default function AnalyticsTab({ ctx }) {
     return (
       <div className="flex flex-col gap-6 animate-fade-in">
         <div className="py-20 text-center">
-          <RefreshCw size={28} className="mx-auto text-brand animate-spin mb-3"/>
+          <RefreshCw size={28} className="mx-auto text-brand-text animate-spin mb-3"/>
           <p className="text-fg/70 font-bold uppercase tracking-widest text-sm">
             {analyticsLoading ? 'Computing analytics on server…' : 'Click Analytics to load data.'}
           </p>
@@ -159,7 +159,7 @@ export default function AnalyticsTab({ ctx }) {
           {byLocation && byLocation.locations.length > 0 && (byLocation.locations.length > 1 || byLocation.hasLocationData) && (
             <div className="bg-surface border border-white/10 rounded-2xl overflow-hidden">
               <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
-                <Building2 size={14} className="text-brand"/>
+                <Building2 size={14} className="text-brand-text"/>
                 <h3 className="text-fg font-bold text-sm">Compare Branches</h3>
                 {!byLocation.hasLocationData && (
                   <span className="ml-auto text-[10px] text-fg/70 font-bold uppercase tracking-widest">No sales tagged with a branch yet - showing inventory only</span>
@@ -185,7 +185,7 @@ export default function AnalyticsTab({ ctx }) {
                           {l.location}
                         </td>
                         <td className="px-5 py-2.5 text-right font-mono tabular-nums text-fg">{peso(l.todayRevenue)}</td>
-                        <td className="px-5 py-2.5 text-right font-mono tabular-nums font-bold text-brand">{peso(l.allTimeRevenue)}</td>
+                        <td className="px-5 py-2.5 text-right font-mono tabular-nums font-bold text-brand-text">{peso(l.allTimeRevenue)}</td>
                         <td className="px-5 py-2.5 text-right font-mono tabular-nums text-fg/70">{l.allTimeOrders.toLocaleString()}</td>
                         <td className="px-5 py-2.5 text-right font-mono tabular-nums text-fg/70">{peso(l.avgTicket)}</td>
                         <td className="px-5 py-2.5 text-right font-mono tabular-nums text-fg/70">{peso(l.inventoryValue)}</td>
@@ -239,10 +239,10 @@ export default function AnalyticsTab({ ctx }) {
           {/* TOP ROW: High-Level Metrics */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-brand border border-brand rounded-xl p-6 shadow-lg shadow-brand/5 flex flex-col justify-center">
-              <p className="text-white text-xs font-bold uppercase tracking-wider mb-1">Net Revenue (All-Time)</p>
-              <p className="text-2xl sm:text-3xl md:text-4xl font-black text-white mb-1 break-words">₱{allTime.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-              <p className="text-sm text-white font-medium">{allTime.orders} completed orders</p>
-              {allTime.comp > 0 && <p className="text-xs text-fg/75 font-semibold mt-1">+₱{allTime.comp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} complimentary (excluded)</p>}
+              <p className="text-on-brand text-xs font-bold uppercase tracking-wider mb-1">Net Revenue (All-Time)</p>
+              <p className="text-2xl sm:text-3xl md:text-4xl font-black text-on-brand mb-1 break-words">₱{allTime.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <p className="text-sm text-on-brand font-medium">{allTime.orders} completed orders</p>
+              {allTime.comp > 0 && <p className="text-xs text-on-brand/75 font-semibold mt-1">+₱{allTime.comp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} complimentary (excluded)</p>}
             </div>
 
             <div className="bg-surface border border-white/10 rounded-xl p-6 flex flex-col justify-center">
@@ -259,7 +259,7 @@ export default function AnalyticsTab({ ctx }) {
                 ) : tp.map((p, i) => (
                   <div key={i} className="flex justify-between items-center text-sm">
                     <span className="font-bold text-fg/60 truncate pr-4">#{i+1} {p.name}</span>
-                    <span className="text-accent font-black bg-accent/10 px-2 py-0.5 rounded">{p.qty}x</span>
+                    <span className="text-brand-text font-black bg-accent/10 px-2 py-0.5 rounded">{p.qty}x</span>
                   </div>
                 ))}
               </div>
@@ -299,7 +299,7 @@ export default function AnalyticsTab({ ctx }) {
             <div className="bg-surface border border-white/10 rounded-xl p-6 flex flex-col max-h-96">
               <div className="flex justify-between items-center mb-4 border-b border-white/10 pb-2 flex-wrap gap-2">
                 <h3 className="text-fg font-bold">Daily Revenue Trend</h3>
-                <button onClick={exportAnalyticsToPDF} className="text-[10px] bg-brand/10 border border-brand/30 text-brand px-3 py-1.5 rounded hover:bg-brand hover:text-page-bg transition font-bold uppercase tracking-wider">
+                <button onClick={exportAnalyticsToPDF} className="text-[10px] bg-brand/10 border border-brand/30 text-brand-text px-3 py-1.5 rounded hover:bg-brand hover:text-on-brand transition font-bold uppercase tracking-wider">
                   Export Analytics PDF
                 </button>
               </div>
@@ -346,7 +346,7 @@ export default function AnalyticsTab({ ctx }) {
                     </div>
                     <div className="flex justify-between text-[10px] text-fg/70 font-bold pt-1 border-t border-white/10">
                       <span>{dailyRevenue.slice(-30)[0]?.date}</span>
-                      <span className="text-accent">Best: {bestDay.date} · ₱{Number(bestDay.revenue).toLocaleString()}</span>
+                      <span className="text-brand-text">Best: {bestDay.date} · ₱{Number(bestDay.revenue).toLocaleString()}</span>
                       <span>{dailyRevenue.slice(-1)[0]?.date}</span>
                     </div>
                   </>
@@ -356,8 +356,8 @@ export default function AnalyticsTab({ ctx }) {
 
             <div className="grid grid-cols-1 gap-4">
               <div className="bg-surface border border-accent/30 rounded-xl p-5 flex flex-col shadow-lg shadow-accent/5">
-                <h3 className="text-accent text-sm font-bold uppercase tracking-wider mb-4 border-b border-accent/20 pb-2 flex items-center gap-2">
-                  <Zap size={14} className="text-accent" /> High Velocity & Forecast
+                <h3 className="text-brand-text text-sm font-bold uppercase tracking-wider mb-4 border-b border-accent/20 pb-2 flex items-center gap-2">
+                  <Zap size={14} className="text-brand-text" /> High Velocity & Forecast
                 </h3>
                 <div className="space-y-4">
                   {mus.length === 0 ? (
@@ -369,7 +369,7 @@ export default function AnalyticsTab({ ctx }) {
                         {item.isNewSku || item.trendPct == null ? (
                           <span className="flex items-center gap-0.5 text-[10px] font-black px-2 py-0.5 rounded bg-blue-500/20 text-info">NEW SKU</span>
                         ) : (
-                          <span className={`flex items-center gap-0.5 text-[10px] font-black px-2 py-0.5 rounded ${item.trend > 0.1 ? 'bg-danger/15 text-danger' : item.trend < -0.1 ? 'bg-green-900/30 text-success' : 'bg-accent/10 text-accent'}`}>
+                          <span className={`flex items-center gap-0.5 text-[10px] font-black px-2 py-0.5 rounded ${item.trend > 0.1 ? 'bg-danger/15 text-danger' : item.trend < -0.1 ? 'bg-green-900/30 text-success' : 'bg-accent/10 text-brand-text'}`}>
                             {item.trend > 0.1 ? <ArrowUp size={10}/> : item.trend < -0.1 ? <ArrowDown size={10}/> : null}
                             {Math.abs((item.trendPct ?? item.trend * 100)).toFixed(0)}% {item.trend > 0.1 ? 'rising' : item.trend < -0.1 ? 'easing' : 'stable'}
                           </span>

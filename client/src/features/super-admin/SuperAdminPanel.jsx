@@ -133,11 +133,11 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
       <div className="p-5 border-b border-white/5">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-brand/20 flex items-center justify-center flex-shrink-0">
-            <Monitor size={16} className="text-brand" />
+            <Monitor size={16} className="text-brand-text" />
           </div>
           <div className="flex-1 min-w-0">
             <p className="font-black text-fg text-xs uppercase tracking-widest leading-none">Command</p>
-            <p className="font-black text-brand text-xs uppercase tracking-widest leading-none mt-0.5">Center</p>
+            <p className="font-black text-brand-text text-xs uppercase tracking-widest leading-none mt-0.5">Center</p>
           </div>
           {onClose && (
             <button onClick={onClose} className="p-1 rounded text-fg/65 hover:text-fg transition" aria-label="Close menu">
@@ -154,7 +154,7 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
             onClick={() => { onSectionChange(id); onClose?.(); }}
             aria-current={activeSection === id ? 'page' : undefined}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
-              ${activeSection === id ? 'bg-brand/20 text-brand' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}
+              ${activeSection === id ? 'bg-brand/20 text-brand-text' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}
           >
             <Icon size={16} />
             {label}
@@ -173,7 +173,7 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
         </button>
         <button
           onClick={onLogout}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-400/60 hover:text-danger hover:bg-red-500/10 transition font-bold text-sm"
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-danger/80 hover:text-danger hover:bg-red-500/10 transition font-bold text-sm"
         >
           <LogOut size={16} />
           Lock Panel
@@ -1095,7 +1095,7 @@ export default function SuperAdminPanel() {
         <form onSubmit={handleSystemLogin} className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-8">
           <div className="flex flex-col items-center mb-8">
             <div className="w-14 h-14 rounded-2xl bg-brand/20 flex items-center justify-center mb-4">
-              <Shield size={26} className="text-brand" />
+              <Shield size={26} className="text-brand-text" />
             </div>
             <h2 className="text-xl font-black text-fg uppercase tracking-widest">Command Center</h2>
             <p className="text-fg/70 text-xs mt-1">Superadmin credentials required</p>
@@ -1224,7 +1224,7 @@ export default function SuperAdminPanel() {
           </button>
           <div className="flex-1 min-w-0">
             <p className="font-black text-fg text-sm uppercase tracking-widest truncate">Command Center</p>
-            <p className="text-brand text-[10px] font-bold uppercase tracking-[0.15em] truncate">
+            <p className="text-brand-text text-[10px] font-bold uppercase tracking-[0.15em] truncate">
               Management &rsaquo; {sectionLabel}
             </p>
           </div>
@@ -1321,7 +1321,7 @@ export default function SuperAdminPanel() {
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleSelectAll}
-                  className="flex items-center gap-2 text-xs font-bold text-accent hover:text-fg transition uppercase tracking-wider"
+                  className="flex items-center gap-2 text-xs font-bold text-brand-text hover:text-fg transition uppercase tracking-wider"
                 >
                   <div className={`w-4 h-4 rounded border flex items-center justify-center transition
                     ${allSelected ? 'bg-brand border-brand' : 'border-fg/60'}`}>
@@ -1330,7 +1330,7 @@ export default function SuperAdminPanel() {
                   {allSelected ? 'Deselect All' : 'Select All'}
                 </button>
                 {selected.size > 0 && (
-                  <span className="text-brand text-xs font-bold">{selected.size} selected</span>
+                  <span className="text-brand-text text-xs font-bold">{selected.size} selected</span>
                 )}
               </div>
             )}
@@ -1349,7 +1349,7 @@ export default function SuperAdminPanel() {
                       {!search && (
                         <button
                           onClick={openCreateModal}
-                          className="mt-4 flex items-center gap-2 bg-brand/20 hover:bg-brand/30 text-brand font-bold px-4 py-2 rounded-xl transition text-sm"
+                          className="mt-4 flex items-center gap-2 bg-brand/20 hover:bg-brand/30 text-brand-text font-bold px-4 py-2 rounded-xl transition text-sm"
                         >
                           <Plus size={14} /> Create First User
                         </button>
@@ -1408,7 +1408,7 @@ export default function SuperAdminPanel() {
                   <p className="text-fg/70 font-bold text-sm">No price tiers yet.</p>
                   <button
                     onClick={openTierCreate}
-                    className="mt-4 flex items-center gap-2 bg-brand/20 hover:bg-brand/30 text-brand font-bold px-4 py-2 rounded-xl transition text-sm"
+                    className="mt-4 flex items-center gap-2 bg-brand/20 hover:bg-brand/30 text-brand-text font-bold px-4 py-2 rounded-xl transition text-sm"
                   >
                     <Plus size={14} /> Add First Tier
                   </button>
@@ -1422,8 +1422,8 @@ export default function SuperAdminPanel() {
                   <div key={tier._id} className="flex items-center gap-4 p-4 rounded-xl border bg-white/5 border-white/5 hover:border-white/15 transition-all">
                     <div className="w-11 h-11 rounded-xl bg-brand/15 border border-brand/25 flex items-center justify-center flex-shrink-0">
                       {isPerProduct
-                        ? <Tag size={16} className="text-brand" />
-                        : <span className="text-brand font-black text-sm tabular-nums">{tier.percent}%</span>}
+                        ? <Tag size={16} className="text-brand-text" />
+                        : <span className="text-brand-text font-black text-sm tabular-nums">{tier.percent}%</span>}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
@@ -1443,12 +1443,12 @@ export default function SuperAdminPanel() {
                     {isPerProduct && (
                       <button
                         onClick={() => openProductPricing(tier)}
-                        className="text-[11px] font-bold text-brand hover:text-fg transition px-3 py-2 flex-shrink-0"
+                        className="text-[11px] font-bold text-brand-text hover:text-fg transition px-3 py-2 flex-shrink-0"
                       >Set Prices</button>
                     )}
                     <button
                       onClick={() => openTierEdit(tier)}
-                      className="text-[11px] font-bold text-fg/75 hover:text-brand transition px-3 py-2 flex-shrink-0"
+                      className="text-[11px] font-bold text-fg/75 hover:text-brand-text transition px-3 py-2 flex-shrink-0"
                     >Edit</button>
                     <button
                       onClick={() => handleTierDelete(tier)}
@@ -1492,7 +1492,7 @@ export default function SuperAdminPanel() {
                                 {price === null ? (
                                   <span className="text-fg/60">&mdash;</span>
                                 ) : (
-                                  <span className={off > 0 ? 'text-brand font-bold' : 'text-fg/70'}>
+                                  <span className={off > 0 ? 'text-brand-text font-bold' : 'text-fg/70'}>
                                     ₱{price.toFixed(2)}
                                     {off > 0 && <span className="text-[9px] text-fg/65 ml-1">-{off}%</span>}
                                   </span>
@@ -1524,7 +1524,7 @@ export default function SuperAdminPanel() {
                     <p className="text-fg/70 font-bold text-sm">No client accounts yet.</p>
                     <button
                       onClick={openClientCreate}
-                      className="mt-4 flex items-center gap-2 bg-brand/20 hover:bg-brand/30 text-brand font-bold px-4 py-2 rounded-xl transition text-sm"
+                      className="mt-4 flex items-center gap-2 bg-brand/20 hover:bg-brand/30 text-brand-text font-bold px-4 py-2 rounded-xl transition text-sm"
                     >
                       <Plus size={14} /> Add First Client
                     </button>
@@ -1532,7 +1532,7 @@ export default function SuperAdminPanel() {
                 )
                 : clients.map(client => (
                   <div key={client._id} className="flex items-center gap-4 p-4 rounded-xl border bg-white/5 border-white/5 hover:border-white/15 transition-all">
-                    <div className="w-10 h-10 rounded-xl bg-brand/20 flex items-center justify-center font-black text-sm text-brand flex-shrink-0">
+                    <div className="w-10 h-10 rounded-xl bg-brand/20 flex items-center justify-center font-black text-sm text-brand-text flex-shrink-0">
                       {client.name.slice(0, 2).toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -1556,7 +1556,7 @@ export default function SuperAdminPanel() {
                         <Edit2 size={14} />
                       </button>
                       {client.source === 'pos' ? (
-                        <button onClick={() => copyOnboardLink(client)} className="p-2 rounded-lg text-brand/70 hover:text-brand hover:bg-brand/10 transition" aria-label="Copy onboarding link" title="Copy a self-service onboarding link for this client to set up their own login">
+                        <button onClick={() => copyOnboardLink(client)} className="p-2 rounded-lg text-brand/70 hover:text-brand-text hover:bg-brand/10 transition" aria-label="Copy onboarding link" title="Copy a self-service onboarding link for this client to set up their own login">
                           <Copy size={14} />
                         </button>
                       ) : (
@@ -1658,7 +1658,7 @@ export default function SuperAdminPanel() {
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <Tag size={13} className="text-brand" />
+                      <Tag size={13} className="text-brand-text" />
                       <span className="font-bold text-fg text-sm">{r.name}</span>
                       <span className="text-fg/65 text-xs">{(r.permissions?.length || 0)} permission{(r.permissions?.length === 1 ? '' : 's')}</span>
                     </div>
@@ -1715,7 +1715,7 @@ export default function SuperAdminPanel() {
           <button
             onClick={handleBatchChangeRole}
             disabled={!batchRole || batchLoading}
-            className="flex items-center gap-1.5 bg-brand/20 hover:bg-brand/30 text-brand font-bold px-3 py-1.5 rounded-lg text-sm transition disabled:opacity-40"
+            className="flex items-center gap-1.5 bg-brand/20 hover:bg-brand/30 text-brand-text font-bold px-3 py-1.5 rounded-lg text-sm transition disabled:opacity-40"
           >
             {batchLoading ? <Loader2 size={13} className="animate-spin" /> : <UserCheck size={13} />}
             Apply
@@ -1754,7 +1754,7 @@ export default function SuperAdminPanel() {
             <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
               <div>
                 <div className="flex items-center gap-2">
-                  <Database size={16} className="text-brand" />
+                  <Database size={16} className="text-brand-text" />
                   <h3 className="font-black text-fg text-sm uppercase tracking-widest">Storage</h3>
                 </div>
                 <p className="text-fg/75 text-xs mt-1">What this branch is holding, and what is growing.</p>
@@ -1894,7 +1894,7 @@ export default function SuperAdminPanel() {
             </div>
             {purgeModal.result ? (
               <div className="p-6 space-y-3">
-                <p className="text-brand font-bold text-sm">Purge complete.</p>
+                <p className="text-brand-text font-bold text-sm">Purge complete.</p>
                 <div className="bg-page-bg border border-white/10 rounded-lg p-3 max-h-[40vh] overflow-y-auto space-y-1">
                   {Object.entries(purgeModal.result).map(([k, v]) => (
                     <div key={k} className="flex justify-between text-xs">
@@ -1963,14 +1963,14 @@ export default function SuperAdminPanel() {
           <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
               <div className="flex items-center gap-2">
-                <RefreshCw size={18} className="text-brand" />
+                <RefreshCw size={18} className="text-brand-text" />
                 <h2 className="font-black text-fg text-lg">Rewire Recipe Links</h2>
               </div>
               <button onClick={() => !rewireModal.busy && setRewireModal({ open: false, busy: false, error: '', result: null })} className="text-fg/70 hover:text-fg transition"><X size={20} /></button>
             </div>
             {rewireModal.result ? (
               <div className="p-6 space-y-3">
-                <p className="text-brand font-bold text-sm">
+                <p className="text-brand-text font-bold text-sm">
                   {rewireModal.result.ingredientsFixed > 0 ? 'Rewire complete.' : 'Nothing to fix - all recipe links are already live.'}
                 </p>
                 <div className="bg-page-bg border border-white/10 rounded-lg p-3 space-y-1">
@@ -2138,7 +2138,7 @@ export default function SuperAdminPanel() {
                 </div>
                 {!form.customPerms ? (
                   <p className="text-fg/70 text-xs bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-                    Using the default permissions for the <span className="text-brand font-bold">{form.role}</span> access level. Tick “Customize” to set exactly what this person can do.
+                    Using the default permissions for the <span className="text-brand-text font-bold">{form.role}</span> access level. Tick “Customize” to set exactly what this person can do.
                   </p>
                 ) : (
                   <div className="space-y-3 bg-white/5 border border-white/10 rounded-xl p-3 max-h-60 overflow-y-auto">
@@ -2257,7 +2257,7 @@ export default function SuperAdminPanel() {
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-2">
                       <span className="text-fg font-black text-sm">{t.name}</span>
-                      {!t.tierId && <span className="text-[9px] font-black uppercase tracking-wider bg-brand/15 text-brand px-1.5 py-0.5 rounded">New Tier</span>}
+                      {!t.tierId && <span className="text-[9px] font-black uppercase tracking-wider bg-brand/15 text-brand-text px-1.5 py-0.5 rounded">New Tier</span>}
                       {t.tierId && t.wasPercent && (
                         <span className="text-[9px] font-black uppercase tracking-wider bg-yellow-500/15 text-warning px-1.5 py-0.5 rounded" title="Currently a flat % rate - importing prices switches it to a per-product price list.">
                           Switches to Price List
@@ -2460,7 +2460,7 @@ export default function SuperAdminPanel() {
                           <p className="text-[10px] text-fg/70">List ₱{Number(p.basePrice || 0).toFixed(2)}{p.category ? ` · ${p.category}` : ''}</p>
                         </div>
                         {off !== null && (
-                          <span className={`text-[10px] font-bold tabular-nums w-14 text-right flex-shrink-0 ${off > 0 ? 'text-brand' : off < 0 ? 'text-danger' : 'text-fg/65'}`}>
+                          <span className={`text-[10px] font-bold tabular-nums w-14 text-right flex-shrink-0 ${off > 0 ? 'text-brand-text' : off < 0 ? 'text-danger' : 'text-fg/65'}`}>
                             {off > 0 ? `-${off}%` : off < 0 ? `+${Math.abs(off)}%` : '-'}
                           </span>
                         )}
@@ -2681,7 +2681,7 @@ export default function SuperAdminPanel() {
                                 onClick={() => toggle(t.name)}
                                 className={`px-3 py-2 rounded-xl text-xs font-bold border transition ${
                                   on
-                                  ? 'bg-brand/20 border-brand/50 text-brand'
+                                  ? 'bg-brand/20 border-brand/50 text-brand-text'
                                   : 'bg-white/5 border-white/10 text-fg/75 hover:border-white/25 hover:text-fg/80'
                                 } ${t.isActive === false ? 'opacity-40' : ''}`}
                               >
@@ -2725,7 +2725,7 @@ export default function SuperAdminPanel() {
                           <summary className="flex items-center justify-between gap-2 px-3 py-2 cursor-pointer list-none">
                             <span className="text-xs font-bold text-fg truncate">{p.name}</span>
                             <span className="flex items-center gap-2 shrink-0">
-                              <span className="text-xs font-black text-brand tabular-nums">
+                              <span className="text-xs font-black text-brand-text tabular-nums">
                                 ₱{(p.flatPrice ?? p.basePrice).toFixed(2)}
                               </span>
                               {p.breaks.length > 0 && (
@@ -2851,7 +2851,7 @@ export default function SuperAdminPanel() {
           <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-fade-in">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-xl bg-brand/10 flex items-center justify-center flex-shrink-0">
-                <KeyRound size={17} className="text-brand" />
+                <KeyRound size={17} className="text-brand-text" />
               </div>
               <div>
                 <h2 className="font-black text-fg">Reset Password</h2>

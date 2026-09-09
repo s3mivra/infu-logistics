@@ -54,7 +54,7 @@ export default function ClientLogin() {
       >
         <div className="flex flex-col items-center mb-8">
           <div className="w-14 h-14 rounded-2xl bg-brand/20 flex items-center justify-center mb-4">
-            <Package size={26} className="text-brand" />
+            <Package size={26} className="text-brand-text" />
           </div>
           <h2 className="text-xl font-black text-fg uppercase tracking-widest">{BIZ_NAME}</h2>
           <p className="text-fg/70 text-xs mt-1">Client Portal - Sign in to order</p>

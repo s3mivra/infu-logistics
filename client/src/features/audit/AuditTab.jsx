@@ -123,7 +123,7 @@ export default function AuditTab({ ctx }) {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h2 className="text-xl font-black text-fg tracking-tight flex items-center gap-2">
-                  <ShieldCheck size={20} className="text-brand" /> Audit Report
+                  <ShieldCheck size={20} className="text-brand-text" /> Audit Report
                 </h2>
                 <p className="text-fg/60 text-xs font-medium mt-0.5">Exception log - cancelled orders, complimentaries, and discounts</p>
               </div>
@@ -143,17 +143,17 @@ export default function AuditTab({ ctx }) {
               <div className="bg-surface border border-white/10 rounded-xl p-4">
                 <p className="text-[10px] text-fg/80 font-bold uppercase tracking-wider mb-1">Cancelled / Voided</p>
                 <p className="text-2xl font-black text-danger">{cancelled.length}</p>
-                <p className="text-[10px] text-red-400/60 font-bold mt-0.5">₱{totalCancelledValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} lost</p>
+                <p className="text-[10px] text-danger/80 font-bold mt-0.5">₱{totalCancelledValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} lost</p>
               </div>
               <div className="bg-surface border border-white/10 rounded-xl p-4">
                 <p className="text-[10px] text-fg/80 font-bold uppercase tracking-wider mb-1">Complimentary</p>
                 <p className="text-2xl font-black text-warning">{comps.length}</p>
-                <p className="text-[10px] text-yellow-400/60 font-bold mt-0.5">₱{totalCompValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} waived</p>
+                <p className="text-[10px] text-warning/80 font-bold mt-0.5">₱{totalCompValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} waived</p>
               </div>
               <div className="bg-surface border border-white/10 rounded-xl p-4">
                 <p className="text-[10px] text-fg/80 font-bold uppercase tracking-wider mb-1">Discounts Given</p>
-                <p className="text-2xl font-black text-brand">{discounted.length}</p>
-                <p className="text-[10px] text-brand/60 font-bold mt-0.5">₱{totalDiscountValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} off</p>
+                <p className="text-2xl font-black text-brand-text">{discounted.length}</p>
+                <p className="text-[10px] text-brand-text/80 font-bold mt-0.5">₱{totalDiscountValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} off</p>
               </div>
               <div className="bg-surface border border-white/10 rounded-xl p-4">
                 <p className="text-[10px] text-fg/80 font-bold uppercase tracking-wider mb-1">Active Staff</p>
@@ -259,9 +259,9 @@ export default function AuditTab({ ctx }) {
             {/* Discount Activity Table */}
             <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
               <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
-                <DollarSign size={14} className="text-brand" />
+                <DollarSign size={14} className="text-brand-text" />
                 <h3 className="text-sm font-black text-fg uppercase tracking-wider">Discount Activity</h3>
-                <span className="ml-auto text-[10px] bg-brand/15 text-brand px-2 py-0.5 rounded-full font-bold">{discounted.length}</span>
+                <span className="ml-auto text-[10px] bg-brand/15 text-brand-text px-2 py-0.5 rounded-full font-bold">{discounted.length}</span>
               </div>
               {discounted.length === 0 ? (
                 <p className="text-fg/60 text-sm p-6 text-center font-bold">No discounted orders in this period.</p>
@@ -286,7 +286,7 @@ export default function AuditTab({ ctx }) {
                             <td className="px-5 py-2.5 text-xs text-fg/60 font-bold">{o.customerName || '-'}</td>
                             <td className="px-5 py-2.5 text-xs text-brand/80 font-bold">{o.discountType || 'Promo'}</td>
                             <td className="px-5 py-2.5 text-xs text-fg/60">{o.discountBy || o.cashier || '-'}</td>
-                            <td className="px-5 py-2.5 text-xs text-right font-mono text-brand">-₱{(o.discount || 0).toFixed(2)}</td>
+                            <td className="px-5 py-2.5 text-xs text-right font-mono text-brand-text">-₱{(o.discount || 0).toFixed(2)}</td>
                             <td className="px-5 py-2.5 text-xs text-right font-mono text-fg/70">₱{(o.total || 0).toFixed(2)}</td>
                           </tr>
                         ))}
@@ -339,7 +339,7 @@ export default function AuditTab({ ctx }) {
                               <td className="px-5 py-2.5 text-xs text-right font-mono">
                                 <span className={myComps.length > 0 ? 'text-warning' : 'text-fg/60'}>{myComps.length}</span>
                               </td>
-                              <td className="px-5 py-2.5 text-xs text-right font-mono text-brand font-bold">₱{myNet.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td className="px-5 py-2.5 text-xs text-right font-mono text-brand-text font-bold">₱{myNet.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             </tr>
                           );
                         })}
@@ -356,7 +356,7 @@ export default function AuditTab({ ctx }) {
             {/* ── System Activity Log (real AuditLog collection) ─────────────── */}
             <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
               <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2 flex-wrap">
-                <ShieldCheck size={14} className="text-brand/70" />
+                <ShieldCheck size={14} className="text-brand-text" />
                 <h3 className="text-sm font-black text-fg uppercase tracking-wider">System Activity Log</h3>
                 <span className="text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{auditLogsTotal} total</span>
                 <input type="text" value={auditLogFilters.actor} onChange={e => setAuditLogFilters(f => ({ ...f, actor: e.target.value }))}
@@ -376,7 +376,7 @@ export default function AuditTab({ ctx }) {
                 <button
                   onClick={exportAuditLogsCsv}
                   title="Export CSV for the selected date range (start/end required, max 92 days)"
-                  className="ml-auto flex items-center gap-1 px-3 py-1 rounded-lg bg-white/5 text-fg/75 hover:text-fg hover:bg-white/10 text-xs font-bold transition"
+                  className="flex items-center gap-1 px-3 py-1 rounded-lg bg-white/5 text-fg/75 hover:text-fg hover:bg-white/10 text-xs font-bold transition"
                 >
                   <Download size={11} /> CSV
                 </button>
@@ -411,7 +411,7 @@ export default function AuditTab({ ctx }) {
                             PRODUCT_RESTORED: 'text-success',
                             PRODUCT_ARCHIVED: 'text-danger',
                             PASSWORD_CHANGED: 'text-info',
-                            AP_PAYMENT: 'text-brand',
+                            AP_PAYMENT: 'text-brand-text',
                             ORDER_COMPLETED: 'text-green-400/70',
                             ORDER_VOIDED: 'text-red-400/70',
                             ORDER_CANCELLED: 'text-fg/70',

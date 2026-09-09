@@ -16,15 +16,19 @@
 :root,
 [data-theme="default"] {
   /* --- PRIMARY BRAND COLOR (RGB channels for opacity modifier support) --- */
-  --brand:        22 163 74;   /* #6f874d - olive green                   */
-  /* Hover BRIGHTENS rather than dims. On a dark UI a darker hover is both
-     backwards and unreadable: the old #15803d left the button label at
-     3.88:1, under AA for anything but large text. green-500 gives 8.53:1. */
-  --brand-dark:   34 197 94;    /* green-500 - hover/pressed state          */
-  /* What actually reads ON the brand colour. White on this green is 3.30:1,
-     on the yellow 1.92:1 and on the ocean blue 2.14:1 - every primary button
-     in those themes was failing. Near-black gives 5.90 / 10.13 / 9.07. */
-  --on-brand:     13 13 13;
+  --brand:        21 128 61;   /* green-700 - dark enough to carry WHITE   */
+  --brand-dark:   22 101 52;    /* green-800 - hover; white reads 7.13:1    */
+  /* What reads ON the brand. Green takes white - black on green looks wrong
+     whatever the arithmetic says - and the green above was chosen dark enough
+     to make that work at 5.02:1. The yellow and ocean themes are the opposite
+     case: they are bright, white on them is 1.92 and 2.14, and dark text is
+     both the convention and 9-10:1. Hence one token rather than one rule. */
+  --on-brand:     255 255 255;
+  /* The brand doing a different job. As a SURFACE it must be dark enough to
+     carry white (green-700, 5.02:1). As TEXT on the dark page it must be
+     light enough to read against it, and green-700 there is only 3.88:1.
+     One colour cannot do both, so the two roles get two variables. */
+  --brand-text:    34 197 94;   /* green-500 - 8.53:1 on the page          */
 
   /* --- SURFACE SYSTEM --- */
   --surface:      26 26 26;     /* #1a1a1a - card panels                   */
@@ -60,6 +64,7 @@
   --brand:        234 179 8;    /* yellow-500 - #eab308                    */
   --brand-dark:   202 138 4;    /* yellow-600 - hover state                */
   --on-brand:     13 13 13;     /* 10.13:1 on the yellow; white is 1.92:1  */
+  --brand-text:  234 179 8;     /* the yellow already reads at 10:1 as text */
 
   /* Status text. The -400 shades are built for dark grounds and read at 7-12:1
      there; on the light theme's white they collapse to 1.5-2.8:1, so the text
@@ -84,6 +89,7 @@
   --brand:        56 189 248;   /* sky-400 - electric blue                 */
   --brand-dark:   14 165 233;   /* sky-500 - hover state                   */
   --on-brand:     13 13 13;     /* 9.07:1 on the sky blue; white is 2.14:1 */
+  --brand-text:   56 189 248;   /* the sky blue already reads at 9:1 as text */
 
   /* Status text. The -400 shades are built for dark grounds and read at 7-12:1
      there; on the light theme's white they collapse to 1.5-2.8:1, so the text
@@ -118,6 +124,7 @@
   /* The one theme where white is right: this green is dark enough that white
      reads at 5.02:1 and near-black would only manage 3.88:1. */
   --on-brand:     255 255 255;
+  --brand-text:   21 128 61;    /* green-700 - 5.02:1 on this theme's white  */
 
   /* Darker shades, because these sit on white here: red-700 6.47:1,
      green-700 5.02:1, amber-700 5.02:1, blue-700 6.70:1. The -400 shades

@@ -8,6 +8,7 @@ export default {
         'brand-dark': 'rgb(var(--brand-dark)   / <alpha-value>)',
         accent:       'rgb(var(--brand)        / <alpha-value>)',
         'on-brand':   'rgb(var(--on-brand)     / <alpha-value>)',
+        'brand-text': 'rgb(var(--brand-text)   / <alpha-value>)',
         info:         'rgb(var(--info-text)    / <alpha-value>)',
         accentShadow: 'rgb(var(--brand-dark)   / <alpha-value>)',
         surface:      'rgb(var(--surface)      / <alpha-value>)',

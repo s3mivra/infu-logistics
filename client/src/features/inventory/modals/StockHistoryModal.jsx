@@ -24,7 +24,7 @@ const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
           <div className="bg-surface p-6 rounded-xl border border-gray-700 shadow-2xl flex flex-col max-w-5xl w-full max-h-[85vh]">
             <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-3 flex-shrink-0">
               <div>
-                <h2 className="text-xl font-bold text-fg">Stock Card: <span className="text-accent">{historyItemName}</span></h2>
+                <h2 className="text-xl font-bold text-fg">Stock Card: <span className="text-brand-text">{historyItemName}</span></h2>
                 {stockHistory.length > 0 && <p className="text-[10px] text-fg/70 mt-0.5">{stockHistory.length} entries total{hUnit ? ` · qty in ${hUnit}` : ''}</p>}
               </div>
               <button onClick={() => setHistoryModalOpen(false)} className="text-fg/70 hover:text-fg font-bold text-xl">✕</button>
@@ -57,7 +57,7 @@ const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
                         {dispChange > 0 ? `+${dispChange}` : dispChange}
                       </td>
                       <td className="py-2 text-right text-fg/80 font-mono text-xs">₱{dispCost.toFixed(2)}</td>
-                      <td className="py-2 text-right text-accent font-bold font-mono">{dispBalance}</td>
+                      <td className="py-2 text-right text-brand-text font-bold font-mono">{dispBalance}</td>
                       <td className="py-2 pl-4 text-fg/80 text-xs">{log.remarks || log.reference}</td>
                     </tr>
                     );
@@ -71,17 +71,17 @@ const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
                 <button
                   onClick={() => setHistoryPage(p => Math.max(p - 1, 1))}
                   disabled={historyPage === 1}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${historyPage === 1 ? 'bg-gray-800 text-fg/70 cursor-not-allowed' : 'bg-surface-2 border border-gray-700 text-fg hover:border-accent hover:text-accent'}`}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${historyPage === 1 ? 'bg-gray-800 text-fg/70 cursor-not-allowed' : 'bg-surface-2 border border-gray-700 text-fg hover:border-accent hover:text-brand-text'}`}
                 >
                   <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                 </button>
                 <span className="text-fg/70 text-xs font-bold tracking-widest">
-                  PAGE <span className="text-accent text-sm">{historyPage}</span> OF {totalHistPages}
+                  PAGE <span className="text-brand-text text-sm">{historyPage}</span> OF {totalHistPages}
                 </span>
                 <button
                   onClick={() => setHistoryPage(p => Math.min(p + 1, totalHistPages))}
                   disabled={historyPage === totalHistPages}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${historyPage === totalHistPages ? 'bg-gray-800 text-fg/70 cursor-not-allowed' : 'bg-surface-2 border border-gray-700 text-fg hover:border-accent hover:text-accent'}`}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${historyPage === totalHistPages ? 'bg-gray-800 text-fg/70 cursor-not-allowed' : 'bg-surface-2 border border-gray-700 text-fg hover:border-accent hover:text-brand-text'}`}
                 >
                   <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                 </button>

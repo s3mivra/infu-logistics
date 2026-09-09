@@ -18,7 +18,7 @@ export default function PriceHistoryModal() {
       <div className="bg-surface p-6 rounded-xl border border-gray-700 shadow-2xl flex flex-col max-w-2xl w-full max-h-[85vh]" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-3 flex-shrink-0">
           <div>
-            <h2 className="text-xl font-bold text-fg flex items-center gap-2"><History size={18} className="text-accent"/> Price History: <span className="text-accent">{priceHistoryProduct?.name}</span></h2>
+            <h2 className="text-xl font-bold text-fg flex items-center gap-2"><History size={18} className="text-brand-text"/> Price History: <span className="text-brand-text">{priceHistoryProduct?.name}</span></h2>
             <p className="text-[10px] text-fg/70 mt-0.5">
               Current: <span className="text-fg font-bold">{money(priceHistoryProduct?.basePrice)}</span>
               {priceHistory.length > 0 && ` · ${priceHistory.length} change${priceHistory.length === 1 ? '' : 's'} recorded`}
@@ -71,7 +71,7 @@ export default function PriceHistoryModal() {
                       As of {new Date(h.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                       <span className="text-fg/70 font-normal normal-case ml-1.5">{new Date(h.date).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
                     </span>
-                    <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${h.type === 'price' ? 'bg-accent/20 text-accent' : 'bg-orange-500/20 text-warning'}`}>
+                    <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${h.type === 'price' ? 'bg-accent/20 text-brand-text' : 'bg-orange-500/20 text-warning'}`}>
                       {h.type === 'price' ? 'Price' : 'Recipe Cost'}
                     </span>
                   </div>

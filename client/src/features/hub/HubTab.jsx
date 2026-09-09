@@ -71,7 +71,7 @@ function NetworkMap({ info, network, card }) {
     <div className={card}>
       <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
         <h3 className="text-fg font-black uppercase tracking-wider text-sm flex items-center gap-2">
-          <Share2 size={15} className="text-accent" /> Network Map
+          <Share2 size={15} className="text-brand-text" /> Network Map
         </h3>
         <div className="flex items-center gap-3 text-[10px] text-fg/70 uppercase tracking-widest">
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" /> Online</span>
@@ -83,7 +83,7 @@ function NetworkMap({ info, network, card }) {
       {active.length === 0 ? (
         <div className="py-8 text-center">
           <div className="inline-block px-6 py-4 rounded-xl border border-accent/40 bg-accent/5">
-            <p className="text-accent font-black text-sm">{info?.tenant || 'This Business'}</p>
+            <p className="text-brand-text font-black text-sm">{info?.tenant || 'This Business'}</p>
             <p className="text-fg/70 text-[10px] uppercase tracking-widest mt-1">Standalone</p>
           </div>
           <p className="text-fg/70 text-xs mt-3">Not linked to any other branch. Generate an invite code above to add one.</p>
@@ -108,7 +108,7 @@ function NetworkMap({ info, network, card }) {
               <Node key={m._id} x={mx[i]} y={Y.main} t={tone(m.partnerSlug)}
                 title={m.partnerName || m.partnerSlug} sub={m.partnerSlug} />
             ))}
-            <Node x={selfX} y={Y.self} t="text-accent" title={info?.tenant || 'This Business'} sub="you" />
+            <Node x={selfX} y={Y.self} t="text-brand-text" title={info?.tenant || 'This Business'} sub="you" />
             {subs.map((s, i) => (
               <Node key={s._id} x={sx[i]} y={Y.sub} t={tone(s.partnerSlug)}
                 title={s.partnerName || s.partnerSlug} sub={s.partnerSlug} />
@@ -523,11 +523,11 @@ export default function HubTab({ ctx }) {
       {/* ── My Business ID ── */}
       <div className={card}>
         <div className="flex items-center gap-2 mb-3">
-          <Network size={16} className="text-accent" />
+          <Network size={16} className="text-brand-text" />
           <h3 className="text-fg font-black uppercase tracking-wider text-sm">My Business ID</h3>
         </div>
         <div className="flex items-center gap-3">
-          <code className="flex-1 bg-page-bg border border-white/10 rounded-lg px-4 py-3 text-accent font-mono font-black text-lg tracking-widest">
+          <code className="flex-1 bg-page-bg border border-white/10 rounded-lg px-4 py-3 text-brand-text font-mono font-black text-lg tracking-widest">
             {info?.tenant ?? '…'}
           </code>
           <button onClick={load} className={btn('ghost')}><RefreshCw size={14} /></button>
@@ -548,7 +548,7 @@ export default function HubTab({ ctx }) {
               <div key={p._id} className="flex items-center justify-between gap-3 py-2 border-b border-white/5 last:border-0">
                 <div>
                   <div className="flex items-center gap-2">
-                    <Link2 size={13} className="text-accent" />
+                    <Link2 size={13} className="text-brand-text" />
                     <span className="text-fg font-bold text-sm">{p.partnerName || p.partnerSlug}</span>
                     {/* `role` is OUR side of the relationship, not theirs:
                         role==='hub' means we are the hub, so this partner is
@@ -616,7 +616,7 @@ export default function HubTab({ ctx }) {
         <div className={card}>
           <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
             <h3 className="text-fg font-black uppercase tracking-wider text-sm flex items-center gap-2">
-              <LayoutGrid size={15} className="text-accent" /> Network Overview
+              <LayoutGrid size={15} className="text-brand-text" /> Network Overview
             </h3>
             <button onClick={loadNetwork} disabled={networkLoading} className={btn('ghost')}>
               {networkLoading ? 'Loading…' : network ? <RefreshCw size={13} /> : 'Load Network Data'}
@@ -674,7 +674,7 @@ export default function HubTab({ ctx }) {
                                   {r.perBranch[b.label] != null ? `${r.perBranch[b.label]} ${r.unit}` : '-'}
                                 </td>
                               ))}
-                              <td className="py-2 pl-3 text-right tabular-nums font-black text-accent">{total} {r.unit}</td>
+                              <td className="py-2 pl-3 text-right tabular-nums font-black text-brand-text">{total} {r.unit}</td>
                             </tr>
                           );
                         })}
@@ -732,13 +732,13 @@ export default function HubTab({ ctx }) {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between py-2 px-3 bg-page-bg border border-white/8 rounded-lg">
                     <span className="text-fg font-bold text-sm">This Business ({network.own.tenant})</span>
-                    <span className="text-[10px] font-black bg-accent/15 text-accent px-2 py-0.5 rounded uppercase">Current</span>
+                    <span className="text-[10px] font-black bg-accent/15 text-brand-text px-2 py-0.5 rounded uppercase">Current</span>
                   </div>
                   {network.partners.map(p => (
                     <a key={p.partnerSlug} href={p.dashboardUrl} target="_blank" rel="noopener noreferrer"
                       className="flex items-center justify-between py-2 px-3 bg-page-bg border border-white/8 rounded-lg hover:border-accent/40 transition">
                       <span className="text-fg font-bold text-sm">{p.partnerName || p.partnerSlug}</span>
-                      <span className="flex items-center gap-1.5 text-accent text-xs font-bold">Open <ExternalLink size={12} /></span>
+                      <span className="flex items-center gap-1.5 text-brand-text text-xs font-bold">Open <ExternalLink size={12} /></span>
                     </a>
                   ))}
                 </div>
@@ -837,7 +837,7 @@ export default function HubTab({ ctx }) {
                                   <tr key={b.slug} className="border-b border-white/5">
                                     <td className="py-2 pl-3 text-fg/80">
                                       {b.name}
-                                      {b.self && <span className="ml-2 text-[9px] font-black bg-accent/15 text-accent px-1.5 py-0.5 rounded uppercase">You</span>}
+                                      {b.self && <span className="ml-2 text-[9px] font-black bg-accent/15 text-brand-text px-1.5 py-0.5 rounded uppercase">You</span>}
                                     </td>
                                     <td className="py-2 pl-3">
                                       {b.branchCodeValid
@@ -924,7 +924,7 @@ export default function HubTab({ ctx }) {
               <p className="text-fg/70 text-xs mb-3">Share this code with another business. They redeem it to link with you. Code expires in 24 h.</p>
               {inviteCode ? (
                 <div className="flex items-center gap-2">
-                  <code className="flex-1 bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-accent font-mono font-bold text-sm tracking-widest">
+                  <code className="flex-1 bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-brand-text font-mono font-bold text-sm tracking-widest">
                     {inviteCode}
                   </code>
                   <button onClick={copyCode} className={btn('ghost')}>
@@ -970,7 +970,7 @@ export default function HubTab({ ctx }) {
       {partners.length > 0 && (
         <div className={card}>
           <div className="flex items-center gap-2 mb-2">
-            <Send size={15} className="text-accent" />
+            <Send size={15} className="text-brand-text" />
             <h3 className="text-fg font-black uppercase tracking-wider text-sm">New Transfer</h3>
           </div>
           {/* Two directions through the same panel: SEND pushes stock you
@@ -1029,7 +1029,7 @@ export default function HubTab({ ctx }) {
                       the dropdown below - toggling this creates its
                       Inventory record first, so the shipment still ships a
                       real, stock-backed item. */}
-                  <button onClick={() => setSendManualMode(m => !m)} className="text-[10px] font-bold uppercase tracking-wider text-accent hover:underline">
+                  <button onClick={() => setSendManualMode(m => !m)} className="text-[10px] font-bold uppercase tracking-wider text-brand-text hover:underline">
                     {sendManualMode ? '← Pick from Inventory instead' : '+ New product not yet in Inventory'}
                   </button>
                 </div>
@@ -1101,7 +1101,7 @@ export default function HubTab({ ctx }) {
                           <td className="py-2 px-3 text-right tabular-nums text-fg">{line.qty} {line.unit}</td>
                           <td className="py-2 px-3 text-fg/75 italic">{line.note || '-'}</td>
                           <td className="py-2 px-3 text-right">
-                            <button onClick={() => removeFromCart(i)} className="text-red-400/60 hover:text-danger text-[10px] font-bold uppercase">Remove</button>
+                            <button onClick={() => removeFromCart(i)} className="text-danger/80 hover:text-danger text-[10px] font-bold uppercase">Remove</button>
                           </td>
                         </tr>
                       ))}
@@ -1188,7 +1188,7 @@ export default function HubTab({ ctx }) {
                           <td className="py-2 px-3 text-right tabular-nums text-fg">{line.qty} {line.unit}</td>
                           <td className="py-2 px-3 text-fg/75 italic">{line.note || '-'}</td>
                           <td className="py-2 px-3 text-right">
-                            <button onClick={() => removeFromAskCart(i)} className="text-red-400/60 hover:text-danger text-[10px] font-bold uppercase">Remove</button>
+                            <button onClick={() => removeFromAskCart(i)} className="text-danger/80 hover:text-danger text-[10px] font-bold uppercase">Remove</button>
                           </td>
                         </tr>
                       ))}
@@ -1227,7 +1227,7 @@ export default function HubTab({ ctx }) {
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div className="min-w-0">
                   <p className="text-fg font-bold text-sm">
-                    {r.fromSlug === info?.tenant ? 'To' : 'From'} <span className="text-accent">{otherName}</span>
+                    {r.fromSlug === info?.tenant ? 'To' : 'From'} <span className="text-brand-text">{otherName}</span>
                     <span className={`ml-2 text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${negoStatusColor[r.status] || 'bg-white/10 text-fg/70'}`}>{r.status}</span>
                     {r.round > 1 && <span className="ml-1.5 text-[9px] text-fg/65 font-bold uppercase">round {r.round}</span>}
                   </p>
@@ -1292,14 +1292,14 @@ export default function HubTab({ ctx }) {
         return (
           <div className={card}>
             <div className="flex items-center gap-2 mb-3">
-              <RefreshCw size={15} className="text-accent" />
+              <RefreshCw size={15} className="text-brand-text" />
               <h3 className="text-fg font-black uppercase tracking-wider text-sm">Transfer Requests</h3>
-              {needsMe.length > 0 && <span className="text-[9px] font-black uppercase bg-brand/20 text-brand px-2 py-0.5 rounded-full">{needsMe.length} need{needsMe.length === 1 ? 's' : ''} you</span>}
+              {needsMe.length > 0 && <span className="text-[9px] font-black uppercase bg-brand/20 text-brand-text px-2 py-0.5 rounded-full">{needsMe.length} need{needsMe.length === 1 ? 's' : ''} you</span>}
             </div>
 
             {needsMe.length > 0 && (
               <div className="space-y-2 mb-4">
-                <p className="text-[10px] font-black uppercase tracking-widest text-brand">Needs Your Response</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-brand-text">Needs Your Response</p>
                 {needsMe.map(r => <RequestCard key={r._id} r={r} actionable />)}
               </div>
             )}
@@ -1338,7 +1338,7 @@ export default function HubTab({ ctx }) {
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="min-w-0">
                     <p className="text-fg font-bold text-sm">
-                      To <span className="text-accent">{slip.partnerName}</span>
+                      To <span className="text-brand-text">{slip.partnerName}</span>
                       <span className="text-fg/65 font-mono text-[10px] ml-2">{slip.shipmentRef}</span>
                     </p>
                     <p className="text-fg/70 text-[11px]">
@@ -1435,7 +1435,7 @@ export default function HubTab({ ctx }) {
                     <td className="py-2 text-right">
                       {t.direction === 'inbound' && t.status === 'Pending' && (
                         <div className="flex gap-1 justify-end">
-                          <button onClick={() => openAccept(t)} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-accent/15 text-accent hover:bg-accent/25 min-h-[28px]">Accept</button>
+                          <button onClick={() => openAccept(t)} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-accent/15 text-brand-text hover:bg-accent/25 min-h-[28px]">Accept</button>
                           <button onClick={() => act(t._id, 'reject')} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-red-500/10 text-danger hover:bg-red-500/20 min-h-[28px]">Reject</button>
                         </div>
                       )}
@@ -1463,7 +1463,7 @@ export default function HubTab({ ctx }) {
             <p className="text-fg/75 text-sm mb-4">
               Receiving <span className="text-fg font-bold">{acceptTarget.qtyBase} {acceptTarget.unit}</span> of{' '}
               <span className="text-fg font-bold">{acceptTarget.itemName}</span> from{' '}
-              <span className="text-accent font-bold">{acceptTarget.partnerName || acceptTarget.partnerSlug}</span>
+              <span className="text-brand-text font-bold">{acceptTarget.partnerName || acceptTarget.partnerSlug}</span>
             </p>
 
             <div className="space-y-3">
@@ -1506,7 +1506,7 @@ export default function HubTab({ ctx }) {
           <div className="bg-surface border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-elev-3">
             <h3 className="text-fg font-black text-base mb-1">Counter-Offer</h3>
             <p className="text-fg/75 text-sm mb-4">
-              Adjust what you can actually give <span className="text-accent font-bold">{counterTarget.fromSlug === info?.tenant ? counterTarget.toName : counterTarget.fromName}</span>.
+              Adjust what you can actually give <span className="text-brand-text font-bold">{counterTarget.fromSlug === info?.tenant ? counterTarget.toName : counterTarget.fromName}</span>.
               Reduce a quantity or remove a line - it goes back to them to accept or decline.
             </p>
 
@@ -1523,7 +1523,7 @@ export default function HubTab({ ctx }) {
                     className="w-24 bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-fg text-sm text-right outline-none focus:border-accent"
                   />
                   <span className="text-fg/70 text-xs w-10">{l.unit}</span>
-                  <button onClick={() => removeCounterLine(i)} className="text-red-400/60 hover:text-danger text-[10px] font-bold uppercase px-1">✕</button>
+                  <button onClick={() => removeCounterLine(i)} className="text-danger/80 hover:text-danger text-[10px] font-bold uppercase px-1">✕</button>
                 </div>
               ))}
               {counterLines.length === 0 && <p className="text-fg/65 text-xs italic text-center py-3">Every line removed - add at least one back to counter.</p>}
@@ -1551,7 +1551,7 @@ export default function HubTab({ ctx }) {
           <div className="bg-surface border border-red-500/25 rounded-2xl p-6 w-full max-w-md shadow-elev-3">
             <h3 className="text-fg font-black text-base mb-1">Decline Request</h3>
             <p className="text-fg/75 text-sm mb-4">
-              This closes the negotiation with <span className="text-accent font-bold">{declineTarget.fromSlug === info?.tenant ? declineTarget.toName : declineTarget.fromName}</span>.
+              This closes the negotiation with <span className="text-brand-text font-bold">{declineTarget.fromSlug === info?.tenant ? declineTarget.toName : declineTarget.fromName}</span>.
               Your reason is visible to them.
             </p>
             <textarea value={declineReason} onChange={e => setDeclineReason(e.target.value)} rows={3}

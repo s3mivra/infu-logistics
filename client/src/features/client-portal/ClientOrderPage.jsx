@@ -911,7 +911,7 @@ export default function ClientOrderPage() {
         {/* POS reference - show this to staff so they can pull up the same order. */}
         <div className="bg-page-bg border border-brand/30 rounded-2xl px-4 py-3 mb-3 w-full max-w-sm">
           <p className="text-[10px] uppercase tracking-widest text-fg/70 font-black mb-1">Order Reference (show to staff)</p>
-          <p className="text-brand font-mono font-black text-lg tracking-wider">{successOrder.orderNumber}</p>
+          <p className="text-brand-text font-mono font-black text-lg tracking-wider">{successOrder.orderNumber}</p>
           {successOrder.billingNumber && (
             <p className="text-fg/75 text-[11px] font-mono mt-0.5">Billing: <span className="text-fg/80 font-bold">{successOrder.billingNumber}</span></p>
           )}
@@ -985,7 +985,7 @@ export default function ClientOrderPage() {
 
           {/* Sticky close bar - the document itself has no chrome */}
           <div className="flex items-center justify-between px-4 sm:px-5 py-3 border-b border-white/10 flex-shrink-0">
-            <p className="font-black text-accent text-[10px] uppercase tracking-widest">Order Slip</p>
+            <p className="font-black text-brand-text text-[10px] uppercase tracking-widest">Order Slip</p>
             <button onClick={() => setSlipOrder(null)} className="p-2 -mr-2 rounded-xl text-fg/70 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
               <X size={16} />
             </button>
@@ -1005,7 +1005,7 @@ export default function ClientOrderPage() {
                     ))}
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-accent">Order Slip</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-brand-text">Order Slip</p>
                     <p className="font-mono font-black text-sm mt-0.5">{slipOrder.orderNumber}</p>
                     <span className={`inline-block mt-1.5 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
                       terminated ? 'bg-red-100 text-red-700'
@@ -1021,18 +1021,18 @@ export default function ClientOrderPage() {
               {/* Billed to / order meta */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 px-5 py-4 border-b border-neutral-200">
                 <div>
-                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-accent mb-1">Billed to</p>
+                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-brand-text mb-1">Billed to</p>
                   <p className="font-bold text-sm leading-tight">{clientInfo?.name || clientInfo?.username || 'Client'}</p>
-                  {clientInfo?.clientCode && <p className="text-[11px] text-accent font-mono">{clientInfo.clientCode}</p>}
+                  {clientInfo?.clientCode && <p className="text-[11px] text-brand-text font-mono">{clientInfo.clientCode}</p>}
                 </div>
                 <div className="sm:text-right space-y-0.5">
-                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-accent mb-1">Details</p>
-                  <p className="text-[11.5px]"><span className="text-accent">Placed </span>{new Date(slipOrder.createdAt).toLocaleString()}</p>
+                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-brand-text mb-1">Details</p>
+                  <p className="text-[11.5px]"><span className="text-brand-text">Placed </span>{new Date(slipOrder.createdAt).toLocaleString()}</p>
                   {slipOrder.billingNumber && (
-                    <p className="text-[11.5px]"><span className="text-accent">Billing </span><span className="font-mono">{slipOrder.billingNumber}</span></p>
+                    <p className="text-[11.5px]"><span className="text-brand-text">Billing </span><span className="font-mono">{slipOrder.billingNumber}</span></p>
                   )}
                   {slipOrder.paymentMethod && (
-                    <p className="text-[11.5px]"><span className="text-accent">Payment </span>{PAYMENT_LABELS[slipOrder.paymentMethod] || slipOrder.paymentMethod}</p>
+                    <p className="text-[11.5px]"><span className="text-brand-text">Payment </span>{PAYMENT_LABELS[slipOrder.paymentMethod] || slipOrder.paymentMethod}</p>
                   )}
                 </div>
               </div>
@@ -1052,7 +1052,7 @@ export default function ClientOrderPage() {
                     two halves per cell (hidden at the two outer ends) so the
                     track meets each dot instead of trailing off one side. */}
                 {terminated ? (
-                  <p className="text-[11.5px] text-accent">{v.msg}</p>
+                  <p className="text-[11.5px] text-brand-text">{v.msg}</p>
                 ) : (
                   <ol className="flex items-start gap-0">
                     {SLIP_STEPS.map((s, i) => {
@@ -1093,7 +1093,7 @@ export default function ClientOrderPage() {
                   recorded on the order itself, so the slip can state what was
                   charged. The footer still notes the team confirms the final total. */}
               <div className="px-5 py-4">
-                <div className="grid gap-2 pb-2 mb-2 border-b border-neutral-300 text-[9px] font-black uppercase tracking-[0.12em] text-accent grid-cols-[1rem_1fr_2.75rem_4.25rem_1.75rem_4.5rem]">
+                <div className="grid gap-2 pb-2 mb-2 border-b border-neutral-300 text-[9px] font-black uppercase tracking-[0.12em] text-brand-text grid-cols-[1rem_1fr_2.75rem_4.25rem_1.75rem_4.5rem]">
                   <span>#</span>
                   <span>Item</span>
                   <span className="text-right">Unit</span>
@@ -1101,7 +1101,7 @@ export default function ClientOrderPage() {
                   <span className="text-right">Qty</span>
                   <span className="text-right">Amount</span>
                 </div>
-                {items.length === 0 && <p className="text-[11.5px] text-accent italic py-2">No items on this order.</p>}
+                {items.length === 0 && <p className="text-[11.5px] text-brand-text italic py-2">No items on this order.</p>}
                 {items.map((item, i) => {
                   const gross = Number(item.price || 0);
                   const pct = lineDiscPct(item);
@@ -1116,12 +1116,12 @@ export default function ClientOrderPage() {
                   const sizeLabel = (prod?.unitLabel || prod?.baseSize || '').trim();
                   return (
                     <div key={i} className="grid gap-2 py-2 border-b border-neutral-100 text-[12px] items-start grid-cols-[1rem_1fr_2.75rem_4.25rem_1.75rem_4.5rem]">
-                      <span className="text-accent tabular-nums">{i + 1}</span>
+                      <span className="text-brand-text tabular-nums">{i + 1}</span>
                       <span className="min-w-0">
                         <span className="font-semibold block leading-snug break-words">{item.name}</span>
-                        {item.productCode && <span className="text-[10px] text-accent font-mono">{item.productCode}</span>}
+                        {item.productCode && <span className="text-[10px] text-brand-text font-mono">{item.productCode}</span>}
                         {pct > 0 && (
-                          <span className="text-[10px] text-accent block">
+                          <span className="text-[10px] text-brand-text block">
                             <span className="line-through">{peso(gross)}</span> <span className="font-bold">-{pct}%</span>
                           </span>
                         )}
@@ -1146,11 +1146,11 @@ export default function ClientOrderPage() {
 
                 {/* Totals */}
                 <div className="flex items-baseline justify-between gap-3 pt-3 mt-1">
-                  <span className="text-[10px] font-black uppercase tracking-[0.12em] text-accent">
+                  <span className="text-[10px] font-black uppercase tracking-[0.12em] text-brand-text">
                     {totalQty} item{totalQty === 1 ? '' : 's'}
                   </span>
                   <span className="text-right">
-                    <span className="text-[9px] font-black uppercase tracking-[0.12em] text-accent block leading-none mb-0.5">Total</span>
+                    <span className="text-[9px] font-black uppercase tracking-[0.12em] text-brand-text block leading-none mb-0.5">Total</span>
                     <span className="font-black text-base tabular-nums leading-none">{peso(orderTotal(slipOrder))}</span>
                   </span>
                 </div>
@@ -1253,7 +1253,7 @@ export default function ClientOrderPage() {
         <div className="flex items-center gap-2 min-w-0">
           {portal.businessLogo
             ? <img src={portal.businessLogo} alt="" className="w-7 h-7 rounded-lg object-cover shrink-0" />
-            : <Package size={18} className="text-brand shrink-0" />}
+            : <Package size={18} className="text-brand-text shrink-0" />}
           <span className="font-black text-fg text-xs sm:text-sm uppercase tracking-widest truncate">{companyName}</span>
         </div>
 
@@ -1380,7 +1380,7 @@ export default function ClientOrderPage() {
           <aside className="w-full max-w-sm h-full bg-sidebar-bg border-l border-white/10 flex flex-col animate-slide-in-right">
             <div className="flex items-center justify-between px-4 h-14 border-b border-white/5 flex-shrink-0">
               <h2 className="font-black text-fg text-sm uppercase tracking-widest flex items-center gap-2">
-                <Package size={16} className="text-brand" /> My Orders
+                <Package size={16} className="text-brand-text" /> My Orders
               </h2>
               <button onClick={() => setQueueOpen(false)} className="p-2 rounded-xl text-fg/70 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
                 <X size={16} />
@@ -1411,7 +1411,7 @@ export default function ClientOrderPage() {
                       </p>
                     </div>
                     <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded shrink-0 ${
-                      q.status === 'Quoted' ? 'text-brand bg-brand/10' : 'text-warning bg-amber-400/10'
+                      q.status === 'Quoted' ? 'text-brand-text bg-brand/10' : 'text-warning bg-amber-400/10'
                     }`}>
                       {q.status === 'Quoted' ? 'Priced' : 'With us'}
                     </span>
@@ -1606,7 +1606,7 @@ export default function ClientOrderPage() {
 
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 flex-shrink-0">
               <h2 className="font-black text-fg text-sm uppercase tracking-widest flex items-center gap-2">
-                <Settings size={15} className="text-brand" /> My settings
+                <Settings size={15} className="text-brand-text" /> My settings
               </h2>
               <button onClick={() => setSettingsOpen(false)} className="p-2 -mr-2 rounded-xl text-fg/70 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
                 <X size={16} />
@@ -1729,7 +1729,7 @@ export default function ClientOrderPage() {
             {welcomeTitle && (
               <p className="text-fg font-black text-sm">
                 {welcomeTitle}
-                {clientInfo && <span className="text-brand">, {clientInfo.name || clientInfo.username}</span>}
+                {clientInfo && <span className="text-brand-text">, {clientInfo.name || clientInfo.username}</span>}
               </p>
             )}
             {welcomeMessage && (
@@ -1795,7 +1795,7 @@ export default function ClientOrderPage() {
       <div className="flex-1 p-3 sm:p-4 pb-28 overflow-y-auto">
         {loadingProducts ? (
           <div className="flex items-center justify-center py-20">
-            <Loader2 size={28} className="animate-spin text-brand" />
+            <Loader2 size={28} className="animate-spin text-brand-text" />
           </div>
         ) : visibleProducts.length === 0 ? (
           <div className="flex flex-col items-center py-20 text-center">
@@ -1876,7 +1876,7 @@ export default function ClientOrderPage() {
                   <span className="text-fg font-black text-sm w-6 text-center tabular-nums">{item.quantity}</span>
                   <button
                     onClick={() => changeQty(item.productId, 1)}
-                    className="w-8 h-8 rounded-lg bg-brand/20 hover:bg-brand/30 text-brand flex items-center justify-center transition"
+                    className="w-8 h-8 rounded-lg bg-brand/20 hover:bg-brand/30 text-brand-text flex items-center justify-center transition"
                     aria-label={`Increase ${item.name}`}
                   >
                     <Plus size={13} />
@@ -1945,7 +1945,7 @@ export default function ClientOrderPage() {
               {needsReference && (
                 <div className="rounded-xl border border-brand/30 bg-brand/10 p-3 space-y-2">
                   <div className="flex items-center gap-1.5">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-brand">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-brand-text">
                       {isCheckPayment ? 'Check Number' : 'Reference Number'}
                     </p>
                     <span className="text-[9px] font-black uppercase text-danger">Required</span>
@@ -1980,7 +1980,7 @@ export default function ClientOrderPage() {
                 <p className="text-xs text-fg/65">
                   Default: {PAYMENT_LABELS[clientInfo.paymentMethod] || clientInfo.paymentMethod}
                   {' '}
-                  <button onClick={() => setPaymentMethod(clientInfo.paymentMethod)} className="text-brand underline">Reset</button>
+                  <button onClick={() => setPaymentMethod(clientInfo.paymentMethod)} className="text-brand-text underline">Reset</button>
                 </p>
               )}
             </div>

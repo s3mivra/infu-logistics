@@ -89,7 +89,7 @@ function App() {
         <Suspense fallback={
           <div className="min-h-screen bg-page-bg flex flex-col items-center justify-center">
             <div className="w-12 h-12 border-4 border-t-transparent rounded-full animate-spin mb-4 border-brand"></div>
-            <p className="text-brand font-bold tracking-widest uppercase">Loading System...</p>
+            <p className="text-brand-text font-bold tracking-widest uppercase">Loading System...</p>
           </div>
         }>
           <Routes>

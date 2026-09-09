@@ -15,7 +15,7 @@ export default function RevolvingFundReplenishModal() {
             <div>
               <h2 className="text-fg font-black text-lg">Replenish Fund</h2>
               <p className="text-fg/65 text-xs font-bold uppercase tracking-widest mt-0.5">
-                {rfActiveFund.name} · Shortfall: <span className="text-brand">₱{(rfActiveFund.initialAmount - rfActiveFund.currentBalance).toFixed(2)}</span>
+                {rfActiveFund.name} · Shortfall: <span className="text-brand-text">₱{(rfActiveFund.initialAmount - rfActiveFund.currentBalance).toFixed(2)}</span>
               </p>
             </div>
             <button onClick={() => setRfReplModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/75 flex items-center justify-center transition"><X size={16}/></button>

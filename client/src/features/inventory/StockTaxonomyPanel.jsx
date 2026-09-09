@@ -104,7 +104,7 @@ export default function StockTaxonomyPanel({
               onClick={async () => { setBackfilling(true); try { await backfillStockCategoryPrefixes(); } finally { setBackfilling(false); } }}
               disabled={backfilling}
               title="Fill in the prefix for any category left blank - derives it from that category's own existing item codes. Never touches an already-set prefix."
-              className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded bg-accent/20 text-accent hover:bg-accent/30 transition disabled:opacity-50 shrink-0"
+              className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded bg-accent/20 text-brand-text hover:bg-accent/30 transition disabled:opacity-50 shrink-0"
             >
               {backfilling ? 'Filling…' : 'Fill In Prefixes'}
             </button>
@@ -137,7 +137,7 @@ export default function StockTaxonomyPanel({
                   <div className="min-w-0">
                     <p className="text-white font-bold text-sm truncate">
                       {c.name}
-                      {c.prefix && <span className="ml-2 text-[10px] font-mono bg-brand/20 text-brand px-1.5 py-0.5 rounded">{c.prefix}</span>}
+                      {c.prefix && <span className="ml-2 text-[10px] font-mono bg-brand/20 text-brand-text px-1.5 py-0.5 rounded">{c.prefix}</span>}
                       {c.isActive === false && <span className="ml-2 text-[9px] text-danger uppercase">inactive</span>}
                     </p>
                     {c.note && <p className="text-white/50 text-[11px] truncate">{c.note}</p>}

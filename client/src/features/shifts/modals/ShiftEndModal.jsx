@@ -26,7 +26,7 @@ export default function ShiftEndModal() {
 
               <div className="bg-surface-2 rounded-xl p-4 space-y-3 text-sm">
                 <div className="flex justify-between"><span className="text-fg/70">Opening Cash</span><span className="font-bold text-fg">₱{(shiftReconcile.result.startingCash||0).toFixed(2)}</span></div>
-                <div className="flex justify-between"><span className="text-fg/70">Cash Sales</span><span className="font-bold text-accent">+₱{(shiftReconcile.result.salesTotal||0).toFixed(2)}</span></div>
+                <div className="flex justify-between"><span className="text-fg/70">Cash Sales</span><span className="font-bold text-brand-text">+₱{(shiftReconcile.result.salesTotal||0).toFixed(2)}</span></div>
                 <div className="flex justify-between border-t border-gray-700 pt-3"><span className="text-fg/70">Expected in Register</span><span className="font-black text-fg text-base">₱{(shiftReconcile.result.expectedCash||0).toFixed(2)}</span></div>
                 <div className="flex justify-between"><span className="text-fg/70">Actual Cash Count</span><span className="font-black text-fg text-base">₱{(shiftReconcile.result.actualCash||0).toFixed(2)}</span></div>
                 <div className={`flex justify-between pt-1 border-t border-gray-700 font-black text-base ${shiftReconcile.result.variance >= 0 ? 'text-success' : 'text-danger'}`}>
@@ -97,7 +97,7 @@ export default function ShiftEndModal() {
             <>
               <div className="text-center">
                 <div className="w-14 h-14 bg-accent/10 border border-accent/30 rounded-2xl flex items-center justify-center mx-auto mb-3">
-                  <DollarSign size={26} className="text-accent" />
+                  <DollarSign size={26} className="text-brand-text" />
                 </div>
                 <h2 className="text-xl font-black text-fg tracking-wider uppercase">End of Shift</h2>
                 <p className="text-fg/70 text-sm mt-1">Count your register before logging out.</p>
@@ -119,8 +119,8 @@ export default function ShiftEndModal() {
                   ))}
                 </div>
                 <div className="flex justify-between items-center bg-brand/10 border border-brand/30 rounded-xl px-4 py-2.5">
-                  <span className="text-brand font-black uppercase tracking-wider text-xs">Total Count</span>
-                  <span className="text-brand font-black text-xl tabular-nums">₱{denomTotal.toFixed(2)}</span>
+                  <span className="text-brand-text font-black uppercase tracking-wider text-xs">Total Count</span>
+                  <span className="text-brand-text font-black text-xl tabular-nums">₱{denomTotal.toFixed(2)}</span>
                 </div>
                 <p className="text-[10px] text-fg/65 text-center">Or type total directly:</p>
                 <input type="number" min="0" step="0.01" placeholder="0.00"

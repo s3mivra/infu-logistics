@@ -36,7 +36,7 @@ export default function EditInventoryModal() {
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 custom-scrollbar">
           <div className="bg-white/5 rounded-xl p-3 border border-white/10">
             <p className="text-fg/60 text-[10px] font-bold uppercase">Current Stock</p>
-            <p className="text-2xl text-brand font-black tabular-nums">
+            <p className="text-2xl text-brand-text font-black tabular-nums">
               {d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}{' '}
               <span className="text-sm text-fg/60 font-bold">{d.isPacked ? 'pcs' : d.unit}</span>
             </p>

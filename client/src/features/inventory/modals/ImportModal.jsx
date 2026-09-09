@@ -132,7 +132,7 @@ export default function ImportModal() {
                     {showTotal && (
                       <tr className="border-b border-white/10 bg-brand/10">
                         <td colSpan={3} className="px-4 py-2 text-fg/60 font-black text-[10px] uppercase tracking-widest text-right">Total after import</td>
-                        <td className="px-2 py-2 text-right text-brand font-black tabular-nums">{fmtQty(finalTotalDisplay)}</td>
+                        <td className="px-2 py-2 text-right text-brand-text font-black tabular-nums">{fmtQty(finalTotalDisplay)}</td>
                         <td colSpan={3}></td>
                       </tr>
                     )}

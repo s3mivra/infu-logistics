@@ -158,7 +158,7 @@ export default function RefundModal() {
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-[10px] text-fg/70 font-bold uppercase">Replacement Item(s) *</label>
                   <button type="button" onClick={() => setReplacements(r => [...r, { productId: '', qty: '1' }])}
-                    className="text-[10px] font-bold text-brand hover:text-brand/80">+ Add another</button>
+                    className="text-[10px] font-bold text-brand-text hover:text-brand/80">+ Add another</button>
                 </div>
                 <div className="space-y-1.5">
                   {replacements.map((r, i) => (

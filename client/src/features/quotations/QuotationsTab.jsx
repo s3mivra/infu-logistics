@@ -18,7 +18,7 @@ const inputCls = 'w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 
 
 const STATUS = {
   Requested: { tone: 'text-warning bg-amber-400/10', icon: Clock, blurb: 'Waiting for you to price it' },
-  Quoted:    { tone: 'text-brand bg-brand/10', icon: Send, blurb: 'Sent, waiting on the client' },
+  Quoted:    { tone: 'text-brand-text bg-brand/10', icon: Send, blurb: 'Sent, waiting on the client' },
   Accepted:  { tone: 'text-success bg-green-400/10', icon: CheckCircle, blurb: 'Accepted' },
   Declined:  { tone: 'text-fg/70 bg-white/5', icon: XCircle, blurb: 'Declined' },
   Expired:   { tone: 'text-fg/70 bg-white/5', icon: AlertCircle, blurb: 'Ran past its validity date' },
@@ -127,7 +127,7 @@ export default function QuotationsTab() {
                     </td>
                     <td className="px-3 py-2.5 text-right">
                       <button onClick={() => setOpen(q._id)}
-                        className="text-[9px] bg-brand/10 hover:bg-brand/20 text-brand px-2.5 py-1 rounded font-bold uppercase tracking-wider transition">
+                        className="text-[9px] bg-brand/10 hover:bg-brand/20 text-brand-text px-2.5 py-1 rounded font-bold uppercase tracking-wider transition">
                         {q.status === 'Requested' ? 'Price it' : 'Open'}
                       </button>
                     </td>
@@ -242,7 +242,7 @@ function QuoteSheet({ id, apiFetch, onBack }) {
             <tfoot>
               <tr className="border-t border-white/10">
                 <td colSpan={4} className="px-3 py-2.5 text-right font-black text-fg">Quote total</td>
-                <td className="px-3 py-2.5 text-right tabular-nums font-black text-brand">{peso(total)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums font-black text-brand-text">{peso(total)}</td>
               </tr>
             </tfoot>
           </table>

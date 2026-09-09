@@ -133,7 +133,7 @@ export default function ClientsTab() {
     <div className="p-4 sm:p-6 space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <div className="w-10 h-10 rounded-xl bg-brand/15 border border-brand/30 flex items-center justify-center shrink-0">
-          <Users size={19} className="text-brand" />
+          <Users size={19} className="text-brand-text" />
         </div>
         <div className="flex-1 min-w-0">
           <h1 className="text-xl font-black text-fg leading-none">Clients</h1>
@@ -153,7 +153,7 @@ export default function ClientsTab() {
           />
         </div>
         <button onClick={() => downloadDataset?.('clients')}
-          className="flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition">
+          className="flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand-text px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition">
           <Download size={13} /> Export
         </button>
         <button onClick={() => downloadDataset?.('clients', { template: true })}
@@ -183,7 +183,9 @@ export default function ClientsTab() {
       <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
         <table className="w-full text-sm min-w-[720px]">
           <thead>
-            <tr className="bg-accent text-on-brand text-[10px] uppercase tracking-widest border-b border-white/10">
+            {/* Every other table in the app heads its columns on the panel's own
+                ground; a solid green bar here made Clients look like a different app. */}
+            <tr className="bg-surface-2 text-fg/80 text-[10px] uppercase tracking-widest border-b border-white/10">
               <th className="text-left py-3 px-4">Client</th>
               <th className="text-left py-3">Code</th>
               <th className="text-right py-3">Orders</th>
@@ -248,7 +250,7 @@ export default function ClientsTab() {
                           {typeof c.lifetimeValue === 'number' && (
                             <span className="bg-brand/10 border border-brand/25 rounded-lg px-3 py-1.5 text-xs">
                               <span className="text-brand/80 font-bold">Lifetime</span>
-                              <span className="text-brand font-black tabular-nums ml-2">{peso(c.lifetimeValue)}</span>
+                              <span className="text-brand-text font-black tabular-nums ml-2">{peso(c.lifetimeValue)}</span>
                             </span>
                           )}
                         </div>

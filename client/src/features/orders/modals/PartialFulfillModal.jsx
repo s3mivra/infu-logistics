@@ -97,7 +97,7 @@ const items = partialModal.items || [];
           {/* Scan to pay, at the moment of paying. */}
           {scannable && systemSettings?.paymentQrImage && (
             <button type="button" onClick={() => setPayQrOpen?.(true)}
-              className="flex items-center justify-center gap-1.5 w-full px-3 py-2.5 rounded-xl bg-brand/15 text-brand hover:bg-brand/25 font-bold text-xs uppercase tracking-wider transition">
+              className="flex items-center justify-center gap-1.5 w-full px-3 py-2.5 rounded-xl bg-brand/15 text-brand-text hover:bg-brand/25 font-bold text-xs uppercase tracking-wider transition">
               Show Pay QR
             </button>
           )}

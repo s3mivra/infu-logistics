@@ -239,14 +239,14 @@ export default function ProductionTab({ ctx }) {
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between border-b border-white/10 pb-3 mb-5 flex-wrap gap-3">
         <h2 className="text-xl font-bold text-fg flex items-center gap-2">
-          <Factory size={20} className="text-accent" /> Production
+          <Factory size={20} className="text-brand-text" /> Production
         </h2>
         <div className="flex items-center gap-2">
           {/* Reconciled batches: planned vs actual, and the moisture/variance
               between them - the report doesn't exist until at least one
               batch has been reconciled. */}
           <button onClick={exportProductionOrdersPDF}
-            className="flex items-center gap-1.5 bg-accent/10 hover:bg-accent/20 text-accent px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition">
+            className="flex items-center gap-1.5 bg-accent/10 hover:bg-accent/20 text-brand-text px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition">
             <ClipboardCheck size={14} /> Production Report
           </button>
           <button onClick={() => setFormOpen(o => !o)}
@@ -273,7 +273,7 @@ export default function ProductionTab({ ctx }) {
               <input type="number" min="0" step="0.01" placeholder={matPick ? pieceInfo(inventory.find(i => i._id === matPick)).label : 'Qty'}
                 value={matQty} onChange={e => setMatQty(e.target.value)}
                 className="w-24 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
-              <button onClick={addMaterial} className="bg-accent/15 text-accent px-3 py-2 rounded-lg font-bold text-xs uppercase hover:bg-accent/25 transition">Add</button>
+              <button onClick={addMaterial} className="bg-accent/15 text-brand-text px-3 py-2 rounded-lg font-bold text-xs uppercase hover:bg-accent/25 transition">Add</button>
             </div>
             {/* Quantities are counted in pieces - for a packed item ("...377G")
                 1 piece = 377g, not the raw gram figure. */}
@@ -397,7 +397,7 @@ export default function ProductionTab({ ctx }) {
                   </p>
                   <p className="text-[10px] text-fg/70 mt-0.5">
                     {o.outputType === 'new' ? 'New product' : 'Adds to existing item'} · filed by {o.requestedBy || '-'}
-                    {o.batchNumber && <span className="font-mono text-accent"> · {o.batchNumber}</span>}
+                    {o.batchNumber && <span className="font-mono text-brand-text"> · {o.batchNumber}</span>}
                   </p>
                 </div>
                 <div className="flex flex-col items-end gap-1 shrink-0">
@@ -508,7 +508,7 @@ export default function ProductionTab({ ctx }) {
         return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setReconciling(null)}>
           <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm" onClick={e => e.stopPropagation()}>
-            <h3 className="font-bold text-fg mb-1 flex items-center gap-1.5"><ClipboardCheck size={16} className="text-accent" /> Confirm actual output</h3>
+            <h3 className="font-bold text-fg mb-1 flex items-center gap-1.5"><ClipboardCheck size={16} className="text-brand-text" /> Confirm actual output</h3>
             <p className="text-fg/75 text-xs mb-3">{reconciling.outputName} - planned {plannedPieces} {label}</p>
             <label className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Actual quantity produced ({label})</label>
             <input type="number" min="0" step="0.01" autoFocus value={actualQty} onChange={e => setActualQty(e.target.value)}

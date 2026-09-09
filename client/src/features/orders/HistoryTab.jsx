@@ -192,7 +192,7 @@ export default function HistoryTab({ ctx }) {
                     <tfoot>
                       <tr className="font-black text-fg border-t-2 border-white/20">
                         <td className="py-2" colSpan={3}>Total</td>
-                        <td className="py-2 text-right font-mono text-brand">₱{deposits.reduce((s, d) => s + Number(d.amount || 0), 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                        <td className="py-2 text-right font-mono text-brand-text">₱{deposits.reduce((s, d) => s + Number(d.amount || 0), 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -250,7 +250,7 @@ export default function HistoryTab({ ctx }) {
                             {SSS_COLS.map(([label, methods]) => { const v = sssColVal(r, methods); return (
                               <td key={label} className="px-3 py-2.5 text-right tabular-nums text-fg/80">{v ? `₱${v.toFixed(2)}` : '-'}</td>
                             ); })}
-                            <td className="px-3 py-2.5 text-right tabular-nums font-black text-brand">₱{r.total.toFixed(2)}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums font-black text-brand-text">₱{r.total.toFixed(2)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -263,7 +263,7 @@ export default function HistoryTab({ ctx }) {
                           {SSS_COLS.map(([label, methods]) => (
                             <td key={label} className="px-3 py-3 text-right tabular-nums">₱{sssColTotal(methods).toFixed(2)}</td>
                           ))}
-                          <td className="px-3 py-3 text-right tabular-nums text-brand">₱{(salesSummary.totals?.total || 0).toFixed(2)}</td>
+                          <td className="px-3 py-3 text-right tabular-nums text-brand-text">₱{(salesSummary.totals?.total || 0).toFixed(2)}</td>
                         </tr>
                       </tfoot>
                     </table>
@@ -354,7 +354,7 @@ export default function HistoryTab({ ctx }) {
                         <td className="p-3 text-fg/70 text-xs">{new Date(sh.shiftStart).toLocaleString()}</td>
                         <td className="p-3 text-fg/70 text-xs">{sh.shiftEnd ? new Date(sh.shiftEnd).toLocaleString() : '- (ongoing)'}</td>
                         <td className="p-3 text-right font-mono text-sm text-fg">₱{(sh.startingCash||0).toFixed(2)}</td>
-                        <td className="p-3 text-right font-mono text-sm text-brand">₱{(sh.salesTotal||0).toFixed(2)}{(sh.isLive || sh.status === 'Open') && <span className="text-[8px] text-warning font-black ml-1 align-top">LIVE</span>}</td>
+                        <td className="p-3 text-right font-mono text-sm text-brand-text">₱{(sh.salesTotal||0).toFixed(2)}{(sh.isLive || sh.status === 'Open') && <span className="text-[8px] text-warning font-black ml-1 align-top">LIVE</span>}</td>
                         <td className="p-3 text-right font-mono text-sm text-fg">₱{(sh.expectedCash||0).toFixed(2)}</td>
                         <td className="p-3 text-right font-mono text-sm text-fg">₱{(sh.actualCash||0).toFixed(2)}</td>
                         <td className={`p-3 text-right font-black text-sm ${(sh.variance||0) < 0 ? 'text-danger' : (sh.variance||0) > 0 ? 'text-warning' : 'text-success'}`}>
@@ -428,7 +428,7 @@ export default function HistoryTab({ ctx }) {
           <div className="bg-surface border border-white/10 rounded-xl p-1 overflow-hidden flex flex-col">
             <div className="p-4  border-white/10 flex justify-between items-center bg-page-bg/20 rounded-t-xl">
               <h3 className="text-fg font-bold text-sm tracking-wider uppercase">Sales History</h3>
-              <button onClick={exportAllToPDF} className="text-[10px] bg-accent border border-gray-600 text-on-brand px-3 py-1.5 rounded hover:bg-page-bg hover:text-accent transition font-bold uppercase tracking-wider">
+              <button onClick={exportAllToPDF} className="text-[10px] bg-accent border border-gray-600 text-on-brand px-3 py-1.5 rounded hover:bg-page-bg hover:text-brand-text transition font-bold uppercase tracking-wider">
                 Export All
               </button>
             </div>
@@ -474,7 +474,7 @@ export default function HistoryTab({ ctx }) {
                     <button onClick={() => toggleDay(date)} className="w-full flex justify-between items-center p-4 hover:bg-page-bg/50 transition text-left">
                       <span className="font-bold text-sm text-fg">{date}</span>
                       <div className="flex items-center gap-3">
-                        <span className="text-accent font-bold">P{data.revenue.toFixed(2)}</span>
+                        <span className="text-brand-text font-bold">P{data.revenue.toFixed(2)}</span>
                         {expandedDays[date] ? <ChevronUp size={14} className="text-fg/70" /> : <ChevronDown size={14} className="text-fg/70" />}
                       </div>
                     </button>
@@ -503,7 +503,7 @@ export default function HistoryTab({ ctx }) {
                               {data.orders.map(order => (
                                 <div key={order._id} className="bg-page-bg/50 p-3 rounded border border-white/10">
                                   <div className="flex justify-between items-center mb-2 border-b border-white/10 pb-2">
-                                    <span className="font-bold text-sm text-accent">{order.orderNumber}</span>
+                                    <span className="font-bold text-sm text-brand-text">{order.orderNumber}</span>
                                     <div className="flex items-center gap-2">
                                       <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${order.status === 'Cancelled' ? 'bg-red-400/50 text-red-600' : 'bg-green-400/50 text-green-600'}`}>{order.status}</span>
                                       <span className="text-xs font-bold text-fg">P{order.total.toFixed(2)}</span>
