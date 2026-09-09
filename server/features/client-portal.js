@@ -299,6 +299,9 @@ app.get('/api/client/profile', verifyClientToken, async (req, res) => {
     res.json({ success: true, profile: {
       _id: String(me._id), clientCode: me.clientCode, username: me.username,
       name: me.name, paymentMethod: me.paymentMethod, theme: me.theme || null,
+      // Whether this buyer is quoted before they buy. The portal reads it to
+      // decide whether the cart asks for a price or places an order.
+      requiresQuote: me.requiresQuote === true,
     } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -436,7 +439,7 @@ const cleanPhone = (v) => String(v ?? '').trim().slice(0, 40);
 
 app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { username, password, name, paymentMethod, creditLimit, creditTermsDays, segments, phone, email, contactNotes } = req.body;
+    const { username, password, name, paymentMethod, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote } = req.body;
     // Usernames are stored lowercase so "KasaLokal" and "kasalokal" are the same
     // account - mixed case here is the classic duplicate-login bug.
     const cleanUsername = lower(username);
@@ -455,7 +458,7 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
     const clientCode = await generateNextSequence(ClientAccount, 'CUS-1000', 'clientCode');
     const emailVal = cleanEmail(email);
     if (emailVal === null) return res.status(400).json({ success: false, error: 'Email is not a valid address.' });
-    const client = await ClientAccount.create({ clientCode, username: cleanUsername, password: hashed, name: cleanName, paymentMethod: paymentMethod || 'Cash', creditLimit: parseCreditLimit(creditLimit), creditTermsDays: parseTermsDays(creditTermsDays), segments: cleanSegments, phone: cleanPhone(phone), email: emailVal, contactNotes: String(contactNotes ?? '').trim().slice(0, 1000) });
+    const client = await ClientAccount.create({ clientCode, username: cleanUsername, password: hashed, name: cleanName, paymentMethod: paymentMethod || 'Cash', creditLimit: parseCreditLimit(creditLimit), creditTermsDays: parseTermsDays(creditTermsDays), segments: cleanSegments, phone: cleanPhone(phone), email: emailVal, contactNotes: String(contactNotes ?? '').trim().slice(0, 1000), requiresQuote: requiresQuote === true });
     res.json({ success: true, client: { _id: client._id, clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, creditLimit: client.creditLimit, creditTermsDays: client.creditTermsDays, segments: client.segments, phone: client.phone, email: client.email, contactNotes: client.contactNotes } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -549,8 +552,11 @@ app.post('/api/client-accounts/import', verifyToken, requireSuperAdmin, async (r
 
 app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { username, password, name, paymentMethod, isActive, creditLimit, creditTermsDays, segments, phone, email, contactNotes } = req.body;
+    const { username, password, name, paymentMethod, isActive, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote } = req.body;
     const update = {};
+    // Which buyers are quoted before they buy. Sent explicitly so it can be
+    // switched off again, not just on.
+    if (typeof requiresQuote === 'boolean') update.requiresQuote = requiresQuote;
     if (username) update.username = lower(username);
     if (name) update.name = title(name);
     if (paymentMethod) update.paymentMethod = paymentMethod;

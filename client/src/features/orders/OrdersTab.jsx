@@ -105,7 +105,7 @@ export default function OrdersTab({ ctx }) {
     posPayments, setPosPayments,
     modifierGroups, printKitchenTicket,
     paymentRefs, setPaymentRefs, paymentCheckDates, setPaymentCheckDates,
-    paymentMethodGroups,
+    paymentMethodGroups, setPayQrOpen,
     refundModal, setRefundModal, handleRefund, openPartial, dropRemaining,
     combos, addComboToPosCart,
     parkedOrders, parkedModalOpen, setParkedModalOpen, fetchParked, parkCurrentOrder, resumeParked,
@@ -135,14 +135,20 @@ export default function OrdersTab({ ctx }) {
   // UI-only hint for the walk-in picker below - not persisted; the real
   // guest-vs-regular classification comes from whether a customer name is entered.
   const [walkInMode, setWalkInMode] = React.useState('guest');
-  // Payment-QR display (set in Settings > Branding). Shown full-screen for the
-  // customer to scan; they/staff dismiss it once paid.
-  const [payQrOpen, setPayQrOpen] = React.useState(false);
+  // Payment-QR display (set in Settings > Branding). The overlay itself lives
+  // at dashboard level so it can be opened from anywhere payment is settled -
+  // the order card here, and the partial-fulfil modal, which is mounted
+  // outside this component and could not otherwise reach it.
   const payQrImage = systemSettings.paymentQrImage || '';
   // "Mark Complimentary" is an edge case, not something every cashier touches
   // on every order - collapsed by default so the card reads as a normal
   // payment panel, and only expands into a form when someone actually needs it.
   const [compFormOpen, setCompFormOpen] = React.useState({});
+  // Discounts are the exception, not the rule: most orders are rung up at full
+  // price, and the promo picker plus the SC/PWD list were taking about a third
+  // of every card to sit unused. Collapsed by default, and opened for you when
+  // the order already carries one so an applied discount is never hidden.
+  const [discountsOpen, setDiscountsOpen] = React.useState({});
 
   return (
           <div className="w-full">
@@ -162,11 +168,11 @@ export default function OrdersTab({ ctx }) {
                       <span className="font-black text-fg tracking-widest uppercase text-sm">POS Register</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      {payQrImage && (
-                        <button onClick={() => setPayQrOpen(true)} title="Show the payment QR for the customer to scan" className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-brand/15 text-brand hover:bg-brand/25 font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
-                          <QrCode size={13} /> Pay QR
-                        </button>
-                      )}
+                      {/* The payment QR used to live here, beside the product
+                          browser. Nobody pays while the cashier is still
+                          ringing items up - it belongs on the order card,
+                          next to the tender picker and the reference box,
+                          which is where the money is actually settled. */}
                       <button onClick={() => setIsPosOpen(false)} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-red-500/20 text-fg/40 hover:text-red-400 font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
                         <ChevronLeft size={13} /> Orders
                       </button>
@@ -1094,9 +1100,14 @@ export default function OrdersTab({ ctx }) {
                                   <span className="font-mono text-brand/80 font-bold">{order.paymentMethod}</span>
                                 </div>
                               )}
-                              <div className="flex justify-between text-[11px] text-black">
-                                <span>Gross</span><span className="font-mono">P{order.subtotal.toFixed(2)}</span>
-                              </div>
+                              {/* Gross earns its own line only when something has
+                                  come off. Printing it above an identical Total is
+                                  two rows saying one thing. */}
+                              {Math.abs(order.subtotal - displayTotal) > 0.005 && (
+                                <div className="flex justify-between text-[11px] text-black/60">
+                                  <span>Gross</span><span className="font-mono">P{order.subtotal.toFixed(2)}</span>
+                                </div>
+                              )}
                               {vatOn && (
                                 <div className="flex justify-between items-center text-[11px] text-black">
                                   <div className="flex items-center gap-2">
@@ -1121,8 +1132,33 @@ export default function OrdersTab({ ctx }) {
                                 const scpwdDiscounts = discounts.filter(d => d.name.toLowerCase().match(/pwd|senior/));
                                 const hasScpwd = order.items.some(i => i.discountPercent > 0);
                                 const hasPromo = order.discountPercent > 0 && order.discountType !== 'SC/PWD';
+                                const anyDiscount = hasPromo || hasScpwd || displayDiscount > 0;
+                                const open = discountsOpen[order._id] ?? anyDiscount;
+                                // Nothing to offer and nothing applied: say so in one
+                                // quiet line rather than rendering an empty control.
+                                if (order.status !== 'Pending' && !anyDiscount) return null;
                                 return (
                                   <>
+                                    {order.status === 'Pending' && (
+                                      <button
+                                        onClick={() => setDiscountsOpen(prev => ({ ...prev, [order._id]: !open }))}
+                                        className="w-full flex items-center justify-between text-[10px] uppercase tracking-wider text-black/60 hover:text-black transition py-0.5"
+                                      >
+                                        <span className="flex items-center gap-1.5">
+                                          <Tag size={10} />
+                                          {anyDiscount ? 'Discount applied' : 'Add a discount'}
+                                        </span>
+                                        <span className="flex items-center gap-1.5">
+                                          {/* Only while shut - the row below shows the
+                                              same figure once it is open. */}
+                                          {!open && displayDiscount > 0 && (
+                                            <span className="text-red-500 font-mono">-P{displayDiscount.toFixed(2)}</span>
+                                          )}
+                                          {open ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                                        </span>
+                                      </button>
+                                    )}
+                                    {(open || order.status !== 'Pending') && (
                                     <div className="flex justify-between items-center text-[11px] text-black border-b border-white/5 pb-1.5">
                                       <div className="flex items-center gap-2 flex-1 pr-2">
                                         <span className="whitespace-nowrap uppercase tracking-wider text-[9px]">Promo</span>
@@ -1149,7 +1185,8 @@ export default function OrdersTab({ ctx }) {
                                       </div>
                                       <span className="text-red-500 whitespace-nowrap font-mono">-P{displayDiscount.toFixed(2)}</span>
                                     </div>
-                                    {scpwdDiscounts.length > 0 && order.status === 'Pending' && (
+                                    )}
+                                    {open && scpwdDiscounts.length > 0 && order.status === 'Pending' && (
                                       <div className="border-b border-white/5 pb-1.5 space-y-1">
                                         {hasPromo ? (
                                           <span className="text-[9px] uppercase tracking-wider text-black italic">SC/PWD - Promo active</span>
@@ -1335,6 +1372,20 @@ export default function OrdersTab({ ctx }) {
                                           ));
                                         })()}
                                       </select>
+                                      {/* Scan to pay, at the moment of paying. Offered for the
+                                          tenders the customer actually scans for - QR and the
+                                          e-wallets - so the cashier turns the screen round, the
+                                          customer scans, and the confirmation number goes in the
+                                          box directly below. */}
+                                      {payQrImage && ['QR', 'GCash', 'Maya', 'Maribank', 'Other E-Wallet'].includes(displayPayment) && (
+                                        <button
+                                          onClick={() => setPayQrOpen(true)}
+                                          title="Show the payment QR for the customer to scan"
+                                          className="flex items-center justify-center gap-1.5 w-full px-3 py-2 rounded-lg bg-brand/15 text-brand hover:bg-brand/25 font-bold text-xs uppercase tracking-wider transition min-h-[38px]"
+                                        >
+                                          <QrCode size={13} /> Show Pay QR
+                                        </button>
+                                      )}
                                       {needsRef && (
                                         <div className="flex flex-col gap-1.5">
                                           <div className="flex items-center gap-2">
@@ -1389,27 +1440,36 @@ export default function OrdersTab({ ctx }) {
                                           )}
                                         </div>
                                       )}
+                                      {/* One thing to press, and two ways out.
+                                          Three solid blocks of colour - green, red,
+                                          amber - all shouted equally, so the eye had
+                                          to read every one to find the ordinary
+                                          action. Taking a payment is what happens on
+                                          almost every order; dropping it and splitting
+                                          it are the exceptions, and now look like it. */}
+                                      <button
+                                        disabled={isUnderpaid || missingRef}
+                                        onClick={() => {
+                                          // Seed the selection with the default so it persists even if untouched.
+                                          if (paymentSelections[order._id] === undefined) {
+                                            setPaymentSelections(prev => ({ ...prev, [order._id]: displayPayment }));
+                                          }
+                                          setTimeout(() => updateStatus(order._id, 'Preparing'), 0);
+                                        }}
+                                        className={`w-full py-3 rounded-xl font-black text-xs uppercase tracking-widest transition ${(isUnderpaid || missingRef) ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-accent text-white hover:bg-accentShadow shadow-lg shadow-accent/20'}`}
+                                      >
+                                        {missingRef ? `${isCheck ? 'Check No.' : 'Ref No.'} Required` : `Pay & Send to ${SEND_TARGET}`}
+                                      </button>
                                       <div className="flex gap-2">
-                                        <button
-                                          disabled={isUnderpaid || missingRef}
-                                          onClick={() => {
-                                            // Seed the selection with the default so it persists even if untouched.
-                                            if (paymentSelections[order._id] === undefined) {
-                                              setPaymentSelections(prev => ({ ...prev, [order._id]: displayPayment }));
-                                            }
-                                            setTimeout(() => updateStatus(order._id, 'Preparing'), 0);
-                                          }}
-                                          className={`flex-1 py-2.5 rounded-lg font-black text-xs uppercase tracking-widest transition ${(isUnderpaid || missingRef) ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-accent text-white hover:bg-accentShadow'}`}
-                                        >
-                                          {missingRef ? `${isCheck ? 'Check No.' : 'Ref No.'} Required` : `Pay & Send to ${SEND_TARGET}`}
+                                        {BUSINESS_TYPE === 'log' && (order.items?.length > 0) && (
+                                          <button onClick={() => openPartial(order)} className="flex-1 border border-amber-500/30 text-amber-400 py-2 rounded-lg hover:bg-amber-500/10 font-bold text-[10px] transition uppercase tracking-widest">
+                                            Partial Fulfill
+                                          </button>
+                                        )}
+                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="flex-1 border border-red-500/30 text-red-400 py-2 rounded-lg hover:bg-red-500/10 font-bold text-[10px] transition uppercase tracking-widest">
+                                          Drop
                                         </button>
-                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500 text-white py-2.5 px-4 rounded-lg hover:bg-red-400 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop</button>
                                       </div>
-                                      {BUSINESS_TYPE === 'log' && (order.items?.length > 0) && (
-                                        <button onClick={() => openPartial(order)} className="w-full bg-amber-500 text-white py-2 rounded-lg hover:bg-amber-400 hover:text-fg font-black text-[11px] transition uppercase tracking-widest border border-amber-500/20">
-                                          Partial Fulfill
-                                        </button>
-                                      )}
                                     </div>
                                   );
                                 })();
@@ -1540,20 +1600,6 @@ export default function OrdersTab({ ctx }) {
               </>
             )}
 
-            {/* Payment QR - full-screen for the customer to scan; dismissed once paid. */}
-            {payQrOpen && payQrImage && (
-              <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-6" onClick={() => setPayQrOpen(false)}>
-                <div className="bg-white rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl" onClick={e => e.stopPropagation()}>
-                  <p className="text-black font-black text-lg uppercase tracking-wider mb-1">Scan to Pay</p>
-                  <p className="text-gray-500 text-xs mb-4">Open your e-wallet or bank app and scan</p>
-                  <img src={payQrImage} alt="Payment QR" className="w-full max-w-[300px] mx-auto rounded-xl" />
-                  <button onClick={() => setPayQrOpen(false)} className="mt-5 w-full bg-brand text-white font-black py-3.5 rounded-2xl uppercase tracking-widest text-sm hover:bg-brand-dark transition">
-                    Done - Paid
-                  </button>
-                  <p className="text-gray-400 text-[11px] mt-2">Tap when payment is confirmed</p>
-                </div>
-              </div>
-            )}
           </div>
   );
 }

@@ -934,7 +934,7 @@ export default function SuperAdminPanel() {
   };
 
   const openClientCreate = () => {
-    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '', creditTermsDays: '', segments: '' });
+    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '', creditTermsDays: '', segments: '', requiresQuote: false });
     setClientFormError('');
     setClientModal({ open: true, mode: 'create', client: null });
   };
@@ -942,7 +942,7 @@ export default function SuperAdminPanel() {
   const openClientEdit = (client) => {
     // null/undefined means "no limit set"; 0 is a real value (cash only), so it
     // must render as "0" rather than collapsing to an empty field.
-    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false, creditLimit: client.creditLimit === null || client.creditLimit === undefined ? '' : String(client.creditLimit), creditTermsDays: client.creditTermsDays === null || client.creditTermsDays === undefined ? '' : String(client.creditTermsDays), segments: (client.segments || []).join(', ') });
+    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false, creditLimit: client.creditLimit === null || client.creditLimit === undefined ? '' : String(client.creditLimit), creditTermsDays: client.creditTermsDays === null || client.creditTermsDays === undefined ? '' : String(client.creditTermsDays), segments: (client.segments || []).join(', '), requiresQuote: client.requiresQuote === true });
     setClientFormError('');
     setClientModal({ open: true, mode: 'edit', client });
     fetchClientPricing(client._id);
@@ -1008,13 +1008,13 @@ export default function SuperAdminPanel() {
       if (clientModal.mode === 'create') {
         const res = await apiFetch('/api/client-accounts', {
           method: 'POST',
-          body: JSON.stringify({ username: clientForm.username.trim(), password: clientForm.password, name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments }),
+          body: JSON.stringify({ username: clientForm.username.trim(), password: clientForm.password, name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments, requiresQuote: !!clientForm.requiresQuote }),
         });
         const data = await res.json();
         if (data.success) { showToast('Client account created.'); closeClientModal(); fetchClients(); }
         else setClientFormError(data.error || 'Failed to create client.');
       } else {
-        const body = { name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments };
+        const body = { name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments, requiresQuote: !!clientForm.requiresQuote };
         if (clientForm.username.trim()) body.username = clientForm.username.trim();
         if (clientForm.password) body.password = clientForm.password;
         const res = await apiFetch(`/api/client-accounts/${clientModal.client._id}`, { method: 'PATCH', body: JSON.stringify(body) });
@@ -2626,6 +2626,26 @@ export default function SuperAdminPanel() {
                   Captured onto each order when it completes, so later changes here don&rsquo;t move existing due dates.
                 </p>
               </div>
+
+              {/* Some buyers are quoted before they buy: wholesale, anything
+                  with freight, anything priced per job. Off by default, because
+                  a regular buying at their tier price should not have to wait
+                  for a human. */}
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!clientForm.requiresQuote}
+                  onChange={e => setClientForm(f => ({ ...f, requiresQuote: e.target.checked }))}
+                  className="mt-0.5"
+                />
+                <span className="min-w-0">
+                  <span className="block text-[11px] font-bold text-fg">Quote before ordering</span>
+                  <span className="block text-[10px] text-fg/40 leading-relaxed mt-0.5">
+                    Their portal asks for a price instead of placing an order. Nothing is committed
+                    until you have priced it and they have accepted.
+                  </span>
+                </span>
+              </label>
 
               <div>
                 <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Price Tier</label>

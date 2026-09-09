@@ -496,6 +496,61 @@ export default function ClientOrderPage() {
 
   useEffect(() => { if (token) fetchMyOrders(); }, [token, fetchMyOrders]);
 
+  // Quotations this client has asked for. Only fetched for buyers who are
+  // quoted before they buy - everyone else has none, and asking would be a
+  // request per page load that could only ever come back empty.
+  const [myQuotes, setMyQuotes] = useState([]);
+  const fetchMyQuotes = useCallback(async () => {
+    if (!token || clientInfo?.requiresQuote !== true) return;
+    try {
+      const res = await fetch(`${API_URL}/api/client/quotations`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (data.success) setMyQuotes(data.quotations || []);
+    } catch { /* leave the last good view */ }
+  }, [token, clientInfo?.requiresQuote]);
+
+  useEffect(() => { fetchMyQuotes(); }, [fetchMyQuotes]);
+
+  // Accepting hands back the prices that were quoted, and those are what the
+  // order is placed at - not the list prices the catalogue shows.
+  const acceptQuote = useCallback(async (q) => {
+    const ok = await ui.confirm(
+      `Accept ${q.quoteNumber} at ${'\u20b1'}${Number(q.quotedTotal || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}?`
+      + String.fromCharCode(10, 10)
+      + 'This puts the quoted items in your cart at the agreed prices, ready to order.',
+    );
+    if (!ok) return;
+    try {
+      const res = await fetch(`${API_URL}/api/client/quotations/${q._id}/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!data.success) { ui.alert(data.error || 'Could not accept that quote.'); return; }
+      // Straight into the cart at the agreed prices, so the last step is the
+      // ordinary one the client already knows.
+      setCart((data.items || []).map(i => ({
+        productId: i.productId, name: i.name, price: i.price, quantity: i.quantity,
+      })));
+      setCartOpen(true);
+      fetchMyQuotes();
+      ui.alert('Accepted. The quoted items are in your cart - place the order to confirm.');
+    } catch { ui.alert('Network error.'); }
+  }, [token, fetchMyQuotes]);
+
+  const declineQuote = useCallback(async (q) => {
+    if (!(await ui.confirm(`Decline ${q.quoteNumber}?`))) return;
+    try {
+      await fetch(`${API_URL}/api/client/quotations/${q._id}/decline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({}),
+      });
+      fetchMyQuotes();
+    } catch { ui.alert('Network error.'); }
+  }, [token, fetchMyQuotes]);
+
   const confirmReceived = useCallback(async (orderId) => {
     try {
       const res = await fetch(`${API_URL}/api/client/orders/${orderId}/received`, {
@@ -743,6 +798,40 @@ export default function ClientOrderPage() {
       setSettingsMsg({ tone: 'bad', text: 'Network error.' });
     } finally { setPwBusy(false); }
   }, [pwForm, authHeaders]);
+
+  // Some buyers are quoted before they buy. For them the cart asks for a price
+  // rather than committing to one, and nothing is ordered or charged until the
+  // business has priced it and they have said yes.
+  const quoteOnly = clientInfo?.requiresQuote === true;
+  const [requestingQuote, setRequestingQuote] = useState(false);
+
+  const handleRequestQuote = async () => {
+    if (!cart.length || requestingQuote) return;
+    setRequestingQuote(true);
+    try {
+      const res = await fetch(`${API_URL}/api/client/quotations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          items: cart.map(c => ({
+            productId: c.productId, name: c.name,
+            quantity: c.quantity, price: c.price,
+          })),
+          notes: orderNotes.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) { ui.alert(data.error || 'Could not send that request.'); return; }
+      setCart([]);
+      setCartOpen(false);
+      setOrderNotes('');
+      ui.alert(
+        `Request ${data.quotation.quoteNumber} sent.` + String.fromCharCode(10, 10) + data.note,
+      );
+    } catch {
+      ui.alert('Network error. Please try again.');
+    } finally { setRequestingQuote(false); }
+  };
 
   const handleSubmitOrder = async () => {
     if (!cart.length || submitting) return;
@@ -1309,6 +1398,50 @@ export default function ClientOrderPage() {
               ))}
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {/* Quotes waiting on the client come first: one of them needs an
+                  answer, and an answer is worth more than scrolling history. */}
+              {myQuotes.filter(q => ['Requested', 'Quoted'].includes(q.status)).map(q => (
+                <div key={q._id} className="bg-white/5 border border-brand/30 rounded-2xl p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-black text-fg text-sm">{q.quoteNumber}</p>
+                      <p className="text-[11px] text-fg/40">
+                        {q.lines?.length || 0} item(s)
+                        {q.validUntil ? ` \u00b7 valid to ${new Date(q.validUntil).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}` : ''}
+                      </p>
+                    </div>
+                    <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded shrink-0 ${
+                      q.status === 'Quoted' ? 'text-brand bg-brand/10' : 'text-amber-400 bg-amber-400/10'
+                    }`}>
+                      {q.status === 'Quoted' ? 'Priced' : 'With us'}
+                    </span>
+                  </div>
+
+                  {q.status === 'Quoted' ? (
+                    <>
+                      <p className="text-lg font-black text-fg tabular-nums mt-2">
+                        {'\u20b1'}{Number(q.quotedTotal || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                      </p>
+                      {q.quoteNotes && <p className="text-[11px] text-fg/50 mt-1 leading-relaxed">{q.quoteNotes}</p>}
+                      <div className="flex gap-2 mt-3">
+                        <button onClick={() => acceptQuote(q)}
+                          className="flex-1 bg-brand hover:bg-brand-dark text-white font-black py-2.5 rounded-xl text-[11px] uppercase tracking-widest transition">
+                          Accept
+                        </button>
+                        <button onClick={() => declineQuote(q)}
+                          className="px-4 border border-white/15 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl text-[11px] uppercase tracking-widest transition">
+                          Decline
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-[11px] text-fg/40 mt-2 leading-relaxed">
+                      We are pricing this. Nothing has been ordered or charged.
+                    </p>
+                  )}
+                </div>
+              ))}
+
               {myOrders.length === 0 ? (
                 <div className="flex flex-col items-center py-16 text-center">
                   <Package size={36} className="text-fg/10 mb-3" />
@@ -1883,16 +2016,33 @@ export default function ClientOrderPage() {
               </p>
               <SupportLink label={supportLabel} className="mt-1.5" />
             </div>
-            <button
-              onClick={handleSubmitOrder}
-              disabled={submitting || cart.length === 0 || (needsReference && !paymentReference.trim())}
-              className="w-full bg-brand hover:bg-brand-dark text-white font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
-            >
-              {submitting ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
-              {submitting
-                ? 'Placing Order…'
-                : (needsReference && !paymentReference.trim()) ? 'Enter Reference to Continue' : 'Place Order'}
-            </button>
+            {quoteOnly ? (
+              <>
+                <button
+                  onClick={handleRequestQuote}
+                  disabled={requestingQuote || cart.length === 0}
+                  className="w-full bg-brand hover:bg-brand-dark text-white font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
+                >
+                  {requestingQuote ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
+                  {requestingQuote ? 'Sending…' : 'Request a Quote'}
+                </button>
+                <p className="text-fg/40 text-[11px] text-center mt-2 leading-relaxed">
+                  Nothing is ordered or charged. The prices above are indicative - we will price this
+                  and send it back for you to accept.
+                </p>
+              </>
+            ) : (
+              <button
+                onClick={handleSubmitOrder}
+                disabled={submitting || cart.length === 0 || (needsReference && !paymentReference.trim())}
+                className="w-full bg-brand hover:bg-brand-dark text-white font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {submitting ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
+                {submitting
+                  ? 'Placing Order…'
+                  : (needsReference && !paymentReference.trim()) ? 'Enter Reference to Continue' : 'Place Order'}
+              </button>
+            )}
           </div>
         </div>
       )}

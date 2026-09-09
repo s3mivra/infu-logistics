@@ -2,7 +2,19 @@ import { useDashboard } from '../../dashboard/DashboardContext';
 
 // Extracted from AdminDashboard; reads shared state via useDashboard().
 export default function PartialFulfillModal() {
-  const { partialBusy, partialModal, partialMode, partialPayment, partialQtys, setPartialModal, setPartialMode, setPartialPayment, setPartialQtys, submitPartialFulfill } = useDashboard();
+  const {
+    partialBusy, partialModal, partialMode, partialPayment, partialQtys,
+    setPartialModal, setPartialMode, setPartialPayment, setPartialQtys, submitPartialFulfill,
+    partialRef, setPartialRef, partialCheckDate, setPartialCheckDate,
+    systemSettings, setPayQrOpen,
+  } = useDashboard();
+
+  // A partial batch takes real money, so it needs the same evidence a full
+  // sale does. Paying one by QR or by check with nowhere to put the
+  // confirmation number left that cash with nothing to reconcile against.
+  const needsRef = ['QR', 'Check'].includes(partialPayment);
+  const isCheck = partialPayment === 'Check';
+  const scannable = ['QR', 'GCash', 'Maya', 'Maribank', 'Other E-Wallet'].includes(partialPayment);
 
   if (!(partialModal)) return null;
 const items = partialModal.items || [];
@@ -81,6 +93,44 @@ const items = partialModal.items || [];
               </optgroup>
             </select>
           </div>
+
+          {/* Scan to pay, at the moment of paying. */}
+          {scannable && systemSettings?.paymentQrImage && (
+            <button type="button" onClick={() => setPayQrOpen?.(true)}
+              className="flex items-center justify-center gap-1.5 w-full px-3 py-2.5 rounded-xl bg-brand/15 text-brand hover:bg-brand/25 font-bold text-xs uppercase tracking-wider transition">
+              Show Pay QR
+            </button>
+          )}
+
+          {needsRef && (
+            <div className="space-y-2">
+              <div>
+                <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1.5">
+                  {isCheck ? 'Check No.' : 'Reference No.'}
+                </label>
+                <input
+                  type="text"
+                  value={partialRef || ''}
+                  onChange={e => setPartialRef?.(e.target.value)}
+                  placeholder={isCheck ? 'Required' : 'Confirmation no. from the payment app'}
+                  className={`w-full bg-page-bg border rounded-xl px-3 py-2.5 text-fg text-sm font-mono outline-none ${
+                    (partialRef || '').trim() ? 'border-white/10 focus:border-brand/60' : 'border-red-500/60'
+                  }`}
+                />
+              </div>
+              {isCheck && (
+                <div>
+                  <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1.5">Check Date</label>
+                  <input
+                    type="date"
+                    value={partialCheckDate || ''}
+                    onChange={e => setPartialCheckDate?.(e.target.value)}
+                    className="w-full bg-page-bg border border-white/10 focus:border-brand/60 rounded-xl px-3 py-2.5 text-fg text-sm font-mono outline-none"
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1.5">Payment</label>

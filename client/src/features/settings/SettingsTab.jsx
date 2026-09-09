@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+﻿import React, { useCallback, useEffect, useState } from 'react';
 import { SlidersHorizontal, QrCode, Clock, DollarSign, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type, X } from 'lucide-react';
 import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
 
@@ -129,16 +129,23 @@ export default function SettingsTab({ ctx }) {
   // off is off end to end - its routes refuse and its screen never appears.
   const [modules, setModules] = useState([]);
   const [moduleBusy, setModuleBusy] = useState('');
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const d = await (await apiFetch('/api/settings/modules')).json();
-        if (alive && d.success) setModules(d.modules || []);
-      } catch { /* the card simply does not render */ }
-    })();
-    return () => { alive = false; };
+  // A failed load used to make the whole card vanish, which is the worst of
+  // both worlds: no switches, no error, and no way to tell whether this
+  // business has no optional modules or whether the request simply did not
+  // come back. Now the section is always there and says which it is.
+  const [modulesError, setModulesError] = useState('');
+  const loadModules = useCallback(async () => {
+    setModulesError('');
+    try {
+      const res = await apiFetch('/api/settings/modules');
+      const d = await res.json();
+      if (d.success) setModules(d.modules || []);
+      else setModulesError(d.error || 'Could not load the module list.');
+    } catch {
+      setModulesError('Could not reach the server.');
+    }
   }, [apiFetch]);
+  useEffect(() => { loadModules(); }, [loadModules]);
 
   const toggleModule = async (mod) => {
     setModuleBusy(mod.key);
@@ -511,8 +518,19 @@ export default function SettingsTab({ ctx }) {
             tax withholds nothing and pays three people in cash; a company with
             staff and a landlord needs both. Off by default, because an unused
             module on the sidebar is noise. */}
-        {isSuperAdmin && modules.length > 0 && (
+        {isSuperAdmin && (
           <Card title="Accounting modules">
+            {modulesError && (
+              <div className="px-4 py-4 flex items-center gap-3">
+                <p className="text-xs text-amber-400/90 flex-1">
+                  {modulesError} The switches cannot be shown until this loads.
+                </p>
+                <button onClick={loadModules}
+                  className="text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">
+                  Retry
+                </button>
+              </div>
+            )}
             <div className="divide-y divide-white/5">
               {modules.map(mod => (
                 <div key={mod.key} className="px-4 py-4 flex items-start gap-4">

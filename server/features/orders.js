@@ -2287,6 +2287,29 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
   try {
     const { fulfill, paymentMode, paymentMethod } = req.body;
     const mode = paymentMode === 'full' ? 'full' : 'partial';
+
+    // A partial batch takes real money, so it carries the same evidence a full
+    // sale does. Paying a partial delivery by QR or by check with no reference
+    // number left that cash with nothing to reconcile it against - the one
+    // handle on it afterwards was simply missing on this path.
+    const partialRef = String(req.body.paymentReference || '').trim().slice(0, 60);
+    const partialTender = String(paymentMethod || '').trim().toUpperCase();
+    if (partialTender === 'QR' && !partialRef) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'A payment reference number is required for QR payments. Enter the confirmation number from the payment app.' });
+    }
+    if (partialTender === 'CHECK' && !partialRef) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'A check number is required when paying by check.' });
+    }
+    let partialCheckDate = null;
+    if (partialTender === 'CHECK' && req.body.paymentCheckDate) {
+      partialCheckDate = new Date(req.body.paymentCheckDate);
+      if (Number.isNaN(partialCheckDate.getTime())) {
+        await session.abortTransaction(); session.endSession();
+        return res.status(400).json({ success: false, error: 'Invalid check date.' });
+      }
+    }
     const order = await Order.findById(req.params.id).session(session);
     if (!order) { await session.abortTransaction(); session.endSession(); return res.status(404).json({ success: false, error: 'Order not found.' }); }
     if (order.isComplimentary) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Complimentary orders cannot be partially fulfilled.' }); }
@@ -2434,6 +2457,9 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     const allFulfilled = order.items.every(it => (it.fulfilledQty || 0) >= (it.quantity || 0));
     order.status = allFulfilled ? 'Completed' : 'Partially Fulfilled';
     if (paymentMethod) order.paymentMethod = paymentMethod;
+    // Keep the evidence with the order, same as a full sale does.
+    if (partialRef) order.paymentReference = partialRef;
+    if (partialCheckDate) order.paymentCheckDate = partialCheckDate;
     // This order never passed through the main completion handler's ERP gate
     // (partial-fulfilled orders are deliberately skipped there to avoid double-
     // posting - see the wasPartiallyFulfilled check above). The final round that

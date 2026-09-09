@@ -53,6 +53,7 @@ import registerRequisitions from './features/requisitions.js';
 import registerProduction from './features/production.js';
 import registerBankReconciliation from './features/bank-reconciliation.js';
 import registerPayroll from './features/payroll.js';
+import registerQuotations from './features/quotations.js';
 import registerCollections from './features/collections.js';
 import registerChangeRequests from './features/change-requests.js';
 import registerNotifications from './features/notifications.js';
@@ -2089,6 +2090,12 @@ const ClientAccountSchema = new mongoose.Schema({
   // has no real login yet - the client opens the link, confirms/fills their
   // own contact details, and sets their own username/password. Single-use:
   // cleared the moment onboarding completes. null = no link outstanding.
+  // Some buyers are quoted before they buy: wholesale, anything with freight,
+  // anything priced per job. With this on, their portal asks for a quotation
+  // instead of placing an order, and nothing is committed until the business
+  // has priced it and they have accepted. Off by default - a regular who buys
+  // at their tier price should not have to wait for a human.
+  requiresQuote:            { type: Boolean, default: false },
   onboardingToken:          { type: String, default: null, index: true },
   onboardingTokenExpiresAt: { type: Date, default: null },
   // Running credit balance from overpaying an invoice - a LIABILITY (we owe
@@ -2719,6 +2726,55 @@ const BankReconciliationSchema = new mongoose.Schema({
 }, { timestamps: true });
 BankReconciliationSchema.index({ businessType: 1, accountCode: 1, statementDate: -1 });
 const BankReconciliation = mongoose.model('BankReconciliation', BankReconciliationSchema);
+
+// --- QUOTATIONS ---
+// A price asked for, not a sale made.
+//
+// Deliberately its own collection rather than another Order status. If a quote
+// were an order, every sales report, the EOD close, the P&L, the A/R list and
+// each ledger path would have to learn to exclude it, and the first one that
+// forgot would put revenue on the books for something nobody has agreed to
+// buy. A separate collection cannot leak into sales by accident.
+//
+// Nothing here posts. Acceptance creates a real Order through the ordinary
+// path, and from that moment it is an ordinary order in every respect.
+const QUOTATION_STATUSES = ['Requested', 'Quoted', 'Accepted', 'Declined', 'Expired'];
+const QuotationSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  branchCode:   { type: String, default: '', index: true },
+  quoteNumber:  { type: String, index: true },              // QUO-2026-000001
+  clientAccountId: { type: mongoose.Schema.Types.ObjectId, ref: 'ClientAccount', required: true, index: true },
+  clientName:   { type: String, default: '' },
+
+  lines: [{
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', default: null },
+    name:      { type: String, required: true },
+    quantity:  { type: Number, default: 1 },
+    // What the client saw when they asked. Kept so a later quote can be read
+    // against what they were expecting to pay.
+    askedPrice: { type: Number, default: 0 },
+    // What the business came back with. Null until someone prices it.
+    quotedPrice: { type: Number, default: null },
+    note:      { type: String, default: '' },
+  }],
+
+  clientNotes:  { type: String, default: '' },              // what they asked for
+  quoteNotes:   { type: String, default: '' },              // terms, freight, lead time
+  // A quote that never expires is a price the business is bound to forever.
+  validUntil:   { type: Date, default: null },
+  status:       { type: String, enum: QUOTATION_STATUSES, default: 'Requested', index: true },
+
+  quotedBy:     { type: String, default: '' },
+  quotedAt:     { type: Date, default: null },
+  respondedAt:  { type: Date, default: null },
+  declineReason: { type: String, default: '' },
+  // Set once accepted, so a quote can never be turned into two orders.
+  orderId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null },
+  orderNumber:  { type: String, default: '' },
+}, { timestamps: true });
+QuotationSchema.index({ businessType: 1, status: 1, createdAt: -1 });
+const Quotation = mongoose.model('Quotation', QuotationSchema);
 
 // --- PAYROLL ---
 // One pay period, and what each person earned and had deducted.
@@ -3643,6 +3699,8 @@ const ctx = {
   BankReconciliation,
   PayrollRun,
   PAYROLL_RUN_STATUSES,
+  Quotation,
+  QUOTATION_STATUSES,
   FixedAssetSchema,
   FixedAsset,
   ADVANCE_STATUSES,
@@ -3715,6 +3773,7 @@ registerDataExport(ctx);
 registerFixedAssets(ctx);
 registerBankReconciliation(ctx);
 registerPayroll(ctx);
+registerQuotations(ctx);
 registerRequisitions(ctx);
 registerProduction(ctx);
 registerCollections(ctx);

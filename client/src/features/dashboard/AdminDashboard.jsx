@@ -55,6 +55,7 @@ const FixedAssetsTab = lazy(() => import('../fixed-assets/FixedAssetsTab'));
 const BankReconciliationTab = lazy(() => import('../finance-modules/BankReconciliationTab'));
 const WithholdingTaxTab = lazy(() => import('../finance-modules/WithholdingTaxTab'));
 const PayrollTab = lazy(() => import('../finance-modules/PayrollTab'));
+const QuotationsTab = lazy(() => import('../quotations/QuotationsTab'));
 
 // Small fallback shown while a tab chunk loads.
 const TabFallback = () => (
@@ -1745,11 +1746,16 @@ export default function AdminDashboard() {
   const [partialQtys, setPartialQtys] = useState({});      // { [itemIndex]: fulfilledQty }
   const [partialMode, setPartialMode] = useState('partial');// 'partial' | 'full'
   const [partialPayment, setPartialPayment] = useState('Cash');
+  // The confirmation number for a partial batch paid by QR or by check.
+  const [partialRef, setPartialRef] = useState('');
+  const [partialCheckDate, setPartialCheckDate] = useState('');
   const [partialBusy, setPartialBusy] = useState(false);
   const openPartial = (order) => {
     setPartialModal(order);
     setPartialMode('partial');
     setPartialPayment(order.paymentMethod || 'Cash');
+    setPartialRef('');
+    setPartialCheckDate('');
     // Default: fulfill all that's still outstanding; operator lowers the short lines.
     setPartialQtys(Object.fromEntries((order.items || []).map((it, i) => [i, (it.quantity || 0) - (it.fulfilledQty || 0)])));
   };
@@ -1760,11 +1766,23 @@ export default function AdminDashboard() {
       return { index: i, qty: Math.max(0, Math.min(remaining, Number(partialQtys[i] ?? remaining))) };
     });
     if (!fulfill.some(f => f.qty > 0)) return ui.alert('Enter at least one unit to fulfill now.');
+    // Refused here as well as on the server: the cashier is standing at the
+    // counter, and finding out after the round trip is worse than being told
+    // before it.
+    if (['QR', 'Check'].includes(partialPayment) && !partialRef.trim()) {
+      return ui.alert(partialPayment === 'Check'
+        ? 'Enter the check number before saving this batch.'
+        : 'Enter the reference number from the payment app before saving this batch.');
+    }
     setPartialBusy(true);
     try {
       const res = await apiFetch(`/api/orders/${partialModal._id}/partial-fulfill`, {
         method: 'POST',
-        body: JSON.stringify({ fulfill, paymentMode: partialMode, paymentMethod: partialPayment || 'Cash' }),
+        body: JSON.stringify({
+          fulfill, paymentMode: partialMode, paymentMethod: partialPayment || 'Cash',
+          ...(partialRef.trim() ? { paymentReference: partialRef.trim() } : {}),
+          ...(partialPayment === 'Check' && partialCheckDate ? { paymentCheckDate: partialCheckDate } : {}),
+        }),
       });
       const d = await res.json();
       if (d.success) { setPartialModal(null); fetchOrders(); fetchERPData?.(); ui.alert(d.order?.status === 'Completed' ? 'Order fully fulfilled and completed.' : 'Partial fulfillment saved. Remaining stays on the same order.'); }
@@ -3774,6 +3792,10 @@ const updateStatus = async (orderId, newStatus) => {
   // code that had already been spent and got nothing. These two let the modal
   // notice and put a live code up on its own.
   const [qrExpiresAt, setQrExpiresAt] = useState(null);
+  // The payment QR the customer scans. Held here rather than inside the Orders
+  // tab so every place that settles money can raise it - the order card and
+  // the partial-fulfil modal, which is mounted at this level.
+  const [payQrOpen, setPayQrOpen] = useState(false);
   const [qrReplacedBecause, setQrReplacedBecause] = useState('');
 
   // Logistics: copy the client portal link instead of generating a table QR.
@@ -7445,6 +7467,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           { id: 'production', label: 'Production', icon: Factory, perm: 'inventory.view' },
           { id: 'procurement', label: 'Procurement', icon: Truck, perm: 'procurement.view' },
           { id: 'clients', label: 'Clients', icon: Users, perm: 'orders.view' },
+          // Prices asked for, not sales made. Lives beside Clients because
+          // that is who asks, and nothing on it touches the books.
+          { id: 'quotations', label: 'Quotations', icon: FileText, perm: 'orders.view' },
           { id: 'products', label: 'Menu Setup', icon: ChefHat, perm: 'products.view' },
         ].filter(({ perm }) => can(perm)).map(({ id, label, icon: Icon }) => {
           // invBadgeCount and invBadgeColor are hoisted to component scope above
@@ -7676,6 +7701,8 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     partialModal, setPartialModal, partialQtys, setPartialQtys,
     partialMode, setPartialMode, partialPayment, setPartialPayment,
     partialBusy, openPartial, submitPartialFulfill, dropRemaining,
+    partialRef, setPartialRef, partialCheckDate, setPartialCheckDate,
+    payQrOpen, setPayQrOpen,
     pnlData, pnlRange, setPnlRange, fetchPnl, bsData, fetchBalanceSheet, reconcileInventory,
     pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF,
     bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF,
@@ -8106,6 +8133,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       {activeTab === 'bankrec' && <Suspense fallback={<TabFallback />}><BankReconciliationTab /></Suspense>}
       {activeTab === 'wht' && <Suspense fallback={<TabFallback />}><WithholdingTaxTab /></Suspense>}
       {activeTab === 'payroll' && <Suspense fallback={<TabFallback />}><PayrollTab /></Suspense>}
+      {activeTab === 'quotations' && <Suspense fallback={<TabFallback />}><QuotationsTab /></Suspense>}
 
 {/* --- MENU SETUP (PRODUCTS/CATEGORIES) --- */}
       {activeTab === 'products' && <Suspense fallback={<TabFallback />}><ProductsTab ctx={ctx} /></Suspense>}
@@ -8140,6 +8168,22 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
       {/* ── PARTIAL FULFILLMENT MODAL ─────────────────────────────────────── */}
       <PartialFulfillModal />
+
+      {/* Payment QR - full-screen for the customer to scan; dismissed once paid. */}
+      {payQrOpen && systemSettings.paymentQrImage && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-6" onClick={() => setPayQrOpen(false)}>
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl" onClick={e => e.stopPropagation()}>
+            <p className="text-black font-black text-lg uppercase tracking-wider mb-1">Scan to Pay</p>
+            <p className="text-gray-500 text-xs mb-4">Open your e-wallet or bank app and scan</p>
+            <img src={systemSettings.paymentQrImage} alt="Payment QR" className="w-full max-w-[300px] mx-auto rounded-xl" />
+            <button onClick={() => setPayQrOpen(false)} className="mt-5 w-full bg-brand text-white font-black py-3.5 rounded-2xl uppercase tracking-widest text-sm hover:bg-brand-dark transition">
+              Done - Paid
+            </button>
+            <p className="text-gray-400 text-[11px] mt-2">Tap when payment is confirmed</p>
+          </div>
+        </div>
+      )}
+
 
       {/* ── REFUND MODAL ──────────────────────────────────────────────────── */}
       <RefundModal />
