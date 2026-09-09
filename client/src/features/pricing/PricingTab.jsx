@@ -148,7 +148,7 @@ export default function PricingTab({ ctx }) {
             {/* Filter bar */}
             <div className="flex flex-wrap gap-2 mb-4">
               <div className="relative shrink-0 self-center">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg/70 pointer-events-none" />
                 <input
                   type="text"
                   placeholder="Search product name…"
@@ -158,8 +158,8 @@ export default function PricingTab({ ctx }) {
                 />
               </div>
               <div className="flex rounded-lg overflow-hidden border border-white/10 shrink-0">
-                <button onClick={() => handleSortChange('az')} className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition ${pricingSort === 'az' ? 'bg-accent text-white' : 'bg-page-bg text-gray-400 hover:text-fg'}`}>A→Z</button>
-                <button onClick={() => handleSortChange('za')} className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition border-l border-white/10 ${pricingSort === 'za' ? 'bg-accent text-white' : 'bg-page-bg text-gray-400 hover:text-fg'}`}>Z→A</button>
+                <button onClick={() => handleSortChange('az')} className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition ${pricingSort === 'az' ? 'bg-accent text-on-brand' : 'bg-page-bg text-fg/70 hover:text-fg'}`}>A→Z</button>
+                <button onClick={() => handleSortChange('za')} className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition border-l border-white/10 ${pricingSort === 'za' ? 'bg-accent text-on-brand' : 'bg-page-bg text-fg/70 hover:text-fg'}`}>Z→A</button>
               </div>
               <select value={pricingCatFilter} onChange={e => handleCatChange(e.target.value)}
                 className="bg-page-bg border border-white/10 rounded-lg px-3 py-1.5 text-xs text-fg font-bold outline-none focus:border-accent min-w-[140px]">
@@ -167,7 +167,7 @@ export default function PricingTab({ ctx }) {
                 {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
               {pricingCatFilter && (
-                <button onClick={() => handleCatChange('')} className="text-xs text-gray-400 hover:text-fg px-2">✕ Clear</button>
+                <button onClick={() => handleCatChange('')} className="text-xs text-fg/70 hover:text-fg px-2">✕ Clear</button>
               )}
             </div>
 
@@ -188,7 +188,7 @@ export default function PricingTab({ ctx }) {
                 </thead>
                 <tbody>
                   {filteredSortedProducts.length === 0 ? (
-                    <tr><td colSpan={isSuperAdmin ? 8 : 6} className="py-4 text-center text-gray-500">No products found.</td></tr>
+                    <tr><td colSpan={isSuperAdmin ? 8 : 6} className="py-4 text-center text-fg/70">No products found.</td></tr>
                   ) : localProducts.flatMap(p => {
                     // 1:1 logistics cost - no recipes in 'log' mode, so cost is
                     // always the linked inventory item's cost per named pack.
@@ -246,8 +246,8 @@ export default function PricingTab({ ctx }) {
                               autoFocus
                               onKeyDown={(e) => { if (e.key === 'Enter') handleInlinePriceUpdate(row.productId, row.sizeIndex); }}
                             />
-                            <button onClick={() => handleInlinePriceUpdate(row.productId, row.sizeIndex)} className="text-green-400 hover:text-green-300 flex items-center"><Check size={14} /></button>
-                            <button onClick={() => setEditPriceId(null)} className="text-red-400 hover:text-red-300">✕</button>
+                            <button onClick={() => handleInlinePriceUpdate(row.productId, row.sizeIndex)} className="text-success hover:text-green-300 flex items-center"><Check size={14} /></button>
+                            <button onClick={() => setEditPriceId(null)} className="text-danger hover:text-red-300">✕</button>
                           </div>
                         ) : (
                           <div className="inline-flex items-center gap-1.5">
@@ -256,7 +256,7 @@ export default function PricingTab({ ctx }) {
                               onClick={() => { setEditPriceId(row.id); setEditPriceVal(row.price); }}
                             >
                               P{Number(row.price).toFixed(2)}
-                              <span className="text-[10px] text-gray-500 group-hover:text-accent">✎</span>
+                              <span className="text-[10px] text-fg/70 group-hover:text-accent">✎</span>
                             </div>
                             {row.isBase && (
                               <button onClick={() => fetchPriceHistory(row.product)} title="Price history"
@@ -283,8 +283,8 @@ export default function PricingTab({ ctx }) {
                               autoFocus
                               onKeyDown={(e) => { if (e.key === 'Enter') handleInlineCostUpdate(row.productId, row.sizeIndex); if (e.key === 'Escape') setEditCostId(null); }}
                             />
-                            <button onClick={() => handleInlineCostUpdate(row.productId, row.sizeIndex)} className="text-green-400 hover:text-green-300"><Check size={12} /></button>
-                            <button onClick={() => setEditCostId(null)} className="text-red-400 hover:text-red-300 text-[10px]">✕</button>
+                            <button onClick={() => handleInlineCostUpdate(row.productId, row.sizeIndex)} className="text-success hover:text-green-300"><Check size={12} /></button>
+                            <button onClick={() => setEditCostId(null)} className="text-danger hover:text-red-300 text-[10px]">✕</button>
                           </div>
                         ) : (
                           <div
@@ -292,14 +292,14 @@ export default function PricingTab({ ctx }) {
                             onClick={() => { setEditCostId(row.id); setEditCostVal(row.cost > 0 ? row.cost.toFixed(2) : ''); }}
                           >
                             {row.cost > 0 ? (
-                              <span className={row.hasOverride ? 'text-yellow-400' : 'text-orange-400'}>
+                              <span className={row.hasOverride ? 'text-warning' : 'text-warning'}>
                                 ₱{row.cost.toFixed(2)}
                                 {row.hasOverride && <span className="ml-1 text-[9px] text-yellow-600 font-bold">✎</span>}
                               </span>
                             ) : (
                               <span className="text-gray-600 text-[10px]">set cost</span>
                             )}
-                            {!row.hasOverride && <span className="text-[10px] text-gray-700 group-hover:text-orange-400">✎</span>}
+                            {!row.hasOverride && <span className="text-[10px] text-gray-700 group-hover:text-warning">✎</span>}
                           </div>
                         )}
                       </td>
@@ -307,7 +307,7 @@ export default function PricingTab({ ctx }) {
                       {/* Gross Margin */}
                       <td className={`py-2 text-right font-mono text-xs ${row.name !== '' ? 'pt-4' : ''}`}>
                         {margin !== null ? (
-                          <span className={`font-bold ${margin >= 60 ? 'text-green-400' : margin >= 35 ? 'text-yellow-400' : 'text-red-400'}`}>
+                          <span className={`font-bold ${margin >= 60 ? 'text-success' : margin >= 35 ? 'text-warning' : 'text-danger'}`}>
                             {margin.toFixed(1)}%
                           </span>
                         ) : (
@@ -367,7 +367,7 @@ export default function PricingTab({ ctx }) {
                 >
                   <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                 </button>
-                <span className="text-gray-400 text-xs font-bold tracking-widest">
+                <span className="text-fg/70 text-xs font-bold tracking-widest">
                   PAGE <span className="text-accent text-sm">{localPage}</span> OF {localTotalPages}
                 </span>
                 <button
@@ -389,13 +389,13 @@ export default function PricingTab({ ctx }) {
             <div className="flex-1 overflow-y-auto mb-6 pr-2 scrollbar-thin scrollbar-thumb-gray-700">
               <div className="space-y-3">
                 {discounts.length === 0 ? (
-                  <p className="text-sm text-gray-500 italic text-center py-4">No custom discounts set.</p>
+                  <p className="text-sm text-fg/70 italic text-center py-4">No custom discounts set.</p>
                 ) : discounts.map(d => (
                   <div key={d._id} className="bg-page-bg p-3 rounded-lg border border-white/10 flex justify-between items-center">
                     <div>
                       {/* Fixed black text bug here! */}
                       <p className="font-bold text-fg text-sm">{d.name}</p>
-                      <p className="text-xs text-gray-400 font-mono">{d.percentage}% OFF</p>
+                      <p className="text-xs text-fg/70 font-mono">{d.percentage}% OFF</p>
                     </div>
                     <button 
                       onClick={async () => {
@@ -404,7 +404,7 @@ export default function PricingTab({ ctx }) {
                           fetchData(); // Refresh the list
                         }
                       }} 
-                      className="text-white hover:text-red-400 font-bold px-2 py-1 bg-red-500 rounded transition"
+                      className="text-white hover:text-danger font-bold px-2 py-1 bg-red-500 rounded transition"
                     >
                       Del
                     </button>
@@ -429,14 +429,14 @@ export default function PricingTab({ ctx }) {
                 className="space-y-3"
               >
                 <div>
-                  <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1 block">Discount Name</label>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Discount Name</label>
                   <input type="text" placeholder="e.g., PWD, Senior Citizen" value={discountForm.name} onChange={(e) => setDiscountForm({...discountForm, name: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" required />
                 </div>
                 <div>
-                  <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1 block">Percentage (%)</label>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Percentage (%)</label>
                   <input type="number" placeholder="e.g., 20" max="100" min="1" value={discountForm.percentage} onChange={(e) => setDiscountForm({...discountForm, percentage: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" required />
                 </div>
-                <button type="submit" className="w-full bg-accent text-white font-black py-3 rounded hover:bg-brand-dark transition shadow-lg shadow-accent/20 uppercase tracking-wider text-xs">
+                <button type="submit" className="w-full bg-accent text-on-brand font-black py-3 rounded hover:bg-brand-dark transition shadow-lg shadow-accent/20 uppercase tracking-wider text-xs">
                   Save Rule
                 </button>
               </form>
@@ -460,13 +460,13 @@ export default function PricingTab({ ctx }) {
                   offline, import it back. See exportPriceTiersExcel /
                   parsePriceTierExcel in AdminDashboard.jsx for the full logic. */}
               <button onClick={exportPriceTiersExcel} className="text-[10px] bg-accent/10 hover:bg-accent/20 text-accent px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition shrink-0">Download Excel</button>
-              <label className="text-[10px] bg-accent text-white px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition shrink-0 cursor-pointer hover:bg-accent/90">
+              <label className="text-[10px] bg-accent text-on-brand px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition shrink-0 cursor-pointer hover:bg-accent/90">
                 Import Excel
                 <input type="file" accept=".xlsx,.xls" className="hidden"
                   onChange={e => { const f = e.target.files?.[0]; if (f) parsePriceTierExcel(f); e.target.value = ''; }} />
               </label>
               <div className="relative">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg/70 pointer-events-none" />
                 <input
                   type="text"
                   placeholder="Search product name…"
@@ -477,7 +477,7 @@ export default function PricingTab({ ctx }) {
               </div>
               </div>
             </div>
-            <p className="text-[11px] text-fg/40 mb-4 leading-relaxed">
+            <p className="text-[11px] text-fg/70 mb-4 leading-relaxed">
               What each customer class pays, right next to the regular price. Click any cell to edit it.
               <span className="text-fg/60 font-bold"> Default %</span> tiers edit as a <span className="text-fg/60 font-bold">percent</span> - one shared rate, so
               it moves every product in that column together. <span className="text-fg/60 font-bold">Price List</span> tiers edit as a <span className="text-fg/60 font-bold">₱ price</span>,
@@ -493,8 +493,8 @@ export default function PricingTab({ ctx }) {
                     {pricingTable.tiers.map(t => (
                       <th key={t._id} className="py-3 px-3 text-right uppercase tracking-wider text-xs whitespace-nowrap min-w-[140px] border-b border-r border-white/10 last:border-r-0">
                         <span className="block truncate max-w-[160px] ml-auto" title={t.name}>{t.name}</span>
-                        {t.isActive === false && <span className="text-fg/25 normal-case text-[9px]">(inactive)</span>}
-                        <span className="block text-[9px] text-fg/30 normal-case font-normal mt-0.5">
+                        {t.isActive === false && <span className="text-fg/65 normal-case text-[9px]">(inactive)</span>}
+                        <span className="block text-[9px] text-fg/65 normal-case font-normal mt-0.5">
                           {t.pricingMode === 'per_product' ? 'price list' : `${t.percent}% off`}
                         </span>
                       </th>
@@ -503,11 +503,11 @@ export default function PricingTab({ ctx }) {
                 </thead>
                 <tbody>
                   {tierPagedProducts.length === 0 ? (
-                    <tr><td colSpan={2 + pricingTable.tiers.length} className="py-4 text-center text-gray-500">No products found.</td></tr>
+                    <tr><td colSpan={2 + pricingTable.tiers.length} className="py-4 text-center text-fg/70">No products found.</td></tr>
                   ) : tierPagedProducts.map((p, pIdx) => (
                     <tr key={p._id} className={`border-b border-white/5 hover:bg-accent/5 transition ${pIdx % 2 === 1 ? 'bg-white/[0.02]' : ''}`}>
                       <td className={`py-3 px-3 font-bold text-fg sticky left-0 z-10 border-r border-white/10 ${pIdx % 2 === 1 ? 'bg-surface-2' : 'bg-surface'}`}>{p.name}</td>
-                      <td className="py-3 px-3 text-right font-mono text-xs text-fg/50 border-r border-white/10">₱{Number(p.basePrice || 0).toFixed(2)}</td>
+                      <td className="py-3 px-3 text-right font-mono text-xs text-fg/75 border-r border-white/10">₱{Number(p.basePrice || 0).toFixed(2)}</td>
                       {pricingTable.tiers.map(t => {
                         const price = t.prices[p._id];
                         const off = price !== null && p.basePrice > 0 ? Math.round((1 - price / p.basePrice) * 100) : null;
@@ -535,7 +535,7 @@ export default function PricingTab({ ctx }) {
                               <div className="flex justify-end items-center gap-2">
                                 {isPerProduct ? (
                                   <div className="relative w-20">
-                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-fg/30 text-xs">₱</span>
+                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-fg/65 text-xs">₱</span>
                                     <input
                                       type="number" step="0.01" min="0" autoFocus
                                       className="w-full bg-page-bg border border-accent rounded pl-5 pr-1 py-1 text-fg outline-none text-right"
@@ -559,14 +559,14 @@ export default function PricingTab({ ctx }) {
                                         if (e.key === 'Escape') setEditTierCell(null);
                                       }}
                                     />
-                                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/30 text-xs">%</span>
+                                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/65 text-xs">%</span>
                                   </div>
                                 )}
-                                <button onClick={save} title="Save price" className="text-green-400 hover:text-green-300"><Check size={14} /></button>
-                                <button onClick={() => setEditTierCell(null)} title="Cancel" className="text-red-400 hover:text-red-300">✕</button>
+                                <button onClick={save} title="Save price" className="text-success hover:text-green-300"><Check size={14} /></button>
+                                <button onClick={() => setEditTierCell(null)} title="Cancel" className="text-danger hover:text-red-300">✕</button>
                                 <button
                                   onClick={() => fetchTierPriceHistory(t._id, isPerProduct ? p._id : null, t.name, isPerProduct ? p.name : null, isPerProduct ? price : t.percent)}
-                                  title="Price history" className="text-fg/30 hover:text-accent"
+                                  title="Price history" className="text-fg/65 hover:text-accent"
                                 ><History size={13} /></button>
                               </div>
 
@@ -574,24 +574,24 @@ export default function PricingTab({ ctx }) {
                                   above, only shown for per_product cells. */}
                               {isPerProduct && (
                                 <div className="mt-2 text-left bg-page-bg/60 border border-white/10 rounded-lg p-2 w-52 ml-auto">
-                                  <p className="text-[9px] font-black uppercase tracking-widest text-fg/40 mb-1.5">Quantity Breaks</p>
+                                  <p className="text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1.5">Quantity Breaks</p>
                                   {breaks.map(b => (
                                     <div key={b.minQty} className="flex items-center justify-between text-[11px] mb-1">
                                       <span className="text-fg/60 font-normal">{b.minQty}+ units</span>
                                       <span className="flex items-center gap-1.5">
                                         <span className="font-bold text-fg tabular-nums">₱{Number(b.price).toFixed(2)}</span>
-                                        <button onClick={() => removeTierBulkBreak(t._id, p._id, b.minQty)} title="Remove this break" className="text-red-400/60 hover:text-red-400">✕</button>
+                                        <button onClick={() => removeTierBulkBreak(t._id, p._id, b.minQty)} title="Remove this break" className="text-red-400/60 hover:text-danger">✕</button>
                                       </span>
                                     </div>
                                   ))}
-                                  {breaks.length === 0 && <p className="text-[10px] text-fg/25 italic mb-1.5">None yet.</p>}
+                                  {breaks.length === 0 && <p className="text-[10px] text-fg/65 italic mb-1.5">None yet.</p>}
                                   <div className="flex items-center gap-1 mt-1.5">
                                     <input type="number" min="1" step="1" placeholder="Qty"
                                       value={newBreakQty} onChange={e => setNewBreakQty(e.target.value)}
                                       className="w-14 bg-white/5 border border-white/10 rounded px-1.5 py-1 text-fg text-[11px] font-normal outline-none focus:border-accent" />
-                                    <span className="text-fg/30 text-[10px]">@</span>
+                                    <span className="text-fg/65 text-[10px]">@</span>
                                     <div className="relative flex-1">
-                                      <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-fg/30 text-[10px]">₱</span>
+                                      <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-fg/65 text-[10px]">₱</span>
                                       <input type="number" min="0" step="0.01" placeholder="Price"
                                         value={newBreakPrice} onChange={e => setNewBreakPrice(e.target.value)}
                                         onKeyDown={e => { if (e.key === 'Enter') { addTierBulkBreak(t._id, p._id, newBreakQty, newBreakPrice); setNewBreakQty(''); setNewBreakPrice(''); } }}
@@ -618,21 +618,21 @@ export default function PricingTab({ ctx }) {
                               title={isPerProduct ? 'Set this product\'s price for this tier' : `Shared rate - editing this changes ${t.name}'s % for every product`}
                             >
                               {price === null ? (
-                                <span className="text-fg/20 text-xs">not set</span>
+                                <span className="text-fg/60 text-xs">not set</span>
                               ) : (
-                                <span className={off > 0 ? (isPerProduct ? 'text-accent font-bold' : 'text-fg/70 font-bold') : 'text-fg/40'}>
+                                <span className={off > 0 ? (isPerProduct ? 'text-accent font-bold' : 'text-fg/70 font-bold') : 'text-fg/70'}>
                                   ₱{price.toFixed(2)}
-                                  {off > 0 && <span className="text-[9px] text-fg/30 ml-1">-{off}%</span>}
+                                  {off > 0 && <span className="text-[9px] text-fg/65 ml-1">-{off}%</span>}
                                 </span>
                               )}
-                              <span className="text-[10px] text-gray-500 group-hover:text-accent">✎</span>
+                              <span className="text-[10px] text-fg/70 group-hover:text-accent">✎</span>
                             </div>
                             {/* Collapsed-view breaks, e.g. "20+  ₱550" - the same
                                 shape as the edit form above, just read-only. */}
                             {breaks.length > 0 && (
                               <div className="mt-0.5 text-right">
                                 {breaks.map(b => (
-                                  <p key={b.minQty} className="text-[9px] text-fg/40 tabular-nums leading-tight">
+                                  <p key={b.minQty} className="text-[9px] text-fg/70 tabular-nums leading-tight">
                                     {b.minQty}+ <span className="text-fg/60 font-bold">₱{Number(b.price).toFixed(2)}</span>
                                   </p>
                                 ))}
@@ -656,7 +656,7 @@ export default function PricingTab({ ctx }) {
                 >
                   <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                 </button>
-                <span className="text-gray-400 text-xs font-bold tracking-widest">
+                <span className="text-fg/70 text-xs font-bold tracking-widest">
                   PAGE <span className="text-accent text-sm">{tierPage}</span> OF {tierTotalPages}
                 </span>
                 <button

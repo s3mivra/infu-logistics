@@ -55,21 +55,21 @@ export default function RefundModal() {
 
   const ItemPicker = () => (
     <div>
-      <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1">{mode === 'exchange' ? 'Items to Return (optional)' : 'Items to Refund'}</label>
+      <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">{mode === 'exchange' ? 'Items to Return (optional)' : 'Items to Refund'}</label>
       <div className="space-y-1.5">
         {items.map((item, idx) => {
           const remaining = remainingOf(item);
           if (remaining <= 0) return (
             <div key={idx} className="flex items-center justify-between gap-2 bg-page-bg/50 border border-gray-800 rounded-lg px-3 py-2 opacity-40">
-              <span className="text-xs font-bold text-fg/50 truncate">{item.name}</span>
-              <span className="text-[10px] text-fg/40 font-bold uppercase shrink-0">Fully refunded</span>
+              <span className="text-xs font-bold text-fg/75 truncate">{item.name}</span>
+              <span className="text-[10px] text-fg/70 font-bold uppercase shrink-0">Fully refunded</span>
             </div>
           );
           return (
             <div key={idx} className="flex items-center justify-between gap-2 bg-page-bg border border-gray-700 rounded-lg px-3 py-2">
               <div className="min-w-0">
                 <p className="text-xs font-bold text-fg truncate">{item.name}</p>
-                <p className="text-[10px] text-fg/40">
+                <p className="text-[10px] text-fg/70">
                   {remaining} of {item.quantity} refundable{Number(item.refundedQty) > 0 ? ` (${item.refundedQty} already refunded)` : ''} · ₱{Number(item.price || 0).toFixed(2)} ea
                 </p>
               </div>
@@ -89,7 +89,7 @@ export default function RefundModal() {
 
   const InventoryActionPicker = ({ disabled, hint }) => (
     <div>
-      <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1">Inventory & COGS</label>
+      <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Inventory & COGS</label>
       <div className="grid grid-cols-3 gap-2">
         {[
           { v: 'Restock', label: 'Restock', hint: 'Goods returned' },
@@ -99,13 +99,13 @@ export default function RefundModal() {
           <button key={opt.v} type="button" disabled={disabled}
             onClick={() => setRefundForm(p => ({ ...p, inventoryAction: opt.v }))}
             className={`flex flex-col items-center py-2 rounded-xl border text-[11px] font-bold transition disabled:opacity-40
-              ${refundForm.inventoryAction === opt.v ? 'bg-brand/20 border-brand/60 text-fg' : 'bg-page-bg border-gray-700 text-gray-400 hover:border-brand/40'}`}>
+              ${refundForm.inventoryAction === opt.v ? 'bg-brand/20 border-brand/60 text-fg' : 'bg-page-bg border-gray-700 text-fg/70 hover:border-brand/40'}`}>
             {opt.label}
-            <span className="text-[9px] font-normal text-fg/30">{opt.hint}</span>
+            <span className="text-[9px] font-normal text-fg/65">{opt.hint}</span>
           </button>
         ))}
       </div>
-      {hint && <p className="text-[10px] text-fg/30 mt-1">{hint}</p>}
+      {hint && <p className="text-[10px] text-fg/65 mt-1">{hint}</p>}
     </div>
   );
 
@@ -115,16 +115,16 @@ export default function RefundModal() {
           <div className="flex justify-between items-center">
             <div>
               <h2 className="text-lg font-black text-fg">Issue Refund</h2>
-              <p className="text-xs text-gray-400 mt-0.5">{refundModal.orderNumber} · ₱{(refundModal.total||0).toFixed(2)}</p>
+              <p className="text-xs text-fg/70 mt-0.5">{refundModal.orderNumber} · ₱{(refundModal.total||0).toFixed(2)}</p>
             </div>
-            <button onClick={close} className="text-gray-500 hover:text-fg text-xl font-bold">✕</button>
+            <button onClick={close} className="text-fg/70 hover:text-fg text-xl font-bold">✕</button>
           </div>
 
           {items.length > 0 && (
             <div className="flex bg-page-bg border border-gray-700 rounded-xl p-1">
               {[{ v: 'full', label: 'Whole Order' }, { v: 'items', label: 'Select Items' }, { v: 'exchange', label: 'Exchange' }].map(t => (
                 <button key={t.v} type="button" onClick={() => setMode(t.v)}
-                  className={`flex-1 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider transition ${mode === t.v ? 'bg-brand text-white' : 'text-gray-400 hover:text-fg'}`}>
+                  className={`flex-1 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider transition ${mode === t.v ? 'bg-brand text-on-brand' : 'text-fg/70 hover:text-fg'}`}>
                   {t.label}
                 </button>
               ))}
@@ -133,12 +133,12 @@ export default function RefundModal() {
 
           {mode === 'full' && (
             <div>
-              <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1">Refund Amount (₱)</label>
+              <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Refund Amount (₱)</label>
               <input type="number" min="0.01" max={refundModal.total} step="0.01"
                 value={refundForm.refundAmount || refundModal.total}
                 onChange={e => setRefundForm(p=>({...p,refundAmount:e.target.value}))}
                 className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-fg font-black tabular-nums outline-none focus:border-brand/60" />
-              <p className="text-[10px] text-fg/30 mt-1">Max: ₱{(refundModal.total||0).toFixed(2)}</p>
+              <p className="text-[10px] text-fg/65 mt-1">Max: ₱{(refundModal.total||0).toFixed(2)}</p>
             </div>
           )}
 
@@ -146,7 +146,7 @@ export default function RefundModal() {
             <div>
               <ItemPicker />
               {selectedItemsPayload.length > 0 && (
-                <p className="text-[11px] text-fg/50 mt-2">Estimated refund: <span className="text-fg font-bold">₱{returnValuePreview.toFixed(2)}</span> <span className="text-fg/30">(server computes the exact, discount/VAT-adjusted amount)</span></p>
+                <p className="text-[11px] text-fg/75 mt-2">Estimated refund: <span className="text-fg font-bold">₱{returnValuePreview.toFixed(2)}</span> <span className="text-fg/65">(server computes the exact, discount/VAT-adjusted amount)</span></p>
               )}
             </div>
           )}
@@ -156,7 +156,7 @@ export default function RefundModal() {
               <ItemPicker />
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-[10px] text-gray-400 font-bold uppercase">Replacement Item(s) *</label>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase">Replacement Item(s) *</label>
                   <button type="button" onClick={() => setReplacements(r => [...r, { productId: '', qty: '1' }])}
                     className="text-[10px] font-bold text-brand hover:text-brand/80">+ Add another</button>
                 </div>
@@ -172,7 +172,7 @@ export default function RefundModal() {
                         onChange={e => setReplacements(rs => rs.map((x, xi) => xi === i ? { ...x, qty: e.target.value } : x))}
                         className="w-14 bg-surface border border-gray-700 rounded-lg px-2 py-1.5 text-fg text-sm text-right font-bold tabular-nums outline-none focus:border-brand/60 shrink-0" />
                       {replacements.length > 1 && (
-                        <button type="button" onClick={() => setReplacements(rs => rs.filter((_, xi) => xi !== i))} className="text-gray-500 hover:text-red-400 text-sm shrink-0">✕</button>
+                        <button type="button" onClick={() => setReplacements(rs => rs.filter((_, xi) => xi !== i))} className="text-fg/70 hover:text-danger text-sm shrink-0">✕</button>
                       )}
                     </div>
                   ))}
@@ -180,9 +180,9 @@ export default function RefundModal() {
               </div>
               {(selectedItemsPayload.length > 0 || replacementsPayload.length > 0) && (
                 <div className="bg-page-bg border border-gray-700 rounded-lg px-3 py-2 text-[11px] space-y-0.5">
-                  <p className="text-fg/50">Returned value: <span className="text-fg font-bold">₱{returnValuePreview.toFixed(2)}</span></p>
-                  <p className="text-fg/50">Replacement charge: <span className="text-fg font-bold">₱{newChargePreview.toFixed(2)}</span></p>
-                  <p className="text-fg/50 pt-1 border-t border-gray-800 mt-1">
+                  <p className="text-fg/75">Returned value: <span className="text-fg font-bold">₱{returnValuePreview.toFixed(2)}</span></p>
+                  <p className="text-fg/75">Replacement charge: <span className="text-fg font-bold">₱{newChargePreview.toFixed(2)}</span></p>
+                  <p className="text-fg/75 pt-1 border-t border-gray-800 mt-1">
                     {Math.abs(netDeltaPreview) < 0.01 ? 'Even swap - no cash movement.' : netDeltaPreview > 0
                       ? <>Customer pays <span className="text-fg font-bold">₱{netDeltaPreview.toFixed(2)}</span> more</>
                       : <>Customer gets <span className="text-fg font-bold">₱{Math.abs(netDeltaPreview).toFixed(2)}</span> back</>}
@@ -193,7 +193,7 @@ export default function RefundModal() {
           )}
 
           <div>
-            <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1">Reason *</label>
+            <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Reason *</label>
             <textarea rows={2} value={refundForm.reason} onChange={e => setRefundForm(p=>({...p,reason:e.target.value}))}
               placeholder="e.g. Wrong order, product defect, customer complaint"
               className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/60 resize-none placeholder-white/20" />

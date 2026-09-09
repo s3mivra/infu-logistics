@@ -16,7 +16,10 @@ const STATUS_STYLES = {
   Processing: 'bg-amber-500 text-white border-amber-500',
   Complete:   'bg-green-500 text-white border-green-500',
   Incomplete: 'bg-red-500 text-white border-red-500',
-  Cancelled:  'bg-white text-fg border-white',
+  // text-black, not text-fg: the pill is hardcoded white in every theme,
+  // and --fg is near-white on the three dark ones - the badge read as a
+  // blank chip at 1.05:1.
+  Cancelled:  'bg-white text-black border-white',
 };
 
 const StatusBadge = ({ status }) => (
@@ -786,7 +789,7 @@ export default function ProcurementTab({ ctx }) {
           </div>
           <div>
             <h1 className="text-xl font-black text-fg leading-none">Procurement</h1>
-            <p className="text-fg/40 text-xs font-bold mt-1">Purchase orders &amp; delivery reconciliation</p>
+            <p className="text-fg/70 text-xs font-bold mt-1">Purchase orders &amp; delivery reconciliation</p>
           </div>
         </div>
         {subTab === 'orders' && canManage && (
@@ -804,7 +807,7 @@ export default function ProcurementTab({ ctx }) {
             <button onClick={buildSuggestedPo} disabled={suggesting} title="Auto-draft a PO from sales velocity - items below their reorder point" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 text-brand font-bold text-sm px-4 py-2.5 rounded-xl transition">
               {suggesting ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} Suggested PO
             </button>
-            <button onClick={openNewForm} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
+            <button onClick={openNewForm} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
               <Plus size={16} /> New PO
             </button>
           </div>
@@ -828,7 +831,7 @@ export default function ProcurementTab({ ctx }) {
               <input type="file" accept=".xlsx,.xls,.csv" className="hidden"
                 onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; importSuppliers(f); }} />
             </label>
-            <button onClick={() => openSupplierForm()} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
+            <button onClick={() => openSupplierForm()} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
               <Plus size={16} /> New Supplier
             </button>
           </>
@@ -846,7 +849,7 @@ export default function ProcurementTab({ ctx }) {
           { id: 'suppliers', label: 'Suppliers', icon: Building2 },
         ].map(({ id, label, icon: Icon, badge }) => (
           <button key={id} onClick={() => setSubTab(id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition shrink-0 ${subTab === id ? 'bg-brand text-white shadow-sm' : 'text-fg/50 hover:text-fg'}`}>
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition shrink-0 ${subTab === id ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/75 hover:text-fg'}`}>
             <Icon size={15} /> {label}
             {badge > 0 && <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${subTab === id ? 'bg-white/20' : 'bg-brand/20 text-brand'}`}>{badge}</span>}
           </button>
@@ -861,7 +864,7 @@ export default function ProcurementTab({ ctx }) {
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center gap-2 text-fg/40 py-16 font-bold"><Loader2 size={18} className="animate-spin" /> Loading…</div>
+        <div className="flex items-center justify-center gap-2 text-fg/70 py-16 font-bold"><Loader2 size={18} className="animate-spin" /> Loading…</div>
       ) : subTab === 'orders' ? (
         /* ── PURCHASE ORDERS LIST ── */
         <div className="space-y-6">
@@ -877,7 +880,7 @@ export default function ProcurementTab({ ctx }) {
                   <button onClick={() => printPurchaseOrder(po)} title="Print purchase order" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 hover:text-fg transition">Print</button>
                   <span className="text-[10px] font-bold text-amber-400/70 uppercase tracking-wider">Receive rest in Receiving tab</span>
                   {canManage && (
-                    <button onClick={() => setStatus(po, 'Cancelled')} title="Cancel the outstanding balance - already-received stock is unaffected" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/40 hover:bg-red-500/15 hover:text-red-300 transition">Cancel rest</button>
+                    <button onClick={() => setStatus(po, 'Cancelled')} title="Cancel the outstanding balance - already-received stock is unaffected" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/70 hover:bg-red-500/15 hover:text-red-300 transition">Cancel rest</button>
                   )}
                 </div>
               );
@@ -890,7 +893,7 @@ export default function ProcurementTab({ ctx }) {
                 {canManage && <button onClick={() => openEditForm(po)} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 hover:text-fg transition">Edit</button>}
                 {canManage && <button onClick={() => setStatus(po, 'Cancelled')} className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-red-500 text-white hover:bg-red-400 hover:text-white/0 transition">Cancel</button>}
                 {canDelete && (
-                  <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-fg/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
+                  <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-fg/65 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
                 )}
               </div>
               );
@@ -900,7 +903,7 @@ export default function ProcurementTab({ ctx }) {
               <div className="flex items-center gap-1.5">
                 <button onClick={() => printPurchaseOrder(po)} title="Print purchase order" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 hover:text-fg transition">Print</button>
                 {canDelete && ['Cancelled'].includes(po.status) && (
-                  <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-fg/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
+                  <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-fg/65 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
                 )}
               </div>
             )} />
@@ -914,7 +917,7 @@ export default function ProcurementTab({ ctx }) {
               <span className="flex items-center gap-2 text-sm font-black text-fg">
                 <Sparkles size={14} className="text-brand" /> Compare Prices - {priceComparison.length} item{priceComparison.length === 1 ? '' : 's'} catalogued
               </span>
-              {showPriceCompare ? <ChevronDown size={16} className="text-fg/40" /> : <ChevronRight size={16} className="text-fg/40" />}
+              {showPriceCompare ? <ChevronDown size={16} className="text-fg/70" /> : <ChevronRight size={16} className="text-fg/70" />}
             </button>
           )}
           {showPriceCompare && (
@@ -928,7 +931,7 @@ export default function ProcurementTab({ ctx }) {
                         <span className={`font-bold truncate ${i === 0 ? 'text-white' : 'text-fg/60'}`}>
                           {i === 0 && '✓ '}{o.supplierName}
                         </span>
-                        <span className={`whitespace-nowrap font-black ${i === 0 ? 'text-white' : 'text-fg/50'}`}>
+                        <span className={`whitespace-nowrap font-black ${i === 0 ? 'text-white' : 'text-fg/75'}`}>
                           {money(o.unitCost)}{o.unit ? ` / ${o.unit}` : ''}{o.packSize ? ` (${o.packSize}${o.unit || ''}/pack)` : ''}
                         </span>
                       </div>
@@ -940,7 +943,7 @@ export default function ProcurementTab({ ctx }) {
           )}
 
           {suppliers.length === 0 ? (
-            <div className="text-center py-16 text-fg/40 font-bold">
+            <div className="text-center py-16 text-fg/70 font-bold">
               <Building2 size={32} className="mx-auto mb-3 opacity-40" />
               No suppliers yet.{canManage ? ' Add one with “New Supplier”.' : ''}
             </div>
@@ -958,15 +961,15 @@ export default function ProcurementTab({ ctx }) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-black text-fg text-sm">{s.name}</span>
-                    {s.isActive === false && <span className="text-[10px] font-black uppercase tracking-wider text-fg/40 bg-white/5 px-1.5 py-0.5 rounded-full">Inactive</span>}
+                    {s.isActive === false && <span className="text-[10px] font-black uppercase tracking-wider text-fg/70 bg-white/5 px-1.5 py-0.5 rounded-full">Inactive</span>}
                   </div>
-                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1 text-fg/50 text-xs">
+                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1 text-fg/75 text-xs">
                     {s.contactPerson && <span>{s.contactPerson}</span>}
                     {s.phone && <span className="inline-flex items-center gap-1"><Phone size={11} />{s.phone}</span>}
                     {s.email && <span className="inline-flex items-center gap-1"><Mail size={11} />{s.email}</span>}
                     {s.address && <span className="inline-flex items-center gap-1"><MapPin size={11} />{s.address}</span>}
                   </div>
-                  {s.notes && <p className="text-fg/50 text-xs mt-1">{s.notes}</p>}
+                  {s.notes && <p className="text-fg/75 text-xs mt-1">{s.notes}</p>}
                   <button onClick={() => setExpandedSupplierId(isOpen ? null : s._id)}
                     className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-brand/80 hover:text-brand transition">
                     <Box size={12} />
@@ -976,9 +979,9 @@ export default function ProcurementTab({ ctx }) {
                   </button>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  <button onClick={() => openStatement(s)} title="Vendor statement" className="p-1.5 rounded-lg text-fg/40 hover:bg-white/10 hover:text-fg transition"><FileText size={14} /></button>
-                  {canManage && <button onClick={() => openSupplierForm(s)} className="p-1.5 rounded-lg text-fg/40 hover:bg-white/10 hover:text-fg transition"><Pencil size={14} /></button>}
-                  {canManage && canDelete && <button onClick={() => deleteSupplier(s)} className="p-1.5 rounded-lg text-fg/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>}
+                  <button onClick={() => openStatement(s)} title="Vendor statement" className="p-1.5 rounded-lg text-fg/70 hover:bg-white/10 hover:text-fg transition"><FileText size={14} /></button>
+                  {canManage && <button onClick={() => openSupplierForm(s)} className="p-1.5 rounded-lg text-fg/70 hover:bg-white/10 hover:text-fg transition"><Pencil size={14} /></button>}
+                  {canManage && canDelete && <button onClick={() => deleteSupplier(s)} className="p-1.5 rounded-lg text-fg/65 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>}
                 </div>
               </div>
               {isOpen && (
@@ -1005,7 +1008,7 @@ export default function ProcurementTab({ ctx }) {
                             </span>
                             {canManage && (
                               <div className="flex items-center gap-0.5">
-                                <button onClick={() => openCatalogForm(s._id, p)} className="p-1 rounded text-black/60 hover:text-black/40 hover:bg-white/10"><Pencil size={12} /></button>
+                                <button onClick={() => openCatalogForm(s._id, p)} className="p-1 rounded text-black/60 hover:text-black/60 hover:bg-white/10"><Pencil size={12} /></button>
                                 <button onClick={() => deleteCatalogEntry(s._id, p)} className="p-1 rounded text-black/60 hover:text-red-300 hover:bg-red-500/15"><Trash2 size={12} /></button>
                               </div>
                             )}
@@ -1037,7 +1040,7 @@ export default function ProcurementTab({ ctx }) {
                           placeholder="Notes (optional)" className={inputCls} />
                         <div className="flex gap-2">
                           <button onClick={() => saveCatalogEntry(s._id)} disabled={savingCatalog}
-                            className="flex-1 flex items-center justify-center gap-1.5 bg-brand text-white font-bold text-xs py-2 rounded-lg hover:bg-brand-dark transition disabled:opacity-50">
+                            className="flex-1 flex items-center justify-center gap-1.5 bg-brand text-on-brand font-bold text-xs py-2 rounded-lg hover:bg-brand-dark transition disabled:opacity-50">
                             {savingCatalog ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {catalogEditId ? 'Save' : 'Add'}
                           </button>
                           <button onClick={closeCatalogForm} className="px-4 bg-white/5 text-black/80 font-bold text-xs py-2 rounded-lg hover:bg-white/10 transition">Cancel</button>
@@ -1049,13 +1052,13 @@ export default function ProcurementTab({ ctx }) {
                   {/* Purchase history - derived from actual POs, read-only */}
                   {purchaseHistory.length > 0 && (
                     <div className="pt-2 border-t border-white/5">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-1.5">Purchase History</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-1.5">Purchase History</p>
                       <div className="space-y-1">
                         {purchaseHistory.map(p => (
                           <div key={`${p.itemCode || p.itemName}`} className="flex items-center justify-between gap-3 text-xs">
                             <span className="text-fg/60 font-bold truncate">{p.itemName}</span>
-                            <span className="text-fg/40 whitespace-nowrap">
-                              {p.receivedQty}/{p.orderedQty} {p.unit} received · <span className="text-fg/50 font-bold">{money(p.actualSpend)}</span> bought
+                            <span className="text-fg/70 whitespace-nowrap">
+                              {p.receivedQty}/{p.orderedQty} {p.unit} received · <span className="text-fg/75 font-bold">{money(p.actualSpend)}</span> bought
                             </span>
                           </div>
                         ))}
@@ -1084,12 +1087,12 @@ export default function ProcurementTab({ ctx }) {
                     <span className="font-black text-fg text-sm">{po.poNumber}</span>
                     <StatusBadge status={po.status} />
                   </div>
-                  <p className="text-fg/40 text-xs font-bold mt-0.5 truncate">
+                  <p className="text-fg/70 text-xs font-bold mt-0.5 truncate">
                     {po.supplier || 'No supplier'} · {po.lines?.length || 0} item(s) · Expected {fmtDate(po.expectedDate)}
                   </p>
                 </div>
-                <span className="text-fg/50 font-black text-sm whitespace-nowrap">{money(po.estTotal)}</span>
-                <ChevronRight size={16} className={`text-fg/30 transition ${receiveId === po._id ? 'rotate-90' : ''}`} />
+                <span className="text-fg/75 font-black text-sm whitespace-nowrap">{money(po.estTotal)}</span>
+                <ChevronRight size={16} className={`text-fg/65 transition ${receiveId === po._id ? 'rotate-90' : ''}`} />
               </button>
 
               {receiveId === po._id && (() => {
@@ -1114,14 +1117,14 @@ export default function ProcurementTab({ ctx }) {
                             <p className="text-black text-xs">
                               Ordered: {l.orderedQty} {l.unit} @ {money(l.unitCost)}
                               {alreadyIn > 0 && <span className="text-emerald-400/70"> · Received so far: {alreadyIn}</span>}
-                              <span className="text-amber-500"> · Missing: {rem} {l.unit}</span>
+                              <span className="text-warning"> · Missing: {rem} {l.unit}</span>
                             </p>
                           </div>
                           <div className="flex items-center gap-1.5">
                             <input type="number" min="0" step="any" value={receiveQtys[key] ?? ''}
                               onChange={e => setReceiveQtys(q => ({ ...q, [key]: e.target.value }))}
                               className={`w-24 bg-white/5 border rounded-lg px-2 py-1.5 text-sm text-right text-fg focus:outline-none ${short ? 'border-red-500/50' : 'border-white/10 focus:border-brand/60'}`} />
-                            <span className="text-fg/40 text-xs font-bold w-8">{l.unit}</span>
+                            <span className="text-fg/70 text-xs font-bold w-8">{l.unit}</span>
                             <input type="date" value={receiveExpiry[key] ?? ''}
                               onChange={e => setReceiveExpiry(x => ({ ...x, [key]: e.target.value }))}
                               title="Expiry date on this delivery (optional)"
@@ -1168,12 +1171,12 @@ export default function ProcurementTab({ ctx }) {
                   </span>
                 )}
               </h2>
-              <button onClick={() => !saving && closeForm()} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+              <button onClick={() => !saving && closeForm()} className="text-fg/70 hover:text-fg transition"><X size={20} /></button>
             </div>
             <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
               <div className="grid sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/40 mb-1 block">Supplier</label>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/70 mb-1 block">Supplier</label>
                   {/* Always visible: pick a saved supplier, add a new one on the fly, or
                       just type the name manually below. Not gated on suppliers existing
                       yet, so the picker is discoverable even before any supplier is saved. */}
@@ -1187,7 +1190,7 @@ export default function ProcurementTab({ ctx }) {
                   <input value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value, supplierId: '' }))} placeholder="Or type supplier name manually" className={inputCls} />
                 </div>
                 <div>
-                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/40 mb-1 block">Expected Delivery</label>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/70 mb-1 block">Expected Delivery</label>
                   <input type="date" value={form.expectedDate} onChange={e => setForm(f => ({ ...f, expectedDate: e.target.value }))} className={inputCls} />
                 </div>
               </div>
@@ -1195,7 +1198,7 @@ export default function ProcurementTab({ ctx }) {
               {/* Line items */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/40">Line Items</label>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/70">Line Items</label>
                   <button onClick={addLine} className="flex items-center gap-1 text-brand text-xs font-bold hover:text-brand/80 transition"><Plus size={13} /> Add line</button>
                 </div>
                 <div className="space-y-2">
@@ -1208,7 +1211,7 @@ export default function ProcurementTab({ ctx }) {
                           {inventory.map(i => <option key={i._id} value={i._id}>{i.itemName}{i.itemCode ? ` (${i.itemCode})` : ''}</option>)}
                         </select>
                         {form.lines.length > 1 && (
-                          <button onClick={() => removeLine(idx)} className="p-1.5 rounded-lg text-fg/30 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={15} /></button>
+                          <button onClick={() => removeLine(idx)} className="p-1.5 rounded-lg text-fg/65 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={15} /></button>
                         )}
                       </div>
                       {/* Labelled, not placeholder-only. A placeholder vanishes
@@ -1218,70 +1221,70 @@ export default function ProcurementTab({ ctx }) {
                           pattern as the storage block below. */}
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                         <div className="col-span-2 sm:col-span-3">
-                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Item Name</p>
+                          <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Item Name</p>
                           <input value={l.itemName} onChange={e => updateLine(idx, { itemName: e.target.value, invId: null })} placeholder="e.g. Alaska Barista Milk" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
                         </div>
                         <div>
-                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Qty (packs)</p>
+                          <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Qty (packs)</p>
                           <input type="number" min="0" step="any" value={l.orderedQty} onChange={e => updateLine(idx, { orderedQty: e.target.value })} placeholder="10" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
                         </div>
                         <div>
-                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Unit</p>
+                          <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Unit</p>
                           <select value={l.unit} onChange={e => updateLine(idx, { unit: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-brand/60">
                             {UNIT_OPTIONS.map(u => <option key={u || 'none'} value={u}>{u || 'Unit'}</option>)}
                           </select>
                         </div>
                         <div>
-                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Cost per Pack</p>
+                          <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Cost per Pack</p>
                           <input type="number" min="0" step="any" value={l.unitCost} onChange={e => updateLine(idx, { unitCost: e.target.value })} placeholder="500.00" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
                         </div>
                         <div>
-                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Size per Pack</p>
+                          <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Size per Pack</p>
                           <input type="number" min="0" step="any" value={l.packSize} onChange={e => updateLine(idx, { packSize: e.target.value })} title="Weight / volume per pack, in the selected unit" placeholder="1000" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
                         </div>
                         <div>
-                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Expiry Date</p>
+                          <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Expiry Date</p>
                           <input type="date" value={l.expiryDate} onChange={e => updateLine(idx, { expiryDate: e.target.value })} title="Expiry date (optional)" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg/70 focus:outline-none focus:border-brand/60" />
                         </div>
                         {!l.expiryDate && (
                           <div>
-                            <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Production Date</p>
+                            <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Production Date</p>
                             <input type="date" value={l.productionDate || ''} onChange={e => updateLine(idx, { productionDate: e.target.value })} title="For goods with no real expiry, e.g. beans" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg/70 focus:outline-none focus:border-brand/60" />
                           </div>
                         )}
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 border-t border-white/8 mt-1">
                         <div>
-                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Storage Location</p>
+                          <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Storage Location</p>
                           <select value={l.stockLocation || ''} onChange={e => updateLine(idx, { stockLocation: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60">
                             <option value="">- None -</option>
                             {(stockLocations || []).filter(loc => loc.isActive !== false).map(loc => <option key={loc._id} value={loc.name}>{loc.name}</option>)}
                           </select>
                         </div>
                         <div>
-                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Stock Category</p>
+                          <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Stock Category</p>
                           <select value={l.stockCategory || ''} onChange={e => updateLine(idx, { stockCategory: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60">
                             <option value="">- None -</option>
                             {(stockCategories || []).filter(c => c.isActive !== false).map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
                           </select>
                         </div>
                         <div>
-                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Payment Method</p>
+                          <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Payment Method</p>
                           <select value={l.creditAccount || ''} onChange={e => updateLine(idx, { creditAccount: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60">
                             <option value="">- Select -</option>
                             {(procurementCreditAccounts || []).map(a => <option key={a.code} value={a.code}>{a.name}{String(a.code).startsWith('220') ? ' (Credit)' : ''}</option>)}
                           </select>
                         </div>
                         <div>
-                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Warn Days (expiry)</p>
+                          <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Warn Days (expiry)</p>
                           <input type="number" min="1" max="365" value={l.expiryWarnDays || ''} onChange={e => updateLine(idx, { expiryWarnDays: e.target.value })} placeholder="e.g. 7" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
                         </div>
                         <div>
-                          <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Low Stock Alert</p>
+                          <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Low Stock Alert</p>
                           <input type="number" min="0" value={l.lowStockThreshold || ''} onChange={e => updateLine(idx, { lowStockThreshold: e.target.value })} placeholder="e.g. 10" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
                         </div>
                       </div>
-                      <p className="text-right text-fg/40 text-xs font-bold">Line: {money((Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0))}</p>
+                      <p className="text-right text-fg/70 text-xs font-bold">Line: {money((Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0))}</p>
                     </div>
                   ))}
                 </div>
@@ -1299,25 +1302,25 @@ export default function ProcurementTab({ ctx }) {
                 </label>
                 {form.prepaid && (
                   <>
-                    <p className="text-[10px] text-fg/35 mt-1.5">
+                    <p className="text-[10px] text-fg/70 mt-1.5">
                       Recorded as an advance to the supplier, not a payable. Receiving the goods clears it.
                     </p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
                       <div>
-                        <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Amount Paid</p>
+                        <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Amount Paid</p>
                         <input type="number" min="0" step="0.01" value={form.prepaidAmount}
                           onChange={e => setForm(f => ({ ...f, prepaidAmount: e.target.value }))}
                           placeholder={String(formEstTotal ?? '')}
                           className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
                       </div>
                       <div>
-                        <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Date Paid</p>
+                        <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Date Paid</p>
                         <input type="date" value={form.prepaidDate}
                           onChange={e => setForm(f => ({ ...f, prepaidDate: e.target.value }))}
                           className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg/70 focus:outline-none focus:border-brand/60" />
                       </div>
                       <div>
-                        <p className="text-[9px] text-fg/30 uppercase font-bold mb-1">Paid From</p>
+                        <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Paid From</p>
                         <select value={form.prepaidFromAccount}
                           onChange={e => setForm(f => ({ ...f, prepaidFromAccount: e.target.value }))}
                           className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-brand/60">
@@ -1328,7 +1331,7 @@ export default function ProcurementTab({ ctx }) {
                         </select>
                       </div>
                     </div>
-                    <p className="text-[10px] text-fg/30 mt-1.5">
+                    <p className="text-[10px] text-fg/65 mt-1.5">
                       Leave the amount blank to record the full estimated total.
                     </p>
                   </>
@@ -1336,15 +1339,15 @@ export default function ProcurementTab({ ctx }) {
               </div>
 
               <div>
-                <label className="text-[11px] font-black uppercase tracking-wider text-fg/40 mb-1 block">Notes</label>
+                <label className="text-[11px] font-black uppercase tracking-wider text-fg/70 mb-1 block">Notes</label>
                 <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder="Optional notes" className={inputCls} />
               </div>
             </div>
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-white/10">
               <span className="text-sm font-black text-fg">Estimated total: <span className="text-brand">{money(formEstTotal)}</span></span>
               <div className="flex items-center gap-2">
-                <button onClick={() => !saving && closeForm()} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">{suggestedQueue.length > 0 ? 'Cancel remaining' : 'Cancel'}</button>
-                <button onClick={saveDraft} disabled={saving} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+                <button onClick={() => !saving && closeForm()} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/75 hover:text-fg transition">{suggestedQueue.length > 0 ? 'Cancel remaining' : 'Cancel'}</button>
+                <button onClick={saveDraft} disabled={saving} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-on-brand font-bold text-sm px-5 py-2 rounded-xl transition">
                   {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
                   {editId ? 'Save Changes' : (suggestedQueue.length > 0 ? 'Create PO & Continue' : 'Create PO')}
                 </button>
@@ -1360,7 +1363,7 @@ export default function ProcurementTab({ ctx }) {
           <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-lg my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
               <h2 className="font-black text-fg text-lg">{supplierEditId ? 'Edit Supplier' : 'New Supplier'}</h2>
-              <button onClick={() => !savingSupplier && setShowSupplierForm(false)} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+              <button onClick={() => !savingSupplier && setShowSupplierForm(false)} className="text-fg/70 hover:text-fg transition"><X size={20} /></button>
             </div>
             <div className="p-5 space-y-3">
               <div>
@@ -1391,8 +1394,8 @@ export default function ProcurementTab({ ctx }) {
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
-              <button onClick={() => !savingSupplier && setShowSupplierForm(false)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
-              <button onClick={saveSupplier} disabled={savingSupplier} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+              <button onClick={() => !savingSupplier && setShowSupplierForm(false)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/75 hover:text-fg transition">Cancel</button>
+              <button onClick={saveSupplier} disabled={savingSupplier} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-on-brand font-bold text-sm px-5 py-2 rounded-xl transition">
                 {savingSupplier ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {supplierEditId ? 'Save Changes' : 'Create Supplier'}
               </button>
             </div>
@@ -1406,34 +1409,34 @@ export default function ProcurementTab({ ctx }) {
           <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-2xl my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
               <h2 className="font-black text-fg text-lg">Vendor Statement - {statementSupplier.name}</h2>
-              <button onClick={closeStatement} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+              <button onClick={closeStatement} className="text-fg/70 hover:text-fg transition"><X size={20} /></button>
             </div>
             <div className="p-5 space-y-3">
               <div className="flex flex-wrap items-end gap-2">
                 <div>
-                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/40 mb-1 block">From</label>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/70 mb-1 block">From</label>
                   <input type="date" value={statementRange.start} onChange={e => setStatementRange(r => ({ ...r, start: e.target.value }))} className={inputCls} />
                 </div>
                 <div>
-                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/40 mb-1 block">To</label>
+                  <label className="text-[11px] font-black uppercase tracking-wider text-fg/70 mb-1 block">To</label>
                   <input type="date" value={statementRange.end} onChange={e => setStatementRange(r => ({ ...r, end: e.target.value }))} className={inputCls} />
                 </div>
                 <button onClick={() => openStatement(statementSupplier, statementRange)} disabled={loadingStatement} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 text-fg font-bold text-sm px-4 py-2 rounded-xl transition">
                   {loadingStatement ? <Loader2 size={15} className="animate-spin" /> : 'Refresh'}
                 </button>
                 {statement && (
-                  <button onClick={exportStatementToPDF} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2 rounded-xl transition ml-auto"><Download size={15} /> Export PDF</button>
+                  <button onClick={exportStatementToPDF} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm px-4 py-2 rounded-xl transition ml-auto"><Download size={15} /> Export PDF</button>
                 )}
               </div>
 
-              {loadingStatement && <div className="text-center py-10 text-fg/40 text-sm"><Loader2 size={20} className="animate-spin mx-auto mb-2" />Loading…</div>}
+              {loadingStatement && <div className="text-center py-10 text-fg/70 text-sm"><Loader2 size={20} className="animate-spin mx-auto mb-2" />Loading…</div>}
 
               {!loadingStatement && statement && (
                 <>
                   <p className="text-sm font-bold text-fg">Opening balance: <span className="text-brand">{money(statement.openingBalance)}</span></p>
                   <div className="max-h-[45vh] overflow-y-auto border border-white/10 rounded-xl">
                     <table className="w-full text-xs">
-                      <thead className="bg-white/5 text-fg/50 sticky top-0">
+                      <thead className="bg-white/5 text-fg/75 sticky top-0">
                         <tr>
                           <th className="text-left px-3 py-2 font-black uppercase tracking-wider">Date</th>
                           <th className="text-left px-3 py-2 font-black uppercase tracking-wider">Reference</th>
@@ -1445,7 +1448,7 @@ export default function ProcurementTab({ ctx }) {
                       </thead>
                       <tbody>
                         {statement.entries.length === 0 && (
-                          <tr><td colSpan={6} className="text-center px-3 py-6 text-fg/40">No activity in this period.</td></tr>
+                          <tr><td colSpan={6} className="text-center px-3 py-6 text-fg/70">No activity in this period.</td></tr>
                         )}
                         {statement.entries.map((e, i) => (
                           <tr key={i} className="border-t border-white/5">
@@ -1475,12 +1478,12 @@ export default function ProcurementTab({ ctx }) {
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
               <div>
                 <h2 className="font-black text-fg text-lg">Import Purchase Orders</h2>
-                <p className="text-fg/40 text-xs mt-0.5">
+                <p className="text-fg/70 text-xs mt-0.5">
                   {importPreview.pos.length} PO(s) · {importPreview.pos.reduce((s, p) => s + p.lines.length, 0)} line item(s)
                   {importPreview.skipped > 0 && ` · ${importPreview.skipped} row(s) skipped`}
                 </p>
               </div>
-              <button onClick={() => !importing && setImportPreview(null)} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+              <button onClick={() => !importing && setImportPreview(null)} className="text-fg/70 hover:text-fg transition"><X size={20} /></button>
             </div>
             <div className="p-5 space-y-3 max-h-[60vh] overflow-y-auto">
               {importPreview.pos.map((p, pi) => {
@@ -1489,7 +1492,7 @@ export default function ProcurementTab({ ctx }) {
                   <div key={pi} className="bg-white/5 border border-white/10 rounded-xl p-3">
                     <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
                       <span className="font-black text-fg text-sm">{p.supplier || 'Unknown supplier'}</span>
-                      <div className="flex items-center gap-2 text-[11px] text-fg/40 font-bold">
+                      <div className="flex items-center gap-2 text-[11px] text-fg/70 font-bold">
                         {p.poNo && <span>PO {p.poNo}</span>}
                         <span className="text-brand">{money(total)}</span>
                       </div>
@@ -1507,7 +1510,7 @@ export default function ProcurementTab({ ctx }) {
               })}
             </div>
             <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
-              <button onClick={() => !importing && setImportPreview(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
+              <button onClick={() => !importing && setImportPreview(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/75 hover:text-fg transition">Cancel</button>
               <button onClick={confirmImport} disabled={importing} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-fg font-bold text-sm px-5 py-2 rounded-xl transition">
                 {importing ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Import {importPreview.pos.length} PO(s)
               </button>
@@ -1525,14 +1528,14 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
   if (!pos.length) {
     return (
       <div>
-        <p className="text-[11px] font-black uppercase tracking-wider text-fg/30 mb-2">{title}</p>
-        <div className="text-center py-8 text-fg/30 text-sm font-bold border border-dashed border-white/10 rounded-2xl">{empty}</div>
+        <p className="text-[11px] font-black uppercase tracking-wider text-fg/65 mb-2">{title}</p>
+        <div className="text-center py-8 text-fg/65 text-sm font-bold border border-dashed border-white/10 rounded-2xl">{empty}</div>
       </div>
     );
   }
   return (
     <div>
-      <p className="text-[11px] font-black uppercase tracking-wider text-fg/30 mb-2">{title} <span className="text-fg/20">({pos.length})</span></p>
+      <p className="text-[11px] font-black uppercase tracking-wider text-fg/65 mb-2">{title} <span className="text-fg/60">({pos.length})</span></p>
       <div className="space-y-2">
         {pos.map(po => {
           const isOpen = open[po._id];
@@ -1540,20 +1543,20 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
             <div key={po._id} className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
               <div className="flex items-center gap-3 px-4 py-3.5">
                 <button onClick={() => setOpen(o => ({ ...o, [po._id]: !o[po._id] }))} className="flex-1 min-w-0 flex items-center gap-3 text-left">
-                  <ChevronRight size={16} className={`text-fg/30 shrink-0 transition ${isOpen ? 'rotate-90' : ''}`} />
+                  <ChevronRight size={16} className={`text-fg/65 shrink-0 transition ${isOpen ? 'rotate-90' : ''}`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-black text-fg text-sm">{po.poNumber}</span>
                       <StatusBadge status={po.status} />
                     </div>
-                    <p className="text-fg/40 text-xs font-bold mt-0.5 truncate">
+                    <p className="text-fg/70 text-xs font-bold mt-0.5 truncate">
                       {po.supplier || 'No supplier'} · {po.lines?.length || 0} item(s)
                       {showReceived && po.receivedAt ? ` · Received ${fmtDate(po.receivedAt)}` : ` · Expected ${fmtDate(po.expectedDate)}`}
                     </p>
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-fg/60 font-black text-sm">{money(showReceived && po.actualTotal ? po.actualTotal : po.estTotal)}</p>
-                    {showReceived && po.actualTotal > 0 && <p className="text-fg/30 text-[10px] font-bold">est {money(po.estTotal)}</p>}
+                    {showReceived && po.actualTotal > 0 && <p className="text-fg/65 text-[10px] font-bold">est {money(po.estTotal)}</p>}
                   </div>
                 </button>
                 {renderActions && <div className="shrink-0">{renderActions(po)}</div>}
@@ -1577,7 +1580,7 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
                           <tr key={l._id || i} className="border-t border-white">
                             <td className="py-1.5 font-bold text-white">{l.itemName}</td>
                             <td className="py-1.5 text-white text-right">{l.orderedQty} {l.unit}</td>
-                            {showReceived && <td className={`py-1.5 text-right font-bold ${short ? 'text-red-400' : 'text-green-400'}`}>{l.receivedQty ?? '-'} {l.unit}</td>}
+                            {showReceived && <td className={`py-1.5 text-right font-bold ${short ? 'text-danger' : 'text-success'}`}>{l.receivedQty ?? '-'} {l.unit}</td>}
                             <td className="py-1.5 text-white text-right">{money(l.unitCost)}</td>
                             <td className="py-1.5 text-white text-right">{money((showReceived && l.receivedQty != null ? l.receivedQty : l.orderedQty) * l.unitCost)}</td>
                           </tr>
@@ -1585,7 +1588,7 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
                       })}
                     </tbody>
                   </table>
-                  {po.notes && <p className="text-white text-xs mt-2 pt-2 border-t border-white/5"><span className="font-black uppercase tracking-wider text-[10px] text-fg/30">Notes: </span>{po.notes}</p>}
+                  {po.notes && <p className="text-white text-xs mt-2 pt-2 border-t border-white/5"><span className="font-black uppercase tracking-wider text-[10px] text-fg/65">Notes: </span>{po.notes}</p>}
                   {po.receivedBy && <p className="text-white text-[11px] mt-1.5 font-bold">Received by {po.receivedBy}</p>}
                 </div>
               )}

@@ -13,7 +13,7 @@ export default function ChangePasswordModal() {
           <div className="flex justify-between items-center">
             <h2 className="text-lg font-black text-fg uppercase tracking-wider">Change Password</h2>
             <button onClick={() => { setChangePwModal(false); setChangePwError(''); setChangePwForm({ currentPassword: '', newPassword: '', confirmPassword: '' }); }}
-              className="text-gray-500 hover:text-fg text-xl font-bold">✕</button>
+              className="text-fg/70 hover:text-fg text-xl font-bold">✕</button>
           </div>
           {changePwError && (
             <div className="bg-red-900/30 border border-red-500/40 rounded-xl px-4 py-3 text-xs text-red-300 font-bold">{changePwError}</div>
@@ -24,7 +24,7 @@ export default function ChangePasswordModal() {
             ['Confirm New Password', 'confirmPassword', 'Repeat the new password'],
           ].map(([label, field, hint]) => (
             <div key={field}>
-              <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1">{label}</label>
+              <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">{label}</label>
               <input type="password" value={changePwForm[field]}
                 onChange={e => setChangePwForm(p => ({ ...p, [field]: e.target.value }))}
                 placeholder={hint}
@@ -33,7 +33,7 @@ export default function ChangePasswordModal() {
             </div>
           ))}
           <button onClick={handleChangePassword} disabled={changePwLoading}
-            className="w-full py-3 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 transition disabled:opacity-50">
+            className="w-full py-3 bg-brand text-on-brand font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 transition disabled:opacity-50">
             {changePwLoading ? 'Saving…' : 'Update Password'}
           </button>
         </div>

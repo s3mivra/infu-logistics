@@ -81,16 +81,16 @@ const MenuItemCard = memo(({ product, onAdd }) => {
     </div>
     <div className="p-3">
       <h3 className="font-bold text-fg text-sm leading-tight truncate">{product.name}</h3>
-      {product.description && <p className="text-fg/40 text-xs mt-0.5 line-clamp-1">{product.description}</p>}
+      {product.description && <p className="text-fg/70 text-xs mt-0.5 line-clamp-1">{product.description}</p>}
       {product.activeSalePrice != null ? (
         <div className="flex items-baseline gap-1.5 mt-2">
-          <p className="text-orange-400 font-black text-sm">₱{Number(product.activeSalePrice).toFixed(2)}</p>
-          <p className="text-fg/30 font-bold text-[10px] line-through">₱{(product.basePrice || 0).toFixed(2)}</p>
+          <p className="text-warning font-black text-sm">₱{Number(product.activeSalePrice).toFixed(2)}</p>
+          <p className="text-fg/65 font-bold text-[10px] line-through">₱{(product.basePrice || 0).toFixed(2)}</p>
         </div>
       ) : (
         <p className="text-brand font-black text-sm mt-2">
           ₱{(product.basePrice || 0).toFixed(2)}
-          {product.sizes?.length > 0 && <span className="text-fg/30 font-normal text-xs ml-1">& up</span>}
+          {product.sizes?.length > 0 && <span className="text-fg/65 font-normal text-xs ml-1">& up</span>}
         </p>
       )}
     </div>
@@ -622,10 +622,10 @@ export default function CustomerMenu() {
       <div className="min-h-screen bg-page-bg flex flex-col items-center justify-center p-6 text-center">
         <div className="bg-sidebar-bg border border-red-500/20 p-10 rounded-3xl max-w-sm w-full animate-fade-in">
           <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center mx-auto mb-5">
-            <AlertCircle size={28} className="text-red-400" />
+            <AlertCircle size={28} className="text-danger" />
           </div>
           <h1 className="text-2xl font-black text-fg uppercase tracking-widest mb-3">Session Expired</h1>
-          <p className="text-fg/40 text-sm leading-relaxed">This ordering link has expired. Please ask staff to generate a new QR code for your table.</p>
+          <p className="text-fg/70 text-sm leading-relaxed">This ordering link has expired. Please ask staff to generate a new QR code for your table.</p>
         </div>
       </div>
     );
@@ -639,9 +639,9 @@ export default function CustomerMenu() {
             <CheckCircle size={36} className="text-brand" />
           </div>
           <h2 className="text-3xl font-black text-fg mb-3 uppercase tracking-widest">Thank You!</h2>
-          <p className="text-fg/50 font-medium mb-8">We hope you enjoy your order. Come back soon!</p>
+          <p className="text-fg/75 font-medium mb-8">We hope you enjoy your order. Come back soon!</p>
           <div className="border-t border-white/5 pt-6">
-            <p className="text-fg/20 text-xs uppercase font-bold tracking-widest">You may now close this page.</p>
+            <p className="text-fg/60 text-xs uppercase font-bold tracking-widest">You may now close this page.</p>
           </div>
         </div>
       </div>
@@ -664,7 +664,7 @@ export default function CustomerMenu() {
               <>
                 <div className="text-6xl mb-6 animate-pulse">📡</div>
                 <h1 className="text-2xl font-black text-fg mb-3 uppercase tracking-widest">Sending Order…</h1>
-                <p className="text-fg/50 text-sm leading-relaxed">Please proceed to the cashier to confirm payment of <span className="text-brand font-bold">₱{(lockedOrder.total||0).toFixed(2)}</span>.</p>
+                <p className="text-fg/75 text-sm leading-relaxed">Please proceed to the cashier to confirm payment of <span className="text-brand font-bold">₱{(lockedOrder.total||0).toFixed(2)}</span>.</p>
               </>
             )}
             {lockedOrder?.status === 'Preparing' && (() => {
@@ -681,7 +681,7 @@ export default function CustomerMenu() {
                   </h1>
                   {totalCount > 0 && (
                     <div className="mb-4">
-                      <div className="flex justify-between text-[10px] text-fg/30 font-bold mb-1.5">
+                      <div className="flex justify-between text-[10px] text-fg/65 font-bold mb-1.5">
                         <span>{deliveredCount} of {totalCount} items served</span>
                         <span>{progressPct}%</span>
                       </div>
@@ -694,8 +694,8 @@ export default function CustomerMenu() {
                     {allItems.map((item, i) => {
                       const done = item.itemStatus === 'Delivered';
                       return (
-                        <div key={i} className={`flex items-center gap-2 text-xs font-semibold transition-all ${done ? 'text-fg/25 line-through' : 'text-fg/70'}`}>
-                          <span className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 text-[9px] font-black ${done ? 'bg-green-500/20 text-green-400' : 'bg-white/10 text-fg/20'}`}>
+                        <div key={i} className={`flex items-center gap-2 text-xs font-semibold transition-all ${done ? 'text-fg/65 line-through' : 'text-fg/70'}`}>
+                          <span className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 text-[9px] font-black ${done ? 'bg-green-500/20 text-success' : 'bg-white/10 text-fg/60'}`}>
                             {done ? '✓' : '·'}
                           </span>
                           {item.quantity}x {item.name}
@@ -703,7 +703,7 @@ export default function CustomerMenu() {
                       );
                     })}
                   </div>
-                  <p className="text-fg/30 text-xs mt-3">
+                  <p className="text-fg/65 text-xs mt-3">
                     {hasPartial ? 'More items on the way!' : 'Our team is crafting your order. Hang tight!'}
                   </p>
                 </>
@@ -720,7 +720,7 @@ export default function CustomerMenu() {
               </>
             )}
             <div className="mt-8 pt-5 border-t border-white/5 flex justify-between items-center">
-              <span className="text-fg/30 font-bold text-xs uppercase tracking-widest">Order ID</span>
+              <span className="text-fg/65 font-bold text-xs uppercase tracking-widest">Order ID</span>
               <span className="bg-white/5 border border-white/10 px-3 py-1 rounded-lg text-brand font-mono font-bold text-sm">{lockedOrder?.orderNumber}</span>
             </div>
           </div>
@@ -741,18 +741,18 @@ export default function CustomerMenu() {
             : <div className="w-28 h-28 rounded-3xl bg-brand flex items-center justify-center mb-8 shadow-2xl shadow-brand/40"><Coffee size={48} className="text-white" /></div>
           }
           <h1 className="text-5xl font-black text-fg tracking-tight leading-none mb-2">{BIZ_NAME}</h1>
-          <div className="flex items-center gap-3 text-fg/30 text-sm font-bold uppercase tracking-widest mb-16">
+          <div className="flex items-center gap-3 text-fg/65 text-sm font-bold uppercase tracking-widest mb-16">
             <div className="h-px w-8 bg-white/20" />
             Table {tableNum}
             <div className="h-px w-8 bg-white/20" />
           </div>
           <button
             onClick={() => setFlowState('name_input')}
-            className="w-full max-w-xs bg-brand text-white font-black py-5 rounded-2xl text-lg shadow-2xl shadow-brand/30 hover:bg-brand-dark transition active:scale-95 uppercase tracking-widest"
+            className="w-full max-w-xs bg-brand text-on-brand font-black py-5 rounded-2xl text-lg shadow-2xl shadow-brand/30 hover:bg-brand-dark transition active:scale-95 uppercase tracking-widest"
           >
             Start Order
           </button>
-          <p className="text-fg/20 text-xs mt-5 font-medium">Scan QR at your table to order</p>
+          <p className="text-fg/60 text-xs mt-5 font-medium">Scan QR at your table to order</p>
         </div>
       </div>
     );
@@ -764,12 +764,12 @@ export default function CustomerMenu() {
         <div className="w-full max-w-sm">
           <button
             onClick={() => setFlowState('landing')}
-            className="flex items-center gap-1.5 text-fg/30 hover:text-fg text-sm mb-10 transition font-bold"
+            className="flex items-center gap-1.5 text-fg/65 hover:text-fg text-sm mb-10 transition font-bold"
           >
             <ChevronLeft size={16} /> Back
           </button>
           <h2 className="text-3xl font-black text-fg mb-2">What's your name?</h2>
-          <p className="text-fg/40 text-sm mb-8 leading-relaxed">We'll use this to call your order when it's ready.</p>
+          <p className="text-fg/70 text-sm mb-8 leading-relaxed">We'll use this to call your order when it's ready.</p>
           <input
             type="text"
             placeholder="Your nickname…"
@@ -784,7 +784,7 @@ export default function CustomerMenu() {
             onClick={() => setFlowState('menu')}
             disabled={customerName.trim().length === 0}
             className={`w-full font-black py-5 rounded-2xl text-lg transition shadow-2xl uppercase tracking-widest
-              ${customerName.trim().length === 0 ? 'bg-white/5 text-fg/20 cursor-not-allowed' : 'bg-brand text-white hover:bg-brand-dark shadow-brand/30 active:scale-95'}`}
+              ${customerName.trim().length === 0 ? 'bg-white/5 text-fg/60 cursor-not-allowed' : 'bg-brand text-on-brand hover:bg-brand-dark shadow-brand/30 active:scale-95'}`}
           >
             Browse Menu →
           </button>
@@ -805,7 +805,7 @@ export default function CustomerMenu() {
               <CheckCircle size={32} className="text-brand" />
             </div>
             <h2 className="text-2xl font-black text-fg mb-2 uppercase tracking-widest">Order Sent!</h2>
-            <p className="text-fg/50 text-sm">Your order is on its way to {SEND_TARGET.toLowerCase()}.</p>
+            <p className="text-fg/75 text-sm">Your order is on its way to {SEND_TARGET.toLowerCase()}.</p>
           </div>
         </div>
       )}
@@ -817,13 +817,13 @@ export default function CustomerMenu() {
             {businessLogo && <img src={businessLogo} alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" />}
             <div>
             <h1 className="text-xl font-black text-fg tracking-tight leading-none">{BIZ_NAME}</h1>
-            <p className="text-fg/30 text-xs font-bold uppercase tracking-widest mt-0.5">Table {tableNum} · {customerName}</p>
+            <p className="text-fg/65 text-xs font-bold uppercase tracking-widest mt-0.5">Table {tableNum} · {customerName}</p>
             </div>
           </div>
           {cart.length > 0 && (
             <button
               onClick={() => setCartOpen(true)}
-              className="relative flex items-center gap-2 bg-brand text-white px-4 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-brand/20 hover:bg-brand-dark transition"
+              className="relative flex items-center gap-2 bg-brand text-on-brand px-4 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-brand/20 hover:bg-brand-dark transition"
             >
               <ShoppingCart size={15} />
               <span>₱{total.toFixed(2)}</span>
@@ -836,7 +836,7 @@ export default function CustomerMenu() {
         {/* Product search */}
         <div className="px-4 pt-1 pb-2">
           <div className="relative">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30" />
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/65" />
             <input
               type="text"
               value={menuSearch}
@@ -846,7 +846,7 @@ export default function CustomerMenu() {
             />
             {menuSearch && (
               <button onClick={() => setMenuSearch('')} aria-label="Clear search"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-fg/40 hover:text-fg transition">
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-fg/70 hover:text-fg transition">
                 <X size={15} />
               </button>
             )}
@@ -861,8 +861,8 @@ export default function CustomerMenu() {
               aria-pressed={activeCategory === cat}
               className={`px-4 py-2 rounded-full whitespace-nowrap text-sm font-bold flex-shrink-0 transition
                 ${activeCategory === cat
-                  ? 'bg-brand text-white shadow-md shadow-brand/20'
-                  : 'bg-white/5 text-fg/50 border border-white/5 hover:text-fg'}`}
+                  ? 'bg-brand text-on-brand shadow-md shadow-brand/20'
+                  : 'bg-white/5 text-fg/75 border border-white/5 hover:text-fg'}`}
             >
               {cat}
             </button>
@@ -881,8 +881,8 @@ export default function CustomerMenu() {
                 <div key={c._id} onClick={() => addComboToCart(c)}
                   className="bg-brand/10 rounded-2xl overflow-hidden border border-brand/30 hover:border-brand/60 cursor-pointer active:scale-[0.97] transition-all p-4 flex flex-col">
                   <h3 className="font-black text-fg text-sm leading-tight">{c.name}</h3>
-                  {c.description && <p className="text-fg/40 text-xs mt-0.5 line-clamp-1">{c.description}</p>}
-                  <p className="text-fg/30 text-[10px] mt-1 line-clamp-2">{(c.items||[]).map(i => `${i.quantity>1?i.quantity+'× ':''}${i.name}`).join(' + ')}</p>
+                  {c.description && <p className="text-fg/70 text-xs mt-0.5 line-clamp-1">{c.description}</p>}
+                  <p className="text-fg/65 text-[10px] mt-1 line-clamp-2">{(c.items||[]).map(i => `${i.quantity>1?i.quantity+'× ':''}${i.name}`).join(' + ')}</p>
                   <p className="text-brand font-black text-base mt-auto pt-2">₱{Number(c.price).toFixed(2)}</p>
                 </div>
               ))}
@@ -890,9 +890,9 @@ export default function CustomerMenu() {
           </div>
         )}
         {displayedCategories.length === 0
-          ? <p className="text-center text-fg/30 mt-20 font-bold">No items available.</p>
+          ? <p className="text-center text-fg/65 mt-20 font-bold">No items available.</p>
           : searchedProducts.length === 0 && menuSearch.trim()
-          ? <p className="text-center text-fg/30 mt-20 font-bold">No products match "{menuSearch.trim()}".</p>
+          ? <p className="text-center text-fg/65 mt-20 font-bold">No products match "{menuSearch.trim()}".</p>
           : displayedCategories.map(category => {
               const catProducts = searchedProducts.filter(p => p.category === category);
               if (catProducts.length === 0) return null;
@@ -917,7 +917,7 @@ export default function CustomerMenu() {
         <div className="fixed bottom-6 left-4 right-4 z-[9990] max-w-lg mx-auto animate-fade-in">
           <button
             onClick={() => setCartOpen(true)}
-            className="w-full flex items-center justify-between bg-brand text-white px-6 py-4 rounded-2xl font-black shadow-2xl shadow-brand/30 hover:bg-brand-dark transition active:scale-[0.98]"
+            className="w-full flex items-center justify-between bg-brand text-on-brand px-6 py-4 rounded-2xl font-black shadow-2xl shadow-brand/30 hover:bg-brand-dark transition active:scale-[0.98]"
           >
             <div className="flex items-center gap-2 text-sm">
               <ShoppingCart size={18} />
@@ -941,7 +941,7 @@ export default function CustomerMenu() {
             {/* Drawer header */}
             <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
               <h3 className="font-black text-fg text-lg">Your Basket</h3>
-              <button onClick={() => setCartOpen(false)} className="p-2 rounded-xl text-fg/40 hover:text-fg hover:bg-white/10 transition">
+              <button onClick={() => setCartOpen(false)} className="p-2 rounded-xl text-fg/70 hover:text-fg hover:bg-white/10 transition">
                 <X size={20} />
               </button>
             </div>
@@ -955,20 +955,20 @@ export default function CustomerMenu() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2 mb-1">
                         <h4 className="font-bold text-fg text-sm leading-tight">{item.name}</h4>
-                        <button onClick={() => removeFromCart(item.cartItemId)} aria-label={`Remove ${item.name}`} className="text-fg/30 hover:text-red-400 transition p-0.5 flex-shrink-0">
+                        <button onClick={() => removeFromCart(item.cartItemId)} aria-label={`Remove ${item.name}`} className="text-fg/65 hover:text-danger transition p-0.5 flex-shrink-0">
                           <X size={14} />
                         </button>
                       </div>
                       {item.selectedAddOns && item.selectedAddOns.length > 0 && (
                         <div className="space-y-0.5 mb-2">
                           {item.selectedAddOns.map((a,i) => (
-                            <p key={i} className="text-brand/70 text-xs">+ {a.name} <span className="text-fg/30">(+₱{a.price.toFixed(2)})</span></p>
+                            <p key={i} className="text-brand/70 text-xs">+ {a.name} <span className="text-fg/65">(+₱{a.price.toFixed(2)})</span></p>
                           ))}
                         </div>
                       )}
                       <div className="flex items-center justify-between mt-2">
                         <div className="flex items-center gap-0.5 bg-black/30 rounded-xl p-1">
-                          <button onClick={() => updateQuantity(item.cartItemId, -1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-fg/60 hover:text-red-400 hover:bg-white/10 transition">
+                          <button onClick={() => updateQuantity(item.cartItemId, -1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-fg/60 hover:text-danger hover:bg-white/10 transition">
                             <Minus size={13} />
                           </button>
                           <span className="text-fg font-bold w-6 text-center text-sm">{item.quantity}</span>
@@ -991,7 +991,7 @@ export default function CustomerMenu() {
               </div>
               {/* Special instructions */}
               <div>
-                <label className="text-[11px] text-fg/40 font-bold uppercase tracking-wider block mb-1.5">Special Instructions (optional)</label>
+                <label className="text-[11px] text-fg/70 font-bold uppercase tracking-wider block mb-1.5">Special Instructions (optional)</label>
                 <textarea
                   rows={2}
                   maxLength={300}
@@ -1002,7 +1002,7 @@ export default function CustomerMenu() {
                   aria-label="Special instructions for your order"
                 />
                 {orderNotes.length > 0 && (
-                  <p className="text-[10px] text-fg/20 text-right mt-0.5">{orderNotes.length}/300</p>
+                  <p className="text-[10px] text-fg/60 text-right mt-0.5">{orderNotes.length}/300</p>
                 )}
               </div>
               <button
@@ -1026,9 +1026,9 @@ export default function CustomerMenu() {
             <div className="flex items-start justify-between p-5 border-b border-white/5 flex-shrink-0">
               <div className="flex-1">
                 <h3 className="text-xl font-black text-fg leading-tight">{selectedProduct.name}</h3>
-                {selectedProduct.description && <p className="text-fg/40 text-xs mt-1 line-clamp-2">{selectedProduct.description}</p>}
+                {selectedProduct.description && <p className="text-fg/70 text-xs mt-1 line-clamp-2">{selectedProduct.description}</p>}
               </div>
-              <button onClick={() => setSelectedProduct(null)} className="p-2 rounded-xl text-fg/40 hover:text-fg hover:bg-white/10 transition ml-3 flex-shrink-0">
+              <button onClick={() => setSelectedProduct(null)} className="p-2 rounded-xl text-fg/70 hover:text-fg hover:bg-white/10 transition ml-3 flex-shrink-0">
                 <X size={18} />
               </button>
             </div>
@@ -1036,7 +1036,7 @@ export default function CustomerMenu() {
             <div className="flex-1 px-5 py-4 space-y-4 overflow-y-auto custom-scrollbar">
               {groupedSizes.Hot && (
                 <div>
-                  <p className="flex items-center gap-2 text-red-400 text-xs font-black uppercase tracking-widest mb-2">
+                  <p className="flex items-center gap-2 text-danger text-xs font-black uppercase tracking-widest mb-2">
                     <span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> Hot Options
                   </p>
                   <div className="space-y-2">
@@ -1054,7 +1054,7 @@ export default function CustomerMenu() {
               )}
               {groupedSizes.Iced && (
                 <div>
-                  <p className="flex items-center gap-2 text-blue-400 text-xs font-black uppercase tracking-widest mb-2">
+                  <p className="flex items-center gap-2 text-info text-xs font-black uppercase tracking-widest mb-2">
                     <span className="w-2 h-2 rounded-full bg-blue-400 inline-block" /> Iced Options
                   </p>
                   <div className="space-y-2">
@@ -1072,7 +1072,7 @@ export default function CustomerMenu() {
               )}
               {groupedSizes.Standard && (
                 <div>
-                  {Object.keys(groupedSizes).length > 1 && <p className="text-fg/40 text-xs font-black uppercase tracking-widest mb-2">Other Options</p>}
+                  {Object.keys(groupedSizes).length > 1 && <p className="text-fg/70 text-xs font-black uppercase tracking-widest mb-2">Other Options</p>}
                   <div className="space-y-2">
                     {groupedSizes.Standard.map((size, idx) => (
                       <label key={`std-${idx}`} className={`flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition ${selectedSize?.name === size.name ? 'border-brand bg-brand/10' : 'border-white/10 hover:border-white/20 bg-white/5'}`}>
@@ -1093,7 +1093,7 @@ export default function CustomerMenu() {
                     <div key={mgIdx}>
                       <p className="text-fg/80 text-xs font-black uppercase tracking-widest mb-2 flex items-center gap-2">
                         {mg.name}
-                        {mg.isRequired && <span className="text-red-400 text-[9px] font-black bg-red-900/30 px-1.5 py-0.5 rounded uppercase">Required</span>}
+                        {mg.isRequired && <span className="text-danger text-[9px] font-black bg-red-900/30 px-1.5 py-0.5 rounded uppercase">Required</span>}
                       </p>
                       <div className="space-y-2">
                         {(mg.options || []).map((opt, optIdx) => {

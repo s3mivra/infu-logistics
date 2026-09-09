@@ -7,6 +7,8 @@ export default {
         brand:        'rgb(var(--brand)        / <alpha-value>)',
         'brand-dark': 'rgb(var(--brand-dark)   / <alpha-value>)',
         accent:       'rgb(var(--brand)        / <alpha-value>)',
+        'on-brand':   'rgb(var(--on-brand)     / <alpha-value>)',
+        info:         'rgb(var(--info-text)    / <alpha-value>)',
         accentShadow: 'rgb(var(--brand-dark)   / <alpha-value>)',
         surface:      'rgb(var(--surface)      / <alpha-value>)',
         'surface-2':  'rgb(var(--surface-2)    / <alpha-value>)',
@@ -23,9 +25,13 @@ export default {
         // Dedicated receipt tokens (printable thermal preview — always white/black).
         'receipt-bg': '#ffffff',
         'receipt-fg': '#000000',
-        danger:       'rgb(var(--danger)       / <alpha-value>)',
-        success:      'rgb(var(--success)      / <alpha-value>)',
-        warning:      'rgb(var(--warning)      / <alpha-value>)',
+        // These names are used almost entirely as TEXT (240 / 119 / 155 call
+        // sites against 7 backgrounds), so they follow the per-theme text
+        // variables. --danger / --success / --warning stay as they are for
+        // anything that wants the raw status hue.
+        danger:       'rgb(var(--danger-text)  / <alpha-value>)',
+        success:      'rgb(var(--success-text) / <alpha-value>)',
+        warning:      'rgb(var(--warning-text) / <alpha-value>)',
       },
       fontFamily: {
         sans: ['Inter', 'sans-serif'],

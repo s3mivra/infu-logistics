@@ -4,18 +4,18 @@ import * as ui from '../../shared/ui';
 
 // Approval decision - Pending -> Approved/Rejected.
 const STATUS_CLS = {
-  Pending:  'bg-yellow-500/15 text-yellow-400',
-  Approved: 'bg-green-500/15 text-green-500',
-  Rejected: 'bg-red-500/15 text-red-400',
+  Pending:  'bg-yellow-500/15 text-warning',
+  Approved: 'bg-green-500/15 text-success',
+  Rejected: 'bg-red-500/15 text-danger',
 };
 // Fulfillment - only meaningful once Approved. Processing (materials spent,
 // actual yield not yet confirmed) -> Complete/Partial once reconciled,
 // mirroring how a Purchase Order's Ordered/Processing/Complete/Incomplete
 // tracks what actually arrived vs what was ordered.
 const FULFILLMENT_CLS = {
-  Processing: 'bg-blue-500/15 text-blue-400',
-  Partial:    'bg-orange-500/15 text-orange-400',
-  Complete:   'bg-green-500/15 text-green-500',
+  Processing: 'bg-blue-500/15 text-info',
+  Partial:    'bg-orange-500/15 text-warning',
+  Complete:   'bg-green-500/15 text-success',
 };
 
 // Production Orders (logistics deployments): materials taken from Inventory,
@@ -250,7 +250,7 @@ export default function ProductionTab({ ctx }) {
             <ClipboardCheck size={14} /> Production Report
           </button>
           <button onClick={() => setFormOpen(o => !o)}
-            className="flex items-center gap-1.5 bg-accent text-white px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-accent/90 transition">
+            className="flex items-center gap-1.5 bg-accent text-on-brand px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-accent/90 transition">
             <Plus size={14} /> {formOpen ? 'Close' : 'New Production Order'}
           </button>
         </div>
@@ -260,7 +260,7 @@ export default function ProductionTab({ ctx }) {
         <div className="bg-surface border border-white/10 rounded-xl p-5 mb-6 space-y-5">
           {/* Materials */}
           <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-2">Materials consumed</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-2">Materials consumed</p>
             <div className="flex flex-wrap gap-2 mb-2">
               <select value={matPick} onChange={e => setMatPick(e.target.value)}
                 className="flex-1 min-w-[200px] bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent">
@@ -281,8 +281,8 @@ export default function ProductionTab({ ctx }) {
               <ul className="space-y-1.5">
                 {materials.map(m => (
                   <li key={m.invId} className="flex items-center justify-between bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm">
-                    <span className="text-fg/80">{m.name} <span className="text-fg/40 font-mono">× {m.pieces} {m.pieceLabel}</span></span>
-                    <button onClick={() => removeMaterial(m.invId)} className="text-red-400/70 hover:text-red-400"><Trash2 size={13} /></button>
+                    <span className="text-fg/80">{m.name} <span className="text-fg/70 font-mono">× {m.pieces} {m.pieceLabel}</span></span>
+                    <button onClick={() => removeMaterial(m.invId)} className="text-red-400/70 hover:text-danger"><Trash2 size={13} /></button>
                   </li>
                 ))}
               </ul>
@@ -291,14 +291,14 @@ export default function ProductionTab({ ctx }) {
 
           {/* Output */}
           <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-2">Produces</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-2">Produces</p>
             <div className="flex gap-2 mb-3">
               <button onClick={() => setOutputType('existing')}
-                className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition ${outputType === 'existing' ? 'bg-accent text-white' : 'bg-page-bg text-fg/50 border border-white/10'}`}>
+                className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition ${outputType === 'existing' ? 'bg-accent text-on-brand' : 'bg-page-bg text-fg/75 border border-white/10'}`}>
                 Add to existing item
               </button>
               <button onClick={() => setOutputType('new')}
-                className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition ${outputType === 'new' ? 'bg-accent text-white' : 'bg-page-bg text-fg/50 border border-white/10'}`}>
+                className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition ${outputType === 'new' ? 'bg-accent text-on-brand' : 'bg-page-bg text-fg/75 border border-white/10'}`}>
                 Create a new product
               </button>
             </div>
@@ -345,12 +345,12 @@ export default function ProductionTab({ ctx }) {
                 value={outputQty} onChange={e => setOutputQty(e.target.value)}
                 className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
               <div>
-                <label className="text-[9px] text-fg/40 uppercase tracking-wider block mb-1">Production date</label>
+                <label className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Production date</label>
                 <input type="date" value={productionDate} onChange={e => setProductionDate(e.target.value)}
                   className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
               </div>
               <div>
-                <label className="text-[9px] text-fg/40 uppercase tracking-wider block mb-1">Expiry date (optional)</label>
+                <label className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Expiry date (optional)</label>
                 <input type="date" value={outputExpiryDate} onChange={e => setOutputExpiryDate(e.target.value)}
                   className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
               </div>
@@ -361,7 +361,7 @@ export default function ProductionTab({ ctx }) {
             className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent resize-none" />
 
           <button onClick={submitOrder} disabled={submitting}
-            className="w-full bg-accent hover:bg-accent/90 disabled:opacity-50 text-white font-bold text-sm py-2.5 rounded-lg transition">
+            className="w-full bg-accent hover:bg-accent/90 disabled:opacity-50 text-on-brand font-bold text-sm py-2.5 rounded-lg transition">
             {submitting ? 'Filing…' : 'File Production Order'}
           </button>
         </div>
@@ -371,18 +371,18 @@ export default function ProductionTab({ ctx }) {
       <div className="flex gap-2 mb-4">
         {['Pending', 'Approved', 'Rejected', ''].map(s => (
           <button key={s || 'all'} onClick={() => setStatusFilter(s)}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider transition ${statusFilter === s ? 'bg-accent text-white' : 'bg-white/5 text-fg/50 hover:text-fg'}`}>
+            className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider transition ${statusFilter === s ? 'bg-accent text-on-brand' : 'bg-white/5 text-fg/75 hover:text-fg'}`}>
             {s || 'All'}
           </button>
         ))}
       </div>
 
       {loading ? (
-        <p className="text-fg/40 text-sm text-center py-10">Loading…</p>
+        <p className="text-fg/70 text-sm text-center py-10">Loading…</p>
       ) : orders.length === 0 ? (
         <div className="flex flex-col items-center py-16 text-center">
           <Package size={36} className="text-fg/10 mb-3" />
-          <p className="text-fg/40 text-sm font-bold">No production orders {statusFilter ? `in ${statusFilter}` : 'yet'}.</p>
+          <p className="text-fg/70 text-sm font-bold">No production orders {statusFilter ? `in ${statusFilter}` : 'yet'}.</p>
         </div>
       ) : (
         <ul className="space-y-3">
@@ -391,11 +391,11 @@ export default function ProductionTab({ ctx }) {
               <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
                 <div>
                   <p className="font-bold text-fg text-sm">
-                    {o.outputName} <span className="text-fg/40 font-normal">
+                    {o.outputName} <span className="text-fg/70 font-normal">
                       × {(() => { const { perPiece, label } = reconcilePieceInfo(o); return `${+(o.outputQty / perPiece).toFixed(4)} ${label}`; })()}
                     </span>
                   </p>
-                  <p className="text-[10px] text-fg/40 mt-0.5">
+                  <p className="text-[10px] text-fg/70 mt-0.5">
                     {o.outputType === 'new' ? 'New product' : 'Adds to existing item'} · filed by {o.requestedBy || '-'}
                     {o.batchNumber && <span className="font-mono text-accent"> · {o.batchNumber}</span>}
                   </p>
@@ -410,7 +410,7 @@ export default function ProductionTab({ ctx }) {
 
               <div className="text-xs text-fg/60 space-y-0.5 mb-2">
                 {(o.materials || []).map(m => (
-                  <p key={m.invId}>{m.itemName} <span className="text-fg/30 font-mono">× {m.qty}{m.unit}</span></p>
+                  <p key={m.invId}>{m.itemName} <span className="text-fg/65 font-mono">× {m.qty}{m.unit}</span></p>
                 ))}
               </div>
 
@@ -422,8 +422,8 @@ export default function ProductionTab({ ctx }) {
                 return (
                 <p className="text-xs mb-1 flex items-center gap-2 flex-wrap">
                   <span>
-                    <span className="text-fg/40">Planned {+(o.outputQty / perPiece).toFixed(4)} {label} → Actual</span>{' '}
-                    <span className={o.fulfillmentStatus === 'Partial' ? 'text-orange-400 font-bold' : 'text-green-400 font-bold'}>
+                    <span className="text-fg/70">Planned {+(o.outputQty / perPiece).toFixed(4)} {label} → Actual</span>{' '}
+                    <span className={o.fulfillmentStatus === 'Partial' ? 'text-warning font-bold' : 'text-success font-bold'}>
                       {+(o.actualOutputQty / perPiece).toFixed(4)} {label}
                     </span>
                   </span>
@@ -432,7 +432,7 @@ export default function ProductionTab({ ctx }) {
                       during roasting/drying). A negative value means the
                       batch came in OVER plan - shown as a gain, not hidden. */}
                   {o.moistureLossPercent != null && o.moistureLossPercent !== 0 && (
-                    <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${o.moistureLossPercent > 0 ? 'bg-orange-500/15 text-orange-400' : 'bg-blue-500/15 text-blue-400'}`}>
+                    <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${o.moistureLossPercent > 0 ? 'bg-orange-500/15 text-warning' : 'bg-blue-500/15 text-info'}`}>
                       {o.moistureLossPercent > 0
                         ? `Moisture loss ${o.moistureLossPercent}%`
                         : `Over plan +${Math.abs(o.moistureLossPercent)}%`}
@@ -442,12 +442,12 @@ export default function ProductionTab({ ctx }) {
                 );
               })()}
 
-              <p className="text-[10px] text-fg/30 flex items-center gap-1.5">
+              <p className="text-[10px] text-fg/65 flex items-center gap-1.5">
                 <Clock size={11} /> {new Date(o.createdAt).toLocaleString()}
               </p>
-              {o.notes && <p className="text-fg/50 text-xs mt-1 italic">"{o.notes}"</p>}
+              {o.notes && <p className="text-fg/75 text-xs mt-1 italic">"{o.notes}"</p>}
               {o.status === 'Rejected' && o.rejectionReason && (
-                <p className="text-red-400 text-xs mt-1">Reason: {o.rejectionReason}</p>
+                <p className="text-danger text-xs mt-1">Reason: {o.rejectionReason}</p>
               )}
 
               {o.status === 'Pending' && (
@@ -465,7 +465,7 @@ export default function ProductionTab({ ctx }) {
                     </>
                   )}
                   <button onClick={() => cancelOrder(o)} disabled={busy}
-                    className="ml-auto text-fg/30 hover:text-fg text-[11px] font-bold uppercase tracking-wider transition">
+                    className="ml-auto text-fg/65 hover:text-fg text-[11px] font-bold uppercase tracking-wider transition">
                     Cancel
                   </button>
                 </div>
@@ -474,7 +474,7 @@ export default function ProductionTab({ ctx }) {
               {o.status === 'Approved' && o.fulfillmentStatus === 'Processing' && canApprove && (
                 <div className="flex items-center mt-3 pt-3 border-t border-white/5">
                   <button onClick={() => { setReconciling(o); const { perPiece } = reconcilePieceInfo(o); setActualQty(String(+(o.outputQty / perPiece).toFixed(4))); }} disabled={busy}
-                    className="flex items-center gap-1.5 bg-accent hover:bg-accent/90 disabled:opacity-50 text-white font-bold text-xs px-3 py-1.5 rounded-lg transition">
+                    className="flex items-center gap-1.5 bg-accent hover:bg-accent/90 disabled:opacity-50 text-on-brand font-bold text-xs px-3 py-1.5 rounded-lg transition">
                     <ClipboardCheck size={13} /> Reconcile - confirm actual output
                   </button>
                 </div>
@@ -489,7 +489,7 @@ export default function ProductionTab({ ctx }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setRejecting(null)}>
           <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm" onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-fg mb-2">Reject production order</h3>
-            <p className="text-fg/50 text-xs mb-3">{rejecting.outputName} × {rejecting.outputQty}{rejecting.outputUnit}</p>
+            <p className="text-fg/75 text-xs mb-3">{rejecting.outputName} × {rejecting.outputQty}{rejecting.outputUnit}</p>
             <textarea autoFocus value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={3}
               placeholder="Reason for rejecting…"
               className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent resize-none mb-3" />
@@ -509,17 +509,17 @@ export default function ProductionTab({ ctx }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setReconciling(null)}>
           <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm" onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-fg mb-1 flex items-center gap-1.5"><ClipboardCheck size={16} className="text-accent" /> Confirm actual output</h3>
-            <p className="text-fg/50 text-xs mb-3">{reconciling.outputName} - planned {plannedPieces} {label}</p>
-            <label className="text-[9px] text-fg/40 uppercase tracking-wider block mb-1">Actual quantity produced ({label})</label>
+            <p className="text-fg/75 text-xs mb-3">{reconciling.outputName} - planned {plannedPieces} {label}</p>
+            <label className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Actual quantity produced ({label})</label>
             <input type="number" min="0" step="0.01" autoFocus value={actualQty} onChange={e => setActualQty(e.target.value)}
               className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent mb-1" />
-            <p className="text-[10px] text-fg/30 mb-3">
-              Meets or beats {plannedPieces} {label} → marked <span className="text-green-400 font-bold">Complete</span>.
-              Falls short → marked <span className="text-orange-400 font-bold">Partial</span>. This is what actually gets added to stock.
+            <p className="text-[10px] text-fg/65 mb-3">
+              Meets or beats {plannedPieces} {label} → marked <span className="text-success font-bold">Complete</span>.
+              Falls short → marked <span className="text-warning font-bold">Partial</span>. This is what actually gets added to stock.
             </p>
             <div className="flex gap-2">
               <button onClick={() => { setReconciling(null); setActualQty(''); }} className="flex-1 border border-white/10 text-fg/60 hover:text-fg py-2 rounded-lg text-xs font-bold uppercase transition">Cancel</button>
-              <button onClick={submitReconcile} disabled={busy} className="flex-1 bg-accent hover:bg-accent/90 disabled:opacity-50 text-white py-2 rounded-lg text-xs font-bold uppercase transition">Confirm</button>
+              <button onClick={submitReconcile} disabled={busy} className="flex-1 bg-accent hover:bg-accent/90 disabled:opacity-50 text-on-brand py-2 rounded-lg text-xs font-bold uppercase transition">Confirm</button>
             </div>
           </div>
         </div>

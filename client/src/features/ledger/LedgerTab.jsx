@@ -1058,7 +1058,7 @@ export default function LedgerTab({ ctx }) {
             const busy = exportBusy === ds;
             return (
               <div className="flex flex-wrap items-center gap-2 mb-3">
-                <span className="text-[10px] font-black uppercase tracking-widest text-fg/30 mr-auto">
+                <span className="text-[10px] font-black uppercase tracking-widest text-fg/65 mr-auto">
                   Export
                 </span>
                 <button onClick={() => downloadDataset(ds)} disabled={busy}
@@ -1141,7 +1141,7 @@ export default function LedgerTab({ ctx }) {
                         key={groupLabel}
                         onClick={() => { if (!isActive) openPage(items[0][0]); }}
                         className={`relative shrink-0 px-3.5 py-2 text-[11px] font-black uppercase tracking-widest transition ${
-                          isActive ? 'text-fg' : 'text-fg/35 hover:text-fg/70'}`}
+                          isActive ? 'text-fg' : 'text-fg/70 hover:text-fg/70'}`}
                       >
                         {groupLabel}
                         {/* Underline, not a filled pill - the group marks where
@@ -1162,8 +1162,8 @@ export default function LedgerTab({ ctx }) {
                       onClick={() => openPage(id)}
                       className={`shrink-0 flex items-center gap-2 px-3 py-2 rounded-lg font-bold text-[11px] tracking-wide transition min-h-[36px] ${
                         ledgerSubTab === id
-                          ? 'bg-brand text-white shadow-elev-1'
-                          : 'text-fg/55 hover:text-fg hover:bg-white/[0.06]'}`}
+                          ? 'bg-brand text-on-brand shadow-elev-1'
+                          : 'text-fg/75 hover:text-fg hover:bg-white/[0.06]'}`}
                     >
                       <Icon size={13} className={ledgerSubTab === id ? '' : 'opacity-60'} /> {label}
                     </button>
@@ -1198,7 +1198,7 @@ export default function LedgerTab({ ctx }) {
               {tb?.error ? (
                 <p className="text-red-300 text-sm font-bold">{tb.error}</p>
               ) : !tb ? (
-                <p className="text-fg/40 text-sm">Loading…</p>
+                <p className="text-fg/70 text-sm">Loading…</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -1220,7 +1220,7 @@ export default function LedgerTab({ ctx }) {
                     </tbody>
                     <tfoot>
                       <tr className="font-black text-fg border-t-2 border-white/20">
-                        <td className="py-2" colSpan={2}>Totals {tb.balanced ? <span className="text-green-400 text-xs ml-1">Balanced</span> : <span className="text-red-400 text-xs ml-1">Out of balance</span>}</td>
+                        <td className="py-2" colSpan={2}>Totals {tb.balanced ? <span className="text-success text-xs ml-1">Balanced</span> : <span className="text-danger text-xs ml-1">Out of balance</span>}</td>
                         <td className="py-2 text-right font-mono">{money2(tb.totalDebit)}</td>
                         <td className="py-2 text-right font-mono">{money2(tb.totalCredit)}</td>
                       </tr>
@@ -1243,7 +1243,7 @@ export default function LedgerTab({ ctx }) {
                   <input type="date" value={sssRange.start} max={sssRange.end || undefined}
                     onChange={e => setSssRange(r => ({ ...r, start: e.target.value }))}
                     className="bg-white/5 border border-white/10 rounded-xl px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand" />
-                  <span className="text-fg/40 text-xs font-bold">to</span>
+                  <span className="text-fg/70 text-xs font-bold">to</span>
                   <input type="date" value={sssRange.end} min={sssRange.start || undefined}
                     onChange={e => setSssRange(r => ({ ...r, end: e.target.value }))}
                     className="bg-white/5 border border-white/10 rounded-xl px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand" />
@@ -1344,11 +1344,11 @@ export default function LedgerTab({ ctx }) {
                           <td className="py-1.5 text-xs text-fg/70">{row.isComponent ? '' : (row.customerName || 'Guest')}</td>
                           <td className="py-1.5 font-mono text-xs text-fg/70">{row.isComponent ? '' : row.orderNumber}</td>
                           <td className="py-1.5 font-mono text-xs text-fg/70">{row.itemCode || (row.isComponent ? '' : '-')}</td>
-                          <td className={`py-1.5 text-xs ${row.isComponent ? 'text-fg/45 pl-4' : 'text-fg/70'} ${row.isCombo ? 'font-bold' : ''}`}>
+                          <td className={`py-1.5 text-xs ${row.isComponent ? 'text-fg/70 pl-4' : 'text-fg/70'} ${row.isCombo ? 'font-bold' : ''}`}>
                             {row.isComponent ? `↳ ${row.itemName}` : row.itemName}{row.isCombo ? ' (promo)' : ''}
                           </td>
                           <td className="py-1.5 text-right font-mono">{row.quantity}</td>
-                          <td className="py-1.5 text-right font-mono font-bold text-fg/90">{row.isComponent ? <span className="text-fg/30 font-normal not-italic">included</span> : money2(row.lineTotal)}</td>
+                          <td className="py-1.5 text-right font-mono font-bold text-fg/90">{row.isComponent ? <span className="text-fg/65 font-normal not-italic">included</span> : money2(row.lineTotal)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1371,20 +1371,20 @@ export default function LedgerTab({ ctx }) {
               <h3 className="text-lg font-black text-fg mb-1">Percentage Tax</h3>
               <p className="text-fg/60 text-xs mb-4">Non-VAT percentage tax on net collected sales for a period.</p>
               <div className="flex items-end gap-2 mb-4 flex-wrap">
-                <label className="text-xs font-bold text-fg/40">Start
+                <label className="text-xs font-bold text-fg/70">Start
                   <input type="date" value={ptaxRange.start} onChange={(e) => setPtaxRange((r) => ({ ...r, start: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
                 </label>
-                <label className="text-xs font-bold text-fg/40">End
+                <label className="text-xs font-bold text-fg/70">End
                   <input type="date" value={ptaxRange.end} onChange={(e) => setPtaxRange((r) => ({ ...r, end: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
                 </label>
-                <button onClick={loadPtax} disabled={ptaxLoading} className="bg-brand hover:bg-brand/90 text-white font-bold text-sm px-4 py-2 rounded-lg transition">{ptaxLoading ? 'Loading…' : 'Compute'}</button>
+                <button onClick={loadPtax} disabled={ptaxLoading} className="bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm px-4 py-2 rounded-lg transition">{ptaxLoading ? 'Loading…' : 'Compute'}</button>
                 {ptax && !ptax.error && <button onClick={exportPercentageTaxPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
               </div>
               {ptax?.error ? (
                 <p className="text-red-300 text-sm font-bold">{ptax.error}</p>
               ) : ptax && !ptax.error ? (
                 <div className="space-y-1">
-                  <p className="text-fg/40 text-xs mb-2">{ptax.orders} completed order(s) in range.</p>
+                  <p className="text-fg/70 text-xs mb-2">{ptax.orders} completed order(s) in range.</p>
                   {(ptax.lines || []).map((l, i) => {
                     const isTax = i === (ptax.lines.length - 1);
                     return (
@@ -1396,7 +1396,7 @@ export default function LedgerTab({ ctx }) {
                   })}
                 </div>
               ) : (
-                <p className="text-fg/40 text-sm">Pick a date range and press Compute.</p>
+                <p className="text-fg/70 text-sm">Pick a date range and press Compute.</p>
               )}
             </div>
           )}
@@ -1421,7 +1421,7 @@ export default function LedgerTab({ ctx }) {
                     className="mt-2 flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
                     <Download size={12} /> {exportBusy === 'account-balances' ? 'Working…' : 'Export Account Balances'}
                   </button>
-                  <p className="text-[11px] text-fg/40 mt-1">
+                  <p className="text-[11px] text-fg/70 mt-1">
                     Carry an existing balance sheet into the books. Balance-sheet accounts only.
                   </p>
                 </div>
@@ -1434,7 +1434,7 @@ export default function LedgerTab({ ctx }) {
               </div>
 
               {obEntry && (
-                <div className="mt-3 text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5">
+                <div className="mt-3 text-[11px] text-warning bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5">
                   Already posted as <span className="font-black">{obEntry.reference}</span> on{' '}
                   {new Date(obEntry.date).toLocaleDateString()} ({peso(obEntry.totalDebit)}).
                   Posting again adds a second full set and doubles every carried-in balance.
@@ -1457,7 +1457,7 @@ export default function LedgerTab({ ctx }) {
                       className="w-32 shrink-0 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs text-right tabular-nums outline-none focus:border-brand" />
                     <button onClick={() => setObRows(rows => rows.length > 1 ? rows.filter((_, j) => j !== i) : rows)}
                       disabled={obRows.length === 1}
-                      className="shrink-0 text-fg/30 hover:text-red-400 disabled:opacity-20 transition p-2" title="Remove row">
+                      className="shrink-0 text-fg/65 hover:text-danger disabled:opacity-20 transition p-2" title="Remove row">
                       <Trash2 size={13} />
                     </button>
                   </div>
@@ -1484,11 +1484,11 @@ export default function LedgerTab({ ctx }) {
                 const diff = Math.round((dr - cr) * 100) / 100;
                 return (
                   <div className="mt-3 bg-page-bg border border-white/10 rounded-lg p-3 text-[11px] space-y-1">
-                    <div className="flex justify-between"><span className="text-fg/50">Total debits</span><span className="tabular-nums text-fg/80">{peso(dr)}</span></div>
-                    <div className="flex justify-between"><span className="text-fg/50">Total credits</span><span className="tabular-nums text-fg/80">{peso(cr)}</span></div>
+                    <div className="flex justify-between"><span className="text-fg/75">Total debits</span><span className="tabular-nums text-fg/80">{peso(dr)}</span></div>
+                    <div className="flex justify-between"><span className="text-fg/75">Total credits</span><span className="tabular-nums text-fg/80">{peso(cr)}</span></div>
                     <div className="flex justify-between border-t border-white/10 pt-1 mt-1">
                       <span className="text-fg/70 font-bold">{diff === 0 ? 'Balanced' : "To Owner's Capital"}</span>
-                      <span className={`tabular-nums font-black ${diff === 0 ? 'text-green-400' : 'text-brand'}`}>
+                      <span className={`tabular-nums font-black ${diff === 0 ? 'text-success' : 'text-brand'}`}>
                         {diff === 0 ? '-' : peso(Math.abs(diff))}
                       </span>
                     </div>
@@ -1498,20 +1498,20 @@ export default function LedgerTab({ ctx }) {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
                 <div>
-                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">As of date</label>
+                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">As of date</label>
                   <input type="date" value={obMeta.date}
                     onChange={e => setObMeta(m => ({ ...m, date: e.target.value }))}
                     className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs outline-none focus:border-brand" />
                 </div>
                 <div>
-                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Reference No.</label>
+                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Reference No.</label>
                   <input type="text" value={obMeta.referenceNumber} placeholder="Prior-books ref, audit ref..."
                     onChange={e => setObMeta(m => ({ ...m, referenceNumber: e.target.value }))}
                     className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs outline-none focus:border-brand" />
                 </div>
               </div>
               <div className="mt-2">
-                <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Remarks</label>
+                <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Remarks</label>
                 <textarea value={obMeta.note} rows={2} placeholder="Where these figures came from"
                   onChange={e => setObMeta(m => ({ ...m, note: e.target.value }))}
                   className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs outline-none focus:border-brand" />
@@ -1519,7 +1519,7 @@ export default function LedgerTab({ ctx }) {
 
               <button onClick={() => submitOpeningBalances(!!obEntry)} disabled={obBusy}
                 className={`w-full mt-4 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition disabled:opacity-50 ${
-                  obEntry ? 'bg-amber-500 hover:bg-amber-400 text-page-bg' : 'bg-brand hover:bg-brand-dark text-white'}`}>
+                  obEntry ? 'bg-amber-500 hover:bg-amber-400 text-page-bg' : 'bg-brand hover:bg-brand-dark text-on-brand'}`}>
                 {obBusy ? 'Posting…' : obEntry ? 'Post Again (doubles balances)' : 'Post Opening Balances'}
               </button>
             </div>
@@ -1548,7 +1548,7 @@ export default function LedgerTab({ ctx }) {
                     onKeyDown={e => { if (e.key === 'Enter') addCoaChild(); }}
                     className="flex-1 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm font-bold outline-none focus:border-brand/60 placeholder-white/25" />
                   <button onClick={addCoaChild} disabled={coaBusy}
-                    className="bg-brand text-white font-black text-xs uppercase tracking-widest px-5 py-2.5 rounded-xl hover:bg-brand-dark transition disabled:opacity-50">
+                    className="bg-brand text-on-brand font-black text-xs uppercase tracking-widest px-5 py-2.5 rounded-xl hover:bg-brand-dark transition disabled:opacity-50">
                     <Plus size={14} className="inline -mt-0.5" /> Add
                   </button>
                 </div>
@@ -1561,7 +1561,7 @@ export default function LedgerTab({ ctx }) {
                   <p className="text-sm text-fg/60 italic">No custom accounts yet. Add one above.</p>
                 ) : coaParents.filter(p => coaChildrenOf(p.code).length > 0).map(p => (
                   <div key={p.code} className="mb-4 last:mb-0">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-1.5">{p.code} · {p.name}</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-1.5">{p.code} · {p.name}</p>
                     <div className="space-y-1.5">
                       {coaChildrenOf(p.code).map(c => (
                         <div key={c._id} className="flex items-center gap-2 bg-page-bg border border-white/10 rounded-xl px-3 py-2">
@@ -1571,8 +1571,8 @@ export default function LedgerTab({ ctx }) {
                               <input autoFocus value={coaEditName} onChange={e => setCoaEditName(e.target.value)}
                                 onKeyDown={e => { if (e.key === 'Enter') renameCoaChild(c._id); if (e.key === 'Escape') setCoaEditId(null); }}
                                 className="flex-1 bg-surface border border-brand/40 rounded-lg px-2 py-1 text-fg text-sm outline-none" />
-                              <button onClick={() => renameCoaChild(c._id)} className="text-green-400 hover:text-green-300 text-xs font-black uppercase">Save</button>
-                              <button onClick={() => setCoaEditId(null)} className="text-fg/40 hover:text-fg text-xs">Cancel</button>
+                              <button onClick={() => renameCoaChild(c._id)} className="text-success hover:text-green-300 text-xs font-black uppercase">Save</button>
+                              <button onClick={() => setCoaEditId(null)} className="text-fg/70 hover:text-fg text-xs">Cancel</button>
                             </>
                           ) : (
                             <>
@@ -1580,7 +1580,7 @@ export default function LedgerTab({ ctx }) {
                               <button onClick={() => { setCoaEditId(c._id); setCoaEditName(c.name); }} title="Rename"
                                 className="text-blue-300/70 hover:text-blue-300 p-1"><Edit size={13} /></button>
                               <button onClick={() => deleteCoaChild(c._id)} title="Delete"
-                                className="text-red-400/70 hover:text-red-400 p-1"><Trash2 size={13} /></button>
+                                className="text-red-400/70 hover:text-danger p-1"><Trash2 size={13} /></button>
                             </>
                           )}
                         </div>
@@ -1600,8 +1600,8 @@ export default function LedgerTab({ ctx }) {
             
             {/* --- LIVE CASH ON HAND --- */}
             <div className="bg-accent border border-accent/30 rounded-xl p-6 shadow-lg shadow-accent/5">
-              <p className="text-white text-xs font-bold uppercase tracking-wider mb-1">Live Cash on Hand</p>
-              <p className="text-4xl font-black text-white">P{cashOnHand.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <p className="text-on-brand text-xs font-bold uppercase tracking-wider mb-1">Live Cash on Hand</p>
+              <p className="text-4xl font-black text-on-brand">P{cashOnHand.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
             </div>
 
             <div className="bg-surface border border-white/10 rounded-xl p-6 h-fit">
@@ -1611,20 +1611,20 @@ export default function LedgerTab({ ctx }) {
                   <label className="text-[10px] text-fg/80 font-bold uppercase block mb-1">Entry date</label>
                   <input type="date" value={jeForm.date || ''} onChange={e => setJeForm({...jeForm, date: e.target.value})}
                     className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none" />
-                  <p className="text-[9px] text-fg/40 mt-1">The period this entry belongs to. A closed month will refuse it.</p>
+                  <p className="text-[9px] text-fg/70 mt-1">The period this entry belongs to. A closed month will refuse it.</p>
                 </div>
                 <input type="text" placeholder="Description / Memo" value={jeForm.description} onChange={e => setJeForm({...jeForm, description: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-fg outline-none" />
                 {jeForm.lines.map((line, idx) => (
                   <div key={idx} className="bg-accent p-3 rounded border border-gray-700 space-y-2 relative">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-semibold text-white">Line {idx + 1}</span>
+                      <span className="text-[10px] font-semibold text-on-brand">Line {idx + 1}</span>
                       <button
                         type="button"
                         aria-label={`Remove line ${idx + 1}`}
                         disabled={jeForm.lines.length <= 2}
                         title={jeForm.lines.length <= 2 ? 'A journal entry needs at least 2 lines' : 'Remove this line'}
                         onClick={() => setJeForm({ ...jeForm, lines: jeForm.lines.filter((_, i) => i !== idx) })}
-                        className="text-white hover:text-red-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                        className="text-on-brand hover:text-red-300 disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <X size={14} />
                       </button>
@@ -1646,7 +1646,7 @@ export default function LedgerTab({ ctx }) {
                 ))}
                 <button onClick={() => setJeForm({...jeForm, lines: [...jeForm.lines, {accountCode:'', accountName:'', debit:'', credit:''}]})} className="text-xs text-accent hover:text-fg">+ Add Line</button>
                 <div className="border-t border-white/10 pt-4 mt-4 flex justify-between items-center">
-                  <div className="text-xs text-gray-400">
+                  <div className="text-xs text-fg/70">
                     Debits: {jeForm.lines.reduce((s, l) => s + Number(l.debit||0), 0)} <br/>
                     Credits: {jeForm.lines.reduce((s, l) => s + Number(l.credit||0), 0)}
                   </div>
@@ -1667,7 +1667,7 @@ export default function LedgerTab({ ctx }) {
                       ui.toast('Entry posted.', { tone: 'success' });
                       fetchERPData();
                     } catch { ui.alert('Network error - nothing was posted.'); }
-                  }} className="bg-accent text-white font-bold py-2 px-4 rounded hover:bg-page-bg hover:text-accent transition shadow-lg shadow-accent/20">Post Entry</button>
+                  }} className="bg-accent text-on-brand font-bold py-2 px-4 rounded hover:bg-page-bg hover:text-accent transition shadow-lg shadow-accent/20">Post Entry</button>
                 </div>
               </div>
             </div>
@@ -1677,7 +1677,7 @@ export default function LedgerTab({ ctx }) {
           <div className="flex-1 bg-surface border border-white/10 rounded-xl p-6">
             <div className="flex justify-between items-center mb-4 border-b border-white/10 pb-2">
               <h3 className="text-xl font-bold text-fg">General Ledger</h3>
-              <button onClick={exportLedgerToPDF} className="text-[10px] bg-accent border border-gray-600 text-white px-3 py-1.5 rounded hover:bg-page-bg hover:text-accent transition font-bold uppercase tracking-wider">
+              <button onClick={exportLedgerToPDF} className="text-[10px] bg-accent border border-gray-600 text-on-brand px-3 py-1.5 rounded hover:bg-page-bg hover:text-accent transition font-bold uppercase tracking-wider">
                 Export Ledger
               </button>
             </div>
@@ -1685,12 +1685,12 @@ export default function LedgerTab({ ctx }) {
                 sorts below everything more recent and can be hard to spot by
                 scrolling. Search by reference or description finds it directly. */}
             <div className="relative mb-4">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/70" />
               <input type="text" placeholder="Search by reference or description (e.g. BACKDATE, order #)…"
                 value={journalSearch} onChange={e => { setJournalSearch(e.target.value); setAccountingPage(1); }}
                 className="w-full bg-page-bg border border-white/10 rounded-lg pl-9 pr-9 py-2 text-sm text-fg placeholder-gray-500 outline-none focus:border-accent" />
               {journalSearch && (
-                <button onClick={() => setJournalSearch('')} aria-label="Clear search" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-fg transition">
+                <button onClick={() => setJournalSearch('')} aria-label="Clear search" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-fg/70 hover:text-fg transition">
                   <X size={14} />
                 </button>
               )}
@@ -1702,7 +1702,7 @@ export default function LedgerTab({ ctx }) {
                   <p className="text-fg/70 font-black uppercase tracking-widest text-xs mb-1">
                     {journalSearch ? 'No matching entries' : 'No journal entries yet'}
                   </p>
-                  <p className="text-fg/35 text-xs">
+                  <p className="text-fg/70 text-xs">
                     {journalSearch ? 'Try a different reference or description.' : 'Every sale, expense, and restock posts here automatically; you can also post one manually on the left.'}
                   </p>
                 </div>
@@ -1738,7 +1738,7 @@ export default function LedgerTab({ ctx }) {
                   >
                     <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                   </button>
-                  <span className="text-gray-400 text-xs font-bold tracking-widest">
+                  <span className="text-fg/70 text-xs font-bold tracking-widest">
                     PAGE <span className="text-accent text-sm">{accountingPage}</span> OF {totalAccountingPages}
                   </span>
                   <button 
@@ -1766,14 +1766,14 @@ export default function LedgerTab({ ctx }) {
                 </div>
                 <div className="flex flex-wrap gap-2 items-end">
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Start</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Start</label>
                     <input type="date" value={pnlRange.start} onChange={e => setPnlRange({...pnlRange, start: e.target.value})} className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm font-bold outline-none focus:border-brand/60" />
                   </div>
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">End</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">End</label>
                     <input type="date" value={pnlRange.end} onChange={e => setPnlRange({...pnlRange, end: e.target.value})} className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm font-bold outline-none focus:border-brand/60" />
                   </div>
-                  <button onClick={fetchPnl} className="bg-brand text-white px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[44px]">Run</button>
+                  <button onClick={fetchPnl} className="bg-brand text-on-brand px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[44px]">Run</button>
                   <button onClick={exportPnlPDF} className="bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition min-h-[44px] flex items-center gap-1.5"><Download size={13}/> PDF</button>
                 </div>
               </div>
@@ -1797,7 +1797,7 @@ export default function LedgerTab({ ctx }) {
                         <table key={sec.code} className="w-full text-sm">
                           <tbody>
                             {sec.name && sec.items.length > 1 && (
-                              <tr><td colSpan={2} className="pb-1 text-[10px] font-black uppercase tracking-widest text-fg/40">{sec.name}</td></tr>
+                              <tr><td colSpan={2} className="pb-1 text-[10px] font-black uppercase tracking-widest text-fg/70">{sec.name}</td></tr>
                             )}
                             {sec.items.map(r => (
                               <tr key={r.code} className="border-b border-white/5">
@@ -1806,7 +1806,7 @@ export default function LedgerTab({ ctx }) {
                               </tr>
                             ))}
                             {sec.items.length > 1 && (
-                              <tr><td className="pt-1 text-fg/50 text-[11px] font-bold uppercase">{sec.name || 'Subtotal'}</td><td className="pt-1 text-right text-fg/70 tabular-nums font-bold text-xs">₱{sec.total.toFixed(2)}</td></tr>
+                              <tr><td className="pt-1 text-fg/75 text-[11px] font-bold uppercase">{sec.name || 'Subtotal'}</td><td className="pt-1 text-right text-fg/70 tabular-nums font-bold text-xs">₱{sec.total.toFixed(2)}</td></tr>
                             )}
                           </tbody>
                         </table>
@@ -1827,37 +1827,37 @@ export default function LedgerTab({ ctx }) {
                       </tbody></table>
                     )}
 
-                    <h4 className="text-orange-400 font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mt-6">Cost of Goods Sold</h4>
+                    <h4 className="text-warning font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mt-6">Cost of Goods Sold</h4>
                     <Sections sections={pnlData.sections?.cogs} flat={pnlData.cogs} emptyLabel="No COGS entries." />
                     {pnlData.cogs.length > 0 && (
                       <table className="w-full text-sm"><tbody>
-                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total COGS</td><td className="pt-2 text-right text-orange-400 tabular-nums font-black">₱{pnlData.totals.cogs.toFixed(2)}</td></tr>
+                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total COGS</td><td className="pt-2 text-right text-warning tabular-nums font-black">₱{pnlData.totals.cogs.toFixed(2)}</td></tr>
                       </tbody></table>
                     )}
                     <table className="w-full text-sm"><tbody>
-                      <tr className="border-t border-white/10"><td className="pt-3 font-black text-fg uppercase text-sm">Gross Profit</td><td className="pt-3 text-right text-green-400 tabular-nums font-black text-lg">₱{pnlData.totals.grossProfit.toFixed(2)}</td></tr>
-                      <tr><td className="font-bold text-fg/50 uppercase text-xs">Gross Margin</td><td className="text-right text-fg/70 tabular-nums font-black text-sm">{pnlData.totals.grossMargin.toFixed(2)}%</td></tr>
+                      <tr className="border-t border-white/10"><td className="pt-3 font-black text-fg uppercase text-sm">Gross Profit</td><td className="pt-3 text-right text-success tabular-nums font-black text-lg">₱{pnlData.totals.grossProfit.toFixed(2)}</td></tr>
+                      <tr><td className="font-bold text-fg/75 uppercase text-xs">Gross Margin</td><td className="text-right text-fg/70 tabular-nums font-black text-sm">{pnlData.totals.grossMargin.toFixed(2)}%</td></tr>
                     </tbody></table>
 
                     {/* Other Income - kept separate from Revenue (interest
                         earned, gains, etc. aren't sales) so the top line
                         isn't inflated by non-operating income. */}
                     {pnlData.otherIncome?.length > 0 && (<>
-                      <h4 className="text-blue-400 font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mt-6">Other Income</h4>
+                      <h4 className="text-info font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mt-6">Other Income</h4>
                       <Sections sections={pnlData.sections?.otherIncome} flat={pnlData.otherIncome} emptyLabel="" />
                       <table className="w-full text-sm"><tbody>
-                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total Other Income</td><td className="pt-2 text-right text-blue-400 tabular-nums font-black">₱{pnlData.totals.otherIncome.toFixed(2)}</td></tr>
+                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total Other Income</td><td className="pt-2 text-right text-info tabular-nums font-black">₱{pnlData.totals.otherIncome.toFixed(2)}</td></tr>
                       </tbody></table>
                     </>)}
                   </div>
 
                   {/* Operating Expenses */}
                   <div className="space-y-3">
-                    <h4 className="text-red-400 font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2">Operating Expenses</h4>
+                    <h4 className="text-danger font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2">Operating Expenses</h4>
                     <Sections sections={pnlData.sections?.opex} flat={pnlData.opex} emptyLabel="No expense entries in this period." />
                     {pnlData.opex.length > 0 && (
                       <table className="w-full text-sm"><tbody>
-                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total OpEx</td><td className="pt-2 text-right text-red-400 tabular-nums font-black">₱{pnlData.totals.opex.toFixed(2)}</td></tr>
+                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total OpEx</td><td className="pt-2 text-right text-danger tabular-nums font-black">₱{pnlData.totals.opex.toFixed(2)}</td></tr>
                       </tbody></table>
                     )}
 
@@ -1865,7 +1865,7 @@ export default function LedgerTab({ ctx }) {
                         as Other Income above; interest paid, disposal losses,
                         etc. sit below regular OpEx, not mixed into it. */}
                     {pnlData.otherExpense?.length > 0 && (<>
-                      <h4 className="text-fg/50 font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mt-6">Other Expenses</h4>
+                      <h4 className="text-fg/75 font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mt-6">Other Expenses</h4>
                       <Sections sections={pnlData.sections?.otherExpense} flat={pnlData.otherExpense} emptyLabel="" />
                       <table className="w-full text-sm"><tbody>
                         <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total Other Expenses</td><td className="pt-2 text-right text-fg/70 tabular-nums font-black">₱{pnlData.totals.otherExpense.toFixed(2)}</td></tr>
@@ -1875,7 +1875,7 @@ export default function LedgerTab({ ctx }) {
                     {/* Net Income Summary */}
                     <div className={`mt-6 rounded-xl p-5 border ${pnlData.totals.netIncome >= 0 ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
                       <p className="text-fg/80 text-xs font-black uppercase tracking-widest mb-2">Net Income</p>
-                      <p className={`text-4xl font-black tabular-nums ${pnlData.totals.netIncome >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      <p className={`text-4xl font-black tabular-nums ${pnlData.totals.netIncome >= 0 ? 'text-success' : 'text-danger'}`}>
                         {pnlData.totals.netIncome < 0 ? '−' : ''}₱{Math.abs(pnlData.totals.netIncome).toFixed(2)}
                       </p>
                       <p className="text-fg/80 text-xs font-bold mt-2">Net Margin: <span className="tabular-nums">{pnlData.totals.netMargin.toFixed(2)}%</span></p>
@@ -1904,10 +1904,10 @@ export default function LedgerTab({ ctx }) {
                 <input type="date" value={pnlmRange.start} onChange={e => setPnlmRange(p => ({ ...p, start: e.target.value }))} className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
                 <span className="text-fg/60 font-bold text-sm">→</span>
                 <input type="date" value={pnlmRange.end} onChange={e => setPnlmRange(p => ({ ...p, end: e.target.value }))} className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
-                <button onClick={fetchPnlMonthly} className="px-5 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition">Load</button>
+                <button onClick={fetchPnlMonthly} className="px-5 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition">Load</button>
                 <div className="flex rounded-xl overflow-hidden border border-white/10">
                   {[['period','Period'],['matrix','Monthly']].map(([v,lbl]) => (
-                    <button key={v} onClick={() => setPnlmView(v)} className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition ${pnlmView === v ? 'bg-brand text-white' : 'bg-surface text-fg/50 hover:text-fg'}`}>{lbl}</button>
+                    <button key={v} onClick={() => setPnlmView(v)} className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition ${pnlmView === v ? 'bg-brand text-on-brand' : 'bg-surface text-fg/75 hover:text-fg'}`}>{lbl}</button>
                   ))}
                 </div>
                 {m && <button onClick={exportPnlMonthlyPDF} className="ml-auto bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition flex items-center gap-1.5"><Download size={13}/> PDF</button>}
@@ -1938,7 +1938,7 @@ export default function LedgerTab({ ctx }) {
                                   <td className="px-3 py-2 text-fg/80 pl-6">{a.code} · {a.name}</td>
                                   {pnlmView === 'matrix'
                                     ? <>{m.months.map(mm => <td key={mm} className="px-3 py-2 text-right tabular-nums text-fg/70">{a.byMonth[mm] ? peso(a.byMonth[mm]) : '-'}</td>)}<td className="px-3 py-2 text-right tabular-nums font-bold text-fg">{peso(a.total)}</td></>
-                                    : <><td className="px-3 py-2 text-right tabular-nums font-bold text-fg">{peso(a.total)}</td><td className="px-3 py-2 text-right tabular-nums text-fg/50">{nr ? `${(a.total/nr*100).toFixed(1)}%` : '-'}</td><td className="px-3 py-2 text-right tabular-nums text-fg/50">{parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '-'}</td></>}
+                                    : <><td className="px-3 py-2 text-right tabular-nums font-bold text-fg">{peso(a.total)}</td><td className="px-3 py-2 text-right tabular-nums text-fg/75">{nr ? `${(a.total/nr*100).toFixed(1)}%` : '-'}</td><td className="px-3 py-2 text-right tabular-nums text-fg/75">{parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '-'}</td></>}
                                 </tr>
                               ))}
                             </React.Fragment>
@@ -1946,7 +1946,7 @@ export default function LedgerTab({ ctx }) {
                         })}
                       </tbody>
                       <tfoot>
-                        <tr className="border-t-2 border-white/10 bg-accent font-black text-white">
+                        <tr className="border-t-2 border-white/10 bg-accent font-black text-on-brand">
                           <td className="px-3 py-3 uppercase text-[10px] tracking-wider">Net Income</td>
                           {pnlmView === 'matrix'
                             ? <>{m.months.map(mm => <td key={mm} className="px-3 py-3 text-right tabular-nums">{peso(m.monthTotals.netIncome[mm])}</td>)}<td className="px-3 py-3 text-right tabular-nums text-white">{peso(m.grandTotals.netIncome)}</td></>
@@ -1972,7 +1972,7 @@ export default function LedgerTab({ ctx }) {
                 <div className="flex gap-2">
                   <button onClick={reconcileInventory} title="Set book Inventory = actual on-hand value (fixes negative/opening inventory)" className="bg-amber-500 text-white border border-amber-500 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-amber-500/60 transition min-h-[44px] flex items-center gap-1.5"><Package size={13}/> Reconcile Inventory</button>
                   {bsData && <button onClick={exportBalanceSheetPDF} className="bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition min-h-[44px] flex items-center gap-1.5"><Download size={13}/> PDF</button>}
-                  <button onClick={fetchBalanceSheet} className="bg-brand text-white px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[44px] flex items-center gap-1.5"><RefreshCw size={13}/> Refresh</button>
+                  <button onClick={fetchBalanceSheet} className="bg-brand text-on-brand px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[44px] flex items-center gap-1.5"><RefreshCw size={13}/> Refresh</button>
                 </div>
               </div>
 
@@ -1991,7 +1991,7 @@ export default function LedgerTab({ ctx }) {
                         <table key={sec.code} className="w-full text-sm">
                           <tbody>
                             {sec.name && sec.items.length > 1 && (
-                              <tr><td colSpan={2} className="pb-1 text-[10px] font-black uppercase tracking-widest text-fg/40">{sec.name}</td></tr>
+                              <tr><td colSpan={2} className="pb-1 text-[10px] font-black uppercase tracking-widest text-fg/70">{sec.name}</td></tr>
                             )}
                             {sec.items.map(r => (
                               <tr key={r.code} className="border-b border-white/5">
@@ -2000,7 +2000,7 @@ export default function LedgerTab({ ctx }) {
                               </tr>
                             ))}
                             {sec.items.length > 1 && (
-                              <tr><td className="pt-1 text-fg/50 text-[11px] font-bold uppercase">{sec.name || 'Subtotal'}</td><td className="pt-1 text-right text-fg/70 tabular-nums font-bold text-xs">₱{sec.total.toFixed(2)}</td></tr>
+                              <tr><td className="pt-1 text-fg/75 text-[11px] font-bold uppercase">{sec.name || 'Subtotal'}</td><td className="pt-1 text-right text-fg/70 tabular-nums font-bold text-xs">₱{sec.total.toFixed(2)}</td></tr>
                             )}
                           </tbody>
                         </table>
@@ -2020,15 +2020,15 @@ export default function LedgerTab({ ctx }) {
                   </div>
                   {/* Liabilities */}
                   <div>
-                    <h4 className="text-red-400 font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mb-3">Liabilities</h4>
+                    <h4 className="text-danger font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mb-3">Liabilities</h4>
                     <BsSections sections={bsData.sections?.liabilities} flat={bsData.liabilities} emptyLabel="No liabilities recorded" />
                     <table className="w-full text-sm"><tbody>
-                      <tr><td className="pt-3 font-black text-fg uppercase text-xs">Total Liabilities</td><td className="pt-3 text-right text-red-400 tabular-nums font-black">₱{bsData.totals.liabilities.toFixed(2)}</td></tr>
+                      <tr><td className="pt-3 font-black text-fg uppercase text-xs">Total Liabilities</td><td className="pt-3 text-right text-danger tabular-nums font-black">₱{bsData.totals.liabilities.toFixed(2)}</td></tr>
                     </tbody></table>
                   </div>
                   {/* Equity */}
                   <div>
-                    <h4 className="text-green-400 font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mb-3">Equity</h4>
+                    <h4 className="text-success font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mb-3">Equity</h4>
                     <table className="w-full text-sm">
                       <tbody>
                         {bsData.equity.map(r => (
@@ -2037,7 +2037,7 @@ export default function LedgerTab({ ctx }) {
                             <td className="py-2 text-right text-fg tabular-nums font-bold">{r.amount < 0 ? '−' : ''}₱{Math.abs(r.amount).toFixed(2)}</td>
                           </tr>
                         ))}
-                        <tr><td className="pt-3 font-black text-fg uppercase text-xs">Total Equity</td><td className="pt-3 text-right text-green-400 tabular-nums font-black">₱{bsData.totals.equity.toFixed(2)}</td></tr>
+                        <tr><td className="pt-3 font-black text-fg uppercase text-xs">Total Equity</td><td className="pt-3 text-right text-success tabular-nums font-black">₱{bsData.totals.equity.toFixed(2)}</td></tr>
                       </tbody>
                     </table>
                   </div>
@@ -2074,10 +2074,10 @@ export default function LedgerTab({ ctx }) {
                 <input type="date" value={bsmRange.start} onChange={e => setBsmRange(p => ({ ...p, start: e.target.value }))} className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
                 <span className="text-fg/60 font-bold text-sm">→</span>
                 <input type="date" value={bsmRange.end} onChange={e => setBsmRange(p => ({ ...p, end: e.target.value }))} className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
-                <button onClick={fetchBsMonthly} className="px-5 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition">Load</button>
+                <button onClick={fetchBsMonthly} className="px-5 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition">Load</button>
                 <div className="flex rounded-xl overflow-hidden border border-white/10">
                   {[['period','As-of'],['matrix','Monthly']].map(([v,lbl]) => (
-                    <button key={v} onClick={() => setBsmView(v)} className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition ${bsmView === v ? 'bg-brand text-white' : 'bg-surface text-fg/50 hover:text-fg'}`}>{lbl}</button>
+                    <button key={v} onClick={() => setBsmView(v)} className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition ${bsmView === v ? 'bg-brand text-on-brand' : 'bg-surface text-fg/75 hover:text-fg'}`}>{lbl}</button>
                   ))}
                 </div>
                 {b && <button onClick={exportBsMonthlyPDF} className="ml-auto bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition flex items-center gap-1.5"><Download size={13}/> PDF</button>}
@@ -2103,7 +2103,7 @@ export default function LedgerTab({ ctx }) {
                                 <td className="px-3 py-2 text-fg/80 pl-6">{a.code} · {a.name}</td>
                                 {bsmView === 'matrix'
                                   ? b.months.map(mm => <td key={mm} className="px-3 py-2 text-right tabular-nums text-fg/70">{a.byMonth[mm] ? peso(a.byMonth[mm]) : '-'}</td>)
-                                  : <><td className="px-3 py-2 text-right tabular-nums font-bold text-fg">{peso(a.total)}</td><td className="px-3 py-2 text-right tabular-nums text-fg/50">{totalAssets ? `${(a.total/totalAssets*100).toFixed(1)}%` : '-'}</td><td className="px-3 py-2 text-right tabular-nums text-fg/50">{parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '-'}</td></>}
+                                  : <><td className="px-3 py-2 text-right tabular-nums font-bold text-fg">{peso(a.total)}</td><td className="px-3 py-2 text-right tabular-nums text-fg/75">{totalAssets ? `${(a.total/totalAssets*100).toFixed(1)}%` : '-'}</td><td className="px-3 py-2 text-right tabular-nums text-fg/75">{parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '-'}</td></>}
                               </tr>
                             ))}
                             <tr className="border-b border-white/10 font-bold text-fg/90">
@@ -2136,10 +2136,10 @@ export default function LedgerTab({ ctx }) {
                 <div className="bg-surface border border-yellow-500/25 rounded-2xl p-6 space-y-3">
                   <div>
                     <h3 className="text-xl font-black text-fg flex items-center gap-2">
-                      <ShieldCheck size={18} className="text-yellow-400" />
+                      <ShieldCheck size={18} className="text-warning" />
                       {changeRequests.length} Price Change{changeRequests.length === 1 ? '' : 's'} Awaiting Approval
                     </h3>
-                    <p className="text-fg/40 text-[11px] mt-0.5">
+                    <p className="text-fg/70 text-[11px] mt-0.5">
                       {canApprovePricing
                         ? 'These are not in effect yet. Approving applies the new value immediately.'
                         : 'Your requests. Someone with approval rights has to sign these off.'}
@@ -2153,15 +2153,15 @@ export default function LedgerTab({ ctx }) {
                             <p className="text-fg font-bold text-sm">{r.entityName || r.entityId}</p>
                             {r.changes.map((c, i) => (
                               <div key={i} className="flex items-center gap-2 font-mono text-xs mt-0.5">
-                                <span className="text-fg/50">{c.label}</span>
-                                <span className="text-fg/40 line-through">₱{Number(c.oldValue || 0).toFixed(2)}</span>
-                                <span className="text-fg/30">→</span>
-                                <span className={`font-black ${Number(c.newValue) > Number(c.oldValue) ? 'text-red-400' : 'text-green-400'}`}>
+                                <span className="text-fg/75">{c.label}</span>
+                                <span className="text-fg/70 line-through">₱{Number(c.oldValue || 0).toFixed(2)}</span>
+                                <span className="text-fg/65">→</span>
+                                <span className={`font-black ${Number(c.newValue) > Number(c.oldValue) ? 'text-danger' : 'text-success'}`}>
                                   ₱{Number(c.newValue || 0).toFixed(2)}
                                 </span>
                               </div>
                             ))}
-                            <p className="text-[10px] text-fg/40 mt-1">
+                            <p className="text-[10px] text-fg/70 mt-1">
                               by {r.requestedBy || 'someone'} · {new Date(r.createdAt).toLocaleDateString()}
                               {r.reason && <span className="italic"> · "{r.reason}"</span>}
                             </p>
@@ -2170,7 +2170,7 @@ export default function LedgerTab({ ctx }) {
                             {canApprovePricing ? (
                               <>
                                 <button onClick={() => actOnChangeRequest(r._id, 'approve')}
-                                  className="bg-brand text-white px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[36px]">
+                                  className="bg-brand text-on-brand px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[36px]">
                                   Approve
                                 </button>
                                 <button onClick={async () => {
@@ -2181,13 +2181,13 @@ export default function LedgerTab({ ctx }) {
                                   });
                                   if (reason) actOnChangeRequest(r._id, 'reject', 'Rejected by approver');
                                 }}
-                                  className="bg-red-500/10 text-red-400 px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-red-500/20 transition min-h-[36px]">
+                                  className="bg-red-500/10 text-danger px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-red-500/20 transition min-h-[36px]">
                                   Reject
                                 </button>
                               </>
                             ) : (
                               <button onClick={() => actOnChangeRequest(r._id, 'withdraw')}
-                                className="bg-white/5 text-fg/50 px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-white/10 transition min-h-[36px]">
+                                className="bg-white/5 text-fg/75 px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-white/10 transition min-h-[36px]">
                                 Withdraw
                               </button>
                             )}
@@ -2208,46 +2208,46 @@ export default function LedgerTab({ ctx }) {
                   </div>
                   <div className="flex items-end gap-2">
                     <div>
-                      <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">From</label>
+                      <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">From</label>
                       <input type="date" value={priceLogRange.start} onChange={e => setPriceLogRange({ ...priceLogRange, start: e.target.value })}
                         className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
                     </div>
                     <div>
-                      <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">To</label>
+                      <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">To</label>
                       <input type="date" value={priceLogRange.end} onChange={e => setPriceLogRange({ ...priceLogRange, end: e.target.value })}
                         className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
                     </div>
                     <button onClick={fetchPriceChangeLog}
-                      className="bg-brand text-white px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
+                      className="bg-brand text-on-brand px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
                       Run
                     </button>
                   </div>
                 </div>
 
                 {!priceChangeLog ? (
-                  <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Pick a range and run the log</div>
+                  <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Pick a range and run the log</div>
                 ) : (
                   <>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Changes</p>
                         <p className="text-xl font-black tabular-nums text-fg">{priceChangeLog.summary.total}</p>
-                        <p className="text-[9px] text-fg/40 mt-0.5">{priceChangeLog.summary.priceChanges} price · {priceChangeLog.summary.costChanges} cost</p>
+                        <p className="text-[9px] text-fg/70 mt-0.5">{priceChangeLog.summary.priceChanges} price · {priceChangeLog.summary.costChanges} cost</p>
                       </div>
                       <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3">
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Increases</p>
-                        <p className="text-xl font-black tabular-nums text-red-400">{priceChangeLog.summary.increases}</p>
+                        <p className="text-xl font-black tabular-nums text-danger">{priceChangeLog.summary.increases}</p>
                         {priceChangeLog.summary.largestIncrease && (
-                          <p className="text-[9px] text-fg/40 mt-0.5 truncate">
+                          <p className="text-[9px] text-fg/70 mt-0.5 truncate">
                             max +{priceChangeLog.summary.largestIncrease.percent}% · {priceChangeLog.summary.largestIncrease.productName}
                           </p>
                         )}
                       </div>
                       <div className="rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-3">
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Decreases</p>
-                        <p className="text-xl font-black tabular-nums text-green-400">{priceChangeLog.summary.decreases}</p>
+                        <p className="text-xl font-black tabular-nums text-success">{priceChangeLog.summary.decreases}</p>
                         {priceChangeLog.summary.largestDecrease && (
-                          <p className="text-[9px] text-fg/40 mt-0.5 truncate">
+                          <p className="text-[9px] text-fg/70 mt-0.5 truncate">
                             max {priceChangeLog.summary.largestDecrease.percent}% · {priceChangeLog.summary.largestDecrease.productName}
                           </p>
                         )}
@@ -2257,14 +2257,14 @@ export default function LedgerTab({ ctx }) {
                       <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Reviewed</p>
                         <p className="text-xl font-black tabular-nums text-fg/70">{priceChangeLog.summary.viaApproval}</p>
-                        <p className="text-[9px] text-fg/40 mt-0.5">{priceChangeLog.summary.pendingCount} still pending</p>
+                        <p className="text-[9px] text-fg/70 mt-0.5">{priceChangeLog.summary.pendingCount} still pending</p>
                       </div>
                     </div>
 
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
-                          <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                          <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
                             <th className="text-left py-2.5">When</th>
                             <th className="text-left py-2.5">Product</th>
                             <th className="text-left py-2.5">Type</th>
@@ -2278,38 +2278,38 @@ export default function LedgerTab({ ctx }) {
                         <tbody>
                           {priceChangeLog.changes.map((c, i) => (
                             <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition">
-                              <td className="py-2.5 text-fg/50 text-xs">{new Date(c.date).toLocaleDateString()}</td>
+                              <td className="py-2.5 text-fg/75 text-xs">{new Date(c.date).toLocaleDateString()}</td>
                               <td className="py-2.5 text-fg font-bold text-xs">
                                 {c.productName}
-                                {c.productCode && <span className="block text-[9px] text-fg/30">{c.productCode}</span>}
+                                {c.productCode && <span className="block text-[9px] text-fg/65">{c.productCode}</span>}
                               </td>
                               <td className="py-2.5">
-                                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${c.type === 'price' ? 'bg-brand/20 text-brand' : 'bg-orange-500/20 text-orange-400'}`}>
+                                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${c.type === 'price' ? 'bg-brand/20 text-brand' : 'bg-orange-500/20 text-warning'}`}>
                                   {c.type === 'price' ? 'Price' : 'Cost'}
                                 </span>
                               </td>
-                              <td className="py-2.5 text-right tabular-nums text-fg/40">₱{Number(c.oldValue || 0).toFixed(2)}</td>
+                              <td className="py-2.5 text-right tabular-nums text-fg/70">₱{Number(c.oldValue || 0).toFixed(2)}</td>
                               <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{Number(c.newValue || 0).toFixed(2)}</td>
-                              <td className={`py-2.5 text-right tabular-nums font-bold ${c.delta > 0 ? 'text-red-400' : c.delta < 0 ? 'text-green-400' : 'text-fg/30'}`}>
+                              <td className={`py-2.5 text-right tabular-nums font-bold ${c.delta > 0 ? 'text-danger' : c.delta < 0 ? 'text-success' : 'text-fg/65'}`}>
                                 {c.percent === null ? '-' : `${c.percent > 0 ? '+' : ''}${c.percent}%`}
                               </td>
                               <td className="py-2.5 pl-3 text-xs">
                                 {c.viaApproval ? (
                                   <>
                                     <span className="text-fg/70">{c.requestedBy || '-'}</span>
-                                    <span className="block text-[9px] text-green-500">approved by {c.approvedBy || '-'}</span>
+                                    <span className="block text-[9px] text-success">approved by {c.approvedBy || '-'}</span>
                                   </>
                                 ) : (
                                   <span className="text-fg/70">{c.changedBy || '-'}</span>
                                 )}
                               </td>
-                              <td className="py-2.5 text-fg/40 text-xs italic max-w-[200px] truncate" title={c.reason}>{c.reason || '-'}</td>
+                              <td className="py-2.5 text-fg/70 text-xs italic max-w-[200px] truncate" title={c.reason}>{c.reason || '-'}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                       {!priceChangeLog.changes.length && (
-                        <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">No price changes in this range</div>
+                        <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">No price changes in this range</div>
                       )}
                     </div>
                   </>
@@ -2332,40 +2332,40 @@ export default function LedgerTab({ ctx }) {
                 </div>
                 <div className="flex items-end gap-2">
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">As Of</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">As Of</label>
                     <input type="date" value={arReportAsOf} onChange={e => setArReportAsOf(e.target.value)}
                       className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
                   </div>
                   <button onClick={fetchArReport}
-                    className="bg-brand text-white px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
+                    className="bg-brand text-on-brand px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
                     Run
                   </button>
                 </div>
               </div>
 
               {!arReport ? (
-                <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Pick a date and run the report</div>
+                <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Pick a date and run the report</div>
               ) : (
                 <>
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                     {[
-                      { label: 'Current', sub: '0-30d', amt: arReport.totals.current, cls: 'text-green-400 bg-green-500/10 border-green-500/20' },
-                      { label: '31-60',   sub: 'days',  amt: arReport.totals.d31_60,  cls: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' },
-                      { label: '61-90',   sub: 'days',  amt: arReport.totals.d61_90,  cls: 'text-orange-400 bg-orange-500/10 border-orange-500/20' },
-                      { label: '91+',     sub: 'days',  amt: arReport.totals.d90_plus,cls: 'text-red-400 bg-red-500/10 border-red-500/20' },
+                      { label: 'Current', sub: '0-30d', amt: arReport.totals.current, cls: 'text-success bg-green-500/10 border-green-500/20' },
+                      { label: '31-60',   sub: 'days',  amt: arReport.totals.d31_60,  cls: 'text-warning bg-yellow-500/10 border-yellow-500/20' },
+                      { label: '61-90',   sub: 'days',  amt: arReport.totals.d61_90,  cls: 'text-warning bg-orange-500/10 border-orange-500/20' },
+                      { label: '91+',     sub: 'days',  amt: arReport.totals.d90_plus,cls: 'text-danger bg-red-500/10 border-red-500/20' },
                       { label: 'Total',   sub: `${arReport.totals.count} invoice(s)`, amt: arReport.totals.total, cls: 'text-brand bg-brand/10 border-brand/25' },
                     ].map(b => (
                       <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.cls.split(' ').slice(1).join(' ')}`}>
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
-                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.cls.split(' ')[0] : 'text-fg/20'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.cls.split(' ')[0] : 'text-fg/60'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                       </div>
                     ))}
                   </div>
 
                   {arReport.overdueTotal > 0 && (
                     <div className="bg-red-500/10 border border-red-500/25 rounded-xl px-4 py-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-red-400">Past Their Agreed Due Date</p>
-                      <p className="text-xl font-black tabular-nums text-red-400">₱{arReport.overdueTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-danger">Past Their Agreed Due Date</p>
+                      <p className="text-xl font-black tabular-nums text-danger">₱{arReport.overdueTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                     </div>
                   )}
 
@@ -2375,7 +2375,7 @@ export default function LedgerTab({ ctx }) {
                     <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 px-4 py-3 border-b border-white/10">By Client</p>
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                        <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
                           <th className="text-left py-2.5 px-4">Client</th>
                           <th className="text-right py-2.5">Current</th>
                           <th className="text-right py-2.5">31-60</th>
@@ -2387,7 +2387,7 @@ export default function LedgerTab({ ctx }) {
                       <tbody>
                         {arReport.byClient.map(c => (
                           <tr key={c.client} className="border-b border-white/5">
-                            <td className="py-2.5 px-4 font-bold text-fg">{c.client}{c.clientCode && <span className="ml-2 text-[9px] text-fg/30">{c.clientCode}</span>}</td>
+                            <td className="py-2.5 px-4 font-bold text-fg">{c.client}{c.clientCode && <span className="ml-2 text-[9px] text-fg/65">{c.clientCode}</span>}</td>
                             <td className="py-2.5 text-right tabular-nums text-fg/70">{c.current ? `₱${c.current.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
                             <td className="py-2.5 text-right tabular-nums text-yellow-500/80">{c.d31_60 ? `₱${c.d31_60.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
                             <td className="py-2.5 text-right tabular-nums text-orange-500/80">{c.d61_90 ? `₱${c.d61_90.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
@@ -2403,7 +2403,7 @@ export default function LedgerTab({ ctx }) {
                     <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 mb-2">Open Invoices</p>
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                        <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
                           <th className="text-left py-2.5">Invoice</th>
                           <th className="text-left py-2.5">Client</th>
                           <th className="text-left py-2.5">Date</th>
@@ -2419,17 +2419,17 @@ export default function LedgerTab({ ctx }) {
                           <tr key={i._id} className={`border-b border-white/5 ${i.overdue ? 'bg-red-500/5' : ''}`}>
                             <td className="py-2.5 font-bold text-fg">{i.orderNumber}</td>
                             <td className="py-2.5 text-fg/70">{i.client}</td>
-                            <td className="py-2.5 text-fg/50 text-xs">{new Date(i.invoiceDate).toLocaleDateString()}</td>
-                            <td className="py-2.5 text-xs">{i.dueDate ? <span className={i.overdue ? 'text-red-400 font-bold' : 'text-fg/60'}>{new Date(i.dueDate).toLocaleDateString()}</span> : <span className="text-fg/20">-</span>}</td>
-                            <td className="py-2.5"><span className={`text-[10px] font-black px-2 py-1 rounded ${i.bucket === 'current' ? 'bg-green-400/15 text-green-500' : i.bucket === 'd31_60' ? 'bg-yellow-500/15 text-yellow-400' : i.bucket === 'd61_90' ? 'bg-orange-500/15 text-orange-400' : 'bg-red-500/15 text-red-400'}`}>{i.ageDays}d</span></td>
-                            <td className="py-2.5 text-right tabular-nums text-fg/50">₱{i.faceTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                            <td className="py-2.5 text-right tabular-nums text-green-400">{i.paid ? `₱${i.paid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : <span className="text-fg/20">-</span>}</td>
+                            <td className="py-2.5 text-fg/75 text-xs">{new Date(i.invoiceDate).toLocaleDateString()}</td>
+                            <td className="py-2.5 text-xs">{i.dueDate ? <span className={i.overdue ? 'text-danger font-bold' : 'text-fg/60'}>{new Date(i.dueDate).toLocaleDateString()}</span> : <span className="text-fg/60">-</span>}</td>
+                            <td className="py-2.5"><span className={`text-[10px] font-black px-2 py-1 rounded ${i.bucket === 'current' ? 'bg-green-400/15 text-success' : i.bucket === 'd31_60' ? 'bg-yellow-500/15 text-warning' : i.bucket === 'd61_90' ? 'bg-orange-500/15 text-warning' : 'bg-red-500/15 text-danger'}`}>{i.ageDays}d</span></td>
+                            <td className="py-2.5 text-right tabular-nums text-fg/75">₱{i.faceTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                            <td className="py-2.5 text-right tabular-nums text-success">{i.paid ? `₱${i.paid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : <span className="text-fg/60">-</span>}</td>
                             <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{i.balance.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
-                    {!arReport.invoices.length && <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Nothing outstanding as of this date</div>}
+                    {!arReport.invoices.length && <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Nothing outstanding as of this date</div>}
                   </div>
                 </>
               )}
@@ -2471,7 +2471,7 @@ export default function LedgerTab({ ctx }) {
                 </div>
 
                 {!checkRegister ? (
-                  <div className="py-12 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Loading check register…</div>
+                  <div className="py-12 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Loading check register…</div>
                 ) : (
                   <>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -2479,30 +2479,30 @@ export default function LedgerTab({ ctx }) {
                           a drawer that could be in the bank today. */}
                       <div className="rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-3">
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Ready to Deposit</p>
-                        <p className="text-xl font-black tabular-nums text-green-400">₱{checkRegister.summary.readyToDepositTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                        <p className="text-[9px] text-fg/40 mt-0.5">{checkRegister.summary.readyToDepositCount} check(s)</p>
+                        <p className="text-xl font-black tabular-nums text-success">₱{checkRegister.summary.readyToDepositTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                        <p className="text-[9px] text-fg/70 mt-0.5">{checkRegister.summary.readyToDepositCount} check(s)</p>
                       </div>
                       <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Post-Dated</p>
                         <p className="text-xl font-black tabular-nums text-fg/70">₱{checkRegister.summary.postDatedTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                        <p className="text-[9px] text-fg/40 mt-0.5">Not bankable yet</p>
+                        <p className="text-[9px] text-fg/70 mt-0.5">Not bankable yet</p>
                       </div>
                       <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/10 px-4 py-3">
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">In Clearing</p>
-                        <p className="text-xl font-black tabular-nums text-yellow-400">₱{checkRegister.summary.inClearingTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                        <p className="text-[9px] text-fg/40 mt-0.5">{checkRegister.summary.inClearingCount} with the bank</p>
+                        <p className="text-xl font-black tabular-nums text-warning">₱{checkRegister.summary.inClearingTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                        <p className="text-[9px] text-fg/70 mt-0.5">{checkRegister.summary.inClearingCount} with the bank</p>
                       </div>
                       <div className={`rounded-xl border px-4 py-3 ${checkRegister.summary.bouncedCount > 0 ? 'border-red-500/25 bg-red-500/10' : 'border-white/10 bg-white/5'}`}>
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Bounced</p>
-                        <p className={`text-xl font-black tabular-nums ${checkRegister.summary.bouncedCount > 0 ? 'text-red-400' : 'text-fg/20'}`}>₱{checkRegister.summary.bouncedTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                        <p className="text-[9px] text-fg/40 mt-0.5">{checkRegister.summary.bouncedCount} reversed</p>
+                        <p className={`text-xl font-black tabular-nums ${checkRegister.summary.bouncedCount > 0 ? 'text-danger' : 'text-fg/60'}`}>₱{checkRegister.summary.bouncedTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                        <p className="text-[9px] text-fg/70 mt-0.5">{checkRegister.summary.bouncedCount} reversed</p>
                       </div>
                     </div>
 
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
-                          <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                          <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
                             <th className="text-left py-2.5">Check No.</th>
                             <th className="text-left py-2.5">Bank / Drawer</th>
                             <th className="text-left py-2.5">Client</th>
@@ -2518,28 +2518,28 @@ export default function LedgerTab({ ctx }) {
                             <tr key={c.paymentId} className={`border-b border-white/5 hover:bg-white/5 transition ${c.status === 'Bounced' ? 'bg-red-500/5' : ''}`}>
                               <td className="py-2.5 font-black text-fg tabular-nums">{c.checkNumber}</td>
                               <td className="py-2.5 text-fg/60 text-xs">
-                                {c.checkBank || <span className="text-fg/20">-</span>}
-                                {c.checkDrawer && <span className="block text-[9px] text-fg/35">{c.checkDrawer}</span>}
+                                {c.checkBank || <span className="text-fg/60">-</span>}
+                                {c.checkDrawer && <span className="block text-[9px] text-fg/70">{c.checkDrawer}</span>}
                               </td>
                               <td className="py-2.5 text-fg/70 text-xs">{c.client}</td>
-                              <td className="py-2.5 text-fg/50 text-xs">{c.orderNumber}</td>
+                              <td className="py-2.5 text-fg/75 text-xs">{c.orderNumber}</td>
                               <td className="py-2.5 text-xs">
                                 {c.checkDate ? (
-                                  <span className={c.postDated ? 'text-yellow-400 font-bold' : 'text-fg/60'}>
+                                  <span className={c.postDated ? 'text-warning font-bold' : 'text-fg/60'}>
                                     {new Date(c.checkDate).toLocaleDateString()}
                                   </span>
-                                ) : <span className="text-fg/20">-</span>}
+                                ) : <span className="text-fg/60">-</span>}
                                 {c.postDated && <span className="block text-[9px] text-yellow-500/70">post-dated</span>}
                                 {/* A check sitting with the bank for a week+ is
                                     worth chasing. */}
-                                {c.daysInClearing > 6 && <span className="block text-[9px] text-orange-400">{c.daysInClearing}d in clearing</span>}
+                                {c.daysInClearing > 6 && <span className="block text-[9px] text-warning">{c.daysInClearing}d in clearing</span>}
                               </td>
                               <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{c.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                               <td className="py-2.5 pl-3">
                                 <span className={`text-[10px] font-black px-2 py-1 rounded ${
-                                  c.status === 'Cleared' ? 'bg-green-500/15 text-green-500'
-                                  : c.status === 'Bounced' ? 'bg-red-500/15 text-red-400'
-                                  : c.status === 'Deposited' ? 'bg-yellow-500/15 text-yellow-400'
+                                  c.status === 'Cleared' ? 'bg-green-500/15 text-success'
+                                  : c.status === 'Bounced' ? 'bg-red-500/15 text-danger'
+                                  : c.status === 'Deposited' ? 'bg-yellow-500/15 text-warning'
                                   : 'bg-white/10 text-fg/60'}`}>{c.status}</span>
                                 {c.status === 'Bounced' && c.bounceReason && (
                                   <span className="block text-[9px] text-red-400/70 italic mt-0.5 max-w-[160px]">{c.bounceReason}</span>
@@ -2559,18 +2559,18 @@ export default function LedgerTab({ ctx }) {
                                   {['On Hand', 'Deposited'].includes(c.status) && (
                                     <>
                                       <button onClick={() => actOnCheck(c, 'clear')} title="The bank honoured it"
-                                        className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-green-500/15 text-green-400 hover:bg-green-500/25 min-h-[28px]">
+                                        className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-green-500/15 text-success hover:bg-green-500/25 min-h-[28px]">
                                         Clear
                                       </button>
                                       <button onClick={() => actOnCheck(c, 'bounce')} title="Reverses the collection - the invoice reopens"
-                                        className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 min-h-[28px]">
+                                        className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-red-500/10 text-danger hover:bg-red-500/20 min-h-[28px]">
                                         Bounce
                                       </button>
                                     </>
                                   )}
                                   {c.status === 'Cleared' && (
                                     <button onClick={() => actOnCheck(c, 'bounce')} title="Bank reversed a cleared check"
-                                      className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/5 text-fg/40 hover:bg-red-500/15 hover:text-red-400 min-h-[28px]">
+                                      className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/5 text-fg/70 hover:bg-red-500/15 hover:text-danger min-h-[28px]">
                                       Reverse
                                     </button>
                                   )}
@@ -2581,7 +2581,7 @@ export default function LedgerTab({ ctx }) {
                         </tbody>
                       </table>
                       {!checkRegister.checks.length && (
-                        <div className="py-12 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">
+                        <div className="py-12 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">
                           {checkFilter ? `No ${checkFilter.toLowerCase()} checks` : 'No checks received yet'}
                         </div>
                       )}
@@ -2599,12 +2599,12 @@ export default function LedgerTab({ ctx }) {
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">From</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">From</label>
                     <input type="date" value={collRange.start} onChange={e => setCollRange({ ...collRange, start: e.target.value })}
                       className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
                   </div>
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">To</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">To</label>
                     <input type="date" value={collRange.end} onChange={e => setCollRange({ ...collRange, end: e.target.value })}
                       className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
                   </div>
@@ -2612,7 +2612,7 @@ export default function LedgerTab({ ctx }) {
                       the collectors took in; deposit basis = what reached the
                       bank, i.e. the figure that ties to a bank statement. */}
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Date Basis</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Date Basis</label>
                     <select value={collRange.basis} onChange={e => setCollRange({ ...collRange, basis: e.target.value })}
                       className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
                       <option value="collection">Collection date</option>
@@ -2620,20 +2620,20 @@ export default function LedgerTab({ ctx }) {
                     </select>
                   </div>
                   <button onClick={fetchCollectionReport}
-                    className="bg-brand text-white px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
+                    className="bg-brand text-on-brand px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
                     Run
                   </button>
                 </div>
               </div>
 
               {!collectionReport ? (
-                <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Pick a range and run the report</div>
+                <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Pick a range and run the report</div>
               ) : (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="bg-green-500/10 border border-green-500/20 rounded-xl px-4 py-3">
                       <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Total Collected</p>
-                      <p className="text-2xl font-black tabular-nums text-green-400">₱{collectionReport.totalCollected.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                      <p className="text-2xl font-black tabular-nums text-success">₱{collectionReport.totalCollected.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                     </div>
                     <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-3">
                       <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Collections</p>
@@ -2643,7 +2643,7 @@ export default function LedgerTab({ ctx }) {
                         where cash goes missing, so it gets its own tile. */}
                     <div className={`rounded-xl px-4 py-3 border ${collectionReport.undepositedTotal > 0 ? 'bg-yellow-500/10 border-yellow-500/25' : 'bg-white/5 border-white/10'}`}>
                       <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Not Yet Deposited</p>
-                      <p className={`text-2xl font-black tabular-nums ${collectionReport.undepositedTotal > 0 ? 'text-yellow-400' : 'text-fg/20'}`}>₱{collectionReport.undepositedTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                      <p className={`text-2xl font-black tabular-nums ${collectionReport.undepositedTotal > 0 ? 'text-warning' : 'text-fg/60'}`}>₱{collectionReport.undepositedTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                     </div>
                   </div>
 
@@ -2663,7 +2663,7 @@ export default function LedgerTab({ ctx }) {
                                 <td className="py-2 px-4 text-right tabular-nums font-bold text-fg">₱{r.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                               </tr>
                             ))}
-                            {!list.length && <tr><td className="py-4 px-4 text-fg/30 text-xs">None</td></tr>}
+                            {!list.length && <tr><td className="py-4 px-4 text-fg/65 text-xs">None</td></tr>}
                           </tbody>
                         </table>
                       </div>
@@ -2673,7 +2673,7 @@ export default function LedgerTab({ ctx }) {
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                        <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
                           <th className="text-left py-2.5">Collected</th>
                           <th className="text-left py-2.5">Deposited</th>
                           <th className="text-left py-2.5">Invoice</th>
@@ -2688,27 +2688,27 @@ export default function LedgerTab({ ctx }) {
                           <tr key={`${r.orderId}-${idx}`} className="border-b border-white/5 hover:bg-white/5 transition">
                             <td className="py-2.5 text-fg/70 text-xs">
                               {new Date(r.collectionDate).toLocaleDateString()}
-                              {r.collectedBy && <span className="block text-[9px] text-fg/35">by {r.collectedBy}</span>}
+                              {r.collectedBy && <span className="block text-[9px] text-fg/70">by {r.collectedBy}</span>}
                             </td>
                             <td className="py-2.5 text-xs">
                               {r.depositDate
                                 ? <span className="text-fg/70">{new Date(r.depositDate).toLocaleDateString()}</span>
-                                : <span className="text-[10px] font-black px-2 py-1 rounded bg-yellow-500/15 text-yellow-400">IN TRANSIT</span>}
+                                : <span className="text-[10px] font-black px-2 py-1 rounded bg-yellow-500/15 text-warning">IN TRANSIT</span>}
                               {r.floatDays > 0 && <span className="block text-[9px] text-yellow-500/70">+{r.floatDays}d float</span>}
                             </td>
                             <td className="py-2.5 text-fg font-bold">{r.orderNumber}</td>
                             <td className="py-2.5 text-fg/70">{r.client}</td>
                             <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand px-2 py-1 rounded">{r.depositedTo || '-'}</span></td>
-                            <td className="py-2.5 text-fg/50 text-xs">
-                              {r.referenceNumber || <span className="text-fg/20">-</span>}
-                              {r.note && <span className="block text-[9px] text-fg/30 italic">{r.note}</span>}
+                            <td className="py-2.5 text-fg/75 text-xs">
+                              {r.referenceNumber || <span className="text-fg/60">-</span>}
+                              {r.note && <span className="block text-[9px] text-fg/65 italic">{r.note}</span>}
                             </td>
-                            <td className="py-2.5 text-right tabular-nums font-black text-green-400">₱{r.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                            <td className="py-2.5 text-right tabular-nums font-black text-success">₱{r.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
-                    {!collectionReport.collections.length && <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">No collections in this range</div>}
+                    {!collectionReport.collections.length && <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">No collections in this range</div>}
                   </div>
                 </>
               )}
@@ -2729,33 +2729,33 @@ export default function LedgerTab({ ctx }) {
                 </div>
                 <div className="flex items-end gap-2">
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">As Of</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">As Of</label>
                     <input type="date" value={apReportAsOf} onChange={e => setApReportAsOf(e.target.value)}
                       className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
                   </div>
                   <button onClick={fetchApReport}
-                    className="bg-brand text-white px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
+                    className="bg-brand text-on-brand px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
                     Run
                   </button>
                 </div>
               </div>
 
               {!apReport ? (
-                <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Pick a date and run the report</div>
+                <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Pick a date and run the report</div>
               ) : (
                 <>
                   {/* Buckets are DAYS PAST DUE here, not invoice age. */}
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                     {[
-                      { label: 'Not Yet Due', sub: '', amt: apReport.totals.current, color: 'text-green-400', bg: 'bg-green-500/10 border-green-500/20' },
-                      { label: '1-30', sub: 'days late', amt: apReport.totals.d31_60, color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' },
-                      { label: '31-60', sub: 'days late', amt: apReport.totals.d61_90, color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20' },
-                      { label: '61+', sub: 'days late', amt: apReport.totals.d90_plus, color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20' },
+                      { label: 'Not Yet Due', sub: '', amt: apReport.totals.current, color: 'text-success', bg: 'bg-green-500/10 border-green-500/20' },
+                      { label: '1-30', sub: 'days late', amt: apReport.totals.d31_60, color: 'text-warning', bg: 'bg-yellow-500/10 border-yellow-500/20' },
+                      { label: '31-60', sub: 'days late', amt: apReport.totals.d61_90, color: 'text-warning', bg: 'bg-orange-500/10 border-orange-500/20' },
+                      { label: '61+', sub: 'days late', amt: apReport.totals.d90_plus, color: 'text-danger', bg: 'bg-red-500/10 border-red-500/20' },
                       { label: 'Total', sub: `${apReport.totals.count} bill(s)`, amt: apReport.totals.total, color: 'text-brand', bg: 'bg-brand/10 border-brand/25' },
                     ].map(b => (
                       <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.bg}`}>
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
-                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/20'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/60'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                       </div>
                     ))}
                   </div>
@@ -2763,22 +2763,22 @@ export default function LedgerTab({ ctx }) {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className={`rounded-xl border px-4 py-3 ${apReport.overdueTotal > 0 ? 'border-red-500/25 bg-red-500/10' : 'border-white/10 bg-white/5'}`}>
                       <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Overdue</p>
-                      <p className={`text-xl font-black tabular-nums ${apReport.overdueTotal > 0 ? 'text-red-400' : 'text-fg/20'}`}>₱{apReport.overdueTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                      <p className="text-[9px] text-fg/40 mt-0.5">{apReport.overdueCount} bill(s) past their date</p>
+                      <p className={`text-xl font-black tabular-nums ${apReport.overdueTotal > 0 ? 'text-danger' : 'text-fg/60'}`}>₱{apReport.overdueTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                      <p className="text-[9px] text-fg/70 mt-0.5">{apReport.overdueCount} bill(s) past their date</p>
                     </div>
                     {/* An aged bucket never answers "do we have the cash this
                         week" - this does. */}
                     <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
                       <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Due Within 7 Days</p>
                       <p className="text-xl font-black tabular-nums text-fg">₱{apReport.dueSoonTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                      <p className="text-[9px] text-fg/40 mt-0.5">{apReport.dueSoonCount} bill(s) coming up</p>
+                      <p className="text-[9px] text-fg/70 mt-0.5">{apReport.dueSoonCount} bill(s) coming up</p>
                     </div>
                     {/* Owed regardless, but can't be scheduled until someone
                         signs it off - an approval problem, not a cash one. */}
                     <div className={`rounded-xl border px-4 py-3 ${apReport.awaitingApprovalTotal > 0 ? 'border-yellow-500/25 bg-yellow-500/10' : 'border-white/10 bg-white/5'}`}>
                       <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Awaiting Approval</p>
-                      <p className={`text-xl font-black tabular-nums ${apReport.awaitingApprovalTotal > 0 ? 'text-yellow-400' : 'text-fg/20'}`}>₱{apReport.awaitingApprovalTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                      <p className="text-[9px] text-fg/40 mt-0.5">{apReport.awaitingApprovalCount} bill(s) not yet authorised</p>
+                      <p className={`text-xl font-black tabular-nums ${apReport.awaitingApprovalTotal > 0 ? 'text-warning' : 'text-fg/60'}`}>₱{apReport.awaitingApprovalTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                      <p className="text-[9px] text-fg/70 mt-0.5">{apReport.awaitingApprovalCount} bill(s) not yet authorised</p>
                     </div>
                   </div>
 
@@ -2786,7 +2786,7 @@ export default function LedgerTab({ ctx }) {
                     <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
                       <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">No Due Date Set</p>
                       <p className="text-lg font-black tabular-nums text-fg/70">₱{apReport.totals.undated.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                      <p className="text-[9px] text-fg/40 mt-0.5">Can't be aged - set terms on these bills so they stop hiding from the buckets.</p>
+                      <p className="text-[9px] text-fg/70 mt-0.5">Can't be aged - set terms on these bills so they stop hiding from the buckets.</p>
                     </div>
                   )}
 
@@ -2794,7 +2794,7 @@ export default function LedgerTab({ ctx }) {
                     <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 px-4 py-3 border-b border-white/10">By Supplier</p>
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                        <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
                           <th className="text-left py-2.5 px-4">Supplier</th>
                           <th className="text-right py-2.5">Not Due</th>
                           <th className="text-right py-2.5">1-30</th>
@@ -2822,7 +2822,7 @@ export default function LedgerTab({ ctx }) {
                     <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 mb-2">Open Bills</p>
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                        <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
                           <th className="text-left py-2.5">Bill</th>
                           <th className="text-left py-2.5">Supplier</th>
                           <th className="text-left py-2.5">Description</th>
@@ -2836,19 +2836,19 @@ export default function LedgerTab({ ctx }) {
                           <tr key={b._id} className={`border-b border-white/5 ${b.overdue ? 'bg-red-500/5' : ''}`}>
                             <td className="py-2.5 font-bold text-fg text-xs">
                               {b.billNumber}
-                              {b.poNumber && <span className="block text-[9px] text-fg/30">{b.poNumber}</span>}
+                              {b.poNumber && <span className="block text-[9px] text-fg/65">{b.poNumber}</span>}
                             </td>
                             <td className="py-2.5 text-fg/70 text-xs">{b.supplier}</td>
-                            <td className="py-2.5 text-fg/50 text-xs max-w-[220px] truncate" title={b.description}>{b.description || '-'}</td>
+                            <td className="py-2.5 text-fg/75 text-xs max-w-[220px] truncate" title={b.description}>{b.description || '-'}</td>
                             <td className="py-2.5 text-xs">
                               {b.dueDate ? (
                                 b.overdue
-                                  ? <span className="text-[10px] font-black px-2 py-1 rounded bg-red-500/15 text-red-400">{b.daysPastDue}d LATE</span>
+                                  ? <span className="text-[10px] font-black px-2 py-1 rounded bg-red-500/15 text-danger">{b.daysPastDue}d LATE</span>
                                   : <span className="text-fg/60">{new Date(b.dueDate).toLocaleDateString()}</span>
-                              ) : <span className="text-[10px] font-black px-2 py-1 rounded bg-white/10 text-fg/40">NO DATE</span>}
+                              ) : <span className="text-[10px] font-black px-2 py-1 rounded bg-white/10 text-fg/70">NO DATE</span>}
                             </td>
                             <td className="py-2.5">
-                              <span className={`text-[9px] font-black uppercase px-2 py-1 rounded ${b.awaitingApproval ? 'bg-yellow-500/15 text-yellow-400' : 'bg-white/10 text-fg/60'}`}>
+                              <span className={`text-[9px] font-black uppercase px-2 py-1 rounded ${b.awaitingApproval ? 'bg-yellow-500/15 text-warning' : 'bg-white/10 text-fg/60'}`}>
                                 {b.status}
                               </span>
                             </td>
@@ -2857,7 +2857,7 @@ export default function LedgerTab({ ctx }) {
                         ))}
                       </tbody>
                     </table>
-                    {!apReport.bills.length && <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Nothing owed as of this date</div>}
+                    {!apReport.bills.length && <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Nothing owed as of this date</div>}
                   </div>
                 </>
               )}
@@ -2876,30 +2876,30 @@ export default function LedgerTab({ ctx }) {
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">From</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">From</label>
                     <input type="date" value={supPayRange.start} onChange={e => setSupPayRange({ ...supPayRange, start: e.target.value })}
                       className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
                   </div>
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">To</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">To</label>
                     <input type="date" value={supPayRange.end} onChange={e => setSupPayRange({ ...supPayRange, end: e.target.value })}
                       className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
                   </div>
                   <button onClick={fetchSupplierPayments}
-                    className="bg-brand text-white px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
+                    className="bg-brand text-on-brand px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
                     Run
                   </button>
                 </div>
               </div>
 
               {!supplierPayments ? (
-                <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">Pick a range and run the report</div>
+                <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Pick a range and run the report</div>
               ) : (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3">
                       <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Total Paid Out</p>
-                      <p className="text-2xl font-black tabular-nums text-red-400">₱{supplierPayments.totalPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                      <p className="text-2xl font-black tabular-nums text-danger">₱{supplierPayments.totalPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                     </div>
                     <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
                       <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Payments</p>
@@ -2922,7 +2922,7 @@ export default function LedgerTab({ ctx }) {
                                 <td className="py-2 px-4 text-right tabular-nums font-bold text-fg">₱{r.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                               </tr>
                             ))}
-                            {!list.length && <tr><td className="py-4 px-4 text-fg/30 text-xs">None</td></tr>}
+                            {!list.length && <tr><td className="py-4 px-4 text-fg/65 text-xs">None</td></tr>}
                           </tbody>
                         </table>
                       </div>
@@ -2932,7 +2932,7 @@ export default function LedgerTab({ ctx }) {
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                        <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
                           <th className="text-left py-2.5">Date</th>
                           <th className="text-left py-2.5">Supplier</th>
                           <th className="text-left py-2.5">Reference</th>
@@ -2943,19 +2943,19 @@ export default function LedgerTab({ ctx }) {
                       <tbody>
                         {supplierPayments.payments.map((p, i) => (
                           <tr key={`${p.reference}-${i}`} className="border-b border-white/5 hover:bg-white/5 transition">
-                            <td className="py-2.5 text-fg/50 text-xs">{new Date(p.date).toLocaleDateString()}</td>
+                            <td className="py-2.5 text-fg/75 text-xs">{new Date(p.date).toLocaleDateString()}</td>
                             <td className="py-2.5 text-fg/70 text-xs">{p.supplier}</td>
-                            <td className="py-2.5 text-fg/50 text-xs">
+                            <td className="py-2.5 text-fg/75 text-xs">
                               {p.reference || '-'}
-                              {p.description && <span className="block text-[9px] text-fg/30 italic max-w-[240px] truncate" title={p.description}>{p.description}</span>}
+                              {p.description && <span className="block text-[9px] text-fg/65 italic max-w-[240px] truncate" title={p.description}>{p.description}</span>}
                             </td>
                             <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand px-2 py-1 rounded">{p.paidFrom || '-'}</span></td>
-                            <td className="py-2.5 text-right tabular-nums font-black text-red-400">₱{p.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                            <td className="py-2.5 text-right tabular-nums font-black text-danger">₱{p.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
-                    {!supplierPayments.payments.length && <div className="py-16 text-center text-fg/50 font-bold uppercase tracking-widest text-sm">No supplier payments in this range</div>}
+                    {!supplierPayments.payments.length && <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">No supplier payments in this range</div>}
                   </div>
                 </>
               )}
@@ -2976,20 +2976,20 @@ export default function LedgerTab({ ctx }) {
                   <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">
                     The disbursement paper trail
                   </p>
-                  <p className="text-[11px] text-fg/40 mt-1">
+                  <p className="text-[11px] text-fg/70 mt-1">
                     Issued automatically on every bill payment, credit refund and cash advance - never by hand.
                   </p>
                 </div>
                 <div className="text-right shrink-0">
-                  <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest">Total Issued</p>
+                  <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest">Total Issued</p>
                   <p className="text-2xl text-brand font-black tabular-nums">{peso(cvTotal || 0)}</p>
-                  <p className="text-[10px] text-fg/40 mt-0.5">Voided excluded</p>
+                  <p className="text-[10px] text-fg/70 mt-0.5">Voided excluded</p>
                 </div>
               </div>
 
               <div className="flex flex-wrap items-end gap-2">
                 <div>
-                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Payee</label>
+                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Payee</label>
                   <select value={cvFilter.payeeType} onChange={e => setCvFilter(f => ({ ...f, payeeType: e.target.value }))}
                     className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs">
                     <option value="">All</option>
@@ -2999,7 +2999,7 @@ export default function LedgerTab({ ctx }) {
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Status</label>
+                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Status</label>
                   <select value={cvFilter.status} onChange={e => setCvFilter(f => ({ ...f, status: e.target.value }))}
                     className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs">
                     <option value="">All</option>
@@ -3008,34 +3008,34 @@ export default function LedgerTab({ ctx }) {
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">From</label>
+                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">From</label>
                   <input type="date" value={cvFilter.start} onChange={e => setCvFilter(f => ({ ...f, start: e.target.value }))}
                     className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs" />
                 </div>
                 <div>
-                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">To</label>
+                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">To</label>
                   <input type="date" value={cvFilter.end} onChange={e => setCvFilter(f => ({ ...f, end: e.target.value }))}
                     className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs" />
                 </div>
                 <button onClick={fetchCheckVouchers}
-                  className="bg-brand text-white px-4 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[38px]">
+                  className="bg-brand text-on-brand px-4 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[38px]">
                   Apply
                 </button>
               </div>
 
               {!checkVouchers ? (
-                <div className="py-16 text-center text-fg/40 font-bold uppercase tracking-widest text-sm">Loading…</div>
+                <div className="py-16 text-center text-fg/70 font-bold uppercase tracking-widest text-sm">Loading…</div>
               ) : checkVouchers.length === 0 ? (
                 <div className="py-16 text-center">
-                  <Receipt size={28} className="mx-auto text-fg/20 mb-3" />
-                  <p className="text-fg/50 font-bold uppercase tracking-widest text-sm">No vouchers found</p>
-                  <p className="text-fg/30 text-xs mt-1">Pay a bill, refund a credit or issue an advance and it lands here.</p>
+                  <Receipt size={28} className="mx-auto text-fg/60 mb-3" />
+                  <p className="text-fg/75 font-bold uppercase tracking-widest text-sm">No vouchers found</p>
+                  <p className="text-fg/65 text-xs mt-1">Pay a bill, refund a credit or issue an advance and it lands here.</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                      <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
                         <th className="text-left py-2.5">Voucher #</th>
                         <th className="text-left py-2.5">Date</th>
                         <th className="text-left py-2.5">Payee</th>
@@ -3054,27 +3054,27 @@ export default function LedgerTab({ ctx }) {
                             {/* Voucher numbers restart per branch, so the number
                                 alone is ambiguous once a business runs more than
                                 one inventory. */}
-                            {v.branchCode && <span className="block text-[9px] text-fg/30 font-normal font-mono">{v.branchCode}</span>}
+                            {v.branchCode && <span className="block text-[9px] text-fg/65 font-normal font-mono">{v.branchCode}</span>}
                           </td>
-                          <td className="py-2.5 text-fg/50 text-xs">{new Date(v.date).toLocaleDateString()}</td>
+                          <td className="py-2.5 text-fg/75 text-xs">{new Date(v.date).toLocaleDateString()}</td>
                           <td className="py-2.5 text-xs">
                             <span className="text-fg/70">{v.payeeName}</span>
-                            <span className="ml-1.5 text-[9px] font-black uppercase text-fg/30">{v.payeeType}</span>
+                            <span className="ml-1.5 text-[9px] font-black uppercase text-fg/65">{v.payeeType}</span>
                           </td>
-                          <td className="py-2.5 text-fg/50 text-xs">{v.purpose}</td>
-                          <td className="py-2.5 text-fg/50 text-xs">{v.sourceAccountName || v.sourceAccount || '-'}</td>
-                          <td className="py-2.5 text-fg/50 text-xs">{v.referenceNumber || '-'}</td>
-                          <td className={`py-2.5 text-right tabular-nums font-black ${v.status === 'Voided' ? 'text-fg/40 line-through' : 'text-fg'}`}>
+                          <td className="py-2.5 text-fg/75 text-xs">{v.purpose}</td>
+                          <td className="py-2.5 text-fg/75 text-xs">{v.sourceAccountName || v.sourceAccount || '-'}</td>
+                          <td className="py-2.5 text-fg/75 text-xs">{v.referenceNumber || '-'}</td>
+                          <td className={`py-2.5 text-right tabular-nums font-black ${v.status === 'Voided' ? 'text-fg/70 line-through' : 'text-fg'}`}>
                             {peso(v.amount)}
                           </td>
                           <td className="py-2.5 text-right">
                             {v.status === 'Issued' ? (
                               <button onClick={() => setCvVoidModal({ voucher: v, reason: '', busy: false })}
-                                className="border border-red-500/40 text-red-400 px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-red-500/10 transition">
+                                className="border border-red-500/40 text-danger px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-red-500/10 transition">
                                 Void
                               </button>
                             ) : (
-                              <span className="text-[10px] font-black uppercase bg-red-500/15 text-red-400 px-2 py-1 rounded" title={v.voidReason || ''}>
+                              <span className="text-[10px] font-black uppercase bg-red-500/15 text-danger px-2 py-1 rounded" title={v.voidReason || ''}>
                                 Voided
                               </span>
                             )}
@@ -3093,14 +3093,14 @@ export default function LedgerTab({ ctx }) {
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setCvVoidModal(null)}>
                   <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
                     <h2 className="font-black text-fg mb-1">Void voucher {cvVoidModal.voucher.voucherNumber}</h2>
-                    <p className="text-xs text-fg/50 mb-3">
+                    <p className="text-xs text-fg/75 mb-3">
                       {peso(cvVoidModal.voucher.amount)} to {cvVoidModal.voucher.payeeName}
                     </p>
-                    <div className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-3">
+                    <div className="text-[11px] text-warning bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-3">
                       This marks the voucher only. The journal entry stays posted and the bill stays paid -
                       correcting those is a separate, deliberate entry.
                     </div>
-                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Reason (required)</label>
+                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Reason (required)</label>
                     <textarea
                       value={cvVoidModal.reason} rows={3}
                       onChange={e => setCvVoidModal(m => ({ ...m, reason: e.target.value }))}
@@ -3133,7 +3133,7 @@ export default function LedgerTab({ ctx }) {
                   </p>
                 </div>
                 <button onClick={() => setAdvIssueModal({ ...ADV_ISSUE_BLANK })}
-                  className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-white px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
+                  className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-on-brand px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
                   <Plus size={14} /> New Advance
                 </button>
               </div>
@@ -3141,23 +3141,23 @@ export default function LedgerTab({ ctx }) {
               {/* Issued vs still-open, the two numbers that actually matter */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="bg-page-bg border border-white/10 rounded-xl p-4">
-                  <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-1">Total Issued</p>
+                  <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest mb-1">Total Issued</p>
                   <p className="text-2xl font-black tabular-nums text-fg">{peso(advTotals.totalIssued)}</p>
-                  <p className="text-[10px] text-fg/40 mt-1">Excludes cancelled</p>
+                  <p className="text-[10px] text-fg/70 mt-1">Excludes cancelled</p>
                 </div>
                 <div className="bg-page-bg border border-white/10 rounded-xl p-4">
-                  <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-1">Still Outstanding</p>
-                  <p className={`text-2xl font-black tabular-nums ${advTotals.totalOutstanding > 0 ? 'text-amber-400' : 'text-green-400'}`}>
+                  <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest mb-1">Still Outstanding</p>
+                  <p className={`text-2xl font-black tabular-nums ${advTotals.totalOutstanding > 0 ? 'text-warning' : 'text-success'}`}>
                     {peso(advTotals.totalOutstanding)}
                   </p>
-                  <p className="text-[10px] text-fg/40 mt-1">Not yet liquidated</p>
+                  <p className="text-[10px] text-fg/70 mt-1">Not yet liquidated</p>
                 </div>
               </div>
 
               {/* Filters */}
               <div className="flex flex-wrap items-end gap-2">
                 <div>
-                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Type</label>
+                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Type</label>
                   <select value={advFilter.type} onChange={e => setAdvFilter(f => ({ ...f, type: e.target.value }))}
                     className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand">
                     <option value="">All</option>
@@ -3167,7 +3167,7 @@ export default function LedgerTab({ ctx }) {
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Status</label>
+                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Status</label>
                   <select value={advFilter.status} onChange={e => setAdvFilter(f => ({ ...f, status: e.target.value }))}
                     className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand">
                     <option value="">All</option>
@@ -3178,12 +3178,12 @@ export default function LedgerTab({ ctx }) {
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">From</label>
+                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">From</label>
                   <input type="date" value={advFilter.start} onChange={e => setAdvFilter(f => ({ ...f, start: e.target.value }))}
                     className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
                 </div>
                 <div>
-                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">To</label>
+                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">To</label>
                   <input type="date" value={advFilter.end} onChange={e => setAdvFilter(f => ({ ...f, end: e.target.value }))}
                     className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
                 </div>
@@ -3194,18 +3194,18 @@ export default function LedgerTab({ ctx }) {
               </div>
 
               {!advances ? (
-                <div className="py-16 text-center text-fg/40 font-bold uppercase tracking-widest text-sm">Loading…</div>
+                <div className="py-16 text-center text-fg/70 font-bold uppercase tracking-widest text-sm">Loading…</div>
               ) : advances.length === 0 ? (
                 <div className="py-16 text-center">
-                  <HandCoins size={28} className="mx-auto text-fg/20 mb-3" />
-                  <p className="text-fg/50 font-bold uppercase tracking-widest text-sm">No advances yet</p>
-                  <p className="text-fg/30 text-xs mt-1">Cash floats, supplier prepayments and customer deposits show up here.</p>
+                  <HandCoins size={28} className="mx-auto text-fg/60 mb-3" />
+                  <p className="text-fg/75 font-bold uppercase tracking-widest text-sm">No advances yet</p>
+                  <p className="text-fg/65 text-xs mt-1">Cash floats, supplier prepayments and customer deposits show up here.</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-fg/50 text-[10px] uppercase tracking-widest border-b border-white/10">
+                      <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
                         <th className="text-left py-2.5">Number</th>
                         <th className="text-left py-2.5">Type</th>
                         <th className="text-left py-2.5">Payee</th>
@@ -3220,32 +3220,32 @@ export default function LedgerTab({ ctx }) {
                     <tbody>
                       {advances.map(a => {
                         const typeCls = {
-                          employee: 'bg-blue-500/15 text-blue-400',
+                          employee: 'bg-blue-500/15 text-info',
                           supplier: 'bg-purple-500/15 text-purple-400',
                           customer: 'bg-teal-500/15 text-teal-400',
                         }[a.type];
                         const stCls = {
-                          'Open': 'bg-amber-500/15 text-amber-400',
-                          'Partially Liquidated': 'bg-orange-500/15 text-orange-400',
-                          'Liquidated': 'bg-green-500/15 text-green-500',
-                          'Cancelled': 'bg-white/10 text-fg/40',
+                          'Open': 'bg-amber-500/15 text-warning',
+                          'Partially Liquidated': 'bg-orange-500/15 text-warning',
+                          'Liquidated': 'bg-green-500/15 text-success',
+                          'Cancelled': 'bg-white/10 text-fg/70',
                         }[a.status];
                         const done = a.status === 'Liquidated' || a.status === 'Cancelled';
                         return (
                           <tr key={a._id} className={`border-b border-white/5 hover:bg-white/5 transition ${a.status === 'Cancelled' ? 'opacity-50' : ''}`}>
                             <td className="py-2.5 font-bold text-fg text-xs">
                               {a.advanceNumber}
-                              {a.branchCode && <span className="block text-[9px] text-fg/30 font-normal font-mono">{a.branchCode}</span>}
-                              {a.checkVoucherRef && <span className="block text-[9px] text-fg/30 font-normal">CV {a.checkVoucherRef}</span>}
+                              {a.branchCode && <span className="block text-[9px] text-fg/65 font-normal font-mono">{a.branchCode}</span>}
+                              {a.checkVoucherRef && <span className="block text-[9px] text-fg/65 font-normal">CV {a.checkVoucherRef}</span>}
                             </td>
                             <td className="py-2.5">
                               <span className={`text-[9px] font-black uppercase px-2 py-1 rounded ${typeCls}`}>{a.type}</span>
                             </td>
                             <td className="py-2.5 text-fg/70 text-xs">{a.payeeName}</td>
-                            <td className="py-2.5 text-fg/40 text-xs max-w-[180px] truncate" title={a.purpose || ''}>{a.purpose || '-'}</td>
-                            <td className="py-2.5 text-fg/50 text-xs">{new Date(a.date).toLocaleDateString()}</td>
+                            <td className="py-2.5 text-fg/70 text-xs max-w-[180px] truncate" title={a.purpose || ''}>{a.purpose || '-'}</td>
+                            <td className="py-2.5 text-fg/75 text-xs">{new Date(a.date).toLocaleDateString()}</td>
                             <td className="py-2.5 text-right tabular-nums text-fg/70">{peso(a.amount)}</td>
-                            <td className={`py-2.5 text-right tabular-nums font-black ${a.outstanding > 0 ? 'text-amber-400' : 'text-fg/25'}`}>
+                            <td className={`py-2.5 text-right tabular-nums font-black ${a.outstanding > 0 ? 'text-warning' : 'text-fg/65'}`}>
                               {a.outstanding > 0 ? peso(a.outstanding) : '-'}
                             </td>
                             <td className="py-2.5 pl-3">
@@ -3258,7 +3258,7 @@ export default function LedgerTab({ ctx }) {
                               {!done && (
                                 <div className="flex flex-col items-end gap-1">
                                   <button onClick={() => openAdvLiquidate(a)}
-                                    className="bg-brand text-white px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition whitespace-nowrap">
+                                    className="bg-brand text-on-brand px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition whitespace-nowrap">
                                     Liquidate
                                   </button>
                                   {/* Cancelling is only honest while nothing has
@@ -3266,7 +3266,7 @@ export default function LedgerTab({ ctx }) {
                                       you to a cash return instead. */}
                                   {a.status === 'Open' && (
                                     <button onClick={() => setAdvCancelModal({ advance: a, reason: '' })}
-                                      className="border border-red-500/30 text-red-400 px-3 py-1 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-red-500/10 transition">
+                                      className="border border-red-500/30 text-danger px-3 py-1 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-red-500/10 transition">
                                       Cancel
                                     </button>
                                   )}
@@ -3286,24 +3286,24 @@ export default function LedgerTab({ ctx }) {
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setAdvIssueModal(null)}>
                   <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                     <h2 className="font-black text-fg text-lg mb-1">New Advance</h2>
-                    <p className="text-xs text-fg/50 mb-4">
+                    <p className="text-xs text-fg/75 mb-4">
                       {advIssueModal.type === 'customer'
                         ? 'A deposit received from a customer. Cash comes in and we owe them goods or services.'
                         : 'Cash goes out now against something that has not been billed yet. A Check Voucher is issued automatically.'}
                     </p>
 
-                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Type</label>
+                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Type</label>
                     <div className="grid grid-cols-3 gap-2 mb-4">
                       {[['employee', 'Employee'], ['supplier', 'Supplier'], ['customer', 'Customer']].map(([v, label]) => (
                         <button key={v} onClick={() => setAdvIssueModal(f => ({ ...f, type: v }))}
                           className={`px-2 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition ${
-                            advIssueModal.type === v ? 'bg-brand text-white' : 'bg-white/5 text-fg/50 hover:text-fg'}`}>
+                            advIssueModal.type === v ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/75 hover:text-fg'}`}>
                           {label}
                         </button>
                       ))}
                     </div>
 
-                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">
+                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">
                       {advIssueModal.type === 'customer' ? 'Customer' : advIssueModal.type === 'supplier' ? 'Supplier' : 'Employee'} name
                     </label>
                     <input type="text" value={advIssueModal.payeeName} autoFocus
@@ -3311,13 +3311,13 @@ export default function LedgerTab({ ctx }) {
                       placeholder="Who is this for?"
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
 
-                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Amount</label>
+                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Amount</label>
                     <input type="number" step="0.01" min="0" value={advIssueModal.amount}
                       onChange={e => setAdvIssueModal(f => ({ ...f, amount: e.target.value }))}
                       placeholder="0.00"
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
 
-                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">
+                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">
                       {advIssueModal.type === 'customer' ? 'Deposit into' : 'Pay from'}
                     </label>
                     <select value={advIssueModal.sourceAccount}
@@ -3326,19 +3326,19 @@ export default function LedgerTab({ ctx }) {
                       {(cashAndBankAccounts || []).map(a => <option key={a.code} value={a.code}>{a.code} - {a.name}</option>)}
                     </select>
 
-                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Date of Transaction</label>
+                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Date of Transaction</label>
                     <input type="date" value={advIssueModal.date}
                       onChange={e => setAdvIssueModal(f => ({ ...f, date: e.target.value }))}
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-1 outline-none focus:border-brand" />
-                    <p className="text-[10px] text-fg/30 mb-4">When the money actually moved. Leave blank for today.</p>
+                    <p className="text-[10px] text-fg/65 mb-4">When the money actually moved. Leave blank for today.</p>
 
-                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Reference No.</label>
+                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Reference No.</label>
                     <input type="text" value={advIssueModal.referenceNumber}
                       onChange={e => setAdvIssueModal(f => ({ ...f, referenceNumber: e.target.value }))}
                       placeholder="OR no., check no., deposit slip..."
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
 
-                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Purpose / Remarks</label>
+                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Purpose / Remarks</label>
                     <textarea value={advIssueModal.purpose} rows={2}
                       onChange={e => setAdvIssueModal(f => ({ ...f, purpose: e.target.value }))}
                       placeholder="e.g. fuel float for the week"
@@ -3346,11 +3346,11 @@ export default function LedgerTab({ ctx }) {
 
                     <div className="flex gap-3">
                       <button onClick={() => setAdvIssueModal(null)} disabled={advBusy}
-                        className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
+                        className="flex-1 bg-white/5 hover:bg-white/10 text-fg/75 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
                         Cancel
                       </button>
                       <button onClick={submitIssueAdvance} disabled={advBusy}
-                        className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">
+                        className="flex-1 bg-brand hover:bg-brand-dark text-on-brand font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">
                         {advBusy ? 'Recording…' : 'Issue Advance'}
                       </button>
                     </div>
@@ -3370,35 +3370,35 @@ export default function LedgerTab({ ctx }) {
                   <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setAdvLiqModal(null)}>
                     <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                       <h2 className="font-black text-fg text-lg mb-1">Liquidate {a.advanceNumber}</h2>
-                      <p className="text-xs text-fg/50 mb-4">
+                      <p className="text-xs text-fg/75 mb-4">
                         {a.payeeName} · {peso(a.outstanding)} of {peso(a.amount)} still open
                       </p>
 
-                      <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">How was it cleared?</label>
+                      <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">How was it cleared?</label>
                       <div className="space-y-1.5 mb-4">
                         {methods.map(([v, label]) => (
                           <button key={v} onClick={() => setAdvLiqModal(f => ({ ...f, method: v }))}
                             className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold transition border ${
                               advLiqModal.method === v
                                 ? 'bg-brand/15 border-brand/50 text-fg'
-                                : 'bg-white/5 border-white/10 text-fg/50 hover:text-fg'}`}>
+                                : 'bg-white/5 border-white/10 text-fg/75 hover:text-fg'}`}>
                             {label}
                           </button>
                         ))}
                       </div>
 
-                      <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Amount</label>
+                      <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Amount</label>
                       <input type="number" step="0.01" min="0" value={advLiqModal.amount}
                         onChange={e => setAdvLiqModal(f => ({ ...f, amount: e.target.value }))}
                         className={`w-full bg-white/5 border rounded-lg px-3 py-2.5 text-sm text-fg mb-1 outline-none ${
                           over ? 'border-red-500/60' : 'border-white/10 focus:border-brand'}`} />
                       {over
-                        ? <p className="text-[11px] text-red-400 mb-3">Exceeds the {peso(a.outstanding)} still open on this advance.</p>
-                        : <p className="text-[11px] text-fg/30 mb-3">Leave as-is to clear the full remaining balance.</p>}
+                        ? <p className="text-[11px] text-danger mb-3">Exceeds the {peso(a.outstanding)} still open on this advance.</p>
+                        : <p className="text-[11px] text-fg/65 mb-3">Leave as-is to clear the full remaining balance.</p>}
 
                       {advLiqModal.method === 'expense' && (
                         <>
-                          <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Expense account</label>
+                          <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Expense account</label>
                           <select value={advLiqModal.expenseAccount}
                             onChange={e => setAdvLiqModal(f => ({ ...f, expenseAccount: e.target.value }))}
                             className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand">
@@ -3410,7 +3410,7 @@ export default function LedgerTab({ ctx }) {
 
                       {advLiqModal.method === 'cash-return' && (
                         <>
-                          <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Returned into</label>
+                          <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Returned into</label>
                           <select value={advLiqModal.returnToAccount}
                             onChange={e => setAdvLiqModal(f => ({ ...f, returnToAccount: e.target.value }))}
                             className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand">
@@ -3425,9 +3425,9 @@ export default function LedgerTab({ ctx }) {
                         const payable = (bills || []).filter(b => ['Approved', 'Partially Paid'].includes(b.status));
                         return (
                           <>
-                            <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Bill to settle</label>
+                            <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Bill to settle</label>
                             {payable.length === 0 ? (
-                              <p className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-4">
+                              <p className="text-[11px] text-warning bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-4">
                                 No approved or partially paid bills to apply this against.
                               </p>
                             ) : (
@@ -3450,9 +3450,9 @@ export default function LedgerTab({ ctx }) {
                         const open = arOutstanding?.orders || [];
                         return (
                           <>
-                            <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Order to apply to</label>
+                            <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Order to apply to</label>
                             {open.length === 0 ? (
-                              <p className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-4">
+                              <p className="text-[11px] text-warning bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-4">
                                 No outstanding receivables to apply this deposit against.
                               </p>
                             ) : (
@@ -3471,18 +3471,18 @@ export default function LedgerTab({ ctx }) {
                         );
                       })()}
 
-                      <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Date of Transaction</label>
+                      <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Date of Transaction</label>
                       <input type="date" value={advLiqModal.date || ''}
                         onChange={e => setAdvLiqModal(f => ({ ...f, date: e.target.value }))}
                         className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
 
-                      <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Reference No.</label>
+                      <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Reference No.</label>
                       <input type="text" value={advLiqModal.referenceNumber}
                         onChange={e => setAdvLiqModal(f => ({ ...f, referenceNumber: e.target.value }))}
                         placeholder="Receipt no., OR no., txn ref..."
                         className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
 
-                      <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Remarks</label>
+                      <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Remarks</label>
                       <textarea value={advLiqModal.note} rows={2}
                         onChange={e => setAdvLiqModal(f => ({ ...f, note: e.target.value }))}
                         placeholder="What this covers"
@@ -3490,11 +3490,11 @@ export default function LedgerTab({ ctx }) {
 
                       <div className="flex gap-3">
                         <button onClick={() => setAdvLiqModal(null)} disabled={advBusy}
-                          className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
+                          className="flex-1 bg-white/5 hover:bg-white/10 text-fg/75 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
                           Cancel
                         </button>
                         <button onClick={submitLiquidateAdvance} disabled={advBusy || over}
-                          className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">
+                          className="flex-1 bg-brand hover:bg-brand-dark text-on-brand font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">
                           {advBusy ? 'Posting…' : 'Liquidate'}
                         </button>
                       </div>
@@ -3508,14 +3508,14 @@ export default function LedgerTab({ ctx }) {
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setAdvCancelModal(null)}>
                   <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
                     <h2 className="font-black text-fg mb-1">Cancel {advCancelModal.advance.advanceNumber}</h2>
-                    <p className="text-xs text-fg/50 mb-3">
+                    <p className="text-xs text-fg/75 mb-3">
                       {peso(advCancelModal.advance.amount)} · {advCancelModal.advance.payeeName}
                     </p>
-                    <div className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-3">
+                    <div className="text-[11px] text-warning bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-3">
                       This posts a reversal of the original entry. Only possible because nothing has been
                       liquidated yet.
                     </div>
-                    <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1">Reason (required)</label>
+                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Reason (required)</label>
                     <textarea value={advCancelModal.reason} rows={3}
                       onChange={e => setAdvCancelModal(m => ({ ...m, reason: e.target.value }))}
                       placeholder="e.g. issued twice by mistake"
@@ -3559,17 +3559,17 @@ export default function LedgerTab({ ctx }) {
                 // must not keep sitting in a bucket at its original value.
                 const ab = agingBuckets(arOutstanding.orders, o => o.createdAt, o => (o.balance ?? o.total));
                 const buckets = [
-                  { label: 'Current', sub: '0-30 days', amt: ab.c,    color: 'text-green-400',  bg: 'bg-green-500/10 border-green-500/20' },
-                  { label: '31-60',   sub: 'days',       amt: ab.d60,  color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' },
-                  { label: '61-90',   sub: 'days',       amt: ab.d90,  color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20' },
-                  { label: '91+',     sub: 'days',       amt: ab.over, color: 'text-red-400',    bg: 'bg-red-500/10 border-red-500/20' },
+                  { label: 'Current', sub: '0-30 days', amt: ab.c,    color: 'text-success',  bg: 'bg-green-500/10 border-green-500/20' },
+                  { label: '31-60',   sub: 'days',       amt: ab.d60,  color: 'text-warning', bg: 'bg-yellow-500/10 border-yellow-500/20' },
+                  { label: '61-90',   sub: 'days',       amt: ab.d90,  color: 'text-warning', bg: 'bg-orange-500/10 border-orange-500/20' },
+                  { label: '91+',     sub: 'days',       amt: ab.over, color: 'text-danger',    bg: 'bg-red-500/10 border-red-500/20' },
                 ];
                 return (
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     {buckets.map(b => (
                       <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.bg}`}>
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
-                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/20'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/60'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                       </div>
                     ))}
                   </div>
@@ -3619,9 +3619,9 @@ export default function LedgerTab({ ctx }) {
                           </td>
                           <td className="py-2.5 px-4 text-right tabular-nums text-xs">
                             {row.creditLimit === null || row.creditLimit === undefined ? (
-                              <span className="text-fg/25">No limit</span>
+                              <span className="text-fg/65">No limit</span>
                             ) : (
-                              <span className={row.overLimit ? 'text-red-400 font-bold' : 'text-fg/60'}>
+                              <span className={row.overLimit ? 'text-danger font-bold' : 'text-fg/60'}>
                                 ₱{row.creditLimit.toLocaleString('en-PH')} <span className="text-fg/60">/</span> ₱{(row.available ?? 0).toLocaleString('en-PH')}
                               </span>
                             )}
@@ -3656,23 +3656,23 @@ export default function LedgerTab({ ctx }) {
                       {arPage.pageItems.map(o => {
                         const days = Math.floor((Date.now() - new Date(o.createdAt).getTime()) / 86400000);
                         const ageBadge = days <= 30
-                          ? 'bg-green-400/15 text-green-500'
-                          : days <= 60 ? 'bg-yellow-500/15 text-yellow-400'
-                          : days <= 90 ? 'bg-orange-500/15 text-orange-400'
-                          : 'bg-red-500/15 text-red-400';
+                          ? 'bg-green-400/15 text-success'
+                          : days <= 60 ? 'bg-yellow-500/15 text-warning'
+                          : days <= 90 ? 'bg-orange-500/15 text-warning'
+                          : 'bg-red-500/15 text-danger';
                         return (
                           <tr key={o._id} className="border-b border-white/5 hover:bg-white/5 transition">
                             <td className="py-3 text-fg font-bold">{o.orderNumber}</td>
                             <td className="py-3 text-fg/70">{o.customerName}</td>
                             <td className="py-3"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/20 text-brand px-2 py-1 rounded">{o.paymentMethod}</span></td>
-                            <td className="py-3 text-fg/50 text-xs">{new Date(o.createdAt).toLocaleDateString()}</td>
+                            <td className="py-3 text-fg/75 text-xs">{new Date(o.createdAt).toLocaleDateString()}</td>
                             <td className="py-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${ageBadge}`}>{days}d</span></td>
                             <td className="py-3 text-xs">
                               {o.arDueDate ? (
                                 o.overdue
-                                  ? <span className="text-[10px] font-black px-2 py-1 rounded bg-red-500/15 text-red-400">OVERDUE · {new Date(o.arDueDate).toLocaleDateString()}</span>
+                                  ? <span className="text-[10px] font-black px-2 py-1 rounded bg-red-500/15 text-danger">OVERDUE · {new Date(o.arDueDate).toLocaleDateString()}</span>
                                   : <span className="text-fg/60">{new Date(o.arDueDate).toLocaleDateString()}</span>
-                              ) : <span className="text-fg/25">-</span>}
+                              ) : <span className="text-fg/65">-</span>}
                             </td>
                             {/* Invoiced is the face value and never moves;
                                 balance is what is still owed after any partial
@@ -3680,11 +3680,11 @@ export default function LedgerTab({ ctx }) {
                                 asking "what do I owe on invoice X" needs the
                                 second, and reconciling against the sale needs
                                 the first. */}
-                            <td className="py-3 text-right text-fg/50 tabular-nums">₱{o.total.toFixed(2)}</td>
+                            <td className="py-3 text-right text-fg/75 tabular-nums">₱{o.total.toFixed(2)}</td>
                             <td className="py-3 text-right tabular-nums">
                               {o.paid > 0
-                                ? <button onClick={() => openArHistory(o)} className="text-green-400 font-bold hover:underline" title="View payment history">₱{o.paid.toFixed(2)}{o.paymentCount > 1 ? ` (${o.paymentCount})` : ''}</button>
-                                : <span className="text-fg/20">-</span>}
+                                ? <button onClick={() => openArHistory(o)} className="text-success font-bold hover:underline" title="View payment history">₱{o.paid.toFixed(2)}{o.paymentCount > 1 ? ` (${o.paymentCount})` : ''}</button>
+                                : <span className="text-fg/60">-</span>}
                             </td>
                             <td className="py-3 text-right text-fg tabular-nums font-black">₱{(o.balance ?? o.total).toFixed(2)}</td>
                             <td className="py-3 text-right">
@@ -3713,7 +3713,7 @@ export default function LedgerTab({ ctx }) {
                                   checkBank: '', checkDrawer: '',
                                 });
                               }}
-                                className="bg-brand text-white px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
+                                className="bg-brand text-on-brand px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
                                 {o.paid > 0 ? 'Collect' : 'Settle'}
                               </button>
                               {/* Stored credit from a past overpayment draws the
@@ -3744,7 +3744,7 @@ export default function LedgerTab({ ctx }) {
                     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setClientCreditModal(null)}>
                       <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
                         <h2 className="font-black text-fg text-lg mb-1">Apply client credit</h2>
-                        <p className="text-xs text-fg/50 mb-4">
+                        <p className="text-xs text-fg/75 mb-4">
                           {clientCreditModal.order.orderNumber} · {clientCreditModal.order.customerName}
                         </p>
                         <div className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 rounded-lg p-2.5 mb-4">
@@ -3753,18 +3753,18 @@ export default function LedgerTab({ ctx }) {
                           No cash is collected.
                         </div>
 
-                        <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Amount</label>
+                        <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Amount</label>
                         <input type="number" step="0.01" min="0" value={clientCreditModal.amount}
                           onChange={e => setClientCreditModal(m => ({ ...m, amount: e.target.value }))}
                           className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
 
-                        <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Reference No.</label>
+                        <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Reference No.</label>
                         <input type="text" value={clientCreditModal.referenceNumber}
                           onChange={e => setClientCreditModal(m => ({ ...m, referenceNumber: e.target.value }))}
                           placeholder="Credit memo no., OR no..."
                           className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
 
-                        <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">Remarks</label>
+                        <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Remarks</label>
                         <textarea value={clientCreditModal.note} rows={2}
                           onChange={e => setClientCreditModal(m => ({ ...m, note: e.target.value }))}
                           placeholder="Why this credit is being applied here"
@@ -3772,7 +3772,7 @@ export default function LedgerTab({ ctx }) {
 
                         <div className="flex gap-3">
                           <button onClick={() => setClientCreditModal(null)} disabled={clientCreditModal.busy}
-                            className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
+                            className="flex-1 bg-white/5 hover:bg-white/10 text-fg/75 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
                             Cancel
                           </button>
                           <button onClick={submitClientCredit} disabled={clientCreditModal.busy}
@@ -3794,18 +3794,18 @@ export default function LedgerTab({ ctx }) {
               {/* Summary KPI bar */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="bg-surface border border-white/10 rounded-xl p-5">
-                  <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-1">Outstanding A/P Balance</p>
-                  <p className={`text-2xl font-black tabular-nums ${apData?.outstandingBalance > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                  <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest mb-1">Outstanding A/P Balance</p>
+                  <p className={`text-2xl font-black tabular-nums ${apData?.outstandingBalance > 0 ? 'text-danger' : 'text-success'}`}>
                     ₱{(apData?.outstandingBalance || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
                   </p>
                   <p className="text-[10px] text-fg/60 mt-1">Total owed to suppliers</p>
                 </div>
                 <div className="bg-surface border border-white/10 rounded-xl p-5">
-                  <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-1">Total Purchased on Credit</p>
+                  <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest mb-1">Total Purchased on Credit</p>
                   <p className="text-xl font-black text-fg/80 tabular-nums">₱{(apData?.totalCredit || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                 </div>
                 <div className="bg-surface border border-white/10 rounded-xl p-5">
-                  <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-1">Total Payments Made</p>
+                  <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest mb-1">Total Payments Made</p>
                   <p className="text-xl font-black text-green-400/80 tabular-nums">₱{(apData?.totalDebit || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                 </div>
               </div>
@@ -3815,7 +3815,7 @@ export default function LedgerTab({ ctx }) {
                 {apData && <button onClick={exportApPDF} className="flex items-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
                 {apData?.outstandingBalance > 0 && (
                   <button onClick={() => setApPayModal(true)}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition shadow-elev-1">
+                    className="flex items-center gap-2 px-5 py-2.5 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition shadow-elev-1">
                     <CreditCard size={15}/> Record Supplier Payment
                   </button>
                 )}
@@ -3827,20 +3827,20 @@ export default function LedgerTab({ ctx }) {
                   <div className="bg-surface border border-white/10 rounded-2xl w-full max-w-sm shadow-elev-3 flex flex-col max-h-[90vh] overflow-hidden">
                     <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                       <h2 className="text-fg font-black text-lg">Record A/P Payment</h2>
-                      <button onClick={() => setApPayModal(false)} className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 text-fg/50 flex items-center justify-center transition"><X size={14}/></button>
+                      <button onClick={() => setApPayModal(false)} className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 text-fg/75 flex items-center justify-center transition"><X size={14}/></button>
                     </div>
                     <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
                       <div className="bg-brand/10 border border-brand/20 rounded-xl px-4 py-3 text-xs text-brand/80 font-bold">
                         Outstanding: ₱{(apData?.outstandingBalance || 0).toFixed(2)} · Journal: DR 2000 A/P / CR Cash
                       </div>
                       <div>
-                        <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Amount (₱) *</label>
+                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Amount (₱) *</label>
                         <input type="number" min="0" step="0.01" value={apPayForm.amount}
                           onChange={e => setApPayForm(p => ({...p, amount: e.target.value}))}
                           className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg text-xl font-black tabular-nums outline-none focus:border-brand/60" />
                       </div>
                       <div>
-                        <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Pay From *</label>
+                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Pay From *</label>
                         <select value={apPayForm.payFromAccount} onChange={e => setApPayForm(p => ({...p, payFromAccount: e.target.value}))}
                           className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg font-bold outline-none focus:border-brand/60">
                           {(cashAndBankAccounts || []).map(a => (
@@ -3849,7 +3849,7 @@ export default function LedgerTab({ ctx }) {
                         </select>
                       </div>
                       <div>
-                        <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Supplier</label>
+                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Supplier</label>
                         <select value={apPayForm.supplierId || ''}
                           onChange={e => {
                             const id = e.target.value;
@@ -3875,7 +3875,7 @@ export default function LedgerTab({ ctx }) {
                       </div>
                       {!apPayForm.supplierId && (
                         <div>
-                          <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Payee Name</label>
+                          <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Payee Name</label>
                           <input type="text" placeholder="e.g. one-off hauler" value={apPayForm.vendorName}
                             onChange={e => setApPayForm(p => ({...p, vendorName: e.target.value}))}
                             className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 placeholder-white/20" />
@@ -3883,13 +3883,13 @@ export default function LedgerTab({ ctx }) {
                         </div>
                       )}
                       <div>
-                        <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Description</label>
+                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Description</label>
                         <input type="text" placeholder="e.g. Weekly supply payment" value={apPayForm.description}
                           onChange={e => setApPayForm(p => ({...p, description: e.target.value}))}
                           className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 placeholder-white/20" />
                       </div>
                       <div>
-                        <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Reference No. (optional)</label>
+                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Reference No. (optional)</label>
                         <input type="text" placeholder="Bank txn ID, check no., GCash ref..." value={apPayForm.referenceNumber}
                           onChange={e => setApPayForm(p => ({...p, referenceNumber: e.target.value}))}
                           className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 placeholder-white/20" />
@@ -3898,7 +3898,7 @@ export default function LedgerTab({ ctx }) {
                     <div className="px-5 py-4 border-t border-white/10 flex gap-3">
                       <button onClick={() => setApPayModal(false)} className="flex-1 bg-white/5 text-fg/60 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
                       <button onClick={submitApPayment} disabled={apPaySubmitting}
-                        className="flex-1 bg-brand text-white rounded-xl py-3 font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">
+                        className="flex-1 bg-brand text-on-brand rounded-xl py-3 font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">
                         {apPaySubmitting ? 'Recording…' : 'Record Payment'}
                       </button>
                     </div>
@@ -3910,29 +3910,29 @@ export default function LedgerTab({ ctx }) {
               {apCreditEntries.length > 0 && (() => {
                 const ab = agingBuckets(apCreditEntries, e => e.date, e => e.outstandingAmt);
                 const buckets = [
-                  { label: 'Current', sub: '0-30 days', amt: ab.c,    color: 'text-green-400',  bg: 'bg-green-500/10 border-green-500/20' },
-                  { label: '31-60',   sub: 'days',       amt: ab.d60,  color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' },
-                  { label: '61-90',   sub: 'days',       amt: ab.d90,  color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20' },
-                  { label: '91+',     sub: 'days',       amt: ab.over, color: 'text-red-400',    bg: 'bg-red-500/10 border-red-500/20' },
+                  { label: 'Current', sub: '0-30 days', amt: ab.c,    color: 'text-success',  bg: 'bg-green-500/10 border-green-500/20' },
+                  { label: '31-60',   sub: 'days',       amt: ab.d60,  color: 'text-warning', bg: 'bg-yellow-500/10 border-yellow-500/20' },
+                  { label: '61-90',   sub: 'days',       amt: ab.d90,  color: 'text-warning', bg: 'bg-orange-500/10 border-orange-500/20' },
+                  { label: '91+',     sub: 'days',       amt: ab.over, color: 'text-danger',    bg: 'bg-red-500/10 border-red-500/20' },
                 ];
                 return (
                   <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
                     <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
-                      <AlertTriangle size={14} className="text-fg/50"/>
+                      <AlertTriangle size={14} className="text-fg/75"/>
                       <h3 className="text-sm font-black text-fg uppercase tracking-wider">A/P Aging</h3>
-                      <span className="ml-auto text-[10px] bg-white/10 text-fg/40 px-2 py-0.5 rounded-full font-bold">FIFO - oldest paid first</span>
+                      <span className="ml-auto text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">FIFO - oldest paid first</span>
                     </div>
                     <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
                       {buckets.map(b => (
                         <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.bg}`}>
-                          <p className="text-[10px] font-black uppercase tracking-widest text-fg/40">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
-                          <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/20'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-fg/70">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
+                          <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/60'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                         </div>
                       ))}
                     </div>
                     <div className="overflow-x-auto border-t border-white/10">
                       <table className="w-full text-left text-xs min-w-[480px]">
-                        <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                        <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                           <tr>
                             <th className="px-5 py-2.5">Date</th>
                             <th className="px-5 py-2.5">Reference</th>
@@ -3945,17 +3945,17 @@ export default function LedgerTab({ ctx }) {
                           {apCreditEntries.map((e, i) => {
                             const days = Math.floor((Date.now() - new Date(e.date).getTime()) / 86400000);
                             const ageBadge = days <= 30
-                              ? 'bg-green-500/15 text-green-400'
-                              : days <= 60 ? 'bg-yellow-500/15 text-yellow-400'
-                              : days <= 90 ? 'bg-orange-500/15 text-orange-400'
-                              : 'bg-red-500/15 text-red-400';
+                              ? 'bg-green-500/15 text-success'
+                              : days <= 60 ? 'bg-yellow-500/15 text-warning'
+                              : days <= 90 ? 'bg-orange-500/15 text-warning'
+                              : 'bg-red-500/15 text-danger';
                             return (
                               <tr key={e._id || i} className={`border-b border-white/5 hover:bg-white/3 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'}`}>
-                                <td className="px-5 py-2.5 text-fg/40 whitespace-nowrap">{new Date(e.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: '2-digit' })}</td>
+                                <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap">{new Date(e.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: '2-digit' })}</td>
                                 <td className="px-5 py-2.5 font-mono text-fg/60 whitespace-nowrap">{e.reference}</td>
                                 <td className="px-5 py-2.5 text-fg/70 truncate max-w-[200px]">{e.description}</td>
                                 <td className="px-5 py-2.5 text-center"><span className={`text-[10px] font-black px-2 py-0.5 rounded ${ageBadge}`}>{days}d</span></td>
-                                <td className="px-5 py-2.5 text-right text-red-400 font-mono tabular-nums font-bold">₱{e.outstandingAmt.toFixed(2)}</td>
+                                <td className="px-5 py-2.5 text-right text-danger font-mono tabular-nums font-bold">₱{e.outstandingAmt.toFixed(2)}</td>
                               </tr>
                             );
                           })}
@@ -3971,13 +3971,13 @@ export default function LedgerTab({ ctx }) {
               {(apData?.bySupplier || []).length > 0 && (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
                   <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
-                    <Truck size={14} className="text-fg/50"/>
+                    <Truck size={14} className="text-fg/75"/>
                     <h3 className="text-sm font-black text-fg uppercase tracking-wider">Payables by Supplier</h3>
-                    <span className="ml-auto text-[10px] bg-white/10 text-fg/40 px-2 py-0.5 rounded-full font-bold">{apData.bySupplier.length}</span>
+                    <span className="ml-auto text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{apData.bySupplier.length}</span>
                   </div>
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
+                      <tr className="text-fg/70 text-[10px] uppercase tracking-widest border-b border-white/10">
                         <th className="text-left py-2.5 px-4">Supplier</th>
                         <th className="text-right py-2.5">Purchased</th>
                         <th className="text-right py-2.5">Paid</th>
@@ -3991,19 +3991,19 @@ export default function LedgerTab({ ctx }) {
                           <td className="py-2.5 px-4 font-bold text-fg">
                             {s.supplier}
                             {!s.supplierId && (
-                              <span className="ml-2 text-[8px] font-black bg-white/10 text-fg/40 px-1.5 py-0.5 rounded uppercase" title="Entries recorded without a supplier record">No record</span>
+                              <span className="ml-2 text-[8px] font-black bg-white/10 text-fg/70 px-1.5 py-0.5 rounded uppercase" title="Entries recorded without a supplier record">No record</span>
                             )}
                           </td>
                           <td className="py-2.5 text-right tabular-nums text-fg/60">₱{s.incurred.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                           <td className="py-2.5 text-right tabular-nums text-green-400/70">₱{s.paid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                          <td className={`py-2.5 text-right tabular-nums font-black ${s.balance > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                          <td className={`py-2.5 text-right tabular-nums font-black ${s.balance > 0 ? 'text-danger' : 'text-success'}`}>
                             ₱{s.balance.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
                           </td>
                           <td className="py-2.5 px-4 text-right">
                             {s.supplierId && s.balance > 0 && (
                               <button
                                 onClick={() => { setApPayForm(p => ({ ...p, supplierId: s.supplierId, amount: String(s.balance) })); setApPayModal(true); }}
-                                className="text-[10px] font-black uppercase tracking-wider bg-brand/15 border border-brand/30 text-brand px-3 py-1.5 rounded-lg hover:bg-brand hover:text-white transition">
+                                className="text-[10px] font-black uppercase tracking-wider bg-brand/15 border border-brand/30 text-brand px-3 py-1.5 rounded-lg hover:bg-brand hover:text-on-brand transition">
                                 Pay
                               </button>
                             )}
@@ -4018,9 +4018,9 @@ export default function LedgerTab({ ctx }) {
               {/* Recent AP Journal Entries */}
               <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
                 <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
-                  <FileText size={14} className="text-fg/50"/>
+                  <FileText size={14} className="text-fg/75"/>
                   <h3 className="text-sm font-black text-fg uppercase tracking-wider">A/P Journal History</h3>
-                  <span className="ml-auto text-[10px] bg-white/10 text-fg/40 px-2 py-0.5 rounded-full font-bold">{(apData?.recent || []).length} entries</span>
+                  <span className="ml-auto text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{(apData?.recent || []).length} entries</span>
                 </div>
                 {!apData ? (
                   <p className="text-fg/60 text-sm p-6 text-center font-bold">Loading…</p>
@@ -4029,7 +4029,7 @@ export default function LedgerTab({ ctx }) {
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs min-w-[480px]">
-                      <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                      <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                         <tr>
                           <th className="px-5 py-2.5">Date</th>
                           <th className="px-5 py-2.5">Reference</th>
@@ -4042,12 +4042,12 @@ export default function LedgerTab({ ctx }) {
                       <tbody>
                         {apPage.pageItems.map((e, i) => (
                           <tr key={e._id || i} className={`border-b border-white/5 hover:bg-white/3 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'}`}>
-                            <td className="px-5 py-2.5 text-fg/40 whitespace-nowrap">{new Date(e.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: '2-digit' })}</td>
+                            <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap">{new Date(e.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: '2-digit' })}</td>
                             <td className="px-5 py-2.5 font-mono text-fg/60 whitespace-nowrap">{e.reference}</td>
-                            <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap">{e.supplierName || <span className="text-fg/20">-</span>}</td>
+                            <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap">{e.supplierName || <span className="text-fg/60">-</span>}</td>
                             <td className="px-5 py-2.5 text-fg/70 truncate max-w-[200px]">{e.description}</td>
-                            <td className="px-5 py-2.5 text-right text-red-400 font-mono tabular-nums font-bold">{e.credit > 0 ? `₱${e.credit.toFixed(2)}` : '-'}</td>
-                            <td className="px-5 py-2.5 text-right text-green-400 font-mono tabular-nums font-bold">{e.debit > 0 ? `₱${e.debit.toFixed(2)}` : '-'}</td>
+                            <td className="px-5 py-2.5 text-right text-danger font-mono tabular-nums font-bold">{e.credit > 0 ? `₱${e.credit.toFixed(2)}` : '-'}</td>
+                            <td className="px-5 py-2.5 text-right text-success font-mono tabular-nums font-bold">{e.debit > 0 ? `₱${e.debit.toFixed(2)}` : '-'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -4069,7 +4069,7 @@ export default function LedgerTab({ ctx }) {
                 <span className="text-fg/60 font-bold text-sm">→</span>
                 <input type="date" value={sbpRange.end} onChange={e => setSbpRange(p=>({...p,end:e.target.value}))}
                   className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
-                <button onClick={fetchSalesByPayment} className="px-5 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition">Load</button>
+                <button onClick={fetchSalesByPayment} className="px-5 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition">Load</button>
                 {salesByPayment && <button onClick={exportPaymentsPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
               </div>
               {!salesByPayment ? (
@@ -4103,7 +4103,7 @@ export default function LedgerTab({ ctx }) {
                             <td className="px-5 py-3 font-bold text-fg">{r.method||'Unknown'}</td>
                             <td className="px-5 py-3 text-right text-fg/70 tabular-nums">{r.count}</td>
                             <td className="px-5 py-3 text-right font-black text-brand tabular-nums">₱{(r.total||0).toFixed(2)}</td>
-                            <td className="px-5 py-3 text-right text-fg/50 tabular-nums">{(r.pct||0).toFixed(1)}%</td>
+                            <td className="px-5 py-3 text-right text-fg/75 tabular-nums">{(r.pct||0).toFixed(1)}%</td>
                             <td className="px-5 py-3 w-32">
                               <div className="h-2 bg-white/5 rounded-full overflow-hidden">
                                 <div className="h-full bg-brand rounded-full" style={{width:`${Math.min(100,r.pct||0)}%`}} />
@@ -4125,7 +4125,7 @@ export default function LedgerTab({ ctx }) {
             <div className="space-y-4 animate-fade-in">
               <div className="flex justify-end gap-2">
                 {profitByCategory && <button onClick={exportProfitByCategoryPDF} className="flex items-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
-                <button onClick={fetchProfitByCategory} className="flex items-center gap-2 px-5 py-2.5 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition">
+                <button onClick={fetchProfitByCategory} className="flex items-center gap-2 px-5 py-2.5 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition">
                   <RefreshCw size={14}/> Refresh
                 </button>
               </div>
@@ -4149,9 +4149,9 @@ export default function LedgerTab({ ctx }) {
                           <td className="px-5 py-3 font-bold text-fg">{c.category}</td>
                           <td className="px-5 py-3 text-right text-fg/80 tabular-nums font-mono">₱{c.revenue.toFixed(2)}</td>
                           <td className="px-5 py-3 text-right text-orange-400/70 tabular-nums font-mono">₱{c.estimatedCOGS.toFixed(2)}</td>
-                          <td className="px-5 py-3 text-right font-black tabular-nums font-mono text-green-400">₱{c.grossProfit.toFixed(2)}</td>
+                          <td className="px-5 py-3 text-right font-black tabular-nums font-mono text-success">₱{c.grossProfit.toFixed(2)}</td>
                           <td className="px-5 py-3 text-right">
-                            <span className={`font-black text-sm ${c.margin>=60?'text-green-400':c.margin>=35?'text-yellow-400':'text-red-400'}`}>
+                            <span className={`font-black text-sm ${c.margin>=60?'text-success':c.margin>=35?'text-warning':'text-danger'}`}>
                               {c.margin.toFixed(1)}%
                             </span>
                           </td>
@@ -4177,7 +4177,7 @@ export default function LedgerTab({ ctx }) {
                 <p className="text-xs text-fg/60">Stars (sell + profit), Plowhorses (sell, low margin), Puzzles (high margin, low sell), Dogs (neither).</p>
                 <div className="flex gap-2">
                   {menuEngineering && <button onClick={exportMenuEngineeringPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
-                  <button onClick={fetchMenuEngineering} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+                  <button onClick={fetchMenuEngineering} className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
                 </div>
               </div>
               {!menuEngineering ? (
@@ -4190,7 +4190,7 @@ export default function LedgerTab({ ctx }) {
                     </thead>
                     <tbody>
                       {mePage.pageItems.map((r,i) => {
-                        const cls = { Star:'bg-green-500/20 text-green-400', Plowhorse:'bg-yellow-500/20 text-yellow-400', Puzzle:'bg-blue-500/20 text-blue-400', Dog:'bg-red-500/20 text-red-400' }[r.quadrant];
+                        const cls = { Star:'bg-green-500/20 text-success', Plowhorse:'bg-yellow-500/20 text-warning', Puzzle:'bg-blue-500/20 text-info', Dog:'bg-red-500/20 text-danger' }[r.quadrant];
                         return (
                           <tr key={i} className={`border-b border-white/5 ${i%2?'bg-white/[0.015]':''}`}>
                             <td className="px-5 py-2.5 font-bold text-fg">{r.name}</td>
@@ -4216,7 +4216,7 @@ export default function LedgerTab({ ctx }) {
                 <p className="text-xs text-fg/60">Average cash drawer variance per cashier across closed shifts. Negative = consistently short.</p>
                 <div className="flex gap-2">
                   {cashierVariance && <button onClick={exportVariancePDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
-                  <button onClick={fetchCashierVariance} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+                  <button onClick={fetchCashierVariance} className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
                 </div>
               </div>
               {!cashierVariance ? (
@@ -4226,7 +4226,7 @@ export default function LedgerTab({ ctx }) {
               ) : (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[480px]">
-                    <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                    <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                       <tr><th className="px-5 py-3">Cashier</th><th className="px-5 py-3 text-right">Shifts</th><th className="px-5 py-3 text-right">Avg Variance</th><th className="px-5 py-3 text-right">Times Short</th><th className="px-5 py-3 text-right">Worst</th></tr>
                     </thead>
                     <tbody>
@@ -4234,9 +4234,9 @@ export default function LedgerTab({ ctx }) {
                         <tr key={i} className={`border-b border-white/5 ${i%2?'bg-white/[0.015]':''}`}>
                           <td className="px-5 py-2.5 font-bold text-fg">{c.cashierName}</td>
                           <td className="px-5 py-2.5 text-right text-fg/70 tabular-nums">{c.shifts}</td>
-                          <td className={`px-5 py-2.5 text-right tabular-nums font-black ${c.avgVariance < 0 ? 'text-red-400' : 'text-green-400'}`}>{c.avgVariance >= 0 ? '+' : ''}₱{c.avgVariance.toFixed(2)}</td>
+                          <td className={`px-5 py-2.5 text-right tabular-nums font-black ${c.avgVariance < 0 ? 'text-danger' : 'text-success'}`}>{c.avgVariance >= 0 ? '+' : ''}₱{c.avgVariance.toFixed(2)}</td>
                           <td className="px-5 py-2.5 text-right text-fg/70 tabular-nums">{c.shortCount}</td>
-                          <td className="px-5 py-2.5 text-right text-red-400 tabular-nums">₱{(c.worstShort||0).toFixed(2)}</td>
+                          <td className="px-5 py-2.5 text-right text-danger tabular-nums">₱{(c.worstShort||0).toFixed(2)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -4254,7 +4254,7 @@ export default function LedgerTab({ ctx }) {
                 <p className="text-xs text-fg/60">Sales attributed by cashier, at each staff member's commission rate (set in User Control). Complimentary and unattributed sales earn no commission.</p>
                 <div className="flex gap-2">
                   {commissions && <button onClick={exportCommissionsPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
-                  <button onClick={fetchCommissions} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+                  <button onClick={fetchCommissions} className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
                 </div>
               </div>
               {!commissions ? (
@@ -4264,7 +4264,7 @@ export default function LedgerTab({ ctx }) {
               ) : (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[520px]">
-                    <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                    <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                       <tr><th className="px-5 py-3">Cashier</th><th className="px-5 py-3 text-right">Orders</th><th className="px-5 py-3 text-right">Sales</th><th className="px-5 py-3 text-right">Rate</th><th className="px-5 py-3 text-right">Commission</th></tr>
                     </thead>
                     <tbody>
@@ -4273,15 +4273,15 @@ export default function LedgerTab({ ctx }) {
                           <td className="px-5 py-2.5 font-bold text-fg">{c.name}</td>
                           <td className="px-5 py-2.5 text-right text-fg/70 tabular-nums">{c.orderCount}</td>
                           <td className="px-5 py-2.5 text-right text-fg/80 tabular-nums font-mono">₱{c.salesTotal.toFixed(2)}</td>
-                          <td className="px-5 py-2.5 text-right text-fg/50 tabular-nums">{c.commissionRate}%</td>
-                          <td className="px-5 py-2.5 text-right font-black tabular-nums font-mono text-green-400">₱{c.commissionEarned.toFixed(2)}</td>
+                          <td className="px-5 py-2.5 text-right text-fg/75 tabular-nums">{c.commissionRate}%</td>
+                          <td className="px-5 py-2.5 text-right font-black tabular-nums font-mono text-success">₱{c.commissionEarned.toFixed(2)}</td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-white/10">
                         <td colSpan={4} className="px-5 py-3 text-right font-bold text-fg/60 uppercase text-[10px] tracking-wider">Total</td>
-                        <td className="px-5 py-3 text-right font-black tabular-nums font-mono text-green-400">₱{(commissions.totalCommission||0).toFixed(2)}</td>
+                        <td className="px-5 py-3 text-right font-black tabular-nums font-mono text-success">₱{(commissions.totalCommission||0).toFixed(2)}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -4300,7 +4300,7 @@ export default function LedgerTab({ ctx }) {
                   {['Pending','Approved','Paid','Rejected','All'].map(s => (
                     <button key={s}
                       onClick={() => { setBillsFilter(s); fetchBills(s); }}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${billsFilter === s ? 'bg-brand text-white' : 'bg-white/5 text-fg/50 hover:text-fg'}`}>
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${billsFilter === s ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/75 hover:text-fg'}`}>
                       {s}
                     </button>
                   ))}
@@ -4308,42 +4308,42 @@ export default function LedgerTab({ ctx }) {
                 <div className="flex gap-2">
                   <button onClick={() => setBillCreate(c => ({ ...c, open: !c.open }))} className="flex items-center gap-2 px-4 py-2 bg-white/5 text-fg/70 rounded-xl font-bold text-sm hover:bg-white/10 transition"><Plus size={14}/> Manual bill</button>
                   {bills && bills.length > 0 && <button onClick={exportBillsPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
-                  <button onClick={() => fetchBills()} className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+                  <button onClick={() => fetchBills()} className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
                 </div>
               </div>
 
               {billCreate.open && (
                 <div className="bg-surface border border-white/10 rounded-xl p-4 space-y-3">
-                  <p className="text-xs text-fg/50">A manual bill (rent, utilities, one-off supplier charge) - it books nothing until you Approve it, which posts DR expense / CR Accounts Payable.</p>
+                  <p className="text-xs text-fg/75">A manual bill (rent, utilities, one-off supplier charge) - it books nothing until you Approve it, which posts DR expense / CR Accounts Payable.</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Supplier</label>
+                      <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Supplier</label>
                       <select value={billCreate.supplierId} onChange={e => setBillCreate(c => ({ ...c, supplierId: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg">
                         <option value="">Select supplier…</option>
                         {(suppliers||[]).map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Expense account (debited on approval)</label>
+                      <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Expense account (debited on approval)</label>
                       <select value={billCreate.expenseAccountCode} onChange={e => setBillCreate(c => ({ ...c, expenseAccountCode: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg">
                         {(expenseAccounts||[]).map(a => <option key={a.code} value={a.code}>{a.code} - {a.name}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Amount (₱)</label>
+                      <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Amount (₱)</label>
                       <input type="number" min="0" step="0.01" value={billCreate.amount} onChange={e => setBillCreate(c => ({ ...c, amount: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" placeholder="0.00" />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Due date (optional)</label>
+                      <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Due date (optional)</label>
                       <input type="date" value={billCreate.dueDate} onChange={e => setBillCreate(c => ({ ...c, dueDate: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" />
                     </div>
                     <div className="sm:col-span-2">
-                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1">Description</label>
+                      <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Description</label>
                       <input value={billCreate.description} onChange={e => setBillCreate(c => ({ ...c, description: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" placeholder="e.g. October warehouse rent" />
                     </div>
                   </div>
                   <div className="flex justify-end">
-                    <button onClick={submitCreateBill} disabled={billBusy} className="px-5 py-2 bg-brand text-white rounded-xl font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">{billBusy ? 'Saving…' : 'Create bill'}</button>
+                    <button onClick={submitCreateBill} disabled={billBusy} className="px-5 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">{billBusy ? 'Saving…' : 'Create bill'}</button>
                   </div>
                 </div>
               )}
@@ -4355,7 +4355,7 @@ export default function LedgerTab({ ctx }) {
               ) : (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[720px]">
-                    <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                    <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                       <tr>
                         <th className="px-4 py-3">Bill #</th><th className="px-4 py-3">Supplier</th>
                         <th className="px-4 py-3">Source</th><th className="px-4 py-3">Description</th>
@@ -4365,25 +4365,25 @@ export default function LedgerTab({ ctx }) {
                     </thead>
                     <tbody>
                       {billsPage.pageItems.map((b, i) => {
-                        const stCls = { Pending:'bg-yellow-500/20 text-yellow-400', Approved:'bg-blue-500/20 text-blue-400', 'Partially Paid':'bg-orange-500/20 text-orange-400', Paid:'bg-green-500/20 text-green-400', Rejected:'bg-red-500/20 text-red-400' }[b.status] || 'bg-white/10 text-fg/50';
+                        const stCls = { Pending:'bg-yellow-500/20 text-warning', Approved:'bg-blue-500/20 text-info', 'Partially Paid':'bg-orange-500/20 text-warning', Paid:'bg-green-500/20 text-success', Rejected:'bg-red-500/20 text-danger' }[b.status] || 'bg-white/10 text-fg/75';
                         const billOutstanding = +(b.amount - (b.paidAmount || 0)).toFixed(2);
                         return (
                           <tr key={b._id} className={`border-b border-white/5 ${i%2?'bg-white/[0.015]':''}`}>
                             <td className="px-4 py-3 font-mono text-fg/70">{b.billNumber}</td>
                             <td className="px-4 py-3 font-bold text-fg">{b.supplierName || '-'}</td>
-                            <td className="px-4 py-3"><span className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-fg/50 font-bold">{b.source}</span></td>
+                            <td className="px-4 py-3"><span className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-fg/75 font-bold">{b.source}</span></td>
                             <td className="px-4 py-3 text-fg/60 max-w-[200px] truncate" title={b.description || b.poNumber}>{b.description || b.poNumber || '-'}</td>
                             <td className="px-4 py-3 text-right font-black tabular-nums font-mono text-fg">
                               {peso(b.amount)}
-                              {b.status === 'Partially Paid' && <div className="text-[10px] font-normal text-orange-400 mt-0.5">{peso(billOutstanding)} left</div>}
+                              {b.status === 'Partially Paid' && <div className="text-[10px] font-normal text-warning mt-0.5">{peso(billOutstanding)} left</div>}
                             </td>
                             <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${stCls}`}>{b.status}</span>
-                              {b.scheduledPaymentDate && b.status === 'Approved' && <div className="text-[10px] text-fg/40 mt-1">pay {String(b.scheduledPaymentDate).slice(0,10)}</div>}
+                              {b.scheduledPaymentDate && b.status === 'Approved' && <div className="text-[10px] text-fg/70 mt-1">pay {String(b.scheduledPaymentDate).slice(0,10)}</div>}
                             </td>
                             <td className="px-4 py-3 text-right whitespace-nowrap">
                               {b.status === 'Pending' && (
                                 <div className="flex gap-1.5 justify-end">
-                                  <button disabled={billBusy} onClick={() => approveBill(b)} className="px-2.5 py-1 rounded-lg bg-green-500/15 text-green-400 hover:bg-green-500/25 text-[11px] font-bold transition disabled:opacity-50">Approve</button>
+                                  <button disabled={billBusy} onClick={() => approveBill(b)} className="px-2.5 py-1 rounded-lg bg-green-500/15 text-success hover:bg-green-500/25 text-[11px] font-bold transition disabled:opacity-50">Approve</button>
                                   <button disabled={billBusy} onClick={() => rejectBill(b)} className="px-2.5 py-1 rounded-lg bg-red-500/10 text-red-400/80 hover:bg-red-500/20 text-[11px] font-bold transition disabled:opacity-50">Reject</button>
                                 </div>
                               )}
@@ -4394,7 +4394,7 @@ export default function LedgerTab({ ctx }) {
                                 </div>
                               )}
                               {(b.status === 'Paid' || b.status === 'Rejected') && (
-                                <span className="text-[10px] text-fg/30">{b.journalEntryRef || (b.rejectionReason ? 'rejected' : '-')}</span>
+                                <span className="text-[10px] text-fg/65">{b.journalEntryRef || (b.rejectionReason ? 'rejected' : '-')}</span>
                               )}
                             </td>
                           </tr>
@@ -4418,8 +4418,8 @@ export default function LedgerTab({ ctx }) {
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setBillPayModal(null)}>
                   <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
                     <h2 className="font-black text-fg mb-1">Pay bill {billPayModal.billNumber}</h2>
-                    <p className="text-fg/50 text-sm mb-1">{billPayModal.supplierName} · {peso(billPayModal.amount)} total</p>
-                    {billPayModal.paidAmount > 0 && <p className="text-orange-400 text-xs mb-2">{peso(billPayModal.paidAmount)} already paid · {peso(outstanding)} remaining</p>}
+                    <p className="text-fg/75 text-sm mb-1">{billPayModal.supplierName} · {peso(billPayModal.amount)} total</p>
+                    {billPayModal.paidAmount > 0 && <p className="text-warning text-xs mb-2">{peso(billPayModal.paidAmount)} already paid · {peso(outstanding)} remaining</p>}
 
                     {availableCredit > 0 && (
                       <div className="bg-brand/10 border border-brand/20 rounded-lg px-3 py-2 mb-3 flex items-center justify-between gap-2">
@@ -4432,25 +4432,25 @@ export default function LedgerTab({ ctx }) {
                       </div>
                     )}
 
-                    <p className="text-[11px] text-fg/40 mb-3">Posts DR Accounts Payable / CR the account you pay from.</p>
-                    <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Amount</label>
+                    <p className="text-[11px] text-fg/70 mb-3">Posts DR Accounts Payable / CR the account you pay from.</p>
+                    <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Amount</label>
                     <input type="number" min="0" step="0.01" value={billPayAmount} onChange={e => setBillPayAmount(e.target.value)}
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-1" />
                     {willOverpay && (
-                      <p className="text-[10px] text-amber-400 mb-2">
+                      <p className="text-[10px] text-warning mb-2">
                         Exceeds the {peso(outstanding)} owed - the extra {peso(+(enteredAmt - outstanding).toFixed(2))} becomes this supplier's credit balance, applicable to a future bill.
                       </p>
                     )}
-                    <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5 mt-2">Pay from</label>
+                    <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5 mt-2">Pay from</label>
                     <select value={billPayFrom} onChange={e => setBillPayFrom(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-3">
                       {(cashAndBankAccounts||[]).map(a => <option key={a.code} value={a.code}>{a.code} - {a.name}</option>)}
                     </select>
-                    <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Reference No. (optional)</label>
+                    <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Reference No. (optional)</label>
                     <input type="text" placeholder="Bank txn ID, check no., GCash ref..." value={billPayReference} onChange={e => setBillPayReference(e.target.value)}
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-5" />
                     <div className="flex gap-3">
-                      <button onClick={() => setBillPayModal(null)} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">Cancel</button>
-                      <button onClick={submitBillPay} disabled={billBusy} className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">{billBusy ? 'Recording…' : 'Record payment'}</button>
+                      <button onClick={() => setBillPayModal(null)} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/75 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">Cancel</button>
+                      <button onClick={submitBillPay} disabled={billBusy} className="flex-1 bg-brand hover:bg-brand-dark text-on-brand font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">{billBusy ? 'Recording…' : 'Record payment'}</button>
                     </div>
                   </div>
                 </div>
@@ -4470,15 +4470,15 @@ export default function LedgerTab({ ctx }) {
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div>
                   <h3 className="text-xl font-black text-fg flex items-center gap-2"><ShieldCheck size={18} className="text-brand"/> Approvals</h3>
-                  <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-1">Requisition slips - petty cash disbursements and new purchase orders wait here until approved</p>
+                  <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Requisition slips - petty cash disbursements and new purchase orders wait here until approved</p>
                 </div>
                 <div className="flex bg-page-bg p-1 rounded-lg shadow-inner">
                   <button onClick={() => { setReqSlipView('pending'); fetchRequisitionSlips('Pending'); }}
-                    className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${reqSlipView === 'pending' ? 'bg-brand text-white shadow-md' : 'text-fg/40 hover:text-fg'}`}>
+                    className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${reqSlipView === 'pending' ? 'bg-brand text-on-brand shadow-md' : 'text-fg/70 hover:text-fg'}`}>
                     Pending
                   </button>
                   <button onClick={() => { setReqSlipView('all'); fetchRequisitionSlips(''); }}
-                    className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${reqSlipView === 'all' ? 'bg-brand text-white shadow-md' : 'text-fg/40 hover:text-fg'}`}>
+                    className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${reqSlipView === 'all' ? 'bg-brand text-on-brand shadow-md' : 'text-fg/70 hover:text-fg'}`}>
                     Slips
                   </button>
                 </div>
@@ -4489,7 +4489,7 @@ export default function LedgerTab({ ctx }) {
 
               <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
                 {reqSlipsLoading && reqSlips.length === 0 ? (
-                  <p className="text-fg/40 text-sm p-8 text-center font-bold">Loading…</p>
+                  <p className="text-fg/70 text-sm p-8 text-center font-bold">Loading…</p>
                 ) : reqSlips.length === 0 ? (
                   <p className="text-fg/60 text-sm p-10 text-center font-bold">
                     {reqSlipView === 'pending' ? 'Nothing waiting on approval.' : 'No requisition slips yet.'}
@@ -4497,7 +4497,7 @@ export default function LedgerTab({ ctx }) {
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs min-w-[720px]">
-                      <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                      <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                         <tr>
                           <th className="px-5 py-2.5">Slip #</th>
                           <th className="px-5 py-2.5">Type</th>
@@ -4518,19 +4518,19 @@ export default function LedgerTab({ ctx }) {
                             <td className="px-5 py-2.5 text-fg/70 truncate max-w-[260px]">{reqSummary(s)}</td>
                             <td className="px-5 py-2.5 text-fg/60 whitespace-nowrap">{s.preparedBy || '-'}</td>
                             <td className="px-5 py-2.5">
-                              <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-full ${s.status === 'Pending' ? 'bg-amber-500/20 text-amber-400' : s.status === 'Approved' ? 'bg-brand/20 text-brand' : 'bg-red-500/20 text-red-400'}`}>{s.status}</span>
+                              <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-full ${s.status === 'Pending' ? 'bg-amber-500/20 text-warning' : s.status === 'Approved' ? 'bg-brand/20 text-brand' : 'bg-red-500/20 text-danger'}`}>{s.status}</span>
                             </td>
                             <td className="px-5 py-2.5 text-right font-mono tabular-nums font-bold text-fg">{reqAmount(s) === null ? 'To full' : peso(reqAmount(s))}</td>
                             <td className="px-5 py-2.5 text-right whitespace-nowrap">
                               {s.status === 'Pending' && can('requisitions.approve') ? (
                                 <div className="flex items-center justify-end gap-3">
                                   <button onClick={() => approveReqSlip(s)} disabled={reqSlipBusy} className="text-[10px] font-black uppercase tracking-wider text-brand hover:underline disabled:opacity-40">Approve</button>
-                                  <button onClick={() => { setReqSlipRejecting(s); setReqSlipRejectReason(''); }} disabled={reqSlipBusy} className="text-[10px] font-black uppercase tracking-wider text-red-400/70 hover:text-red-400 hover:underline disabled:opacity-40">Reject</button>
+                                  <button onClick={() => { setReqSlipRejecting(s); setReqSlipRejectReason(''); }} disabled={reqSlipBusy} className="text-[10px] font-black uppercase tracking-wider text-red-400/70 hover:text-danger hover:underline disabled:opacity-40">Reject</button>
                                 </div>
                               ) : s.status === 'Pending' ? (
-                                <span className="text-[10px] font-black uppercase tracking-wider text-fg/30">Awaiting approval</span>
+                                <span className="text-[10px] font-black uppercase tracking-wider text-fg/65">Awaiting approval</span>
                               ) : (
-                                <button onClick={() => setReqSlipPreview(s)} className="text-[10px] font-black uppercase tracking-wider text-fg/40 hover:text-fg hover:underline">View</button>
+                                <button onClick={() => setReqSlipPreview(s)} className="text-[10px] font-black uppercase tracking-wider text-fg/70 hover:text-fg hover:underline">View</button>
                               )}
                             </td>
                           </tr>
@@ -4550,7 +4550,7 @@ export default function LedgerTab({ ctx }) {
               <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 border-b border-white/10 pb-4">
                 <div>
                   <h3 className="text-2xl font-black text-fg">Revolving Funds</h3>
-                  <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-1">Petty cash pools - track disbursements and replenishments</p>
+                  <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Petty cash pools - track disbursements and replenishments</p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <button onClick={exportRevolvingFundsPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[44px]">
@@ -4558,7 +4558,7 @@ export default function LedgerTab({ ctx }) {
                   </button>
                   <button
                     onClick={() => setRfNewModal(true)}
-                    className="flex items-center gap-2 bg-brand text-white px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[44px]"
+                    className="flex items-center gap-2 bg-brand text-on-brand px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[44px]"
                   >
                     <Plus size={14}/> New Fund
                   </button>
@@ -4569,7 +4569,7 @@ export default function LedgerTab({ ctx }) {
 
               {!rfLoading && rfFunds.length === 0 && (
                 <div className="py-16 text-center space-y-3">
-                  <RefreshCw size={32} className="mx-auto text-fg/20"/>
+                  <RefreshCw size={32} className="mx-auto text-fg/60"/>
                   <p className="text-fg/60 font-bold uppercase tracking-widest text-sm">No revolving funds yet</p>
                   <p className="text-fg/60 text-xs">Create a fund to track petty cash and small operational expenses.</p>
                 </div>
@@ -4589,18 +4589,18 @@ export default function LedgerTab({ ctx }) {
                         <div className="flex items-start justify-between gap-2">
                           <div>
                             <p className="text-fg font-black text-base leading-tight">{fund.name}</p>
-                            {fund.description && <p className="text-fg/40 text-xs mt-0.5 line-clamp-1">{fund.description}</p>}
+                            {fund.description && <p className="text-fg/70 text-xs mt-0.5 line-clamp-1">{fund.description}</p>}
                           </div>
                           <button
                             onClick={() => closeRfFund(fund._id)}
-                            className="text-fg/20 hover:text-danger transition p-1 shrink-0"
+                            className="text-fg/60 hover:text-danger transition p-1 shrink-0"
                             title="Close fund"
                           ><X size={13}/></button>
                         </div>
 
                         {/* Balance display */}
                         <div>
-                          <p className="text-fg/40 text-[10px] font-bold uppercase tracking-widest mb-0.5">Current Balance</p>
+                          <p className="text-fg/70 text-[10px] font-bold uppercase tracking-widest mb-0.5">Current Balance</p>
                           <p className={`text-3xl font-black tabular-nums ${low ? 'text-danger' : 'text-brand'}`}>
                             ₱{fund.currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                           </p>
@@ -4646,7 +4646,7 @@ export default function LedgerTab({ ctx }) {
                                 fetchRfTxs(fund._id, 1);
                               }
                             }}
-                            className={`rounded-xl py-2 font-bold text-[10px] uppercase tracking-wider transition min-h-[40px] border ${isActive ? 'bg-white/10 text-fg border-white/20' : 'bg-white/5 text-fg/40 border-white/10 hover:bg-white/10 hover:text-fg'}`}
+                            className={`rounded-xl py-2 font-bold text-[10px] uppercase tracking-wider transition min-h-[40px] border ${isActive ? 'bg-white/10 text-fg border-white/20' : 'bg-white/5 text-fg/70 border-white/10 hover:bg-white/10 hover:text-fg'}`}
                           >
                             <FileText size={11} className="inline mr-1"/>{isActive ? 'Hide' : 'History'}
                           </button>
@@ -4670,7 +4670,7 @@ export default function LedgerTab({ ctx }) {
                       <span className="text-fg/60 text-xs tabular-nums">{rfTxTotal} {rfTxTotal === 1 ? 'entry' : 'entries'}</span>
                       <button
                         onClick={() => { setRfActiveFund(null); setRfTxs([]); }}
-                        className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/15 text-fg/40 hover:text-fg flex items-center justify-center transition"
+                        className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/15 text-fg/70 hover:text-fg flex items-center justify-center transition"
                         title="Close history"
                       ><X size={14}/></button>
                     </div>
@@ -4681,13 +4681,13 @@ export default function LedgerTab({ ctx }) {
                     <div className="py-14 text-center">
                       <FileText size={28} className="mx-auto text-fg/15 mb-3"/>
                       <p className="text-fg/60 text-sm font-bold uppercase tracking-widest">No transactions yet</p>
-                      <p className="text-fg/20 text-xs mt-1">Disbursements and replenishments will appear here.</p>
+                      <p className="text-fg/60 text-xs mt-1">Disbursements and replenishments will appear here.</p>
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
-                          <tr className="text-fg/40 text-[10px] font-bold uppercase tracking-widest border-b border-white/10 bg-white/2">
+                          <tr className="text-fg/70 text-[10px] font-bold uppercase tracking-widest border-b border-white/10 bg-white/2">
                             <th className="text-left px-6 py-3">Date</th>
                             <th className="text-left px-3 py-3">Type</th>
                             <th className="text-left px-3 py-3">Description</th>
@@ -4699,7 +4699,7 @@ export default function LedgerTab({ ctx }) {
                         <tbody>
                           {rfTxs.map((tx, idx) => (
                             <tr key={tx._id} className={`border-b border-white/5 transition hover:bg-white/3 ${idx % 2 === 0 ? '' : 'bg-white/1'}`}>
-                              <td className="py-3 px-6 text-fg/50 text-xs tabular-nums whitespace-nowrap">
+                              <td className="py-3 px-6 text-fg/75 text-xs tabular-nums whitespace-nowrap">
                                 {new Date(tx.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
                               </td>
                               <td className="py-3 px-3">
@@ -4708,11 +4708,11 @@ export default function LedgerTab({ ctx }) {
                                 </span>
                               </td>
                               <td className="py-3 px-3 text-fg/80 max-w-[200px] truncate">{tx.description}</td>
-                              <td className="py-3 px-3 text-fg/40 text-xs hidden sm:table-cell">{tx.performedBy || '-'}</td>
+                              <td className="py-3 px-3 text-fg/70 text-xs hidden sm:table-cell">{tx.performedBy || '-'}</td>
                               <td className={`py-3 px-3 text-right font-black tabular-nums ${tx.type === 'disbursement' ? 'text-danger' : 'text-brand'}`}>
                                 {tx.type === 'disbursement' ? '−' : '+'}₱{tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                               </td>
-                              <td className="py-3 px-6 text-right text-fg/50 tabular-nums text-xs">
+                              <td className="py-3 px-6 text-right text-fg/75 tabular-nums text-xs">
                                 ₱{(tx.balanceAfter ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                               </td>
                             </tr>
@@ -4728,7 +4728,7 @@ export default function LedgerTab({ ctx }) {
                       <button
                         disabled={rfTxPage <= 1}
                         onClick={() => fetchRfTxs(rfActiveFund._id, rfTxPage - 1)}
-                        className="px-4 py-2 rounded-lg bg-white/5 text-fg/50 font-bold text-xs disabled:opacity-25 hover:bg-white/10 hover:text-fg transition"
+                        className="px-4 py-2 rounded-lg bg-white/5 text-fg/75 font-bold text-xs disabled:opacity-25 hover:bg-white/10 hover:text-fg transition"
                       >← Prev</button>
                       <span className="text-fg/60 text-xs font-bold">
                         Page {rfTxPage} of {rfTxPages} &nbsp;·&nbsp; {rfTxTotal} {rfTxTotal === 1 ? 'entry' : 'entries'}
@@ -4736,7 +4736,7 @@ export default function LedgerTab({ ctx }) {
                       <button
                         disabled={rfTxPage >= rfTxPages}
                         onClick={() => fetchRfTxs(rfActiveFund._id, rfTxPage + 1)}
-                        className="px-4 py-2 rounded-lg bg-white/5 text-fg/50 font-bold text-xs disabled:opacity-25 hover:bg-white/10 hover:text-fg transition"
+                        className="px-4 py-2 rounded-lg bg-white/5 text-fg/75 font-bold text-xs disabled:opacity-25 hover:bg-white/10 hover:text-fg transition"
                       >Next →</button>
                     </div>
                   )}
@@ -4750,20 +4750,20 @@ export default function LedgerTab({ ctx }) {
             <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-6">
               <div>
                 <h3 className="text-xl font-black text-fg flex items-center gap-2"><Lock size={18} className="text-brand"/> Closed Accounting Periods</h3>
-                <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-1">Lock a month to prevent back-dated journal entries</p>
+                <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Lock a month to prevent back-dated journal entries</p>
               </div>
 
               <div className="bg-page-bg border border-white/10 rounded-xl p-4">
                 <h4 className="text-sm font-black text-fg uppercase tracking-wider mb-3">Close a Period</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Year</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Year</label>
                     <input type="number" min="2000" max="2100" value={periodCloseForm.year}
                       onChange={e => setPeriodCloseForm({...periodCloseForm, year: e.target.value})}
                       className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60"/>
                   </div>
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Month</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Month</label>
                     <select value={periodCloseForm.month}
                       onChange={e => setPeriodCloseForm({...periodCloseForm, month: e.target.value})}
                       className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
@@ -4773,22 +4773,22 @@ export default function LedgerTab({ ctx }) {
                     </select>
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Notes (optional)</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Notes (optional)</label>
                     <input type="text" placeholder="e.g. Q2 books closed by finance" value={periodCloseForm.notes}
                       onChange={e => setPeriodCloseForm({...periodCloseForm, notes: e.target.value})}
                       className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg outline-none focus:border-brand/60"/>
                   </div>
                 </div>
-                <button onClick={closePeriod} className="mt-3 w-full bg-brand text-white font-black py-3 rounded-lg uppercase tracking-widest text-sm hover:bg-brand/90 transition">
+                <button onClick={closePeriod} className="mt-3 w-full bg-brand text-on-brand font-black py-3 rounded-lg uppercase tracking-widest text-sm hover:bg-brand/90 transition">
                   Lock Period
                 </button>
-                <p className="text-[10px] text-fg/40 mt-2">Once locked, journal entries dated in this month are rejected. Superadmin can reopen below.</p>
+                <p className="text-[10px] text-fg/70 mt-2">Once locked, journal entries dated in this month are rejected. Superadmin can reopen below.</p>
               </div>
 
               <div>
                 <h4 className="text-sm font-black text-fg uppercase tracking-wider mb-3">History</h4>
                 {(closedPeriods || []).length === 0 ? (
-                  <p className="text-fg/40 text-sm italic">No periods locked yet.</p>
+                  <p className="text-fg/70 text-sm italic">No periods locked yet.</p>
                 ) : (
                   <div className="space-y-2">
                     {closedPeriods.map(p => {
@@ -4797,10 +4797,10 @@ export default function LedgerTab({ ctx }) {
                       return (
                         <div key={p._id} className={`flex items-center justify-between rounded-xl p-3 border ${isLocked ? 'bg-red-500/5 border-red-500/20' : 'bg-white/5 border-white/10'}`}>
                           <div className="flex items-center gap-3 min-w-0">
-                            {isLocked ? <Lock size={14} className="text-red-400"/> : <Unlock size={14} className="text-fg/40"/>}
+                            {isLocked ? <Lock size={14} className="text-danger"/> : <Unlock size={14} className="text-fg/70"/>}
                             <div className="min-w-0">
-                              <p className="text-fg font-black text-sm">{label} <span className={`text-[10px] ml-1 font-black uppercase tracking-widest ${isLocked ? 'text-red-400' : 'text-fg/40'}`}>{isLocked ? 'Locked' : 'Reopened'}</span></p>
-                              <p className="text-[10px] text-fg/40 truncate">{isLocked ? `Closed by ${p.closedBy} · ${new Date(p.closedAt).toLocaleString()}` : `Reopened by ${p.reopenedBy} · ${new Date(p.reopenedAt).toLocaleString()}`}{p.notes ? ` · ${p.notes}` : ''}</p>
+                              <p className="text-fg font-black text-sm">{label} <span className={`text-[10px] ml-1 font-black uppercase tracking-widest ${isLocked ? 'text-danger' : 'text-fg/70'}`}>{isLocked ? 'Locked' : 'Reopened'}</span></p>
+                              <p className="text-[10px] text-fg/70 truncate">{isLocked ? `Closed by ${p.closedBy} · ${new Date(p.closedAt).toLocaleString()}` : `Reopened by ${p.reopenedBy} · ${new Date(p.reopenedAt).toLocaleString()}`}{p.notes ? ` · ${p.notes}` : ''}</p>
                             </div>
                           </div>
                           {isLocked && (
@@ -4839,12 +4839,12 @@ export default function LedgerTab({ ctx }) {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="text-xl font-black text-fg flex items-center gap-2"><CreditCard size={18} className="text-brand"/> Payment Method Routing</h3>
-                    <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-1">
+                    <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">
                       Map each POS payment method to a specific account
                       {customSubsAvailable > 0 && <span className="ml-2 text-emerald-400 normal-case tracking-normal">· {customSubsAvailable} custom sub-account{customSubsAvailable === 1 ? '' : 's'} available</span>}
                     </p>
                     {!canEdit && (
-                      <p className="mt-2 text-[10px] uppercase tracking-widest font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5 inline-flex items-center gap-1.5">
+                      <p className="mt-2 text-[10px] uppercase tracking-widest font-black text-warning bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5 inline-flex items-center gap-1.5">
                         <Lock size={11}/> Superadmin only - sign in as superadmin to change routes
                       </p>
                     )}
@@ -4911,9 +4911,9 @@ export default function LedgerTab({ ctx }) {
                     return (
                       <tr key={m} className="border-b border-white/5 hover:bg-page-bg/30">
                         <td className={`py-2 text-fg font-bold text-sm ${indent ? 'pl-10' : 'pl-3'}`}>
-                          {indent && <span className="text-fg/20 mr-2">↳</span>}{m}
+                          {indent && <span className="text-fg/60 mr-2">↳</span>}{m}
                         </td>
-                        <td className="py-2 text-fg/40 text-xs font-mono">{def}</td>
+                        <td className="py-2 text-fg/70 text-xs font-mono">{def}</td>
                         <td className="py-2">
                           {canEdit ? (
                             <select value={eff} onChange={e => savePaymentMapping(m, e.target.value)}
@@ -4926,7 +4926,7 @@ export default function LedgerTab({ ctx }) {
                             <span className="text-fg text-xs font-bold font-mono">{effName} <span className="text-fg/60">({eff})</span></span>
                           )}
                           {canEdit && <span className="ml-2 text-[10px] text-fg/60">{effName}</span>}
-                          {isOverride && <span className="ml-2 text-[9px] uppercase tracking-widest font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">Override</span>}
+                          {isOverride && <span className="ml-2 text-[9px] uppercase tracking-widest font-black text-warning bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">Override</span>}
                         </td>
                         <td className="py-2 pr-3 text-right">
                           {canEdit && isOverride && (
@@ -4966,9 +4966,9 @@ export default function LedgerTab({ ctx }) {
                                         {childCount > 0 ? (
                                           isExpanded
                                             ? <ChevronDown size={14} className="text-brand"/>
-                                            : <ChevronRight size={14} className="text-fg/40"/>
+                                            : <ChevronRight size={14} className="text-fg/70"/>
                                         ) : <span className="w-[14px]" />}
-                                        <span className="text-[10px] uppercase tracking-widest font-black text-fg/40">{parentCode}</span>
+                                        <span className="text-[10px] uppercase tracking-widest font-black text-fg/70">{parentCode}</span>
                                         <span className="text-fg font-black text-sm">{PARENT_LABEL[parentCode] || parentCode}</span>
                                         {childCount > 0 && (
                                           <span className="text-[9px] uppercase tracking-widest font-black bg-brand/15 text-brand border border-brand/30 px-1.5 py-0.5 rounded">
@@ -4994,13 +4994,13 @@ export default function LedgerTab({ ctx }) {
                                   return (
                                     <tr key={`${parentCode}-sa-${sa.code}`} className="border-b border-white/5 hover:bg-page-bg/30">
                                       <td className="py-2 pl-10 text-fg/80 text-sm">
-                                        <span className="text-fg/20 mr-2">↳</span>
-                                        <span className={`font-bold ${sa.isActive === false ? 'line-through text-fg/30' : ''}`}>{sa.name}</span>
+                                        <span className="text-fg/60 mr-2">↳</span>
+                                        <span className={`font-bold ${sa.isActive === false ? 'line-through text-fg/65' : ''}`}>{sa.name}</span>
                                         {sa.isActive === false && (
-                                          <span className="ml-2 text-[9px] uppercase tracking-widest font-black bg-white/10 text-fg/40 px-1.5 py-0.5 rounded">Inactive</span>
+                                          <span className="ml-2 text-[9px] uppercase tracking-widest font-black bg-white/10 text-fg/70 px-1.5 py-0.5 rounded">Inactive</span>
                                         )}
                                       </td>
-                                      <td className="py-2 text-fg/40 text-xs font-mono">{sa.code}</td>
+                                      <td className="py-2 text-fg/70 text-xs font-mono">{sa.code}</td>
                                       <td className="py-2">
                                         <div className="flex items-center gap-2 flex-wrap">
                                           {/* Existing method chips - click ✕ to detach (resets that method back to its default). */}
@@ -5060,8 +5060,8 @@ export default function LedgerTab({ ctx }) {
                                               : 'Remove from POS/portal picker without deleting - history stays intact'}
                                             className={`text-[9px] uppercase tracking-widest font-black px-2 py-1 rounded transition ${
                                               sa.isActive === false
-                                                ? 'bg-green-500/10 text-green-400 hover:bg-green-500/20'
-                                                : 'bg-white/5 text-fg/50 hover:bg-white/10 hover:text-fg'
+                                                ? 'bg-green-500/10 text-success hover:bg-green-500/20'
+                                                : 'bg-white/5 text-fg/75 hover:bg-white/10 hover:text-fg'
                                             }`}>
                                             {sa.isActive === false ? 'Reactivate' : 'Deactivate'}
                                           </button>
@@ -5097,7 +5097,7 @@ export default function LedgerTab({ ctx }) {
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div>
                   <h3 className="text-xl font-black text-fg flex items-center gap-2"><Clock size={18} className="text-brand"/> Backdate Sale</h3>
-                  <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-1">Ring up a historical sale like the register, then post it to a past date. Books a real, balanced journal entry.</p>
+                  <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Ring up a historical sale like the register, then post it to a past date. Books a real, balanced journal entry.</p>
                 </div>
                 {isSuperAdmin && (
                   <div className="flex items-center gap-2 shrink-0">
@@ -5113,7 +5113,7 @@ export default function LedgerTab({ ctx }) {
                 )}
               </div>
               {!isSuperAdmin ? (
-                <p className="mt-2 text-[10px] uppercase tracking-widest font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5 inline-flex items-center gap-1.5">
+                <p className="mt-2 text-[10px] uppercase tracking-widest font-black text-warning bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5 inline-flex items-center gap-1.5">
                   <Lock size={11}/> Superadmin only
                 </p>
               ) : (
@@ -5122,7 +5122,7 @@ export default function LedgerTab({ ctx }) {
                   {/* LEFT: product picker + cart */}
                   <div className="bg-page-bg border border-white/10 rounded-xl p-4 flex flex-col min-h-[420px]">
                     <div className="relative mb-3">
-                      <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30" />
+                      <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/65" />
                       <input type="text" placeholder="Search products to add…" value={bdSearch}
                         onChange={e => setBdSearch(e.target.value)}
                         className="w-full bg-surface border border-white/10 rounded-lg pl-9 pr-3 py-2.5 text-fg text-sm outline-none focus:border-brand/60" />
@@ -5135,18 +5135,18 @@ export default function LedgerTab({ ctx }) {
                           <p className="text-brand font-black text-sm mt-1 tabular-nums">{peso(Number(p.basePrice || p.price || 0))}</p>
                         </button>
                       ))}
-                      {(products || []).length === 0 && <p className="col-span-full text-fg/30 text-xs text-center py-8">No products yet - add them in Menu Setup.</p>}
+                      {(products || []).length === 0 && <p className="col-span-full text-fg/65 text-xs text-center py-8">No products yet - add them in Menu Setup.</p>}
                     </div>
                     <div className="border-t border-white/10 pt-3 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-                      <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-2">Cart ({bdCart.length})</p>
+                      <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest mb-2">Cart ({bdCart.length})</p>
                       {bdCart.length === 0 ? (
-                        <p className="text-fg/30 text-xs py-6 text-center">Tap products above to build the sale.</p>
+                        <p className="text-fg/65 text-xs py-6 text-center">Tap products above to build the sale.</p>
                       ) : bdCart.map(x => (
                         <div key={x.productId} className="flex items-center gap-2 py-2 border-b border-white/5">
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-bold text-fg truncate">{x.name}</p>
                             <div className="flex items-center gap-1 mt-1">
-                              <span className="text-[10px] text-fg/40">₱</span>
+                              <span className="text-[10px] text-fg/70">₱</span>
                               <input type="number" min="0" step="0.01" value={x.price} onChange={e => bdSetPrice(x.productId, e.target.value)}
                                 className="w-16 bg-surface border border-white/10 rounded px-1.5 py-0.5 text-[11px] text-fg tabular-nums outline-none focus:border-brand/60" />
                             </div>
@@ -5158,7 +5158,7 @@ export default function LedgerTab({ ctx }) {
                             <button onClick={() => bdSetQty(x.productId, x.quantity + 1)} className="w-7 h-7 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 font-black">+</button>
                           </div>
                           <span className="w-20 text-right text-xs font-black text-fg tabular-nums shrink-0">{peso(x.price * x.quantity)}</span>
-                          <button onClick={() => bdRemove(x.productId)} className="text-red-400/60 hover:text-red-400 shrink-0"><Trash2 size={14}/></button>
+                          <button onClick={() => bdRemove(x.productId)} className="text-red-400/60 hover:text-danger shrink-0"><Trash2 size={14}/></button>
                         </div>
                       ))}
                     </div>
@@ -5168,13 +5168,13 @@ export default function LedgerTab({ ctx }) {
                   <div className="bg-page-bg border border-white/10 rounded-xl p-4 space-y-3">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Sale Date *</label>
+                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Sale Date *</label>
                         <input type="date" value={bd.date} max={new Date().toISOString().slice(0,10)}
                           onChange={e => setBd({ ...bd, date: e.target.value })}
                           className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
                       </div>
                       <div>
-                        <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Payment Method</label>
+                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Payment Method</label>
                         <select value={bd.paymentMethod} onChange={e => setBd({ ...bd, paymentMethod: e.target.value })}
                           disabled={bd.isComplimentary}
                           className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60 disabled:opacity-40">
@@ -5205,7 +5205,7 @@ export default function LedgerTab({ ctx }) {
                         className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition ${bd.affectInventory ? 'bg-amber-500/10 border-amber-500/40' : 'bg-surface border-white/10'}`}>
                         <span className="text-left">
                           <span className="text-xs font-bold text-fg block">Reduce current inventory</span>
-                          <span className="text-[10px] text-fg/40">{bd.affectInventory ? 'Stock WILL be deducted + COGS booked' : 'Off - old sale won’t touch today’s stock (default)'}</span>
+                          <span className="text-[10px] text-fg/70">{bd.affectInventory ? 'Stock WILL be deducted + COGS booked' : 'Off - old sale won’t touch today’s stock (default)'}</span>
                         </span>
                         <span className={`w-10 h-5 rounded-full shrink-0 relative transition ${bd.affectInventory ? 'bg-amber-500' : 'bg-white/15'}`}>
                           <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bd.affectInventory ? 'left-[22px]' : 'left-0.5'}`}/>
@@ -5215,7 +5215,7 @@ export default function LedgerTab({ ctx }) {
                         className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition ${bd.isComplimentary ? 'bg-brand/10 border-brand/40' : 'bg-surface border-white/10'}`}>
                         <span className="text-left">
                           <span className="text-xs font-bold text-fg block">Complimentary (free)</span>
-                          <span className="text-[10px] text-fg/40">{bd.isComplimentary ? 'Books Comp Expense / Revenue, collects ₱0' : 'Off - a normal paid sale'}</span>
+                          <span className="text-[10px] text-fg/70">{bd.isComplimentary ? 'Books Comp Expense / Revenue, collects ₱0' : 'Off - a normal paid sale'}</span>
                         </span>
                         <span className={`w-10 h-5 rounded-full shrink-0 relative transition ${bd.isComplimentary ? 'bg-brand' : 'bg-white/15'}`}>
                           <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bd.isComplimentary ? 'left-[22px]' : 'left-0.5'}`}/>
@@ -5225,20 +5225,20 @@ export default function LedgerTab({ ctx }) {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Customer (optional)</label>
+                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Customer (optional)</label>
                         <input type="text" placeholder="Walk-in" value={bd.customerName}
                           onChange={e => setBd({ ...bd, customerName: e.target.value })}
                           className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg outline-none focus:border-brand/60" />
                       </div>
                       <div>
-                        <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Discount %</label>
+                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Discount %</label>
                         <input type="number" min="0" max="100" step="0.5" value={bd.discountPercent} disabled={bd.isComplimentary}
                           onChange={e => setBd({ ...bd, discountPercent: e.target.value })}
                           className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold tabular-nums outline-none focus:border-brand/60 disabled:opacity-40" />
                       </div>
                     </div>
                     <div>
-                      <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Notes</label>
+                      <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Notes</label>
                       <input type="text" placeholder="e.g. Paper receipt #4521, 2024 carry-over" value={bd.notes}
                         onChange={e => setBd({ ...bd, notes: e.target.value })}
                         className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg outline-none focus:border-brand/60" />
@@ -5252,17 +5252,17 @@ export default function LedgerTab({ ctx }) {
                     </div>
 
                     <button onClick={submitBackdateCart} disabled={bdBusy || bdCart.length === 0}
-                      className="w-full bg-brand text-white font-black py-3 rounded-lg uppercase tracking-widest text-sm hover:bg-brand/90 transition disabled:opacity-50">
+                      className="w-full bg-brand text-on-brand font-black py-3 rounded-lg uppercase tracking-widest text-sm hover:bg-brand/90 transition disabled:opacity-50">
                       {bdBusy ? 'Posting…' : 'Record Backdated Sale'}
                     </button>
-                    <p className="text-[10px] text-fg/40">Period locks are enforced - a closed month is rejected. Always audited.</p>
+                    <p className="text-[10px] text-fg/70">Period locks are enforced - a closed month is rejected. Always audited.</p>
 
                     <div className="border-t border-white/10 pt-3">
                       <button onClick={runBackfillLedger} disabled={backfillBusy}
                         className="w-full bg-surface border border-white/10 text-fg/70 font-bold py-2 rounded-lg uppercase tracking-widest text-[11px] hover:border-brand/60 transition disabled:opacity-50">
                         {backfillBusy ? 'Scanning…' : 'Repair Missing Ledger Entries'}
                       </button>
-                      <p className="text-[10px] text-fg/40 mt-1.5">One-time fix for older backdated sales missing a journal entry. Safe to run repeatedly.</p>
+                      <p className="text-[10px] text-fg/70 mt-1.5">One-time fix for older backdated sales missing a journal entry. Safe to run repeatedly.</p>
                     </div>
                   </div>
                 </div>
@@ -5272,20 +5272,20 @@ export default function LedgerTab({ ctx }) {
               {isSuperAdmin && bdQueue?.total > 0 && (
                 <div className="bg-surface border border-amber-500/30 rounded-xl overflow-hidden mt-2">
                   <div className="px-5 py-3 border-b border-amber-500/20 bg-amber-500/5 flex items-center gap-2 flex-wrap">
-                    <AlertTriangle size={14} className="text-amber-400" />
+                    <AlertTriangle size={14} className="text-warning" />
                     <h3 className="text-sm font-black text-fg uppercase tracking-wider">Backdate Queue</h3>
-                    <span className="text-[10px] text-amber-400 font-bold">{bdQueue.total} needs a payment method</span>
+                    <span className="text-[10px] text-warning font-bold">{bdQueue.total} needs a payment method</span>
                     <button onClick={() => fetchBdQueue(bdQueuePage)} disabled={bdQueueLoading}
                       className="ml-auto flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition disabled:opacity-50">
                       <RefreshCw size={11} className={bdQueueLoading ? 'animate-spin' : ''}/> Refresh
                     </button>
                   </div>
-                  <p className="text-fg/40 text-[11px] px-5 pt-3">
+                  <p className="text-fg/70 text-[11px] px-5 pt-3">
                     These sheets left "Terms of Payment" blank, so we didn't guess how they were paid. Supply it and Save to post them as backdated sales.
                   </p>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs min-w-[560px]">
-                      <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                      <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                         <tr>
                           <th className="px-5 py-2.5">Date</th>
                           <th className="px-5 py-2.5">Sheet</th>
@@ -5300,8 +5300,8 @@ export default function LedgerTab({ ctx }) {
                           const total = (row.items || []).reduce((s, it) => s + (it.price || 0) * (it.quantity || 0), 0);
                           return (
                             <tr key={row._id} className={`border-b border-white/5 hover:bg-white/3 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'}`}>
-                              <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap font-bold">{row.date || <span className="text-red-400">no date</span>}</td>
-                              <td className="px-5 py-2.5 text-fg/40 truncate max-w-[140px]">{row.sheet || '-'}</td>
+                              <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap font-bold">{row.date || <span className="text-danger">no date</span>}</td>
+                              <td className="px-5 py-2.5 text-fg/70 truncate max-w-[140px]">{row.sheet || '-'}</td>
                               <td className="px-5 py-2.5 text-fg/80 font-bold truncate max-w-[160px]">{row.client || 'Walk-in'}</td>
                               <td className="px-5 py-2.5 text-fg/60 truncate max-w-[220px]">{(row.items || []).map(it => it.name).join(', ')}</td>
                               <td className="px-5 py-2.5 text-right text-fg font-mono tabular-nums font-bold">{peso(total)}</td>
@@ -5309,7 +5309,7 @@ export default function LedgerTab({ ctx }) {
                                 <button onClick={() => setBdQueueResolve({ row, paymentMethod: 'Cash', affectInventory: false })}
                                   className="text-[10px] font-black uppercase tracking-wider text-brand hover:underline mr-3">Complete</button>
                                 <button onClick={() => discardBdQueueItem(row)}
-                                  className="text-[10px] font-black uppercase tracking-wider text-red-400/70 hover:text-red-400 hover:underline">Discard</button>
+                                  className="text-[10px] font-black uppercase tracking-wider text-red-400/70 hover:text-danger hover:underline">Discard</button>
                               </td>
                             </tr>
                           );
@@ -5320,10 +5320,10 @@ export default function LedgerTab({ ctx }) {
                   {bdQueue.pages > 1 && (
                     <div className="flex items-center justify-between px-5 py-3 border-t border-white/10">
                       <button onClick={() => fetchBdQueue(bdQueuePage - 1)} disabled={bdQueuePage <= 1 || bdQueueLoading}
-                        className="text-[10px] font-black uppercase tracking-widest text-fg/50 hover:text-fg disabled:opacity-30 transition">← Prev</button>
-                      <span className="text-[10px] text-fg/40 font-bold">Page {bdQueue.page} of {bdQueue.pages}</span>
+                        className="text-[10px] font-black uppercase tracking-widest text-fg/75 hover:text-fg disabled:opacity-30 transition">← Prev</button>
+                      <span className="text-[10px] text-fg/70 font-bold">Page {bdQueue.page} of {bdQueue.pages}</span>
                       <button onClick={() => fetchBdQueue(bdQueuePage + 1)} disabled={bdQueuePage >= bdQueue.pages || bdQueueLoading}
-                        className="text-[10px] font-black uppercase tracking-widest text-fg/50 hover:text-fg disabled:opacity-30 transition">Next →</button>
+                        className="text-[10px] font-black uppercase tracking-widest text-fg/75 hover:text-fg disabled:opacity-30 transition">Next →</button>
                     </div>
                   )}
                 </div>
@@ -5333,9 +5333,9 @@ export default function LedgerTab({ ctx }) {
               {isSuperAdmin && (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-hidden mt-2">
                   <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2 flex-wrap">
-                    <History size={14} className="text-fg/50" />
+                    <History size={14} className="text-fg/75" />
                     <h3 className="text-sm font-black text-fg uppercase tracking-wider">Backdate History</h3>
-                    {bdHistory?.total > 0 && <span className="text-[10px] text-fg/40 font-bold">{bdHistory.total} total</span>}
+                    {bdHistory?.total > 0 && <span className="text-[10px] text-fg/70 font-bold">{bdHistory.total} total</span>}
                     <button onClick={exportBackdateHistoryPDF} disabled={bdExporting || !bdHistory?.total}
                       className="ml-auto flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition disabled:opacity-50">
                       <Download size={11}/> {bdExporting ? 'Exporting…' : 'Export PDF'}
@@ -5346,14 +5346,14 @@ export default function LedgerTab({ ctx }) {
                     </button>
                   </div>
                   {bdHistoryLoading && !bdHistory ? (
-                    <p className="text-fg/40 text-sm p-6 text-center font-bold">Loading…</p>
+                    <p className="text-fg/70 text-sm p-6 text-center font-bold">Loading…</p>
                   ) : !bdHistory || bdHistory.orders.length === 0 ? (
                     <p className="text-fg/60 text-sm p-8 text-center font-bold">No backdated sales recorded yet.</p>
                   ) : (
                     <>
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs min-w-[560px]">
-                          <thead className="text-fg/25 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                          <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                             <tr>
                               <th className="px-5 py-2.5">Date</th>
                               <th className="px-5 py-2.5">Order No.</th>
@@ -5372,7 +5372,7 @@ export default function LedgerTab({ ctx }) {
                                 <td className="px-5 py-2.5 font-mono text-fg/60 whitespace-nowrap">{o.orderNumber}</td>
                                 <td className="px-5 py-2.5 text-fg/80 font-bold truncate max-w-[160px]">{o.customerName || 'Walk-in'}</td>
                                 <td className="px-5 py-2.5 text-fg/60 whitespace-nowrap">{o.paymentMethod}</td>
-                                <td className="px-5 py-2.5 text-fg/40 truncate max-w-[220px]">{o.orderNotes || '-'}</td>
+                                <td className="px-5 py-2.5 text-fg/70 truncate max-w-[220px]">{o.orderNotes || '-'}</td>
                                 <td className="px-5 py-2.5 text-right text-fg font-mono tabular-nums font-bold">{peso(o.total)}</td>
                               </tr>
                             ))}
@@ -5382,10 +5382,10 @@ export default function LedgerTab({ ctx }) {
                       {bdHistory.pages > 1 && (
                         <div className="flex items-center justify-between px-5 py-3 border-t border-white/10">
                           <button onClick={() => fetchBdHistory(bdHistoryPage - 1)} disabled={bdHistoryPage <= 1 || bdHistoryLoading}
-                            className="text-[10px] font-black uppercase tracking-widest text-fg/50 hover:text-fg disabled:opacity-30 transition">← Prev</button>
-                          <span className="text-[10px] text-fg/40 font-bold">Page {bdHistory.page} of {bdHistory.pages}</span>
+                            className="text-[10px] font-black uppercase tracking-widest text-fg/75 hover:text-fg disabled:opacity-30 transition">← Prev</button>
+                          <span className="text-[10px] text-fg/70 font-bold">Page {bdHistory.page} of {bdHistory.pages}</span>
                           <button onClick={() => fetchBdHistory(bdHistoryPage + 1)} disabled={bdHistoryPage >= bdHistory.pages || bdHistoryLoading}
-                            className="text-[10px] font-black uppercase tracking-widest text-fg/50 hover:text-fg disabled:opacity-30 transition">Next →</button>
+                            className="text-[10px] font-black uppercase tracking-widest text-fg/75 hover:text-fg disabled:opacity-30 transition">Next →</button>
                         </div>
                       )}
                     </>
@@ -5402,9 +5402,9 @@ export default function LedgerTab({ ctx }) {
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                   <div>
                     <h2 className="font-black text-fg text-base">Complete Queued Sale</h2>
-                    <p className="text-fg/40 text-xs mt-0.5">{bdQueueResolve.row.client || 'Walk-in'} · {bdQueueResolve.row.date || 'no date'}</p>
+                    <p className="text-fg/70 text-xs mt-0.5">{bdQueueResolve.row.client || 'Walk-in'} · {bdQueueResolve.row.date || 'no date'}</p>
                   </div>
-                  <button onClick={() => !bdQueueSaving && setBdQueueResolve(null)} className="text-fg/40 hover:text-fg transition"><X size={18} /></button>
+                  <button onClick={() => !bdQueueSaving && setBdQueueResolve(null)} className="text-fg/70 hover:text-fg transition"><X size={18} /></button>
                 </div>
                 <div className="px-5 py-4 space-y-2 max-h-[30vh] overflow-y-auto border-b border-white/10">
                   {(bdQueueResolve.row.items || []).map((it, i) => (
@@ -5416,7 +5416,7 @@ export default function LedgerTab({ ctx }) {
                 </div>
                 <div className="px-5 py-4 space-y-3">
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Payment Method *</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Payment Method *</label>
                     <select value={bdQueueResolve.paymentMethod} onChange={e => setBdQueueResolve(s => ({ ...s, paymentMethod: e.target.value }))}
                       className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
                       <option value="Cash">Cash</option>
@@ -5430,7 +5430,7 @@ export default function LedgerTab({ ctx }) {
                     className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition ${bdQueueResolve.affectInventory ? 'bg-amber-500/10 border-amber-500/40' : 'bg-page-bg border-white/10'}`}>
                     <span className="text-left">
                       <span className="text-xs font-bold text-fg block">Reduce current inventory</span>
-                      <span className="text-[10px] text-fg/40">{bdQueueResolve.affectInventory ? 'Stock WILL be deducted' : 'Off - won’t touch today’s stock (default)'}</span>
+                      <span className="text-[10px] text-fg/70">{bdQueueResolve.affectInventory ? 'Stock WILL be deducted' : 'Off - won’t touch today’s stock (default)'}</span>
                     </span>
                     <span className={`w-10 h-5 rounded-full shrink-0 relative transition ${bdQueueResolve.affectInventory ? 'bg-amber-500' : 'bg-white/15'}`}>
                       <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bdQueueResolve.affectInventory ? 'left-[22px]' : 'left-0.5'}`}/>
@@ -5438,8 +5438,8 @@ export default function LedgerTab({ ctx }) {
                   </button>
                 </div>
                 <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
-                  <button onClick={() => !bdQueueSaving && setBdQueueResolve(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition">Cancel</button>
-                  <button onClick={saveBdQueueItem} disabled={bdQueueSaving} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+                  <button onClick={() => !bdQueueSaving && setBdQueueResolve(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/75 hover:text-fg transition">Cancel</button>
+                  <button onClick={saveBdQueueItem} disabled={bdQueueSaving} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-on-brand font-bold text-sm px-5 py-2 rounded-xl transition">
                     {bdQueueSaving ? 'Saving…' : 'Save'}
                   </button>
                 </div>
@@ -5454,13 +5454,13 @@ export default function LedgerTab({ ctx }) {
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                   <div>
                     <h2 className="font-black text-fg text-base">Import Options</h2>
-                    <p className="text-fg/40 text-xs mt-0.5">
+                    <p className="text-fg/70 text-xs mt-0.5">
                       {bdSheetPicker.sheetNames.length > 1
                         ? `This file has ${bdSheetPicker.sheetNames.length} tabs. Pick which to import.`
                         : 'Set how this sale should post before previewing it.'}
                     </p>
                   </div>
-                  <button onClick={() => !bdImporting && setBdSheetPicker(null)} className="text-fg/40 hover:text-fg transition"><X size={18} /></button>
+                  <button onClick={() => !bdImporting && setBdSheetPicker(null)} className="text-fg/70 hover:text-fg transition"><X size={18} /></button>
                 </div>
 
                 {bdSheetPicker.sheetNames.length > 1 && (
@@ -5468,9 +5468,9 @@ export default function LedgerTab({ ctx }) {
                     <div className="px-5 py-3 flex items-center gap-2 border-b border-white/10">
                       <button onClick={() => setBdSheetPicker(s => ({ ...s, selected: new Set(s.sheetNames) }))}
                         className="text-[10px] font-black uppercase tracking-widest text-brand hover:underline">Select All</button>
-                      <span className="text-fg/20">·</span>
+                      <span className="text-fg/60">·</span>
                       <button onClick={() => setBdSheetPicker(s => ({ ...s, selected: new Set() }))}
-                        className="text-[10px] font-black uppercase tracking-widest text-fg/40 hover:underline">Select None</button>
+                        className="text-[10px] font-black uppercase tracking-widest text-fg/70 hover:underline">Select None</button>
                     </div>
                     <div className="px-5 py-3 space-y-1.5 max-h-[35vh] overflow-y-auto border-b border-white/10">
                       {bdSheetPicker.sheetNames.map(name => {
@@ -5492,7 +5492,7 @@ export default function LedgerTab({ ctx }) {
 
                 <div className="px-5 py-4 space-y-3">
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Payment Method (applies to all)</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Payment Method (applies to all)</label>
                     <select value={bdImportSettings.paymentMethod} onChange={e => setBdImportSettings(s => ({ ...s, paymentMethod: e.target.value }))}
                       className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
                       <option value="Cash">Cash</option>
@@ -5506,7 +5506,7 @@ export default function LedgerTab({ ctx }) {
                     className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition ${bdImportSettings.affectInventory ? 'bg-amber-500/10 border-amber-500/40' : 'bg-page-bg border-white/10'}`}>
                     <span className="text-left">
                       <span className="text-xs font-bold text-fg block">Reduce current inventory</span>
-                      <span className="text-[10px] text-fg/40">{bdImportSettings.affectInventory ? 'Stock WILL be deducted for every item matched' : 'Off - these sales won’t touch today’s stock (default)'}</span>
+                      <span className="text-[10px] text-fg/70">{bdImportSettings.affectInventory ? 'Stock WILL be deducted for every item matched' : 'Off - these sales won’t touch today’s stock (default)'}</span>
                     </span>
                     <span className={`w-10 h-5 rounded-full shrink-0 relative transition ${bdImportSettings.affectInventory ? 'bg-amber-500' : 'bg-white/15'}`}>
                       <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bdImportSettings.affectInventory ? 'left-[22px]' : 'left-0.5'}`}/>
@@ -5516,7 +5516,7 @@ export default function LedgerTab({ ctx }) {
 
                 {bdParseProgress && (
                   <div className="px-5 pt-4">
-                    <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-fg/50 mb-1.5">
+                    <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-fg/75 mb-1.5">
                       <span>Reading sheets…</span>
                       <span className="tabular-nums">{bdParseProgress.done} / {bdParseProgress.total}</span>
                     </div>
@@ -5527,8 +5527,8 @@ export default function LedgerTab({ ctx }) {
                   </div>
                 )}
                 <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
-                  <button onClick={() => !bdImporting && setBdSheetPicker(null)} disabled={bdImporting} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition disabled:opacity-30">Cancel</button>
-                  <button onClick={confirmBdSheetPicker} disabled={bdImporting || bdSheetPicker.selected.size === 0} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+                  <button onClick={() => !bdImporting && setBdSheetPicker(null)} disabled={bdImporting} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/75 hover:text-fg transition disabled:opacity-30">Cancel</button>
+                  <button onClick={confirmBdSheetPicker} disabled={bdImporting || bdSheetPicker.selected.size === 0} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-on-brand font-bold text-sm px-5 py-2 rounded-xl transition">
                     {bdImporting ? (bdParseProgress ? `Reading ${bdParseProgress.done}/${bdParseProgress.total}` : 'Reading…') : bdSheetPicker.sheetNames.length > 1 ? `Continue (${bdSheetPicker.selected.size} sheet${bdSheetPicker.selected.size === 1 ? '' : 's'})` : 'Continue'}
                   </button>
                 </div>
@@ -5543,16 +5543,16 @@ export default function LedgerTab({ ctx }) {
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                   <div>
                     <h2 className="font-black text-fg text-lg">Import Backdated Sales</h2>
-                    <p className="text-fg/40 text-xs mt-0.5">
+                    <p className="text-fg/70 text-xs mt-0.5">
                       {bdImportPreview.groups.length} sale(s) · {bdImportPreview.groups.reduce((s, g) => s + g.items.length, 0)} line item(s)
                       {bdImportPreview.skipped > 0 && ` · ${bdImportPreview.skipped} row(s) skipped`}
                     </p>
                   </div>
-                  <button onClick={() => !bdImporting && setBdImportPreview(null)} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+                  <button onClick={() => !bdImporting && setBdImportPreview(null)} className="text-fg/70 hover:text-fg transition"><X size={20} /></button>
                 </div>
                 <div className="px-5 py-4 border-b border-white/10 grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Payment Method (default - override any sale below)</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Payment Method (default - override any sale below)</label>
                     <select value={bdImportSettings.paymentMethod} onChange={e => setBdImportSettings(s => ({ ...s, paymentMethod: e.target.value }))}
                       className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
                       <option value="Cash">Cash</option>
@@ -5577,10 +5577,10 @@ export default function LedgerTab({ ctx }) {
                     <div key={gi} className="bg-white/5 border border-white/10 rounded-xl p-3">
                       <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
                         <span className="font-black text-fg text-sm">{g.client || 'Walk-in'}</span>
-                        <div className="flex items-center gap-2 text-[11px] text-fg/40 font-bold">
-                          {bdImportPreview.multiSheet && g.sheet && <span className="text-[9px] bg-white/10 text-fg/50 px-1.5 py-0.5 rounded uppercase tracking-wider">{g.sheet}</span>}
+                        <div className="flex items-center gap-2 text-[11px] text-fg/70 font-bold">
+                          {bdImportPreview.multiSheet && g.sheet && <span className="text-[9px] bg-white/10 text-fg/75 px-1.5 py-0.5 rounded uppercase tracking-wider">{g.sheet}</span>}
                           {g.transNo && <span>{g.transNo}</span>}
-                          <span>{g.date || <span className="text-red-400">no date</span>}</span>
+                          <span>{g.date || <span className="text-danger">no date</span>}</span>
                           <span className="text-brand">{peso(g.total)}</span>
                         </div>
                       </div>
@@ -5596,7 +5596,7 @@ export default function LedgerTab({ ctx }) {
                         </select>
                         {g.paymentMethod && (
                           <button onClick={() => setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, paymentMethod: null } : x) }))}
-                            className="text-[9px] font-bold uppercase tracking-wider text-fg/30 hover:text-fg/60 transition">reset to default</button>
+                            className="text-[9px] font-bold uppercase tracking-wider text-fg/65 hover:text-fg/60 transition">reset to default</button>
                         )}
                       </div>
                       <div className="space-y-0.5">
@@ -5604,7 +5604,7 @@ export default function LedgerTab({ ctx }) {
                           <div key={li} className="flex items-center justify-between text-xs text-fg/60">
                             <span className="truncate pr-2">
                               {it.code ? `${it.code} · ` : ''}{it.name}
-                              {!it.matched && <span className="ml-1.5 text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1 py-0.5 rounded uppercase align-middle">No product match</span>}
+                              {!it.matched && <span className="ml-1.5 text-[9px] font-black bg-amber-500/20 text-warning border border-amber-500/40 px-1 py-0.5 rounded uppercase align-middle">No product match</span>}
                             </span>
                             <span className="whitespace-nowrap font-mono">{it.quantity} × {peso(it.price)}</span>
                           </div>
@@ -5615,7 +5615,7 @@ export default function LedgerTab({ ctx }) {
                 </div>
                 {bdImportProgress && (
                   <div className="px-5 pt-4">
-                    <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-fg/50 mb-1.5">
+                    <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-fg/75 mb-1.5">
                       <span>Importing…</span>
                       <span className="tabular-nums">{bdImportProgress.done} / {bdImportProgress.total}</span>
                     </div>
@@ -5626,8 +5626,8 @@ export default function LedgerTab({ ctx }) {
                   </div>
                 )}
                 <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
-                  <button onClick={() => !bdImporting && setBdImportPreview(null)} disabled={bdImporting} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition disabled:opacity-30">Cancel</button>
-                  <button onClick={confirmBdImport} disabled={bdImporting} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+                  <button onClick={() => !bdImporting && setBdImportPreview(null)} disabled={bdImporting} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/75 hover:text-fg transition disabled:opacity-30">Cancel</button>
+                  <button onClick={confirmBdImport} disabled={bdImporting} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-on-brand font-bold text-sm px-5 py-2 rounded-xl transition">
                     {bdImporting ? `Importing ${bdImportProgress ? `${bdImportProgress.done}/${bdImportProgress.total}` : '…'}` : `Import ${bdImportPreview.groups.length} Sale(s)`}
                   </button>
                 </div>
@@ -5641,16 +5641,16 @@ export default function LedgerTab({ ctx }) {
               <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                   <h2 className="font-black text-fg text-base">Reject {reqSlipRejecting.slipNumber}</h2>
-                  <button onClick={() => !reqSlipBusy && setReqSlipRejecting(null)} className="text-fg/40 hover:text-fg transition"><X size={18} /></button>
+                  <button onClick={() => !reqSlipBusy && setReqSlipRejecting(null)} className="text-fg/70 hover:text-fg transition"><X size={18} /></button>
                 </div>
                 <div className="p-5 space-y-3">
-                  <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Reason *</label>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Reason *</label>
                   <textarea autoFocus rows={3} value={reqSlipRejectReason} onChange={e => setReqSlipRejectReason(e.target.value)}
                     placeholder="Why is this being rejected?"
                     className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-red-500/60 resize-none" />
                 </div>
                 <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
-                  <button onClick={() => setReqSlipRejecting(null)} disabled={reqSlipBusy} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/50 hover:text-fg transition disabled:opacity-40">Cancel</button>
+                  <button onClick={() => setReqSlipRejecting(null)} disabled={reqSlipBusy} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/75 hover:text-fg transition disabled:opacity-40">Cancel</button>
                   <button onClick={submitRejectReqSlip} disabled={reqSlipBusy || !reqSlipRejectReason.trim()} className="flex items-center gap-2 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
                     {reqSlipBusy ? 'Rejecting…' : 'Reject Slip'}
                   </button>
@@ -5666,45 +5666,45 @@ export default function LedgerTab({ ctx }) {
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                   <div>
                     <h2 className="font-black text-fg text-lg">{reqSlipPreview.slipNumber}</h2>
-                    <p className="text-fg/40 text-xs mt-0.5">{reqSlipPreview.type === 'petty-cash' ? 'Petty Cash / Revolving Fund Requisition' : reqSlipPreview.type === 'new-fund' ? 'New Revolving Fund Requisition' : reqSlipPreview.type === 'fund-replenish' ? 'Revolving Fund Replenishment' : 'Procurement Requisition'}</p>
+                    <p className="text-fg/70 text-xs mt-0.5">{reqSlipPreview.type === 'petty-cash' ? 'Petty Cash / Revolving Fund Requisition' : reqSlipPreview.type === 'new-fund' ? 'New Revolving Fund Requisition' : reqSlipPreview.type === 'fund-replenish' ? 'Revolving Fund Replenishment' : 'Procurement Requisition'}</p>
                   </div>
-                  <button onClick={() => setReqSlipPreview(null)} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+                  <button onClick={() => setReqSlipPreview(null)} className="text-fg/70 hover:text-fg transition"><X size={20} /></button>
                 </div>
                 <div className="p-5 space-y-4">
                   <div className="flex items-center justify-between">
-                    <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${reqSlipPreview.status === 'Pending' ? 'bg-amber-500/20 text-amber-400' : reqSlipPreview.status === 'Approved' ? 'bg-brand/20 text-brand' : 'bg-red-500/20 text-red-400'}`}>{reqSlipPreview.status}</span>
-                    <span className="text-fg/40 text-[10px] font-bold">{new Date(reqSlipPreview.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                    <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${reqSlipPreview.status === 'Pending' ? 'bg-amber-500/20 text-warning' : reqSlipPreview.status === 'Approved' ? 'bg-brand/20 text-brand' : 'bg-red-500/20 text-danger'}`}>{reqSlipPreview.status}</span>
+                    <span className="text-fg/70 text-[10px] font-bold">{new Date(reqSlipPreview.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                   </div>
 
                   {reqSlipPreview.type === 'petty-cash' ? (
                     <div className="bg-page-bg border border-white/10 rounded-lg p-4 space-y-2 text-sm">
-                      <div className="flex justify-between"><span className="text-fg/50">Fund</span><span className="text-fg font-bold">{reqSlipPreview.fundName}</span></div>
-                      <div className="flex justify-between"><span className="text-fg/50">Description</span><span className="text-fg font-bold text-right max-w-[60%]">{reqSlipPreview.description}</span></div>
-                      <div className="flex justify-between border-t border-white/10 pt-2 mt-1"><span className="text-fg/50">Amount</span><span className="text-brand font-black text-lg tabular-nums">{peso(reqSlipPreview.amount)}</span></div>
+                      <div className="flex justify-between"><span className="text-fg/75">Fund</span><span className="text-fg font-bold">{reqSlipPreview.fundName}</span></div>
+                      <div className="flex justify-between"><span className="text-fg/75">Description</span><span className="text-fg font-bold text-right max-w-[60%]">{reqSlipPreview.description}</span></div>
+                      <div className="flex justify-between border-t border-white/10 pt-2 mt-1"><span className="text-fg/75">Amount</span><span className="text-brand font-black text-lg tabular-nums">{peso(reqSlipPreview.amount)}</span></div>
                       {/* Live balance preview - what approving this actually
                           does to the fund, so the reviewer isn't approving
                           blind. Money going OUT of a fund, so subtracted. */}
                       {reqSlipFundBalance !== null && (
                         <div className="flex justify-between border-t border-white/10 pt-2 mt-1 text-xs">
-                          <span className="text-fg/40">Current Balance → After</span>
+                          <span className="text-fg/70">Current Balance → After</span>
                           <span className="font-mono tabular-nums">
                             <span className="text-fg/60">{peso(reqSlipFundBalance)}</span>
-                            <span className="text-fg/30 mx-1">→</span>
-                            <span className={reqSlipFundBalance - reqSlipPreview.amount < 0 ? 'text-red-400 font-bold' : 'text-fg font-bold'}>
+                            <span className="text-fg/65 mx-1">→</span>
+                            <span className={reqSlipFundBalance - reqSlipPreview.amount < 0 ? 'text-danger font-bold' : 'text-fg font-bold'}>
                               {peso(reqSlipFundBalance - reqSlipPreview.amount)}
                             </span>
                           </span>
                         </div>
                       )}
                       {reqSlipFundBalance !== null && reqSlipFundBalance < reqSlipPreview.amount && (
-                        <p className="text-red-400 text-[11px] font-bold">⚠ Exceeds the fund's current balance - approving this will fail.</p>
+                        <p className="text-danger text-[11px] font-bold">⚠ Exceeds the fund's current balance - approving this will fail.</p>
                       )}
                     </div>
                   ) : reqSlipPreview.type === 'new-fund' ? (
                     <div className="bg-page-bg border border-white/10 rounded-lg p-4 space-y-2 text-sm">
-                      <div className="flex justify-between"><span className="text-fg/50">New Fund Name</span><span className="text-fg font-bold">{reqSlipPreview.fundName}</span></div>
-                      {reqSlipPreview.description && <div className="flex justify-between"><span className="text-fg/50">Note</span><span className="text-fg font-bold text-right max-w-[60%]">{reqSlipPreview.description}</span></div>}
-                      <div className="flex justify-between border-t border-white/10 pt-2 mt-1"><span className="text-fg/50">Opening Amount</span><span className="text-brand font-black text-lg tabular-nums">{peso(reqSlipPreview.amount)}</span></div>
+                      <div className="flex justify-between"><span className="text-fg/75">New Fund Name</span><span className="text-fg font-bold">{reqSlipPreview.fundName}</span></div>
+                      {reqSlipPreview.description && <div className="flex justify-between"><span className="text-fg/75">Note</span><span className="text-fg font-bold text-right max-w-[60%]">{reqSlipPreview.description}</span></div>}
+                      <div className="flex justify-between border-t border-white/10 pt-2 mt-1"><span className="text-fg/75">Opening Amount</span><span className="text-brand font-black text-lg tabular-nums">{peso(reqSlipPreview.amount)}</span></div>
                     </div>
                   ) : reqSlipPreview.type === 'fund-replenish' ? (() => {
                     // "Top up to full" resolves to the fund's own initialAmount
@@ -5716,19 +5716,19 @@ export default function LedgerTab({ ctx }) {
                       : (rfFunds.find(f => String(f._id) === String(reqSlipPreview.fundId))?.initialAmount ?? null);
                     return (
                       <div className="bg-page-bg border border-white/10 rounded-lg p-4 space-y-2 text-sm">
-                        <div className="flex justify-between"><span className="text-fg/50">Fund</span><span className="text-fg font-bold">{reqSlipPreview.fundName}</span></div>
-                        {reqSlipPreview.description && <div className="flex justify-between"><span className="text-fg/50">Note</span><span className="text-fg font-bold text-right max-w-[60%]">{reqSlipPreview.description}</span></div>}
+                        <div className="flex justify-between"><span className="text-fg/75">Fund</span><span className="text-fg font-bold">{reqSlipPreview.fundName}</span></div>
+                        {reqSlipPreview.description && <div className="flex justify-between"><span className="text-fg/75">Note</span><span className="text-fg font-bold text-right max-w-[60%]">{reqSlipPreview.description}</span></div>}
                         <div className="flex justify-between border-t border-white/10 pt-2 mt-1">
-                          <span className="text-fg/50">Amount</span>
+                          <span className="text-fg/75">Amount</span>
                           <span className="text-brand font-black text-lg tabular-nums">{reqSlipPreview.amount > 0 ? peso(reqSlipPreview.amount) : 'Top up to full'}</span>
                         </div>
                         {/* Live balance preview - money coming IN this time, so added. */}
                         {reqSlipFundBalance !== null && (
                           <div className="flex justify-between border-t border-white/10 pt-2 mt-1 text-xs">
-                            <span className="text-fg/40">Current Balance → After</span>
+                            <span className="text-fg/70">Current Balance → After</span>
                             <span className="font-mono tabular-nums">
                               <span className="text-fg/60">{peso(reqSlipFundBalance)}</span>
-                              <span className="text-fg/30 mx-1">→</span>
+                              <span className="text-fg/65 mx-1">→</span>
                               <span className="text-fg font-bold">{willBe !== null ? peso(willBe) : '-'}</span>
                             </span>
                           </div>
@@ -5737,7 +5737,7 @@ export default function LedgerTab({ ctx }) {
                     );
                   })() : (
                     <div className="bg-page-bg border border-white/10 rounded-lg p-4 space-y-3 text-sm">
-                      <div className="flex justify-between"><span className="text-fg/50">Supplier</span><span className="text-fg font-bold">{reqSlipPreview.supplier || 'Unassigned'}</span></div>
+                      <div className="flex justify-between"><span className="text-fg/75">Supplier</span><span className="text-fg font-bold">{reqSlipPreview.supplier || 'Unassigned'}</span></div>
                       <div className="space-y-1">
                         {(reqSlipPreview.lines || []).map((l, i) => (
                           <div key={i} className="flex items-center justify-between text-xs text-fg/70">
@@ -5746,39 +5746,39 @@ export default function LedgerTab({ ctx }) {
                           </div>
                         ))}
                       </div>
-                      <div className="flex justify-between border-t border-white/10 pt-2"><span className="text-fg/50">Est. Total</span><span className="text-brand font-black text-lg tabular-nums">{peso(reqSlipPreview.estTotal)}</span></div>
-                      {reqSlipPreview.notes && <p className="text-fg/40 text-xs italic">{reqSlipPreview.notes}</p>}
+                      <div className="flex justify-between border-t border-white/10 pt-2"><span className="text-fg/75">Est. Total</span><span className="text-brand font-black text-lg tabular-nums">{peso(reqSlipPreview.estTotal)}</span></div>
+                      {reqSlipPreview.notes && <p className="text-fg/70 text-xs italic">{reqSlipPreview.notes}</p>}
                     </div>
                   )}
 
                   {reqSlipPreview.status === 'Rejected' && reqSlipPreview.rejectionReason && (
                     <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
-                      <p className="text-[10px] text-red-400 font-black uppercase tracking-widest mb-1">Rejection Reason</p>
+                      <p className="text-[10px] text-danger font-black uppercase tracking-widest mb-1">Rejection Reason</p>
                       <p className="text-fg/70 text-xs">{reqSlipPreview.rejectionReason}</p>
                     </div>
                   )}
 
                   {reqSlipPreview.status === 'Approved' && reqSlipPreview.resultRefLabel && (
-                    <p className="text-fg/40 text-xs">Posted as <span className="text-fg font-bold font-mono">{reqSlipPreview.resultRefLabel}</span></p>
+                    <p className="text-fg/70 text-xs">Posted as <span className="text-fg font-bold font-mono">{reqSlipPreview.resultRefLabel}</span></p>
                   )}
 
                   {/* Signature block - Prepared By, then Approved By beneath it once set */}
                   <div className="border-t border-white/10 pt-4 space-y-4">
                     <div>
-                      <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-1">Prepared By</p>
+                      <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest mb-1">Prepared By</p>
                       <p className="text-fg font-black text-sm border-b border-white/20 pb-1.5">{reqSlipPreview.preparedBy || '-'}</p>
                     </div>
                     <div>
-                      <p className="text-[10px] text-fg/40 font-bold uppercase tracking-widest mb-1">Approved By</p>
+                      <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest mb-1">Approved By</p>
                       {reqSlipPreview.approvedBy ? (
                         <p className="text-fg font-black text-sm border-b border-white/20 pb-1.5">
                           {reqSlipPreview.approvedBy}
-                          <span className="text-fg/40 font-bold text-[10px] ml-2">{new Date(reqSlipPreview.approvedAt).toLocaleDateString()}</span>
+                          <span className="text-fg/70 font-bold text-[10px] ml-2">{new Date(reqSlipPreview.approvedAt).toLocaleDateString()}</span>
                         </p>
                       ) : reqSlipPreview.status === 'Rejected' ? (
                         <p className="text-red-400/70 font-bold text-sm border-b border-white/20 pb-1.5">Rejected by {reqSlipPreview.rejectedBy}</p>
                       ) : (
-                        <p className="text-fg/25 font-bold text-sm border-b border-white/10 pb-1.5 italic">Pending approval</p>
+                        <p className="text-fg/65 font-bold text-sm border-b border-white/10 pb-1.5 italic">Pending approval</p>
                       )}
                     </div>
                   </div>
@@ -5786,9 +5786,9 @@ export default function LedgerTab({ ctx }) {
                 {reqSlipPreview.status === 'Pending' && (
                   <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
                     <button onClick={() => { setReqSlipRejecting(reqSlipPreview); setReqSlipRejectReason(''); setReqSlipPreview(null); }} disabled={reqSlipBusy}
-                      className="text-sm font-bold px-4 py-2 rounded-xl text-red-400/70 hover:text-red-400 transition disabled:opacity-40">Reject</button>
+                      className="text-sm font-bold px-4 py-2 rounded-xl text-red-400/70 hover:text-danger transition disabled:opacity-40">Reject</button>
                     <button onClick={() => { approveReqSlip(reqSlipPreview); setReqSlipPreview(null); }} disabled={reqSlipBusy}
-                      className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-white font-bold text-sm px-5 py-2 rounded-xl transition">Approve</button>
+                      className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-on-brand font-bold text-sm px-5 py-2 rounded-xl transition">Approve</button>
                   </div>
                 )}
               </div>
@@ -5799,24 +5799,24 @@ export default function LedgerTab({ ctx }) {
             <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-6">
               <div>
                 <h3 className="text-xl font-black text-fg flex items-center gap-2"><ShieldCheck size={18} className="text-brand"/> Tenancy Health</h3>
-                <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-1">Verify every doc is stamped with this server's business type</p>
+                <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Verify every doc is stamped with this server's business type</p>
               </div>
 
               {!tenancyReport ? (
-                <p className="text-fg/40 text-sm italic">Loading report…</p>
+                <p className="text-fg/70 text-sm italic">Loading report…</p>
               ) : (
                 <>
                   <div className="bg-page-bg border border-white/10 rounded-xl p-4">
-                    <p className="text-[10px] uppercase tracking-widest text-fg/40 font-bold mb-1">Current Business Type</p>
+                    <p className="text-[10px] uppercase tracking-widest text-fg/70 font-bold mb-1">Current Business Type</p>
                     <p className="text-2xl font-black text-brand">{tenancyReport.currentBusinessType}</p>
-                    <p className={`mt-2 text-[10px] uppercase tracking-widest font-black ${tenancyReport.isClean ? 'text-green-400' : 'text-amber-400'}`}>
+                    <p className={`mt-2 text-[10px] uppercase tracking-widest font-black ${tenancyReport.isClean ? 'text-success' : 'text-warning'}`}>
                       {tenancyReport.isClean ? '✓ Clean - all docs stamped' : '⚠ Some docs need attention'}
                     </p>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead>
-                        <tr className="text-fg/40 border-b border-white/10 text-[10px] uppercase tracking-widest">
+                        <tr className="text-fg/70 border-b border-white/10 text-[10px] uppercase tracking-widest">
                           <th className="pb-2">Collection</th>
                           <th className="pb-2 text-right">Missing businessType</th>
                           <th className="pb-2 text-right">Other businessType</th>
@@ -5826,8 +5826,8 @@ export default function LedgerTab({ ctx }) {
                         {tenancyReport.rows.map(r => (
                           <tr key={r.collection} className="border-b border-white/5">
                             <td className="py-2 text-fg font-bold">{r.collection}</td>
-                            <td className={`py-2 text-right font-mono tabular-nums ${r.missingBusinessType > 0 ? 'text-amber-400 font-black' : 'text-fg/40'}`}>{r.missingBusinessType.toLocaleString()}</td>
-                            <td className={`py-2 text-right font-mono tabular-nums ${r.otherBusinessType > 0 ? 'text-red-400 font-black' : 'text-fg/40'}`}>{r.otherBusinessType.toLocaleString()}</td>
+                            <td className={`py-2 text-right font-mono tabular-nums ${r.missingBusinessType > 0 ? 'text-warning font-black' : 'text-fg/70'}`}>{r.missingBusinessType.toLocaleString()}</td>
+                            <td className={`py-2 text-right font-mono tabular-nums ${r.otherBusinessType > 0 ? 'text-danger font-black' : 'text-fg/70'}`}>{r.otherBusinessType.toLocaleString()}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -5838,11 +5838,11 @@ export default function LedgerTab({ ctx }) {
                       Refresh
                     </button>
                     <button onClick={runTenancyRebackfill} disabled={tenancyBusy}
-                      className="bg-brand text-white font-black px-4 py-2 rounded-lg uppercase tracking-widest text-xs hover:bg-brand/90 transition disabled:opacity-50">
+                      className="bg-brand text-on-brand font-black px-4 py-2 rounded-lg uppercase tracking-widest text-xs hover:bg-brand/90 transition disabled:opacity-50">
                       {tenancyBusy ? 'Running…' : 'Run Re-Backfill'}
                     </button>
                   </div>
-                  <p className="text-[10px] text-fg/40">"Other businessType" docs belong to another tenant on the same database. Re-backfill only stamps docs missing the field - it never overwrites an existing different value.</p>
+                  <p className="text-[10px] text-fg/70">"Other businessType" docs belong to another tenant on the same database. Re-backfill only stamps docs missing the field - it never overwrites an existing different value.</p>
                 </>
               )}
             </div>

@@ -88,7 +88,7 @@ export default function CommandPalette({ open, onClose }) {
     >
       <div className="bg-surface border border-white/10 rounded-2xl w-full max-w-lg shadow-elev-3 overflow-hidden animate-scale-in">
         <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10">
-          <Search size={16} className="text-fg/30 shrink-0" />
+          <Search size={16} className="text-fg/65 shrink-0" />
           <input
             ref={inputRef}
             value={q}
@@ -97,14 +97,14 @@ export default function CommandPalette({ open, onClose }) {
             placeholder="Go to…"
             className="flex-1 bg-transparent text-fg placeholder-white/25 outline-none text-sm font-bold"
           />
-          <button onClick={onClose} className="text-[10px] font-black uppercase tracking-wider text-fg/30 hover:text-fg transition px-2 py-1 rounded border border-white/10">
+          <button onClick={onClose} className="text-[10px] font-black uppercase tracking-wider text-fg/65 hover:text-fg transition px-2 py-1 rounded border border-white/10">
             Esc
           </button>
         </div>
 
         <div ref={listRef} className="max-h-[50vh] overflow-y-auto custom-scrollbar">
           {results.length === 0 ? (
-            <p className="px-4 py-10 text-center text-fg/30 text-sm font-bold">Nothing matches “{q}”.</p>
+            <p className="px-4 py-10 text-center text-fg/65 text-sm font-bold">Nothing matches “{q}”.</p>
           ) : results.map((c, i) => (
             <button
               key={`${c.id}-${c.sub || ''}-${c.label}`}
@@ -117,14 +117,14 @@ export default function CommandPalette({ open, onClose }) {
             >
               <span className="min-w-0 flex-1">
                 <span className={`block text-sm font-bold ${i === sel ? 'text-brand' : 'text-fg'}`}>{c.label}</span>
-                {c.hint && <span className="block text-fg/35 text-xs mt-0.5">{c.hint}</span>}
+                {c.hint && <span className="block text-fg/70 text-xs mt-0.5">{c.hint}</span>}
               </span>
               {i === sel && <CornerDownLeft size={13} className="text-brand/60 shrink-0" />}
             </button>
           ))}
         </div>
 
-        <div className="px-4 py-2 border-t border-white/10 flex items-center gap-3 text-[10px] text-fg/25 font-bold uppercase tracking-wider">
+        <div className="px-4 py-2 border-t border-white/10 flex items-center gap-3 text-[10px] text-fg/65 font-bold uppercase tracking-wider">
           <Command size={11} /> Ctrl+K anywhere
           <span className="ml-auto hidden sm:inline">↑↓ to move · Enter to open</span>
         </div>

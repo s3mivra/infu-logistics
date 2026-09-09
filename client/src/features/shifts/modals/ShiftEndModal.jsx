@@ -17,19 +17,19 @@ export default function ShiftEndModal() {
               <div className="text-center">
                 <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3 ${shiftReconcile.result.variance >= 0 ? 'bg-green-500/20 border border-green-500/40' : 'bg-red-500/20 border border-red-500/40'}`}>
                   {shiftReconcile.result.variance >= 0
-                    ? <CheckCircle size={32} className="text-green-400" />
-                    : <AlertCircle size={32} className="text-red-400" />}
+                    ? <CheckCircle size={32} className="text-success" />
+                    : <AlertCircle size={32} className="text-danger" />}
                 </div>
                 <h2 className="text-xl font-black text-fg tracking-wider uppercase">Shift Summary</h2>
-                <p className="text-gray-400 text-xs mt-1">Recorded for {shiftReconcile.result.cashierName}</p>
+                <p className="text-fg/70 text-xs mt-1">Recorded for {shiftReconcile.result.cashierName}</p>
               </div>
 
               <div className="bg-surface-2 rounded-xl p-4 space-y-3 text-sm">
-                <div className="flex justify-between"><span className="text-gray-400">Opening Cash</span><span className="font-bold text-fg">₱{(shiftReconcile.result.startingCash||0).toFixed(2)}</span></div>
-                <div className="flex justify-between"><span className="text-gray-400">Cash Sales</span><span className="font-bold text-accent">+₱{(shiftReconcile.result.salesTotal||0).toFixed(2)}</span></div>
-                <div className="flex justify-between border-t border-gray-700 pt-3"><span className="text-gray-400">Expected in Register</span><span className="font-black text-fg text-base">₱{(shiftReconcile.result.expectedCash||0).toFixed(2)}</span></div>
-                <div className="flex justify-between"><span className="text-gray-400">Actual Cash Count</span><span className="font-black text-fg text-base">₱{(shiftReconcile.result.actualCash||0).toFixed(2)}</span></div>
-                <div className={`flex justify-between pt-1 border-t border-gray-700 font-black text-base ${shiftReconcile.result.variance >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                <div className="flex justify-between"><span className="text-fg/70">Opening Cash</span><span className="font-bold text-fg">₱{(shiftReconcile.result.startingCash||0).toFixed(2)}</span></div>
+                <div className="flex justify-between"><span className="text-fg/70">Cash Sales</span><span className="font-bold text-accent">+₱{(shiftReconcile.result.salesTotal||0).toFixed(2)}</span></div>
+                <div className="flex justify-between border-t border-gray-700 pt-3"><span className="text-fg/70">Expected in Register</span><span className="font-black text-fg text-base">₱{(shiftReconcile.result.expectedCash||0).toFixed(2)}</span></div>
+                <div className="flex justify-between"><span className="text-fg/70">Actual Cash Count</span><span className="font-black text-fg text-base">₱{(shiftReconcile.result.actualCash||0).toFixed(2)}</span></div>
+                <div className={`flex justify-between pt-1 border-t border-gray-700 font-black text-base ${shiftReconcile.result.variance >= 0 ? 'text-success' : 'text-danger'}`}>
                   <span>Variance</span>
                   <span>{shiftReconcile.result.variance >= 0 ? '+' : ''}₱{(shiftReconcile.result.variance||0).toFixed(2)}</span>
                 </div>
@@ -48,25 +48,25 @@ export default function ShiftEndModal() {
                 </div>
               ) : (
                 <div className="bg-surface-2 rounded-xl p-4 space-y-3 text-sm border border-blue-500/20">
-                  <h3 className="text-blue-400 font-black uppercase tracking-wider text-xs flex items-center gap-2">
+                  <h3 className="text-info font-black uppercase tracking-wider text-xs flex items-center gap-2">
                     <Building2 size={14} /> Bank Deposit
                   </h3>
                   <div className="space-y-1 text-xs">
                     <div className="flex justify-between">
-                      <span className="text-gray-400">Cash on Hand</span>
+                      <span className="text-fg/70">Cash on Hand</span>
                       <span className="font-bold text-fg">₱{Math.max(0, (shiftReconcile.result.actualCash || 0) - (shiftReconcile.result.depositedAmount || 0)).toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-gray-400">Keep in Drawer</span>
+                      <span className="text-fg/70">Keep in Drawer</span>
                       <span className="font-bold text-fg">₱{(shiftReconcile.result.startingCash || 0).toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between border-t border-gray-700 pt-1">
-                      <span className="text-gray-400">Suggested Deposit</span>
-                      <span className="font-bold text-blue-400">₱{Math.max(0, (shiftReconcile.result.actualCash || 0) - (shiftReconcile.result.depositedAmount || 0) - (shiftReconcile.result.startingCash || 0)).toFixed(2)}</span>
+                      <span className="text-fg/70">Suggested Deposit</span>
+                      <span className="font-bold text-info">₱{Math.max(0, (shiftReconcile.result.actualCash || 0) - (shiftReconcile.result.depositedAmount || 0) - (shiftReconcile.result.startingCash || 0)).toFixed(2)}</span>
                     </div>
                   </div>
                   <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-400 font-black pointer-events-none">₱</span>
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-info font-black pointer-events-none">₱</span>
                     <input
                       type="number" min="0" step="0.01" placeholder="Deposit amount"
                       value={depositAmount}
@@ -74,7 +74,7 @@ export default function ShiftEndModal() {
                       className="w-full bg-gray-800 border-2 border-blue-500/50 focus:border-blue-400 text-fg py-2.5 pl-8 pr-4 rounded-xl outline-none font-bold text-sm"
                     />
                   </div>
-                  {depositError && <p className="text-red-400 text-xs">{depositError}</p>}
+                  {depositError && <p className="text-danger text-xs">{depositError}</p>}
                   <button
                     onClick={handleBankDeposit}
                     disabled={depositLoading || !depositAmount}
@@ -100,16 +100,16 @@ export default function ShiftEndModal() {
                   <DollarSign size={26} className="text-accent" />
                 </div>
                 <h2 className="text-xl font-black text-fg tracking-wider uppercase">End of Shift</h2>
-                <p className="text-gray-400 text-sm mt-1">Count your register before logging out.</p>
+                <p className="text-fg/70 text-sm mt-1">Count your register before logging out.</p>
               </div>
 
               {/* Bill/coin denomination breakdown */}
               <div className="space-y-2">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Count Your Bills & Coins</label>
+                <label className="text-xs font-bold text-fg/70 uppercase tracking-wider block">Count Your Bills & Coins</label>
                 <div className="grid grid-cols-3 gap-1.5">
                   {DENOMS.map(d => (
                     <div key={d} className="flex items-center gap-1.5 bg-surface-2 rounded-xl px-2.5 py-2 border border-white/5">
-                      <span className="text-fg/50 font-bold text-xs w-10 shrink-0">₱{d}</span>
+                      <span className="text-fg/75 font-bold text-xs w-10 shrink-0">₱{d}</span>
                       <input type="number" min="0" placeholder="0"
                         value={denomCounts[d] || ''}
                         onChange={e => setDenomCounts(p => ({ ...p, [d]: e.target.value }))}
@@ -122,7 +122,7 @@ export default function ShiftEndModal() {
                   <span className="text-brand font-black uppercase tracking-wider text-xs">Total Count</span>
                   <span className="text-brand font-black text-xl tabular-nums">₱{denomTotal.toFixed(2)}</span>
                 </div>
-                <p className="text-[10px] text-fg/30 text-center">Or type total directly:</p>
+                <p className="text-[10px] text-fg/65 text-center">Or type total directly:</p>
                 <input type="number" min="0" step="0.01" placeholder="0.00"
                   value={shiftReconcile.actualCash}
                   onChange={e => setShiftReconcile(prev => ({ ...prev, actualCash: e.target.value }))}
@@ -133,7 +133,7 @@ export default function ShiftEndModal() {
               <div className="flex gap-3">
                 <button
                   onClick={() => setShiftEndModal(false)}
-                  className="flex-1 py-3 bg-surface-2 border border-white/10 text-fg/50 font-bold rounded-xl hover:text-fg transition text-sm uppercase"
+                  className="flex-1 py-3 bg-surface-2 border border-white/10 text-fg/75 font-bold rounded-xl hover:text-fg transition text-sm uppercase"
                 >
                   Cancel
                 </button>
@@ -148,7 +148,7 @@ export default function ShiftEndModal() {
 
               <button
                 onClick={performLogout}
-                className="text-xs text-gray-600 hover:text-red-400 transition text-center w-full"
+                className="text-xs text-gray-600 hover:text-danger transition text-center w-full"
               >
                 Skip & force logout (emergency only)
               </button>

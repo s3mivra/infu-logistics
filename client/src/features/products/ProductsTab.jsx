@@ -14,10 +14,10 @@ function SaleStatusBadge({ sale }) {
   const now = new Date();
   const start = new Date(sale.startsAt);
   const end = new Date(sale.endsAt);
-  if (!sale.isActive) return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/5 text-fg/30">Inactive</span>;
-  if (now < start) return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/15 text-blue-400">Upcoming</span>;
-  if (now > end) return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/5 text-fg/30">Expired</span>;
-  return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-500/15 text-green-400 flex items-center gap-1"><Flame size={9} />Live</span>;
+  if (!sale.isActive) return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/5 text-fg/65">Inactive</span>;
+  if (now < start) return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/15 text-info">Upcoming</span>;
+  if (now > end) return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/5 text-fg/65">Expired</span>;
+  return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-500/15 text-success flex items-center gap-1"><Flame size={9} />Live</span>;
 }
 
 function RuleRow({ rule, products, onRemove }) {
@@ -31,7 +31,7 @@ function RuleRow({ rule, products, onRemove }) {
         {rule.ruleType === 'percent_off' && prod && <span className="text-fg/60 ml-2">{prod.name} → {rule.discountPercent}% off</span>}
         {rule.ruleType === 'threshold' && <span className="text-fg/60 ml-2">Order ≥ {fmt(rule.thresholdAmount)} → {prod?.name || 'product'} gets {rule.discountPercent}% off</span>}
       </div>
-      {onRemove && <button onClick={onRemove} className="text-red-400 hover:text-red-300 shrink-0"><X size={12} /></button>}
+      {onRemove && <button onClick={onRemove} className="text-danger hover:text-red-300 shrink-0"><X size={12} /></button>}
     </div>
   );
 }
@@ -101,24 +101,24 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
   return (
     <div className="bg-surface border border-white/10 shadow-md rounded-xl p-4 sm:p-6">
       <div className="flex items-center gap-3 mb-1">
-        <Flame size={18} className="text-orange-400" />
+        <Flame size={18} className="text-warning" />
         <h3 className="text-xl font-bold text-fg">Sales &amp; Promotions</h3>
       </div>
-      <p className="text-xs text-fg/40 mb-4">Time-boxed discounts applied automatically during the sale window. Fixed price, percent off, or order-threshold deals.</p>
+      <p className="text-xs text-fg/70 mb-4">Time-boxed discounts applied automatically during the sale window. Fixed price, percent off, or order-threshold deals.</p>
 
       <div className="flex flex-col lg:flex-row gap-6">
         {/* List */}
         <div className="flex-1 space-y-2">
-          {loading && <p className="text-sm text-fg/30 italic py-4">Loading…</p>}
-          {!loading && sales.length === 0 && <p className="text-sm text-fg/30 italic py-4">No sales yet.</p>}
+          {loading && <p className="text-sm text-fg/65 italic py-4">Loading…</p>}
+          {!loading && sales.length === 0 && <p className="text-sm text-fg/65 italic py-4">No sales yet.</p>}
           {sales.map(sale => (
             <div key={sale._id} className="bg-page-bg border border-white/10 rounded-xl overflow-hidden">
               <div className="flex items-center gap-3 px-4 py-3">
                 <button onClick={() => setExpanded(expanded === sale._id ? null : sale._id)} className="flex-1 min-w-0 text-left flex items-center gap-2">
-                  <ChevronRight size={14} className={`text-fg/40 shrink-0 transition-transform ${expanded === sale._id ? 'rotate-90' : ''}`} />
+                  <ChevronRight size={14} className={`text-fg/70 shrink-0 transition-transform ${expanded === sale._id ? 'rotate-90' : ''}`} />
                   <div className="min-w-0">
                     <p className="font-bold text-fg text-sm truncate">{sale.name}</p>
-                    <p className="text-[10px] text-fg/40 flex items-center gap-1 mt-0.5">
+                    <p className="text-[10px] text-fg/70 flex items-center gap-1 mt-0.5">
                       <Calendar size={9} />{fmtDate(sale.startsAt)} - {fmtDate(sale.endsAt)}
                       <span className="mx-1">·</span>{sale.rules?.length || 0} rule{sale.rules?.length !== 1 ? 's' : ''}
                     </p>
@@ -127,17 +127,17 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
                 <SaleStatusBadge sale={sale} />
                 {isSuperAdmin && (
                   <div className="flex items-center gap-1 shrink-0">
-                    <button onClick={() => toggleActive(sale)} title={sale.isActive ? 'Disable' : 'Enable'} className="p-1 text-fg/40 hover:text-fg/80 transition">
-                      {sale.isActive ? <ToggleRight size={16} className="text-green-400" /> : <ToggleLeft size={16} />}
+                    <button onClick={() => toggleActive(sale)} title={sale.isActive ? 'Disable' : 'Enable'} className="p-1 text-fg/70 hover:text-fg/80 transition">
+                      {sale.isActive ? <ToggleRight size={16} className="text-success" /> : <ToggleLeft size={16} />}
                     </button>
-                    <button onClick={() => startEdit(sale)} className="p-1 text-fg/40 hover:text-blue-400 transition"><Edit size={13} /></button>
-                    <button onClick={() => deleteSale(sale._id)} className="p-1 text-fg/40 hover:text-red-400 transition"><Trash2 size={13} /></button>
+                    <button onClick={() => startEdit(sale)} className="p-1 text-fg/70 hover:text-info transition"><Edit size={13} /></button>
+                    <button onClick={() => deleteSale(sale._id)} className="p-1 text-fg/70 hover:text-danger transition"><Trash2 size={13} /></button>
                   </div>
                 )}
               </div>
               {expanded === sale._id && (
                 <div className="border-t border-white/8 px-4 py-3 space-y-1.5">
-                  {(sale.rules || []).length === 0 && <p className="text-xs text-fg/30 italic">No rules yet.</p>}
+                  {(sale.rules || []).length === 0 && <p className="text-xs text-fg/65 italic">No rules yet.</p>}
                   {(sale.rules || []).map((r, i) => <RuleRow key={i} rule={r} products={products} />)}
                 </div>
               )}
@@ -155,18 +155,18 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <p className="text-[10px] text-fg/40 uppercase font-bold mb-1">Starts</p>
+                <p className="text-[10px] text-fg/70 uppercase font-bold mb-1">Starts</p>
                 <input type="datetime-local" className={`w-full ${inputCls} text-xs`} value={form.startsAt} onChange={e => setForm(f => ({ ...f, startsAt: e.target.value }))} />
               </div>
               <div>
-                <p className="text-[10px] text-fg/40 uppercase font-bold mb-1">Ends</p>
+                <p className="text-[10px] text-fg/70 uppercase font-bold mb-1">Ends</p>
                 <input type="datetime-local" className={`w-full ${inputCls} text-xs`} value={form.endsAt} onChange={e => setForm(f => ({ ...f, endsAt: e.target.value }))} />
               </div>
             </div>
 
             {/* Rules builder */}
             <div className="space-y-1.5">
-              <p className="text-[10px] text-fg/40 uppercase font-bold">Discount Rules</p>
+              <p className="text-[10px] text-fg/70 uppercase font-bold">Discount Rules</p>
               {form.rules.map((r, i) => (
                 <RuleRow key={i} rule={r} products={products} onRemove={() => setForm(f => ({ ...f, rules: f.rules.filter((_, j) => j !== i) }))} />
               ))}
@@ -209,7 +209,7 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
 
             <div className="flex gap-2 pt-1">
               {editing && (
-                <button onClick={resetForm} className="px-3 py-2 bg-white/5 text-fg/50 rounded-lg text-xs font-bold hover:bg-white/10 transition">Cancel</button>
+                <button onClick={resetForm} className="px-3 py-2 bg-white/5 text-fg/75 rounded-lg text-xs font-bold hover:bg-white/10 transition">Cancel</button>
               )}
               <button onClick={saveSale} disabled={saving || !form.name.trim() || !form.startsAt || !form.endsAt} className="flex-1 py-2 bg-orange-500 text-white rounded-lg text-xs font-black uppercase tracking-wider hover:bg-orange-400 transition disabled:opacity-40">
                 {saving ? 'Saving…' : editing ? 'Update Sale' : 'Create Sale'}
@@ -324,7 +324,7 @@ export default function ProductsTab({ ctx }) {
             <div className="flex items-baseline justify-between gap-3 mb-4 border-b border-white/10 pb-2">
               <h3 className="text-xl font-bold text-fg">Menu Items</h3>
               <div className="flex items-center gap-3 shrink-0">
-                <span className="text-xs font-bold text-fg/40">
+                <span className="text-xs font-bold text-fg/70">
                   {prodFiltersActive ? `${filteredProducts.length} of ${products.length}` : `${products.length} item${products.length === 1 ? '' : 's'}`}
                 </span>
                 <button onClick={exportMenuItemsPDF} className="text-[10px] bg-brand/10 hover:bg-brand/20 text-brand px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">Export PDF</button>
@@ -339,7 +339,7 @@ export default function ProductsTab({ ctx }) {
             <div className="flex flex-wrap items-center gap-2 mb-5 p-3 bg-page-bg border border-white/10 rounded-xl">
               <div className="mr-auto min-w-0">
                 <p className="text-[11px] font-black uppercase tracking-widest text-fg/60">Menu Backup</p>
-                <p className="text-[10px] text-fg/35 mt-0.5">Download the whole menu, restore it after a rebuild.</p>
+                <p className="text-[10px] text-fg/70 mt-0.5">Download the whole menu, restore it after a rebuild.</p>
               </div>
               <button onClick={() => downloadMenuBackup(false)} disabled={menuBackupBusy}
                 className="flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
@@ -358,7 +358,7 @@ export default function ProductsTab({ ctx }) {
             <div className="flex flex-wrap items-center gap-2 mb-5 p-3 bg-page-bg border border-white/10 rounded-xl">
               <div className="mr-auto min-w-0">
                 <p className="text-[11px] font-black uppercase tracking-widest text-fg/60">Recipe Workbook</p>
-                <p className="text-[10px] text-fg/35 mt-0.5">Read drinks and bulk recipes from the barista sheets.</p>
+                <p className="text-[10px] text-fg/70 mt-0.5">Read drinks and bulk recipes from the barista sheets.</p>
               </div>
               <label className={`flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition ${rsBusy ? 'opacity-40 pointer-events-none' : 'cursor-pointer'}`}>
                 <Upload size={12} /> {rsBusy ? 'Reading…' : 'Read Workbook'}
@@ -371,36 +371,36 @@ export default function ProductsTab({ ctx }) {
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={closeRecipeSheet}>
                 <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                   <h2 className="font-black text-fg text-lg mb-1">Recipe workbook</h2>
-                  <p className="text-xs text-fg/50 mb-4 break-all">{rsFile?.name}</p>
+                  <p className="text-xs text-fg/75 mb-4 break-all">{rsFile?.name}</p>
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
                     {[
                       ['Drinks read', rsPreview.counts.drinks, 'text-fg'],
-                      ['Ready', rsPreview.counts.drinks - rsPreview.counts.drinksNeedingReview, 'text-green-400'],
-                      ['Need review', rsPreview.counts.drinksNeedingReview, 'text-amber-400'],
+                      ['Ready', rsPreview.counts.drinks - rsPreview.counts.drinksNeedingReview, 'text-success'],
+                      ['Need review', rsPreview.counts.drinksNeedingReview, 'text-warning'],
                       ['Bulk recipes', rsPreview.counts.bulkRecipes, 'text-fg'],
                     ].map(([label, val, cls]) => (
                       <div key={label} className="bg-page-bg border border-white/10 rounded-lg p-2.5">
-                        <p className="text-[9px] font-black uppercase tracking-widest text-fg/40">{label}</p>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-fg/70">{label}</p>
                         <p className={`text-lg font-black tabular-nums ${cls}`}>{val}</p>
                       </div>
                     ))}
                   </div>
 
                   {/* Materials: what already exists vs what would be created. */}
-                  <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-1.5">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-1.5">
                     Materials · {rsPreview.counts.materialsMatched} in stock, {rsPreview.counts.materialsMissing} missing
                   </p>
                   <div className="max-h-44 overflow-y-auto bg-page-bg border border-white/10 rounded-lg mb-2">
                     {rsPreview.materials.map(m => (
                       <div key={m.name} className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-white/5 last:border-0 text-xs">
-                        <span className="truncate text-fg/80">{m.name} <span className="text-fg/30">×{m.uses}</span></span>
+                        <span className="truncate text-fg/80">{m.name} <span className="text-fg/65">×{m.uses}</span></span>
                         {m.matchedInvId ? (
-                          <span className={`shrink-0 text-[10px] font-bold ${m.unitMismatch ? 'text-amber-400' : 'text-green-400'}`}>
+                          <span className={`shrink-0 text-[10px] font-bold ${m.unitMismatch ? 'text-warning' : 'text-success'}`}>
                             {m.unitMismatch ? `unit mismatch (stock is ${m.matchedUnit})` : (m.matchedCode || 'in stock')}
                           </span>
                         ) : (
-                          <span className="shrink-0 text-[10px] font-bold text-fg/35">will be created</span>
+                          <span className="shrink-0 text-[10px] font-bold text-fg/70">will be created</span>
                         )}
                       </div>
                     ))}
@@ -410,7 +410,7 @@ export default function ProductsTab({ ctx }) {
                       column - so SRP is typed here, per size, before import. */}
                   {rsDrafts.length > 0 && (
                     <>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-1.5">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-1.5">
                         Drinks &amp; prices · {rsDrafts.length} ready
                       </p>
                       <div className="max-h-60 overflow-y-auto bg-page-bg border border-white/10 rounded-lg mb-4">
@@ -419,12 +419,12 @@ export default function ProductsTab({ ctx }) {
                             <div className="flex items-center justify-between gap-2">
                               <div className="min-w-0">
                                 <p className="text-xs font-bold text-fg truncate">{d.name}</p>
-                                <p className="text-[10px] text-fg/40">
+                                <p className="text-[10px] text-fg/70">
                                   {d.category} · {d.baseSizeName || 'no size'} · {(d.baseRecipe || []).length} ingredient(s)
                                 </p>
                               </div>
                               <div className="flex items-center gap-1 shrink-0">
-                                <span className="text-[10px] text-fg/40">SRP</span>
+                                <span className="text-[10px] text-fg/70">SRP</span>
                                 <input
                                   type="number" min="0" step="0.01" placeholder="0.00"
                                   value={rsPrices[d.name]?.[''] ?? ''}
@@ -435,8 +435,8 @@ export default function ProductsTab({ ctx }) {
                             </div>
                             {(d.sizes || []).map(sz => (
                               <div key={sz.name} className="flex items-center justify-between gap-2 mt-1 pl-3">
-                                <span className="text-[10px] text-fg/50 truncate">
-                                  + {sz.name} <span className="text-fg/30">({(sz.recipe || []).length} ingredient(s))</span>
+                                <span className="text-[10px] text-fg/75 truncate">
+                                  + {sz.name} <span className="text-fg/65">({(sz.recipe || []).length} ingredient(s))</span>
                                 </span>
                                 <input
                                   type="number" min="0" step="0.01" placeholder="0.00"
@@ -459,12 +459,12 @@ export default function ProductsTab({ ctx }) {
 
                   {rsPreview.counts.drinksNeedingReview > 0 && (
                     <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/25 mb-4 text-xs">
-                      <AlertTriangle size={15} className="text-amber-400 mt-0.5 shrink-0" />
+                      <AlertTriangle size={15} className="text-warning mt-0.5 shrink-0" />
                       <div>
-                        <p className="text-amber-400 font-black uppercase tracking-wider">
+                        <p className="text-warning font-black uppercase tracking-wider">
                           {rsPreview.counts.drinksNeedingReview} drink(s) skipped
                         </p>
-                        <p className="text-fg/50 mt-1">
+                        <p className="text-fg/75 mt-1">
                           Their ingredient cells are ambiguous - usually several materials in one cell, or a hot/iced
                           split that could be read two ways. Add these by hand rather than let the import guess:
                         </p>
@@ -475,18 +475,18 @@ export default function ProductsTab({ ctx }) {
                     </div>
                   )}
 
-                  <div className="text-[11px] text-fg/40 bg-page-bg border border-white/10 rounded-lg p-2.5 mb-4">
+                  <div className="text-[11px] text-fg/70 bg-page-bg border border-white/10 rounded-lg p-2.5 mb-4">
                     Prices are not in these sheets, so every drink imports at ₱0 - set each price before selling.
                     Sizes are imported using their hot figure; adjust iced quantities on the product afterwards.
                   </div>
 
                   <div className="flex gap-3">
                     <button onClick={closeRecipeSheet} disabled={rsBusy}
-                      className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
+                      className="flex-1 bg-white/5 hover:bg-white/10 text-fg/75 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
                       Cancel
                     </button>
                     <button onClick={submitRecipeSheet} disabled={rsBusy}
-                      className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">
+                      className="flex-1 bg-brand hover:bg-brand-dark text-on-brand font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">
                       {rsBusy ? 'Importing…' : `Import ${rsPreview.counts.drinks - rsPreview.counts.drinksNeedingReview} drink(s)`}
                     </button>
                   </div>
@@ -501,12 +501,12 @@ export default function ProductsTab({ ctx }) {
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setMenuRestoreModal(null)}>
                 <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                   <h2 className="font-black text-fg text-lg mb-1">Restore menu backup</h2>
-                  <p className="text-xs text-fg/50 mb-4 break-all">
+                  <p className="text-xs text-fg/75 mb-4 break-all">
                     {menuRestoreModal.fileName} · {menuRestoreModal.backup.products.length} product(s)
                     {menuRestoreModal.backup.exportedAt && ` · exported ${new Date(menuRestoreModal.backup.exportedAt).toLocaleDateString()}`}
                   </p>
 
-                  <label className="text-[10px] text-fg/40 uppercase tracking-widest font-bold block mb-1.5">If a product is already on the menu</label>
+                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">If a product is already on the menu</label>
                   <div className="space-y-1.5 mb-4">
                     {[
                       ['skip', 'Keep what is on the menu', 'Existing products are left exactly as they are.'],
@@ -516,17 +516,17 @@ export default function ProductsTab({ ctx }) {
                         className={`w-full text-left px-3 py-2.5 rounded-lg border transition ${
                           menuRestoreModal.onConflict === v ? 'bg-brand/15 border-brand/50' : 'bg-white/5 border-white/10 hover:border-white/20'}`}>
                         <span className={`block text-xs font-bold ${menuRestoreModal.onConflict === v ? 'text-fg' : 'text-fg/60'}`}>{label}</span>
-                        <span className="block text-[10px] text-fg/35 mt-0.5">{help}</span>
+                        <span className="block text-[10px] text-fg/70 mt-0.5">{help}</span>
                       </button>
                     ))}
                   </div>
 
                   {menuRestoreModal.preview ? (
                     <div className="bg-page-bg border border-white/10 rounded-xl p-3 mb-4 text-xs space-y-1">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-1.5">Preview</p>
-                      <div className="flex justify-between"><span className="text-fg/50">Will be created</span><span className="tabular-nums font-bold text-green-400">{menuRestoreModal.preview.created}</span></div>
-                      <div className="flex justify-between"><span className="text-fg/50">Will be updated</span><span className="tabular-nums font-bold text-amber-400">{menuRestoreModal.preview.updated}</span></div>
-                      <div className="flex justify-between"><span className="text-fg/50">Left untouched</span><span className="tabular-nums font-bold text-fg/50">{menuRestoreModal.preview.skipped}</span></div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-1.5">Preview</p>
+                      <div className="flex justify-between"><span className="text-fg/75">Will be created</span><span className="tabular-nums font-bold text-success">{menuRestoreModal.preview.created}</span></div>
+                      <div className="flex justify-between"><span className="text-fg/75">Will be updated</span><span className="tabular-nums font-bold text-warning">{menuRestoreModal.preview.updated}</span></div>
+                      <div className="flex justify-between"><span className="text-fg/75">Left untouched</span><span className="tabular-nums font-bold text-fg/75">{menuRestoreModal.preview.skipped}</span></div>
 
                       {/* How recipe lines re-linked to stock. Leaning on NAME
                           is the one worth flagging: it means the stock codes
@@ -537,11 +537,11 @@ export default function ProductsTab({ ctx }) {
                         if (!total) return null;
                         return (
                           <div className="mt-2 pt-2 border-t border-white/10">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-1">Recipe lines linked by</p>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-1">Recipe lines linked by</p>
                             <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px]">
-                              {mb.invId > 0 && <span className="text-fg/50">same stock record <span className="text-fg/80 font-bold tabular-nums">{mb.invId}</span></span>}
-                              {mb.itemCode > 0 && <span className="text-fg/50">stock code <span className="text-green-400 font-bold tabular-nums">{mb.itemCode}</span></span>}
-                              {mb.name > 0 && <span className="text-fg/50">name only <span className="text-amber-400 font-bold tabular-nums">{mb.name}</span></span>}
+                              {mb.invId > 0 && <span className="text-fg/75">same stock record <span className="text-fg/80 font-bold tabular-nums">{mb.invId}</span></span>}
+                              {mb.itemCode > 0 && <span className="text-fg/75">stock code <span className="text-success font-bold tabular-nums">{mb.itemCode}</span></span>}
+                              {mb.name > 0 && <span className="text-fg/75">name only <span className="text-warning font-bold tabular-nums">{mb.name}</span></span>}
                             </div>
                             {mb.name > 0 && (
                               <p className="text-[10px] text-amber-400/80 mt-1">
@@ -553,10 +553,10 @@ export default function ProductsTab({ ctx }) {
                       })()}
                       {menuRestoreModal.preview.unmatchedIngredients?.length > 0 && (
                         <div className="mt-2 pt-2 border-t border-white/10">
-                          <p className="text-[11px] text-amber-400 font-bold">
+                          <p className="text-[11px] text-warning font-bold">
                             {menuRestoreModal.preview.unmatchedIngredients.length} ingredient(s) not in stock
                           </p>
-                          <p className="text-[10px] text-fg/40 mt-0.5">
+                          <p className="text-[10px] text-fg/70 mt-0.5">
                             Those recipe lines will be left out, so affected products under-report cost until the
                             ingredient exists:
                           </p>
@@ -565,12 +565,12 @@ export default function ProductsTab({ ctx }) {
                       )}
                     </div>
                   ) : (
-                    <p className="text-[11px] text-fg/40 mb-4">Preview first to see exactly what this file would change.</p>
+                    <p className="text-[11px] text-fg/70 mb-4">Preview first to see exactly what this file would change.</p>
                   )}
 
                   <div className="flex gap-2">
                     <button onClick={() => setMenuRestoreModal(null)} disabled={menuBackupBusy}
-                      className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
+                      className="flex-1 bg-white/5 hover:bg-white/10 text-fg/75 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
                       Cancel
                     </button>
                     <button onClick={() => runMenuRestore(true)} disabled={menuBackupBusy}
@@ -579,7 +579,7 @@ export default function ProductsTab({ ctx }) {
                     </button>
                     <button onClick={() => runMenuRestore(false)} disabled={menuBackupBusy || !menuRestoreModal.preview}
                       title={!menuRestoreModal.preview ? 'Preview first' : ''}
-                      className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-40">
+                      className="flex-1 bg-brand hover:bg-brand-dark text-on-brand font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-40">
                       Restore
                     </button>
                   </div>
@@ -591,7 +591,7 @@ export default function ProductsTab({ ctx }) {
                 to find one item, so this narrows the list before pagination. */}
             <div className="mb-5 space-y-2">
               <div className="relative">
-                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30" />
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/65" />
                 <input
                   type="text"
                   value={prodSearch}
@@ -601,7 +601,7 @@ export default function ProductsTab({ ctx }) {
                 />
                 {prodSearch && (
                   <button type="button" onClick={() => setProdSearch('')} aria-label="Clear search"
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-fg/40 hover:text-fg transition">
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-fg/70 hover:text-fg transition">
                     <X size={15} />
                   </button>
                 )}
@@ -662,11 +662,11 @@ export default function ProductsTab({ ctx }) {
                   {prodFiltersActive ? (<>
                     <Search size={26} className="mx-auto mb-3 text-brand/50" />
                     <p className="text-fg/70 font-black uppercase tracking-widest text-xs mb-1">No matching items</p>
-                    <p className="text-fg/35 text-xs">No product matches your search and filters. Try clearing them.</p>
+                    <p className="text-fg/70 text-xs">No product matches your search and filters. Try clearing them.</p>
                   </>) : (<>
                     <Coffee size={26} className="mx-auto mb-3 text-brand/50" />
                     <p className="text-fg/70 font-black uppercase tracking-widest text-xs mb-1">No menu items yet</p>
-                    <p className="text-fg/35 text-xs">Add your first product with the form on the right; it goes live on the menu instantly.</p>
+                    <p className="text-fg/70 text-xs">Add your first product with the form on the right; it goes live on the menu instantly.</p>
                   </>)}
                 </div>
               )}
@@ -678,7 +678,7 @@ export default function ProductsTab({ ctx }) {
                     {p.image && ctx.systemSettings?.imagesEnabled !== false ? (
                       <img src={p.image} alt={p.name} className="w-16 h-16 object-cover rounded-lg shadow-sm border border-white/10 shrink-0" />
                     ) : (
-                      <div className="w-16 h-16 bg-white/5 rounded-lg border border-white/10 flex items-center justify-center text-xs text-fg/30 font-bold shrink-0">No Img</div>
+                      <div className="w-16 h-16 bg-white/5 rounded-lg border border-white/10 flex items-center justify-center text-xs text-fg/65 font-bold shrink-0">No Img</div>
                     )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -690,7 +690,7 @@ export default function ProductsTab({ ctx }) {
                           const est = getEstimatedStock(p.baseRecipe);
                           if (est === null) return null;
                           return (
-                            <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${est <= 0 ? 'bg-red-500/15 text-red-400' : est <= 5 ? 'bg-yellow-500/15 text-yellow-400' : 'bg-green-500/15 text-green-400'}`}>
+                            <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${est <= 0 ? 'bg-red-500/15 text-danger' : est <= 5 ? 'bg-yellow-500/15 text-warning' : 'bg-green-500/15 text-success'}`}>
                               {est <= 0 ? 'Out of Stock' : `Est: ${est} left`}
                             </span>
                           );
@@ -702,7 +702,7 @@ export default function ProductsTab({ ctx }) {
                             leaving staff to wonder why the item is hidden. */}
                         {p.stockAvailable === false && (
                           <span title={p.stockReason || 'Hidden from the customer menu.'}
-                            className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider bg-red-500/15 text-red-400">
+                            className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider bg-red-500/15 text-danger">
                             Hidden on menu
                           </span>
                         )}
@@ -719,8 +719,8 @@ export default function ProductsTab({ ctx }) {
                           {p.sizesWithoutRecipe.map(n => `"${n}"`).join(', ')} - selling {p.sizesWithoutRecipe.length === 1 ? 'it' : 'them'} deducts no stock.
                         </p>
                       )}
-                      {p.description && <p className="text-xs text-fg/40 mt-1 line-clamp-2">{p.description}</p>}
-                      <p className="text-sm text-fg/70 font-bold mt-1">P{Number(p.basePrice || p.price || 0).toFixed(2)} {p.baseSize && <span className="text-xs text-fg/30 font-normal">({p.baseSize})</span>} {p.sizes?.length > 0 && <span className="text-brand/70 text-xs ml-1">(+ {p.sizes.length} sizes)</span>}</p>
+                      {p.description && <p className="text-xs text-fg/70 mt-1 line-clamp-2">{p.description}</p>}
+                      <p className="text-sm text-fg/70 font-bold mt-1">P{Number(p.basePrice || p.price || 0).toFixed(2)} {p.baseSize && <span className="text-xs text-fg/65 font-normal">({p.baseSize})</span>} {p.sizes?.length > 0 && <span className="text-brand/70 text-xs ml-1">(+ {p.sizes.length} sizes)</span>}</p>
                     </div>
                   </div>
 
@@ -750,7 +750,7 @@ export default function ProductsTab({ ctx }) {
                           imageUrl: (p.image || '').startsWith('http') ? p.image : ''
                         }); 
                       }} 
-                      className="w-full sm:w-auto px-4 py-3 sm:py-2 bg-white/10 text-fg rounded-lg text-sm font-bold hover:bg-brand hover:text-white transition flex items-center justify-center gap-2"
+                      className="w-full sm:w-auto px-4 py-3 sm:py-2 bg-white/10 text-fg rounded-lg text-sm font-bold hover:bg-brand hover:text-on-brand transition flex items-center justify-center gap-2"
                     >
                       <Edit size={14} /> Edit
                     </button>
@@ -768,7 +768,7 @@ export default function ProductsTab({ ctx }) {
                   <span className="flex items-center gap-1"><ChevronLeft size={12} /> Previous</span>
                 </button>
                 
-                <span className="text-gray-400 text-sm font-bold tracking-widest">
+                <span className="text-fg/70 text-sm font-bold tracking-widest">
                   PAGE <span className="text-accent text-lg">{currentPage}</span> OF {totalPages}
                 </span>
                 
@@ -812,7 +812,7 @@ export default function ProductsTab({ ctx }) {
                     </>
                   )}
                 </select>
-                <button type="submit" className="bg-accent text-white font-bold px-6 py-2 rounded-lg hover:bg-opacity-90 transition shadow-md">
+                <button type="submit" className="bg-accent text-on-brand font-bold px-6 py-2 rounded-lg hover:bg-opacity-90 transition shadow-md">
                   {editingCategory ? 'Update' : 'Add'}
                 </button>
                 {editingCategory && (
@@ -827,11 +827,11 @@ export default function ProductsTab({ ctx }) {
                   <div key={c._id} className="flex justify-between items-center p-3 border border-white/10 rounded-xl bg-surface-2">
                     <div>
                       <span className="font-bold text-sm text-fg block">{c.name}</span>
-                      <span className="text-[10px] uppercase font-bold text-fg/40 tracking-wider">Routes to: {c.department || DEFAULT_DEPARTMENT}</span>
+                      <span className="text-[10px] uppercase font-bold text-fg/70 tracking-wider">Routes to: {c.department || DEFAULT_DEPARTMENT}</span>
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => { setEditingCategory(c); setCatForm({ name: c.name, department: c.department || DEFAULT_DEPARTMENT }); }} className="text-fg/40 hover:text-brand p-1.5 rounded"><Edit size={16} /></button>
-                      <button onClick={() => deleteCategory(c._id)} className="text-red-400 hover:text-red-300 p-1.5 rounded"><Trash2 size={16} /></button>
+                      <button onClick={() => { setEditingCategory(c); setCatForm({ name: c.name, department: c.department || DEFAULT_DEPARTMENT }); }} className="text-fg/70 hover:text-brand p-1.5 rounded"><Edit size={16} /></button>
+                      <button onClick={() => deleteCategory(c._id)} className="text-danger hover:text-red-300 p-1.5 rounded"><Trash2 size={16} /></button>
                     </div>
                   </div>
                 ))}
@@ -873,7 +873,7 @@ export default function ProductsTab({ ctx }) {
                     <option value="Milks">Milks</option>
                   </>)}
                 </select>
-                <button type="submit" className="bg-brand text-white font-bold px-6 py-2 rounded-lg hover:bg-brand-dark transition shadow-md">{addOnForm._id ? 'Save' : 'Add'}</button>
+                <button type="submit" className="bg-brand text-on-brand font-bold px-6 py-2 rounded-lg hover:bg-brand-dark transition shadow-md">{addOnForm._id ? 'Save' : 'Add'}</button>
                 {addOnForm._id && (
                   <button type="button" onClick={() => setAddOnForm({ name: '', price: '', category: 'Extras' })}
                     className="bg-white/5 text-fg/60 font-bold px-4 py-2 rounded-lg hover:bg-white/10 transition">Cancel</button>
@@ -889,8 +889,8 @@ export default function ProductsTab({ ctx }) {
                     </div>
                     <div className="flex items-center gap-1">
                       <button onClick={() => setAddOnForm({ _id: a._id, name: a.name, price: a.price, category: a.category || 'Extras' })}
-                        className="text-fg/40 hover:text-fg bg-white/5 hover:bg-white/10 p-1.5 rounded"><Edit size={16} /></button>
-                      <button onClick={() => deleteAddOn(a._id)} className="text-red-400 hover:text-red-300 bg-red-500/10 p-1.5 rounded"><Trash2 size={16} /></button>
+                        className="text-fg/70 hover:text-fg bg-white/5 hover:bg-white/10 p-1.5 rounded"><Edit size={16} /></button>
+                      <button onClick={() => deleteAddOn(a._id)} className="text-danger hover:text-red-300 bg-red-500/10 p-1.5 rounded"><Trash2 size={16} /></button>
                     </div>
                   </div>
                 ))}
@@ -914,10 +914,10 @@ export default function ProductsTab({ ctx }) {
                     {formData.image ? (
                       <img src={formData.image} alt="Preview" className="w-16 h-16 object-cover rounded-lg border border-white/10 shadow-sm" />
                     ) : (
-                      <div className="w-16 h-16 bg-white/5 border border-white/10 rounded-lg flex items-center justify-center text-xs text-fg/25 font-bold">None</div>
+                      <div className="w-16 h-16 bg-white/5 border border-white/10 rounded-lg flex items-center justify-center text-xs text-fg/65 font-bold">None</div>
                     )}
                     <div className="flex flex-col gap-2 min-w-0">
-                      <input type="file" accept="image/*" onChange={handleImageUpload} className="max-w-full text-sm text-fg/40 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-bold file:bg-accent file:text-white hover:file:bg-accent/80 cursor-pointer transition" />
+                      <input type="file" accept="image/*" onChange={handleImageUpload} className="max-w-full text-sm text-fg/70 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-bold file:bg-accent file:text-on-brand hover:file:bg-accent/80 cursor-pointer transition" />
                       {formData.image && (
                         <button type="button" onClick={() => setFormData({ ...formData, image: '', imageUrl: '' })}
                           className="self-start text-sm font-bold bg-red-500 rounded-xl py-2 px-4 text-white hover:text-white/60 transition">
@@ -943,7 +943,7 @@ export default function ProductsTab({ ctx }) {
                   <div className="flex gap-2 mb-2">
                     <input type="text" placeholder="Size Name (e.g. Regular)" value={formData.baseSize || ''} onChange={e => setFormData({...formData, baseSize: e.target.value})} className="w-1/2 bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand font-bold placeholder-white/20" />
                     <div className="w-1/2 relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/40 font-bold">₱</span>
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/70 font-bold">₱</span>
                       <input type="number" step="0.01" placeholder="Selling Price" value={formData.basePrice} onChange={e => setFormData({...formData, basePrice: parseFloat(e.target.value) || 0})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pl-8 text-fg outline-none focus:border-brand font-bold" />
                     </div>
                   </div>
@@ -951,7 +951,7 @@ export default function ProductsTab({ ctx }) {
                   <div className="flex items-center gap-2 mb-1">
                     <div className="relative w-1/2">
                       <input type="number" min="0" max="100" step="0.01" placeholder="Product Discount" value={formData.discountPercent || ''} onChange={e => setFormData({...formData, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pr-7 text-fg outline-none focus:border-brand font-bold placeholder-white/20" />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/40 font-bold">%</span>
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/70 font-bold">%</span>
                     </div>
                     {formData.discountPercent > 0 && (
                       <span className="text-[11px] text-emerald-400 font-bold">
@@ -1006,7 +1006,7 @@ export default function ProductsTab({ ctx }) {
                         className="text-[11px] font-black text-brand hover:text-fg transition disabled:opacity-40">+ Add client</button>
                     </div>
                     {(!clientAccounts || clientAccounts.length === 0) && (
-                      <p className="text-[10px] text-fg/30 italic">No client accounts yet - create one in the Client Accounts panel to assign a special discount.</p>
+                      <p className="text-[10px] text-fg/65 italic">No client accounts yet - create one in the Client Accounts panel to assign a special discount.</p>
                     )}
                     {(formData.clientDiscounts || []).map((cd, idx) => (
                       <div key={idx} className="flex items-center gap-2 mb-1.5">
@@ -1030,11 +1030,11 @@ export default function ProductsTab({ ctx }) {
                               setFormData({ ...formData, clientDiscounts: list });
                             }}
                             className="w-full bg-white/5 border border-white/10 rounded-lg pl-2 pr-6 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand" />
-                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/40 text-[10px] font-bold">%</span>
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/70 text-[10px] font-bold">%</span>
                         </div>
                         <button type="button"
                           onClick={() => setFormData({ ...formData, clientDiscounts: (formData.clientDiscounts || []).filter((_, i) => i !== idx) })}
-                          className="text-red-400/70 hover:text-red-500 text-sm">✕</button>
+                          className="text-red-400/70 hover:text-danger text-sm">✕</button>
                       </div>
                     ))}
                   </div>
@@ -1056,7 +1056,7 @@ export default function ProductsTab({ ctx }) {
                         className="text-[11px] font-black text-brand hover:text-fg transition disabled:opacity-40">+ Add break</button>
                     </div>
                     {(!formData.clientBulkBreaks || formData.clientBulkBreaks.length === 0) && (
-                      <p className="text-[10px] text-fg/30 italic">
+                      <p className="text-[10px] text-fg/65 italic">
                         {(!clientAccounts || clientAccounts.length === 0)
                           ? 'No client accounts yet - create one in the Client Accounts panel first.'
                           : 'e.g. "once this client orders 50+, charge them ₱180 each" - a quoted price at volume, only for this client.'}
@@ -1077,7 +1077,7 @@ export default function ProductsTab({ ctx }) {
                           ))}
                         </select>
                         <div className="flex items-center gap-1 shrink-0">
-                          <span className="text-[10px] text-fg/40 font-bold shrink-0">Qty ≥</span>
+                          <span className="text-[10px] text-fg/70 font-bold shrink-0">Qty ≥</span>
                           <input type="number" min="1" step="1" value={b.minQty}
                             onChange={e => {
                               const list = [...(formData.clientBulkBreaks || [])];
@@ -1087,7 +1087,7 @@ export default function ProductsTab({ ctx }) {
                             className="w-16 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand" />
                         </div>
                         <div className="relative w-28 shrink-0">
-                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-fg/40 text-[10px] font-bold">₱</span>
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-fg/70 text-[10px] font-bold">₱</span>
                           <input type="number" min="0" step="0.01" value={b.price}
                             onChange={e => {
                               const list = [...(formData.clientBulkBreaks || [])];
@@ -1098,7 +1098,7 @@ export default function ProductsTab({ ctx }) {
                         </div>
                         <button type="button"
                           onClick={() => setFormData({ ...formData, clientBulkBreaks: (formData.clientBulkBreaks || []).filter((_, i) => i !== idx) })}
-                          className="text-red-400/70 hover:text-red-500 text-sm">✕</button>
+                          className="text-red-400/70 hover:text-danger text-sm">✕</button>
                       </div>
                     ))}
                   </div>
@@ -1118,7 +1118,7 @@ export default function ProductsTab({ ctx }) {
                         className="text-[11px] font-black text-brand hover:text-fg transition">+ Add segment</button>
                     </div>
                     {(!formData.segmentDiscounts || formData.segmentDiscounts.length === 0) && (
-                      <p className="text-[10px] text-fg/30 italic">
+                      <p className="text-[10px] text-fg/65 italic">
                         {(priceTiers || []).length === 0
                           ? 'No price tiers yet - create them in Price Tiers (Super Admin), assign clients to one, then set a per-product rate here.'
                           : 'Optional. A tier already applies its own percent to every product; add a row here only to override this one product for that tier.'}
@@ -1154,11 +1154,11 @@ export default function ProductsTab({ ctx }) {
                               setFormData({ ...formData, segmentDiscounts: list });
                             }}
                             className="w-full bg-white/5 border border-white/10 rounded-lg pl-2 pr-6 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand" />
-                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/40 text-[10px] font-bold">%</span>
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/70 text-[10px] font-bold">%</span>
                         </div>
                         <button type="button"
                           onClick={() => setFormData({ ...formData, segmentDiscounts: (formData.segmentDiscounts || []).filter((_, i) => i !== idx) })}
-                          className="text-red-400/70 hover:text-red-500 text-sm">✕</button>
+                          className="text-red-400/70 hover:text-danger text-sm">✕</button>
                       </div>
                     ))}
                   </div>
@@ -1175,12 +1175,12 @@ export default function ProductsTab({ ctx }) {
                         className="text-[11px] font-black text-brand hover:text-fg transition">+ Add break</button>
                     </div>
                     {(!formData.bulkBreaks || formData.bulkBreaks.length === 0) && (
-                      <p className="text-[10px] text-fg/30 italic">No bulk breaks yet - e.g. "buy 10+, get 10% off".</p>
+                      <p className="text-[10px] text-fg/65 italic">No bulk breaks yet - e.g. "buy 10+, get 10% off".</p>
                     )}
                     {(formData.bulkBreaks || []).map((b, idx) => (
                       <div key={idx} className="flex items-center gap-2 mb-1.5">
                         <div className="flex items-center gap-1 w-1/2 sm:w-3/5 shrink-0">
-                          <span className="text-[10px] text-fg/40 font-bold shrink-0">Qty ≥</span>
+                          <span className="text-[10px] text-fg/70 font-bold shrink-0">Qty ≥</span>
                           <input type="number" min="1" step="1" value={b.minQty}
                             onChange={e => {
                               const list = [...(formData.bulkBreaks || [])];
@@ -1197,11 +1197,11 @@ export default function ProductsTab({ ctx }) {
                               setFormData({ ...formData, bulkBreaks: list });
                             }}
                             className="w-full bg-white/5 border border-white/10 rounded-lg pl-2 pr-6 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand" />
-                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/40 text-[10px] font-bold">%</span>
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/70 text-[10px] font-bold">%</span>
                         </div>
                         <button type="button"
                           onClick={() => setFormData({ ...formData, bulkBreaks: (formData.bulkBreaks || []).filter((_, i) => i !== idx) })}
-                          className="text-red-400/70 hover:text-red-500 text-sm">✕</button>
+                          className="text-red-400/70 hover:text-danger text-sm">✕</button>
                       </div>
                     ))}
                   </div>
@@ -1213,7 +1213,7 @@ export default function ProductsTab({ ctx }) {
                     const baseMargin = basePriceVal > 0 ? (((basePriceVal - baseCost) / basePriceVal) * 100).toFixed(1) : '0.0';
                     return baseCost > 0 ? (
                       <div className="flex justify-between items-center text-[10px] px-1 mb-3">
-                        <span className={parseFloat(baseMargin) >= 30 ? "text-green-400 font-black" : "text-yellow-500 font-black"}>Margin: {baseMargin}%</span>
+                        <span className={parseFloat(baseMargin) >= 30 ? "text-success font-black" : "text-warning font-black"}>Margin: {baseMargin}%</span>
                         <button type="button" onClick={() => setFormData({...formData, basePrice: parseFloat(suggestedBasePrice)})} className="text-fg/60 hover:text-brand font-bold transition">Set 30% Margin (₱{suggestedBasePrice})</button>
                       </div>
                     ) : <div className="mb-3"></div>;
@@ -1235,7 +1235,7 @@ export default function ProductsTab({ ctx }) {
                           onChange={e => updateMaterialQty((isLog ? (parseInt(e.target.value) || 0) : (parseFloat(e.target.value) || 0)) * currentPb, i, null)}
                           className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
                         <span className="text-white w-8 text-xs font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : mat.unit}</span>
-                        <button type="button" onClick={() => removeMaterial(i, null)} className="text-red-400 hover:text-red-300 ml-2"><X size={16} /></button>
+                        <button type="button" onClick={() => removeMaterial(i, null)} className="text-danger hover:text-red-300 ml-2"><X size={16} /></button>
                       </div>
                       );
                     })}
@@ -1278,7 +1278,7 @@ export default function ProductsTab({ ctx }) {
                       <div className="flex gap-2 mb-2">
                         <input type="text" placeholder="Size Name" value={size.name} onChange={e => updateSize(idx, 'name', e.target.value)} className="w-1/2 bg-white/5 border border-white/10 rounded-lg p-2 text-sm text-fg font-bold placeholder-white/20" required />
                         <input type="number" step="0.01" placeholder="Price" value={size.price} onChange={e => updateSize(idx, 'price', e.target.value)} className="w-1/3 bg-white/5 border border-white/10 rounded-lg p-2 text-sm text-fg font-bold placeholder-white/20" required />
-                        <button type="button" onClick={() => removeSize(idx)} className="text-fg/30 hover:text-red-400 font-bold ml-auto px-2"><X size={20} /></button>
+                        <button type="button" onClick={() => removeSize(idx)} className="text-fg/65 hover:text-danger font-bold ml-auto px-2"><X size={20} /></button>
                       </div>
 
                       {/* Per-size margin. A size carries its own price AND its own
@@ -1291,10 +1291,10 @@ export default function ProductsTab({ ctx }) {
                         const m = ((szPrice - szCost) / szPrice) * 100;
                         return (
                           <div className="flex justify-between items-center text-[10px] px-1 mb-2">
-                            <span className={m >= 30 ? 'text-green-400 font-black' : 'text-yellow-500 font-black'}>
+                            <span className={m >= 30 ? 'text-success font-black' : 'text-warning font-black'}>
                               Margin: {m.toFixed(1)}%
                             </span>
-                            <span className="text-fg/40 font-bold">
+                            <span className="text-fg/70 font-bold">
                               Set 30% margin (₱{(szCost / 0.7).toFixed(2)})
                             </span>
                           </div>
@@ -1317,7 +1317,7 @@ export default function ProductsTab({ ctx }) {
                               onChange={e => updateMaterialQty((isLog ? (parseInt(e.target.value) || 0) : (parseFloat(e.target.value) || 0)) * currentPb, i, idx)}
                               className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
                             <span className="text-white w-8 text-xs font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : mat.unit}</span>
-                            <button type="button" onClick={() => removeMaterial(i, idx)} className="text-red-400 hover:text-red-300 ml-2"><X size={16} /></button>
+                            <button type="button" onClick={() => removeMaterial(i, idx)} className="text-danger hover:text-red-300 ml-2"><X size={16} /></button>
                           </div>
                           );
                         })}
@@ -1376,7 +1376,7 @@ export default function ProductsTab({ ctx }) {
                 {BUSINESS_TYPE !== 'log' && modifierGroups.length > 0 && (
                   <div className="border-t border-white/10 pt-5 mt-4 mb-4">
                     <label className="text-sm font-black text-fg/80 uppercase tracking-wider mb-1 block">Required Modifier Groups</label>
-                    <p className="text-[10px] text-fg/30 mb-3">Checked groups will be required before adding to cart (e.g. "Choose your milk").</p>
+                    <p className="text-[10px] text-fg/65 mb-3">Checked groups will be required before adding to cart (e.g. "Choose your milk").</p>
                     <div className="space-y-2">
                       {modifierGroups.map(mg => {
                         const current = (formData.modifierGroups || []).map(id => (id && id._id) ? id._id : id);
@@ -1391,7 +1391,7 @@ export default function ProductsTab({ ctx }) {
                             />
                             <div>
                               <p className="text-sm font-bold text-fg">{mg.name}</p>
-                              <p className="text-[10px] text-fg/40">{mg.isRequired ? `Required - pick ${mg.minSelect}${mg.maxSelect>mg.minSelect?`-${mg.maxSelect}`:``}` : 'Optional'} · {mg.options?.length||0} options</p>
+                              <p className="text-[10px] text-fg/70">{mg.isRequired ? `Required - pick ${mg.minSelect}${mg.maxSelect>mg.minSelect?`-${mg.maxSelect}`:``}` : 'Optional'} · {mg.options?.length||0} options</p>
                             </div>
                           </label>
                         );
@@ -1402,23 +1402,23 @@ export default function ProductsTab({ ctx }) {
 
                 {/* --- IMAGE URL input --- */}
                 <div className="border-t border-white/10 pt-4 mt-2">
-                  <label className="text-xs font-bold text-fg/50 uppercase tracking-wider block mb-1.5">Image URL (alternative to upload)</label>
+                  <label className="text-xs font-bold text-fg/75 uppercase tracking-wider block mb-1.5">Image URL (alternative to upload)</label>
                   <input type="url" placeholder="https://example.com/image.jpg"
                     value={formData.imageUrl || ''}
                     onChange={e => setFormData({...formData, imageUrl: e.target.value, image: e.target.value || formData.image})}
                     className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/60 placeholder-white/20"
                   />
-                  <p className="text-[10px] text-fg/20 mt-1">Leave blank to use uploaded image. Paste URL to override.</p>
+                  <p className="text-[10px] text-fg/60 mt-1">Leave blank to use uploaded image. Paste URL to override.</p>
                 </div>
 
                 {/* Save Buttons */}
                 <div className="flex gap-3 mt-6 pt-4 border-t border-white/10">
                   {editingProduct && (
-                    <button type="button" onClick={() => deleteProduct(editingProduct._id)} className="bg-red-500/10 text-red-400 font-bold py-3 px-4 rounded-xl hover:bg-red-500/20 transition flex items-center justify-center border border-red-500/20" title="Delete product" aria-label="Delete product">
+                    <button type="button" onClick={() => deleteProduct(editingProduct._id)} className="bg-red-500/10 text-danger font-bold py-3 px-4 rounded-xl hover:bg-red-500/20 transition flex items-center justify-center border border-red-500/20" title="Delete product" aria-label="Delete product">
                       <Trash2 size={20} />
                     </button>
                   )}
-                  <button type="submit" className="flex-1 bg-accent text-white font-black py-4 rounded-xl hover:bg-opacity-90 shadow-lg shadow-accent/20 transition uppercase tracking-wider text-sm">
+                  <button type="submit" className="flex-1 bg-accent text-on-brand font-black py-4 rounded-xl hover:bg-opacity-90 shadow-lg shadow-accent/20 transition uppercase tracking-wider text-sm">
                     {editingProduct ? 'Update Product' : 'Save Product'}
                   </button>
                 </div>
@@ -1438,21 +1438,21 @@ export default function ProductsTab({ ctx }) {
           {/* ════════════ MODIFIER GROUPS MANAGEMENT - fb only ════════════ */}
           {BUSINESS_TYPE !== 'log' && <div className="bg-surface border border-white/10 shadow-md rounded-xl p-4 sm:p-6">
             <h3 className="text-xl font-bold mb-1 text-fg">Modifier Groups</h3>
-            <p className="text-xs text-fg/40 mb-4">Required choices on a product (e.g. "Choose your milk"). Attach them to products in the form above.</p>
+            <p className="text-xs text-fg/70 mb-4">Required choices on a product (e.g. "Choose your milk"). Attach them to products in the form above.</p>
             <div className="flex flex-col lg:flex-row gap-6">
               {/* Existing groups */}
               <div className="flex-1 space-y-2">
                 {modifierGroups.length === 0 ? (
-                  <p className="text-sm text-fg/30 italic py-4">No modifier groups yet.</p>
+                  <p className="text-sm text-fg/65 italic py-4">No modifier groups yet.</p>
                 ) : modifierGroups.map(g => (
                   <div key={g._id} className="bg-page-bg border border-white/10 rounded-xl p-3 flex justify-between items-start">
                     <div className="min-w-0">
-                      <p className="font-bold text-fg text-sm">{g.name} {g.isRequired && <span className="text-[9px] bg-red-900/40 text-red-400 px-1.5 py-0.5 rounded uppercase ml-1">Required</span>}</p>
-                      <p className="text-[11px] text-fg/40 mt-0.5">Pick {g.minSelect}{g.maxSelect > g.minSelect ? `-${g.maxSelect}` : ''} · {(g.options||[]).map(o => o.name + (o.price ? ` (+₱${o.price})` : '')).join(', ')}</p>
+                      <p className="font-bold text-fg text-sm">{g.name} {g.isRequired && <span className="text-[9px] bg-red-900/40 text-danger px-1.5 py-0.5 rounded uppercase ml-1">Required</span>}</p>
+                      <p className="text-[11px] text-fg/70 mt-0.5">Pick {g.minSelect}{g.maxSelect > g.minSelect ? `-${g.maxSelect}` : ''} · {(g.options||[]).map(o => o.name + (o.price ? ` (+₱${o.price})` : '')).join(', ')}</p>
                     </div>
                     <div className="flex gap-1 shrink-0 ml-2">
                       <button onClick={() => editModifierGroup(g)} className="text-blue-300 hover:text-fg hover:bg-blue-600 text-xs font-bold px-2 py-1 bg-blue-900/30 rounded transition">Edit</button>
-                      <button onClick={() => deleteModifierGroup(g._id)} className="text-red-400 hover:text-fg hover:bg-red-600 text-xs font-bold px-2 py-1 bg-red-900/30 rounded transition">Del</button>
+                      <button onClick={() => deleteModifierGroup(g._id)} className="text-danger hover:text-fg hover:bg-red-600 text-xs font-bold px-2 py-1 bg-red-900/30 rounded transition">Del</button>
                     </div>
                   </div>
                 ))}
@@ -1475,7 +1475,7 @@ export default function ProductsTab({ ctx }) {
                   </label>
                 </div>
                 <div className="space-y-1.5">
-                  <p className="text-[10px] text-fg/40 font-bold uppercase">Options</p>
+                  <p className="text-[10px] text-fg/70 font-bold uppercase">Options</p>
                   {modForm.options.map((o, i) => (
                     <div key={i} className="flex gap-1.5 items-center">
                       <input type="text" placeholder="Option name" value={o.name}
@@ -1484,16 +1484,16 @@ export default function ProductsTab({ ctx }) {
                       <input type="number" placeholder="₱0" value={o.price}
                         onChange={e => { const opts=[...modForm.options]; opts[i]={...opts[i],price:e.target.value}; setModForm({...modForm,options:opts}); }}
                         className="w-16 bg-surface border border-white/10 rounded px-2 py-1.5 text-fg text-xs text-right outline-none focus:border-accent" />
-                      <button onClick={() => setModForm({...modForm, options: modForm.options.filter((_,j)=>j!==i)})} className="text-red-400 hover:text-red-300 px-1 font-bold">✕</button>
+                      <button onClick={() => setModForm({...modForm, options: modForm.options.filter((_,j)=>j!==i)})} className="text-danger hover:text-red-300 px-1 font-bold">✕</button>
                     </div>
                   ))}
                   <button onClick={() => setModForm({...modForm, options:[...modForm.options,{name:'',price:'',recipe:[]}]})}
-                    className="w-full py-1.5 bg-white/5 text-fg/50 rounded text-xs font-bold hover:bg-white/10 transition">+ Add option</button>
+                    className="w-full py-1.5 bg-white/5 text-fg/75 rounded text-xs font-bold hover:bg-white/10 transition">+ Add option</button>
                 </div>
                 <div className="flex gap-2 pt-1">
                   {editingModifier && (
                     <button onClick={() => { setEditingModifier(null); setModForm({ name:'', isRequired:true, minSelect:1, maxSelect:1, options:[] }); }}
-                      className="px-3 py-2 bg-white/5 text-fg/50 rounded-lg text-xs font-bold hover:bg-white/10 transition">Cancel</button>
+                      className="px-3 py-2 bg-white/5 text-fg/75 rounded-lg text-xs font-bold hover:bg-white/10 transition">Cancel</button>
                   )}
                   <button onClick={saveModifierGroup} className="flex-1 py-2 bg-accent text-fg rounded-lg text-xs font-black uppercase tracking-wider hover:bg-opacity-90 transition">
                     {editingModifier ? 'Update Group' : 'Create Group'}
@@ -1506,17 +1506,17 @@ export default function ProductsTab({ ctx }) {
           {/* ════════════ COMBOS / BUNDLES (PRODUCT PROMOS) ════════════ */}
           <div className="bg-surface border border-white/10 shadow-md rounded-xl p-4 sm:p-6">
             <h3 className="text-xl font-bold mb-1 text-fg">Product Promos &amp; Combos</h3>
-            <p className="text-xs text-fg/40 mb-4">Fixed-price bundles of existing products (e.g. "Budget Meal: Americano + Pandesal = ₱99"). Sold as one line; stock is deducted per component.</p>
+            <p className="text-xs text-fg/70 mb-4">Fixed-price bundles of existing products (e.g. "Budget Meal: Americano + Pandesal = ₱99"). Sold as one line; stock is deducted per component.</p>
             <div className="flex flex-col lg:flex-row gap-6">
               {/* Existing combos */}
               <div className="flex-1 space-y-2">
                 {combos.length === 0 ? (
-                  <p className="text-sm text-fg/30 italic py-4">No combos yet.</p>
+                  <p className="text-sm text-fg/65 italic py-4">No combos yet.</p>
                 ) : combos.map(c => (
                   <div key={c._id} className="bg-page-bg border border-white/10 rounded-xl p-3 flex justify-between items-start">
                     <div className="min-w-0">
                       <p className="font-bold text-fg text-sm">{c.name} <span className="text-brand font-black ml-1">₱{Number(c.price).toFixed(2)}</span></p>
-                      <p className="text-[11px] text-fg/40 mt-0.5">{(c.items||[]).map(i => `${i.quantity>1?i.quantity+'× ':''}${i.name}${i.sizeName?` (${i.sizeName})`:''}`).join(' + ')}</p>
+                      <p className="text-[11px] text-fg/70 mt-0.5">{(c.items||[]).map(i => `${i.quantity>1?i.quantity+'× ':''}${i.name}${i.sizeName?` (${i.sizeName})`:''}`).join(' + ')}</p>
                     </div>
                     <div className="flex gap-1 shrink-0 ml-2">
                       <button onClick={() => editCombo(c)} className="text-white hover:text-fg hover:bg-blue-600 text-xs font-bold px-2 py-1 bg-blue-500 rounded transition">Edit</button>
@@ -1540,14 +1540,14 @@ export default function ProductsTab({ ctx }) {
                     className="flex-1 min-w-0 bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-accent placeholder-white/20" />
                 </div>
                 <div className="space-y-1.5">
-                  <p className="text-[10px] text-fg/40 font-bold uppercase">Components</p>
+                  <p className="text-[10px] text-fg/70 font-bold uppercase">Components</p>
                   {comboForm.items.map((it, i) => (
                     <div key={i} className="flex gap-1.5 items-center">
                       <span className="flex-1 text-xs text-fg/80 bg-surface border border-white/10 rounded px-2 py-1.5 truncate">{it.quantity>1?it.quantity+'× ':''}{it.name}</span>
                       <input type="number" min="1" value={it.quantity}
                         onChange={e => { const items=[...comboForm.items]; items[i]={...items[i],quantity:e.target.value}; setComboForm({...comboForm,items}); }}
                         className="w-14 bg-surface border border-white/10 rounded px-2 py-1.5 text-fg text-xs text-center outline-none" />
-                      <button onClick={() => setComboForm({...comboForm, items: comboForm.items.filter((_,j)=>j!==i)})} className="text-red-400 hover:text-red-300 px-1 font-bold">✕</button>
+                      <button onClick={() => setComboForm({...comboForm, items: comboForm.items.filter((_,j)=>j!==i)})} className="text-danger hover:text-red-300 px-1 font-bold">✕</button>
                     </div>
                   ))}
                   <select value="" onChange={e => {
@@ -1563,9 +1563,9 @@ export default function ProductsTab({ ctx }) {
                 <div className="flex gap-2 pt-1">
                   {editingCombo && (
                     <button onClick={() => { setEditingCombo(null); setComboForm({ name:'', description:'', price:'', image:'', items:[] }); }}
-                      className="px-3 py-2 bg-white/5 text-fg/50 rounded-lg text-xs font-bold hover:bg-white/10 transition">Cancel</button>
+                      className="px-3 py-2 bg-white/5 text-fg/75 rounded-lg text-xs font-bold hover:bg-white/10 transition">Cancel</button>
                   )}
-                  <button onClick={saveCombo} className="flex-1 py-2 bg-accent text-white rounded-lg text-xs font-black uppercase tracking-wider hover:bg-opacity-90 transition">
+                  <button onClick={saveCombo} className="flex-1 py-2 bg-accent text-on-brand rounded-lg text-xs font-black uppercase tracking-wider hover:bg-opacity-90 transition">
                     {editingCombo ? 'Update Combo' : 'Create Combo'}
                   </button>
                 </div>

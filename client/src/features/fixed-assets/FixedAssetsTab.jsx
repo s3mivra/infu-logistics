@@ -20,9 +20,9 @@ const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'n
 const today = () => new Date().toISOString().slice(0, 10);
 
 const STATUS_TONE = {
-  Active: 'text-green-400 bg-green-400/10',
-  'Fully Depreciated': 'text-amber-400 bg-amber-400/10',
-  Disposed: 'text-fg/40 bg-white/5',
+  Active: 'text-success bg-green-400/10',
+  'Fully Depreciated': 'text-warning bg-amber-400/10',
+  Disposed: 'text-fg/70 bg-white/5',
 };
 
 // One labelled input. The label is not decoration: an unlabelled row of boxes
@@ -31,9 +31,9 @@ const STATUS_TONE = {
 function Field({ label, hint, children, className = '' }) {
   return (
     <label className={`block ${className}`}>
-      <span className="block text-[9px] font-black uppercase tracking-widest text-fg/40 mb-1">{label}</span>
+      <span className="block text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1">{label}</span>
       {children}
-      {hint && <span className="block text-[10px] text-fg/35 mt-1">{hint}</span>}
+      {hint && <span className="block text-[10px] text-fg/70 mt-1">{hint}</span>}
     </label>
   );
 }
@@ -184,7 +184,7 @@ export default function FixedAssetsTab() {
             onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; importFile(f); }} />
         </label>
         <button onClick={() => setAcquireOpen(true)}
-          className="flex items-center gap-1.5 text-[10px] bg-brand hover:bg-brand/90 text-white px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition">
+          className="flex items-center gap-1.5 text-[10px] bg-brand hover:bg-brand/90 text-on-brand px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition">
           <Plus size={12} /> Add Asset
         </button>
       </div>
@@ -194,12 +194,12 @@ export default function FixedAssetsTab() {
         {[
           ['Assets held', String(totals.count ?? 0), 'text-fg'],
           ['At cost', peso(totals.cost), 'text-fg'],
-          ['Depreciated', peso(totals.accumulatedDepreciation), 'text-amber-400'],
-          ['Net book value', peso(totals.netBookValue), 'text-green-400'],
-          ['Due now', peso(totals.dueNow), totals.dueNow > 0 ? 'text-brand' : 'text-fg/40'],
+          ['Depreciated', peso(totals.accumulatedDepreciation), 'text-warning'],
+          ['Net book value', peso(totals.netBookValue), 'text-success'],
+          ['Due now', peso(totals.dueNow), totals.dueNow > 0 ? 'text-brand' : 'text-fg/70'],
         ].map(([label, val, cls]) => (
           <div key={label} className="bg-sidebar-bg border border-white/10 rounded-xl p-3">
-            <p className="text-[9px] font-black uppercase tracking-widest text-fg/40">{label}</p>
+            <p className="text-[9px] font-black uppercase tracking-widest text-fg/70">{label}</p>
             <p className={`text-base font-black tabular-nums ${cls}`}>{val}</p>
           </div>
         ))}
@@ -214,7 +214,7 @@ export default function FixedAssetsTab() {
             {peso(totals.dueNow)} of depreciation is owed. It is charged in whole months, so a part-month waits.
           </p>
           <button onClick={runMonthEnd} disabled={busy === 'run'}
-            className="flex items-center gap-1.5 text-[10px] bg-brand hover:bg-brand/90 text-white px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
+            className="flex items-center gap-1.5 text-[10px] bg-brand hover:bg-brand/90 text-on-brand px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
             <TrendingDown size={12} /> {busy === 'run' ? 'Posting…' : 'Run month-end'}
           </button>
         </div>
@@ -247,7 +247,7 @@ export default function FixedAssetsTab() {
         <div className="overflow-x-auto">
           <table className="w-full text-xs min-w-[900px]">
             <thead>
-              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/40 border-b border-white/10">
+              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/70 border-b border-white/10">
                 <th className="text-left px-3 py-2.5 w-6" />
                 <th className="text-left px-3 py-2.5">Asset</th>
                 <th className="text-left px-3 py-2.5">Class</th>
@@ -262,7 +262,7 @@ export default function FixedAssetsTab() {
             </thead>
             <tbody>
               {shown.length === 0 && (
-                <tr><td colSpan={10} className="px-3 py-10 text-center text-fg/40">
+                <tr><td colSpan={10} className="px-3 py-10 text-center text-fg/70">
                   {loading ? 'Loading…' : assets.length === 0
                     ? 'No assets yet. Add one, or import the filled-in template.'
                     : 'Nothing matches that search.'}
@@ -297,13 +297,13 @@ function FragmentRow({ a, expanded, rows, busy, onToggle, onDepreciate, onDispos
     <>
       <tr className="border-b border-white/5 hover:bg-white/[0.02]">
         <td className="px-3 py-2.5">
-          <button onClick={onToggle} className="text-fg/40 hover:text-fg transition" title="Depreciation schedule">
+          <button onClick={onToggle} className="text-fg/70 hover:text-fg transition" title="Depreciation schedule">
             {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           </button>
         </td>
         <td className="px-3 py-2.5">
           <p className="font-bold text-fg">{a.name}</p>
-          <p className="text-[10px] text-fg/35">
+          <p className="text-[10px] text-fg/70">
             {a.assetCode}{a.serialNumber ? ` · ${a.serialNumber}` : ''}{a.location ? ` · ${a.location}` : ''}
           </p>
         </td>
@@ -314,11 +314,11 @@ function FragmentRow({ a, expanded, rows, busy, onToggle, onDepreciate, onDispos
         <td className="px-3 py-2.5 text-right tabular-nums font-bold text-fg">{peso(a.netBookValue)}</td>
         <td className="px-3 py-2.5 text-right tabular-nums">
           {a.due?.amount > 0
-            ? <span className="text-brand font-bold">{peso(a.due.amount)}<span className="text-fg/35 font-normal"> · {a.due.months}mo</span></span>
-            : <span className="text-fg/25">-</span>}
+            ? <span className="text-brand font-bold">{peso(a.due.amount)}<span className="text-fg/70 font-normal"> · {a.due.months}mo</span></span>
+            : <span className="text-fg/65">-</span>}
         </td>
         <td className="px-3 py-2.5">
-          <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded ${STATUS_TONE[a.status] || 'text-fg/40 bg-white/5'}`}>
+          <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded ${STATUS_TONE[a.status] || 'text-fg/70 bg-white/5'}`}>
             {a.status}
           </span>
         </td>
@@ -332,11 +332,11 @@ function FragmentRow({ a, expanded, rows, busy, onToggle, onDepreciate, onDispos
             )}
             {!disposed && (
               <button onClick={onDispose}
-                className="flex items-center gap-1 text-[9px] border border-white/15 text-fg/50 hover:text-fg hover:bg-white/5 px-2 py-1 rounded font-bold uppercase tracking-wider transition">
+                className="flex items-center gap-1 text-[9px] border border-white/15 text-fg/75 hover:text-fg hover:bg-white/5 px-2 py-1 rounded font-bold uppercase tracking-wider transition">
                 <Archive size={10} /> Dispose
               </button>
             )}
-            {disposed && <span className="text-[10px] text-fg/30">{shortDate(a.disposedAt)}</span>}
+            {disposed && <span className="text-[10px] text-fg/65">{shortDate(a.disposedAt)}</span>}
           </div>
         </td>
       </tr>
@@ -344,17 +344,17 @@ function FragmentRow({ a, expanded, rows, busy, onToggle, onDepreciate, onDispos
       {expanded && (
         <tr className="bg-page-bg/50">
           <td colSpan={10} className="px-3 py-3">
-            <p className="text-[9px] font-black uppercase tracking-widest text-fg/40 mb-2">
+            <p className="text-[9px] font-black uppercase tracking-widest text-fg/70 mb-2">
               Schedule from here · {peso(a.monthlyDepreciation)} a month
-              {a.salvageValue > 0 && <span className="text-fg/30 font-normal"> · stops at the {peso(a.salvageValue)} salvage floor</span>}
+              {a.salvageValue > 0 && <span className="text-fg/65 font-normal"> · stops at the {peso(a.salvageValue)} salvage floor</span>}
             </p>
-            {!rows && <p className="text-[11px] text-fg/40">Loading…</p>}
-            {rows?.length === 0 && <p className="text-[11px] text-fg/40">Nothing further to charge - this asset is fully depreciated.</p>}
+            {!rows && <p className="text-[11px] text-fg/70">Loading…</p>}
+            {rows?.length === 0 && <p className="text-[11px] text-fg/70">Nothing further to charge - this asset is fully depreciated.</p>}
             {rows?.length > 0 && (
               <div className="max-h-52 overflow-y-auto border border-white/10 rounded-lg">
                 <table className="w-full text-[11px]">
                   <thead className="sticky top-0 bg-sidebar-bg">
-                    <tr className="text-[9px] font-black uppercase tracking-widest text-fg/40">
+                    <tr className="text-[9px] font-black uppercase tracking-widest text-fg/70">
                       <th className="text-left px-3 py-1.5">Month</th>
                       <th className="text-right px-3 py-1.5">Charge</th>
                       <th className="text-right px-3 py-1.5">Accumulated</th>
@@ -364,7 +364,7 @@ function FragmentRow({ a, expanded, rows, busy, onToggle, onDepreciate, onDispos
                   <tbody>
                     {rows.map(r => (
                       <tr key={r.period} className="border-t border-white/5">
-                        <td className="px-3 py-1.5 text-fg/50">+{r.period}</td>
+                        <td className="px-3 py-1.5 text-fg/75">+{r.period}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-fg/80">{peso(r.charge)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-amber-400/70">{peso(r.accumulated)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-fg">{peso(r.netBookValue)}</td>
@@ -469,7 +469,7 @@ function AcquireModal({ classes, apiFetch, onClose, onDone }) {
       </div>
 
       {perMonth > 0 && (
-        <p className="mt-3 text-[11px] text-fg/50">
+        <p className="mt-3 text-[11px] text-fg/75">
           Straight line: <span className="text-fg font-bold tabular-nums">{peso(perMonth)}</span> a month
           for {life} months, down to {peso(salvage)}.
         </p>
@@ -519,7 +519,7 @@ function DisposeModal({ asset, apiFetch, onClose, onDone }) {
         {[['Cost', peso(asset.acquisitionCost)], ['Depreciated', peso(asset.accumulatedDepreciation)], ['Net book value', peso(nbv)]]
           .map(([l, v]) => (
             <div key={l}>
-              <p className="text-[9px] font-black uppercase tracking-widest text-fg/40">{l}</p>
+              <p className="text-[9px] font-black uppercase tracking-widest text-fg/70">{l}</p>
               <p className="text-xs font-black tabular-nums text-fg">{v}</p>
             </div>
           ))}
@@ -542,9 +542,9 @@ function DisposeModal({ asset, apiFetch, onClose, onDone }) {
         </Field>
       </div>
 
-      <p className={`mt-3 text-[11px] font-bold ${diff > 0 ? 'text-green-400' : diff < 0 ? 'text-red-400' : 'text-fg/50'}`}>
+      <p className={`mt-3 text-[11px] font-bold ${diff > 0 ? 'text-success' : diff < 0 ? 'text-danger' : 'text-fg/75'}`}>
         {diff > 0 ? `Gain of ${peso(diff)}` : diff < 0 ? `Loss of ${peso(-diff)}` : 'No gain or loss'}
-        <span className="text-fg/40 font-normal"> - proceeds against a net book value of {peso(nbv)}.</span>
+        <span className="text-fg/70 font-normal"> - proceeds against a net book value of {peso(nbv)}.</span>
       </p>
 
       <ModalActions onClose={onClose} onSubmit={submit} busy={saving} label="Dispose" danger />
@@ -560,7 +560,7 @@ function Modal({ title, onClose, children }) {
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-black text-fg text-lg">{title}</h2>
-          <button onClick={onClose} className="text-fg/40 hover:text-fg transition"><X size={18} /></button>
+          <button onClick={onClose} className="text-fg/70 hover:text-fg transition"><X size={18} /></button>
         </div>
         {children}
       </div>

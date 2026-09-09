@@ -20,9 +20,9 @@ const inputCls = 'w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 
 function Field({ label, hint, children }) {
   return (
     <label className="block">
-      <span className="block text-[9px] font-black uppercase tracking-widest text-fg/40 mb-1">{label}</span>
+      <span className="block text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1">{label}</span>
       {children}
-      {hint && <span className="block text-[10px] text-fg/35 mt-1">{hint}</span>}
+      {hint && <span className="block text-[10px] text-fg/70 mt-1">{hint}</span>}
     </label>
   );
 }
@@ -70,12 +70,12 @@ export default function BankReconciliationTab() {
           <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Refresh
         </button>
         <button onClick={() => setStartOpen(true)}
-          className="flex items-center gap-1.5 text-[10px] bg-brand hover:bg-brand/90 text-white px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition">
+          className="flex items-center gap-1.5 text-[10px] bg-brand hover:bg-brand/90 text-on-brand px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition">
           <Plus size={12} /> New Statement
         </button>
       </div>
 
-      <p className="text-xs text-fg/50 leading-relaxed max-w-3xl">
+      <p className="text-xs text-fg/75 leading-relaxed max-w-3xl">
         The ledger and the bank never agree on the day, and they are not supposed to - a cheque written
         on the 28th clears on the 3rd. Reconciling accounts for every peso of that gap. What cannot be
         explained is the finding: a missed entry, a duplicate, or money gone.
@@ -85,7 +85,7 @@ export default function BankReconciliationTab() {
         <div className="overflow-x-auto">
           <table className="w-full text-xs min-w-[720px]">
             <thead>
-              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/40 border-b border-white/10">
+              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/70 border-b border-white/10">
                 <th className="text-left px-3 py-2.5">Reference</th>
                 <th className="text-left px-3 py-2.5">Account</th>
                 <th className="text-left px-3 py-2.5">Statement date</th>
@@ -97,7 +97,7 @@ export default function BankReconciliationTab() {
             </thead>
             <tbody>
               {list.length === 0 && (
-                <tr><td colSpan={7} className="px-3 py-10 text-center text-fg/40">
+                <tr><td colSpan={7} className="px-3 py-10 text-center text-fg/70">
                   {loading ? 'Loading…' : 'No statements yet. Start one when your bank statement arrives.'}
                 </td></tr>
               )}
@@ -110,7 +110,7 @@ export default function BankReconciliationTab() {
                   <td className="px-3 py-2.5 text-right tabular-nums text-fg/70">{peso(r.ledgerBalance)}</td>
                   <td className="px-3 py-2.5">
                     <span className={`inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded ${
-                      r.status === 'Reconciled' ? 'text-green-400 bg-green-400/10' : 'text-amber-400 bg-amber-400/10'
+                      r.status === 'Reconciled' ? 'text-success bg-green-400/10' : 'text-warning bg-amber-400/10'
                     }`}>
                       {r.status === 'Reconciled' ? <Lock size={9} /> : <Unlock size={9} />}{r.status}
                     </span>
@@ -164,7 +164,7 @@ function StartModal({ accounts, apiFetch, onClose, onDone }) {
       <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-black text-fg text-lg">New bank statement</h2>
-          <button onClick={onClose} className="text-fg/40 hover:text-fg transition"><X size={18} /></button>
+          <button onClick={onClose} className="text-fg/70 hover:text-fg transition"><X size={18} /></button>
         </div>
 
         <div className="space-y-3">
@@ -192,7 +192,7 @@ function StartModal({ accounts, apiFetch, onClose, onDone }) {
           <button onClick={onClose} disabled={saving}
             className="text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-4 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">Cancel</button>
           <button onClick={submit} disabled={saving}
-            className="text-[10px] bg-brand hover:bg-brand/90 text-white px-4 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
+            className="text-[10px] bg-brand hover:bg-brand/90 text-on-brand px-4 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
             {saving ? 'Working…' : 'Start reconciling'}
           </button>
         </div>
@@ -269,14 +269,14 @@ function Worksheet({ id, onBack, apiFetch }) {
     load();
   };
 
-  if (!data) return <p className="text-fg/40 text-sm">Loading…</p>;
+  if (!data) return <p className="text-fg/70 text-sm">Loading…</p>;
   const rec = data.reconciliation;
   const closed = rec.status === 'Reconciled';
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <button onClick={onBack} className="flex items-center gap-1 text-xs text-fg/50 hover:text-fg transition mr-auto">
+        <button onClick={onBack} className="flex items-center gap-1 text-xs text-fg/75 hover:text-fg transition mr-auto">
           <ChevronLeft size={14} /> All statements
         </button>
         {!closed && (
@@ -287,7 +287,7 @@ function Worksheet({ id, onBack, apiFetch }) {
             </button>
             <button onClick={finish} disabled={busy || !live.reconciles}
               title={live.reconciles ? '' : 'Every difference has to be accounted for first'}
-              className="flex items-center gap-1.5 text-[10px] bg-brand hover:bg-brand/90 text-white px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-30">
+              className="flex items-center gap-1.5 text-[10px] bg-brand hover:bg-brand/90 text-on-brand px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-30">
               <Check size={12} /> Mark reconciled
             </button>
           </>
@@ -302,7 +302,7 @@ function Worksheet({ id, onBack, apiFetch }) {
 
       <div>
         <h1 className="font-black text-fg text-lg">{rec.reference} · {rec.accountName}</h1>
-        <p className="text-xs text-fg/50">Statement dated {shortDate(rec.statementDate)}</p>
+        <p className="text-xs text-fg/75">Statement dated {shortDate(rec.statementDate)}</p>
       </div>
 
       {/* The reconciliation itself, laid out as the arithmetic it is. */}
@@ -320,7 +320,7 @@ function Worksheet({ id, onBack, apiFetch }) {
           <div className={`border-t pt-1.5 ${live.reconciles ? 'border-green-400/30' : 'border-red-400/30'}`}>
             <Row label={live.reconciles ? 'Difference - accounted for' : 'Unexplained difference'}
               value={live.difference} bold
-              tone={live.reconciles ? 'text-green-400' : 'text-red-400'} />
+              tone={live.reconciles ? 'text-success' : 'text-danger'} />
           </div>
         </div>
 
@@ -338,15 +338,15 @@ function Worksheet({ id, onBack, apiFetch }) {
 
       <div className="bg-sidebar-bg border border-white/10 rounded-xl overflow-hidden">
         <div className="px-3 py-2 border-b border-white/10 flex items-center justify-between">
-          <p className="text-[9px] font-black uppercase tracking-widest text-fg/40">
+          <p className="text-[9px] font-black uppercase tracking-widest text-fg/70">
             Ledger entries to {shortDate(rec.statementDate)}
           </p>
-          <p className="text-[10px] text-fg/40">{ticked.size} of {data.lines.length} ticked</p>
+          <p className="text-[10px] text-fg/70">{ticked.size} of {data.lines.length} ticked</p>
         </div>
         <div className="overflow-x-auto max-h-[28rem] overflow-y-auto">
           <table className="w-full text-xs min-w-[640px]">
             <thead className="sticky top-0 bg-sidebar-bg">
-              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/40 border-b border-white/10">
+              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/70 border-b border-white/10">
                 <th className="text-left px-3 py-2 w-10">On stmt</th>
                 <th className="text-left px-3 py-2">Date</th>
                 <th className="text-left px-3 py-2">Reference</th>
@@ -357,7 +357,7 @@ function Worksheet({ id, onBack, apiFetch }) {
             </thead>
             <tbody>
               {data.lines.length === 0 && (
-                <tr><td colSpan={6} className="px-3 py-8 text-center text-fg/40">
+                <tr><td colSpan={6} className="px-3 py-8 text-center text-fg/70">
                   Nothing has been posted to this account up to that date.
                 </td></tr>
               )}
@@ -376,7 +376,7 @@ function Worksheet({ id, onBack, apiFetch }) {
                     </td>
                     <td className="px-3 py-2 text-fg/60">{shortDate(l.date)}</td>
                     <td className="px-3 py-2 text-fg/80">{l.reference}</td>
-                    <td className="px-3 py-2 text-fg/50 truncate max-w-[18rem]">{l.description}</td>
+                    <td className="px-3 py-2 text-fg/75 truncate max-w-[18rem]">{l.description}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-green-400/80">{l.debit ? peso(l.debit) : ''}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-red-400/70">{l.credit ? peso(l.credit) : ''}</td>
                   </tr>
@@ -395,7 +395,7 @@ function Row({ label, value, hint, bold, tone }) {
     <div className="flex items-baseline justify-between gap-4">
       <span className={`${bold ? 'font-bold text-fg' : 'text-fg/60'}`}>
         {label}
-        {hint && <span className="block text-[10px] text-fg/30">{hint}</span>}
+        {hint && <span className="block text-[10px] text-fg/65">{hint}</span>}
       </span>
       <span className={`tabular-nums ${bold ? 'font-black' : ''} ${tone || 'text-fg'}`}>{peso(value)}</span>
     </div>

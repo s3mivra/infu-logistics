@@ -103,20 +103,20 @@ export default function StockTransferPanel({
   const card = 'bg-surface border border-white/10 rounded-xl p-4';
   const input = 'w-full bg-page-bg border border-white/10 rounded p-2 text-fg text-sm outline-none focus:border-accent';
   const statusColor = {
-    Requested: 'bg-yellow-500/15 text-yellow-400',
-    Approved: 'bg-blue-500/15 text-blue-400',
-    Released: 'bg-green-500/15 text-green-500',
-    Rejected: 'bg-red-500/15 text-red-400',
-    Cancelled: 'bg-white/10 text-fg/40',
+    Requested: 'bg-yellow-500/15 text-warning',
+    Approved: 'bg-blue-500/15 text-info',
+    Released: 'bg-green-500/15 text-success',
+    Rejected: 'bg-red-500/15 text-danger',
+    Cancelled: 'bg-white/10 text-fg/70',
   };
   // CrossTransfer (Hub) statuses are a different vocabulary from StockTransfer's -
   // same color language, different words.
   const hubStatusColor = {
-    Pending: 'bg-yellow-500/15 text-yellow-400',
-    Accepted: 'bg-blue-500/15 text-blue-400',
-    Released: 'bg-blue-500/15 text-blue-400',
-    Received: 'bg-green-500/15 text-green-500',
-    Rejected: 'bg-red-500/15 text-red-400',
+    Pending: 'bg-yellow-500/15 text-warning',
+    Accepted: 'bg-blue-500/15 text-info',
+    Released: 'bg-blue-500/15 text-info',
+    Received: 'bg-green-500/15 text-success',
+    Rejected: 'bg-red-500/15 text-danger',
   };
   const label = (i) => `${i.itemName}${i.stockLocation ? ` · ${i.stockLocation}` : ''}`;
   // Transfers are stored in base units (the ledger and stock cards need them
@@ -138,7 +138,7 @@ export default function StockTransferPanel({
             <div key={l.location} className={card}>
               <p className="text-[10px] uppercase tracking-widest text-white font-bold truncate">{l.location}</p>
               <p className="text-lg font-black text-white tabular-nums">{peso ? peso(l.totalValue) : l.totalValue}</p>
-              <p className="text-[10px] text-white/50">{l.itemCount} item(s){l.lowStockCount > 0 && <span className="text-red-400"> · {l.lowStockCount} low</span>}</p>
+              <p className="text-[10px] text-white/50">{l.itemCount} item(s){l.lowStockCount > 0 && <span className="text-danger"> · {l.lowStockCount} low</span>}</p>
             </div>
           ))}
         </div>
@@ -150,7 +150,7 @@ export default function StockTransferPanel({
         {/* Spell out the boundary this tab works within - the Hub tab's
             transfer moves stock to a DIFFERENT business, which is a different
             money path entirely. Users conflate the two constantly. */}
-        <p className="text-fg/40 text-[11px] mb-3">
+        <p className="text-fg/70 text-[11px] mb-3">
           Moves stock between locations of <span className="text-fg/70 font-bold">this</span> business - same inventory, same books.
           To ship stock to another business in your network, use the Hub tab.
           Either way the slip needs approval before stock moves.
@@ -214,7 +214,7 @@ export default function StockTransferPanel({
               placeholder={fromItem ? `How many ${pieceLabel}` : 'Select a source item first'}
               className={`${input}${overAvailable ? ' border-red-500/60' : ''}`} />
             {fromItem && (
-              <p className={`text-[10px] mt-1 ${overAvailable ? 'text-red-400 font-bold' : 'text-fg/40'}`}>
+              <p className={`text-[10px] mt-1 ${overAvailable ? 'text-danger font-bold' : 'text-fg/70'}`}>
                 {overAvailable
                   ? `Only ${availablePieces} ${pieceLabel} on hand.`
                   : <>
@@ -232,7 +232,7 @@ export default function StockTransferPanel({
             <input value={note} onChange={e => setNote(e.target.value)} placeholder="Reason / reference" className={input} />
           </div>
         </div>
-        <button onClick={submit} disabled={busy || !fromItemId || !toValue || !(qtyInBase > 0) || overAvailable} className="bg-accent text-white px-5 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-40 min-h-[44px]">
+        <button onClick={submit} disabled={busy || !fromItemId || !toValue || !(qtyInBase > 0) || overAvailable} className="bg-accent text-on-brand px-5 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-40 min-h-[44px]">
           {isHubTarget ? 'Send to Partner' : 'Request Transfer'}
         </button>
       </div>
@@ -276,13 +276,13 @@ export default function StockTransferPanel({
                     <td className="py-2 text-right">
                       <div className="flex gap-1.5 justify-end">
                         {t.status === 'Requested' && isSuperAdmin && (
-                          <button onClick={() => actOnStockTransfer(t._id, 'approve')} className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 min-h-[32px]">Approve</button>
+                          <button onClick={() => actOnStockTransfer(t._id, 'approve')} className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded bg-blue-500/15 text-info hover:bg-blue-500/25 min-h-[32px]">Approve</button>
                         )}
                         {t.status === 'Approved' && (
-                          <button onClick={() => actOnStockTransfer(t._id, 'release')} className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded bg-green-500/15 text-green-500 hover:bg-green-500/25 min-h-[32px]">Release</button>
+                          <button onClick={() => actOnStockTransfer(t._id, 'release')} className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded bg-green-500/15 text-success hover:bg-green-500/25 min-h-[32px]">Release</button>
                         )}
                         {['Requested', 'Approved'].includes(t.status) && (
-                          <button onClick={() => actOnStockTransfer(t._id, 'reject')} className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 min-h-[32px]">{isSuperAdmin ? 'Reject' : 'Cancel'}</button>
+                          <button onClick={() => actOnStockTransfer(t._id, 'reject')} className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded bg-red-500/10 text-danger hover:bg-red-500/20 min-h-[32px]">{isSuperAdmin ? 'Reject' : 'Cancel'}</button>
                         )}
                       </div>
                     </td>

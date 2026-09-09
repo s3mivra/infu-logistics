@@ -137,15 +137,15 @@ export default function ClientsTab() {
         </div>
         <div className="flex-1 min-w-0">
           <h1 className="text-xl font-black text-fg leading-none">Clients</h1>
-          <p className="text-fg/40 text-xs font-bold mt-1">
+          <p className="text-fg/70 text-xs font-bold mt-1">
             {data.clients.length} account{data.clients.length === 1 ? '' : 's'}
             {data.showMoney && overLimitCount > 0 && (
-              <span className="text-red-400"> · {overLimitCount} over limit</span>
+              <span className="text-danger"> · {overLimitCount} over limit</span>
             )}
           </p>
         </div>
         <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30" />
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/65" />
           <input
             value={q} onChange={e => setQ(e.target.value)}
             placeholder="Search clients…"
@@ -167,14 +167,14 @@ export default function ClientsTab() {
             onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; importClients(f); }} />
         </label>
         <button onClick={load} disabled={loading}
-          className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/40 hover:text-fg flex items-center justify-center transition disabled:opacity-40"
+          className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg flex items-center justify-center transition disabled:opacity-40"
           aria-label="Refresh clients">
           <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
 
       {!data.showMoney && (
-        <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-fg/40 text-xs font-bold">
+        <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-fg/70 text-xs font-bold">
           <AlertCircle size={14} />
           Balances and credit limits are hidden - they need the accounting permission.
         </div>
@@ -183,7 +183,7 @@ export default function ClientsTab() {
       <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
         <table className="w-full text-sm min-w-[720px]">
           <thead>
-            <tr className="bg-accent text-white text-[10px] uppercase tracking-widest border-b border-white/10">
+            <tr className="bg-accent text-on-brand text-[10px] uppercase tracking-widest border-b border-white/10">
               <th className="text-left py-3 px-4">Client</th>
               <th className="text-left py-3">Code</th>
               <th className="text-right py-3">Orders</th>
@@ -198,7 +198,7 @@ export default function ClientsTab() {
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={data.showMoney ? 7 : 4} className="py-14 text-center text-fg/30 font-bold">
+                <td colSpan={data.showMoney ? 7 : 4} className="py-14 text-center text-fg/65 font-bold">
                   {loading ? 'Loading…' : q ? 'No clients match that search.' : 'No client accounts yet - add one in the Admin Panel.'}
                 </td>
               </tr>
@@ -209,11 +209,11 @@ export default function ClientsTab() {
                   className={`border-b border-white/5 cursor-pointer hover:bg-white/5 transition ${c.overLimit ? 'bg-red-500/5' : ''}`}>
                   <td className="py-3 px-4 font-bold text-fg">
                     <span className="inline-flex items-center gap-2">
-                      {expanded === c._id ? <ChevronDown size={13} className="text-fg/60" /> : <ChevronRight size={13} className="text-fg/30" />}
+                      {expanded === c._id ? <ChevronDown size={13} className="text-fg/60" /> : <ChevronRight size={13} className="text-fg/65" />}
                       {c.name}
                       {!c.isActive && <span className="text-[8px] font-black bg-white/10 text-fg/60 px-1.5 py-0.5 rounded uppercase">Inactive</span>}
                       {c.overLimit && <span className="text-[8px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">Over</span>}
-                      {c.source === 'pos' && <span className="text-[8px] font-black bg-white/10 text-fg/40 px-1.5 py-0.5 rounded uppercase" title="Auto-promoted repeat walk-in">Walk-in</span>}
+                      {c.source === 'pos' && <span className="text-[8px] font-black bg-white/10 text-fg/70 px-1.5 py-0.5 rounded uppercase" title="Auto-promoted repeat walk-in">Walk-in</span>}
                     </span>
                   </td>
                   <td className="py-3 font-mono text-fg/100 text-xs">{c.clientCode}</td>
@@ -227,7 +227,7 @@ export default function ClientsTab() {
                     <td className="py-3 px-4 text-right tabular-nums text-xs">
                       {c.creditLimit === null || c.creditLimit === undefined
                         ? <span className="text-fg/100">No limit</span>
-                        : <span className={c.overLimit ? 'text-red-400 font-bold' : 'text-fg/100'}>
+                        : <span className={c.overLimit ? 'text-danger font-bold' : 'text-fg/100'}>
                             ₱{c.creditLimit.toLocaleString('en-PH')} <span className="text-fg/100">/</span> ₱{(c.available ?? 0).toLocaleString('en-PH')}
                           </span>}
                     </td>
@@ -254,9 +254,9 @@ export default function ClientsTab() {
                         </div>
                       )}
                       {!orders[c._id] ? (
-                        <p className="text-fg/30 text-xs font-bold py-2">Loading orders…</p>
+                        <p className="text-fg/65 text-xs font-bold py-2">Loading orders…</p>
                       ) : orders[c._id].length === 0 ? (
-                        <p className="text-fg/30 text-xs font-bold py-2">No orders yet.</p>
+                        <p className="text-fg/65 text-xs font-bold py-2">No orders yet.</p>
                       ) : (
                         <table className="w-full text-xs">
                           <thead>
@@ -278,7 +278,7 @@ export default function ClientsTab() {
                                 <td className="py-1.5 text-fg/80">
                                   {o.paymentMethod}
                                   {o.paymentMethod !== 'Cash' && !o.arSettled && o.status === 'Completed' && (
-                                    <span className="ml-1.5 text-[8px] font-black bg-yellow-500/20 text-yellow-400 px-1 py-0.5 rounded uppercase">Unsettled</span>
+                                    <span className="ml-1.5 text-[8px] font-black bg-yellow-500/20 text-warning px-1 py-0.5 rounded uppercase">Unsettled</span>
                                   )}
                                 </td>
                                 <td className="py-1.5 text-right tabular-nums text-fg/80">{o.itemCount}</td>

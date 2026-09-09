@@ -16,8 +16,8 @@ const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
 
 const ROLE_META = {
   superadmin: { label: 'Superadmin', bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30' },
-  Admin:      { label: 'Admin',      bg: 'bg-blue-500/20',    text: 'text-blue-400',    border: 'border-blue-500/30' },
-  Staff:      { label: 'Staff',      bg: 'bg-gray-500/20',    text: 'text-gray-400',    border: 'border-gray-500/30' },
+  Admin:      { label: 'Admin',      bg: 'bg-blue-500/20',    text: 'text-info',    border: 'border-blue-500/30' },
+  Staff:      { label: 'Staff',      bg: 'bg-gray-500/20',    text: 'text-fg/70',    border: 'border-gray-500/30' },
 };
 const getRoleMeta = (role) =>
   ROLE_META[role] ?? { label: role, bg: 'bg-purple-500/20', text: 'text-purple-400', border: 'border-purple-500/30' };
@@ -78,7 +78,7 @@ const UserCard = memo(({ user, isSelected, onSelect, onEdit, onDelete }) => {
 
       <div className="flex-1 min-w-0">
         <p className="font-bold text-fg truncate">{user.name}</p>
-        <p className="text-xs text-fg/40 font-mono">{user.userCode}</p>
+        <p className="text-xs text-fg/70 font-mono">{user.userCode}</p>
       </div>
 
       <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border flex-shrink-0
@@ -90,21 +90,21 @@ const UserCard = memo(({ user, isSelected, onSelect, onEdit, onDelete }) => {
         <div className="flex gap-1 flex-shrink-0">
           <button
             onClick={() => onEdit(user)}
-            className="p-2 rounded-lg text-fg/40 hover:text-fg hover:bg-white/10 transition"
+            className="p-2 rounded-lg text-fg/70 hover:text-fg hover:bg-white/10 transition"
             aria-label={`Edit ${user.name}`}
           >
             <Edit2 size={14} />
           </button>
           <button
             onClick={() => onDelete(user)}
-            className="p-2 rounded-lg text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition"
+            className="p-2 rounded-lg text-red-400/50 hover:text-danger hover:bg-red-500/10 transition"
             aria-label={`Delete ${user.name}`}
           >
             <Trash2 size={14} />
           </button>
         </div>
       ) : (
-        <Lock size={13} className="text-fg/20 flex-shrink-0" />
+        <Lock size={13} className="text-fg/60 flex-shrink-0" />
       )}
     </div>
   );
@@ -140,7 +140,7 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
             <p className="font-black text-brand text-xs uppercase tracking-widest leading-none mt-0.5">Center</p>
           </div>
           {onClose && (
-            <button onClick={onClose} className="p-1 rounded text-fg/30 hover:text-fg transition" aria-label="Close menu">
+            <button onClick={onClose} className="p-1 rounded text-fg/65 hover:text-fg transition" aria-label="Close menu">
               <X size={18} />
             </button>
           )}
@@ -154,7 +154,7 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
             onClick={() => { onSectionChange(id); onClose?.(); }}
             aria-current={activeSection === id ? 'page' : undefined}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
-              ${activeSection === id ? 'bg-brand/20 text-brand' : 'text-fg/50 hover:text-fg hover:bg-white/5'}`}
+              ${activeSection === id ? 'bg-brand/20 text-brand' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}
           >
             <Icon size={16} />
             {label}
@@ -166,14 +166,14 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
       <div className="p-3 border-t border-white/5 space-y-0.5">
         <button
           onClick={onPOS}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-fg/40 hover:text-fg hover:bg-white/5 transition font-bold text-sm"
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-fg/70 hover:text-fg hover:bg-white/5 transition font-bold text-sm"
         >
           <Monitor size={16} />
           POS Dashboard
         </button>
         <button
           onClick={onLogout}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-400/60 hover:text-red-400 hover:bg-red-500/10 transition font-bold text-sm"
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-400/60 hover:text-danger hover:bg-red-500/10 transition font-bold text-sm"
         >
           <LogOut size={16} />
           Lock Panel
@@ -1098,11 +1098,11 @@ export default function SuperAdminPanel() {
               <Shield size={26} className="text-brand" />
             </div>
             <h2 className="text-xl font-black text-fg uppercase tracking-widest">Command Center</h2>
-            <p className="text-fg/40 text-xs mt-1">Superadmin credentials required</p>
+            <p className="text-fg/70 text-xs mt-1">Superadmin credentials required</p>
           </div>
 
           {loginError && (
-            <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl px-4 py-3 mb-5">
+            <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 text-danger text-sm rounded-xl px-4 py-3 mb-5">
               <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
               <span>{loginError}</span>
             </div>
@@ -1132,7 +1132,7 @@ export default function SuperAdminPanel() {
               <button
                 type="button"
                 onClick={() => setLoginForm(f => ({ ...f, showPassword: !f.showPassword }))}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/30 hover:text-fg/70 transition"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/65 hover:text-fg/70 transition"
                 aria-label={loginForm.showPassword ? 'Hide password' : 'Show password'}
               >
                 {loginForm.showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -1152,7 +1152,7 @@ export default function SuperAdminPanel() {
           <button
             type="button"
             onClick={() => navigate('/admin')}
-            className="w-full text-fg/30 hover:text-fg/60 text-xs font-bold uppercase tracking-widest transition mt-4"
+            className="w-full text-fg/65 hover:text-fg/60 text-xs font-bold uppercase tracking-widest transition mt-4"
           >
             Return to POS
           </button>
@@ -1173,7 +1173,7 @@ export default function SuperAdminPanel() {
         <div className={`flex items-center gap-3 px-5 py-3 rounded-xl shadow-2xl border text-sm font-bold
           ${toast.type === 'success'
             ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400'
-            : 'bg-red-500/20 border-red-500/30 text-red-400'}`}>
+            : 'bg-red-500/20 border-red-500/30 text-danger'}`}>
           {toast.type === 'success' ? <UserCheck size={14} /> : <AlertCircle size={14} />}
           {toast.message}
         </div>
@@ -1216,7 +1216,7 @@ export default function SuperAdminPanel() {
         <header className="lg:hidden flex items-center gap-3 px-4 h-16 bg-sidebar-bg border-b border-white/5 flex-shrink-0">
           <button
             onClick={() => setDrawerOpen(true)}
-            className="p-2 rounded-xl text-fg/50 hover:text-fg hover:bg-white/10 transition"
+            className="p-2 rounded-xl text-fg/75 hover:text-fg hover:bg-white/10 transition"
             aria-label="Open navigation menu"
             aria-expanded={drawerOpen}
           >
@@ -1241,7 +1241,7 @@ export default function SuperAdminPanel() {
           {activeSection === 'users' && (
             <button
               onClick={openCreateModal}
-              className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-white font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex-shrink-0"
+              className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-on-brand font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex-shrink-0"
             >
               <Plus size={15} />
               New User
@@ -1293,7 +1293,7 @@ export default function SuperAdminPanel() {
             {/* Search + filter */}
             <div className="flex flex-col sm:flex-row gap-3">
               <div className="relative flex-1">
-                <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-fg/30" />
+                <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-fg/65" />
                 <input
                   type="text"
                   placeholder="Search name, code, or role…"
@@ -1343,7 +1343,7 @@ export default function SuperAdminPanel() {
                   ? (
                     <div className="flex flex-col items-center py-20 text-center">
                       <Users size={40} className="text-fg/10 mb-4" />
-                      <p className="text-fg/40 font-bold text-sm mb-1">
+                      <p className="text-fg/70 font-bold text-sm mb-1">
                         {search ? 'No users match your search.' : 'No users yet.'}
                       </p>
                       {!search && (
@@ -1377,12 +1377,12 @@ export default function SuperAdminPanel() {
         {activeSection === 'tiers' && (
           <div className="flex-1 p-6 space-y-3">
             <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-              <p className="text-[11px] text-fg/50 leading-relaxed">
+              <p className="text-[11px] text-fg/75 leading-relaxed">
                 A tier is a class of customer &mdash; <span className="text-fg/80 font-bold">Dealer</span>, <span className="text-fg/80 font-bold">Satellite</span>, <span className="text-fg/80 font-bold">Wholesale</span>.
                 Give it either a flat <span className="text-fg/80 font-bold">Default %</span> off every product, or a full <span className="text-fg/80 font-bold">Price List</span> with an
                 exact price per product. Assign a client to a tier in <span className="text-fg/80 font-bold">Client Accounts</span>.
               </p>
-              <p className="text-[11px] text-fg/35 leading-relaxed mt-2">
+              <p className="text-[11px] text-fg/70 leading-relaxed mt-2">
                 Need one product priced differently for a <em>Default %</em> tier? Add a <span className="text-fg/60 font-bold">Segment Override</span> on that product
                 (Products tab). A per-client override beats everything.
               </p>
@@ -1392,11 +1392,11 @@ export default function SuperAdminPanel() {
               <div className="flex bg-white/5 p-1 rounded-xl">
                 <button
                   onClick={() => setTierView('list')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${tierView === 'list' ? 'bg-brand text-white' : 'text-fg/50 hover:text-fg'}`}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${tierView === 'list' ? 'bg-brand text-on-brand' : 'text-fg/75 hover:text-fg'}`}
                 >Tiers</button>
                 <button
                   onClick={() => setTierView('table')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${tierView === 'table' ? 'bg-brand text-white' : 'text-fg/50 hover:text-fg'}`}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${tierView === 'table' ? 'bg-brand text-on-brand' : 'text-fg/75 hover:text-fg'}`}
                 >Pricing Table</button>
               </div>
             </div>
@@ -1405,7 +1405,7 @@ export default function SuperAdminPanel() {
               priceTiers.length === 0 ? (
                 <div className="flex flex-col items-center py-20 text-center">
                   <Tag size={40} className="text-fg/10 mb-4" />
-                  <p className="text-fg/40 font-bold text-sm">No price tiers yet.</p>
+                  <p className="text-fg/70 font-bold text-sm">No price tiers yet.</p>
                   <button
                     onClick={openTierCreate}
                     className="mt-4 flex items-center gap-2 bg-brand/20 hover:bg-brand/30 text-brand font-bold px-4 py-2 rounded-xl transition text-sm"
@@ -1429,10 +1429,10 @@ export default function SuperAdminPanel() {
                       <div className="flex items-center gap-2">
                         <p className="font-bold text-fg text-sm truncate">{tier.name}</p>
                         {tier.isActive === false && (
-                          <span className="text-[9px] font-black uppercase tracking-wider bg-white/10 text-fg/40 px-1.5 py-0.5 rounded">Inactive</span>
+                          <span className="text-[9px] font-black uppercase tracking-wider bg-white/10 text-fg/70 px-1.5 py-0.5 rounded">Inactive</span>
                         )}
                       </div>
-                      <p className="text-[11px] text-fg/40 truncate">
+                      <p className="text-[11px] text-fg/70 truncate">
                         {assigned} client{assigned === 1 ? '' : 's'}
                         {isPerProduct
                           ? ` · price list · ${priced}/${pricingTable.products.length} products priced`
@@ -1448,11 +1448,11 @@ export default function SuperAdminPanel() {
                     )}
                     <button
                       onClick={() => openTierEdit(tier)}
-                      className="text-[11px] font-bold text-fg/50 hover:text-brand transition px-3 py-2 flex-shrink-0"
+                      className="text-[11px] font-bold text-fg/75 hover:text-brand transition px-3 py-2 flex-shrink-0"
                     >Edit</button>
                     <button
                       onClick={() => handleTierDelete(tier)}
-                      className="text-[11px] font-bold text-red-400/70 hover:text-red-400 transition px-3 py-2 flex-shrink-0"
+                      className="text-[11px] font-bold text-red-400/70 hover:text-danger transition px-3 py-2 flex-shrink-0"
                     >Remove</button>
                   </div>
                 );
@@ -1460,20 +1460,20 @@ export default function SuperAdminPanel() {
             ) : (
               // ── PRICING TABLE: every product x every tier's resolved price ──
               pricingTableLoading ? (
-                <div className="flex justify-center py-20"><Loader2 size={24} className="animate-spin text-fg/30" /></div>
+                <div className="flex justify-center py-20"><Loader2 size={24} className="animate-spin text-fg/65" /></div>
               ) : pricingTable.products.length === 0 ? (
-                <p className="text-fg/40 text-sm text-center py-20">No products yet - add some in the Products tab.</p>
+                <p className="text-fg/70 text-sm text-center py-20">No products yet - add some in the Products tab.</p>
               ) : pricingTable.tiers.length === 0 ? (
-                <p className="text-fg/40 text-sm text-center py-20">No price tiers yet - create one to see prices here.</p>
+                <p className="text-fg/70 text-sm text-center py-20">No price tiers yet - create one to see prices here.</p>
               ) : (
                 <div className="overflow-x-auto rounded-xl border border-white/10">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-white/5 border-b border-white/10">
-                        <th className="text-left px-4 py-3 font-black text-[10px] uppercase tracking-widest text-fg/40 sticky left-0 bg-sidebar-bg">Product</th>
-                        <th className="text-right px-4 py-3 font-black text-[10px] uppercase tracking-widest text-fg/40">List Price</th>
+                        <th className="text-left px-4 py-3 font-black text-[10px] uppercase tracking-widest text-fg/70 sticky left-0 bg-sidebar-bg">Product</th>
+                        <th className="text-right px-4 py-3 font-black text-[10px] uppercase tracking-widest text-fg/70">List Price</th>
                         {pricingTable.tiers.map(t => (
-                          <th key={t._id} className="text-right px-4 py-3 font-black text-[10px] uppercase tracking-widest text-fg/40 whitespace-nowrap">
+                          <th key={t._id} className="text-right px-4 py-3 font-black text-[10px] uppercase tracking-widest text-fg/70 whitespace-nowrap">
                             {t.name}{t.isActive === false ? ' (inactive)' : ''}
                           </th>
                         ))}
@@ -1483,18 +1483,18 @@ export default function SuperAdminPanel() {
                       {pricingTable.products.map(p => (
                         <tr key={p._id} className="border-b border-white/5 hover:bg-white/[0.03]">
                           <td className="px-4 py-2.5 text-fg font-bold truncate max-w-[220px] sticky left-0 bg-sidebar-bg">{p.name}</td>
-                          <td className="px-4 py-2.5 text-right text-fg/50 font-mono tabular-nums">₱{Number(p.basePrice || 0).toFixed(2)}</td>
+                          <td className="px-4 py-2.5 text-right text-fg/75 font-mono tabular-nums">₱{Number(p.basePrice || 0).toFixed(2)}</td>
                           {pricingTable.tiers.map(t => {
                             const price = t.prices[p._id];
                             const off = price !== null && p.basePrice > 0 ? Math.round((1 - price / p.basePrice) * 100) : null;
                             return (
                               <td key={t._id} className="px-4 py-2.5 text-right font-mono tabular-nums">
                                 {price === null ? (
-                                  <span className="text-fg/20">&mdash;</span>
+                                  <span className="text-fg/60">&mdash;</span>
                                 ) : (
                                   <span className={off > 0 ? 'text-brand font-bold' : 'text-fg/70'}>
                                     ₱{price.toFixed(2)}
-                                    {off > 0 && <span className="text-[9px] text-fg/30 ml-1">-{off}%</span>}
+                                    {off > 0 && <span className="text-[9px] text-fg/65 ml-1">-{off}%</span>}
                                   </span>
                                 )}
                               </td>
@@ -1521,7 +1521,7 @@ export default function SuperAdminPanel() {
                 ? (
                   <div className="flex flex-col items-center py-20 text-center">
                     <Package size={40} className="text-fg/10 mb-4" />
-                    <p className="text-fg/40 font-bold text-sm">No client accounts yet.</p>
+                    <p className="text-fg/70 font-bold text-sm">No client accounts yet.</p>
                     <button
                       onClick={openClientCreate}
                       className="mt-4 flex items-center gap-2 bg-brand/20 hover:bg-brand/30 text-brand font-bold px-4 py-2 rounded-xl transition text-sm"
@@ -1537,22 +1537,22 @@ export default function SuperAdminPanel() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-bold text-fg truncate">{client.name}</p>
-                      <p className="text-xs text-fg/40 font-mono">
+                      <p className="text-xs text-fg/70 font-mono">
                         {client.clientCode} · {client.source === 'pos' ? 'no portal login (auto-promoted)' : `@${client.username}`}
                       </p>
                     </div>
-                    <span className="text-[10px] font-bold text-fg/50 bg-white/10 px-2 py-1 rounded-full flex-shrink-0">
+                    <span className="text-[10px] font-bold text-fg/75 bg-white/10 px-2 py-1 rounded-full flex-shrink-0">
                       {client.paymentMethod}
                     </span>
                     <button
                       onClick={() => toggleClientActive(client)}
-                      className={`flex-shrink-0 transition ${client.isActive ? 'text-emerald-400' : 'text-fg/20'}`}
+                      className={`flex-shrink-0 transition ${client.isActive ? 'text-emerald-400' : 'text-fg/60'}`}
                       title={client.isActive ? 'Active - click to deactivate' : 'Inactive - click to activate'}
                     >
                       {client.isActive ? <ToggleRight size={22} /> : <ToggleLeft size={22} />}
                     </button>
                     <div className="flex gap-1 flex-shrink-0">
-                      <button onClick={() => openClientEdit(client)} className="p-2 rounded-lg text-fg/40 hover:text-fg hover:bg-white/10 transition" aria-label="Edit">
+                      <button onClick={() => openClientEdit(client)} className="p-2 rounded-lg text-fg/70 hover:text-fg hover:bg-white/10 transition" aria-label="Edit">
                         <Edit2 size={14} />
                       </button>
                       {client.source === 'pos' ? (
@@ -1560,11 +1560,11 @@ export default function SuperAdminPanel() {
                           <Copy size={14} />
                         </button>
                       ) : (
-                        <button onClick={() => openResetPassword(client)} className="p-2 rounded-lg text-fg/40 hover:text-fg hover:bg-white/10 transition" aria-label="Reset password" title="Reset password">
+                        <button onClick={() => openResetPassword(client)} className="p-2 rounded-lg text-fg/70 hover:text-fg hover:bg-white/10 transition" aria-label="Reset password" title="Reset password">
                           <KeyRound size={14} />
                         </button>
                       )}
-                      <button onClick={() => handleClientDelete(client)} className="p-2 rounded-lg text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition" aria-label="Delete">
+                      <button onClick={() => handleClientDelete(client)} className="p-2 rounded-lg text-red-400/50 hover:text-danger hover:bg-red-500/10 transition" aria-label="Delete">
                         <Trash2 size={14} />
                       </button>
                     </div>
@@ -1584,7 +1584,7 @@ export default function SuperAdminPanel() {
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-black text-fg text-sm">{roleForm.id ? 'Edit Role' : 'New Role'}</h3>
                 {roleForm.id && (
-                  <button type="button" onClick={resetRoleForm} className="text-xs font-bold text-fg/40 hover:text-fg transition">Cancel edit</button>
+                  <button type="button" onClick={resetRoleForm} className="text-xs font-bold text-fg/70 hover:text-fg transition">Cancel edit</button>
                 )}
               </div>
               <input
@@ -1597,7 +1597,7 @@ export default function SuperAdminPanel() {
 
               <p className="text-[10px] font-bold text-fg/80 uppercase tracking-widest mb-2">What this role can do</p>
               <div className="space-y-3 bg-black/20 border border-white/10 rounded-xl p-3 max-h-72 overflow-y-auto">
-                {groupedPerms.length === 0 && <p className="text-fg/30 text-xs">Loading permissions…</p>}
+                {groupedPerms.length === 0 && <p className="text-fg/65 text-xs">Loading permissions…</p>}
                 {groupedPerms.map(([group, perms]) => (
                   <div key={group}>
                     <p className="text-[10px] font-black uppercase tracking-wider text-fg/80 mb-1">{group}</p>
@@ -1617,7 +1617,7 @@ export default function SuperAdminPanel() {
                 <button
                   type="submit"
                   disabled={roleLoading || !roleForm.name.trim()}
-                  className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-white font-bold px-5 py-2.5 rounded-xl transition disabled:opacity-50 text-sm"
+                  className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-on-brand font-bold px-5 py-2.5 rounded-xl transition disabled:opacity-50 text-sm"
                 >
                   {roleLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
                   {roleForm.id ? 'Save Role' : 'Add Role'}
@@ -1631,16 +1631,16 @@ export default function SuperAdminPanel() {
                 <div key={r.name} className="bg-white/5 border border-white/5 px-5 py-4 rounded-xl">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <Lock size={13} className="text-fg/40" />
+                      <Lock size={13} className="text-fg/70" />
                       <span className="font-bold text-fg text-sm">{r.name}</span>
-                      <span className="text-fg/30 text-xs">{r.permissions.length} permissions</span>
+                      <span className="text-fg/65 text-xs">{r.permissions.length} permissions</span>
                     </div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider bg-white/5 text-fg/40 border border-white/10 px-2 py-0.5 rounded-full">Built-in</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider bg-white/5 text-fg/70 border border-white/10 px-2 py-0.5 rounded-full">Built-in</span>
                   </div>
                   <div className="flex flex-wrap gap-1.5 mt-2.5 pl-6">
                     {r.permissions.map(k => {
                       const meta = permCatalog.find(p => p.key === k);
-                      return <span key={k} className="text-[10px] font-bold bg-white/5 border border-white/10 text-fg/50 px-2 py-0.5 rounded-full">{meta ? meta.label : k}</span>;
+                      return <span key={k} className="text-[10px] font-bold bg-white/5 border border-white/10 text-fg/75 px-2 py-0.5 rounded-full">{meta ? meta.label : k}</span>;
                     })}
                   </div>
                 </div>
@@ -1648,8 +1648,8 @@ export default function SuperAdminPanel() {
               {roles.length === 0 ? (
                 <div className="flex flex-col items-center py-10 text-center">
                   <Tag size={32} className="text-fg/10 mb-3" />
-                  <p className="text-fg/40 font-bold text-sm">No custom roles yet.</p>
-                  <p className="text-fg/20 text-xs mt-1">Create one above to extend beyond the built-in roles.</p>
+                  <p className="text-fg/70 font-bold text-sm">No custom roles yet.</p>
+                  <p className="text-fg/60 text-xs mt-1">Create one above to extend beyond the built-in roles.</p>
                 </div>
               ) : roles.map(r => (
                 <div
@@ -1660,19 +1660,19 @@ export default function SuperAdminPanel() {
                     <div className="flex items-center gap-3">
                       <Tag size={13} className="text-brand" />
                       <span className="font-bold text-fg text-sm">{r.name}</span>
-                      <span className="text-fg/30 text-xs">{(r.permissions?.length || 0)} permission{(r.permissions?.length === 1 ? '' : 's')}</span>
+                      <span className="text-fg/65 text-xs">{(r.permissions?.length || 0)} permission{(r.permissions?.length === 1 ? '' : 's')}</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => editRole(r)}
-                        className="p-1.5 rounded-lg text-fg/40 hover:text-fg hover:bg-white/10 transition"
+                        className="p-1.5 rounded-lg text-fg/70 hover:text-fg hover:bg-white/10 transition"
                         aria-label={`Edit ${r.name} role`}
                       >
                         <Edit2 size={14} />
                       </button>
                       <button
                         onClick={() => handleDeleteRole(r._id, r.name)}
-                        className="p-1.5 rounded-lg text-red-400/40 hover:text-red-400 hover:bg-red-500/10 transition"
+                        className="p-1.5 rounded-lg text-red-400/40 hover:text-danger hover:bg-red-500/10 transition"
                         aria-label={`Delete ${r.name} role`}
                       >
                         <Trash2 size={14} />
@@ -1723,14 +1723,14 @@ export default function SuperAdminPanel() {
           <button
             onClick={handleBatchDelete}
             disabled={batchLoading}
-            className="flex items-center gap-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-bold px-3 py-1.5 rounded-lg text-sm transition disabled:opacity-40"
+            className="flex items-center gap-1.5 bg-red-500/10 hover:bg-red-500/20 text-danger font-bold px-3 py-1.5 rounded-lg text-sm transition disabled:opacity-40"
           >
             <Trash2 size={13} />
             Revoke
           </button>
           <button
             onClick={() => setSelected(new Set())}
-            className="p-1 text-fg/30 hover:text-fg transition"
+            className="p-1 text-fg/65 hover:text-fg transition"
             aria-label="Clear selection"
           >
             <X size={17} />
@@ -1757,7 +1757,7 @@ export default function SuperAdminPanel() {
                   <Database size={16} className="text-brand" />
                   <h3 className="font-black text-fg text-sm uppercase tracking-widest">Storage</h3>
                 </div>
-                <p className="text-fg/50 text-xs mt-1">What this branch is holding, and what is growing.</p>
+                <p className="text-fg/75 text-xs mt-1">What this branch is holding, and what is growing.</p>
               </div>
               <button onClick={fetchStorage} disabled={storageBusy}
                 className="border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition disabled:opacity-40">
@@ -1775,7 +1775,7 @@ export default function SuperAdminPanel() {
                     ['Fastest growing', storage.growth.fastestGrowing || '-'],
                   ].map(([label, val]) => (
                     <div key={label} className="bg-page-bg border border-white/10 rounded-lg p-2.5">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-fg/40">{label}</p>
+                      <p className="text-[9px] font-black uppercase tracking-widest text-fg/70">{label}</p>
                       <p className="text-sm font-black text-fg mt-0.5 truncate" title={String(val)}>{val}</p>
                     </div>
                   ))}
@@ -1784,7 +1784,7 @@ export default function SuperAdminPanel() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
-                      <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
+                      <tr className="text-fg/70 text-[10px] uppercase tracking-widest border-b border-white/10">
                         <th className="text-left py-2">Collection</th>
                         <th className="text-right py-2 pl-3">Records</th>
                         <th className="text-right py-2 pl-3">Size</th>
@@ -1797,15 +1797,15 @@ export default function SuperAdminPanel() {
                         <tr key={c.key} className="border-b border-white/5">
                           <td className="py-2">
                             <span className="text-fg/80 font-bold">{c.label}</span>
-                            {c.note && <span className="block text-[10px] text-fg/30">{c.note}</span>}
+                            {c.note && <span className="block text-[10px] text-fg/65">{c.note}</span>}
                           </td>
                           <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{c.docs.toLocaleString()}</td>
                           <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{fmtBytes(c.bytes)}</td>
-                          <td className="py-2 pl-3 text-right tabular-nums text-fg/50">
+                          <td className="py-2 pl-3 text-right tabular-nums text-fg/75">
                             {c.docsPerDay > 0 ? `${c.docsPerDay.toLocaleString()}` : '-'}
                           </td>
                           <td className={`py-2 pl-3 text-right tabular-nums font-bold ${
-                            c.projectedBytesPerYear > 50 * 1024 * 1024 ? 'text-amber-400' : 'text-fg/50'}`}>
+                            c.projectedBytesPerYear > 50 * 1024 * 1024 ? 'text-warning' : 'text-fg/75'}`}>
                             {c.projectedBytesPerYear > 0 ? fmtBytes(c.projectedBytesPerYear) : '-'}
                           </td>
                         </tr>
@@ -1814,7 +1814,7 @@ export default function SuperAdminPanel() {
                   </table>
                 </div>
 
-                <p className="text-[10px] text-fg/30 mt-3">
+                <p className="text-[10px] text-fg/65 mt-3">
                   Per-day and per-year are projected from the last 30 days, so a branch that has just opened
                   will read low until it has traded for a month. Amber marks anything on track to add more
                   than 50 MB a year.
@@ -1825,10 +1825,10 @@ export default function SuperAdminPanel() {
 
           <div className="bg-red-500/5 border border-red-500/30 rounded-xl p-5">
             <div className="flex items-center gap-2 mb-1">
-              <AlertTriangle size={16} className="text-red-400" />
-              <h3 className="font-black text-red-400 text-sm uppercase tracking-widest">Danger Zone</h3>
+              <AlertTriangle size={16} className="text-danger" />
+              <h3 className="font-black text-danger text-sm uppercase tracking-widest">Danger Zone</h3>
             </div>
-            <p className="text-fg/50 text-xs mb-3 max-w-2xl">
+            <p className="text-fg/75 text-xs mb-3 max-w-2xl">
               Purge Data permanently deletes every sale/order, ledger entry, inventory item and stock history,
               shift/time-clock record, revolving fund, and purchase order/bill for this business. Staff accounts,
               roles, client accounts, the menu (products/combos/categories), pricing, the Chart of Accounts, and
@@ -1836,7 +1836,7 @@ export default function SuperAdminPanel() {
             </p>
             <div className="flex flex-wrap gap-2">
               <button onClick={openPurgeModal}
-                className="flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/40 text-red-400 font-bold text-sm px-4 py-2.5 rounded-lg transition">
+                className="flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/40 text-danger font-bold text-sm px-4 py-2.5 rounded-lg transition">
                 <Trash2 size={14} /> Purge Data
               </button>
               <button onClick={() => { setRewireModal({ open: true, busy: false, error: '', result: null }); }}
@@ -1849,10 +1849,10 @@ export default function SuperAdminPanel() {
 
           <div className="bg-amber-500/5 border border-amber-500/30 rounded-xl p-5 mt-4">
             <div className="flex items-center gap-2 mb-1">
-              <Trash2 size={16} className="text-amber-400" />
-              <h3 className="font-black text-amber-400 text-sm uppercase tracking-widest">Archived Products Cleanup</h3>
+              <Trash2 size={16} className="text-warning" />
+              <h3 className="font-black text-warning text-sm uppercase tracking-widest">Archived Products Cleanup</h3>
             </div>
-            <p className="text-fg/50 text-xs mb-3 max-w-2xl">
+            <p className="text-fg/75 text-xs mb-3 max-w-2xl">
               "Delete" on a product only archives it (hidden from the menu) - the record, including its embedded
               image, stays in the database forever, invisibly. This checks how much of that is piled up and lets
               you actually remove it. Permanent - unlike Archive, these cannot be restored afterward.
@@ -1863,14 +1863,14 @@ export default function SuperAdminPanel() {
                 {archivedLoading ? 'Checking…' : 'Check Archived Products'}
               </button>
             ) : archivedProducts.count === 0 ? (
-              <p className="text-fg/40 text-sm">No archived products - nothing to clean up.</p>
+              <p className="text-fg/70 text-sm">No archived products - nothing to clean up.</p>
             ) : (
               <div className="flex items-center gap-3 flex-wrap">
                 <p className="text-fg text-sm font-bold">
                   {archivedProducts.count} archived product(s) · ~{fmtBytes(archivedProducts.totalImageBytes)} of image data
                 </p>
                 <button onClick={deleteArchivedProductsForever} disabled={archivedDeleting}
-                  className="flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/40 text-red-400 font-bold text-sm px-4 py-2.5 rounded-lg transition disabled:opacity-50">
+                  className="flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/40 text-danger font-bold text-sm px-4 py-2.5 rounded-lg transition disabled:opacity-50">
                   <Trash2 size={14} /> {archivedDeleting ? 'Deleting…' : 'Delete Forever'}
                 </button>
               </div>
@@ -1887,10 +1887,10 @@ export default function SuperAdminPanel() {
           <div className="bg-sidebar-bg border border-red-500/40 rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
               <div className="flex items-center gap-2">
-                <AlertTriangle size={18} className="text-red-400" />
+                <AlertTriangle size={18} className="text-danger" />
                 <h2 className="font-black text-fg text-lg">Purge Data</h2>
               </div>
-              <button onClick={() => !purgeModal.busy && setPurgeModal({ open: false, phrase: '', busy: false, error: '', result: null })} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+              <button onClick={() => !purgeModal.busy && setPurgeModal({ open: false, phrase: '', busy: false, error: '', result: null })} className="text-fg/70 hover:text-fg transition"><X size={20} /></button>
             </div>
             {purgeModal.result ? (
               <div className="p-6 space-y-3">
@@ -1898,27 +1898,27 @@ export default function SuperAdminPanel() {
                 <div className="bg-page-bg border border-white/10 rounded-lg p-3 max-h-[40vh] overflow-y-auto space-y-1">
                   {Object.entries(purgeModal.result).map(([k, v]) => (
                     <div key={k} className="flex justify-between text-xs">
-                      <span className="text-fg/50">{k}</span>
+                      <span className="text-fg/75">{k}</span>
                       <span className="text-fg font-mono font-bold">{v}</span>
                     </div>
                   ))}
                 </div>
-                <p className="text-fg/40 text-xs">
+                <p className="text-fg/70 text-xs">
                   If you're re-adding inventory under the same item names, use <span className="text-fg font-bold">Rewire Recipe Links</span> below
                   afterward so recipe-based products re-link to the new items instead of relying on the runtime fallback.
                 </p>
-                <p className="text-fg/40 text-xs">Reloading clears every screen's cached data (P&L, Trial Balance, Balance Sheet, Transfers, Analytics, etc.) so they show the fresh, purged state instead of what was loaded before the purge ran.</p>
+                <p className="text-fg/70 text-xs">Reloading clears every screen's cached data (P&L, Trial Balance, Balance Sheet, Transfers, Analytics, etc.) so they show the fresh, purged state instead of what was loaded before the purge ran.</p>
                 <button onClick={() => window.location.reload()}
-                  className="w-full bg-brand hover:bg-brand/90 text-white font-bold text-sm py-2.5 rounded-lg transition">Done - Reload App</button>
+                  className="w-full bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm py-2.5 rounded-lg transition">Done - Reload App</button>
               </div>
             ) : (
               <div className="p-6 space-y-4">
                 <p className="text-fg/70 text-sm">
                   Pick exactly what to delete. Staff, roles, client accounts, the Chart of Accounts, and Settings are
-                  never touched here regardless of what's selected below. <span className="text-red-400 font-bold">This cannot be undone.</span>
+                  never touched here regardless of what's selected below. <span className="text-danger font-bold">This cannot be undone.</span>
                 </p>
                 <div>
-                  <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1.5">What to delete</label>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1.5">What to delete</label>
                   <div className="space-y-1.5 max-h-[36vh] overflow-y-auto pr-1">
                     {purgeCategories.map(c => {
                       const checked = purgeSelected.has(c.key);
@@ -1927,7 +1927,7 @@ export default function SuperAdminPanel() {
                           <input type="checkbox" checked={checked} onChange={() => togglePurgeCategory(c.key)} className="accent-red-500 w-4 h-4 mt-0.5 shrink-0" />
                           <span className="text-sm font-bold text-fg">
                             {c.label}
-                            {c.key === 'menu' && <span className="block text-[10px] font-bold text-amber-400 normal-case mt-0.5">Off by default - only check this if you really want to wipe the menu itself, not just its sales history.</span>}
+                            {c.key === 'menu' && <span className="block text-[10px] font-bold text-warning normal-case mt-0.5">Off by default - only check this if you really want to wipe the menu itself, not just its sales history.</span>}
                           </span>
                         </label>
                       );
@@ -1935,15 +1935,15 @@ export default function SuperAdminPanel() {
                   </div>
                 </div>
                 <div>
-                  <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Type PURGE to confirm</label>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Type PURGE to confirm</label>
                   <input autoFocus type="text" value={purgeModal.phrase} onChange={e => setPurgeModal(m => ({ ...m, phrase: e.target.value, error: '' }))}
                     className="w-full bg-page-bg border border-red-500/30 rounded-lg px-3 py-2.5 text-fg font-mono font-bold outline-none focus:border-red-500/60 tracking-widest"
                     placeholder="PURGE" />
-                  {purgeModal.error && <p className="text-red-400 text-xs mt-1.5 font-bold">{purgeModal.error}</p>}
+                  {purgeModal.error && <p className="text-danger text-xs mt-1.5 font-bold">{purgeModal.error}</p>}
                 </div>
                 <div className="flex justify-end gap-2">
                   <button onClick={() => setPurgeModal({ open: false, phrase: '', busy: false, error: '', result: null })} disabled={purgeModal.busy}
-                    className="text-sm font-bold px-4 py-2 rounded-lg text-fg/50 hover:text-fg transition disabled:opacity-40">Cancel</button>
+                    className="text-sm font-bold px-4 py-2 rounded-lg text-fg/75 hover:text-fg transition disabled:opacity-40">Cancel</button>
                   <button onClick={handlePurgeData} disabled={purgeModal.busy || purgeModal.phrase.trim() !== 'PURGE' || purgeSelected.size === 0}
                     className="flex items-center gap-2 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-lg transition">
                     {purgeModal.busy ? 'Purging…' : `Purge ${purgeSelected.size ? `${purgeSelected.size} Selected` : 'Selected'}`}
@@ -1966,7 +1966,7 @@ export default function SuperAdminPanel() {
                 <RefreshCw size={18} className="text-brand" />
                 <h2 className="font-black text-fg text-lg">Rewire Recipe Links</h2>
               </div>
-              <button onClick={() => !rewireModal.busy && setRewireModal({ open: false, busy: false, error: '', result: null })} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+              <button onClick={() => !rewireModal.busy && setRewireModal({ open: false, busy: false, error: '', result: null })} className="text-fg/70 hover:text-fg transition"><X size={20} /></button>
             </div>
             {rewireModal.result ? (
               <div className="p-6 space-y-3">
@@ -1974,19 +1974,19 @@ export default function SuperAdminPanel() {
                   {rewireModal.result.ingredientsFixed > 0 ? 'Rewire complete.' : 'Nothing to fix - all recipe links are already live.'}
                 </p>
                 <div className="bg-page-bg border border-white/10 rounded-lg p-3 space-y-1">
-                  <div className="flex justify-between text-xs"><span className="text-fg/50">Products checked</span><span className="text-fg font-mono font-bold">{rewireModal.result.productsChecked}</span></div>
-                  <div className="flex justify-between text-xs"><span className="text-fg/50">Products fixed</span><span className="text-fg font-mono font-bold">{rewireModal.result.productsFixed}</span></div>
-                  <div className="flex justify-between text-xs"><span className="text-fg/50">Modifier groups fixed</span><span className="text-fg font-mono font-bold">{rewireModal.result.groupsFixed}</span></div>
-                  <div className="flex justify-between text-xs"><span className="text-fg/50">Ingredients re-linked</span><span className="text-fg font-mono font-bold">{rewireModal.result.ingredientsFixed}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-fg/75">Products checked</span><span className="text-fg font-mono font-bold">{rewireModal.result.productsChecked}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-fg/75">Products fixed</span><span className="text-fg font-mono font-bold">{rewireModal.result.productsFixed}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-fg/75">Modifier groups fixed</span><span className="text-fg font-mono font-bold">{rewireModal.result.groupsFixed}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-fg/75">Ingredients re-linked</span><span className="text-fg font-mono font-bold">{rewireModal.result.ingredientsFixed}</span></div>
                 </div>
                 {rewireModal.result.unresolved?.length > 0 && (
                   <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
-                    <p className="text-[10px] text-amber-400 font-bold uppercase tracking-widest mb-1.5">Couldn't resolve (no matching inventory item by name)</p>
+                    <p className="text-[10px] text-warning font-bold uppercase tracking-widest mb-1.5">Couldn't resolve (no matching inventory item by name)</p>
                     <p className="text-fg/70 text-xs">{rewireModal.result.unresolved.join(', ')}</p>
                   </div>
                 )}
                 <button onClick={() => setRewireModal({ open: false, busy: false, error: '', result: null })}
-                  className="w-full bg-brand hover:bg-brand/90 text-white font-bold text-sm py-2.5 rounded-lg transition">Done</button>
+                  className="w-full bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm py-2.5 rounded-lg transition">Done</button>
               </div>
             ) : (
               <div className="p-6 space-y-4">
@@ -1996,12 +1996,12 @@ export default function SuperAdminPanel() {
                   current inventory item with the same name. Only fixes broken links - leaves everything else
                   untouched. Safe to run anytime.
                 </p>
-                {rewireModal.error && <p className="text-red-400 text-xs font-bold">{rewireModal.error}</p>}
+                {rewireModal.error && <p className="text-danger text-xs font-bold">{rewireModal.error}</p>}
                 <div className="flex justify-end gap-2">
                   <button onClick={() => setRewireModal({ open: false, busy: false, error: '', result: null })} disabled={rewireModal.busy}
-                    className="text-sm font-bold px-4 py-2 rounded-lg text-fg/50 hover:text-fg transition disabled:opacity-40">Cancel</button>
+                    className="text-sm font-bold px-4 py-2 rounded-lg text-fg/75 hover:text-fg transition disabled:opacity-40">Cancel</button>
                   <button onClick={handleRewireRecipes} disabled={rewireModal.busy}
-                    className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-lg transition">
+                    className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-40 text-on-brand font-bold text-sm px-5 py-2 rounded-lg transition">
                     {rewireModal.busy ? 'Scanning…' : 'Run Rewire'}
                   </button>
                 </div>
@@ -2022,13 +2022,13 @@ export default function SuperAdminPanel() {
                 <h2 className="font-black text-fg text-lg">
                   {modal.mode === 'create' ? 'New User' : 'Edit User'}
                 </h2>
-                <p className="text-fg/40 text-xs mt-0.5">
+                <p className="text-fg/70 text-xs mt-0.5">
                   {modal.mode === 'create' ? 'Create a new staff account.' : `Editing ${modal.user?.name}`}
                 </p>
               </div>
               <button
                 onClick={closeModal}
-                className="p-2 rounded-xl text-fg/30 hover:text-fg hover:bg-white/10 transition"
+                className="p-2 rounded-xl text-fg/65 hover:text-fg hover:bg-white/10 transition"
                 aria-label="Close modal"
               >
                 <X size={17} />
@@ -2037,7 +2037,7 @@ export default function SuperAdminPanel() {
 
             <form onSubmit={handleSubmitModal} className="p-6 space-y-4">
               {formErrors.general && (
-                <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl px-4 py-3">
+                <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 text-danger text-sm rounded-xl px-4 py-3">
                   <AlertCircle size={13} className="flex-shrink-0 mt-0.5" />
                   <span>{formErrors.general}</span>
                 </div>
@@ -2045,7 +2045,7 @@ export default function SuperAdminPanel() {
 
               {/* Name field */}
               <div>
-                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
+                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
                   Employee Name
                 </label>
                 <input
@@ -2058,7 +2058,7 @@ export default function SuperAdminPanel() {
                     ${formErrors.name ? 'border-red-500/60' : 'border-white/10 focus:border-brand'}`}
                 />
                 {formErrors.name && (
-                  <p className="flex items-center gap-1.5 text-red-400 text-xs mt-1.5">
+                  <p className="flex items-center gap-1.5 text-danger text-xs mt-1.5">
                     <AlertCircle size={11} />{formErrors.name}
                   </p>
                 )}
@@ -2066,7 +2066,7 @@ export default function SuperAdminPanel() {
 
               {/* Password field */}
               <div>
-                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
+                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
                   {modal.mode === 'edit' ? 'New Password (leave blank to keep)' : 'Password / PIN'}
                 </label>
                 <div className="relative">
@@ -2081,14 +2081,14 @@ export default function SuperAdminPanel() {
                   <button
                     type="button"
                     onClick={() => setForm(f => ({ ...f, showPassword: !f.showPassword }))}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/30 hover:text-fg/70 transition"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/65 hover:text-fg/70 transition"
                     aria-label={form.showPassword ? 'Hide password' : 'Show password'}
                   >
                     {form.showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                   </button>
                 </div>
                 {formErrors.password && (
-                  <p className="flex items-center gap-1.5 text-red-400 text-xs mt-1.5">
+                  <p className="flex items-center gap-1.5 text-danger text-xs mt-1.5">
                     <AlertCircle size={11} />{formErrors.password}
                   </p>
                 )}
@@ -2096,7 +2096,7 @@ export default function SuperAdminPanel() {
 
               {/* Role field */}
               <div>
-                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
+                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
                   Access Level
                 </label>
                 <select
@@ -2113,7 +2113,7 @@ export default function SuperAdminPanel() {
               {/* Commission rate - edit mode only; a brand-new user has no sales yet */}
               {modal.mode === 'edit' && (
                 <div>
-                  <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
+                  <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
                     Commission Rate (%)
                   </label>
                   <input
@@ -2123,29 +2123,29 @@ export default function SuperAdminPanel() {
                     placeholder="0"
                     className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
                   />
-                  <p className="text-[10px] text-fg/30 mt-1.5">Percent of this cashier's attributed sales, shown on the Commissions report.</p>
+                  <p className="text-[10px] text-fg/65 mt-1.5">Percent of this cashier's attributed sales, shown on the Commissions report.</p>
                 </div>
               )}
 
               {/* Granular permissions - override the role defaults per user */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest">Permissions</label>
-                  <label className="flex items-center gap-1.5 cursor-pointer text-fg/50 hover:text-fg/80 text-xs font-bold transition">
+                  <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest">Permissions</label>
+                  <label className="flex items-center gap-1.5 cursor-pointer text-fg/75 hover:text-fg/80 text-xs font-bold transition">
                     <input type="checkbox" checked={form.customPerms} onChange={e => handleFormChange('customPerms', e.target.checked)} className="accent-brand" />
                     Customize
                   </label>
                 </div>
                 {!form.customPerms ? (
-                  <p className="text-fg/40 text-xs bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                  <p className="text-fg/70 text-xs bg-white/5 border border-white/10 rounded-xl px-4 py-3">
                     Using the default permissions for the <span className="text-brand font-bold">{form.role}</span> access level. Tick “Customize” to set exactly what this person can do.
                   </p>
                 ) : (
                   <div className="space-y-3 bg-white/5 border border-white/10 rounded-xl p-3 max-h-60 overflow-y-auto">
-                    {groupedPerms.length === 0 && <p className="text-fg/30 text-xs">Loading permissions…</p>}
+                    {groupedPerms.length === 0 && <p className="text-fg/65 text-xs">Loading permissions…</p>}
                     {groupedPerms.map(([group, perms]) => (
                       <div key={group}>
-                        <p className="text-[10px] font-black uppercase tracking-wider text-fg/30 mb-1">{group}</p>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-fg/65 mb-1">{group}</p>
                         <div className="grid sm:grid-cols-2 gap-x-3 gap-y-1">
                           {perms.map(p => (
                             <label key={p.key} className="flex items-center gap-2 text-[13px] text-fg/70 cursor-pointer hover:text-fg transition">
@@ -2164,14 +2164,14 @@ export default function SuperAdminPanel() {
                 <button
                   type="button"
                   onClick={closeModal}
-                  className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-3 rounded-xl transition text-sm"
+                  className="flex-1 bg-white/5 hover:bg-white/10 text-fg/75 hover:text-fg font-bold py-3 rounded-xl transition text-sm"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={formLoading || hasFormErrors}
-                  className="flex-1 bg-brand hover:bg-brand-dark text-white font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="flex-1 bg-brand hover:bg-brand-dark text-on-brand font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {formLoading && <Loader2 size={14} className="animate-spin" />}
                   {formLoading ? 'Saving…' : modal.mode === 'create' ? 'Create User' : 'Save Changes'}
@@ -2190,27 +2190,27 @@ export default function SuperAdminPanel() {
           <div className="bg-sidebar-bg border border-red-500/20 rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-fade-in">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center flex-shrink-0">
-                <Trash2 size={17} className="text-red-400" />
+                <Trash2 size={17} className="text-danger" />
               </div>
               <div>
                 <h2 className="font-black text-fg">Remove User?</h2>
-                <p className="text-fg/40 text-xs mt-0.5">{confirmDelete.user?.name}</p>
+                <p className="text-fg/70 text-xs mt-0.5">{confirmDelete.user?.name}</p>
               </div>
             </div>
-            <p className="text-fg/40 text-sm mb-6 pl-[52px]">
+            <p className="text-fg/70 text-sm mb-6 pl-[52px]">
               This permanently revokes their access and cannot be undone.
             </p>
             <div className="flex gap-3">
               <button
                 onClick={() => setConfirmDelete({ open: false, user: null })}
-                className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-3 rounded-xl transition text-sm"
+                className="flex-1 bg-white/5 hover:bg-white/10 text-fg/75 hover:text-fg font-bold py-3 rounded-xl transition text-sm"
               >
                 Cancel
               </button>
               <button
                 onClick={handleDeleteUser}
                 disabled={deleteLoading}
-                className="flex-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 font-bold py-3 rounded-xl transition text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                className="flex-1 bg-red-500/20 hover:bg-red-500/30 text-danger font-bold py-3 rounded-xl transition text-sm flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {deleteLoading ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                 {deleteLoading ? 'Removing…' : 'Confirm Remove'}
@@ -2231,21 +2231,21 @@ export default function SuperAdminPanel() {
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
               <div>
                 <h2 className="text-lg font-black text-fg">Import Price Tiers</h2>
-                <p className="text-fg/40 text-xs mt-0.5">
+                <p className="text-fg/70 text-xs mt-0.5">
                   {tierImportPreview.tiers.length} tier column{tierImportPreview.tiers.length === 1 ? '' : 's'} ·{' '}
                   {tierImportPreview.tiers.reduce((s, t) => s + t.rows.length, 0)} price(s) to set
                 </p>
               </div>
-              <button onClick={() => setTierImportPreview(null)} className="text-fg/40 hover:text-fg transition"><X size={20} /></button>
+              <button onClick={() => setTierImportPreview(null)} className="text-fg/70 hover:text-fg transition"><X size={20} /></button>
             </div>
 
             <div className="px-6 py-4 space-y-3 overflow-y-auto">
               {tierImportPreview.unmatchedCodes.length > 0 && (
                 <div className="rounded-xl border border-yellow-500/25 bg-yellow-500/10 p-3">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-yellow-400 flex items-center gap-1.5">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-warning flex items-center gap-1.5">
                     <AlertTriangle size={12} /> {tierImportPreview.unmatchedCodes.length} row(s) skipped - no matching product
                   </p>
-                  <p className="text-[11px] text-fg/50 mt-1 truncate">
+                  <p className="text-[11px] text-fg/75 mt-1 truncate">
                     {tierImportPreview.unmatchedCodes.slice(0, 8).join(', ')}
                     {tierImportPreview.unmatchedCodes.length > 8 ? `, +${tierImportPreview.unmatchedCodes.length - 8} more` : ''}
                   </p>
@@ -2259,21 +2259,21 @@ export default function SuperAdminPanel() {
                       <span className="text-fg font-black text-sm">{t.name}</span>
                       {!t.tierId && <span className="text-[9px] font-black uppercase tracking-wider bg-brand/15 text-brand px-1.5 py-0.5 rounded">New Tier</span>}
                       {t.tierId && t.wasPercent && (
-                        <span className="text-[9px] font-black uppercase tracking-wider bg-yellow-500/15 text-yellow-400 px-1.5 py-0.5 rounded" title="Currently a flat % rate - importing prices switches it to a per-product price list.">
+                        <span className="text-[9px] font-black uppercase tracking-wider bg-yellow-500/15 text-warning px-1.5 py-0.5 rounded" title="Currently a flat % rate - importing prices switches it to a per-product price list.">
                           Switches to Price List
                         </span>
                       )}
                     </div>
-                    <span className="text-fg/40 text-xs font-bold">{t.rows.length} price{t.rows.length === 1 ? '' : 's'}</span>
+                    <span className="text-fg/70 text-xs font-bold">{t.rows.length} price{t.rows.length === 1 ? '' : 's'}</span>
                   </div>
                   <div className="mt-2 max-h-24 overflow-y-auto space-y-0.5">
                     {t.rows.slice(0, 6).map(r => (
-                      <div key={r.productId} className="flex justify-between text-[11px] text-fg/50">
+                      <div key={r.productId} className="flex justify-between text-[11px] text-fg/75">
                         <span className="truncate pr-2">{r.name}</span>
                         <span className="font-mono text-fg/70 shrink-0">₱{r.price.toFixed(2)}</span>
                       </div>
                     ))}
-                    {t.rows.length > 6 && <p className="text-[10px] text-fg/30 italic">+{t.rows.length - 6} more</p>}
+                    {t.rows.length > 6 && <p className="text-[10px] text-fg/65 italic">+{t.rows.length - 6} more</p>}
                   </div>
                 </div>
               ))}
@@ -2303,18 +2303,18 @@ export default function SuperAdminPanel() {
                 <h2 className="font-black text-fg text-lg">
                   {tierModal.mode === 'create' ? 'New Price Tier' : 'Edit Price Tier'}
                 </h2>
-                <p className="text-fg/40 text-xs mt-0.5">
+                <p className="text-fg/70 text-xs mt-0.5">
                   {tierModal.mode === 'create' ? 'A customer class with its own rate.' : `Editing ${tierModal.tier?.name}`}
                 </p>
               </div>
-              <button onClick={closeTierModal} className="p-2 rounded-xl text-fg/30 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
+              <button onClick={closeTierModal} className="p-2 rounded-xl text-fg/65 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
                 <X size={16} />
               </button>
             </div>
 
             <form onSubmit={handleTierSubmit} className="px-6 py-5 space-y-4">
               <div>
-                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Tier Name</label>
+                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Tier Name</label>
                 <input
                   type="text"
                   value={tierForm.name}
@@ -2323,19 +2323,19 @@ export default function SuperAdminPanel() {
                   className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
                 />
                 {tierModal.mode === 'edit' && (
-                  <p className="text-[10px] text-fg/30 mt-1.5 leading-relaxed">
+                  <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
                     Renaming re-tags every client in this tier and every product override that names it, so nobody silently loses their rate.
                   </p>
                 )}
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Pricing Mode</label>
+                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Pricing Mode</label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setTierForm(f => ({ ...f, pricingMode: 'percent' }))}
-                    className={`text-left px-3 py-2.5 rounded-xl border text-xs transition ${tierForm.pricingMode === 'percent' ? 'bg-brand/15 border-brand/50 text-fg' : 'bg-white/5 border-white/10 text-fg/50 hover:border-white/20'}`}
+                    className={`text-left px-3 py-2.5 rounded-xl border text-xs transition ${tierForm.pricingMode === 'percent' ? 'bg-brand/15 border-brand/50 text-fg' : 'bg-white/5 border-white/10 text-fg/75 hover:border-white/20'}`}
                   >
                     <span className="font-bold block">Default %</span>
                     <span className="text-[10px] opacity-70">One rate, every product</span>
@@ -2343,7 +2343,7 @@ export default function SuperAdminPanel() {
                   <button
                     type="button"
                     onClick={() => setTierForm(f => ({ ...f, pricingMode: 'per_product' }))}
-                    className={`text-left px-3 py-2.5 rounded-xl border text-xs transition ${tierForm.pricingMode === 'per_product' ? 'bg-brand/15 border-brand/50 text-fg' : 'bg-white/5 border-white/10 text-fg/50 hover:border-white/20'}`}
+                    className={`text-left px-3 py-2.5 rounded-xl border text-xs transition ${tierForm.pricingMode === 'per_product' ? 'bg-brand/15 border-brand/50 text-fg' : 'bg-white/5 border-white/10 text-fg/75 hover:border-white/20'}`}
                   >
                     <span className="font-bold block">Price List</span>
                     <span className="text-[10px] opacity-70">Set every product's price</span>
@@ -2353,7 +2353,7 @@ export default function SuperAdminPanel() {
 
               {tierForm.pricingMode === 'percent' ? (
                 <div>
-                  <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Default Discount</label>
+                  <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Default Discount</label>
                   <div className="relative">
                     <input
                       type="number" min="0" max="100" step="0.01"
@@ -2362,15 +2362,15 @@ export default function SuperAdminPanel() {
                       placeholder="e.g. 15"
                       className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 pr-9 rounded-xl outline-none transition text-sm tabular-nums"
                     />
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-fg/30 text-sm font-bold">%</span>
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-fg/65 text-sm font-bold">%</span>
                   </div>
-                  <p className="text-[10px] text-fg/30 mt-1.5 leading-relaxed">
+                  <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
                     Comes off every product a client in this tier buys. 0 = tag only, no automatic rate.
                   </p>
                 </div>
               ) : (
                 <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-                  <p className="text-[11px] text-fg/50 leading-relaxed">
+                  <p className="text-[11px] text-fg/75 leading-relaxed">
                     {tierModal.mode === 'create'
                       ? "You'll set a price for every product right after saving this tier."
                       : "Use “Set Prices” on the tier list to edit this tier's price list."}
@@ -2380,7 +2380,7 @@ export default function SuperAdminPanel() {
               )}
 
               <div>
-                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Note</label>
+                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Note</label>
                 <input
                   type="text"
                   value={tierForm.note}
@@ -2393,7 +2393,7 @@ export default function SuperAdminPanel() {
               <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
                 <div>
                   <span className="text-sm font-bold text-fg">Tier Active</span>
-                  <p className="text-[10px] text-fg/30 mt-0.5">Inactive tiers grant no rate but keep their tags.</p>
+                  <p className="text-[10px] text-fg/65 mt-0.5">Inactive tiers grant no rate but keep their tags.</p>
                 </div>
                 <button
                   type="button"
@@ -2406,7 +2406,7 @@ export default function SuperAdminPanel() {
               </div>
 
               {tierFormError && (
-                <p className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{tierFormError}</p>
+                <p className="text-[11px] text-danger bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{tierFormError}</p>
               )}
 
               <div className="flex gap-2 pt-1">
@@ -2436,18 +2436,18 @@ export default function SuperAdminPanel() {
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 flex-shrink-0">
               <div>
                 <h2 className="font-black text-fg text-lg">{productPriceModal.tier?.name} &mdash; Prices</h2>
-                <p className="text-fg/40 text-xs mt-0.5">
+                <p className="text-fg/70 text-xs mt-0.5">
                   One price per product. Blank = this tier grants no discount on that product.
                 </p>
               </div>
-              <button onClick={closeProductPricing} className="p-2 rounded-xl text-fg/30 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
+              <button onClick={closeProductPricing} className="p-2 rounded-xl text-fg/65 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
                 <X size={16} />
               </button>
             </div>
 
             <div className="overflow-y-auto flex-1 px-6 py-4">
               {pricingTable.products.length === 0 ? (
-                <p className="text-fg/40 text-sm text-center py-10">No products yet - add some in the Products tab first.</p>
+                <p className="text-fg/70 text-sm text-center py-10">No products yet - add some in the Products tab first.</p>
               ) : (
                 <div className="space-y-1.5">
                   {pricingTable.products.map(p => {
@@ -2457,15 +2457,15 @@ export default function SuperAdminPanel() {
                       <div key={p._id} className="flex items-center gap-3 py-1.5">
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-fg font-bold truncate">{p.name}</p>
-                          <p className="text-[10px] text-fg/35">List ₱{Number(p.basePrice || 0).toFixed(2)}{p.category ? ` · ${p.category}` : ''}</p>
+                          <p className="text-[10px] text-fg/70">List ₱{Number(p.basePrice || 0).toFixed(2)}{p.category ? ` · ${p.category}` : ''}</p>
                         </div>
                         {off !== null && (
-                          <span className={`text-[10px] font-bold tabular-nums w-14 text-right flex-shrink-0 ${off > 0 ? 'text-brand' : off < 0 ? 'text-red-400' : 'text-fg/30'}`}>
+                          <span className={`text-[10px] font-bold tabular-nums w-14 text-right flex-shrink-0 ${off > 0 ? 'text-brand' : off < 0 ? 'text-danger' : 'text-fg/65'}`}>
                             {off > 0 ? `-${off}%` : off < 0 ? `+${Math.abs(off)}%` : '-'}
                           </span>
                         )}
                         <div className="relative w-32 flex-shrink-0">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30 text-xs font-bold">₱</span>
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/65 text-xs font-bold">₱</span>
                           <input
                             type="number" min="0" step="0.01"
                             value={val}
@@ -2478,7 +2478,7 @@ export default function SuperAdminPanel() {
                           <button
                             type="button"
                             onClick={() => setProductPriceRows(r => { const n = { ...r }; delete n[p._id]; return n; })}
-                            className="text-fg/20 hover:text-red-400 transition flex-shrink-0"
+                            className="text-fg/60 hover:text-danger transition flex-shrink-0"
                             aria-label={`Clear price for ${p.name}`}
                           ><X size={13} /></button>
                         )}
@@ -2517,25 +2517,25 @@ export default function SuperAdminPanel() {
                 <h2 className="font-black text-fg text-lg">
                   {clientModal.mode === 'create' ? 'New Client Account' : 'Edit Client'}
                 </h2>
-                <p className="text-fg/40 text-xs mt-0.5">
+                <p className="text-fg/70 text-xs mt-0.5">
                   {clientModal.mode === 'create' ? 'Pre-register a client for logistics ordering.' : `Editing ${clientModal.client?.name}`}
                 </p>
               </div>
-              <button onClick={closeClientModal} className="p-2 rounded-xl text-fg/30 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
+              <button onClick={closeClientModal} className="p-2 rounded-xl text-fg/65 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
                 <X size={17} />
               </button>
             </div>
 
             <form onSubmit={handleClientSubmit} className="p-6 space-y-4 overflow-y-auto custom-scrollbar">
               {clientFormError && (
-                <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl px-4 py-3">
+                <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 text-danger text-sm rounded-xl px-4 py-3">
                   <AlertCircle size={13} className="flex-shrink-0 mt-0.5" />
                   <span>{clientFormError}</span>
                 </div>
               )}
 
               <div>
-                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Client / Company Name</label>
+                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Client / Company Name</label>
                 <input
                   type="text"
                   value={clientForm.name}
@@ -2547,7 +2547,7 @@ export default function SuperAdminPanel() {
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Username</label>
+                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Username</label>
                 <input
                   type="text"
                   value={clientForm.username}
@@ -2559,7 +2559,7 @@ export default function SuperAdminPanel() {
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
+                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
                   {clientModal.mode === 'edit' ? 'New Password (leave blank to keep)' : 'Password'}
                 </label>
                 <div className="relative">
@@ -2574,7 +2574,7 @@ export default function SuperAdminPanel() {
                   <button
                     type="button"
                     onClick={() => setClientForm(f => ({ ...f, showPassword: !f.showPassword }))}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/30 hover:text-fg/70 transition"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/65 hover:text-fg/70 transition"
                   >
                     {clientForm.showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                   </button>
@@ -2582,7 +2582,7 @@ export default function SuperAdminPanel() {
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Default Payment Method</label>
+                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Default Payment Method</label>
                 <select
                   value={clientForm.paymentMethod}
                   onChange={e => setClientForm(f => ({ ...f, paymentMethod: e.target.value }))}
@@ -2596,7 +2596,7 @@ export default function SuperAdminPanel() {
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Credit Limit (₱)</label>
+                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Credit Limit (₱)</label>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -2605,14 +2605,14 @@ export default function SuperAdminPanel() {
                   placeholder="Leave blank for no limit"
                   className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
                 />
-                <p className="text-[10px] text-fg/30 mt-1.5 leading-relaxed">
-                  Blank = no limit for this client. <span className="text-fg/50 font-bold">0 = cash only</span> (blocks all on-account orders).
+                <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
+                  Blank = no limit for this client. <span className="text-fg/75 font-bold">0 = cash only</span> (blocks all on-account orders).
                   Whether limits apply at all is set in Settings &rarr; Credit Limits.
                 </p>
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Payment Terms (days)</label>
+                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Payment Terms (days)</label>
                 <input
                   type="text"
                   inputMode="numeric"
@@ -2621,8 +2621,8 @@ export default function SuperAdminPanel() {
                   placeholder="e.g. 7, 15, 30"
                   className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
                 />
-                <p className="text-[10px] text-fg/30 mt-1.5 leading-relaxed">
-                  Days an on-account (utang) sale has before it turns <span className="text-fg/50 font-bold">overdue</span>. Blank = no terms. 0 = due on receipt.
+                <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
+                  Days an on-account (utang) sale has before it turns <span className="text-fg/75 font-bold">overdue</span>. Blank = no terms. 0 = due on receipt.
                   Captured onto each order when it completes, so later changes here don&rsquo;t move existing due dates.
                 </p>
               </div>
@@ -2640,7 +2640,7 @@ export default function SuperAdminPanel() {
                 />
                 <span className="min-w-0">
                   <span className="block text-[11px] font-bold text-fg">Quote before ordering</span>
-                  <span className="block text-[10px] text-fg/40 leading-relaxed mt-0.5">
+                  <span className="block text-[10px] text-fg/70 leading-relaxed mt-0.5">
                     Their portal asks for a price instead of placing an order. Nothing is committed
                     until you have priced it and they have accepted.
                   </span>
@@ -2648,7 +2648,7 @@ export default function SuperAdminPanel() {
               </label>
 
               <div>
-                <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Price Tier</label>
+                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Price Tier</label>
                 {(() => {
                   // The form still stores segments as a comma string (that's what
                   // the submit handler splits), but assignment is by click so the
@@ -2667,7 +2667,7 @@ export default function SuperAdminPanel() {
                   return (
                     <>
                       {priceTiers.length === 0 ? (
-                        <p className="text-[11px] text-fg/40 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                        <p className="text-[11px] text-fg/70 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
                           No price tiers yet. Create them in <span className="text-fg/70 font-bold">Price Tiers</span> below, then assign one here.
                         </p>
                       ) : (
@@ -2682,7 +2682,7 @@ export default function SuperAdminPanel() {
                                 className={`px-3 py-2 rounded-xl text-xs font-bold border transition ${
                                   on
                                   ? 'bg-brand/20 border-brand/50 text-brand'
-                                  : 'bg-white/5 border-white/10 text-fg/50 hover:border-white/25 hover:text-fg/80'
+                                  : 'bg-white/5 border-white/10 text-fg/75 hover:border-white/25 hover:text-fg/80'
                                 } ${t.isActive === false ? 'opacity-40' : ''}`}
                               >
                                 {t.name}
@@ -2697,7 +2697,7 @@ export default function SuperAdminPanel() {
                           Unrecognised tag{orphans.length === 1 ? '' : 's'}: <span className="font-bold">{orphans.join(', ')}</span>. No tier matches, so no automatic rate applies. Click a tier above to replace, or create a matching tier.
                         </p>
                       )}
-                      <p className="text-[10px] text-fg/30 mt-1.5 leading-relaxed">
+                      <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
                         The tier&rsquo;s percent applies to every product this client buys. A product&rsquo;s
                         Segment Override (Products tab) can set a different rate for that one product.
                       </p>
@@ -2713,11 +2713,11 @@ export default function SuperAdminPanel() {
                   hunting product by product. */}
               {clientModal.mode === 'edit' && (
                 <div className="bg-white/5 border border-white/10 rounded-xl p-3">
-                  <p className="text-[10px] font-bold text-fg/40 uppercase tracking-widest mb-2">Special Pricing</p>
+                  <p className="text-[10px] font-bold text-fg/70 uppercase tracking-widest mb-2">Special Pricing</p>
                   {clientPricingLoading ? (
-                    <p className="text-[11px] text-fg/30 italic">Loading…</p>
+                    <p className="text-[11px] text-fg/65 italic">Loading…</p>
                   ) : !clientPricing || clientPricing.length === 0 ? (
-                    <p className="text-[11px] text-fg/30 italic">No product-specific rates or volume breaks yet - set one on a product in the Products tab.</p>
+                    <p className="text-[11px] text-fg/65 italic">No product-specific rates or volume breaks yet - set one on a product in the Products tab.</p>
                   ) : (
                     <div className="space-y-1.5">
                       {clientPricing.map(p => (
@@ -2729,7 +2729,7 @@ export default function SuperAdminPanel() {
                                 ₱{(p.flatPrice ?? p.basePrice).toFixed(2)}
                               </span>
                               {p.breaks.length > 0 && (
-                                <ChevronRight size={12} className="text-fg/30 transition group-open:rotate-90" />
+                                <ChevronRight size={12} className="text-fg/65 transition group-open:rotate-90" />
                               )}
                             </span>
                           </summary>
@@ -2737,7 +2737,7 @@ export default function SuperAdminPanel() {
                             <div className="px-3 pb-2 pt-0.5 space-y-0.5 border-t border-white/5 mt-0.5">
                               {p.breaks.map((b, i) => (
                                 <div key={i} className="flex items-center justify-between text-[11px]">
-                                  <span className="text-fg/40">{b.minQty}+ units</span>
+                                  <span className="text-fg/70">{b.minQty}+ units</span>
                                   <span className="font-bold text-fg/70 tabular-nums">₱{b.price.toFixed(2)}</span>
                                 </div>
                               ))}
@@ -2761,7 +2761,7 @@ export default function SuperAdminPanel() {
                     <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Credit Balance</p>
                     <span className="text-sm font-black text-emerald-400 tabular-nums">₱{clientModal.client.creditBalance.toFixed(2)}</span>
                   </div>
-                  <p className="text-[11px] text-fg/40 mt-1">From past overpayments. Apply it to a future order's A/R settlement, or refund it out below.</p>
+                  <p className="text-[11px] text-fg/70 mt-1">From past overpayments. Apply it to a future order's A/R settlement, or refund it out below.</p>
                   {!clientCreditRefundForm ? (
                     <button
                       type="button"
@@ -2773,7 +2773,7 @@ export default function SuperAdminPanel() {
                   ) : (
                     <div className="mt-2 space-y-2 bg-page-bg/40 border border-white/10 rounded-lg p-2.5">
                       <div>
-                        <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest">Amount</label>
+                        <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest">Amount</label>
                         <input
                           type="number" step="0.01" min="0"
                           value={clientCreditRefundForm.amount}
@@ -2782,7 +2782,7 @@ export default function SuperAdminPanel() {
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest">Reference Number</label>
+                        <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest">Reference Number</label>
                         <input
                           type="text"
                           value={clientCreditRefundForm.referenceNumber}
@@ -2818,7 +2818,7 @@ export default function SuperAdminPanel() {
                   <button
                     type="button"
                     onClick={() => setClientForm(f => ({ ...f, isActive: !f.isActive }))}
-                    className={`transition ${clientForm.isActive ? 'text-emerald-400' : 'text-fg/20'}`}
+                    className={`transition ${clientForm.isActive ? 'text-emerald-400' : 'text-fg/60'}`}
                   >
                     {clientForm.isActive ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}
                   </button>
@@ -2826,7 +2826,7 @@ export default function SuperAdminPanel() {
               )}
 
               <div className="flex gap-3 pt-2">
-                <button type="button" onClick={closeClientModal} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-3 rounded-xl transition text-sm">
+                <button type="button" onClick={closeClientModal} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/75 hover:text-fg font-bold py-3 rounded-xl transition text-sm">
                   Cancel
                 </button>
                 <button
@@ -2855,13 +2855,13 @@ export default function SuperAdminPanel() {
               </div>
               <div>
                 <h2 className="font-black text-fg">Reset Password</h2>
-                <p className="text-fg/40 text-xs mt-0.5">{resetPwModal.client?.name}</p>
+                <p className="text-fg/70 text-xs mt-0.5">{resetPwModal.client?.name}</p>
               </div>
             </div>
 
             {resetPwModal.result ? (
               <>
-                <p className="text-fg/50 text-sm mb-3">
+                <p className="text-fg/75 text-sm mb-3">
                   New password for <span className="text-fg font-bold">@{resetPwModal.client?.username}</span> - shown once, write it down now:
                 </p>
                 <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-4 py-3 mb-4">
@@ -2869,13 +2869,13 @@ export default function SuperAdminPanel() {
                   <button
                     type="button"
                     onClick={() => { navigator.clipboard?.writeText(resetPwModal.result); showToast('Copied.'); }}
-                    className="p-2 rounded-lg text-fg/40 hover:text-fg hover:bg-white/10 transition"
+                    className="p-2 rounded-lg text-fg/70 hover:text-fg hover:bg-white/10 transition"
                     aria-label="Copy password"
                   >
                     <Copy size={15} />
                   </button>
                 </div>
-                <p className="text-[10px] text-fg/30 mb-4 leading-relaxed">
+                <p className="text-[10px] text-fg/65 mb-4 leading-relaxed">
                   This password cannot be shown again after you close this - reset again if it's lost.
                 </p>
                 <button onClick={closeResetPassword} className="w-full bg-brand hover:bg-brand-dark text-fg font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm">
@@ -2884,17 +2884,17 @@ export default function SuperAdminPanel() {
               </>
             ) : (
               <form onSubmit={handleResetPasswordConfirm} className="space-y-4">
-                <p className="text-fg/40 text-sm">
+                <p className="text-fg/70 text-sm">
                   Passwords are encrypted and can't be viewed - confirm it's you, and a new password
                   will be generated for <span className="text-fg font-bold">@{resetPwModal.client?.username}</span>.
                 </p>
                 {resetPwModal.error && (
-                  <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-bold px-3 py-2.5 rounded-xl">
+                  <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 text-danger text-xs font-bold px-3 py-2.5 rounded-xl">
                     <AlertCircle size={13} className="flex-shrink-0" /> {resetPwModal.error}
                   </div>
                 )}
                 <div>
-                  <label className="text-xs font-bold text-fg/50 mb-1.5 block">Your Password</label>
+                  <label className="text-xs font-bold text-fg/75 mb-1.5 block">Your Password</label>
                   <input
                     type="password"
                     autoFocus
@@ -2905,7 +2905,7 @@ export default function SuperAdminPanel() {
                   />
                 </div>
                 <div className="flex gap-3 pt-1">
-                  <button type="button" onClick={closeResetPassword} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/50 hover:text-fg font-bold py-3 rounded-xl transition text-sm">
+                  <button type="button" onClick={closeResetPassword} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/75 hover:text-fg font-bold py-3 rounded-xl transition text-sm">
                     Cancel
                   </button>
                   <button

@@ -17,11 +17,11 @@ const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'n
 const inputCls = 'w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg focus:border-brand/50 focus:outline-none';
 
 const STATUS = {
-  Requested: { tone: 'text-amber-400 bg-amber-400/10', icon: Clock, blurb: 'Waiting for you to price it' },
+  Requested: { tone: 'text-warning bg-amber-400/10', icon: Clock, blurb: 'Waiting for you to price it' },
   Quoted:    { tone: 'text-brand bg-brand/10', icon: Send, blurb: 'Sent, waiting on the client' },
-  Accepted:  { tone: 'text-green-400 bg-green-400/10', icon: CheckCircle, blurb: 'Accepted' },
-  Declined:  { tone: 'text-fg/40 bg-white/5', icon: XCircle, blurb: 'Declined' },
-  Expired:   { tone: 'text-fg/40 bg-white/5', icon: AlertCircle, blurb: 'Ran past its validity date' },
+  Accepted:  { tone: 'text-success bg-green-400/10', icon: CheckCircle, blurb: 'Accepted' },
+  Declined:  { tone: 'text-fg/70 bg-white/5', icon: XCircle, blurb: 'Declined' },
+  Expired:   { tone: 'text-fg/70 bg-white/5', icon: AlertCircle, blurb: 'Ran past its validity date' },
 };
 
 export default function QuotationsTab() {
@@ -69,7 +69,7 @@ export default function QuotationsTab() {
         </button>
       </div>
 
-      <p className="text-xs text-fg/50 leading-relaxed max-w-3xl">
+      <p className="text-xs text-fg/75 leading-relaxed max-w-3xl">
         A price a client has asked for. None of this is a sale and none of it is in the books - the
         figures here are what you have offered, not what you have earned. Only the client accepting,
         and the order that follows, reaches the ledger.
@@ -77,12 +77,12 @@ export default function QuotationsTab() {
 
       <div className="grid grid-cols-3 gap-2">
         {[
-          ['Waiting on you', counts.waiting, counts.waiting > 0 ? 'text-amber-400' : 'text-fg/40'],
+          ['Waiting on you', counts.waiting, counts.waiting > 0 ? 'text-warning' : 'text-fg/70'],
           ['Waiting on them', counts.quoted, 'text-fg'],
-          ['Accepted', counts.accepted, 'text-green-400'],
+          ['Accepted', counts.accepted, 'text-success'],
         ].map(([label, val, cls]) => (
           <div key={label} className="bg-sidebar-bg border border-white/10 rounded-xl p-3">
-            <p className="text-[9px] font-black uppercase tracking-widest text-fg/40">{label}</p>
+            <p className="text-[9px] font-black uppercase tracking-widest text-fg/70">{label}</p>
             <p className={`text-lg font-black tabular-nums ${cls}`}>{val ?? 0}</p>
           </div>
         ))}
@@ -92,7 +92,7 @@ export default function QuotationsTab() {
         <div className="overflow-x-auto">
           <table className="w-full text-xs min-w-[760px]">
             <thead>
-              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/40 border-b border-white/10">
+              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/70 border-b border-white/10">
                 <th className="text-left px-3 py-2.5">Quote</th>
                 <th className="text-left px-3 py-2.5">Client</th>
                 <th className="text-left px-3 py-2.5">Asked</th>
@@ -104,7 +104,7 @@ export default function QuotationsTab() {
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={7} className="px-3 py-10 text-center text-fg/40">
+                <tr><td colSpan={7} className="px-3 py-10 text-center text-fg/70">
                   {loading ? 'Loading…' : 'No quotations yet.'}
                 </td></tr>
               )}
@@ -115,10 +115,10 @@ export default function QuotationsTab() {
                   <tr key={q._id} className="border-b border-white/5 hover:bg-white/[0.02]">
                     <td className="px-3 py-2.5 font-bold text-fg">{q.quoteNumber}</td>
                     <td className="px-3 py-2.5 text-fg/70">{q.clientName}</td>
-                    <td className="px-3 py-2.5 text-fg/50">{shortDate(q.createdAt)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-fg/50">{peso(q.askedTotal)}</td>
+                    <td className="px-3 py-2.5 text-fg/75">{shortDate(q.createdAt)}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-fg/75">{peso(q.askedTotal)}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums font-bold text-fg">
-                      {q.quotedTotal == null ? <span className="text-fg/25">not priced</span> : peso(q.quotedTotal)}
+                      {q.quotedTotal == null ? <span className="text-fg/65">not priced</span> : peso(q.quotedTotal)}
                     </td>
                     <td className="px-3 py-2.5">
                       <span className={`inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded ${st.tone}`}>
@@ -179,20 +179,20 @@ function QuoteSheet({ id, apiFetch, onBack }) {
     finally { setBusy(false); }
   };
 
-  if (!q) return <p className="text-fg/40 text-sm">Loading…</p>;
+  if (!q) return <p className="text-fg/70 text-sm">Loading…</p>;
 
   const total = (q.lines || []).reduce((s, l, i) => s + ((Number(prices[i]) || 0) * (l.quantity || 1)), 0);
   const locked = ['Accepted', 'Declined'].includes(q.status);
 
   return (
     <div className="space-y-4">
-      <button onClick={onBack} className="flex items-center gap-1 text-xs text-fg/50 hover:text-fg transition">
+      <button onClick={onBack} className="flex items-center gap-1 text-xs text-fg/75 hover:text-fg transition">
         <ChevronLeft size={14} /> All quotations
       </button>
 
       <div>
         <h1 className="font-black text-fg text-lg">{q.quoteNumber} · {q.clientName}</h1>
-        <p className="text-xs text-fg/50">
+        <p className="text-xs text-fg/75">
           Asked {shortDate(q.createdAt)} · {q.status}
           {q.validUntil ? ` · valid to ${shortDate(q.validUntil)}` : ''}
           {q.orderNumber ? ` · ordered as ${q.orderNumber}` : ''}
@@ -201,7 +201,7 @@ function QuoteSheet({ id, apiFetch, onBack }) {
 
       {q.clientNotes && (
         <div className="bg-sidebar-bg border border-white/10 rounded-xl px-4 py-3">
-          <p className="text-[9px] font-black uppercase tracking-widest text-fg/40 mb-1">What they asked for</p>
+          <p className="text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1">What they asked for</p>
           <p className="text-xs text-fg/80 leading-relaxed">{q.clientNotes}</p>
         </div>
       )}
@@ -210,7 +210,7 @@ function QuoteSheet({ id, apiFetch, onBack }) {
         <div className="overflow-x-auto">
           <table className="w-full text-xs min-w-[620px]">
             <thead>
-              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/40 border-b border-white/10">
+              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/70 border-b border-white/10">
                 <th className="text-left px-3 py-2.5">Item</th>
                 <th className="text-right px-3 py-2.5">Qty</th>
                 <th className="text-right px-3 py-2.5">They expected</th>
@@ -223,10 +223,10 @@ function QuoteSheet({ id, apiFetch, onBack }) {
                 <tr key={i} className="border-b border-white/5">
                   <td className="px-3 py-2.5 font-bold text-fg">
                     {l.name}
-                    {l.note && <span className="block text-[10px] text-fg/35 font-normal">{l.note}</span>}
+                    {l.note && <span className="block text-[10px] text-fg/70 font-normal">{l.note}</span>}
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-fg/70">{l.quantity}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-fg/40">{peso(l.askedPrice)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-fg/70">{peso(l.askedPrice)}</td>
                   <td className="px-3 py-2.5 text-right">
                     <input type="number" min="0" step="0.01" disabled={locked}
                       value={prices[i] ?? ''} placeholder="0.00"
@@ -253,24 +253,24 @@ function QuoteSheet({ id, apiFetch, onBack }) {
         <div className="bg-sidebar-bg border border-white/10 rounded-xl p-4 space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
-              <span className="block text-[9px] font-black uppercase tracking-widest text-fg/40 mb-1">Valid until</span>
+              <span className="block text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1">Valid until</span>
               <input type="date" className={inputCls} value={validUntil} onChange={e => setValidUntil(e.target.value)} />
-              <span className="block text-[10px] text-fg/35 mt-1">
+              <span className="block text-[10px] text-fg/70 mt-1">
                 A quote with no end date is a price you are bound to forever.
               </span>
             </label>
             <label className="block">
-              <span className="block text-[9px] font-black uppercase tracking-widest text-fg/40 mb-1">Terms</span>
+              <span className="block text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1">Terms</span>
               <input className={inputCls} value={notes} onChange={e => setNotes(e.target.value)}
                 placeholder="Freight, lead time, anything they should know" />
             </label>
           </div>
 
           <button onClick={send} disabled={busy}
-            className="flex items-center justify-center gap-2 w-full bg-brand hover:bg-brand/90 text-white px-4 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition disabled:opacity-40">
+            className="flex items-center justify-center gap-2 w-full bg-brand hover:bg-brand/90 text-on-brand px-4 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition disabled:opacity-40">
             <Send size={13} /> {busy ? 'Sending…' : q.status === 'Quoted' ? 'Send the revised quote' : 'Send this quote'}
           </button>
-          <p className="text-[10px] text-fg/35 text-center">
+          <p className="text-[10px] text-fg/70 text-center">
             Sending posts nothing. The books only move when they accept and the order is placed.
           </p>
         </div>

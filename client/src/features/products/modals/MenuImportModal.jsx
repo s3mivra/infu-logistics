@@ -22,9 +22,9 @@ export default function MenuImportModal() {
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
           <div>
             <h2 className="text-fg font-black text-lg">Bulk Import - Menu</h2>
-            <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-0.5">Creates/updates products · wires matched ingredients into each recipe</p>
+            <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-0.5">Creates/updates products · wires matched ingredients into each recipe</p>
           </div>
-          <button onClick={() => setMenuImportModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/50 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
+          <button onClick={() => setMenuImportModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/75 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
         </div>
 
         <div className="px-5 py-3 flex flex-wrap gap-2 border-b border-white/10 shrink-0">
@@ -50,11 +50,11 @@ export default function MenuImportModal() {
                   <td className="px-2 py-2.5 text-fg/60">{r.category}</td>
                   <td className="px-2 py-2.5 text-right text-fg font-bold tabular-nums whitespace-nowrap">{peso(r.srp)}</td>
                   <td className="px-4 py-2.5">
-                    {r.ingredients.length === 0 && <span className="text-fg/30 italic">No ingredients listed</span>}
+                    {r.ingredients.length === 0 && <span className="text-fg/65 italic">No ingredients listed</span>}
                     <div className="flex flex-wrap gap-1.5">
                       {r.ingredients.map((ing, j) => (
                         <span key={j} title={ing._matched ? `Matched: ${ing._matchName}` : 'No matching Inventory item - this line will be skipped'}
-                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${ing._matched ? 'bg-green-500/15 text-green-400' : 'bg-amber-500/15 text-amber-400'}`}>
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${ing._matched ? 'bg-green-500/15 text-success' : 'bg-amber-500/15 text-warning'}`}>
                           {ing._matched ? <Check size={9} className="inline mr-0.5 -mt-0.5" /> : '⚠ '}{ing.qty}{ing.unit} {ing.name}
                         </span>
                       ))}
@@ -71,7 +71,7 @@ export default function MenuImportModal() {
             Cancel
           </button>
           <button onClick={submitMenuImport} disabled={menuImportSubmitting || menuImportRows.length === 0}
-            className="flex-1 px-5 py-3 rounded-xl bg-brand hover:bg-brand-dark text-white font-black text-sm uppercase tracking-widest transition shadow-elev-2 disabled:opacity-50 min-h-[44px] flex items-center justify-center gap-2">
+            className="flex-1 px-5 py-3 rounded-xl bg-brand hover:bg-brand-dark text-on-brand font-black text-sm uppercase tracking-widest transition shadow-elev-2 disabled:opacity-50 min-h-[44px] flex items-center justify-center gap-2">
             <Check size={16}/> {menuImportSubmitting ? 'Importing…' : `Import ${menuImportRows.length} Product${menuImportRows.length === 1 ? '' : 's'}`}
           </button>
         </div>

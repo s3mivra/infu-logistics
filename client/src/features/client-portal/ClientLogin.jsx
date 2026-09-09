@@ -57,11 +57,11 @@ export default function ClientLogin() {
             <Package size={26} className="text-brand" />
           </div>
           <h2 className="text-xl font-black text-fg uppercase tracking-widest">{BIZ_NAME}</h2>
-          <p className="text-fg/40 text-xs mt-1">Client Portal - Sign in to order</p>
+          <p className="text-fg/70 text-xs mt-1">Client Portal - Sign in to order</p>
         </div>
 
         {error && (
-          <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl px-4 py-3 mb-5">
+          <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 text-danger text-sm rounded-xl px-4 py-3 mb-5">
             <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>
@@ -93,7 +93,7 @@ export default function ClientLogin() {
             <button
               type="button"
               onClick={() => setForm(f => ({ ...f, showPassword: !f.showPassword }))}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/30 hover:text-fg/70 transition"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/65 hover:text-fg/70 transition"
               aria-label={form.showPassword ? 'Hide password' : 'Show password'}
             >
               {form.showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -104,7 +104,7 @@ export default function ClientLogin() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-brand hover:bg-brand-dark text-white font-black py-3 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
+          className="w-full bg-brand hover:bg-brand-dark text-on-brand font-black py-3 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
         >
           {loading ? <Loader2 size={15} className="animate-spin" /> : <LogIn size={15} />}
           {loading ? 'Signing in…' : 'Sign In'}

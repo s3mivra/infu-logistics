@@ -13,7 +13,7 @@ export default function QRCode({ url, size = 200 }) {
           style={{ width: `${size}px`, height: `${size}px` }}
         />
       </div>
-      <p className="text-gray-400 text-sm mt-4 text-center break-all max-w-xs">{url}</p>
+      <p className="text-fg/70 text-sm mt-4 text-center break-all max-w-xs">{url}</p>
     </div>
   );
 }

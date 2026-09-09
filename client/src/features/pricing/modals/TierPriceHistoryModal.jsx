@@ -23,27 +23,27 @@ export default function TierPriceHistoryModal() {
             <h2 className="text-xl font-bold text-fg flex items-center gap-2">
               <History size={18} className="text-accent" /> Price History:{' '}
               <span className="text-accent">{tierPriceHistoryCtx?.tierName}</span>
-              {tierPriceHistoryCtx?.productName && <span className="text-fg/50"> · {tierPriceHistoryCtx.productName}</span>}
+              {tierPriceHistoryCtx?.productName && <span className="text-fg/75"> · {tierPriceHistoryCtx.productName}</span>}
             </h2>
-            <p className="text-[10px] text-gray-500 mt-0.5">
+            <p className="text-[10px] text-fg/70 mt-0.5">
               Current: <span className="text-fg font-bold">{fmt(tierPriceHistoryCtx?.current)}</span>
               {tierPriceHistory.length > 0 && ` · ${tierPriceHistory.length} change${tierPriceHistory.length === 1 ? '' : 's'} recorded`}
             </p>
           </div>
-          <button onClick={() => setTierPriceHistoryOpen(false)} className="text-gray-400 hover:text-fg font-bold text-xl">✕</button>
+          <button onClick={() => setTierPriceHistoryOpen(false)} className="text-fg/70 hover:text-fg font-bold text-xl">✕</button>
         </div>
 
         <div className="overflow-y-auto custom-scrollbar flex-1">
           {tierPriceHistoryLoading ? (
-            <p className="text-gray-500 text-sm text-center py-8">Loading…</p>
+            <p className="text-fg/70 text-sm text-center py-8">Loading…</p>
           ) : tierPriceHistory.length === 0 ? (
-            <p className="text-gray-500 text-sm text-center py-8">No changes recorded yet - still at its original {isPercent ? 'rate' : 'price'}.</p>
+            <p className="text-fg/70 text-sm text-center py-8">No changes recorded yet - still at its original {isPercent ? 'rate' : 'price'}.</p>
           ) : (
             <ul className="space-y-2">
               {tierPriceHistory.map((h, i) => (
                 <li key={i} className="bg-page-bg border border-white/10 rounded-lg px-4 py-3">
                   <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">
+                    <span className="text-[10px] text-fg/70 font-bold uppercase tracking-widest">
                       As of {new Date(h.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                       <span className="text-gray-600 font-normal normal-case ml-1.5">{new Date(h.date).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
                     </span>
@@ -52,9 +52,9 @@ export default function TierPriceHistoryModal() {
                     </span>
                   </div>
                   <div className="flex items-center gap-2 mt-1.5 font-mono">
-                    <span className="text-fg/40 text-sm line-through">{fmt(h.oldValue)}</span>
-                    <span className="text-fg/30">→</span>
-                    <span className={`text-lg font-black ${h.oldValue !== null && Number(h.newValue) > Number(h.oldValue) ? 'text-red-400' : 'text-green-400'}`}>{fmt(h.newValue)}</span>
+                    <span className="text-fg/70 text-sm line-through">{fmt(h.oldValue)}</span>
+                    <span className="text-fg/65">→</span>
+                    <span className={`text-lg font-black ${h.oldValue !== null && Number(h.newValue) > Number(h.oldValue) ? 'text-danger' : 'text-success'}`}>{fmt(h.newValue)}</span>
                   </div>
                   {h.changedBy && <p className="text-[10px] text-gray-600 mt-1">by {h.changedBy}</p>}
                 </li>

@@ -50,7 +50,7 @@ export default function WithholdingTaxTab() {
         </h1>
         <input type="date" value={range.start} onChange={e => setRange(r => ({ ...r, start: e.target.value }))}
           className="bg-sidebar-bg border border-white/10 rounded-lg px-3 py-2 text-xs text-fg focus:border-brand/50 focus:outline-none" />
-        <span className="text-fg/30 text-xs">to</span>
+        <span className="text-fg/65 text-xs">to</span>
         <input type="date" value={range.end} onChange={e => setRange(r => ({ ...r, end: e.target.value }))}
           className="bg-sidebar-bg border border-white/10 rounded-lg px-3 py-2 text-xs text-fg focus:border-brand/50 focus:outline-none" />
         <button onClick={load} disabled={loading}
@@ -59,7 +59,7 @@ export default function WithholdingTaxTab() {
         </button>
       </div>
 
-      <p className="text-xs text-fg/50 leading-relaxed max-w-3xl">
+      <p className="text-xs text-fg/75 leading-relaxed max-w-3xl">
         Tax deducted from a supplier's payment is never the business's own expense - the supplier was paid
         less by exactly this much. It sits as a liability from the moment it is withheld until the BIR is
         paid. Set the rate on an expense when you file it.
@@ -69,10 +69,10 @@ export default function WithholdingTaxTab() {
         {[
           ['Withheld', peso(t.withheld), 'text-fg'],
           ['Remitted', peso(t.remitted), 'text-fg/60'],
-          ['Still owed to the BIR', peso(t.outstanding), t.outstanding > 0 ? 'text-amber-400' : 'text-green-400'],
+          ['Still owed to the BIR', peso(t.outstanding), t.outstanding > 0 ? 'text-warning' : 'text-success'],
         ].map(([label, val, cls]) => (
           <div key={label} className="bg-sidebar-bg border border-white/10 rounded-xl p-3">
-            <p className="text-[9px] font-black uppercase tracking-widest text-fg/40">{label}</p>
+            <p className="text-[9px] font-black uppercase tracking-widest text-fg/70">{label}</p>
             <p className={`text-lg font-black tabular-nums ${cls}`}>{val}</p>
           </div>
         ))}
@@ -91,7 +91,7 @@ export default function WithholdingTaxTab() {
 
       <div className="space-y-2">
         {(data?.periods || []).length === 0 && (
-          <div className="bg-sidebar-bg border border-white/10 rounded-xl px-4 py-10 text-center text-fg/40 text-sm">
+          <div className="bg-sidebar-bg border border-white/10 rounded-xl px-4 py-10 text-center text-fg/70 text-sm">
             {loading ? 'Loading…' : 'Nothing has been withheld in this range.'}
           </div>
         )}
@@ -102,14 +102,14 @@ export default function WithholdingTaxTab() {
             <div key={key} className="bg-sidebar-bg border border-white/10 rounded-xl overflow-hidden">
               <button onClick={() => setOpen(isOpen ? null : key)}
                 className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.02] transition">
-                {isOpen ? <ChevronDown size={14} className="text-fg/40" /> : <ChevronRight size={14} className="text-fg/40" />}
+                {isOpen ? <ChevronDown size={14} className="text-fg/70" /> : <ChevronRight size={14} className="text-fg/70" />}
                 <div className="min-w-0 flex-1">
                   <p className="font-bold text-fg text-sm">{monthName(p.month)}</p>
-                  <p className="text-[10px] text-fg/40">{p.accountName}</p>
+                  <p className="text-[10px] text-fg/70">{p.accountName}</p>
                 </div>
                 <div className="text-right shrink-0">
                   <p className="text-xs tabular-nums text-fg">{peso(p.withheld)} withheld</p>
-                  <p className={`text-[10px] tabular-nums ${p.outstanding > 0 ? 'text-amber-400' : 'text-green-400'}`}>
+                  <p className={`text-[10px] tabular-nums ${p.outstanding > 0 ? 'text-warning' : 'text-success'}`}>
                     {p.outstanding > 0 ? `${peso(p.outstanding)} still owed` : 'settled'}
                   </p>
                 </div>
@@ -119,7 +119,7 @@ export default function WithholdingTaxTab() {
                 <div className="border-t border-white/5">
                   <table className="w-full text-xs">
                     <thead>
-                      <tr className="text-[9px] font-black uppercase tracking-widest text-fg/40">
+                      <tr className="text-[9px] font-black uppercase tracking-widest text-fg/70">
                         <th className="text-left px-4 py-2">Date</th>
                         <th className="text-left px-4 py-2">Reference</th>
                         <th className="text-left px-4 py-2">Description</th>
@@ -131,13 +131,13 @@ export default function WithholdingTaxTab() {
                         <tr key={i} className="border-t border-white/5">
                           <td className="px-4 py-2 text-fg/60">{shortDate(e.date)}</td>
                           <td className="px-4 py-2 text-fg/80">{e.reference}</td>
-                          <td className="px-4 py-2 text-fg/50 truncate max-w-[22rem]">{e.description}</td>
+                          <td className="px-4 py-2 text-fg/75 truncate max-w-[22rem]">{e.description}</td>
                           <td className="px-4 py-2 text-right tabular-nums text-fg">{peso(e.amount)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  <p className="px-4 py-2 text-[10px] text-fg/35 border-t border-white/5">
+                  <p className="px-4 py-2 text-[10px] text-fg/70 border-t border-white/5">
                     One row per withholding - enough to fill in a 2307 for each supplier.
                   </p>
                 </div>

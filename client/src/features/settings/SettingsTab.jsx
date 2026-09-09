@@ -22,7 +22,7 @@ function Toggle({ on, onChange, disabled }) {
 }
 
 function SettingRow({ icon: Icon, title, desc, children, tone = 'default' }) {
-  const iconTone = tone === 'default' ? 'text-brand bg-brand/15 border-brand/30' : 'text-fg/50 bg-white/5 border-white/10';
+  const iconTone = tone === 'default' ? 'text-brand bg-brand/15 border-brand/30' : 'text-fg/75 bg-white/5 border-white/10';
   return (
     <div className="flex items-center gap-4 px-4 py-4">
       <div className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${iconTone}`}>
@@ -30,7 +30,7 @@ function SettingRow({ icon: Icon, title, desc, children, tone = 'default' }) {
       </div>
       <div className="flex-1 min-w-0">
         <p className="font-bold text-fg text-sm">{title}</p>
-        {desc && <p className="text-fg/40 text-xs mt-0.5 leading-snug">{desc}</p>}
+        {desc && <p className="text-fg/70 text-xs mt-0.5 leading-snug">{desc}</p>}
       </div>
       <div className="shrink-0">{children}</div>
     </div>
@@ -40,7 +40,7 @@ function SettingRow({ icon: Icon, title, desc, children, tone = 'default' }) {
 function Card({ title, children }) {
   return (
     <div>
-      <p className="text-[11px] font-black uppercase tracking-wider text-fg/30 mb-2 px-1">{title}</p>
+      <p className="text-[11px] font-black uppercase tracking-wider text-fg/65 mb-2 px-1">{title}</p>
       <div className="bg-white/5 border border-white/10 rounded-2xl divide-y divide-white/5">{children}</div>
     </div>
   );
@@ -90,11 +90,11 @@ function TextSetting({ label, hint, value, onSave, placeholder, multiline, maxLe
   };
   return (
     <div>
-      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">{label}</label>
+      <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">{label}</label>
       {multiline
         ? <textarea key={String(value ?? '')} rows={2} {...common} className={`${common.className} resize-none`} />
         : <input key={String(value ?? '')} type="text" {...common} />}
-      {hint && <p className="text-[10px] text-fg/40 mt-1 leading-snug">{hint}</p>}
+      {hint && <p className="text-[10px] text-fg/70 mt-1 leading-snug">{hint}</p>}
     </div>
   );
 }
@@ -289,7 +289,7 @@ export default function SettingsTab({ ctx }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-fg text-sm">Business Logo</p>
-                  <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                  <p className="text-fg/70 text-xs mt-0.5 leading-snug">
                     Shown on the sidebar, login screen, printed receipts, the menu and the client portal. PNG or JPG; it's resized automatically.
                   </p>
                   <div className="flex items-center gap-4 mt-3 flex-wrap">
@@ -299,15 +299,15 @@ export default function SettingsTab({ ctx }) {
                     >
                       {currentLogo
                         ? <img src={currentLogo} alt="Logo" className="max-w-full max-h-full object-contain" />
-                        : <ImageIcon size={22} className={systemSettings.logoColor ? 'text-white/60' : 'text-fg/20'} />}
+                        : <ImageIcon size={22} className={systemSettings.logoColor ? 'text-white/60' : 'text-fg/60'} />}
                     </div>
                     <div className="flex flex-col gap-2">
-                      <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-white hover:bg-brand/90 transition min-h-[40px]">
+                      <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-on-brand hover:bg-brand/90 transition min-h-[40px]">
                         {busyKey === 'businessLogo' ? 'Uploading…' : (currentLogo ? 'Replace Logo' : 'Upload Logo')}
                         <input type="file" accept="image/*" className="hidden" disabled={busyKey === 'businessLogo'} onChange={(e) => uploadImageSetting('businessLogo', e, 300)} />
                       </label>
                       {currentLogo && (
-                        <button onClick={() => saveSetting('businessLogo', '')} className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/5 text-fg/50 border border-white/10 hover:text-red-400 hover:border-red-400/40 transition min-h-[38px]">
+                        <button onClick={() => saveSetting('businessLogo', '')} className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/5 text-fg/75 border border-white/10 hover:text-danger hover:border-red-400/40 transition min-h-[38px]">
                           Remove
                         </button>
                       )}
@@ -315,7 +315,7 @@ export default function SettingsTab({ ctx }) {
                   </div>
                   <div className="mt-3 space-y-3">
                       <div>
-                        <p className="text-[10px] text-fg/40 uppercase font-bold tracking-widest mb-2">Logo Background Color</p>
+                        <p className="text-[10px] text-fg/70 uppercase font-bold tracking-widest mb-2">Logo Background Color</p>
                         <div className="flex flex-wrap gap-2">
                           {/* Clear / no color */}
                           <button
@@ -323,7 +323,7 @@ export default function SettingsTab({ ctx }) {
                             className={`w-8 h-8 rounded-lg border-2 transition hover:scale-110 flex items-center justify-center ${!systemSettings.logoColor ? 'border-brand bg-brand/10' : 'border-white/20 bg-white/5'}`}
                             title="No background color"
                           >
-                            <X size={14} className={!systemSettings.logoColor ? 'text-brand' : 'text-fg/30'} />
+                            <X size={14} className={!systemSettings.logoColor ? 'text-brand' : 'text-fg/65'} />
                           </button>
                           {['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#8b5cf6','#ec4899','#6b7280','#1e293b'].map(color => (
                             <button
@@ -335,16 +335,16 @@ export default function SettingsTab({ ctx }) {
                             />
                           ))}
                         </div>
-                        <p className="text-[10px] text-fg/30 mt-1.5">Used as background behind the logo on screen and in print.</p>
+                        <p className="text-[10px] text-fg/65 mt-1.5">Used as background behind the logo on screen and in print.</p>
                       </div>
                       <div>
-                        <p className="text-[10px] text-fg/40 uppercase font-bold tracking-widest mb-2">Corner Radius</p>
+                        <p className="text-[10px] text-fg/70 uppercase font-bold tracking-widest mb-2">Corner Radius</p>
                         <div className="flex gap-2 flex-wrap">
                           {[{label:'None',v:'0px'},{label:'Small',v:'6px'},{label:'Medium',v:'12px'},{label:'Large',v:'20px'},{label:'Circle',v:'9999px'}].map(({label,v}) => (
                             <button
                               key={v}
                               onClick={() => saveSetting('logoRadius', v)}
-                              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition border ${(systemSettings.logoRadius || '12px') === v ? 'bg-brand text-white border-brand' : 'border-white/10 text-fg/50 hover:border-white/30'}`}
+                              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition border ${(systemSettings.logoRadius || '12px') === v ? 'bg-brand text-on-brand border-brand' : 'border-white/10 text-fg/75 hover:border-white/30'}`}
                             >
                               {label}
                             </button>
@@ -365,22 +365,22 @@ export default function SettingsTab({ ctx }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-fg text-sm">Payment QR</p>
-                  <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                  <p className="text-fg/70 text-xs mt-0.5 leading-snug">
                     Your GCash / Maya / bank QR. Once uploaded, staff get a “Show Payment QR” button at checkout for the customer to scan.
                   </p>
                   <div className="flex items-center gap-4 mt-3 flex-wrap">
                     <div className="w-20 h-20 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
                       {currentQr
                         ? <img src={currentQr} alt="Payment QR" className="max-w-full max-h-full object-contain" />
-                        : <QrCode size={22} className="text-fg/20" />}
+                        : <QrCode size={22} className="text-fg/60" />}
                     </div>
                     <div className="flex flex-col gap-2">
-                      <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-white hover:bg-brand/90 transition min-h-[40px]">
+                      <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-on-brand hover:bg-brand/90 transition min-h-[40px]">
                         {busyKey === 'paymentQrImage' ? 'Uploading…' : (currentQr ? 'Replace QR' : 'Upload QR')}
                         <input type="file" accept="image/*" className="hidden" disabled={busyKey === 'paymentQrImage'} onChange={(e) => uploadImageSetting('paymentQrImage', e, 500)} />
                       </label>
                       {currentQr && (
-                        <button onClick={() => saveSetting('paymentQrImage', '')} className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/5 text-fg/50 border border-white/10 hover:text-red-400 hover:border-red-400/40 transition min-h-[38px]">
+                        <button onClick={() => saveSetting('paymentQrImage', '')} className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/5 text-fg/75 border border-white/10 hover:text-danger hover:border-red-400/40 transition min-h-[38px]">
                           Remove
                         </button>
                       )}
@@ -417,7 +417,7 @@ export default function SettingsTab({ ctx }) {
                   {vatOn && (
                     <>
                       <div className="mt-4">
-                        <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
+                        <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
                           VAT rate (%)
                         </label>
                         <input
@@ -441,7 +441,7 @@ export default function SettingsTab({ ctx }) {
                       </div>
 
                       <div className="mt-4">
-                        <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
+                        <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
                           Price basis
                         </label>
                         <div className="grid grid-cols-2 gap-2">
@@ -453,7 +453,7 @@ export default function SettingsTab({ ctx }) {
                               onClick={() => saveSetting?.('vatInclusive', opt.v)}
                               className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
                                 vatInclusive === opt.v
-                                  ? 'bg-brand text-white border-brand'
+                                  ? 'bg-brand text-on-brand border-brand'
                                   : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'
                               }`}>
                               {opt.label}
@@ -473,7 +473,7 @@ export default function SettingsTab({ ctx }) {
                           discount against, so the choice would do nothing. */}
                       {vatInclusive && (
                         <div className="mt-4">
-                          <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
+                          <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
                             SC/PWD calculation
                           </label>
                           <div className="grid grid-cols-2 gap-2">
@@ -485,7 +485,7 @@ export default function SettingsTab({ ctx }) {
                                 onClick={() => saveSetting?.('scPwdOrder', opt.v)}
                                 className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
                                   scPwdOrder === opt.v
-                                    ? 'bg-brand text-white border-brand'
+                                    ? 'bg-brand text-on-brand border-brand'
                                     : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'
                                 }`}>
                                 {opt.label}
@@ -535,7 +535,7 @@ export default function SettingsTab({ ctx }) {
               {modules.map(mod => (
                 <div key={mod.key} className="px-4 py-4 flex items-start gap-4">
                   <div className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${
-                    mod.enabled ? 'text-brand bg-brand/15 border-brand/30' : 'text-fg/30 bg-white/5 border-white/10'
+                    mod.enabled ? 'text-brand bg-brand/15 border-brand/30' : 'text-fg/65 bg-white/5 border-white/10'
                   }`}>
                     <FileText size={16} />
                   </div>
@@ -549,7 +549,7 @@ export default function SettingsTab({ ctx }) {
                         onChange={() => toggleModule(mod)} />
                     </div>
                     {!mod.enabled && (
-                      <p className="text-[10px] text-fg/40 mt-2 leading-relaxed">
+                      <p className="text-[10px] text-fg/70 mt-2 leading-relaxed">
                         Switched off: its screen is hidden and nothing posts to its accounts.
                       </p>
                     )}
@@ -578,7 +578,7 @@ export default function SettingsTab({ ctx }) {
                         onClick={() => saveSetting?.('creditLimitMode', m.value)}
                         className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
                           creditMode === m.value
-                            ? 'bg-brand text-white border-brand'
+                            ? 'bg-brand text-on-brand border-brand'
                             : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'
                         }`}>
                         {m.label}
@@ -587,7 +587,7 @@ export default function SettingsTab({ ctx }) {
                   </div>
                   {usesGlobal && (
                     <div className="mt-4">
-                      <label className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">
+                      <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
                         Limit for all clients (₱)
                       </label>
                       <input
@@ -642,7 +642,7 @@ export default function SettingsTab({ ctx }) {
               <div className="flex-1 min-w-0 space-y-3">
                 <div>
                   <p className="font-bold text-fg text-sm">Welcome &amp; Announcements</p>
-                  <p className="text-fg/40 text-xs mt-0.5 leading-snug">Shown at the top of the portal after a client signs in.</p>
+                  <p className="text-fg/70 text-xs mt-0.5 leading-snug">Shown at the top of the portal after a client signs in.</p>
                 </div>
                 <TextSetting label="Welcome title" value={systemSettings.portalWelcomeTitle}
                   placeholder="e.g. Welcome back" maxLength={60}
@@ -665,7 +665,7 @@ export default function SettingsTab({ ctx }) {
               <div className="flex-1 min-w-0 space-y-3">
                 <div>
                   <p className="font-bold text-fg text-sm">Support &amp; Payment</p>
-                  <p className="text-fg/40 text-xs mt-0.5 leading-snug">Where clients send payment proof and reach you. Overrides VITE_FB_LINK.</p>
+                  <p className="text-fg/70 text-xs mt-0.5 leading-snug">Where clients send payment proof and reach you. Overrides VITE_FB_LINK.</p>
                 </div>
                 <TextSetting label="Support link" value={systemSettings.portalSupportLink}
                   placeholder="https://m.me/yourpage" maxLength={300}
@@ -688,7 +688,7 @@ export default function SettingsTab({ ctx }) {
               <div className="flex-1 min-w-0 space-y-3">
                 <div>
                   <p className="font-bold text-fg text-sm">Order Slip Letterhead</p>
-                  <p className="text-fg/40 text-xs mt-0.5 leading-snug">Printed at the top of the client’s order slip and its PDF.</p>
+                  <p className="text-fg/70 text-xs mt-0.5 leading-snug">Printed at the top of the client’s order slip and its PDF.</p>
                 </div>
                 <TextSetting label="Company name" value={systemSettings.portalCompanyName}
                   hint={`Leave blank to print “${BIZ_NAME}” (your deployment name). Type here only to print a different legal/trade name.`}
@@ -728,7 +728,7 @@ export default function SettingsTab({ ctx }) {
                 <div className="flex-1 min-w-0 space-y-3">
                   <div>
                     <p className="font-bold text-fg text-sm">Receipt format &amp; paper</p>
-                    <p className="text-fg/40 text-xs mt-0.5 leading-snug">What prints when an order is paid, and on what paper. The A4 document always prints an original and a duplicate.</p>
+                    <p className="text-fg/70 text-xs mt-0.5 leading-snug">What prints when an order is paid, and on what paper. The A4 document always prints an original and a duplicate.</p>
                   </div>
                   <div>
                     <p className="text-xs font-bold text-fg/60 mb-1.5">Receipt format</p>
@@ -742,7 +742,7 @@ export default function SettingsTab({ ctx }) {
                         return (
                           <button key={opt.v} onClick={() => saveSetting?.('logReceiptFormat', opt.v)}
                             className={`px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
-                              active ? 'bg-brand text-white border-brand' : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                              active ? 'bg-brand text-on-brand border-brand' : 'bg-white/5 text-fg/75 border-white/10 hover:text-fg hover:bg-white/10'
                             }`}>
                             {opt.label}
                           </button>
@@ -758,7 +758,7 @@ export default function SettingsTab({ ctx }) {
                         return (
                           <button key={sz} onClick={() => saveSetting?.('portalPrintSize', sz)}
                             className={`px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
-                              active ? 'bg-brand text-white border-brand' : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                              active ? 'bg-brand text-on-brand border-brand' : 'bg-white/5 text-fg/75 border-white/10 hover:text-fg hover:bg-white/10'
                             }`}>
                             {sz}
                           </button>
@@ -768,14 +768,14 @@ export default function SettingsTab({ ctx }) {
                   </div>
                   <div>
                     <p className="text-xs font-bold text-fg/60 mb-1.5">Thermal paper width</p>
-                    <p className="text-fg/40 text-[11px] mb-1.5 leading-snug">The order slip auto-adjusts and stays centered for whichever roll is loaded.</p>
+                    <p className="text-fg/70 text-[11px] mb-1.5 leading-snug">The order slip auto-adjusts and stays centered for whichever roll is loaded.</p>
                     <div className="grid grid-cols-2 gap-2">
                       {[{ v: '58', label: '58mm' }, { v: '80', label: '80mm' }].map(opt => {
                         const active = String(systemSettings.thermalPaperWidth || 80) === opt.v;
                         return (
                           <button key={opt.v} onClick={() => saveSetting?.('thermalPaperWidth', opt.v)}
                             className={`px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
-                              active ? 'bg-brand text-white border-brand' : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                              active ? 'bg-brand text-on-brand border-brand' : 'bg-white/5 text-fg/75 border-white/10 hover:text-fg hover:bg-white/10'
                             }`}>
                             {opt.label}
                           </button>
@@ -795,14 +795,14 @@ export default function SettingsTab({ ctx }) {
                 </SettingRow>
                 <div className="px-4 py-4 border-t border-white/5">
                   <p className="text-xs font-bold text-fg/60 mb-1.5">Thermal paper width</p>
-                  <p className="text-fg/40 text-[11px] mb-1.5 leading-snug">The receipt auto-adjusts and stays centered for whichever roll is loaded.</p>
+                  <p className="text-fg/70 text-[11px] mb-1.5 leading-snug">The receipt auto-adjusts and stays centered for whichever roll is loaded.</p>
                   <div className="grid grid-cols-2 gap-2 max-w-xs">
                     {[{ v: '58', label: '58mm' }, { v: '80', label: '80mm' }].map(opt => {
                       const active = String(systemSettings.thermalPaperWidth || 80) === opt.v;
                       return (
                         <button key={opt.v} onClick={() => saveSetting?.('thermalPaperWidth', opt.v)}
                           className={`px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
-                            active ? 'bg-brand text-white border-brand' : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                            active ? 'bg-brand text-on-brand border-brand' : 'bg-white/5 text-fg/75 border-white/10 hover:text-fg hover:bg-white/10'
                           }`}>
                           {opt.label}
                         </button>
@@ -820,7 +820,7 @@ export default function SettingsTab({ ctx }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-fg text-sm">Print Logo</p>
-                  <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                  <p className="text-fg/70 text-xs mt-0.5 leading-snug">
                     Upload a separate logo for printed receipts and documents, or use the business logo.
                   </p>
                   {(() => {
@@ -843,20 +843,20 @@ export default function SettingsTab({ ctx }) {
                             <div className="w-20 h-20 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
                               {currentPrintLogo
                                 ? <img src={currentPrintLogo} alt="Print logo" className="max-w-full max-h-full object-contain" />
-                                : <Printer size={22} className="text-fg/20" />}
+                                : <Printer size={22} className="text-fg/60" />}
                             </div>
                             <div className="flex flex-col gap-2">
-                              <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-white hover:bg-brand/90 transition min-h-[40px]">
+                              <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-on-brand hover:bg-brand/90 transition min-h-[40px]">
                                 {busyKey === 'printLogo' ? 'Uploading…' : (currentPrintLogo ? 'Replace Print Logo' : 'Upload Print Logo')}
                                 <input type="file" accept="image/*" className="hidden" disabled={busyKey === 'printLogo'} onChange={(e) => uploadImageSetting('printLogo', e, 400)} />
                               </label>
                               {currentPrintLogo && (
-                                <button onClick={() => saveSetting('printLogo', '')} className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/5 text-fg/50 border border-white/10 hover:text-red-400 hover:border-red-400/40 transition min-h-[38px]">
+                                <button onClick={() => saveSetting('printLogo', '')} className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/5 text-fg/75 border border-white/10 hover:text-danger hover:border-red-400/40 transition min-h-[38px]">
                                   Remove
                                 </button>
                               )}
                               {!currentPrintLogo && (
-                                <p className="text-[10px] text-fg/30 leading-snug">No print logo uploaded yet.</p>
+                                <p className="text-[10px] text-fg/65 leading-snug">No print logo uploaded yet.</p>
                               )}
                             </div>
                           </div>
@@ -879,7 +879,7 @@ export default function SettingsTab({ ctx }) {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-fg text-sm">Appearance</p>
-                <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                <p className="text-fg/70 text-xs mt-0.5 leading-snug">
                   {THEMES.find(t => t.value === theme)?.hint} · saved on this device only
                 </p>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
@@ -887,8 +887,8 @@ export default function SettingsTab({ ctx }) {
                     <button key={t.value} onClick={() => applyTheme(t.value)}
                       className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
                         theme === t.value
-                          ? 'bg-brand text-white border-brand'
-                          : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                          ? 'bg-brand text-on-brand border-brand'
+                          : 'bg-white/5 text-fg/75 border-white/10 hover:text-fg hover:bg-white/10'
                       }`}>
                       {t.label}
                     </button>
@@ -900,12 +900,12 @@ export default function SettingsTab({ ctx }) {
 
           <div className="px-4 py-4">
             <div className="flex items-start gap-4">
-              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-fg/50 bg-white/5 border-white/10">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-fg/75 bg-white/5 border-white/10">
                 <Type size={16} />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-fg text-sm">Text Size</p>
-                <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                <p className="text-fg/70 text-xs mt-0.5 leading-snug">
                   Scales the whole app - bigger is easier to read on a tablet at arm's length. Saved on this device only.
                 </p>
                 <div className="grid grid-cols-4 gap-2 mt-3 max-w-md">
@@ -913,8 +913,8 @@ export default function SettingsTab({ ctx }) {
                     <button key={s.value} onClick={() => applyFontScale(s.value)}
                       className={`px-2 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
                         fontScale === s.value
-                          ? 'bg-brand text-white border-brand'
-                          : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                          ? 'bg-brand text-on-brand border-brand'
+                          : 'bg-white/5 text-fg/75 border-white/10 hover:text-fg hover:bg-white/10'
                       }`}>
                       {s.label}
                     </button>
@@ -926,12 +926,12 @@ export default function SettingsTab({ ctx }) {
 
           <div className="px-4 py-4">
             <div className="flex items-start gap-4">
-              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-fg/50 bg-white/5 border-white/10">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-fg/75 bg-white/5 border-white/10">
                 <Languages size={16} />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-fg text-sm">Language</p>
-                <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                <p className="text-fg/70 text-xs mt-0.5 leading-snug">
                   Interface language for this device.
                 </p>
                 <div className="grid grid-cols-2 gap-2 mt-3 max-w-xs">
@@ -939,8 +939,8 @@ export default function SettingsTab({ ctx }) {
                     <button key={l.value} onClick={() => applyLang(l.value)}
                       className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
                         lang === l.value
-                          ? 'bg-brand text-white border-brand'
-                          : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                          ? 'bg-brand text-on-brand border-brand'
+                          : 'bg-white/5 text-fg/75 border-white/10 hover:text-fg hover:bg-white/10'
                       }`}>
                       {l.label}
                     </button>
@@ -956,12 +956,12 @@ export default function SettingsTab({ ctx }) {
 
           <div className="px-4 py-4">
             <div className="flex items-start gap-4">
-              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-fg/50 bg-white/5 border-white/10">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-fg/75 bg-white/5 border-white/10">
                 <Printer size={16} />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-fg text-sm">Receipt Printing</p>
-                <p className="text-fg/40 text-xs mt-0.5 leading-snug">
+                <p className="text-fg/70 text-xs mt-0.5 leading-snug">
                   {printerMode === 'browser'
                     ? 'Always uses the browser print dialog - this device never probes for a paired Bluetooth/USB thermal printer.'
                     : 'Tries a paired Bluetooth or USB thermal printer first, falling back to the browser print dialog. Saved on this device only.'}
@@ -971,8 +971,8 @@ export default function SettingsTab({ ctx }) {
                     <button key={v} onClick={() => applyPrinterMode(v)}
                       className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
                         printerMode === v
-                          ? 'bg-brand text-white border-brand'
-                          : 'bg-white/5 text-fg/50 border-white/10 hover:text-fg hover:bg-white/10'
+                          ? 'bg-brand text-on-brand border-brand'
+                          : 'bg-white/5 text-fg/75 border-white/10 hover:text-fg hover:bg-white/10'
                       }`}>
                       {label}
                     </button>

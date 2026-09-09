@@ -29,9 +29,9 @@ const items = partialModal.items || [];
           <div className="flex justify-between items-center">
             <div>
               <h2 className="text-lg font-black text-fg">Partial Fulfillment</h2>
-              <p className="text-xs text-gray-400 mt-0.5">{partialModal.orderNumber} · set fulfilled quantities</p>
+              <p className="text-xs text-fg/70 mt-0.5">{partialModal.orderNumber} · set fulfilled quantities</p>
             </div>
-            <button onClick={() => setPartialModal(null)} className="text-gray-500 hover:text-fg text-xl font-bold">✕</button>
+            <button onClick={() => setPartialModal(null)} className="text-fg/70 hover:text-fg text-xl font-bold">✕</button>
           </div>
 
           <div className="space-y-2">
@@ -49,7 +49,7 @@ const items = partialModal.items || [];
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-sm font-bold text-fg truncate">{it.name}</p>
-                      <p className="text-[10px] text-fg/40">Remaining: {remaining} of {it.quantity} · ₱{netUnit(it).toFixed(2)} ea{(it.productDiscountPercent||0) > 0 ? ` (${it.productDiscountPercent}% off)` : ''}</p>
+                      <p className="text-[10px] text-fg/70">Remaining: {remaining} of {it.quantity} · ₱{netUnit(it).toFixed(2)} ea{(it.productDiscountPercent||0) > 0 ? ` (${it.productDiscountPercent}% off)` : ''}</p>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <button onClick={() => setPartialQtys(p => ({ ...p, [i]: Math.max(0, fq - 1) }))} className="w-7 h-7 rounded-lg bg-white/5 text-fg hover:bg-white/10 font-black">−</button>
@@ -59,7 +59,7 @@ const items = partialModal.items || [];
                       <button onClick={() => setPartialQtys(p => ({ ...p, [i]: Math.min(remaining, fq + 1) }))} className="w-7 h-7 rounded-lg bg-white/5 text-fg hover:bg-white/10 font-black">+</button>
                     </div>
                   </div>
-                  {short > 0 && <p className="text-[10px] text-amber-400 mt-1 font-bold">{short} stays on this order (fulfill later)</p>}
+                  {short > 0 && <p className="text-[10px] text-warning mt-1 font-bold">{short} stays on this order (fulfill later)</p>}
                 </div>
               );
             })}
@@ -67,11 +67,11 @@ const items = partialModal.items || [];
 
           <div className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-xs space-y-1">
             <div className="flex justify-between text-fg/70"><span>Fulfilled now</span><span className="font-mono font-bold text-fg">₱{fTotal.toFixed(2)}</span></div>
-            <div className="flex justify-between text-fg/70"><span>Remaining on order</span><span className="font-mono font-bold text-amber-400">₱{rTotal.toFixed(2)}</span></div>
+            <div className="flex justify-between text-fg/70"><span>Remaining on order</span><span className="font-mono font-bold text-warning">₱{rTotal.toFixed(2)}</span></div>
           </div>
 
           <div>
-            <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1.5">Payment Method</label>
+            <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1.5">Payment Method</label>
             <select value={partialPayment} onChange={e => setPartialPayment(e.target.value)}
               className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm font-bold outline-none focus:border-brand/60">
               <optgroup label="In-Store Payments">
@@ -105,7 +105,7 @@ const items = partialModal.items || [];
           {needsRef && (
             <div className="space-y-2">
               <div>
-                <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1.5">
+                <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1.5">
                   {isCheck ? 'Check No.' : 'Reference No.'}
                 </label>
                 <input
@@ -120,7 +120,7 @@ const items = partialModal.items || [];
               </div>
               {isCheck && (
                 <div>
-                  <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1.5">Check Date</label>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1.5">Check Date</label>
                   <input
                     type="date"
                     value={partialCheckDate || ''}
@@ -133,21 +133,21 @@ const items = partialModal.items || [];
           )}
 
           <div>
-            <label className="text-[10px] text-gray-400 font-bold uppercase block mb-1.5">Payment</label>
+            <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1.5">Payment</label>
             <div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setPartialMode('partial')}
-                className={`py-2.5 rounded-xl border text-xs font-bold transition ${partialMode === 'partial' ? 'bg-brand/20 border-brand/60 text-fg' : 'bg-page-bg border-white/10 text-fg/50'}`}>
+                className={`py-2.5 rounded-xl border text-xs font-bold transition ${partialMode === 'partial' ? 'bg-brand/20 border-brand/60 text-fg' : 'bg-page-bg border-white/10 text-fg/75'}`}>
                 Pay partial only<br/><span className="text-[9px] font-normal opacity-70">₱{fTotal.toFixed(2)} now · rest billed later</span>
               </button>
               <button type="button" onClick={() => setPartialMode('full')}
-                className={`py-2.5 rounded-xl border text-xs font-bold transition ${partialMode === 'full' ? 'bg-brand/20 border-brand/60 text-fg' : 'bg-page-bg border-white/10 text-fg/50'}`}>
+                className={`py-2.5 rounded-xl border text-xs font-bold transition ${partialMode === 'full' ? 'bg-brand/20 border-brand/60 text-fg' : 'bg-page-bg border-white/10 text-fg/75'}`}>
                 Pay full now<br/><span className="text-[9px] font-normal opacity-70">remaining prepaid (deposit)</span>
               </button>
             </div>
           </div>
 
           <button onClick={submitPartialFulfill} disabled={partialBusy}
-            className="w-full py-3 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand-dark transition disabled:opacity-50">
+            className="w-full py-3 bg-brand text-on-brand font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand-dark transition disabled:opacity-50">
             {partialBusy ? 'Processing…' : 'Fulfill & Set Aside Remaining'}
           </button>
         </div>

@@ -25,9 +25,9 @@ const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
             <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-3 flex-shrink-0">
               <div>
                 <h2 className="text-xl font-bold text-fg">Stock Card: <span className="text-accent">{historyItemName}</span></h2>
-                {stockHistory.length > 0 && <p className="text-[10px] text-gray-500 mt-0.5">{stockHistory.length} entries total{hUnit ? ` · qty in ${hUnit}` : ''}</p>}
+                {stockHistory.length > 0 && <p className="text-[10px] text-fg/70 mt-0.5">{stockHistory.length} entries total{hUnit ? ` · qty in ${hUnit}` : ''}</p>}
               </div>
-              <button onClick={() => setHistoryModalOpen(false)} className="text-gray-400 hover:text-fg font-bold text-xl">✕</button>
+              <button onClick={() => setHistoryModalOpen(false)} className="text-fg/70 hover:text-fg font-bold text-xl">✕</button>
             </div>
 
             <div className="overflow-y-auto custom-scrollbar flex-1">
@@ -44,7 +44,7 @@ const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
                 </thead>
                 <tbody>
                   {stockHistory.length === 0 ? (
-                    <tr><td colSpan="6" className="py-4 text-center text-gray-500">No movement history recorded yet.</td></tr>
+                    <tr><td colSpan="6" className="py-4 text-center text-fg/70">No movement history recorded yet.</td></tr>
                   ) : pagedHistory.map((log, idx) => {
                     const dispChange = fmtQty(log.qtyChange);
                     const dispBalance = fmtQty(log.balanceAfter);
@@ -53,7 +53,7 @@ const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
                     <tr key={idx} className="border-b border-gray-800/50 hover:bg-page-bg/30">
                       <td className="py-2 text-fg/80 text-xs">{new Date(log.date).toLocaleString()}</td>
                       <td className="py-2 font-bold text-fg/80">{log.type}</td>
-                      <td className={`py-2 text-right font-mono font-bold ${dispChange < 0 ? 'text-red-400' : 'text-green-400'}`}>
+                      <td className={`py-2 text-right font-mono font-bold ${dispChange < 0 ? 'text-danger' : 'text-success'}`}>
                         {dispChange > 0 ? `+${dispChange}` : dispChange}
                       </td>
                       <td className="py-2 text-right text-fg/80 font-mono text-xs">₱{dispCost.toFixed(2)}</td>
@@ -75,7 +75,7 @@ const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
                 >
                   <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                 </button>
-                <span className="text-gray-400 text-xs font-bold tracking-widest">
+                <span className="text-fg/70 text-xs font-bold tracking-widest">
                   PAGE <span className="text-accent text-sm">{historyPage}</span> OF {totalHistPages}
                 </span>
                 <button

@@ -110,9 +110,9 @@ export default function AuditTab({ ctx }) {
 
   const PagBar = ({ page, total, prev, next }) => total <= 1 ? null : (
     <div className="flex justify-between items-center border-t border-white/5 px-5 py-3 flex-shrink-0">
-      <button onClick={prev} disabled={page === 1} className={`px-3 py-1 rounded text-[10px] font-black uppercase tracking-wider transition ${page === 1 ? 'text-fg/15 cursor-not-allowed' : 'text-fg/50 hover:text-fg hover:bg-white/5'}`}>← Prev</button>
-      <span className="text-[10px] text-fg/30 font-bold tracking-widest">PAGE {page} OF {total}</span>
-      <button onClick={next} disabled={page === total} className={`px-3 py-1 rounded text-[10px] font-black uppercase tracking-wider transition ${page === total ? 'text-fg/15 cursor-not-allowed' : 'text-fg/50 hover:text-fg hover:bg-white/5'}`}>Next →</button>
+      <button onClick={prev} disabled={page === 1} className={`px-3 py-1 rounded text-[10px] font-black uppercase tracking-wider transition ${page === 1 ? 'text-fg/15 cursor-not-allowed' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}>← Prev</button>
+      <span className="text-[10px] text-fg/65 font-bold tracking-widest">PAGE {page} OF {total}</span>
+      <button onClick={next} disabled={page === total} className={`px-3 py-1 rounded text-[10px] font-black uppercase tracking-wider transition ${page === total ? 'text-fg/15 cursor-not-allowed' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}>Next →</button>
     </div>
   );
 
@@ -131,7 +131,7 @@ export default function AuditTab({ ctx }) {
                 {[['today','Today'],['7d','7 Days'],['30d','30 Days'],['all','All Time']].map(([val, lbl]) => (
                   <button key={val}
                     onClick={() => { setAuditFilter(val); setAuditCancelPage(1); setAuditCompPage(1); setAuditDiscPage(1); setAuditStaffPage(1); }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition ${auditFilter === val ? 'bg-brand text-white' : 'bg-white/5 text-fg/40 hover:bg-white/10 hover:text-fg'}`}>
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition ${auditFilter === val ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/70 hover:bg-white/10 hover:text-fg'}`}>
                     {lbl}
                   </button>
                 ))}
@@ -142,12 +142,12 @@ export default function AuditTab({ ctx }) {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               <div className="bg-surface border border-white/10 rounded-xl p-4">
                 <p className="text-[10px] text-fg/80 font-bold uppercase tracking-wider mb-1">Cancelled / Voided</p>
-                <p className="text-2xl font-black text-red-400">{cancelled.length}</p>
+                <p className="text-2xl font-black text-danger">{cancelled.length}</p>
                 <p className="text-[10px] text-red-400/60 font-bold mt-0.5">₱{totalCancelledValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} lost</p>
               </div>
               <div className="bg-surface border border-white/10 rounded-xl p-4">
                 <p className="text-[10px] text-fg/80 font-bold uppercase tracking-wider mb-1">Complimentary</p>
-                <p className="text-2xl font-black text-yellow-400">{comps.length}</p>
+                <p className="text-2xl font-black text-warning">{comps.length}</p>
                 <p className="text-[10px] text-yellow-400/60 font-bold mt-0.5">₱{totalCompValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} waived</p>
               </div>
               <div className="bg-surface border border-white/10 rounded-xl p-4">
@@ -158,16 +158,16 @@ export default function AuditTab({ ctx }) {
               <div className="bg-surface border border-white/10 rounded-xl p-4">
                 <p className="text-[10px] text-fg/80 font-bold uppercase tracking-wider mb-1">Active Staff</p>
                 <p className="text-2xl font-black text-fg">{staffList.length}</p>
-                <p className="text-[10px] text-fg/30 font-bold mt-0.5">in period</p>
+                <p className="text-[10px] text-fg/65 font-bold mt-0.5">in period</p>
               </div>
             </div>
 
             {/* Cancelled / Voided Table */}
             <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
               <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
-                <XCircle size={14} className="text-red-400" />
+                <XCircle size={14} className="text-danger" />
                 <h3 className="text-sm font-black text-fg uppercase tracking-wider">Cancelled &amp; Voided Orders</h3>
-                <span className="ml-auto text-[10px] bg-red-500/15 text-red-400 px-2 py-0.5 rounded-full font-bold">{cancelled.length}</span>
+                <span className="ml-auto text-[10px] bg-red-500/15 text-danger px-2 py-0.5 rounded-full font-bold">{cancelled.length}</span>
               </div>
               {cancelled.length === 0 ? (
                 <p className="text-fg/60 text-sm p-6 text-center font-bold">No cancelled or voided orders in this period.</p>
@@ -197,9 +197,9 @@ export default function AuditTab({ ctx }) {
                             <td className="px-5 py-2.5 text-xs text-fg/60 font-mono">{fmtDate(o.createdAt)}</td>
                             <td className="px-5 py-2.5 text-xs text-fg/60 font-bold">{o.customerName || '-'}</td>
                             <td className="px-5 py-2.5 text-xs text-fg/60 font-bold">{actor}</td>
-                            <td className="px-5 py-2.5 text-xs text-right font-mono text-red-400">₱{(o.subtotal || 0).toFixed(2)}</td>
+                            <td className="px-5 py-2.5 text-xs text-right font-mono text-danger">₱{(o.subtotal || 0).toFixed(2)}</td>
                             <td className="px-5 py-2.5">
-                              <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${o.status === 'Voided' ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20 text-gray-400'}`}>{o.status}</span>
+                              <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${o.status === 'Voided' ? 'bg-red-500/20 text-danger' : 'bg-gray-500/20 text-fg/70'}`}>{o.status}</span>
                             </td>
                           </tr>
                           );
@@ -217,9 +217,9 @@ export default function AuditTab({ ctx }) {
             {/* Complimentary Orders Table */}
             <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
               <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
-                <Gift size={14} className="text-yellow-400" />
+                <Gift size={14} className="text-warning" />
                 <h3 className="text-sm font-black text-fg uppercase tracking-wider">Complimentary Orders</h3>
-                <span className="ml-auto text-[10px] bg-yellow-500/15 text-yellow-400 px-2 py-0.5 rounded-full font-bold">{comps.length}</span>
+                <span className="ml-auto text-[10px] bg-yellow-500/15 text-warning px-2 py-0.5 rounded-full font-bold">{comps.length}</span>
               </div>
               {comps.length === 0 ? (
                 <p className="text-fg/60 text-sm p-6 text-center font-bold">No complimentary orders in this period.</p>
@@ -243,7 +243,7 @@ export default function AuditTab({ ctx }) {
                             <td className="px-5 py-2.5 text-xs text-fg/60 font-bold">{o.customerName || '-'}</td>
                             <td className="px-5 py-2.5 text-xs text-yellow-400/80">{COMP_REASON_LABELS[o.reasonType] || o.reasonType || o.reasonNote || '-'}</td>
                             <td className="px-5 py-2.5 text-xs text-fg/60">{o.cashier || '-'}</td>
-                            <td className="px-5 py-2.5 text-xs text-right font-mono text-yellow-400">₱{(o.subtotal || 0).toFixed(2)}</td>
+                            <td className="px-5 py-2.5 text-xs text-right font-mono text-warning">₱{(o.subtotal || 0).toFixed(2)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -303,9 +303,9 @@ export default function AuditTab({ ctx }) {
             {/* Staff Activity Summary */}
             <div className="bg-surface border border-white/10 rounded-xl overflow-hidden mb-6">
               <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
-                <Users size={14} className="text-fg/50" />
+                <Users size={14} className="text-fg/75" />
                 <h3 className="text-sm font-black text-fg uppercase tracking-wider">Staff Activity</h3>
-                <span className="ml-auto text-[10px] bg-white/10 text-fg/40 px-2 py-0.5 rounded-full font-bold">{staffList.length}</span>
+                <span className="ml-auto text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{staffList.length}</span>
               </div>
               {staffList.length === 0 ? (
                 <p className="text-fg/60 text-sm p-6 text-center font-bold">No staff activity in this period.</p>
@@ -334,10 +334,10 @@ export default function AuditTab({ ctx }) {
                               <td className="px-5 py-2.5 text-xs text-fg/60 font-black">{name}</td>
                               <td className="px-5 py-2.5 text-xs text-right text-fg/60 font-mono">{myOrders.length}</td>
                               <td className="px-5 py-2.5 text-xs text-right font-mono">
-                                <span className={myCancelled.length > 0 ? 'text-red-400' : 'text-fg/60'}>{myCancelled.length}</span>
+                                <span className={myCancelled.length > 0 ? 'text-danger' : 'text-fg/60'}>{myCancelled.length}</span>
                               </td>
                               <td className="px-5 py-2.5 text-xs text-right font-mono">
-                                <span className={myComps.length > 0 ? 'text-yellow-400' : 'text-fg/60'}>{myComps.length}</span>
+                                <span className={myComps.length > 0 ? 'text-warning' : 'text-fg/60'}>{myComps.length}</span>
                               </td>
                               <td className="px-5 py-2.5 text-xs text-right font-mono text-brand font-bold">₱{myNet.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             </tr>
@@ -358,7 +358,7 @@ export default function AuditTab({ ctx }) {
               <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2 flex-wrap">
                 <ShieldCheck size={14} className="text-brand/70" />
                 <h3 className="text-sm font-black text-fg uppercase tracking-wider">System Activity Log</h3>
-                <span className="text-[10px] bg-white/10 text-fg/40 px-2 py-0.5 rounded-full font-bold">{auditLogsTotal} total</span>
+                <span className="text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{auditLogsTotal} total</span>
                 <input type="text" value={auditLogFilters.actor} onChange={e => setAuditLogFilters(f => ({ ...f, actor: e.target.value }))}
                   placeholder="Filter by user" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/25 focus:outline-none focus:border-brand/60 w-32" />
                 <input type="text" value={auditLogFilters.action} onChange={e => setAuditLogFilters(f => ({ ...f, action: e.target.value }))}
@@ -369,21 +369,21 @@ export default function AuditTab({ ctx }) {
                   className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg focus:outline-none focus:border-brand/60" />
                 <button
                   onClick={() => fetchAuditLogs(1)}
-                  className="flex items-center gap-1 px-3 py-1 rounded-lg bg-white/5 text-fg/50 hover:text-fg hover:bg-white/10 text-xs font-bold transition"
+                  className="flex items-center gap-1 px-3 py-1 rounded-lg bg-white/5 text-fg/75 hover:text-fg hover:bg-white/10 text-xs font-bold transition"
                 >
                   <RefreshCw size={11} /> Load
                 </button>
                 <button
                   onClick={exportAuditLogsCsv}
                   title="Export CSV for the selected date range (start/end required, max 92 days)"
-                  className="ml-auto flex items-center gap-1 px-3 py-1 rounded-lg bg-white/5 text-fg/50 hover:text-fg hover:bg-white/10 text-xs font-bold transition"
+                  className="ml-auto flex items-center gap-1 px-3 py-1 rounded-lg bg-white/5 text-fg/75 hover:text-fg hover:bg-white/10 text-xs font-bold transition"
                 >
                   <Download size={11} /> CSV
                 </button>
                 <button
                   onClick={exportAuditLogsPdf}
                   title="Export the currently loaded page as PDF"
-                  className="flex items-center gap-1 px-3 py-1 rounded-lg bg-white/5 text-fg/50 hover:text-fg hover:bg-white/10 text-xs font-bold transition"
+                  className="flex items-center gap-1 px-3 py-1 rounded-lg bg-white/5 text-fg/75 hover:text-fg hover:bg-white/10 text-xs font-bold transition"
                 >
                   <FileText size={11} /> PDF
                 </button>
@@ -406,17 +406,17 @@ export default function AuditTab({ ctx }) {
                       <tbody>
                         {auditLogs.map((log, i) => {
                           const actionColors = {
-                            PRODUCT_PRICE_CHANGED: 'text-yellow-400',
-                            PRODUCT_86D: 'text-red-400',
-                            PRODUCT_RESTORED: 'text-green-400',
-                            PRODUCT_ARCHIVED: 'text-red-500',
-                            PASSWORD_CHANGED: 'text-blue-400',
+                            PRODUCT_PRICE_CHANGED: 'text-warning',
+                            PRODUCT_86D: 'text-danger',
+                            PRODUCT_RESTORED: 'text-success',
+                            PRODUCT_ARCHIVED: 'text-danger',
+                            PASSWORD_CHANGED: 'text-info',
                             AP_PAYMENT: 'text-brand',
                             ORDER_COMPLETED: 'text-green-400/70',
                             ORDER_VOIDED: 'text-red-400/70',
-                            ORDER_CANCELLED: 'text-gray-400',
+                            ORDER_CANCELLED: 'text-fg/70',
                           };
-                          const actionColor = actionColors[log.action] || 'text-fg/50';
+                          const actionColor = actionColors[log.action] || 'text-fg/75';
                           const detail = log.details
                             ? log.action === 'PRODUCT_PRICE_CHANGED'
                               ? `₱${log.details.oldPrice} → ₱${log.details.newPrice}`
@@ -426,13 +426,13 @@ export default function AuditTab({ ctx }) {
                             : '';
                           return (
                             <tr key={log._id || i} className={`border-b border-white/5 hover:bg-white/3 text-xs ${i % 2 === 0 ? '' : 'bg-white/[0.02]'}`}>
-                              <td className="px-5 py-2.5 text-fg/40 font-mono whitespace-nowrap">
+                              <td className="px-5 py-2.5 text-fg/70 font-mono whitespace-nowrap">
                                 {new Date(log.timestamp).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} {new Date(log.timestamp).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
                               </td>
                               <td className={`px-5 py-2.5 font-black uppercase tracking-wider text-[10px] ${actionColor}`}>{log.action.replace(/_/g,' ')}</td>
                               <td className="px-5 py-2.5 font-mono text-fg/60">{log.targetReference}</td>
                               <td className="px-5 py-2.5 text-fg/70 font-bold">{log.userId || '-'}</td>
-                              <td className="px-5 py-2.5 text-fg/40 truncate max-w-[180px]">{detail}</td>
+                              <td className="px-5 py-2.5 text-fg/70 truncate max-w-[180px]">{detail}</td>
                             </tr>
                           );
                         })}

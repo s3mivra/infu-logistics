@@ -47,14 +47,14 @@ export default function SettleArModal() {
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
             <div>
               <h2 className="text-fg font-black text-lg">Record Collection</h2>
-              <p className="text-fg/40 text-xs mt-0.5">{order.orderNumber} · {order.paymentMethod}</p>
+              <p className="text-fg/70 text-xs mt-0.5">{order.orderNumber} · {order.paymentMethod}</p>
             </div>
             <div className="flex items-center gap-2">
               {paid > 0 && (
                 <button onClick={() => { setSettleModal(null); openArHistory(order); }} title="Payment history"
-                  className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/50 flex items-center justify-center transition" aria-label="Payment history"><History size={16}/></button>
+                  className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/75 flex items-center justify-center transition" aria-label="Payment history"><History size={16}/></button>
               )}
-              <button onClick={() => setSettleModal(null)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/50 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
+              <button onClick={() => setSettleModal(null)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/75 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
             </div>
           </div>
           <div className="px-5 py-4 space-y-3 overflow-y-auto">
@@ -62,16 +62,16 @@ export default function SettleArModal() {
                 already been collected, the face value is shown alongside so the
                 figure reconciles against the original sale. */}
             <div className="bg-white/5 rounded-xl p-3 border border-white/10">
-              <p className="text-fg/40 text-[10px] font-bold uppercase">Still Outstanding</p>
+              <p className="text-fg/70 text-[10px] font-bold uppercase">Still Outstanding</p>
               <p className="text-3xl text-brand font-black tabular-nums">{peso(outstanding)}</p>
               {paid > 0 && (
-                <p className="text-[10px] text-fg/40 mt-1 tabular-nums">
+                <p className="text-[10px] text-fg/70 mt-1 tabular-nums">
                   {peso(paid)} already collected of {peso(face)} invoiced
                 </p>
               )}
             </div>
             <div>
-              <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Amount Received *</label>
+              <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Amount Received *</label>
               <input type="number" min="0" step="0.01" value={settleForm.amount} onChange={e => setSettleForm({...settleForm, amount: e.target.value})}
                 className={`w-full bg-page-bg border rounded-xl px-3 py-3 text-fg text-xl font-black tabular-nums outline-none focus:border-brand/60 ${blockedOverpay ? 'border-red-500/60' : overpaying ? 'border-amber-500/60' : 'border-white/10'}`} />
               <div className="flex items-center justify-between mt-1.5 gap-2">
@@ -81,13 +81,13 @@ export default function SettleArModal() {
                     the excess to - it settles the order in full and the rest
                     becomes that client's stored credit. */}
                 {blockedOverpay ? (
-                  <p className="text-[10px] text-red-400 font-bold">Exceeds the {peso(outstanding)} outstanding - this order has no client account to credit the excess to.</p>
+                  <p className="text-[10px] text-danger font-bold">Exceeds the {peso(outstanding)} outstanding - this order has no client account to credit the excess to.</p>
                 ) : overpaying ? (
-                  <p className="text-[10px] text-amber-400 font-bold">Overpaying by {peso(overpayAmount)} - settles this order in full; the rest becomes client credit.</p>
+                  <p className="text-[10px] text-warning font-bold">Overpaying by {peso(overpayAmount)} - settles this order in full; the rest becomes client credit.</p>
                 ) : isPartial ? (
-                  <p className="text-[10px] text-yellow-400 font-bold tabular-nums">Partial · {peso(remainingAfter)} will remain outstanding.</p>
+                  <p className="text-[10px] text-warning font-bold tabular-nums">Partial · {peso(remainingAfter)} will remain outstanding.</p>
                 ) : (
-                  <p className="text-[10px] text-fg/25">Enter less than the full amount to record a partial collection.</p>
+                  <p className="text-[10px] text-fg/65">Enter less than the full amount to record a partial collection.</p>
                 )}
                 <button type="button" onClick={() => setSettleForm({ ...settleForm, amount: outstanding.toFixed(2) })}
                   className="shrink-0 text-[10px] font-black uppercase tracking-wider bg-white/5 hover:bg-white/10 text-fg/60 px-2 py-1 rounded-lg transition">
@@ -101,31 +101,31 @@ export default function SettleArModal() {
                 the deposit date, because that is when the account moved. */}
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Collection Date *</label>
+                <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Collection Date *</label>
                 <input type="date" value={settleForm.collectionDate || ''} onChange={e => setSettleForm({...settleForm, collectionDate: e.target.value})}
                   className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60" />
-                <p className="text-[9px] text-fg/25 mt-1">When the client paid.</p>
+                <p className="text-[9px] text-fg/65 mt-1">When the client paid.</p>
               </div>
               {isCheck ? (
                 <div>
-                  <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Check Date</label>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Check Date</label>
                   <input type="date" value={settleForm.checkDate || ''} onChange={e => setSettleForm({...settleForm, checkDate: e.target.value})}
                     className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60" />
-                  <p className="text-[9px] text-fg/25 mt-1">Post-dated? It can't be banked before this.</p>
+                  <p className="text-[9px] text-fg/65 mt-1">Post-dated? It can't be banked before this.</p>
                 </div>
               ) : (
                 <div>
-                  <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Deposit Date *</label>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Deposit Date *</label>
                   <input type="date" value={settleForm.depositDate || ''} min={settleForm.collectionDate || undefined} onChange={e => setSettleForm({...settleForm, depositDate: e.target.value})}
                     className={`w-full bg-page-bg border rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60 ${datesOutOfOrder ? 'border-red-500/60' : 'border-white/10'}`} />
-                  <p className={`text-[9px] mt-1 ${datesOutOfOrder ? 'text-red-400 font-bold' : 'text-fg/25'}`}>
+                  <p className={`text-[9px] mt-1 ${datesOutOfOrder ? 'text-danger font-bold' : 'text-fg/65'}`}>
                     {datesOutOfOrder ? 'Cannot precede collection.' : 'When it hit the account.'}
                   </p>
                 </div>
               )}
             </div>
             <div>
-              <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Deposited To *</label>
+              <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Deposited To *</label>
               <select value={settleForm.paymentMethod} onChange={e => setSettleForm({...settleForm, paymentMethod: e.target.value})}
                 className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg font-bold outline-none focus:border-brand/60">
                 <option>Cash on Hand</option>
@@ -143,52 +143,52 @@ export default function SettleArModal() {
                 invoice reopens. */}
             {isCheck && (
               <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/[0.06] p-3 space-y-2.5">
-                <p className="text-[10px] font-black uppercase tracking-widest text-yellow-400">Check Details</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-warning">Check Details</p>
                 <div>
-                  <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Check Number *</label>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Check Number *</label>
                   <input type="text" placeholder="e.g. 0012345" value={settleForm.checkNumber || ''} onChange={e => setSettleForm({...settleForm, checkNumber: e.target.value})}
                     className={`w-full bg-page-bg border rounded-xl px-3 py-2.5 text-fg font-bold tabular-nums placeholder-white/25 outline-none focus:border-brand/60 ${missingCheckNo ? 'border-red-500/60' : 'border-white/10'}`} />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Bank</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Bank</label>
                     <input type="text" placeholder="BPI, BDO..." value={settleForm.checkBank || ''} onChange={e => setSettleForm({...settleForm, checkBank: e.target.value})}
                       className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
                   </div>
                   <div>
-                    <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Drawer</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Drawer</label>
                     <input type="text" placeholder="Whose account" value={settleForm.checkDrawer || ''} onChange={e => setSettleForm({...settleForm, checkDrawer: e.target.value})}
                       className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
                   </div>
                 </div>
-                <p className="text-[9px] text-fg/40">
+                <p className="text-[9px] text-fg/70">
                   Held in Checks on Hand - not counted as bank cash until you clear it in Collections.
                 </p>
               </div>
             )}
             <div>
-              <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Collected By (optional)</label>
+              <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Collected By (optional)</label>
               <input type="text" placeholder="Rider / collector name..." value={settleForm.collectedBy || ''} onChange={e => setSettleForm({...settleForm, collectedBy: e.target.value})}
                 className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
-              <p className="text-[9px] text-fg/25 mt-1">Who physically took the money in - the collection report groups by this.</p>
+              <p className="text-[9px] text-fg/65 mt-1">Who physically took the money in - the collection report groups by this.</p>
             </div>
             {!isCheck && (
               <div>
-                <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Reference No. *</label>
+                <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Reference No. *</label>
                 <input type="text" placeholder="Bank txn ID, GCash ref, transaction no..." value={settleForm.referenceNumber || ''} onChange={e => setSettleForm({...settleForm, referenceNumber: e.target.value})}
                   className={`w-full bg-page-bg border rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60 ${missingReference ? 'border-red-500/60' : 'border-white/10'}`} />
-                <p className="text-[9px] text-fg/25 mt-1">Required - this is what ties the collection back to a real bank/wallet transaction for reconciliation.</p>
+                <p className="text-[9px] text-fg/65 mt-1">Required - this is what ties the collection back to a real bank/wallet transaction for reconciliation.</p>
               </div>
             )}
             <div>
-              <label className="text-[10px] text-fg/40 font-bold uppercase block mb-1">Note (optional)</label>
+              <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Note (optional)</label>
               <input type="text" placeholder="Grab payout batch #..." value={settleForm.note} onChange={e => setSettleForm({...settleForm, note: e.target.value})}
                 className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
             </div>
           </div>
           <div className="px-5 pb-5 pt-3 border-t border-white/10">
             <button onClick={submitArSettlement} disabled={settleSubmitting || blockedOverpay || datesOutOfOrder || missingCheckNo || missingReference}
-              className="w-full py-4 bg-brand text-white font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active-press transition shadow-elev-2 disabled:opacity-50 min-h-[56px] flex items-center justify-center gap-2">
+              className="w-full py-4 bg-brand text-on-brand font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand/90 active-press transition shadow-elev-2 disabled:opacity-50 min-h-[56px] flex items-center justify-center gap-2">
               <Check size={18}/> {settleSubmitting ? 'Recording…' : overpaying ? 'Record & Credit Overpayment' : isPartial ? 'Record Partial Payment' : 'Record Collection'}
             </button>
           </div>

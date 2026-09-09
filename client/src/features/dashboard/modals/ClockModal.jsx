@@ -14,9 +14,9 @@ export default function ClockModal() {
           <div className="flex justify-between items-center">
             <div>
               <h2 className="text-lg font-black text-fg uppercase tracking-wider">End Shift or Break?</h2>
-              <p className="text-xs text-gray-400 mt-0.5">Break used: {clockStatus.breakUsedMinutes || 0}m of 60m</p>
+              <p className="text-xs text-fg/70 mt-0.5">Break used: {clockStatus.breakUsedMinutes || 0}m of 60m</p>
             </div>
-            <button onClick={() => setClockModalOpen(false)} className="text-gray-500 hover:text-fg text-xl font-bold">✕</button>
+            <button onClick={() => setClockModalOpen(false)} className="text-fg/70 hover:text-fg text-xl font-bold">✕</button>
           </div>
 
           {/* Take a break - disabled once the 1-hour break is used up */}
@@ -26,7 +26,7 @@ export default function ClockModal() {
               <Coffee size={16} /> Take a Break ({clockStatus.breakRemainingMinutes ?? 60}m left)
             </button>
           ) : (
-            <div className="w-full py-3 bg-white/5 border border-white/10 text-fg/30 font-bold rounded-xl text-xs text-center">
+            <div className="w-full py-3 bg-white/5 border border-white/10 text-fg/65 font-bold rounded-xl text-xs text-center">
               Break used up - 1-hour break already taken
             </div>
           )}
@@ -36,7 +36,7 @@ export default function ClockModal() {
             <LogOut size={16} /> End Shift (Clock Out)
           </button>
           <button onClick={() => setClockModalOpen(false)}
-            className="w-full py-2 bg-surface-2 border border-white/10 text-fg/50 font-bold rounded-xl text-xs uppercase hover:text-fg transition">
+            className="w-full py-2 bg-surface-2 border border-white/10 text-fg/75 font-bold rounded-xl text-xs uppercase hover:text-fg transition">
             Cancel
           </button>
         </div>

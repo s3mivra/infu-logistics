@@ -18,9 +18,9 @@ const inputCls = 'w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 
 const numCls = 'w-full bg-page-bg border border-white/10 rounded px-2 py-1.5 text-xs text-right tabular-nums text-fg focus:border-brand/50 focus:outline-none';
 
 const STATUS_TONE = {
-  Draft: 'text-fg/50 bg-white/5',
-  Approved: 'text-amber-400 bg-amber-400/10',
-  Paid: 'text-green-400 bg-green-400/10',
+  Draft: 'text-fg/75 bg-white/5',
+  Approved: 'text-warning bg-amber-400/10',
+  Paid: 'text-success bg-green-400/10',
 };
 
 const blankLine = () => ({
@@ -87,7 +87,7 @@ export default function PayrollTab() {
           <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Refresh
         </button>
         <button onClick={() => setDraftOpen(true)}
-          className="flex items-center gap-1.5 text-[10px] bg-brand hover:bg-brand/90 text-white px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition">
+          className="flex items-center gap-1.5 text-[10px] bg-brand hover:bg-brand/90 text-on-brand px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition">
           <Plus size={12} /> New Run
         </button>
       </div>
@@ -96,10 +96,10 @@ export default function PayrollTab() {
         {[
           ['Gross, all runs', peso(totals.gross), 'text-fg'],
           ['Net paid out', peso(totals.net), 'text-fg'],
-          ['Approved, not yet paid', peso(totals.unpaid), totals.unpaid > 0 ? 'text-amber-400' : 'text-fg/40'],
+          ['Approved, not yet paid', peso(totals.unpaid), totals.unpaid > 0 ? 'text-warning' : 'text-fg/70'],
         ].map(([label, val, cls]) => (
           <div key={label} className="bg-sidebar-bg border border-white/10 rounded-xl p-3">
-            <p className="text-[9px] font-black uppercase tracking-widest text-fg/40">{label}</p>
+            <p className="text-[9px] font-black uppercase tracking-widest text-fg/70">{label}</p>
             <p className={`text-base font-black tabular-nums ${cls}`}>{val}</p>
           </div>
         ))}
@@ -109,12 +109,12 @@ export default function PayrollTab() {
           schedules - a single pooled figure could not say which is short. */}
       {liabilities.some(l => l.outstanding > 0) && (
         <div className="bg-sidebar-bg border border-white/10 rounded-xl p-4">
-          <p className="text-[9px] font-black uppercase tracking-widest text-fg/40 mb-2">Held, not yet remitted</p>
+          <p className="text-[9px] font-black uppercase tracking-widest text-fg/70 mb-2">Held, not yet remitted</p>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             {liabilities.map(l => (
               <div key={l.accountCode}>
-                <p className="text-[10px] text-fg/50 truncate">{l.accountName}</p>
-                <p className={`text-sm font-black tabular-nums ${l.outstanding > 0 ? 'text-amber-400' : 'text-fg/30'}`}>
+                <p className="text-[10px] text-fg/75 truncate">{l.accountName}</p>
+                <p className={`text-sm font-black tabular-nums ${l.outstanding > 0 ? 'text-warning' : 'text-fg/65'}`}>
                   {peso(l.outstanding)}
                 </p>
               </div>
@@ -127,7 +127,7 @@ export default function PayrollTab() {
         <div className="overflow-x-auto">
           <table className="w-full text-xs min-w-[820px]">
             <thead>
-              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/40 border-b border-white/10">
+              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/70 border-b border-white/10">
                 <th className="text-left px-3 py-2.5">Reference</th>
                 <th className="text-left px-3 py-2.5">Period</th>
                 <th className="text-right px-3 py-2.5">Staff</th>
@@ -140,7 +140,7 @@ export default function PayrollTab() {
             </thead>
             <tbody>
               {runs.length === 0 && (
-                <tr><td colSpan={8} className="px-3 py-10 text-center text-fg/40">
+                <tr><td colSpan={8} className="px-3 py-10 text-center text-fg/70">
                   {loading ? 'Loading…' : 'No payroll runs yet.'}
                 </td></tr>
               )}
@@ -162,7 +162,7 @@ export default function PayrollTab() {
                     <td className="px-3 py-2.5">
                       <div className="flex items-center justify-end gap-1.5">
                         <button onClick={() => setOpenRun(r)}
-                          className="text-[9px] border border-white/15 text-fg/50 hover:text-fg hover:bg-white/5 px-2 py-1 rounded font-bold uppercase tracking-wider transition">
+                          className="text-[9px] border border-white/15 text-fg/75 hover:text-fg hover:bg-white/5 px-2 py-1 rounded font-bold uppercase tracking-wider transition">
                           Payslips
                         </button>
                         {r.status === 'Draft' && (
@@ -173,7 +173,7 @@ export default function PayrollTab() {
                         )}
                         {r.status === 'Approved' && (
                           <button onClick={() => act(r, 'pay')}
-                            className="flex items-center gap-1 text-[9px] bg-brand hover:bg-brand/90 text-white px-2 py-1 rounded font-bold uppercase tracking-wider transition">
+                            className="flex items-center gap-1 text-[9px] bg-brand hover:bg-brand/90 text-on-brand px-2 py-1 rounded font-bold uppercase tracking-wider transition">
                             <Banknote size={10} /> Pay out
                           </button>
                         )}
@@ -248,32 +248,32 @@ function DraftModal({ apiFetch, onClose, onDone }) {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="font-black text-fg text-lg">New payroll run</h2>
-            <p className="text-xs text-fg/50">A draft posts nothing - check it against the timesheets, then approve.</p>
+            <p className="text-xs text-fg/75">A draft posts nothing - check it against the timesheets, then approve.</p>
           </div>
-          <button onClick={onClose} className="text-fg/40 hover:text-fg transition"><X size={18} /></button>
+          <button onClick={onClose} className="text-fg/70 hover:text-fg transition"><X size={18} /></button>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
           <label className="block">
-            <span className="block text-[9px] font-black uppercase tracking-widest text-fg/40 mb-1">Period start</span>
+            <span className="block text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1">Period start</span>
             <input type="date" className={inputCls} value={periodStart} onChange={e => setPeriodStart(e.target.value)} />
           </label>
           <label className="block">
-            <span className="block text-[9px] font-black uppercase tracking-widest text-fg/40 mb-1">Period end</span>
+            <span className="block text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1">Period end</span>
             <input type="date" className={inputCls} value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} />
-            <span className="block text-[10px] text-fg/35 mt-1">The wages are dated here - that is the month they belong to.</span>
+            <span className="block text-[10px] text-fg/70 mt-1">The wages are dated here - that is the month they belong to.</span>
           </label>
           <label className="block">
-            <span className="block text-[9px] font-black uppercase tracking-widest text-fg/40 mb-1">Pay date</span>
+            <span className="block text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1">Pay date</span>
             <input type="date" className={inputCls} value={payDate} onChange={e => setPayDate(e.target.value)} />
-            <span className="block text-[10px] text-fg/35 mt-1">When the cash actually leaves. Often a later month.</span>
+            <span className="block text-[10px] text-fg/70 mt-1">When the cash actually leaves. Often a later month.</span>
           </label>
         </div>
 
         <div className="overflow-x-auto border border-white/10 rounded-lg">
           <table className="w-full text-xs min-w-[860px]">
             <thead>
-              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/40 border-b border-white/10">
+              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/70 border-b border-white/10">
                 <th className="text-left px-2 py-2">Employee</th>
                 {COLS.map(([k, label]) => <th key={k} className="text-right px-2 py-2">{label}</th>)}
                 <th className="text-right px-2 py-2">Net</th>
@@ -295,13 +295,13 @@ function DraftModal({ apiFetch, onClose, onDone }) {
                           onChange={e => setLine(i, k, e.target.value)} placeholder="0" />
                       </td>
                     ))}
-                    <td className={`px-2 py-1.5 text-right tabular-nums font-bold ${net < 0 ? 'text-red-400' : 'text-fg'}`}>
+                    <td className={`px-2 py-1.5 text-right tabular-nums font-bold ${net < 0 ? 'text-danger' : 'text-fg'}`}>
                       {peso(net)}
                     </td>
                     <td className="px-2 py-1.5">
                       {lines.length > 1 && (
                         <button onClick={() => setLines(prev => prev.filter((_, j) => j !== i))}
-                          className="text-fg/30 hover:text-red-400 transition"><Trash2 size={12} /></button>
+                          className="text-fg/65 hover:text-danger transition"><Trash2 size={12} /></button>
                       )}
                     </td>
                   </tr>
@@ -318,7 +318,7 @@ function DraftModal({ apiFetch, onClose, onDone }) {
           </button>
           <p className="text-xs text-fg/60">
             Gross <span className="font-black text-fg tabular-nums">{peso(totals.gross)}</span>
-            <span className="mx-2 text-fg/25">·</span>
+            <span className="mx-2 text-fg/65">·</span>
             Take-home <span className="font-black text-fg tabular-nums">{peso(totals.net)}</span>
           </p>
         </div>
@@ -327,7 +327,7 @@ function DraftModal({ apiFetch, onClose, onDone }) {
           <button onClick={onClose} disabled={saving}
             className="text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-4 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">Cancel</button>
           <button onClick={submit} disabled={saving}
-            className="text-[10px] bg-brand hover:bg-brand/90 text-white px-4 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
+            className="text-[10px] bg-brand hover:bg-brand/90 text-on-brand px-4 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
             {saving ? 'Saving…' : 'Save draft'}
           </button>
         </div>
@@ -349,14 +349,14 @@ function RunDetail({ run, apiFetch, onBack }) {
 
   return (
     <div className="space-y-4">
-      <button onClick={onBack} className="flex items-center gap-1 text-xs text-fg/50 hover:text-fg transition">
+      <button onClick={onBack} className="flex items-center gap-1 text-xs text-fg/75 hover:text-fg transition">
         <ChevronLeft size={14} /> All runs
       </button>
       <div>
         <h1 className="flex items-center gap-2 font-black text-fg text-lg">
           <FileText size={17} /> {fresh.reference}
         </h1>
-        <p className="text-xs text-fg/50">
+        <p className="text-xs text-fg/75">
           {shortDate(fresh.periodStart)} - {shortDate(fresh.periodEnd)} · paid {shortDate(fresh.payDate)} · {fresh.status}
         </p>
       </div>
@@ -365,7 +365,7 @@ function RunDetail({ run, apiFetch, onBack }) {
         <div className="overflow-x-auto">
           <table className="w-full text-xs min-w-[760px]">
             <thead>
-              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/40 border-b border-white/10">
+              <tr className="text-[9px] font-black uppercase tracking-widest text-fg/70 border-b border-white/10">
                 <th className="text-left px-3 py-2.5">Employee</th>
                 <th className="text-right px-3 py-2.5">Gross</th>
                 <th className="text-right px-3 py-2.5">SSS</th>
@@ -381,14 +381,14 @@ function RunDetail({ run, apiFetch, onBack }) {
                 <tr key={i} className="border-b border-white/5">
                   <td className="px-3 py-2.5 font-bold text-fg">
                     {l.employeeName}
-                    {l.employeeId && <span className="block text-[10px] text-fg/35">{l.employeeId}</span>}
+                    {l.employeeId && <span className="block text-[10px] text-fg/70">{l.employeeId}</span>}
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-fg">{peso(l.grossPay)}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-fg/50">{peso(l.sss)}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-fg/50">{peso(l.philhealth)}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-fg/50">{peso(l.pagibig)}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-fg/50">{peso(l.withholdingTax)}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-fg/50">{peso(l.otherDeductions)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-fg/75">{peso(l.sss)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-fg/75">{peso(l.philhealth)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-fg/75">{peso(l.pagibig)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-fg/75">{peso(l.withholdingTax)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-fg/75">{peso(l.otherDeductions)}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums font-black text-fg">{peso(l.netPay)}</td>
                 </tr>
               ))}

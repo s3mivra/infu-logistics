@@ -3,24 +3,24 @@ import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus,
 
 const statusColor = {
   // Awaiting our own approval before the partner is even told about it.
-  Requested: 'bg-orange-500/15 text-orange-400',
-  Pending:  'bg-yellow-500/15 text-yellow-400',
-  Cancelled: 'bg-white/10 text-fg/40',
-  Accepted: 'bg-blue-500/15 text-blue-400',
-  Released: 'bg-blue-500/15 text-blue-400',
-  Received: 'bg-green-500/15 text-green-500',
-  Rejected: 'bg-red-500/15 text-red-400',
+  Requested: 'bg-orange-500/15 text-warning',
+  Pending:  'bg-yellow-500/15 text-warning',
+  Cancelled: 'bg-white/10 text-fg/70',
+  Accepted: 'bg-blue-500/15 text-info',
+  Released: 'bg-blue-500/15 text-info',
+  Received: 'bg-green-500/15 text-success',
+  Rejected: 'bg-red-500/15 text-danger',
 };
 
 // Transfer Request (negotiation) statuses are a different vocabulary from
 // CrossTransfer's shipment statuses above - same color language, own words.
 const negoStatusColor = {
-  Pending: 'bg-yellow-500/15 text-yellow-400',
-  CounterPending: 'bg-orange-500/15 text-orange-400',
-  AwaitingFinal: 'bg-blue-500/15 text-blue-400',
-  Approved: 'bg-green-500/15 text-green-500',
-  Declined: 'bg-red-500/15 text-red-400',
-  Cancelled: 'bg-white/10 text-fg/40',
+  Pending: 'bg-yellow-500/15 text-warning',
+  CounterPending: 'bg-orange-500/15 text-warning',
+  AwaitingFinal: 'bg-blue-500/15 text-info',
+  Approved: 'bg-green-500/15 text-success',
+  Declined: 'bg-red-500/15 text-danger',
+  Cancelled: 'bg-white/10 text-fg/70',
 };
 
 // ── Network Map ──────────────────────────────────────────────────────────────
@@ -43,7 +43,7 @@ function NetworkMap({ info, network, card }) {
   const subs = active.filter(l => l.role === 'hub');     // partners we host
 
   const liveness = new Map((network?.partners || []).map(p => [p.partnerSlug, p.ok]));
-  const tone = (slug) => (!liveness.has(slug) ? 'text-fg/40' : liveness.get(slug) ? 'text-green-500' : 'text-red-400');
+  const tone = (slug) => (!liveness.has(slug) ? 'text-fg/70' : liveness.get(slug) ? 'text-success' : 'text-danger');
 
   const NW = 152, NH = 46, GAP = 26;
   const rowW = (n) => n * NW + Math.max(0, n - 1) * GAP;
@@ -73,7 +73,7 @@ function NetworkMap({ info, network, card }) {
         <h3 className="text-fg font-black uppercase tracking-wider text-sm flex items-center gap-2">
           <Share2 size={15} className="text-accent" /> Network Map
         </h3>
-        <div className="flex items-center gap-3 text-[10px] text-fg/40 uppercase tracking-widest">
+        <div className="flex items-center gap-3 text-[10px] text-fg/70 uppercase tracking-widest">
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" /> Online</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" /> Unreachable</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-fg/30" /> Not probed</span>
@@ -84,16 +84,16 @@ function NetworkMap({ info, network, card }) {
         <div className="py-8 text-center">
           <div className="inline-block px-6 py-4 rounded-xl border border-accent/40 bg-accent/5">
             <p className="text-accent font-black text-sm">{info?.tenant || 'This Business'}</p>
-            <p className="text-fg/40 text-[10px] uppercase tracking-widest mt-1">Standalone</p>
+            <p className="text-fg/70 text-[10px] uppercase tracking-widest mt-1">Standalone</p>
           </div>
-          <p className="text-fg/40 text-xs mt-3">Not linked to any other branch. Generate an invite code above to add one.</p>
+          <p className="text-fg/70 text-xs mt-3">Not linked to any other branch. Generate an invite code above to add one.</p>
         </div>
       ) : (
         <div className="overflow-x-auto">
           <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 480 }} role="img" aria-label="Network topology">
             {mains.map((m, i) => (
               <line key={`ml${m._id}`} x1={cx(mx[i])} y1={Y.main + NH} x2={cx(selfX)} y2={Y.self}
-                stroke="currentColor" strokeWidth="1.5" className="text-blue-400" opacity="0.5" />
+                stroke="currentColor" strokeWidth="1.5" className="text-info" opacity="0.5" />
             ))}
             {subs.map((s, i) => (
               <line key={`sl${s._id}`} x1={cx(selfX)} y1={Y.self + NH} x2={cx(sx[i])} y2={Y.sub}
@@ -498,9 +498,9 @@ export default function HubTab({ ctx }) {
   const card  = 'bg-surface border border-white/10 rounded-xl p-4 mb-4';
   const input = 'w-full bg-page-bg border border-white/10 rounded-lg p-2.5 text-fg text-sm outline-none focus:border-accent';
   const btn   = (v = 'primary') => `px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider min-h-[40px] disabled:opacity-40 transition ${
-    v === 'primary' ? 'bg-accent text-white hover:opacity-90' :
+    v === 'primary' ? 'bg-accent text-on-brand hover:opacity-90' :
     v === 'ghost'   ? 'border border-white/15 text-fg hover:bg-white/5' :
-    v === 'red'     ? 'border border-red-500/30 text-red-400 hover:bg-red-500/10' : ''
+    v === 'red'     ? 'border border-red-500/30 text-danger hover:bg-red-500/10' : ''
   }`;
 
   const partners = info?.links || [];
@@ -532,16 +532,16 @@ export default function HubTab({ ctx }) {
           </code>
           <button onClick={load} className={btn('ghost')}><RefreshCw size={14} /></button>
         </div>
-        <p className="text-fg/40 text-xs mt-2">Share this ID so other businesses can find you. They enter your invite code - not this ID directly.</p>
+        <p className="text-fg/70 text-xs mt-2">Share this ID so other businesses can find you. They enter your invite code - not this ID directly.</p>
       </div>
 
       {/* ── Connected Partners ── */}
       <div className={card}>
         <h3 className="text-fg font-black uppercase tracking-wider text-sm mb-3">
-          Connected Partners <span className="text-fg/40 font-normal normal-case tracking-normal">({partners.length})</span>
+          Connected Partners <span className="text-fg/70 font-normal normal-case tracking-normal">({partners.length})</span>
         </h3>
         {partners.length === 0 ? (
-          <p className="text-fg/40 text-xs py-4 text-center uppercase tracking-widest">No connections yet</p>
+          <p className="text-fg/70 text-xs py-4 text-center uppercase tracking-widest">No connections yet</p>
         ) : (
           <div className="space-y-2">
             {partners.map(p => (
@@ -554,14 +554,14 @@ export default function HubTab({ ctx }) {
                         role==='hub' means we are the hub, so this partner is
                         our subhost; role==='client' means we are the client,
                         so this partner is our main host. Label accordingly. */}
-                    <span className={`text-[10px] font-black px-2 py-0.5 rounded ${p.role === 'hub' ? 'bg-purple-500/15 text-purple-400' : 'bg-blue-500/15 text-blue-400'}`}>
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded ${p.role === 'hub' ? 'bg-purple-500/15 text-purple-400' : 'bg-blue-500/15 text-info'}`}>
                       {p.role === 'hub' ? 'SUBHOST' : 'MAIN HOST'}
                     </span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded ${p.status === 'active' ? 'bg-green-500/15 text-green-500' : 'bg-red-500/15 text-red-400'}`}>
+                    <span className={`text-[10px] px-2 py-0.5 rounded ${p.status === 'active' ? 'bg-green-500/15 text-success' : 'bg-red-500/15 text-danger'}`}>
                       {p.status}
                     </span>
                   </div>
-                  <p className="text-fg/40 text-xs mt-0.5 ml-5">{p.partnerSlug}</p>
+                  <p className="text-fg/70 text-xs mt-0.5 ml-5">{p.partnerSlug}</p>
                 </div>
                 {isSuperAdmin && (
                   <button onClick={() => disconnect(p.partnerSlug)} className={btn('red')} title="Disconnect">
@@ -581,13 +581,13 @@ export default function HubTab({ ctx }) {
         <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
           <div>
             <h3 className="text-fg font-black uppercase tracking-wider text-sm">Branch Code</h3>
-            <p className="text-[11px] text-fg/40 mt-1">
+            <p className="text-[11px] text-fg/70 mt-1">
               Identifies this inventory in consolidated reports.
             </p>
           </div>
           {branchCodeSaved
-            ? <span className="text-[10px] font-black uppercase bg-green-500/15 text-green-500 px-2 py-1 rounded">{branchCodeSaved}</span>
-            : <span className="text-[10px] font-black uppercase bg-amber-500/15 text-amber-400 px-2 py-1 rounded">Not set</span>}
+            ? <span className="text-[10px] font-black uppercase bg-green-500/15 text-success px-2 py-1 rounded">{branchCodeSaved}</span>
+            : <span className="text-[10px] font-black uppercase bg-amber-500/15 text-warning px-2 py-1 rounded">Not set</span>}
         </div>
         <div className="flex flex-wrap gap-2 items-center">
           <input
@@ -598,7 +598,7 @@ export default function HubTab({ ctx }) {
             {branchBusy ? 'Saving…' : 'Save'}
           </button>
         </div>
-        <p className="text-[11px] text-fg/35 mt-2">
+        <p className="text-[11px] text-fg/70 mt-2">
           <span className="font-mono text-fg/60">AC</span> business ·
           <span className="font-mono text-fg/60"> A</span> location ·
           <span className="font-mono text-fg/60"> 001</span> which inventory there.
@@ -633,7 +633,7 @@ export default function HubTab({ ctx }) {
                   ['books', 'Consolidated Books', Landmark],
                 ].map(([id, label, Icon]) => (
                   <button key={id} onClick={() => setNetworkView(id)}
-                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition ${networkView === id ? 'bg-accent text-white' : 'text-fg/50 hover:text-fg'}`}>
+                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition ${networkView === id ? 'bg-accent text-on-brand' : 'text-fg/75 hover:text-fg'}`}>
                     <Icon size={13} /> {label}
                   </button>
                 ))}
@@ -652,12 +652,12 @@ export default function HubTab({ ctx }) {
                 }
                 const rows = [...merged.values()].sort((a, b) => a.itemName.localeCompare(b.itemName));
                 return rows.length === 0 ? (
-                  <p className="text-fg/40 text-xs py-6 text-center uppercase tracking-widest">No inventory to show</p>
+                  <p className="text-fg/70 text-xs py-6 text-center uppercase tracking-widest">No inventory to show</p>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
-                        <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
+                        <tr className="text-fg/70 text-[10px] uppercase tracking-widest border-b border-white/10">
                           <th className="text-left py-2">Item</th>
                           {branches.map(b => <th key={b.label} className="text-right py-2 pl-3">{b.label}</th>)}
                           <th className="text-right py-2 pl-3 text-fg/70">Total</th>
@@ -692,7 +692,7 @@ export default function HubTab({ ctx }) {
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
-                        <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
+                        <tr className="text-fg/70 text-[10px] uppercase tracking-widest border-b border-white/10">
                           <th className="text-left py-2">Branch</th>
                           <th className="text-right py-2 pl-3">Today Revenue</th>
                           <th className="text-right py-2 pl-3">Today Orders</th>
@@ -705,7 +705,7 @@ export default function HubTab({ ctx }) {
                           <tr key={b.label} className="border-b border-white/5">
                             <td className="py-2 font-bold text-fg flex items-center gap-1.5">
                               {b.label}
-                              {b.today && b.today.revenue === best && best > 0 && <span className="text-[9px] font-black bg-green-500/15 text-green-400 px-1.5 py-0.5 rounded uppercase">Top</span>}
+                              {b.today && b.today.revenue === best && best > 0 && <span className="text-[9px] font-black bg-green-500/15 text-success px-1.5 py-0.5 rounded uppercase">Top</span>}
                             </td>
                             {b.today ? (
                               <>
@@ -753,11 +753,11 @@ export default function HubTab({ ctx }) {
                 <div className="space-y-4">
                   <div className="flex items-end gap-2 flex-wrap">
                     <div>
-                      <label className="text-[10px] text-fg/40 uppercase tracking-widest font-black block mb-1">From</label>
+                      <label className="text-[10px] text-fg/70 uppercase tracking-widest font-black block mb-1">From</label>
                       <input type="date" value={finStart} onChange={e => setFinStart(e.target.value)} className={input} />
                     </div>
                     <div>
-                      <label className="text-[10px] text-fg/40 uppercase tracking-widest font-black block mb-1">To</label>
+                      <label className="text-[10px] text-fg/70 uppercase tracking-widest font-black block mb-1">To</label>
                       <input type="date" value={finEnd} onChange={e => setFinEnd(e.target.value)} className={input} />
                     </div>
                     <button onClick={loadFinancials} disabled={finLoading} className={btn()}>
@@ -766,22 +766,22 @@ export default function HubTab({ ctx }) {
                   </div>
 
                   {!fin ? (
-                    <p className="text-fg/40 text-xs py-6 text-center uppercase tracking-widest">
+                    <p className="text-fg/70 text-xs py-6 text-center uppercase tracking-widest">
                       Pick a period and build the consolidated books
                     </p>
                   ) : (
                     <>
                       {!fin.complete && (
                         <div className="flex items-start gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
-                          <AlertTriangle size={15} className="text-red-400 mt-0.5 shrink-0" />
+                          <AlertTriangle size={15} className="text-danger mt-0.5 shrink-0" />
                           <div className="text-xs">
-                            <p className="text-red-400 font-black uppercase tracking-wider">Incomplete - not a final statement</p>
+                            <p className="text-danger font-black uppercase tracking-wider">Incomplete - not a final statement</p>
                             <p className="text-fg/60 mt-1">
                               These branches could not be reached, and the totals below <span className="font-bold">exclude</span> them:
                             </p>
                             <ul className="mt-1 space-y-0.5">
                               {fin.unreachable.map(u => (
-                                <li key={u.slug} className="text-fg/50">• <span className="text-fg/80 font-bold">{u.name}</span> - {u.error}</li>
+                                <li key={u.slug} className="text-fg/75">• <span className="text-fg/80 font-bold">{u.name}</span> - {u.error}</li>
                               ))}
                             </ul>
                           </div>
@@ -790,9 +790,9 @@ export default function HubTab({ ctx }) {
 
                       {fin.unknownAccounts?.length > 0 && (
                         <div className="flex items-start gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-xs">
-                          <AlertTriangle size={15} className="text-yellow-400 mt-0.5 shrink-0" />
+                          <AlertTriangle size={15} className="text-warning mt-0.5 shrink-0" />
                           <div>
-                            <p className="text-yellow-400 font-black uppercase tracking-wider">Unmapped accounts</p>
+                            <p className="text-warning font-black uppercase tracking-wider">Unmapped accounts</p>
                             <p className="text-fg/60 mt-1">
                               A branch posted to accounts this business does not have, so they are excluded from the totals:{' '}
                               <span className="text-fg/80">{fin.unknownAccounts.map(a => `${a.code} ${a.name}`).join(', ')}</span>
@@ -811,7 +811,7 @@ export default function HubTab({ ctx }) {
                       <div className="overflow-x-auto">
                         <table className="w-full text-xs">
                           <thead>
-                            <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
+                            <tr className="text-fg/70 text-[10px] uppercase tracking-widest border-b border-white/10">
                               <th className="text-left py-2">Branch</th>
                               <th className="text-left py-2 pl-3">Code</th>
                               <th className="text-right py-2 pl-3">Net Income</th>
@@ -822,11 +822,11 @@ export default function HubTab({ ctx }) {
                             {(fin.byLocation || []).map(group => (
                               <Fragment key={group.locationKey}>
                                 <tr className="bg-white/[0.03]">
-                                  <td colSpan={2} className="py-1.5 text-[10px] font-black uppercase tracking-widest text-fg/50">
+                                  <td colSpan={2} className="py-1.5 text-[10px] font-black uppercase tracking-widest text-fg/75">
                                     {group.locationKey === 'Unassigned'
                                       ? 'No branch code set'
                                       : `Location ${group.location}`}
-                                    <span className="ml-2 font-normal normal-case tracking-normal text-fg/30">
+                                    <span className="ml-2 font-normal normal-case tracking-normal text-fg/65">
                                       {group.branchCount} {group.branchCount === 1 ? 'inventory' : 'inventories'}
                                     </span>
                                   </td>
@@ -841,7 +841,7 @@ export default function HubTab({ ctx }) {
                                     </td>
                                     <td className="py-2 pl-3">
                                       {b.branchCodeValid
-                                        ? <span className="font-mono text-fg/50">{b.branchCode}</span>
+                                        ? <span className="font-mono text-fg/75">{b.branchCode}</span>
                                         : <span className="text-amber-400/80 text-[10px]">not set</span>}
                                     </td>
                                     <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{peso(b.netIncome)}</td>
@@ -857,7 +857,7 @@ export default function HubTab({ ctx }) {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {/* Consolidated P&L */}
                         <div className="bg-page-bg border border-white/8 rounded-xl p-3">
-                          <p className="text-[10px] font-black text-fg/40 uppercase tracking-widest mb-2">Consolidated P&amp;L</p>
+                          <p className="text-[10px] font-black text-fg/70 uppercase tracking-widest mb-2">Consolidated P&amp;L</p>
                           {[
                             ['Revenue', fin.pnl.totals.revenue],
                             ['Less: Contra Revenue', -fin.pnl.totals.contra],
@@ -869,13 +869,13 @@ export default function HubTab({ ctx }) {
                             ['Other Expense', -fin.pnl.totals.otherexpense],
                           ].map(([label, val, strong]) => (
                             <div key={label} className={`flex justify-between py-1 text-xs ${strong ? 'border-t border-white/10 mt-1 pt-1.5' : ''}`}>
-                              <span className={strong ? 'text-fg font-bold' : 'text-fg/50'}>{label}</span>
+                              <span className={strong ? 'text-fg font-bold' : 'text-fg/75'}>{label}</span>
                               <span className={`tabular-nums ${strong ? 'text-fg font-black' : 'text-fg/70'}`}>{peso(val)}</span>
                             </div>
                           ))}
                           <div className="flex justify-between py-1.5 mt-1 border-t-2 border-accent/30">
                             <span className="text-fg font-black text-sm">Net Income</span>
-                            <span className={`tabular-nums font-black text-sm ${fin.pnl.totals.netIncome >= 0 ? 'text-green-500' : 'text-red-400'}`}>
+                            <span className={`tabular-nums font-black text-sm ${fin.pnl.totals.netIncome >= 0 ? 'text-success' : 'text-danger'}`}>
                               {peso(fin.pnl.totals.netIncome)}
                             </span>
                           </div>
@@ -883,7 +883,7 @@ export default function HubTab({ ctx }) {
 
                         {/* Consolidated Balance Sheet */}
                         <div className="bg-page-bg border border-white/8 rounded-xl p-3">
-                          <p className="text-[10px] font-black text-fg/40 uppercase tracking-widest mb-2">
+                          <p className="text-[10px] font-black text-fg/70 uppercase tracking-widest mb-2">
                             Consolidated Balance Sheet
                           </p>
                           {[
@@ -893,12 +893,12 @@ export default function HubTab({ ctx }) {
                             ['Liabilities + Equity', fin.balanceSheet.totals.liabilitiesAndEquity, true],
                           ].map(([label, val, strong]) => (
                             <div key={label} className={`flex justify-between py-1 text-xs ${strong ? 'border-t border-white/10 mt-1 pt-1.5' : ''}`}>
-                              <span className={strong ? 'text-fg font-bold' : 'text-fg/50'}>{label}</span>
+                              <span className={strong ? 'text-fg font-bold' : 'text-fg/75'}>{label}</span>
                               <span className={`tabular-nums ${strong ? 'text-fg font-black' : 'text-fg/70'}`}>{peso(val)}</span>
                             </div>
                           ))}
                           <div className={`mt-2 text-[10px] font-black uppercase tracking-widest px-2 py-1.5 rounded text-center ${
-                            fin.balanceSheet.totals.balanced ? 'bg-green-500/15 text-green-500' : 'bg-red-500/15 text-red-400'}`}>
+                            fin.balanceSheet.totals.balanced ? 'bg-green-500/15 text-success' : 'bg-red-500/15 text-danger'}`}>
                             {fin.balanceSheet.totals.balanced ? 'Balanced' : 'Out of balance'}
                           </div>
                         </div>
@@ -920,15 +920,15 @@ export default function HubTab({ ctx }) {
 
             {/* Generate invite */}
             <div>
-              <p className="text-fg/50 text-xs uppercase tracking-widest font-bold mb-2">Generate Invite Code</p>
-              <p className="text-fg/40 text-xs mb-3">Share this code with another business. They redeem it to link with you. Code expires in 24 h.</p>
+              <p className="text-fg/75 text-xs uppercase tracking-widest font-bold mb-2">Generate Invite Code</p>
+              <p className="text-fg/70 text-xs mb-3">Share this code with another business. They redeem it to link with you. Code expires in 24 h.</p>
               {inviteCode ? (
                 <div className="flex items-center gap-2">
                   <code className="flex-1 bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-accent font-mono font-bold text-sm tracking-widest">
                     {inviteCode}
                   </code>
                   <button onClick={copyCode} className={btn('ghost')}>
-                    {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+                    {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
                   </button>
                 </div>
               ) : (
@@ -937,7 +937,7 @@ export default function HubTab({ ctx }) {
                 </button>
               )}
               {inviteCode && (
-                <button onClick={() => { setInviteCode(''); generateInvite(); }} disabled={busy} className="mt-2 text-xs text-fg/40 hover:text-fg underline">
+                <button onClick={() => { setInviteCode(''); generateInvite(); }} disabled={busy} className="mt-2 text-xs text-fg/70 hover:text-fg underline">
                   Generate new code
                 </button>
               )}
@@ -945,8 +945,8 @@ export default function HubTab({ ctx }) {
 
             {/* Redeem code */}
             <div>
-              <p className="text-fg/50 text-xs uppercase tracking-widest font-bold mb-2">Redeem a Code</p>
-              <p className="text-fg/40 text-xs mb-3">Enter the invite code from your hub/partner to link this business as a client.</p>
+              <p className="text-fg/75 text-xs uppercase tracking-widest font-bold mb-2">Redeem a Code</p>
+              <p className="text-fg/70 text-xs mb-3">Enter the invite code from your hub/partner to link this business as a client.</p>
               <div className="flex gap-2">
                 <input
                   className={input}
@@ -959,10 +959,10 @@ export default function HubTab({ ctx }) {
                   {redeemBusy ? '…' : 'Link'}
                 </button>
               </div>
-              {redeemErr && <p className="text-red-400 text-xs mt-2">{redeemErr}</p>}
+              {redeemErr && <p className="text-danger text-xs mt-2">{redeemErr}</p>}
             </div>
           </div>
-          {err && <p className="text-red-400 text-xs mt-3">{err}</p>}
+          {err && <p className="text-danger text-xs mt-3">{err}</p>}
         </div>
       )}
 
@@ -982,18 +982,18 @@ export default function HubTab({ ctx }) {
               negotiation once one is filed. */}
           <div className="flex gap-1.5 mb-3 bg-page-bg border border-white/8 rounded-xl p-1 w-fit">
             <button onClick={() => setTransferMode('send')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition ${transferMode === 'send' ? 'bg-accent text-white' : 'text-fg/50 hover:text-fg'}`}>
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition ${transferMode === 'send' ? 'bg-accent text-on-brand' : 'text-fg/75 hover:text-fg'}`}>
               Send Stock
             </button>
             <button onClick={() => setTransferMode('ask')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition ${transferMode === 'ask' ? 'bg-accent text-white' : 'text-fg/50 hover:text-fg'}`}>
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition ${transferMode === 'ask' ? 'bg-accent text-on-brand' : 'text-fg/75 hover:text-fg'}`}>
               Request Stock
             </button>
           </div>
 
           {transferMode === 'send' ? (
             <>
-              <p className="text-fg/40 text-[11px] mb-4">
+              <p className="text-fg/70 text-[11px] mb-4">
                 Ships stock to <span className="text-fg/70 font-bold">another business</span> in your network - it leaves your books and lands on theirs.
                 Moving stock between your own locations is the Transfer tab under Inventory.
                 Filing this creates a slip that must be approved before the partner is notified.
@@ -1002,7 +1002,7 @@ export default function HubTab({ ctx }) {
               {/* FROM / TO */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                 <div>
-                  <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">From (Source)</label>
+                  <label className="text-[10px] text-fg/70 uppercase font-bold block mb-1">From (Source)</label>
                   <select value={sendFrom} onChange={e => setSendFrom(e.target.value)} className={input}>
                     <option value="__self__">This Business ({info?.tenant ?? '…'})</option>
                     {partners.filter(p => p.status === 'active').map(p => (
@@ -1011,7 +1011,7 @@ export default function HubTab({ ctx }) {
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">To (Destination)</label>
+                  <label className="text-[10px] text-fg/70 uppercase font-bold block mb-1">To (Destination)</label>
                   <select value={sendPartner} onChange={e => setSendPartner(e.target.value)} className={input}>
                     <option value="">- Select business -</option>
                     {partners.filter(p => p.status === 'active' && (sendFrom === '__self__' || p.partnerSlug !== sendFrom)).map(p => (
@@ -1024,7 +1024,7 @@ export default function HubTab({ ctx }) {
               {/* Add item row */}
               <div className="bg-page-bg border border-white/8 rounded-xl p-3 mb-3">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-[10px] text-fg/40 uppercase font-bold">Add Item</p>
+                  <p className="text-[10px] text-fg/70 uppercase font-bold">Add Item</p>
                   {/* A brand-new/untracked product has nothing to pick from
                       the dropdown below - toggling this creates its
                       Inventory record first, so the shipment still ships a
@@ -1087,7 +1087,7 @@ export default function HubTab({ ctx }) {
                 <div className="border border-white/8 rounded-xl overflow-hidden mb-3">
                   <table className="w-full text-xs">
                     <thead>
-                      <tr className="text-fg/40 text-[9px] uppercase tracking-widest border-b border-white/8 bg-white/3">
+                      <tr className="text-fg/70 text-[9px] uppercase tracking-widest border-b border-white/8 bg-white/3">
                         <th className="text-left py-2 px-3">Product</th>
                         <th className="text-right py-2 px-3">Qty</th>
                         <th className="text-left py-2 px-3">Note</th>
@@ -1099,9 +1099,9 @@ export default function HubTab({ ctx }) {
                         <tr key={i} className="border-b border-white/5 last:border-0">
                           <td className="py-2 px-3 font-bold text-fg">{line.itemName}</td>
                           <td className="py-2 px-3 text-right tabular-nums text-fg">{line.qty} {line.unit}</td>
-                          <td className="py-2 px-3 text-fg/50 italic">{line.note || '-'}</td>
+                          <td className="py-2 px-3 text-fg/75 italic">{line.note || '-'}</td>
                           <td className="py-2 px-3 text-right">
-                            <button onClick={() => removeFromCart(i)} className="text-red-400/60 hover:text-red-400 text-[10px] font-bold uppercase">Remove</button>
+                            <button onClick={() => removeFromCart(i)} className="text-red-400/60 hover:text-danger text-[10px] font-bold uppercase">Remove</button>
                           </td>
                         </tr>
                       ))}
@@ -1117,18 +1117,18 @@ export default function HubTab({ ctx }) {
               >
                 {sendBusy ? 'Sending…' : `Send ${sendCart.length > 0 ? `${sendCart.length} item${sendCart.length > 1 ? 's' : ''}` : 'Transfer'}`}
               </button>
-              {sendErr && <p className={`text-xs mt-2 ${sendErr.startsWith('⚠') ? 'text-yellow-400' : 'text-red-400'}`}>{sendErr}</p>}
+              {sendErr && <p className={`text-xs mt-2 ${sendErr.startsWith('⚠') ? 'text-warning' : 'text-danger'}`}>{sendErr}</p>}
             </>
           ) : (
             <>
-              <p className="text-fg/40 text-[11px] mb-4">
+              <p className="text-fg/70 text-[11px] mb-4">
                 Asks <span className="text-fg/70 font-bold">another business</span> to send you stock you don't have. They can decline,
                 accept it exactly as asked, or counter with what they can actually give - nothing ships until it's agreed on both sides.
                 You won't see their inventory, so type what you need by name.
               </p>
 
               <div className="mb-4">
-                <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">Ask (Business)</label>
+                <label className="text-[10px] text-fg/70 uppercase font-bold block mb-1">Ask (Business)</label>
                 <select value={askPartner} onChange={e => setAskPartner(e.target.value)} className={input}>
                   <option value="">- Select business -</option>
                   {partners.filter(p => p.status === 'active').map(p => (
@@ -1138,7 +1138,7 @@ export default function HubTab({ ctx }) {
               </div>
 
               <div className="bg-page-bg border border-white/8 rounded-xl p-3 mb-3">
-                <p className="text-[10px] text-fg/40 uppercase font-bold mb-2">Add Item</p>
+                <p className="text-[10px] text-fg/70 uppercase font-bold mb-2">Add Item</p>
                 {/* Quick-pick from your own catalogue (e.g. asking for more of
                     something you already stock but is running low) - just
                     fills the Item Name/Unit fields below, which stay editable
@@ -1174,7 +1174,7 @@ export default function HubTab({ ctx }) {
                 <div className="border border-white/8 rounded-xl overflow-hidden mb-3">
                   <table className="w-full text-xs">
                     <thead>
-                      <tr className="text-fg/40 text-[9px] uppercase tracking-widest border-b border-white/8 bg-white/3">
+                      <tr className="text-fg/70 text-[9px] uppercase tracking-widest border-b border-white/8 bg-white/3">
                         <th className="text-left py-2 px-3">Item</th>
                         <th className="text-right py-2 px-3">Qty</th>
                         <th className="text-left py-2 px-3">Note</th>
@@ -1186,9 +1186,9 @@ export default function HubTab({ ctx }) {
                         <tr key={i} className="border-b border-white/5 last:border-0">
                           <td className="py-2 px-3 font-bold text-fg">{line.itemName}</td>
                           <td className="py-2 px-3 text-right tabular-nums text-fg">{line.qty} {line.unit}</td>
-                          <td className="py-2 px-3 text-fg/50 italic">{line.note || '-'}</td>
+                          <td className="py-2 px-3 text-fg/75 italic">{line.note || '-'}</td>
                           <td className="py-2 px-3 text-right">
-                            <button onClick={() => removeFromAskCart(i)} className="text-red-400/60 hover:text-red-400 text-[10px] font-bold uppercase">Remove</button>
+                            <button onClick={() => removeFromAskCart(i)} className="text-red-400/60 hover:text-danger text-[10px] font-bold uppercase">Remove</button>
                           </td>
                         </tr>
                       ))}
@@ -1200,7 +1200,7 @@ export default function HubTab({ ctx }) {
               <button onClick={sendAsk} disabled={askBusy || !askPartner || askCart.length === 0} className={btn()}>
                 {askBusy ? 'Sending…' : `Ask for ${askCart.length > 0 ? `${askCart.length} item${askCart.length > 1 ? 's' : ''}` : 'Stock'}`}
               </button>
-              {askErr && <p className={`text-xs mt-2 ${askErr.startsWith('⚠') ? 'text-yellow-400' : 'text-red-400'}`}>{askErr}</p>}
+              {askErr && <p className={`text-xs mt-2 ${askErr.startsWith('⚠') ? 'text-warning' : 'text-danger'}`}>{askErr}</p>}
             </>
           )}
         </div>
@@ -1228,10 +1228,10 @@ export default function HubTab({ ctx }) {
                 <div className="min-w-0">
                   <p className="text-fg font-bold text-sm">
                     {r.fromSlug === info?.tenant ? 'To' : 'From'} <span className="text-accent">{otherName}</span>
-                    <span className={`ml-2 text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${negoStatusColor[r.status] || 'bg-white/10 text-fg/40'}`}>{r.status}</span>
-                    {r.round > 1 && <span className="ml-1.5 text-[9px] text-fg/30 font-bold uppercase">round {r.round}</span>}
+                    <span className={`ml-2 text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${negoStatusColor[r.status] || 'bg-white/10 text-fg/70'}`}>{r.status}</span>
+                    {r.round > 1 && <span className="ml-1.5 text-[9px] text-fg/65 font-bold uppercase">round {r.round}</span>}
                   </p>
-                  <p className="text-fg/40 text-[10px]">{iAmFiler ? 'You asked' : 'They asked'} · {r.requestedBy || 'someone'} · {new Date(r.createdAt).toLocaleDateString()}</p>
+                  <p className="text-fg/70 text-[10px]">{iAmFiler ? 'You asked' : 'They asked'} · {r.requestedBy || 'someone'} · {new Date(r.createdAt).toLocaleDateString()}</p>
                 </div>
                 {actionable && (
                   <div className="flex gap-1.5 shrink-0">
@@ -1263,22 +1263,22 @@ export default function HubTab({ ctx }) {
               <ul className="mt-2 space-y-1">
                 {r.lines.map((l, i) => (
                   <li key={i} className="text-xs text-fg/60 flex justify-between gap-3 border-t border-white/5 pt-1">
-                    <span className="text-fg/80 font-bold truncate">{l.itemName}{l.note && <span className="text-fg/30 font-normal italic"> · {l.note}</span>}</span>
+                    <span className="text-fg/80 font-bold truncate">{l.itemName}{l.note && <span className="text-fg/65 font-normal italic"> · {l.note}</span>}</span>
                     <span className="tabular-nums shrink-0">{l.qty} {l.unit}</span>
                   </li>
                 ))}
               </ul>
               {r.round > 1 && (
-                <p className="text-[10px] text-fg/30 mt-1.5 italic">
+                <p className="text-[10px] text-fg/65 mt-1.5 italic">
                   Originally asked: {r.originalLines.map(l => `${l.qty} ${l.unit} ${l.itemName}`).join(', ')}
                 </p>
               )}
               {r.history?.length > 1 && (
                 <details className="mt-1.5">
-                  <summary className="text-[9px] text-fg/30 uppercase tracking-widest font-bold cursor-pointer hover:text-fg/50">History ({r.history.length})</summary>
+                  <summary className="text-[9px] text-fg/65 uppercase tracking-widest font-bold cursor-pointer hover:text-fg/75">History ({r.history.length})</summary>
                   <ul className="mt-1 space-y-0.5">
                     {r.history.map((h, i) => (
-                      <li key={i} className="text-[10px] text-fg/40">
+                      <li key={i} className="text-[10px] text-fg/70">
                         <span className="font-bold text-fg/60">{h.action}</span> by {h.by || h.slug} {h.note && `- "${h.note}"`}
                       </li>
                     ))}
@@ -1305,13 +1305,13 @@ export default function HubTab({ ctx }) {
             )}
             {waitingOnThem.length > 0 && (
               <div className="space-y-2 mb-4">
-                <p className="text-[10px] font-black uppercase tracking-widest text-fg/40">Awaiting The Other Side</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-fg/70">Awaiting The Other Side</p>
                 {waitingOnThem.map(r => <RequestCard key={r._id} r={r} actionable={false} />)}
               </div>
             )}
             {closed.length > 0 && (
               <details>
-                <summary className="text-[10px] font-black uppercase tracking-widest text-fg/40 cursor-pointer hover:text-fg/60">Closed ({closed.length})</summary>
+                <summary className="text-[10px] font-black uppercase tracking-widest text-fg/70 cursor-pointer hover:text-fg/60">Closed ({closed.length})</summary>
                 <div className="space-y-2 mt-2">
                   {closed.map(r => <RequestCard key={r._id} r={r} actionable={false} />)}
                 </div>
@@ -1328,10 +1328,10 @@ export default function HubTab({ ctx }) {
           been told anything. */}
       {awaitingApproval.length > 0 && (
         <div className="bg-orange-500/8 border border-orange-500/20 rounded-xl p-4 mb-4">
-          <h3 className="text-orange-400 font-black uppercase tracking-wider text-sm mb-1 flex items-center gap-2">
+          <h3 className="text-warning font-black uppercase tracking-wider text-sm mb-1 flex items-center gap-2">
             <Send size={14} /> {awaitingApproval.length} Transfer Slip{awaitingApproval.length > 1 ? 's' : ''} Awaiting Approval
           </h3>
-          <p className="text-fg/40 text-[11px] mb-3">The partner business is only notified once a slip is approved.</p>
+          <p className="text-fg/70 text-[11px] mb-3">The partner business is only notified once a slip is approved.</p>
           <div className="space-y-3">
             {awaitingApproval.map(slip => (
               <div key={slip.shipmentRef} className="bg-surface rounded-lg p-3">
@@ -1339,9 +1339,9 @@ export default function HubTab({ ctx }) {
                   <div className="min-w-0">
                     <p className="text-fg font-bold text-sm">
                       To <span className="text-accent">{slip.partnerName}</span>
-                      <span className="text-fg/30 font-mono text-[10px] ml-2">{slip.shipmentRef}</span>
+                      <span className="text-fg/65 font-mono text-[10px] ml-2">{slip.shipmentRef}</span>
                     </p>
-                    <p className="text-fg/40 text-[11px]">
+                    <p className="text-fg/70 text-[11px]">
                       {slip.lines.length} line{slip.lines.length > 1 ? 's' : ''}
                       {slip.requestedBy ? ` · filed by ${slip.requestedBy}` : ''}
                       {slip.createdAt ? ` · ${new Date(slip.createdAt).toLocaleDateString()}` : ''}
@@ -1364,7 +1364,7 @@ export default function HubTab({ ctx }) {
                     </li>
                   ))}
                 </ul>
-                {!isSuperAdmin && <p className="text-fg/30 text-[10px] mt-2 italic">Waiting on someone with approval rights.</p>}
+                {!isSuperAdmin && <p className="text-fg/65 text-[10px] mt-2 italic">Waiting on someone with approval rights.</p>}
               </div>
             ))}
           </div>
@@ -1374,7 +1374,7 @@ export default function HubTab({ ctx }) {
       {/* ── Pending Inbound (action required) ── */}
       {pendingInbound.length > 0 && (
         <div className="bg-yellow-500/8 border border-yellow-500/20 rounded-xl p-4 mb-4">
-          <h3 className="text-yellow-400 font-black uppercase tracking-wider text-sm mb-3 flex items-center gap-2">
+          <h3 className="text-warning font-black uppercase tracking-wider text-sm mb-3 flex items-center gap-2">
             <Download size={14} /> {pendingInbound.length} Inbound Transfer{pendingInbound.length > 1 ? 's' : ''} - Action Required
           </h3>
           <div className="space-y-3">
@@ -1382,8 +1382,8 @@ export default function HubTab({ ctx }) {
               <div key={t._id} className="flex items-center justify-between gap-3 bg-surface rounded-lg p-3">
                 <div>
                   <p className="text-fg font-bold text-sm">{t.itemName}</p>
-                  <p className="text-fg/50 text-xs">{t.qtyBase} {t.unit} from <span className="text-fg/80 font-bold">{t.partnerName || t.partnerSlug}</span></p>
-                  {t.note && <p className="text-fg/40 text-xs italic">{t.note}</p>}
+                  <p className="text-fg/75 text-xs">{t.qtyBase} {t.unit} from <span className="text-fg/80 font-bold">{t.partnerName || t.partnerSlug}</span></p>
+                  {t.note && <p className="text-fg/70 text-xs italic">{t.note}</p>}
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => openAccept(t)} className={btn()}>Accept</button>
@@ -1402,12 +1402,12 @@ export default function HubTab({ ctx }) {
           <button onClick={load} className={btn('ghost')}><RefreshCw size={13} /></button>
         </div>
         {transfers.length === 0 ? (
-          <p className="text-fg/40 text-xs py-6 text-center uppercase tracking-widest">No transfers yet</p>
+          <p className="text-fg/70 text-xs py-6 text-center uppercase tracking-widest">No transfers yet</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-fg/40 text-[10px] uppercase tracking-widest border-b border-white/10">
+                <tr className="text-fg/70 text-[10px] uppercase tracking-widest border-b border-white/10">
                   <th className="text-left py-2">Ref</th>
                   <th className="text-left py-2">Dir</th>
                   <th className="text-left py-2">Partner</th>
@@ -1420,9 +1420,9 @@ export default function HubTab({ ctx }) {
               <tbody>
                 {transfers.map(t => (
                   <tr key={t._id} className="border-b border-white/5 hover:bg-white/2">
-                    <td className="py-2 text-fg/50 text-xs font-mono">{t.reference}</td>
+                    <td className="py-2 text-fg/75 text-xs font-mono">{t.reference}</td>
                     <td className="py-2">
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${t.direction === 'outbound' ? 'bg-blue-500/15 text-blue-400' : 'bg-purple-500/15 text-purple-400'}`}>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${t.direction === 'outbound' ? 'bg-blue-500/15 text-info' : 'bg-purple-500/15 text-purple-400'}`}>
                         {t.direction === 'outbound' ? '↑ OUT' : '↓ IN'}
                       </span>
                     </td>
@@ -1430,17 +1430,17 @@ export default function HubTab({ ctx }) {
                     <td className="py-2 text-fg font-bold text-xs">{t.itemName}</td>
                     <td className="py-2 text-right text-fg tabular-nums font-bold text-xs">{t.qtyBase} {t.unit}</td>
                     <td className="py-2 pl-3">
-                      <span className={`text-[10px] font-black px-2 py-1 rounded ${statusColor[t.status] || 'bg-white/10 text-fg/40'}`}>{t.status}</span>
+                      <span className={`text-[10px] font-black px-2 py-1 rounded ${statusColor[t.status] || 'bg-white/10 text-fg/70'}`}>{t.status}</span>
                     </td>
                     <td className="py-2 text-right">
                       {t.direction === 'inbound' && t.status === 'Pending' && (
                         <div className="flex gap-1 justify-end">
                           <button onClick={() => openAccept(t)} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-accent/15 text-accent hover:bg-accent/25 min-h-[28px]">Accept</button>
-                          <button onClick={() => act(t._id, 'reject')} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 min-h-[28px]">Reject</button>
+                          <button onClick={() => act(t._id, 'reject')} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-red-500/10 text-danger hover:bg-red-500/20 min-h-[28px]">Reject</button>
                         </div>
                       )}
                       {t.direction === 'outbound' && ['Pending', 'Requested'].includes(t.status) && (
-                        <button onClick={() => act(t._id, 'cancel')} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/8 text-fg/50 hover:bg-white/15 min-h-[28px]">
+                        <button onClick={() => act(t._id, 'cancel')} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/8 text-fg/75 hover:bg-white/15 min-h-[28px]">
                           {t.status === 'Requested' ? 'Withdraw' : 'Cancel'}
                         </button>
                       )}
@@ -1460,7 +1460,7 @@ export default function HubTab({ ctx }) {
           role="dialog" aria-modal="true" aria-label="Accept transfer">
           <div className="bg-surface border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-elev-3">
             <h3 className="text-fg font-black text-base mb-1">Accept Transfer</h3>
-            <p className="text-fg/50 text-sm mb-4">
+            <p className="text-fg/75 text-sm mb-4">
               Receiving <span className="text-fg font-bold">{acceptTarget.qtyBase} {acceptTarget.unit}</span> of{' '}
               <span className="text-fg font-bold">{acceptTarget.itemName}</span> from{' '}
               <span className="text-accent font-bold">{acceptTarget.partnerName || acceptTarget.partnerSlug}</span>
@@ -1468,7 +1468,7 @@ export default function HubTab({ ctx }) {
 
             <div className="space-y-3">
               <div>
-                <label className="text-[10px] text-fg/40 uppercase font-bold block mb-1">Add to existing inventory item</label>
+                <label className="text-[10px] text-fg/70 uppercase font-bold block mb-1">Add to existing inventory item</label>
                 <select value={acceptItemId} onChange={e => { setAcceptItemId(e.target.value); if (e.target.value) setAcceptCreateNew(false); }} className={input} disabled={acceptCreateNew}>
                   <option value="">- Choose item -</option>
                   {inventory.map(i => <option key={i._id} value={i._id}>{i.itemName} · {i.stockQty} {i.unit}</option>)}
@@ -1483,7 +1483,7 @@ export default function HubTab({ ctx }) {
               </label>
             </div>
 
-            {acceptErr && <p className="text-red-400 text-xs mt-3">{acceptErr}</p>}
+            {acceptErr && <p className="text-danger text-xs mt-3">{acceptErr}</p>}
 
             <div className="flex gap-2 mt-5 justify-end">
               <button onClick={() => setAcceptTarget(null)} className={btn('ghost')}>Cancel</button>
@@ -1505,7 +1505,7 @@ export default function HubTab({ ctx }) {
           role="dialog" aria-modal="true" aria-label="Counter-offer">
           <div className="bg-surface border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-elev-3">
             <h3 className="text-fg font-black text-base mb-1">Counter-Offer</h3>
-            <p className="text-fg/50 text-sm mb-4">
+            <p className="text-fg/75 text-sm mb-4">
               Adjust what you can actually give <span className="text-accent font-bold">{counterTarget.fromSlug === info?.tenant ? counterTarget.toName : counterTarget.fromName}</span>.
               Reduce a quantity or remove a line - it goes back to them to accept or decline.
             </p>
@@ -1515,23 +1515,23 @@ export default function HubTab({ ctx }) {
                 <div key={i} className="flex items-center gap-2 bg-page-bg border border-white/8 rounded-xl p-2.5">
                   <div className="flex-1 min-w-0">
                     <p className="text-fg font-bold text-sm truncate">{l.itemName}</p>
-                    {l.note && <p className="text-fg/30 text-[10px] italic truncate">{l.note}</p>}
+                    {l.note && <p className="text-fg/65 text-[10px] italic truncate">{l.note}</p>}
                   </div>
                   <input
                     type="number" min="0" step="any" value={l.qty}
                     onChange={e => updateCounterQty(i, e.target.value)}
                     className="w-24 bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-fg text-sm text-right outline-none focus:border-accent"
                   />
-                  <span className="text-fg/40 text-xs w-10">{l.unit}</span>
-                  <button onClick={() => removeCounterLine(i)} className="text-red-400/60 hover:text-red-400 text-[10px] font-bold uppercase px-1">✕</button>
+                  <span className="text-fg/70 text-xs w-10">{l.unit}</span>
+                  <button onClick={() => removeCounterLine(i)} className="text-red-400/60 hover:text-danger text-[10px] font-bold uppercase px-1">✕</button>
                 </div>
               ))}
-              {counterLines.length === 0 && <p className="text-fg/30 text-xs italic text-center py-3">Every line removed - add at least one back to counter.</p>}
+              {counterLines.length === 0 && <p className="text-fg/65 text-xs italic text-center py-3">Every line removed - add at least one back to counter.</p>}
             </div>
 
             <input value={counterNote} onChange={e => setCounterNote(e.target.value)} className={input} placeholder="Note (optional) - e.g. why the quantity changed" />
 
-            {counterErr && <p className="text-red-400 text-xs mt-3">{counterErr}</p>}
+            {counterErr && <p className="text-danger text-xs mt-3">{counterErr}</p>}
 
             <div className="flex gap-2 mt-5 justify-end">
               <button onClick={() => setCounterTarget(null)} className={btn('ghost')}>Cancel</button>
@@ -1550,7 +1550,7 @@ export default function HubTab({ ctx }) {
           role="dialog" aria-modal="true" aria-label="Decline transfer request">
           <div className="bg-surface border border-red-500/25 rounded-2xl p-6 w-full max-w-md shadow-elev-3">
             <h3 className="text-fg font-black text-base mb-1">Decline Request</h3>
-            <p className="text-fg/50 text-sm mb-4">
+            <p className="text-fg/75 text-sm mb-4">
               This closes the negotiation with <span className="text-accent font-bold">{declineTarget.fromSlug === info?.tenant ? declineTarget.toName : declineTarget.fromName}</span>.
               Your reason is visible to them.
             </p>

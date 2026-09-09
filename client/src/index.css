@@ -17,7 +17,14 @@
 [data-theme="default"] {
   /* --- PRIMARY BRAND COLOR (RGB channels for opacity modifier support) --- */
   --brand:        22 163 74;   /* #6f874d - olive green                   */
-  --brand-dark:   21 128 61;    /* #5a6e3d - hover/pressed state           */
+  /* Hover BRIGHTENS rather than dims. On a dark UI a darker hover is both
+     backwards and unreadable: the old #15803d left the button label at
+     3.88:1, under AA for anything but large text. green-500 gives 8.53:1. */
+  --brand-dark:   34 197 94;    /* green-500 - hover/pressed state          */
+  /* What actually reads ON the brand colour. White on this green is 3.30:1,
+     on the yellow 1.92:1 and on the ocean blue 2.14:1 - every primary button
+     in those themes was failing. Near-black gives 5.90 / 10.13 / 9.07. */
+  --on-brand:     13 13 13;
 
   /* --- SURFACE SYSTEM --- */
   --surface:      26 26 26;     /* #1a1a1a - card panels                   */
@@ -36,6 +43,14 @@
   --danger:       239 68 68;    /* red-500                                 */
   --success:      34 197 94;    /* green-500                               */
   --warning:      234 179 8;    /* yellow-500                              */
+
+  /* Status text. The -400 shades are built for dark grounds and read at 7-12:1
+     there; on the light theme's white they collapse to 1.5-2.8:1, so the text
+     colour has to follow the theme rather than be hardcoded at the call site. */
+  --danger-text:  248 113 113;  /* red-400                                  */
+  --success-text:  74 222 128;  /* green-400                                */
+  --warning-text: 251 191 36;   /* amber-400                                */
+  --info-text:     96 165 250;  /* blue-400                                 */
 }
 
 /* =====================================================================
@@ -44,6 +59,15 @@
 [data-theme="yellow"] {
   --brand:        234 179 8;    /* yellow-500 - #eab308                    */
   --brand-dark:   202 138 4;    /* yellow-600 - hover state                */
+  --on-brand:     13 13 13;     /* 10.13:1 on the yellow; white is 1.92:1  */
+
+  /* Status text. The -400 shades are built for dark grounds and read at 7-12:1
+     there; on the light theme's white they collapse to 1.5-2.8:1, so the text
+     colour has to follow the theme rather than be hardcoded at the call site. */
+  --danger-text:  248 113 113;  /* red-400                                  */
+  --success-text:  74 222 128;  /* green-400                                */
+  --warning-text: 251 191 36;   /* amber-400                                */
+  --info-text:     96 165 250;  /* blue-400                                 */
   --surface:      26 26 26;     /* #1a1a1a - identical to default          */
   --surface-2:    36 36 36;     /* #242424 - identical to default          */
   --bg:           13 13 13;
@@ -59,6 +83,15 @@
 [data-theme="ocean"] {
   --brand:        56 189 248;   /* sky-400 - electric blue                 */
   --brand-dark:   14 165 233;   /* sky-500 - hover state                   */
+  --on-brand:     13 13 13;     /* 9.07:1 on the sky blue; white is 2.14:1 */
+
+  /* Status text. The -400 shades are built for dark grounds and read at 7-12:1
+     there; on the light theme's white they collapse to 1.5-2.8:1, so the text
+     colour has to follow the theme rather than be hardcoded at the call site. */
+  --danger-text:  248 113 113;  /* red-400                                  */
+  --success-text:  74 222 128;  /* green-400                                */
+  --warning-text: 251 191 36;   /* amber-400                                */
+  --info-text:     96 165 250;  /* blue-400                                 */
   --surface:      26 26 26;     /* #1a1a1a - identical to default          */
   --surface-2:    36 36 36;     /* #242424 - identical to default          */
   --bg:           13 13 13;
@@ -82,6 +115,17 @@
   /*--brand:        90 110 61;*/    /* #5a6e3d - darker olive for AA on white  */
   --brand:       21 128 61;
   --brand-dark:   22 101 52;     /* pressed state                            */
+  /* The one theme where white is right: this green is dark enough that white
+     reads at 5.02:1 and near-black would only manage 3.88:1. */
+  --on-brand:     255 255 255;
+
+  /* Darker shades, because these sit on white here: red-700 6.47:1,
+     green-700 5.02:1, amber-700 5.02:1, blue-700 6.70:1. The -400 shades
+     used on the dark themes would be 1.5-2.8:1 and effectively invisible. */
+  --danger-text:  185 28 28;    /* red-700                                  */
+  --success-text:  21 128 61;   /* green-700                                */
+  --warning-text: 180 83 9;     /* amber-700                                */
+  --info-text:     29 78 216;   /* blue-700                                 */
   --surface:      255 255 255;  /* cards                                    */
   --surface-2:    244 244 241;  /* nested panels                            */
   --bg:           250 250 247;

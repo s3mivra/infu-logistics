@@ -14,9 +14,9 @@ export default function ImportModal() {
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
             <div>
               <h2 className="text-fg font-black text-lg">Bulk Import - Stock Take</h2>
-              <p className="text-fg/40 text-xs font-bold uppercase tracking-widest mt-0.5">Replaces current quantities · audited via journal entries</p>
+              <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-0.5">Replaces current quantities · audited via journal entries</p>
             </div>
-            <button onClick={() => setImportModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/50 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
+            <button onClick={() => setImportModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/75 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
           </div>
 
           {/* Summary chips */}
@@ -62,7 +62,7 @@ export default function ImportModal() {
                 {importRows.map((r, i) => {
                   if (r._isCategory) return (
                     <tr key={i} className="bg-white/5">
-                      <td colSpan={7} className="px-4 py-2 text-fg/50 font-black text-[10px] uppercase tracking-[0.2em]">{r.category}</td>
+                      <td colSpan={7} className="px-4 py-2 text-fg/75 font-black text-[10px] uppercase tracking-[0.2em]">{r.category}</td>
                     </tr>
                   );
                   const isErr = !!r._error;
@@ -99,7 +99,7 @@ export default function ImportModal() {
                     <Fragment key={i}>
                     <tr className={`border-b border-white/5 ${isErr ? 'bg-red-500/10' : isBatch ? 'bg-purple-500/5' : ''}`}>
                       <td className="px-4 py-2.5 text-fg font-bold">
-                        {r.itemCode && <span className="text-fg/30 font-mono text-[10px] mr-1.5">{r.itemCode}</span>}
+                        {r.itemCode && <span className="text-fg/65 font-mono text-[10px] mr-1.5">{r.itemCode}</span>}
                         {r.itemName || <span className="text-red-300">(missing)</span>}
                         {r._needsSize && (
                           <span title="No unit/size found in the name or a Unit column - imported as pcs. Edit the item afterward to set its real size." className="ml-1.5 text-[9px] font-black bg-amber-500 text-white border border-amber-500/40 px-1.5 py-0.5 rounded uppercase align-middle">SET SIZE</span>
@@ -123,11 +123,11 @@ export default function ImportModal() {
                       </td>
                       <td className="px-2 py-2.5 text-right text-fg/60 tabular-nums">{isNew || isErr ? '-' : fmtQty(r._oldDisplay.qty)}</td>
                       <td className="px-2 py-2.5 text-right text-fg font-bold tabular-nums">{isErr ? '-' : fmtQty(Number(r.qty))}</td>
-                      <td className={`px-2 py-2.5 text-right tabular-nums font-bold ${diff > 0 ? 'text-green-400' : diff < 0 ? 'text-red-400' : 'text-fg/40'}`}>
+                      <td className={`px-2 py-2.5 text-right tabular-nums font-bold ${diff > 0 ? 'text-success' : diff < 0 ? 'text-danger' : 'text-fg/70'}`}>
                         {isErr || isNew ? '-' : (diff > 0 ? '+' : '') + (isPacked ? (diff / packSize).toLocaleString(undefined, { maximumFractionDigits: 2 }) : diff.toLocaleString(undefined, { maximumFractionDigits: 3 }))}
                       </td>
                       <td className="px-2 py-2.5 text-right text-fg/70 tabular-nums">{isErr || r.unitCost === '' ? '-' : peso(r.unitCost)}</td>
-                      <td className={`px-4 py-2.5 text-right tabular-nums font-bold ${valueDiff > 0 ? 'text-green-400' : valueDiff < 0 ? 'text-red-400' : 'text-fg/40'}`}>{isErr ? '-' : peso(Math.abs(valueDiff)) + (valueDiff < 0 ? ' loss' : valueDiff > 0 ? ' gain' : '')}</td>
+                      <td className={`px-4 py-2.5 text-right tabular-nums font-bold ${valueDiff > 0 ? 'text-success' : valueDiff < 0 ? 'text-danger' : 'text-fg/70'}`}>{isErr ? '-' : peso(Math.abs(valueDiff)) + (valueDiff < 0 ? ' loss' : valueDiff > 0 ? ' gain' : '')}</td>
                     </tr>
                     {showTotal && (
                       <tr className="border-b border-white/10 bg-brand/10">
@@ -147,10 +147,10 @@ export default function ImportModal() {
           {importProgress >= 0 && (
             <div className="px-5 pt-3 shrink-0">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] font-black uppercase tracking-widest text-fg/50">
+                <span className="text-[10px] font-black uppercase tracking-widest text-fg/75">
                   {importProgress < 100 ? 'Processing…' : 'Done!'}
                 </span>
-                <span className="text-[10px] font-mono text-fg/50">{importProgress}%</span>
+                <span className="text-[10px] font-mono text-fg/75">{importProgress}%</span>
               </div>
               <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
                 <div
@@ -216,7 +216,7 @@ export default function ImportModal() {
               Export PDF
             </button>
             <button onClick={submitImport} disabled={importSubmitting || importRows.every(r => r._error)}
-              className="flex-1 px-5 py-3 rounded-xl bg-brand hover:bg-brand-dark text-white font-black text-sm uppercase tracking-widest transition shadow-elev-2 disabled:opacity-50 min-h-[44px] flex items-center justify-center gap-2">
+              className="flex-1 px-5 py-3 rounded-xl bg-brand hover:bg-brand-dark text-on-brand font-black text-sm uppercase tracking-widest transition shadow-elev-2 disabled:opacity-50 min-h-[44px] flex items-center justify-center gap-2">
               <Check size={16}/> {importSubmitting ? 'Importing…' : 'Confirm Import'}
             </button>
           </div>

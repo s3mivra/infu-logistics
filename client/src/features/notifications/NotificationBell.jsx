@@ -11,8 +11,8 @@ import { useDashboard } from '../dashboard/DashboardContext';
 // component turns that into a real jump.
 
 const SEVERITY = {
-  critical: { Icon: AlertCircle,    dot: 'bg-red-500',    text: 'text-red-400',    ring: 'border-red-500/30' },
-  warn:     { Icon: AlertTriangle,  dot: 'bg-yellow-500', text: 'text-yellow-400', ring: 'border-yellow-500/30' },
+  critical: { Icon: AlertCircle,    dot: 'bg-red-500',    text: 'text-danger',    ring: 'border-red-500/30' },
+  warn:     { Icon: AlertTriangle,  dot: 'bg-yellow-500', text: 'text-warning', ring: 'border-yellow-500/30' },
   info:     { Icon: Info,           dot: 'bg-brand',      text: 'text-brand',      ring: 'border-brand/30' },
 };
 
@@ -154,7 +154,7 @@ export default function NotificationBell({ align = 'right', full = false }) {
           <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
             <div>
               <h3 className="text-fg font-black text-sm uppercase tracking-wider">Needs Attention</h3>
-              <p className="text-fg/30 text-[10px] font-bold uppercase tracking-widest mt-0.5">
+              <p className="text-fg/65 text-[10px] font-bold uppercase tracking-widest mt-0.5">
                 {count === 0 ? 'All clear' : `${count} item${count === 1 ? '' : 's'}`}
                 {data.criticalCount > 0 && ` · ${data.criticalCount} critical`}
               </p>
@@ -163,7 +163,7 @@ export default function NotificationBell({ align = 'right', full = false }) {
               onClick={load}
               disabled={loading}
               aria-label="Refresh notifications"
-              className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-fg/40 hover:text-fg flex items-center justify-center transition disabled:opacity-40"
+              className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg flex items-center justify-center transition disabled:opacity-40"
             >
               <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
             </button>
@@ -172,8 +172,8 @@ export default function NotificationBell({ align = 'right', full = false }) {
           <div className="flex-1 overflow-y-auto custom-scrollbar">
             {count === 0 ? (
               <div className="px-4 py-10 text-center">
-                <p className="text-fg/40 text-sm font-bold">Nothing needs attention</p>
-                <p className="text-fg/20 text-xs mt-1">Stock, expiry, A/R and POs all look fine.</p>
+                <p className="text-fg/70 text-sm font-bold">Nothing needs attention</p>
+                <p className="text-fg/60 text-xs mt-1">Stock, expiry, A/R and POs all look fine.</p>
               </div>
             ) : (
               data.items.map((item) => {
@@ -188,10 +188,10 @@ export default function NotificationBell({ align = 'right', full = false }) {
                     <span className="min-w-0 flex-1">
                       <span className={`block text-sm font-bold ${s.text} break-words`}>{item.title}</span>
                       {item.detail && (
-                        <span className="block text-fg/40 text-xs mt-0.5 break-words">{item.detail}</span>
+                        <span className="block text-fg/70 text-xs mt-0.5 break-words">{item.detail}</span>
                       )}
                     </span>
-                    <span className="text-fg/20 group-hover:text-fg/50 text-xs font-black shrink-0 mt-0.5">›</span>
+                    <span className="text-fg/60 group-hover:text-fg/75 text-xs font-black shrink-0 mt-0.5">›</span>
                   </button>
                 );
               })

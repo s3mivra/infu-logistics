@@ -61,10 +61,10 @@ export default function StockTaxonomyPanel({
         <div className="flex flex-col sm:flex-row gap-2 mb-3">
           <input value={locName} onChange={e => setLocName(e.target.value)} placeholder="Location name (e.g. Main Warehouse)" className={input} />
           <input value={locNote} onChange={e => setLocNote(e.target.value)} placeholder="Note (optional)" className={input} />
-          <button onClick={addLoc} disabled={busy || !locName.trim()} className="bg-accent text-white px-4 py-2 rounded font-bold text-xs uppercase tracking-wider disabled:opacity-40 shrink-0 min-h-[40px]">Add</button>
+          <button onClick={addLoc} disabled={busy || !locName.trim()} className="bg-accent text-on-brand px-4 py-2 rounded font-bold text-xs uppercase tracking-wider disabled:opacity-40 shrink-0 min-h-[40px]">Add</button>
         </div>
         {stockLocations.length === 0 ? (
-          <p className="text-white/40 text-xs py-4 text-center uppercase tracking-widest">No locations yet</p>
+          <p className="text-white/70 text-xs py-4 text-center uppercase tracking-widest">No locations yet</p>
         ) : (
           <ul className="divide-y divide-white/5">
             {stockLocations.map(l => (
@@ -73,20 +73,20 @@ export default function StockTaxonomyPanel({
                   <input autoFocus value={editLoc.name} onChange={e => setEditLoc(s => ({ ...s, name: e.target.value }))} placeholder="Location name" className={input} />
                   <input value={editLoc.note} onChange={e => setEditLoc(s => ({ ...s, note: e.target.value }))} placeholder="Note (optional)" className={input} />
                   <div className="flex gap-1.5 shrink-0">
-                    <button onClick={saveEditLoc} disabled={busy || !editLoc.name.trim()} className={`${rowBtn} bg-accent text-white disabled:opacity-40`}>Save</button>
+                    <button onClick={saveEditLoc} disabled={busy || !editLoc.name.trim()} className={`${rowBtn} bg-accent text-on-brand disabled:opacity-40`}>Save</button>
                     <button onClick={() => setEditLoc(null)} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>Cancel</button>
                   </div>
                 </li>
               ) : (
                 <li key={l._id} className="flex items-center justify-between py-2.5 gap-2">
                   <div className="min-w-0">
-                    <p className="text-white font-bold text-sm truncate">{l.name}{l.isActive === false && <span className="ml-2 text-[9px] text-red-400 uppercase">inactive</span>}</p>
+                    <p className="text-white font-bold text-sm truncate">{l.name}{l.isActive === false && <span className="ml-2 text-[9px] text-danger uppercase">inactive</span>}</p>
                     {l.note && <p className="text-white/50 text-[11px] truncate">{l.note}</p>}
                   </div>
                   <div className="flex gap-1.5 shrink-0">
                     <button onClick={() => setEditLoc({ id: l._id, name: l.name, note: l.note || '' })} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>Edit</button>
                     <button onClick={() => saveStockLocation({ isActive: l.isActive === false }, l._id)} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>{l.isActive === false ? 'Enable' : 'Disable'}</button>
-                    <button onClick={() => deleteStockLocation(l._id)} className={`${rowBtn} bg-red-500/10 text-red-400 hover:bg-red-500/20`}>Del</button>
+                    <button onClick={() => deleteStockLocation(l._id)} className={`${rowBtn} bg-red-500/10 text-danger hover:bg-red-500/20`}>Del</button>
                   </div>
                 </li>
               )
@@ -116,10 +116,10 @@ export default function StockTaxonomyPanel({
         <div className="flex flex-col sm:flex-row gap-2 mb-3">
           <input value={catName} onChange={e => setCatName(e.target.value)} placeholder="Category name (e.g. Beans)" className={input} />
           <input value={catPrefix} onChange={e => setCatPrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))} placeholder="Prefix" className={`${input} sm:max-w-[110px] uppercase font-mono`} maxLength={4} />
-          <button onClick={addCat} disabled={busy || !catName.trim()} className="bg-accent text-white px-4 py-2 rounded font-bold text-xs uppercase tracking-wider disabled:opacity-40 shrink-0 min-h-[40px]">Add</button>
+          <button onClick={addCat} disabled={busy || !catName.trim()} className="bg-accent text-on-brand px-4 py-2 rounded font-bold text-xs uppercase tracking-wider disabled:opacity-40 shrink-0 min-h-[40px]">Add</button>
         </div>
         {stockCategories.length === 0 ? (
-          <p className="text-white/40 text-xs py-4 text-center uppercase tracking-widest">No categories yet</p>
+          <p className="text-white/70 text-xs py-4 text-center uppercase tracking-widest">No categories yet</p>
         ) : (
           <ul className="divide-y divide-white/5">
             {stockCategories.map(c => (
@@ -128,7 +128,7 @@ export default function StockTaxonomyPanel({
                   <input autoFocus value={editCat.name} onChange={e => setEditCat(s => ({ ...s, name: e.target.value }))} placeholder="Category name" className={input} />
                   <input value={editCat.prefix} onChange={e => setEditCat(s => ({ ...s, prefix: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) }))} placeholder="Prefix" className={`${input} sm:max-w-[110px] uppercase font-mono`} maxLength={4} />
                   <div className="flex gap-1.5 shrink-0">
-                    <button onClick={saveEditCat} disabled={busy || !editCat.name.trim()} className={`${rowBtn} bg-accent text-white disabled:opacity-40`}>Save</button>
+                    <button onClick={saveEditCat} disabled={busy || !editCat.name.trim()} className={`${rowBtn} bg-accent text-on-brand disabled:opacity-40`}>Save</button>
                     <button onClick={() => setEditCat(null)} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>Cancel</button>
                   </div>
                 </li>
@@ -138,7 +138,7 @@ export default function StockTaxonomyPanel({
                     <p className="text-white font-bold text-sm truncate">
                       {c.name}
                       {c.prefix && <span className="ml-2 text-[10px] font-mono bg-brand/20 text-brand px-1.5 py-0.5 rounded">{c.prefix}</span>}
-                      {c.isActive === false && <span className="ml-2 text-[9px] text-red-400 uppercase">inactive</span>}
+                      {c.isActive === false && <span className="ml-2 text-[9px] text-danger uppercase">inactive</span>}
                     </p>
                     {c.note && <p className="text-white/50 text-[11px] truncate">{c.note}</p>}
                   </div>
@@ -149,13 +149,13 @@ export default function StockTaxonomyPanel({
                         onClick={async () => { setRenumberingId(c._id); try { await renumberStockCategory(c); } finally { setRenumberingId(null); } }}
                         disabled={renumberingId === c._id}
                         title="Rewrite EVERY existing item in this category to a fresh sequential code under its prefix. Permanent - a separate, deliberate action from just editing the prefix."
-                        className={`${rowBtn} bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 disabled:opacity-50`}
+                        className={`${rowBtn} bg-amber-500/10 text-warning hover:bg-amber-500/20 disabled:opacity-50`}
                       >
                         {renumberingId === c._id ? 'Renumbering…' : 'Renumber'}
                       </button>
                     )}
                     <button onClick={() => saveStockCategory({ isActive: c.isActive === false }, c._id)} className={`${rowBtn} bg-white/5 text-white/70 hover:bg-white/10`}>{c.isActive === false ? 'Enable' : 'Disable'}</button>
-                    <button onClick={() => deleteStockCategory(c._id)} className={`${rowBtn} bg-red-500/10 text-red-400 hover:bg-red-500/20`}>Del</button>
+                    <button onClick={() => deleteStockCategory(c._id)} className={`${rowBtn} bg-red-500/10 text-danger hover:bg-red-500/20`}>Del</button>
                   </div>
                 </li>
               )

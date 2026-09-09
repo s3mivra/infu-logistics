@@ -14,7 +14,7 @@ function IconSelect({ value, onChange, options, className = '' }) {
         className="w-full flex items-center gap-2 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg/80 font-bold text-sm outline-none focus:border-brand/60 transition">
         {selected?.Icon && <selected.Icon size={16} className="text-brand shrink-0" />}
         <span className="flex-1 text-left truncate">{selected?.label}</span>
-        <ChevronDown size={14} className={`text-fg/40 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown size={14} className={`text-fg/70 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
         <>
@@ -23,8 +23,8 @@ function IconSelect({ value, onChange, options, className = '' }) {
             {options.map(o => (
               <button key={o.value} type="button"
                 onClick={() => { onChange(o.value); setOpen(false); }}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-sm font-bold text-left transition ${o.value === value ? 'bg-brand text-white' : 'text-fg/80 hover:bg-white/10'}`}>
-                <o.Icon size={16} className={o.value === value ? 'text-fg' : 'text-fg/50'} />
+                className={`w-full flex items-center gap-2 px-3 py-2 text-sm font-bold text-left transition ${o.value === value ? 'bg-brand text-on-brand' : 'text-fg/80 hover:bg-white/10'}`}>
+                <o.Icon size={16} className={o.value === value ? 'text-fg' : 'text-fg/75'} />
                 {o.label}
               </button>
             ))}
@@ -173,7 +173,7 @@ export default function OrdersTab({ ctx }) {
                           ringing items up - it belongs on the order card,
                           next to the tender picker and the reference box,
                           which is where the money is actually settled. */}
-                      <button onClick={() => setIsPosOpen(false)} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-red-500/20 text-fg/40 hover:text-red-400 font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
+                      <button onClick={() => setIsPosOpen(false)} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-red-500/20 text-fg/70 hover:text-danger font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
                         <ChevronLeft size={13} /> Orders
                       </button>
                     </div>
@@ -182,7 +182,7 @@ export default function OrdersTab({ ctx }) {
                   {/* Search + Category pills */}
                   <div className="px-4 pt-3 pb-2 shrink-0 space-y-2">
                     <div className="relative">
-                      <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30" />
+                      <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/65" />
                       <input
                         type="text"
                         placeholder="Search menu items…"
@@ -199,7 +199,7 @@ export default function OrdersTab({ ctx }) {
                         <button
                           key={c._id}
                           onClick={() => { setPosCategory(c.name === 'All' ? 'All' : c.name); setPosPage(1); }}
-                          className={`px-4 py-2 rounded-xl font-bold whitespace-nowrap text-xs uppercase tracking-wider transition min-h-[40px] shrink-0 ${posCategory === (c.name === 'All' ? 'All' : c.name) ? 'bg-brand text-white shadow-md' : 'bg-white/5 text-fg/50 hover:text-fg hover:bg-white/10'}`}
+                          className={`px-4 py-2 rounded-xl font-bold whitespace-nowrap text-xs uppercase tracking-wider transition min-h-[40px] shrink-0 ${posCategory === (c.name === 'All' ? 'All' : c.name) ? 'bg-brand text-on-brand shadow-md' : 'bg-white/5 text-fg/75 hover:text-fg hover:bg-white/10'}`}
                         >
                           {c.name}
                         </button>
@@ -230,7 +230,7 @@ export default function OrdersTab({ ctx }) {
                                   className="shrink-0 w-28 bg-brand/10 border border-brand/30 rounded-xl p-2.5 text-left hover:bg-brand/20 active-press transition">
                                   <p className="text-[11px] font-black text-fg leading-tight line-clamp-2">{c.name}</p>
                                   <p className="text-brand font-black text-sm mt-1 tabular-nums">₱{Number(c.price).toFixed(2)}</p>
-                                  <p className="text-[8px] text-fg/40 uppercase tracking-wide mt-0.5">{(c.items||[]).length} items</p>
+                                  <p className="text-[8px] text-fg/70 uppercase tracking-wide mt-0.5">{(c.items||[]).length} items</p>
                                 </button>
                               ))}
                             </div>
@@ -238,7 +238,7 @@ export default function OrdersTab({ ctx }) {
                         )}
                         <div className="flex-1 overflow-y-auto px-3 pb-3 grid grid-cols-3 sm:grid-cols-3 xl:grid-cols-4 gap-3 content-start custom-scrollbar">
                           {posPaged.length === 0 && (
-                            <div className="col-span-full flex flex-col items-center justify-center py-16 text-fg/20">
+                            <div className="col-span-full flex flex-col items-center justify-center py-16 text-fg/60">
                               <ShoppingCart size={32} className="mb-3 opacity-30" />
                               <p className="font-bold text-sm uppercase tracking-widest">No items found</p>
                             </div>
@@ -283,8 +283,8 @@ export default function OrdersTab({ ctx }) {
                               </div>
                               {p.activeSalePrice != null ? (
                                 <div className="mt-auto pt-1 flex flex-col items-center gap-0.5">
-                                  <span className="text-orange-400 font-black text-sm tabular-nums">₱{Number(p.activeSalePrice).toFixed(2)}</span>
-                                  <span className="text-fg/30 font-bold text-[10px] tabular-nums line-through">₱{Number(p.basePrice || 0).toFixed(2)}</span>
+                                  <span className="text-warning font-black text-sm tabular-nums">₱{Number(p.activeSalePrice).toFixed(2)}</span>
+                                  <span className="text-fg/65 font-bold text-[10px] tabular-nums line-through">₱{Number(p.basePrice || 0).toFixed(2)}</span>
                                 </div>
                               ) : (
                                 <span className="text-brand font-black mt-auto pt-1 text-sm tabular-nums">₱{Number(p.basePrice || p.price || 0).toFixed(2)}</span>
@@ -296,12 +296,12 @@ export default function OrdersTab({ ctx }) {
                         {posTotalPages > 1 && (
                           <div className="shrink-0 flex items-center justify-between px-4 py-2.5 border-t white/10 bg-page-bg/40">
                             <button onClick={() => setPosPage(p => Math.max(1, p - 1))} disabled={posPage === 1}
-                              className="px-4 py-2 rounded-xl font-bold text-xs uppercase bg-white/5 text-fg/50 hover:text-fg hover:bg-white/10 disabled:opacity-25 transition flex items-center gap-1 min-h-[40px]">
+                              className="px-4 py-2 rounded-xl font-bold text-xs uppercase bg-white/5 text-fg/75 hover:text-fg hover:bg-white/10 disabled:opacity-25 transition flex items-center gap-1 min-h-[40px]">
                               <ChevronLeft size={13}/> Prev
                             </button>
-                            <span className="text-xs text-fg/30 font-bold">{posPage} / {posTotalPages}</span>
+                            <span className="text-xs text-fg/65 font-bold">{posPage} / {posTotalPages}</span>
                             <button onClick={() => setPosPage(p => Math.min(posTotalPages, p + 1))} disabled={posPage === posTotalPages}
-                              className="px-4 py-2 rounded-xl font-bold text-xs uppercase bg-white/5 text-fg/50 hover:text-fg hover:bg-white/10 disabled:opacity-25 transition flex items-center gap-1 min-h-[40px]">
+                              className="px-4 py-2 rounded-xl font-bold text-xs uppercase bg-white/5 text-fg/75 hover:text-fg hover:bg-white/10 disabled:opacity-25 transition flex items-center gap-1 min-h-[40px]">
                               Next <ChevronRight size={13}/>
                             </button>
                           </div>
@@ -411,8 +411,8 @@ export default function OrdersTab({ ctx }) {
                     const met = posSubtotal >= rule.thresholdAmount;
                     const remain = rule.thresholdAmount - posSubtotal;
                     return (
-                      <div key={i} className={`mx-3 mt-2 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 ${met ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30' : 'bg-white/5 text-fg/40 border border-white/8'}`}>
-                        <Flame size={12} className={met ? 'text-orange-400' : 'text-fg/20'} />
+                      <div key={i} className={`mx-3 mt-2 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 ${met ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30' : 'bg-white/5 text-fg/70 border border-white/8'}`}>
+                        <Flame size={12} className={met ? 'text-warning' : 'text-fg/60'} />
                         {met
                           ? <span>🎉 Deal unlocked! <span className="font-black">{rule.productName}</span> gets <span className="font-black">{rule.discountPercent}%</span> off</span>
                           : <span>Spend <span className="font-black">₱{remain.toFixed(2)}</span> more → <span className="font-black">{rule.productName}</span> gets {rule.discountPercent}% off</span>
@@ -439,7 +439,7 @@ export default function OrdersTab({ ctx }) {
                           <div className="flex-1 pr-2 min-w-0">
                             <p className="font-bold text-fg/90 text-sm truncate leading-tight">{item.name}</p>
                             {item.selectedAddOns.map((a, i) => (
-                              <p key={i} className="text-[10px] text-fg/35 truncate">+ {a.name} ₱{a.price}</p>
+                              <p key={i} className="text-[10px] text-fg/70 truncate">+ {a.name} ₱{a.price}</p>
                             ))}
                             <div className="flex items-center gap-2 mt-2">
                               <button onClick={() => setPosCart(posCart.map((c, i) => i === idx ? {...c, quantity: Math.max(1, c.quantity - 1)} : c))}
@@ -455,15 +455,15 @@ export default function OrdersTab({ ctx }) {
                                   onChange={e => setPosCart(posCart.map((c, i) => i === idx ? {...c, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))} : c))}
                                   className="w-14 bg-white/5 border border-white/10 rounded-lg pl-2 pr-5 py-1 text-fg text-xs font-bold outline-none focus:border-brand/60 placeholder-white/20 tabular-nums"
                                 />
-                                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-fg/30 text-[10px] font-bold pointer-events-none">%</span>
+                                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-fg/65 text-[10px] font-bold pointer-events-none">%</span>
                               </div>
                             </div>
                           </div>
                           <div className="flex flex-col items-end gap-1 shrink-0">
-                            {lineDisc > 0 && <p className="text-[10px] text-green-400 font-bold tabular-nums">-₱{lineDisc.toFixed(2)}</p>}
+                            {lineDisc > 0 && <p className="text-[10px] text-success font-bold tabular-nums">-₱{lineDisc.toFixed(2)}</p>}
                             <p className="font-black text-brand text-sm tabular-nums">₱{lineTotal.toFixed(2)}</p>
                             <button onClick={() => setPosCart(posCart.filter((_, i) => i !== idx))}
-                              className="w-8 h-8 flex items-center justify-center text-red-400/60 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition active:scale-90">
+                              className="w-8 h-8 flex items-center justify-center text-red-400/60 hover:text-danger hover:bg-red-500/10 rounded-lg transition active:scale-90">
                               <Trash2 size={13}/>
                             </button>
                           </div>
@@ -475,26 +475,26 @@ export default function OrdersTab({ ctx }) {
                   {/* Totals + CTA */}
                   <div className="px-4 pb-4 pt-2 border-t border-white/10 bg-page-bg/60 shrink-0">
                     <div className="space-y-1 mb-3">
-                      <div className="flex justify-between text-xs text-fg/40 font-bold">
+                      <div className="flex justify-between text-xs text-fg/70 font-bold">
                         <span>Subtotal</span><span>₱{posSubtotal.toFixed(2)}</span>
                       </div>
                       {posItemDiscountAmt > 0 && (
-                        <div className="flex justify-between text-xs text-green-400 font-bold">
+                        <div className="flex justify-between text-xs text-success font-bold">
                           <span>Item Discounts</span><span>−₱{posItemDiscountAmt.toFixed(2)}</span>
                         </div>
                       )}
                       {posDiscountAmt > 0 && (
-                        <div className="flex justify-between text-xs text-green-400 font-bold">
+                        <div className="flex justify-between text-xs text-success font-bold">
                           <span>Order Discount</span><span>−₱{posDiscountAmt.toFixed(2)}</span>
                         </div>
                       )}
                       {posDeliveryFeeNum > 0 && (
-                        <div className="flex justify-between text-xs text-fg/40 font-bold">
+                        <div className="flex justify-between text-xs text-fg/70 font-bold">
                           <span>Delivery Fee</span><span>₱{posDeliveryFeeNum.toFixed(2)}</span>
                         </div>
                       )}
                       <div className="flex justify-between items-baseline pt-1.5 border-t border-white/10">
-                        <span className="text-xs text-fg/50 font-bold uppercase tracking-widest">Total</span>
+                        <span className="text-xs text-fg/75 font-bold uppercase tracking-widest">Total</span>
                         <span className="text-3xl font-black text-fg">₱<span className="tabular-nums">{posGrandTotal.toFixed(2)}</span></span>
                       </div>
                     </div>
@@ -505,7 +505,7 @@ export default function OrdersTab({ ctx }) {
                       <input type="checkbox" checked={!!posReserveOnly} onChange={e => setPosReserveOnly(e.target.checked)}
                         className="w-4 h-4 accent-brand" />
                       <span className="text-[11px] font-bold text-fg/70">Reserve only (pay later)</span>
-                      <span className="ml-auto text-[9px] uppercase tracking-widest font-black text-fg/30">Status: {posReserveOnly ? 'Reserved' : 'Pending'}</span>
+                      <span className="ml-auto text-[9px] uppercase tracking-widest font-black text-fg/65">Status: {posReserveOnly ? 'Reserved' : 'Pending'}</span>
                     </label>
                     <div className="flex gap-2">
                       <button
@@ -517,7 +517,7 @@ export default function OrdersTab({ ctx }) {
                       <button
                         onClick={submitManualOrder}
                         disabled={posSubmitting}
-                        className="flex-1 py-3 bg-brand text-white font-black rounded-xl hover:bg-brand/90 active:scale-98 transition shadow-lg shadow-brand/20 flex items-center justify-center gap-2 min-h-[56px] disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
+                        className="flex-1 py-3 bg-brand text-on-brand font-black rounded-xl hover:bg-brand/90 active:scale-98 transition shadow-lg shadow-brand/20 flex items-center justify-center gap-2 min-h-[56px] disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
                       >
                         <ShoppingCart size={18} className="shrink-0"/>
                         {posSubmitting ? (
@@ -569,7 +569,7 @@ export default function OrdersTab({ ctx }) {
                         {/* --- EXTRAS --- */}
                         {(posSelectedProduct.addOns?.length > 0) && (
                           <div>
-                            <label className="text-xs font-bold text-gray-400 mb-2 block uppercase tracking-wider">Add Extras</label>
+                            <label className="text-xs font-bold text-fg/70 mb-2 block uppercase tracking-wider">Add Extras</label>
                             <div className="space-y-3">
                               {(posSelectedProduct.addOns || []).map((addon, idx) => {
                                 const isSelected = posActiveAddOns.some(a => a.name === addon.name);
@@ -602,7 +602,7 @@ export default function OrdersTab({ ctx }) {
 
                       <div className="flex gap-3 mt-3 shrink-0">
                         <button onClick={() => setPosSelectedProduct(null)} className="flex-1 py-4 bg-page-bg border border-gray-700 text-fg hover:text-accent font-bold rounded-xl uppercase tracking-wider text-xs transition">Cancel</button>
-                        <button onClick={confirmPosItem} className="flex-1 py-4 bg-accent text-white hover:bg-brand-dark font-black rounded-xl uppercase tracking-wider text-xs shadow-lg shadow-accent/20 transition">Add to Cart</button>
+                        <button onClick={confirmPosItem} className="flex-1 py-4 bg-accent text-on-brand hover:bg-brand-dark font-black rounded-xl uppercase tracking-wider text-xs shadow-lg shadow-accent/20 transition">Add to Cart</button>
                       </div>
                     </div>
                   </div>
@@ -617,7 +617,7 @@ export default function OrdersTab({ ctx }) {
                 <div className="flex justify-between items-center mb-6 bg-surface-2 p-3 rounded-xl border border-white/10 shadow-sm relative flex-wrap gap-3">
                   {/* Search bar */}
                   <div className="relative w-full sm:flex-1 sm:max-w-md order-last sm:order-none">
-                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30 pointer-events-none" />
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/65 pointer-events-none" />
                     <input
                       type="text"
                       placeholder="Search name or #order…"
@@ -626,7 +626,7 @@ export default function OrdersTab({ ctx }) {
                       className="w-full pl-8 pr-3 py-2 bg-page-bg border border-white/10 rounded-lg text-fg text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50 transition"
                     />
                     {orderSearch && (
-                      <button onClick={() => setOrderSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/30 hover:text-fg/70 transition">
+                      <button onClick={() => setOrderSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/65 hover:text-fg/70 transition">
                         <X size={12} />
                       </button>
                     )}
@@ -636,7 +636,7 @@ export default function OrdersTab({ ctx }) {
                       <button
                         key={dept}
                         onClick={() => setDepartmentFilter(dept)}
-                        className={`px-5 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition whitespace-nowrap ${departmentFilter === dept ? 'bg-brand text-white shadow-md shadow-brand/20' : 'bg-transparent text-fg/50 hover:text-fg/80 hover:bg-white/5'}`}
+                        className={`px-5 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition whitespace-nowrap ${departmentFilter === dept ? 'bg-brand text-on-brand shadow-md shadow-brand/20' : 'bg-transparent text-fg/75 hover:text-fg/80 hover:bg-white/5'}`}
                       >
                         {dept} View
                       </button>
@@ -647,7 +647,7 @@ export default function OrdersTab({ ctx }) {
                     <div className="relative">
                       <button 
                         onClick={() => setIsStatusMenuOpen(!isStatusMenuOpen)}
-                        className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-lg font-bold uppercase tracking-wider text-xs hover:bg-transparent hover:text-brand transition shadow-md"
+                        className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-lg font-bold uppercase tracking-wider text-xs hover:bg-transparent hover:text-brand transition shadow-md"
                       >
                         <Menu size={16} /> {orderFilter}
                       </button>
@@ -704,7 +704,7 @@ export default function OrdersTab({ ctx }) {
                   const tables = Object.values(tableMap).sort((a,b) => a.table.localeCompare(b.table));
                   return (
                     <div className="mb-4 flex flex-wrap gap-2 items-center">
-                      <span className="text-[10px] text-fg/30 font-black uppercase tracking-widest shrink-0">Active Tables:</span>
+                      <span className="text-[10px] text-fg/65 font-black uppercase tracking-widest shrink-0">Active Tables:</span>
                       {tables.map(({ table, count, status }) => (
                         <button key={table}
                           onClick={() => { setOrderFilter('All'); setOrderSearch(table); }}
@@ -735,7 +735,7 @@ export default function OrdersTab({ ctx }) {
                       <p className="text-fg/80 font-black uppercase tracking-widest text-sm mb-1.5">
                         No orders in {departmentFilter === 'All' ? 'any' : departmentFilter} queue
                       </p>
-                      <p className="text-fg/35 text-xs mb-6 max-w-xs">
+                      <p className="text-fg/70 text-xs mb-6 max-w-xs">
                         New orders appear here instantly, whether staff ring them up or customers order by QR.
                       </p>
                       <button
@@ -781,7 +781,7 @@ export default function OrdersTab({ ctx }) {
                               {order.customerName && (
                                 <span className="text-[11px] bg-white/10 text-fg px-2 py-0.5 rounded font-semibold">{order.customerName}</span>
                               )}
-                              {order.table && <span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">({order.table})</span>}
+                              {order.table && <span className="text-[11px] text-fg/70 font-bold uppercase tracking-wider">({order.table})</span>}
                               {allDeptDone && order.status !== 'Completed' && (
                                 <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-green-500 text-white border border-green-500 flex items-center gap-1">
                                   <CheckCircle size={9}/> All Done
@@ -810,15 +810,15 @@ export default function OrdersTab({ ctx }) {
                           </div>
                           <div className="flex items-center gap-1 flex-shrink-0">
                             {order.isParked && (
-                              <button onClick={() => resumeParked(order._id)} className="px-3 py-1.5 bg-brand text-white rounded-lg text-[11px] font-black uppercase tracking-wider hover:bg-brand/90 transition flex items-center gap-1">
+                              <button onClick={() => resumeParked(order._id)} className="px-3 py-1.5 bg-brand text-on-brand rounded-lg text-[11px] font-black uppercase tracking-wider hover:bg-brand/90 transition flex items-center gap-1">
                                 <ShoppingCart size={12} /> Resume
                               </button>
                             )}
-                            <button onClick={() => printKitchenTicket(order)} className="p-1.5 bg-white/5 text-orange-400/60 rounded-lg hover:bg-orange-500/10 hover:text-orange-400 transition" title={`${SEND_TARGET} Ticket (no prices)`}>
+                            <button onClick={() => printKitchenTicket(order)} className="p-1.5 bg-white/5 text-orange-400/60 rounded-lg hover:bg-orange-500/10 hover:text-warning transition" title={`${SEND_TARGET} Ticket (no prices)`}>
                               <ChefHat size={13} />
                             </button>
                             {BUSINESS_TYPE !== 'log' && (
-                              <button onClick={() => printOrderSlip(order)} className="p-1.5 bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-fg transition" title="Print Receipt">
+                              <button onClick={() => printOrderSlip(order)} className="p-1.5 bg-white/5 text-fg/70 rounded-lg hover:bg-white/10 hover:text-fg transition" title="Print Receipt">
                                 <Printer size={13} />
                               </button>
                             )}
@@ -834,7 +834,7 @@ export default function OrdersTab({ ctx }) {
                             )}
                             <button
                               onClick={() => setCollapsedOrders(prev => ({ ...prev, [order._id]: !prev[order._id] }))}
-                              className="p-1.5 bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-fg transition"
+                              className="p-1.5 bg-white/5 text-fg/70 rounded-lg hover:bg-white/10 hover:text-fg transition"
                             >
                               {collapsedOrders[order._id] ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
                             </button>
@@ -846,21 +846,21 @@ export default function OrdersTab({ ctx }) {
                         {['Manual Delivery','Pickup','Grab Delivery','Foodpanda'].includes(order.table)
                           && (order.customerPhone || order.deliveryAddress || order.deliveryFee > 0 || order.scheduledTime || order.dispatchStatus) && (
                           <div className="mx-4 mb-2 bg-black/30 rounded-lg px-3 py-2 border border-white/5 text-[10px] space-y-1">
-                            {order.customerPhone && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-fg/40 uppercase tracking-widest">Phone</span> {order.customerPhone}</div>}
-                            {order.deliveryAddress && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-fg/40 uppercase tracking-widest">Address</span> {order.deliveryAddress}</div>}
-                            {order.deliveryFee > 0 && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-fg/40 uppercase tracking-widest">Delivery Fee</span> ₱{order.deliveryFee.toFixed(2)}</div>}
-                            {order.scheduledTime && <div className="flex items-center gap-1.5 text-gray-400"><span className="font-black text-fg/40 uppercase tracking-widest">Scheduled</span> {order.scheduledTime}</div>}
+                            {order.customerPhone && <div className="flex items-center gap-1.5 text-fg/70"><span className="font-black text-fg/70 uppercase tracking-widest">Phone</span> {order.customerPhone}</div>}
+                            {order.deliveryAddress && <div className="flex items-center gap-1.5 text-fg/70"><span className="font-black text-fg/70 uppercase tracking-widest">Address</span> {order.deliveryAddress}</div>}
+                            {order.deliveryFee > 0 && <div className="flex items-center gap-1.5 text-fg/70"><span className="font-black text-fg/70 uppercase tracking-widest">Delivery Fee</span> ₱{order.deliveryFee.toFixed(2)}</div>}
+                            {order.scheduledTime && <div className="flex items-center gap-1.5 text-fg/70"><span className="font-black text-fg/70 uppercase tracking-widest">Scheduled</span> {order.scheduledTime}</div>}
                             {/* DISPATCH PIPELINE */}
                             {order.dispatchStatus && (
                               <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-white/30 mt-1">
-                                <span className="font-black text-fg/40 uppercase tracking-widest">Dispatch</span>
+                                <span className="font-black text-fg/70 uppercase tracking-widest">Dispatch</span>
                                 {(['Preparing','Out for Delivery','Awaiting Pickup','Delivered','Picked Up']).map(s => {
                                   const isActive = order.dispatchStatus === s;
                                   return (
                                     <button key={s} onClick={async () => {
                                       const res = await apiFetch(`/api/orders/${order._id}/dispatch`, { method: 'PATCH', body: JSON.stringify({ dispatchStatus: s }) });
                                       if (res.ok) fetchOrders();
-                                    }} className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider transition ${isActive ? 'bg-brand text-white' : 'bg-white/5 text-gray-500 hover:bg-white/10 hover:text-fg'}`}>
+                                    }} className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider transition ${isActive ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/70 hover:bg-white/10 hover:text-fg'}`}>
                                       {s}
                                     </button>
                                   );
@@ -907,7 +907,7 @@ export default function OrdersTab({ ctx }) {
                                                   <button onClick={() => updateItemStatus(order, item.originalIdx, 'Preparing')} className="bg-yellow-500 text-white border border-yellow-500 hover:bg-yellow-400 hover:text-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition">Prep</button>
                                                 )}
                                                 {item.itemStatus === 'Preparing' && (
-                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Finished')} className="bg-accent text-white border border-accent hover:bg-accent hover:text-white/20 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition">Finish</button>
+                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Finished')} className="bg-accent text-on-brand border border-accent hover:bg-accent hover:text-on-brand/20 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition">Finish</button>
                                                 )}
                                                 {item.itemStatus === 'Finished' && departmentFilter === 'All' && (
                                                   <button onClick={() => updateItemStatus(order, item.originalIdx, 'Delivered')} className="bg-green-500 text-white border border-green-500 hover:bg-green-400 hover:text-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition flex items-center gap-1">
@@ -945,7 +945,7 @@ export default function OrdersTab({ ctx }) {
                                                         row carrying a redundant "0%" edit box. */}
                                                     {effPct > 0 && (
                                                       <div className="flex items-center gap-1.5">
-                                                        <span className="text-fg/30 line-through text-[10px] font-mono">P{lineGross.toFixed(2)}</span>
+                                                        <span className="text-fg/65 line-through text-[10px] font-mono">P{lineGross.toFixed(2)}</span>
                                                         <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${isClientRate ? 'bg-emerald-500 text-white' : 'bg-amber-500 text-white'}`}>
                                                           {isClientRate ? `Client −${effPct}%` : `−${effPct}%`}
                                                         </span>
@@ -965,7 +965,7 @@ export default function OrdersTab({ ctx }) {
                                                             title="Cashier discount override for this line"
                                                             className="w-12 bg-white border border-black/20 rounded pl-1.5 pr-4 py-0.5 text-black text-[10px] font-bold outline-none focus:border-brand/60 placeholder-black/30 tabular-nums"
                                                           />
-                                                          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-black/40 text-[9px] font-bold pointer-events-none">%</span>
+                                                          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-black/60 text-[9px] font-bold pointer-events-none">%</span>
                                                         </div>
                                                       )}
                                                     </div>
@@ -991,7 +991,7 @@ export default function OrdersTab({ ctx }) {
                                                   <ChevronRight size={8} className="flex-shrink-0" /> {addon.name} <span className="opacity-70">(+P{addon.price})</span>
                                                 </span>
                                                 {order.status === 'Pending' && (
-                                                  <button onClick={() => removeAddOnFromOrder(order, item.originalIdx, aIdx)} className="text-gray-600 hover:text-red-400 transition p-0.5 rounded">
+                                                  <button onClick={() => removeAddOnFromOrder(order, item.originalIdx, aIdx)} className="text-gray-600 hover:text-danger transition p-0.5 rounded">
                                                     <X size={10} />
                                                   </button>
                                                 )}
@@ -1011,15 +1011,15 @@ export default function OrdersTab({ ctx }) {
                                 {isComp ? (
                                   /* ── APPLIED STATE: audit badge ── */
                                   <div className="flex items-start gap-2 bg-white/3 border border-white/10 rounded-lg p-2">
-                                    <Gift size={11} className="text-gray-500 flex-shrink-0 mt-0.5" />
+                                    <Gift size={11} className="text-fg/70 flex-shrink-0 mt-0.5" />
                                     <div className="flex-1 min-w-0 space-y-0.5">
                                       <div className="flex items-center gap-2">
-                                        <span className="text-gray-400 text-[10px] font-black uppercase tracking-wider">Complimentary</span>
+                                        <span className="text-fg/70 text-[10px] font-black uppercase tracking-wider">Complimentary</span>
                                         {order.complimentaryReferenceNumber && (
                                           <span className="text-gray-600 text-[9px] font-mono">{order.complimentaryReferenceNumber}</span>
                                         )}
                                       </div>
-                                      <div className="text-gray-500 text-[9px]">
+                                      <div className="text-fg/70 text-[9px]">
                                         <span className="text-gray-600">Reason:</span> {COMP_REASON_LABELS[order.complimentaryReasonType] || '-'}
                                       </div>
                                       {order.complimentaryReasonNote && (
@@ -1044,9 +1044,9 @@ export default function OrdersTab({ ctx }) {
                                       onClick={() => setCompFormOpen(prev => ({ ...prev, [order._id]: !prev[order._id] }))}
                                       className="flex items-center gap-1.5 text-left hover:opacity-80 transition"
                                     >
-                                      <Gift size={10} className="text-gray-500 flex-shrink-0" />
+                                      <Gift size={10} className="text-fg/70 flex-shrink-0" />
                                       <span className="text-fg/60 text-[9px] font-bold uppercase tracking-wider">Mark Complimentary</span>
-                                      {compFormOpen[order._id] ? <ChevronUp size={11} className="text-gray-500" /> : <ChevronDown size={11} className="text-gray-500" />}
+                                      {compFormOpen[order._id] ? <ChevronUp size={11} className="text-fg/70" /> : <ChevronDown size={11} className="text-fg/70" />}
                                     </button>
                                     {!compFormOpen[order._id] ? null : (
                                     <div className="flex flex-col gap-1.5 bg-white/[0.03] border border-white/10 rounded-lg p-2">
@@ -1119,7 +1119,7 @@ export default function OrdersTab({ ctx }) {
                                         switch, because a cashier silently zeroing output VAT on one
                                         sale is exactly what a tax audit looks for. */}
                                     {order.isVatExempt && (
-                                      <span className="bg-amber-400/15 border border-amber-400/30 text-amber-500 px-1.5 py-0.5 rounded text-[9px] uppercase font-black">
+                                      <span className="bg-amber-400/15 border border-amber-400/30 text-warning px-1.5 py-0.5 rounded text-[9px] uppercase font-black">
                                         SC/PWD Exempt
                                       </span>
                                     )}
@@ -1152,7 +1152,7 @@ export default function OrdersTab({ ctx }) {
                                           {/* Only while shut - the row below shows the
                                               same figure once it is open. */}
                                           {!open && displayDiscount > 0 && (
-                                            <span className="text-red-500 font-mono">-P{displayDiscount.toFixed(2)}</span>
+                                            <span className="text-danger font-mono">-P{displayDiscount.toFixed(2)}</span>
                                           )}
                                           {open ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
                                         </span>
@@ -1175,7 +1175,7 @@ export default function OrdersTab({ ctx }) {
                                                 <option value="">No promo</option>
                                                 {promoDiscounts.map(d => <option key={d._id} value={d.percentage}>{d.name} ({d.percentage}%)</option>)}
                                               </select>
-                                              <button onClick={() => applyDiscount(order._id)} className="bg-accent hover:bg-accent/80 text-white hover:text-fg px-2 rounded font-black transition h-6 flex items-center border border-accent/20"><Check size={12} /></button>
+                                              <button onClick={() => applyDiscount(order._id)} className="bg-accent hover:bg-accent/80 text-on-brand hover:text-fg px-2 rounded font-black transition h-6 flex items-center border border-accent/20"><Check size={12} /></button>
                                               {order.discountPercent > 0 && order.discountType !== 'SC/PWD' && (
                                                 <button onClick={() => applyDiscount(order._id, true)} className="bg-red-500 text-white px-2 rounded font-black h-6 border border-red-500 flex items-center"><X size={12} /></button>
                                               )}
@@ -1183,7 +1183,7 @@ export default function OrdersTab({ ctx }) {
                                           )
                                         )}
                                       </div>
-                                      <span className="text-red-500 whitespace-nowrap font-mono">-P{displayDiscount.toFixed(2)}</span>
+                                      <span className="text-danger whitespace-nowrap font-mono">-P{displayDiscount.toFixed(2)}</span>
                                     </div>
                                     )}
                                     {open && scpwdDiscounts.length > 0 && order.status === 'Pending' && (
@@ -1258,7 +1258,7 @@ export default function OrdersTab({ ctx }) {
                                     >
                                       <Unlock size={12} /> Unlock & Take Payment
                                     </button>
-                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop</button>
+                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-danger py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop</button>
                                   </div>
                                 </div>
                               )}
@@ -1271,8 +1271,8 @@ export default function OrdersTab({ ctx }) {
                                   return (
                                     <div className="flex flex-col w-full gap-2">
                                       <div className="flex items-center justify-center gap-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg py-2.5 px-3">
-                                        <Gift size={12} className="text-yellow-400" />
-                                        <span className="text-yellow-400 text-[10px] font-black uppercase tracking-widest">No Payment - Complimentary</span>
+                                        <Gift size={12} className="text-warning" />
+                                        <span className="text-warning text-[10px] font-black uppercase tracking-widest">No Payment - Complimentary</span>
                                       </div>
                                       <div className="flex gap-2">
                                         <button
@@ -1281,7 +1281,7 @@ export default function OrdersTab({ ctx }) {
                                         >
                                           Send to {SEND_TARGET}
                                         </button>
-                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop</button>
+                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-danger py-2.5 px-4 rounded-lg hover:bg-red-500 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop</button>
                                       </div>
                                     </div>
                                   );
@@ -1389,7 +1389,7 @@ export default function OrdersTab({ ctx }) {
                                       {needsRef && (
                                         <div className="flex flex-col gap-1.5">
                                           <div className="flex items-center gap-2">
-                                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest whitespace-nowrap">
+                                            <span className="text-[10px] text-fg/70 font-bold uppercase tracking-widest whitespace-nowrap">
                                               {isCheck ? 'Check No.' : 'Ref No.'}
                                             </span>
                                             <input
@@ -1405,7 +1405,7 @@ export default function OrdersTab({ ctx }) {
                                               the check can actually be banked. */}
                                           {isCheck && (
                                             <div className="flex items-center gap-2">
-                                              <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest whitespace-nowrap">Check Date</span>
+                                              <span className="text-[10px] text-fg/70 font-bold uppercase tracking-widest whitespace-nowrap">Check Date</span>
                                               <input
                                                 type="date"
                                                 value={paymentCheckDates[order._id] || ''}
@@ -1420,7 +1420,7 @@ export default function OrdersTab({ ctx }) {
                                       {isCash && (
                                         <div className="flex flex-col gap-1">
                                           <div className="flex items-center gap-2">
-                                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest whitespace-nowrap">Cash In</span>
+                                            <span className="text-[10px] text-fg/70 font-bold uppercase tracking-widest whitespace-nowrap">Cash In</span>
                                             <input
                                               type="number"
                                               min="0"
@@ -1433,7 +1433,7 @@ export default function OrdersTab({ ctx }) {
                                             />
                                           </div>
                                           {changeDue !== null && (
-                                            <div className={`flex justify-between text-xs font-black px-1 ${isUnderpaid ? 'text-red-400' : 'text-green-400'}`}>
+                                            <div className={`flex justify-between text-xs font-black px-1 ${isUnderpaid ? 'text-danger' : 'text-success'}`}>
                                               <span>{isUnderpaid ? 'SHORT' : 'CHANGE'}</span>
                                               <span className="font-mono">P{Math.abs(changeDue).toFixed(2)}</span>
                                             </div>
@@ -1456,17 +1456,17 @@ export default function OrdersTab({ ctx }) {
                                           }
                                           setTimeout(() => updateStatus(order._id, 'Preparing'), 0);
                                         }}
-                                        className={`w-full py-3 rounded-xl font-black text-xs uppercase tracking-widest transition ${(isUnderpaid || missingRef) ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-accent text-white hover:bg-accentShadow shadow-lg shadow-accent/20'}`}
+                                        className={`w-full py-3 rounded-xl font-black text-xs uppercase tracking-widest transition ${(isUnderpaid || missingRef) ? 'bg-gray-600 text-fg/70 cursor-not-allowed' : 'bg-accent text-on-brand hover:bg-accentShadow shadow-lg shadow-accent/20'}`}
                                       >
                                         {missingRef ? `${isCheck ? 'Check No.' : 'Ref No.'} Required` : `Pay & Send to ${SEND_TARGET}`}
                                       </button>
                                       <div className="flex gap-2">
                                         {BUSINESS_TYPE === 'log' && (order.items?.length > 0) && (
-                                          <button onClick={() => openPartial(order)} className="flex-1 border border-amber-500/30 text-amber-400 py-2 rounded-lg hover:bg-amber-500/10 font-bold text-[10px] transition uppercase tracking-widest">
+                                          <button onClick={() => openPartial(order)} className="flex-1 border border-amber-500/30 text-warning py-2 rounded-lg hover:bg-amber-500/10 font-bold text-[10px] transition uppercase tracking-widest">
                                             Partial Fulfill
                                           </button>
                                         )}
-                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="flex-1 border border-red-500/30 text-red-400 py-2 rounded-lg hover:bg-red-500/10 font-bold text-[10px] transition uppercase tracking-widest">
+                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="flex-1 border border-red-500/30 text-danger py-2 rounded-lg hover:bg-red-500/10 font-bold text-[10px] transition uppercase tracking-widest">
                                           Drop
                                         </button>
                                       </div>
@@ -1495,7 +1495,7 @@ export default function OrdersTab({ ctx }) {
                                         <span className="text-white/90 text-[10px] font-bold tracking-wide">Remaining to fulfill: ₱{remainingValue.toFixed(2)}</span>
                                       )}
                                     </div>
-                                    <button onClick={() => openPartial(order)} className="w-full bg-accent text-white py-2.5 rounded-lg hover:bg-accentShadow font-black text-xs uppercase tracking-widest transition">
+                                    <button onClick={() => openPartial(order)} className="w-full bg-accent text-on-brand py-2.5 rounded-lg hover:bg-accentShadow font-black text-xs uppercase tracking-widest transition">
                                       Fulfill Remaining
                                     </button>
                                     <button onClick={() => dropRemaining(order)} className="bg-red-500 text-white py-2 px-4 rounded-lg hover:bg-red-500 hover:text-fg font-black text-[11px] transition uppercase border border-red-500/20">Drop Remaining</button>
@@ -1507,18 +1507,18 @@ export default function OrdersTab({ ctx }) {
                                 <div className="flex flex-col gap-2">
                                   {deliveredCount > 0 && (
                                     <div className="flex items-center gap-2 bg-green-500 border border-green-500 rounded-lg px-3 py-2">
-                                      <Truck size={12} className="text-green-400 flex-shrink-0" />
+                                      <Truck size={12} className="text-success flex-shrink-0" />
                                       <span className="text-white text-[10px] font-black uppercase tracking-widest">{deliveredCount}/{viewItems.length} Given to Customer</span>
                                     </div>
                                   )}
                                   {departmentFilter !== 'All' ? (
                                     // Kitchen / Bar view: scope progress to this dept only
                                     allDeptDone ? (
-                                      <div className="flex items-center justify-center gap-2 bg-green-500/10 border border-green-500/20 text-green-400 rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
+                                      <div className="flex items-center justify-center gap-2 bg-green-500/10 border border-green-500/20 text-success rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
                                         <CheckCircle size={11} /> All {departmentFilter === 'All' ? '' : departmentFilter + ' '}Items Done
                                       </div>
                                     ) : (
-                                      <div className="flex items-center justify-center bg-black/20 border border-white/5 text-gray-500 rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
+                                      <div className="flex items-center justify-center bg-black/20 border border-white/5 text-fg/70 rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
                                         In Preparation... ({deptDoneCount}/{viewItems.length})
                                       </div>
                                     )
@@ -1531,7 +1531,7 @@ export default function OrdersTab({ ctx }) {
                                       <Truck size={11} /> Give items above to complete
                                     </div>
                                   ) : (
-                                    <div className="flex items-center justify-center bg-black/20 border border-white/5 text-gray-500 rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
+                                    <div className="flex items-center justify-center bg-black/20 border border-white/5 text-fg/70 rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
                                       In Preparation...
                                     </div>
                                   )}
@@ -1545,13 +1545,13 @@ export default function OrdersTab({ ctx }) {
                                 <div className="flex flex-col gap-2">
                                   {deliveredCount > 0 && (
                                     <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">
-                                      <Truck size={12} className="text-green-400 flex-shrink-0" />
-                                      <span className="text-green-400 text-[10px] font-black uppercase tracking-widest">{deliveredCount}/{order.items.length} Given</span>
+                                      <Truck size={12} className="text-success flex-shrink-0" />
+                                      <span className="text-success text-[10px] font-black uppercase tracking-widest">{deliveredCount}/{order.items.length} Given</span>
                                     </div>
                                   )}
                                   <div className="flex gap-2">
                                     <button onClick={() => updateStatus(order._id, 'Completed')} className="flex-1 bg-green-600 text-white py-2.5 rounded-lg hover:bg-green-500 font-black uppercase tracking-widest text-xs transition">Mark All Delivered</button>
-                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-red-400 py-2.5 px-3 rounded-lg hover:bg-red-500 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop</button>
+                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="bg-red-500/10 text-danger py-2.5 px-3 rounded-lg hover:bg-red-500 hover:text-fg font-black text-xs transition uppercase border border-red-500/20">Drop</button>
                                   </div>
                                   <button
                                     onClick={async () => {
@@ -1571,8 +1571,8 @@ export default function OrdersTab({ ctx }) {
                               {order.status === 'Partially Delivered' && departmentFilter === 'All' && (
                                 <div className="flex flex-col gap-2">
                                   <div className="flex items-center justify-center gap-2 bg-orange-500/10 border border-orange-500/20 rounded-lg py-2">
-                                    <Clock size={13} className="text-orange-400" />
-                                    <span className="text-orange-400 text-[10px] font-black uppercase tracking-widest">Partially Delivered</span>
+                                    <Clock size={13} className="text-warning" />
+                                    <span className="text-warning text-[10px] font-black uppercase tracking-widest">Partially Delivered</span>
                                   </div>
                                   <button onClick={() => updateStatus(order._id, 'Completed')} className="w-full bg-green-600 text-white py-2.5 rounded-lg hover:bg-green-500 font-black uppercase tracking-widest text-xs transition">
                                     Deliver Remaining Items

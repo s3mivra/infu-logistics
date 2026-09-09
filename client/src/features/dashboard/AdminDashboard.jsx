@@ -59,7 +59,7 @@ const QuotationsTab = lazy(() => import('../quotations/QuotationsTab'));
 
 // Small fallback shown while a tab chunk loads.
 const TabFallback = () => (
-  <div className="p-12 flex items-center justify-center text-fg/40 text-sm gap-2">
+  <div className="p-12 flex items-center justify-center text-fg/70 text-sm gap-2">
     <RefreshCw size={16} className="animate-spin" /> Loading…
   </div>
 );
@@ -7185,7 +7185,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
               <Lock size={40} className="text-brand" />
             </div>
             <p className="text-5xl font-black text-brand tracking-tight leading-none mb-3">{BIZ_NAME}</p>
-            <p className="text-fg/25 font-bold uppercase tracking-[0.3em] text-sm">SEMIVRA LIBELLUS</p>
+            <p className="text-fg/65 font-bold uppercase tracking-[0.3em] text-sm">SEMIVRA LIBELLUS</p>
             <p className="text-fg/15 text-xs mt-12 font-medium">Restaurant POS &amp; Management System</p>
           </div>
         </div>
@@ -7199,10 +7199,10 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
               </div>
             )}
           <h2 className="text-2xl font-black text-fg tracking-widest mb-1 uppercase">System Locked</h2>
-          <p className="text-fg/40 text-sm mb-6">Enter credentials to begin your shift.</p>
+          <p className="text-fg/70 text-sm mb-6">Enter credentials to begin your shift.</p>
 
           {loginError && (
-            <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl px-4 py-3 mb-4 text-left">
+            <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 text-danger text-sm rounded-xl px-4 py-3 mb-4 text-left">
               <AlertCircle size={14} className="flex-shrink-0" />
               {loginError}
             </div>
@@ -7242,7 +7242,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
               />
             </div>
           )}
-          <p className="text-fg/25 text-xs mb-5 text-center font-medium">
+          <p className="text-fg/65 text-xs mb-5 text-center font-medium">
             {requireCashShift ? 'Required for staff · Optional for Superadmin' : 'Cash shift tracking is turned off for this shop'}
           </p>
           <button type="submit" className="w-full bg-brand hover:bg-brand-dark text-fg font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest">
@@ -7401,12 +7401,12 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           <Clock size={40} className="text-brand" />
         </div>
         <h1 className="text-fg text-2xl font-black mb-1">Clock in to start</h1>
-        <p className="text-fg/50 text-sm mb-8 max-w-xs">Hi {activeAdmin?.name} - you must clock in before taking orders or using the system.</p>
+        <p className="text-fg/75 text-sm mb-8 max-w-xs">Hi {activeAdmin?.name} - you must clock in before taking orders or using the system.</p>
         <button onClick={handleClockIn}
-          className="bg-brand text-white px-10 py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-brand/90 active:scale-98 transition shadow-lg shadow-brand/20 min-h-[56px] flex items-center gap-2">
+          className="bg-brand text-on-brand px-10 py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-brand/90 active:scale-98 transition shadow-lg shadow-brand/20 min-h-[56px] flex items-center gap-2">
           <Clock size={18} /> Clock In
         </button>
-        <button onClick={performLogout} className="mt-5 text-fg/40 hover:text-fg/70 text-xs font-bold uppercase tracking-wider transition">
+        <button onClick={performLogout} className="mt-5 text-fg/70 hover:text-fg/70 text-xs font-bold uppercase tracking-wider transition">
           Log out
         </button>
       </div>
@@ -7433,12 +7433,12 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         </div>
 
         {/* Row 2: SEMIVRA NEGOTIUM · */}
-        <p className="text-[9px] text-fg/50 font-bold uppercase tracking-[0.2em]">
-          SEMIVRA <span className="text-brand/70">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span> ·
+        <p className="text-[9px] text-fg/75 font-bold uppercase tracking-[0.2em]">
+          SEMIVRA <span className="text-brand">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span> ·
         </p>
 
         {/* Row 3: Operations / Management */}
-        <p className="text-[9px] text-fg/35 font-semibold mt-0.5">
+        <p className="text-[9px] text-fg/70 font-semibold mt-0.5">
           {navMode === 'libellus' ? 'Operations' : 'Management'}
         </p>
 
@@ -7479,7 +7479,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             <button key={id}
               onClick={() => { setActiveTab(id); setNavMode('libellus'); closeFn?.(); }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
-                ${activeTab === id && navMode === 'libellus' ? 'bg-brand text-white shadow-sm' : 'text-fg/50 hover:text-fg hover:bg-white/5'}`}
+                ${activeTab === id && navMode === 'libellus' ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}
             >
               <Icon size={16} />
               {label}
@@ -7522,7 +7522,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
                 <button key={id}
                   onClick={() => { setActiveTab(id); setNavMode('negotium'); closeFn?.(); if (id === 'analytics') { fetchAnalytics(); fetchTurnover(); fetchSalesTrend(); } if (sub) setLedgerSubTab(sub); }}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
-                    ${activeTab === id && navMode === 'negotium' ? 'bg-brand text-white shadow-sm' : 'text-fg/50 hover:text-fg hover:bg-white/5'}`}
+                    ${activeTab === id && navMode === 'negotium' ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}
                 >
                   <Icon size={16} />
                   {label}
@@ -7534,11 +7534,11 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
                 // account, role & tenant management), outside the tabbed dashboard.
                 <button key="admin-panel"
                   onClick={() => { closeFn?.(); navigate('/admin/admin-panel'); }}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm text-fg/50 hover:text-fg hover:bg-white/5"
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm text-fg/75 hover:text-fg hover:bg-white/5"
                 >
                   <ShieldCheck size={16} className="text-brand shrink-0" />
                   <span className="whitespace-nowrap">Admin Panel</span>
-                  <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand border border-brand text-white px-1.5 py-0.5 rounded">Super</span>
+                  <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand border border-brand text-on-brand px-1.5 py-0.5 rounded">Super</span>
                 </button>
               )}
             </>
@@ -7558,7 +7558,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             this button was just nagging someone the app never blocks. */}
         {!isSuperAdmin && (
           <button onClick={handleClockButton}
-            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-white bg-amber-500 hover:bg-amber-600' : clockStatus.isClockedIn ? 'text-white bg-accent hover:bg-accent/80' : 'text-fg/40 hover:text-fg hover:bg-white/5'}`}>
+            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-white bg-amber-500 hover:bg-amber-600' : clockStatus.isClockedIn ? 'text-white bg-accent hover:bg-accent/80' : 'text-fg/70 hover:text-fg hover:bg-white/5'}`}>
             <Clock size={15} />
             {clockStatus.onBreak
               ? `On Break - tap to resume`
@@ -7572,7 +7572,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             Product-Images toggles and Change Password now live on this page
             instead of being crammed into the sidebar dropdown. */}
         <button onClick={() => { setActiveTab('settings'); setNavMode('negotium'); closeFn?.(); }}
-          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${activeTab === 'settings' ? 'bg-brand text-white shadow-sm' : 'text-fg/40 hover:text-fg hover:bg-white/5'}`}>
+          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${activeTab === 'settings' ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/70 hover:text-fg hover:bg-white/5'}`}>
           <Settings size={15} />
           Settings
           {activeTab === 'settings' && <ChevronRight size={13} className="ml-auto" />}
@@ -7580,7 +7580,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
         {/* Collapsible quick tools - Fullscreen / QR / Install (frequent, low-stakes) */}
         <button onClick={toggleOpsTools}
-          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/40 hover:text-fg hover:bg-white/5 transition font-bold text-[11px] uppercase tracking-wider">
+          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/70 hover:text-fg hover:bg-white/5 transition font-bold text-[11px] uppercase tracking-wider">
           {opsToolsOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
           Quick Tools
         </button>
@@ -7589,12 +7589,12 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             {/* Quick jump lives here too - the top bar that used to host it is
                 hidden once the persistent sidebar appears (md+), and a touch-only
                 tablet has no Ctrl+K. */}
-            <button onClick={() => { setPaletteOpen(true); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/40 hover:text-fg hover:bg-white/5 transition font-bold text-sm">
+            <button onClick={() => { setPaletteOpen(true); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/70 hover:text-fg hover:bg-white/5 transition font-bold text-sm">
               <Search size={15} />
               Quick Jump
-              <span className="ml-auto text-[9px] font-black text-fg/25 tracking-widest">CTRL K</span>
+              <span className="ml-auto text-[9px] font-black text-fg/65 tracking-widest">CTRL K</span>
             </button>
-            <button onClick={toggleFullScreen} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/40 hover:text-fg hover:bg-white/5 transition font-bold text-sm">
+            <button onClick={toggleFullScreen} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/70 hover:text-fg hover:bg-white/5 transition font-bold text-sm">
               {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
               {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
             </button>
@@ -7613,14 +7613,14 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             {/* Install as app (only when the browser offers it) */}
             {installable && (
               <button onClick={() => { install(); closeFn?.(); }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand/70 hover:text-brand hover:bg-brand/10 transition font-bold text-sm">
+                className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand hover:text-brand hover:bg-brand/10 transition font-bold text-sm">
                 <Download size={15} />
                 Install App
               </button>
             )}
           </div>
         )}
-        <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-red-400/60 hover:text-red-400 hover:bg-red-500/10 transition font-bold text-sm">
+        <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-danger hover:text-danger hover:bg-red-500/10 transition font-bold text-sm">
           <LogOut size={15} />
           {isSuperAdmin ? 'Log Out' : 'End Shift'}
         </button>
@@ -7631,7 +7631,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             </div>
             <div className="min-w-0">
               <p className="text-fg/60 text-xs font-bold truncate">{activeAdmin?.name}</p>
-              <p className="text-fg/25 text-[10px] uppercase tracking-widest">{activeAdmin?.role}</p>
+              <p className="text-fg/65 text-[10px] uppercase tracking-widest">{activeAdmin?.role}</p>
             </div>
           </div>
         </div>
@@ -7907,7 +7907,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         <div className="fixed top-4 right-4 z-[99999] flex flex-col gap-2 pointer-events-none">
           {orderToasts.map(t => (
             <div key={t.id}
-              className="flex items-center gap-3 bg-brand text-white px-4 py-3 rounded-2xl shadow-lg shadow-brand/30 animate-fade-in min-w-[220px]">
+              className="flex items-center gap-3 bg-brand text-on-brand px-4 py-3 rounded-2xl shadow-lg shadow-brand/30 animate-fade-in min-w-[220px]">
               <Bell size={16} className="shrink-0 animate-bounce"/>
               <div>
                 <p className="font-black text-sm leading-none">New Order! #{t.orderNumber}</p>
@@ -7955,7 +7955,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         <header className="md:hidden sticky top-0 z-30 flex items-center gap-3 px-4 h-16 bg-sidebar-bg border-b border-white/5 flex-shrink-0">
           <button
             onClick={() => setDashDrawerOpen(true)}
-            className="p-2 rounded-xl text-fg/50 hover:text-fg hover:bg-white/10 transition"
+            className="p-2 rounded-xl text-fg/75 hover:text-fg hover:bg-white/10 transition"
             aria-label={dashDrawerOpen ? 'Close navigation' : 'Open navigation'}
             aria-expanded={dashDrawerOpen}
           >
@@ -7974,24 +7974,24 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
               so no scrollbar shows. */}
           <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-hide">
             {(!isOnline || queuedCount > 0) && (
-              <span className={`shrink-0 flex items-center gap-1 px-2 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider ${isOnline ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30' : 'bg-red-500/15 text-red-400 border border-red-500/30'}`}>
+              <span className={`shrink-0 flex items-center gap-1 px-2 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider ${isOnline ? 'bg-amber-500/15 text-warning border border-amber-500/30' : 'bg-red-500/15 text-danger border border-red-500/30'}`}>
                 {isOnline ? <RefreshCw size={12} className={queuedCount > 0 ? 'animate-spin' : ''} /> : <WifiOff size={12} />}
                 {queuedCount > 0 ? queuedCount : 'Off'}
               </span>
             )}
             <button onClick={() => setPaletteOpen(true)}
               title="Quick jump (Ctrl+K)" aria-label="Open quick jump"
-              className="shrink-0 flex items-center gap-1.5 bg-white/5 text-fg/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 hover:text-fg transition">
+              className="shrink-0 flex items-center gap-1.5 bg-white/5 text-fg/75 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 hover:text-fg transition">
               <Search size={13} /><span className="hidden sm:inline">Jump</span>
             </button>
             <div className="shrink-0"><NotificationBell /></div>
             <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="shrink-0 flex items-center gap-1.5 bg-brand/20 text-brand border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
               <QrCode size={13} /> {BUSINESS_TYPE === 'log' ? 'Portal' : 'QR'}
             </button>
-            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="shrink-0 flex items-center gap-1.5 bg-white/5 text-fg/50 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
+            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="shrink-0 flex items-center gap-1.5 bg-white/5 text-fg/75 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
               <Settings size={13} />
             </button>
-            <button onClick={handleLogout} className="shrink-0 flex items-center gap-1.5 bg-red-500/10 text-red-400 border border-red-500/20 px-3 py-2 rounded-xl font-bold text-xs hover:bg-red-500/20 transition">
+            <button onClick={handleLogout} className="shrink-0 flex items-center gap-1.5 bg-red-500/10 text-danger border border-red-500/20 px-3 py-2 rounded-xl font-bold text-xs hover:bg-red-500/20 transition">
               {isSuperAdmin ? 'Log Out' : 'End Shift'}
             </button>
           </div>
@@ -8029,10 +8029,10 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       {showQR && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-surface p-6 md:p-8 rounded-xl border border-gray-700 shadow-2xl flex flex-col items-center max-w-sm w-full relative max-h-[95vh] overflow-y-auto custom-scrollbar">
-            <button onClick={() => { setShowQR(false); setQrReplacedBecause(''); }} className="absolute top-4 right-4 text-gray-400 hover:text-fg font-bold text-2xl shrink-0">✕</button>
+            <button onClick={() => { setShowQR(false); setQrReplacedBecause(''); }} className="absolute top-4 right-4 text-fg/70 hover:text-fg font-bold text-2xl shrink-0">✕</button>
             <h2 className="text-2xl font-bold mb-1 text-fg shrink-0">Customer QR</h2>
             <div className="bg-page-bg px-6 py-2 rounded-full border border-gray-700 mb-6 mt-2 flex items-center gap-2 shrink-0">
-              <span className="text-gray-400 text-sm font-bold uppercase tracking-wider">Session ID:</span>
+              <span className="text-fg/70 text-sm font-bold uppercase tracking-wider">Session ID:</span>
               <span className="text-accent font-black text-lg">{autoTableId}</span>
             </div>
             
@@ -8053,11 +8053,11 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             {/* One code, one customer. It is replaced the moment it is spent
                 or times out, so what is on screen is always scannable. */}
             {qrReplacedBecause && (
-              <p className="mt-4 w-full text-center text-[11px] text-green-400 bg-green-400/10 border border-green-400/20 rounded-lg px-3 py-2 shrink-0">
+              <p className="mt-4 w-full text-center text-[11px] text-success bg-green-400/10 border border-green-400/20 rounded-lg px-3 py-2 shrink-0">
                 {qrReplacedBecause} This is a fresh one.
               </p>
             )}
-            <p className="mt-4 text-[11px] text-gray-400 text-center shrink-0">
+            <p className="mt-4 text-[11px] text-fg/70 text-center shrink-0">
               Single use. It replaces itself when the order comes in, or after ten idle minutes.
             </p>
 
@@ -8174,12 +8174,12 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-6" onClick={() => setPayQrOpen(false)}>
           <div className="bg-white rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl" onClick={e => e.stopPropagation()}>
             <p className="text-black font-black text-lg uppercase tracking-wider mb-1">Scan to Pay</p>
-            <p className="text-gray-500 text-xs mb-4">Open your e-wallet or bank app and scan</p>
+            <p className="text-fg/70 text-xs mb-4">Open your e-wallet or bank app and scan</p>
             <img src={systemSettings.paymentQrImage} alt="Payment QR" className="w-full max-w-[300px] mx-auto rounded-xl" />
-            <button onClick={() => setPayQrOpen(false)} className="mt-5 w-full bg-brand text-white font-black py-3.5 rounded-2xl uppercase tracking-widest text-sm hover:bg-brand-dark transition">
+            <button onClick={() => setPayQrOpen(false)} className="mt-5 w-full bg-brand text-on-brand font-black py-3.5 rounded-2xl uppercase tracking-widest text-sm hover:bg-brand-dark transition">
               Done - Paid
             </button>
-            <p className="text-gray-400 text-[11px] mt-2">Tap when payment is confirmed</p>
+            <p className="text-fg/70 text-[11px] mt-2">Tap when payment is confirmed</p>
           </div>
         </div>
       )}

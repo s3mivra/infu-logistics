@@ -44,10 +44,10 @@ class ErrorBoundary extends Component {
         <div className="min-h-screen bg-page-bg flex flex-col items-center justify-center text-center px-6">
           <p className="text-4xl mb-4">⚠️</p>
           <h1 className="text-fg text-xl font-bold mb-2">Something went wrong</h1>
-          <p className="text-gray-400 text-sm mb-6">{this.state.error.message}</p>
+          <p className="text-fg/70 text-sm mb-6">{this.state.error.message}</p>
           <button
             onClick={() => { this.setState({ error: null }); window.location.reload(); }}
-            className="bg-brand text-white px-6 py-2 rounded-lg font-bold"
+            className="bg-brand text-on-brand px-6 py-2 rounded-lg font-bold"
           >
             Reload
           </button>

@@ -163,22 +163,22 @@ const ProductCard = memo(({ product, onAdd, onPreview, showPrices }) => {
       <h3 className="font-bold text-fg text-[13px] sm:text-sm leading-snug">{product.name}</h3>
       <div className="flex flex-col items-end gap-1 shrink-0">
         {hasSale && <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-orange-500 text-white">Sale</span>}
-        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${unavailable ? 'bg-white border-white text-fg' : 'bg-emerald-400 border-emerald-400 text-white'}`}>
+        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${unavailable ? 'bg-white border-white text-black' : 'bg-emerald-400 border-emerald-400 text-white'}`}>
           {unavailable ? 'Out of Stock' : 'In Stock'}
         </span>
       </div>
     </div>
-    {product.description && <p className="text-fg/40 text-xs mt-1 line-clamp-2">{product.description}</p>}
+    {product.description && <p className="text-fg/70 text-xs mt-1 line-clamp-2">{product.description}</p>}
     <div className="flex items-center justify-between gap-2 mt-3">
       {showPrices ? (
         <div className="min-w-0">
-          <p className={`font-black text-sm leading-none ${hasSale ? 'text-orange-400' : 'text-fg'}`}>{peso(net)}</p>
+          <p className={`font-black text-sm leading-none ${hasSale ? 'text-warning' : 'text-fg'}`}>{peso(net)}</p>
           {(hasSale || discount > 0) && (
-            <p className="text-fg/30 text-[10px] line-through mt-0.5">{peso(base)}</p>
+            <p className="text-fg/65 text-[10px] line-through mt-0.5">{peso(base)}</p>
           )}
         </div>
       ) : (
-        <p className="text-fg/40 font-black text-[11px] uppercase tracking-wider">Inquire price</p>
+        <p className="text-fg/70 font-black text-[11px] uppercase tracking-wider">Inquire price</p>
       )}
       {!unavailable && (
         <button
@@ -907,13 +907,13 @@ export default function ClientOrderPage() {
           <CheckCircle size={32} className="text-emerald-400" />
         </div>
         <h2 className="text-2xl font-black text-fg mb-1">Sent to Logistics!</h2>
-        <p className="text-fg/50 text-sm mb-3">Your order has been received.</p>
+        <p className="text-fg/75 text-sm mb-3">Your order has been received.</p>
         {/* POS reference - show this to staff so they can pull up the same order. */}
         <div className="bg-page-bg border border-brand/30 rounded-2xl px-4 py-3 mb-3 w-full max-w-sm">
-          <p className="text-[10px] uppercase tracking-widest text-fg/40 font-black mb-1">Order Reference (show to staff)</p>
+          <p className="text-[10px] uppercase tracking-widest text-fg/70 font-black mb-1">Order Reference (show to staff)</p>
           <p className="text-brand font-mono font-black text-lg tracking-wider">{successOrder.orderNumber}</p>
           {successOrder.billingNumber && (
-            <p className="text-fg/50 text-[11px] font-mono mt-0.5">Billing: <span className="text-fg/80 font-bold">{successOrder.billingNumber}</span></p>
+            <p className="text-fg/75 text-[11px] font-mono mt-0.5">Billing: <span className="text-fg/80 font-bold">{successOrder.billingNumber}</span></p>
           )}
         </div>
 
@@ -935,17 +935,17 @@ export default function ClientOrderPage() {
               <div key={i} className="flex justify-between gap-3 text-sm">
                 <span className="text-fg font-bold min-w-0 truncate">
                   {item.name}
-                  <span className="text-fg/40 font-normal font-mono"> ×{item.quantity}</span>
+                  <span className="text-fg/70 font-normal font-mono"> ×{item.quantity}</span>
                 </span>
                 <span className="text-fg/70 font-mono shrink-0 tabular-nums">{peso(unit * Number(item.quantity || 0))}</span>
               </div>
             );
           })}
           <div className="border-t border-white/10 pt-2 flex justify-between items-baseline gap-3">
-            <span className="text-[11px] font-black uppercase tracking-widest text-fg/40">Total</span>
+            <span className="text-[11px] font-black uppercase tracking-widest text-fg/70">Total</span>
             <span className="text-fg font-black text-base tabular-nums">{peso(orderTotal(successOrder))}</span>
           </div>
-          <p className="text-[11px] text-fg/40 italic">Final total is confirmed by our team.</p>
+          <p className="text-[11px] text-fg/70 italic">Final total is confirmed by our team.</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full max-w-sm">
           <button
@@ -956,7 +956,7 @@ export default function ClientOrderPage() {
           </button>
           <button
             onClick={() => setSuccessOrder(null)}
-            className="flex-1 bg-brand hover:bg-brand-dark text-white font-black px-6 py-3 rounded-xl transition uppercase tracking-widest text-xs"
+            className="flex-1 bg-brand hover:bg-brand-dark text-on-brand font-black px-6 py-3 rounded-xl transition uppercase tracking-widest text-xs"
           >
             Place Another Order
           </button>
@@ -986,7 +986,7 @@ export default function ClientOrderPage() {
           {/* Sticky close bar - the document itself has no chrome */}
           <div className="flex items-center justify-between px-4 sm:px-5 py-3 border-b border-white/10 flex-shrink-0">
             <p className="font-black text-accent text-[10px] uppercase tracking-widest">Order Slip</p>
-            <button onClick={() => setSlipOrder(null)} className="p-2 -mr-2 rounded-xl text-fg/40 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
+            <button onClick={() => setSlipOrder(null)} className="p-2 -mr-2 rounded-xl text-fg/70 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
               <X size={16} />
             </button>
           </div>
@@ -1190,7 +1190,7 @@ export default function ClientOrderPage() {
 
           <div className="p-3 sm:p-4 border-t border-white/10 flex-shrink-0">
             <button onClick={() => downloadOrderSlip(slipOrder)} disabled={slipDownloading}
-              className="w-full flex items-center justify-center gap-2 bg-brand hover:bg-brand-dark disabled:opacity-60 text-white font-black py-3 rounded-xl transition uppercase tracking-widest text-xs">
+              className="w-full flex items-center justify-center gap-2 bg-brand hover:bg-brand-dark disabled:opacity-60 text-on-brand font-black py-3 rounded-xl transition uppercase tracking-widest text-xs">
               {slipDownloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
               {slipDownloading ? 'Preparing…' : 'Download Slip (PDF)'}
             </button>
@@ -1216,7 +1216,7 @@ export default function ClientOrderPage() {
           >
             <div className="flex items-center justify-between w-full">
               <p className="font-bold text-fg text-sm">Scan to Pay</p>
-              <button onClick={closeQr} className="text-fg/40 hover:text-fg transition">
+              <button onClick={closeQr} className="text-fg/70 hover:text-fg transition">
                 <X size={18} />
               </button>
             </div>
@@ -1227,11 +1227,11 @@ export default function ClientOrderPage() {
             />
             {showPrices && cartTotal > 0 && (
               <div className="w-full text-center">
-                <p className="text-[10px] uppercase tracking-widest text-fg/40 font-bold">Amount</p>
+                <p className="text-[10px] uppercase tracking-widest text-fg/70 font-bold">Amount</p>
                 <p className="text-2xl font-black text-fg tabular-nums">{peso(cartTotal)}</p>
               </div>
             )}
-            <p className="text-xs text-fg/40 text-center">
+            <p className="text-xs text-fg/70 text-center">
               Scan with GCash, Maya, or your banking app. Keep the confirmation
               number - you'll be asked for it next.
             </p>
@@ -1239,7 +1239,7 @@ export default function ClientOrderPage() {
                 has paid and has a reference number in front of them. */}
             <button
               onClick={closeQr}
-              className="w-full py-3 rounded-xl bg-brand text-white text-xs font-black uppercase tracking-widest hover:bg-brand/90 transition"
+              className="w-full py-3 rounded-xl bg-brand text-on-brand text-xs font-black uppercase tracking-widest hover:bg-brand/90 transition"
             >
               I've Paid - Enter Reference
             </button>
@@ -1260,7 +1260,7 @@ export default function ClientOrderPage() {
         {/* Desktop / tablet actions */}
         <div className="hidden sm:flex items-center gap-3">
           {clientInfo && (
-            <span className="text-fg/40 text-xs max-w-[12rem] truncate">
+            <span className="text-fg/70 text-xs max-w-[12rem] truncate">
               {clientInfo.name || clientInfo.username}
             </span>
           )}
@@ -1272,7 +1272,7 @@ export default function ClientOrderPage() {
           >
             <Package size={16} />
             {activeOrders.length > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-brand text-white text-[9px] font-black flex items-center justify-center">
+              <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-brand text-on-brand text-[9px] font-black flex items-center justify-center">
                 {activeOrders.length}
               </span>
             )}
@@ -1287,7 +1287,7 @@ export default function ClientOrderPage() {
           </button>
           <button
             onClick={handleLogout}
-            className="p-2 rounded-xl text-fg/40 hover:text-fg hover:bg-white/10 transition"
+            className="p-2 rounded-xl text-fg/70 hover:text-fg hover:bg-white/10 transition"
             aria-label="Sign out"
           >
             <LogOut size={16} />
@@ -1303,7 +1303,7 @@ export default function ClientOrderPage() {
         >
           <Menu size={20} />
           {activeOrders.length > 0 && (
-            <span className="absolute top-0.5 right-0.5 min-w-[15px] h-[15px] px-1 rounded-full bg-brand text-white text-[9px] font-black flex items-center justify-center">
+            <span className="absolute top-0.5 right-0.5 min-w-[15px] h-[15px] px-1 rounded-full bg-brand text-on-brand text-[9px] font-black flex items-center justify-center">
               {activeOrders.length}
             </span>
           )}
@@ -1318,9 +1318,9 @@ export default function ClientOrderPage() {
             <div className="flex items-center justify-between px-4 h-14 border-b border-white/5">
               <div className="min-w-0">
                 <p className="text-fg font-black text-xs uppercase tracking-widest truncate">{clientInfo?.name || clientInfo?.username || 'Client'}</p>
-                {clientInfo?.clientCode && <p className="text-fg/30 text-[10px] font-mono truncate">{clientInfo.clientCode}</p>}
+                {clientInfo?.clientCode && <p className="text-fg/65 text-[10px] font-mono truncate">{clientInfo.clientCode}</p>}
               </div>
-              <button onClick={() => setMenuOpen(false)} className="p-2 -mr-2 rounded-xl text-fg/40 hover:text-fg hover:bg-white/10 transition" aria-label="Close menu">
+              <button onClick={() => setMenuOpen(false)} className="p-2 -mr-2 rounded-xl text-fg/70 hover:text-fg hover:bg-white/10 transition" aria-label="Close menu">
                 <X size={16} />
               </button>
             </div>
@@ -1331,7 +1331,7 @@ export default function ClientOrderPage() {
               >
                 <Package size={16} /> My orders
                 {activeOrders.length > 0 && (
-                  <span className="ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-brand text-white text-[10px] font-black flex items-center justify-center">
+                  <span className="ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-brand text-on-brand text-[10px] font-black flex items-center justify-center">
                     {activeOrders.length}
                   </span>
                 )}
@@ -1342,7 +1342,7 @@ export default function ClientOrderPage() {
               >
                 <ShoppingCart size={16} /> Your order
                 {cartCount > 0 && (
-                  <span className="ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-brand text-white text-[10px] font-black flex items-center justify-center">
+                  <span className="ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-brand text-on-brand text-[10px] font-black flex items-center justify-center">
                     {cartCount}
                   </span>
                 )}
@@ -1382,7 +1382,7 @@ export default function ClientOrderPage() {
               <h2 className="font-black text-fg text-sm uppercase tracking-widest flex items-center gap-2">
                 <Package size={16} className="text-brand" /> My Orders
               </h2>
-              <button onClick={() => setQueueOpen(false)} className="p-2 rounded-xl text-fg/40 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
+              <button onClick={() => setQueueOpen(false)} className="p-2 rounded-xl text-fg/70 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
                 <X size={16} />
               </button>
             </div>
@@ -1392,7 +1392,7 @@ export default function ClientOrderPage() {
               {FILTER_BUCKETS.map(b => (
                 <button key={b.key} onClick={() => setOrderFilter(b.key)}
                   className={`px-3 py-1.5 rounded-full text-[11px] font-bold whitespace-nowrap transition flex-shrink-0
-                    ${orderFilter === b.key ? 'bg-brand text-white' : 'bg-white/5 text-fg/50 hover:text-fg'}`}>
+                    ${orderFilter === b.key ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/75 hover:text-fg'}`}>
                   {b.label}
                 </button>
               ))}
@@ -1405,13 +1405,13 @@ export default function ClientOrderPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="font-black text-fg text-sm">{q.quoteNumber}</p>
-                      <p className="text-[11px] text-fg/40">
+                      <p className="text-[11px] text-fg/70">
                         {q.lines?.length || 0} item(s)
                         {q.validUntil ? ` \u00b7 valid to ${new Date(q.validUntil).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}` : ''}
                       </p>
                     </div>
                     <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded shrink-0 ${
-                      q.status === 'Quoted' ? 'text-brand bg-brand/10' : 'text-amber-400 bg-amber-400/10'
+                      q.status === 'Quoted' ? 'text-brand bg-brand/10' : 'text-warning bg-amber-400/10'
                     }`}>
                       {q.status === 'Quoted' ? 'Priced' : 'With us'}
                     </span>
@@ -1422,20 +1422,20 @@ export default function ClientOrderPage() {
                       <p className="text-lg font-black text-fg tabular-nums mt-2">
                         {'\u20b1'}{Number(q.quotedTotal || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
                       </p>
-                      {q.quoteNotes && <p className="text-[11px] text-fg/50 mt-1 leading-relaxed">{q.quoteNotes}</p>}
+                      {q.quoteNotes && <p className="text-[11px] text-fg/75 mt-1 leading-relaxed">{q.quoteNotes}</p>}
                       <div className="flex gap-2 mt-3">
                         <button onClick={() => acceptQuote(q)}
-                          className="flex-1 bg-brand hover:bg-brand-dark text-white font-black py-2.5 rounded-xl text-[11px] uppercase tracking-widest transition">
+                          className="flex-1 bg-brand hover:bg-brand-dark text-on-brand font-black py-2.5 rounded-xl text-[11px] uppercase tracking-widest transition">
                           Accept
                         </button>
                         <button onClick={() => declineQuote(q)}
-                          className="px-4 border border-white/15 text-fg/50 hover:text-fg font-bold py-2.5 rounded-xl text-[11px] uppercase tracking-widest transition">
+                          className="px-4 border border-white/15 text-fg/75 hover:text-fg font-bold py-2.5 rounded-xl text-[11px] uppercase tracking-widest transition">
                           Decline
                         </button>
                       </div>
                     </>
                   ) : (
-                    <p className="text-[11px] text-fg/40 mt-2 leading-relaxed">
+                    <p className="text-[11px] text-fg/70 mt-2 leading-relaxed">
                       We are pricing this. Nothing has been ordered or charged.
                     </p>
                   )}
@@ -1445,12 +1445,12 @@ export default function ClientOrderPage() {
               {myOrders.length === 0 ? (
                 <div className="flex flex-col items-center py-16 text-center">
                   <Package size={36} className="text-fg/10 mb-3" />
-                  <p className="text-fg/40 text-sm font-bold">No orders yet.</p>
+                  <p className="text-fg/70 text-sm font-bold">No orders yet.</p>
                 </div>
               ) : filteredOrders.length === 0 ? (
                 <div className="flex flex-col items-center py-16 text-center">
                   <Package size={36} className="text-fg/10 mb-3" />
-                  <p className="text-fg/40 text-sm font-bold">No orders in this filter.</p>
+                  <p className="text-fg/70 text-sm font-bold">No orders in this filter.</p>
                 </div>
               ) : filteredOrders.map(o => {
                 const v = STATUS_VIEW(o.status);
@@ -1476,34 +1476,34 @@ export default function ClientOrderPage() {
                     </div>
 
                     <div className="p-4 cursor-pointer" onClick={() => setSlipOrder(o)}>
-                      {v.msg && <p className="text-fg/50 text-[11px] leading-snug mb-2.5">{v.msg}</p>}
+                      {v.msg && <p className="text-fg/75 text-[11px] leading-snug mb-2.5">{v.msg}</p>}
 
                       {/* Item summary */}
                       <div className="space-y-1.5">
                         {shown.map((it, i) => (
                           <div key={i} className="flex items-center justify-between gap-3 text-xs">
                             <span className="text-fg/70 truncate min-w-0">
-                              {it.name} <span className="text-fg/30 font-mono">×{it.quantity}</span>
+                              {it.name} <span className="text-fg/65 font-mono">×{it.quantity}</span>
                             </span>
                             {showPrices && (
-                              <span className="text-fg/50 font-mono shrink-0 tabular-nums">
+                              <span className="text-fg/75 font-mono shrink-0 tabular-nums">
                                 {peso(Number(it.price || 0) * (1 - lineDiscPct(it) / 100) * Number(it.quantity || 0))}
                               </span>
                             )}
                           </div>
                         ))}
-                        {extra > 0 && <p className="text-fg/30 text-[11px] italic">+{extra} more item{extra === 1 ? '' : 's'}</p>}
+                        {extra > 0 && <p className="text-fg/65 text-[11px] italic">+{extra} more item{extra === 1 ? '' : 's'}</p>}
                       </div>
 
                       {/* Total + view slip, footer-style */}
                       <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-white/5">
-                        <span className="text-fg/30 text-[10px]">
+                        <span className="text-fg/65 text-[10px]">
                           {totalQty} item{totalQty === 1 ? '' : 's'} · {new Date(o.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                         </span>
                         {showPrices ? (
                           <span className="text-fg font-black text-sm">{peso(orderTotal)}</span>
                         ) : (
-                          <span className="text-fg/30 text-[10px] font-black uppercase tracking-wider inline-flex items-center gap-1"><FileText size={11} /> View slip</span>
+                          <span className="text-fg/65 text-[10px] font-black uppercase tracking-wider inline-flex items-center gap-1"><FileText size={11} /> View slip</span>
                         )}
                       </div>
                     </div>
@@ -1572,21 +1572,21 @@ export default function ClientOrderPage() {
               <div className="p-5 overflow-y-auto custom-scrollbar">
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="font-bold text-fg text-lg leading-snug">{p.name}</h3>
-                  <span className={`shrink-0 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${unavailable ? 'bg-white border-white text-fg' : 'bg-emerald-400 border-emerald-400 text-white'}`}>
+                  <span className={`shrink-0 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${unavailable ? 'bg-white border-white text-black' : 'bg-emerald-400 border-emerald-400 text-white'}`}>
                     {unavailable ? 'Out of Stock' : 'In Stock'}
                   </span>
                 </div>
-                {p.description && <p className="text-fg/50 text-sm mt-2 leading-relaxed">{p.description}</p>}
+                {p.description && <p className="text-fg/75 text-sm mt-2 leading-relaxed">{p.description}</p>}
                 {showPrices && (
                   <div className="flex items-center gap-2 mt-3">
-                    <p className={`font-black text-xl ${hasSale ? 'text-orange-400' : 'text-fg'}`}>{peso(net)}</p>
-                    {(hasSale || discount > 0) && <p className="text-fg/30 text-sm line-through">{peso(base)}</p>}
+                    <p className={`font-black text-xl ${hasSale ? 'text-warning' : 'text-fg'}`}>{peso(net)}</p>
+                    {(hasSale || discount > 0) && <p className="text-fg/65 text-sm line-through">{peso(base)}</p>}
                   </div>
                 )}
                 {!unavailable && (
                   <button
                     onClick={() => { addToCart(p); setPreviewProduct(null); }}
-                    className="mt-4 w-full bg-brand hover:bg-brand-dark text-white font-bold text-sm py-3 rounded-xl transition active:scale-[0.98] flex items-center justify-center gap-2"
+                    className="mt-4 w-full bg-brand hover:bg-brand-dark text-on-brand font-bold text-sm py-3 rounded-xl transition active:scale-[0.98] flex items-center justify-center gap-2"
                   >
                     <Plus size={16} strokeWidth={2.5} /> Add to Cart
                   </button>
@@ -1608,7 +1608,7 @@ export default function ClientOrderPage() {
               <h2 className="font-black text-fg text-sm uppercase tracking-widest flex items-center gap-2">
                 <Settings size={15} className="text-brand" /> My settings
               </h2>
-              <button onClick={() => setSettingsOpen(false)} className="p-2 -mr-2 rounded-xl text-fg/40 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
+              <button onClick={() => setSettingsOpen(false)} className="p-2 -mr-2 rounded-xl text-fg/70 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
                 <X size={16} />
               </button>
             </div>
@@ -1624,22 +1624,22 @@ export default function ClientOrderPage() {
 
               {/* Account */}
               <section>
-                <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-2 flex items-center gap-1.5">
+                <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-2 flex items-center gap-1.5">
                   <UserCircle size={12} /> Account
                 </p>
                 <div className="bg-page-bg border border-white/10 rounded-xl p-4 space-y-3">
                   <div className="flex justify-between text-xs">
-                    <span className="text-fg/40">Business</span>
+                    <span className="text-fg/70">Business</span>
                     <span className="text-fg font-bold">{clientInfo?.name}</span>
                   </div>
                   {clientInfo?.clientCode && (
                     <div className="flex justify-between text-xs">
-                      <span className="text-fg/40">Client code</span>
+                      <span className="text-fg/70">Client code</span>
                       <span className="text-fg font-mono">{clientInfo.clientCode}</span>
                     </div>
                   )}
                   <div>
-                    <label htmlFor="cp-username" className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">Username</label>
+                    <label htmlFor="cp-username" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Username</label>
                     <div className="flex gap-2">
                       <input id="cp-username" type="text" value={nameForm}
                         onChange={e => setNameForm(e.target.value)}
@@ -1647,18 +1647,18 @@ export default function ClientOrderPage() {
                         className="flex-1 min-w-0 bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm" />
                       <button onClick={saveUsername}
                         disabled={nameBusy || !nameForm.trim() || nameForm.trim().toLowerCase() === (clientInfo?.username || '')}
-                        className="shrink-0 bg-brand hover:bg-brand-dark disabled:opacity-40 text-white font-black px-4 rounded-xl transition text-xs uppercase tracking-wider">
+                        className="shrink-0 bg-brand hover:bg-brand-dark disabled:opacity-40 text-on-brand font-black px-4 rounded-xl transition text-xs uppercase tracking-wider">
                         {nameBusy ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
                       </button>
                     </div>
-                    <p className="text-[10px] text-fg/30 mt-1.5">Letters, digits, dot, dash and underscore. This is what you sign in with.</p>
+                    <p className="text-[10px] text-fg/65 mt-1.5">Letters, digits, dot, dash and underscore. This is what you sign in with.</p>
                   </div>
                 </div>
               </section>
 
               {/* Password */}
               <section>
-                <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-2 flex items-center gap-1.5">
+                <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-2 flex items-center gap-1.5">
                   <KeyRound size={12} /> Password
                 </p>
                 <div className="bg-page-bg border border-white/10 rounded-xl p-4 space-y-2.5">
@@ -1668,7 +1668,7 @@ export default function ClientOrderPage() {
                     { key: 'confirm', label: 'Confirm new password', auto: 'new-password' },
                   ].map(f => (
                     <div key={f.key}>
-                      <label htmlFor={`cp-pw-${f.key}`} className="text-[10px] font-bold text-fg/40 uppercase tracking-widest block mb-1.5">{f.label}</label>
+                      <label htmlFor={`cp-pw-${f.key}`} className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">{f.label}</label>
                       <div className="relative">
                         <input id={`cp-pw-${f.key}`} type={pwForm.show ? 'text' : 'password'}
                           value={pwForm[f.key]} autoComplete={f.auto}
@@ -1676,7 +1676,7 @@ export default function ClientOrderPage() {
                           className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 pr-10 rounded-xl outline-none transition text-sm" />
                         {f.key === 'current' && (
                           <button type="button" onClick={() => setPwForm(p => ({ ...p, show: !p.show }))}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/30 hover:text-fg/70 transition"
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/65 hover:text-fg/70 transition"
                             aria-label={pwForm.show ? 'Hide passwords' : 'Show passwords'}>
                             {pwForm.show ? <EyeOff size={15} /> : <Eye size={15} />}
                           </button>
@@ -1686,17 +1686,17 @@ export default function ClientOrderPage() {
                   ))}
                   <button onClick={savePassword}
                     disabled={pwBusy || !pwForm.current || pwForm.next.length < 8}
-                    className="w-full mt-1 bg-brand hover:bg-brand-dark disabled:opacity-40 text-white font-black py-2.5 rounded-xl transition text-xs uppercase tracking-wider flex items-center justify-center gap-2">
+                    className="w-full mt-1 bg-brand hover:bg-brand-dark disabled:opacity-40 text-on-brand font-black py-2.5 rounded-xl transition text-xs uppercase tracking-wider flex items-center justify-center gap-2">
                     {pwBusy ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={13} />}
                     Change password
                   </button>
-                  <p className="text-[10px] text-fg/30">At least 8 characters, and different from your current one.</p>
+                  <p className="text-[10px] text-fg/65">At least 8 characters, and different from your current one.</p>
                 </div>
               </section>
 
               {/* Appearance - this client's own, not the shop's */}
               <section>
-                <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-2 flex items-center gap-1.5">
+                <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-2 flex items-center gap-1.5">
                   <Palette size={12} /> Appearance
                 </p>
                 <div className="bg-page-bg border border-white/10 rounded-xl p-4">
@@ -1705,13 +1705,13 @@ export default function ClientOrderPage() {
                       <button key={t.value} onClick={() => chooseTheme(t.value)}
                         className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition text-left ${
                           theme === t.value
-                            ? 'bg-brand text-white border-brand'
+                            ? 'bg-brand text-on-brand border-brand'
                             : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'}`}>
                         {t.label}
                       </button>
                     ))}
                   </div>
-                  <p className="text-[10px] text-fg/30 mt-2.5">
+                  <p className="text-[10px] text-fg/65 mt-2.5">
                     {CLIENT_THEMES.find(t => t.value === theme)?.hint} · saved to your account, so it follows you to any device.
                     Changing it here never affects anyone else.
                   </p>
@@ -1733,7 +1733,7 @@ export default function ClientOrderPage() {
               </p>
             )}
             {welcomeMessage && (
-              <p className="text-fg/50 text-xs mt-1 leading-snug">{welcomeMessage}</p>
+              <p className="text-fg/75 text-xs mt-1 leading-snug">{welcomeMessage}</p>
             )}
           </div>
         </div>
@@ -1757,7 +1757,7 @@ export default function ClientOrderPage() {
         {/* Product search */}
         <div className="px-3 sm:px-4 pt-3 pb-1">
           <div className="relative">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/30" />
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/65" />
             <input
               type="text"
               value={productSearch}
@@ -1767,7 +1767,7 @@ export default function ClientOrderPage() {
             />
             {productSearch && (
               <button onClick={() => setProductSearch('')} aria-label="Clear search"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-fg/40 hover:text-fg transition">
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-fg/70 hover:text-fg transition">
                 <X size={15} />
               </button>
             )}
@@ -1783,7 +1783,7 @@ export default function ClientOrderPage() {
               key={cat}
               onClick={() => setActiveCategory(cat)}
               className={`px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition flex-shrink-0
-                ${activeCategory === cat ? 'bg-brand text-white' : 'bg-white/5 text-fg/50 hover:text-fg'}`}
+                ${activeCategory === cat ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/75 hover:text-fg'}`}
             >
               {cat}
             </button>
@@ -1800,7 +1800,7 @@ export default function ClientOrderPage() {
         ) : visibleProducts.length === 0 ? (
           <div className="flex flex-col items-center py-20 text-center">
             <Package size={40} className="text-fg/10 mb-4" />
-            <p className="text-fg/40 font-bold text-sm">
+            <p className="text-fg/70 font-bold text-sm">
               {productSearch.trim() ? `No products match "${productSearch.trim()}".` : 'No products available.'}
             </p>
           </div>
@@ -1818,7 +1818,7 @@ export default function ClientOrderPage() {
         <div className="fixed bottom-5 sm:bottom-6 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-1.5rem)] sm:w-auto max-w-sm">
           <button
             onClick={() => setCartOpen(true)}
-            className="w-full flex items-center justify-center gap-3 bg-brand hover:bg-brand-dark text-white font-black px-6 py-3.5 rounded-2xl shadow-2xl shadow-brand/40 transition active:scale-95"
+            className="w-full flex items-center justify-center gap-3 bg-brand hover:bg-brand-dark text-on-brand font-black px-6 py-3.5 rounded-2xl shadow-2xl shadow-brand/40 transition active:scale-95"
           >
             <ShoppingCart size={18} />
             <span>{cartCount} item{cartCount !== 1 ? 's' : ''}</span>
@@ -1835,14 +1835,14 @@ export default function ClientOrderPage() {
           <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 h-14 bg-sidebar-bg border-b border-white/5 flex-shrink-0">
             <button
               onClick={() => setCartOpen(false)}
-              className="p-2 rounded-xl text-fg/40 hover:text-fg hover:bg-white/10 transition"
+              className="p-2 rounded-xl text-fg/70 hover:text-fg hover:bg-white/10 transition"
               aria-label="Back"
             >
               <ChevronLeft size={18} />
             </button>
             <div className="flex-1 min-w-0">
               <h2 className="font-black text-fg text-sm uppercase tracking-widest">Your Order</h2>
-              <p className="text-fg/40 text-xs truncate">{clientInfo?.name || clientInfo?.username}</p>
+              <p className="text-fg/70 text-xs truncate">{clientInfo?.name || clientInfo?.username}</p>
             </div>
           </div>
 
@@ -1851,19 +1851,19 @@ export default function ClientOrderPage() {
             {cart.length === 0 && (
               <div className="flex flex-col items-center py-16 text-center">
                 <ShoppingCart size={36} className="text-fg/10 mb-3" />
-                <p className="text-fg/40 text-sm font-bold">Your order is empty.</p>
+                <p className="text-fg/70 text-sm font-bold">Your order is empty.</p>
               </div>
             )}
             {cart.map(item => (
               <div key={item.productId} className="flex items-center gap-2 sm:gap-3 bg-sidebar-bg border border-white/5 rounded-xl px-3 sm:px-4 py-3">
                 <div className="flex-1 min-w-0">
                   {item.productCode && (
-                    <p className="text-fg/30 text-[10px] font-mono uppercase tracking-widest truncate">{item.productCode}</p>
+                    <p className="text-fg/65 text-[10px] font-mono uppercase tracking-widest truncate">{item.productCode}</p>
                   )}
                   <p className="font-bold text-fg text-sm truncate">{item.name}</p>
                   {showPrices
-                    ? <p className="text-fg/50 text-[11px] tabular-nums">{peso(netPrice(item))} each</p>
-                    : <p className="text-fg/30 text-[10px] italic">Price confirmed by our team</p>}
+                    ? <p className="text-fg/75 text-[11px] tabular-nums">{peso(netPrice(item))} each</p>
+                    : <p className="text-fg/65 text-[10px] italic">Price confirmed by our team</p>}
                 </div>
                 <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
                   <button
@@ -1882,7 +1882,7 @@ export default function ClientOrderPage() {
                     <Plus size={13} />
                   </button>
                 </div>
-                <p className="text-fg/50 font-black text-[11px] w-16 sm:w-20 text-right flex-shrink-0 tabular-nums">
+                <p className="text-fg/75 font-black text-[11px] w-16 sm:w-20 text-right flex-shrink-0 tabular-nums">
                   {showPrices ? peso(netPrice(item) * item.quantity) : `×${item.quantity}`}
                 </p>
               </div>
@@ -1890,7 +1890,7 @@ export default function ClientOrderPage() {
 
             {/* Payment method (pre-set, can be changed) */}
             <div className="bg-sidebar-bg border border-white/10 rounded-xl p-4 space-y-3">
-              <div className="flex items-center gap-2 text-xs font-bold text-fg/40 uppercase tracking-widest">
+              <div className="flex items-center gap-2 text-xs font-bold text-fg/70 uppercase tracking-widest">
                 <CreditCard size={13} />
                 Payment Method
               </div>
@@ -1905,7 +1905,7 @@ export default function ClientOrderPage() {
                 { label: 'E-Wallets', methods: paymentGroups['E-Wallets'] || [] },
               ].filter(group => group.methods.length > 0).map(group => (
                 <div key={group.label}>
-                  <p className="text-[10px] font-bold text-fg/30 uppercase tracking-widest mb-1.5">{group.label}</p>
+                  <p className="text-[10px] font-bold text-fg/65 uppercase tracking-widest mb-1.5">{group.label}</p>
                   <div className="flex flex-wrap gap-2">
                     {group.methods.map(m => (
                       <button
@@ -1913,7 +1913,7 @@ export default function ClientOrderPage() {
                         onClick={() => setPaymentMethod(m.name)}
                         className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
                           paymentMethod === m.name
-                            ? 'bg-brand text-white border-brand'
+                            ? 'bg-brand text-on-brand border-brand'
                             : 'bg-white/5 text-fg/60 border-white/10 hover:border-white/30 hover:text-fg'
                         }`}
                       >
@@ -1929,8 +1929,8 @@ export default function ClientOrderPage() {
                   onClick={() => setShowQr(true)}
                   className={`w-full mt-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition ${
                     qrScanned
-                      ? 'bg-white/5 text-fg/50 border border-white/10 hover:bg-white/10'
-                      : 'bg-brand text-white hover:bg-brand/90'
+                      ? 'bg-white/5 text-fg/75 border border-white/10 hover:bg-white/10'
+                      : 'bg-brand text-on-brand hover:bg-brand/90'
                   }`}
                 >
                   <QrCode size={14} />
@@ -1948,7 +1948,7 @@ export default function ClientOrderPage() {
                     <p className="text-[10px] font-black uppercase tracking-widest text-brand">
                       {isCheckPayment ? 'Check Number' : 'Reference Number'}
                     </p>
-                    <span className="text-[9px] font-black uppercase text-red-400">Required</span>
+                    <span className="text-[9px] font-black uppercase text-danger">Required</span>
                   </div>
                   <input
                     value={paymentReference}
@@ -1960,7 +1960,7 @@ export default function ClientOrderPage() {
                   />
                   {isCheckPayment && (
                     <div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/40 mb-1">Check Date</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-1">Check Date</p>
                       <input
                         type="date"
                         value={paymentCheckDate}
@@ -1969,7 +1969,7 @@ export default function ClientOrderPage() {
                       />
                     </div>
                   )}
-                  <p className="text-[10px] text-fg/40 leading-snug">
+                  <p className="text-[10px] text-fg/70 leading-snug">
                     {isCheckPayment
                       ? 'The number printed on the check, and the date written on it if post-dated. We use these to track it until it clears.'
                       : 'The confirmation or transaction number your payment app showed after sending. We use it to match your payment to this order.'}
@@ -1977,7 +1977,7 @@ export default function ClientOrderPage() {
                 </div>
               )}
               {clientInfo?.paymentMethod && clientInfo.paymentMethod !== paymentMethod && (
-                <p className="text-xs text-fg/30">
+                <p className="text-xs text-fg/65">
                   Default: {PAYMENT_LABELS[clientInfo.paymentMethod] || clientInfo.paymentMethod}
                   {' '}
                   <button onClick={() => setPaymentMethod(clientInfo.paymentMethod)} className="text-brand underline">Reset</button>
@@ -1988,7 +1988,7 @@ export default function ClientOrderPage() {
             {/* Order notes */}
             {allowNotes && (
               <div className="bg-sidebar-bg border border-white/5 rounded-xl p-4">
-                <p className="text-xs font-bold text-fg/40 uppercase tracking-widest mb-2">Order Notes (optional)</p>
+                <p className="text-xs font-bold text-fg/70 uppercase tracking-widest mb-2">Order Notes (optional)</p>
                 <textarea
                   value={orderNotes}
                   onChange={e => setOrderNotes(e.target.value)}
@@ -2004,7 +2004,7 @@ export default function ClientOrderPage() {
           <div className="p-3 sm:p-4 bg-sidebar-bg border-t border-white/5 flex-shrink-0 space-y-2">
             {showPrices && cart.length > 0 && (
               <div className="flex items-baseline justify-between px-1">
-                <span className="text-xs font-black uppercase tracking-widest text-fg/40">Estimated total</span>
+                <span className="text-xs font-black uppercase tracking-widest text-fg/70">Estimated total</span>
                 <span className="text-fg font-black text-lg tabular-nums">{peso(cartTotal)}</span>
               </div>
             )}
@@ -2021,12 +2021,12 @@ export default function ClientOrderPage() {
                 <button
                   onClick={handleRequestQuote}
                   disabled={requestingQuote || cart.length === 0}
-                  className="w-full bg-brand hover:bg-brand-dark text-white font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
+                  className="w-full bg-brand hover:bg-brand-dark text-on-brand font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
                 >
                   {requestingQuote ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
                   {requestingQuote ? 'Sending…' : 'Request a Quote'}
                 </button>
-                <p className="text-fg/40 text-[11px] text-center mt-2 leading-relaxed">
+                <p className="text-fg/70 text-[11px] text-center mt-2 leading-relaxed">
                   Nothing is ordered or charged. The prices above are indicative - we will price this
                   and send it back for you to accept.
                 </p>
@@ -2035,7 +2035,7 @@ export default function ClientOrderPage() {
               <button
                 onClick={handleSubmitOrder}
                 disabled={submitting || cart.length === 0 || (needsReference && !paymentReference.trim())}
-                className="w-full bg-brand hover:bg-brand-dark text-white font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
+                className="w-full bg-brand hover:bg-brand-dark text-on-brand font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
               >
                 {submitting ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
                 {submitting

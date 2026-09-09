@@ -65,23 +65,23 @@ export default function SpoilageModal() {
         <div className="flex justify-between items-center">
           <div>
             <h2 className="text-lg font-black text-fg uppercase tracking-wider">Log Waste / Spoilage</h2>
-            <p className="text-orange-400 text-xs font-bold mt-0.5">{item.itemName}</p>
+            <p className="text-warning text-xs font-bold mt-0.5">{item.itemName}</p>
           </div>
-          <button onClick={() => setSpoilageModal(null)} className="text-gray-500 hover:text-fg text-xl font-bold">✕</button>
+          <button onClick={() => setSpoilageModal(null)} className="text-fg/70 hover:text-fg text-xl font-bold">✕</button>
         </div>
         <div className="bg-surface-2 rounded-xl p-3 text-sm flex justify-between">
-          <span className="text-gray-400">Current Stock</span>
+          <span className="text-fg/70">Current Stock</span>
           <span className="font-black text-fg">{currentQty} {unitLabel}</span>
         </div>
         <div>
-          <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Quantity to Discard ({unitLabel})</label>
+          <label className="text-xs font-bold text-fg/70 uppercase tracking-wider block mb-1">Quantity to Discard ({unitLabel})</label>
           <input type="number" min="0.001" step="any" placeholder="0.00" value={spoilageForm.qty}
             onChange={e => setSpoilageForm(f => ({ ...f, qty: e.target.value }))}
             className="w-full bg-surface-2 border border-orange-500/40 focus:border-orange-400 text-fg py-2.5 px-3 rounded-xl outline-none font-black text-lg text-center"
           />
         </div>
         <div>
-          <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Reason *</label>
+          <label className="text-xs font-bold text-fg/70 uppercase tracking-wider block mb-1">Reason *</label>
           <select value={spoilageForm.reason} onChange={e => setSpoilageForm(f => ({ ...f, reason: e.target.value }))}
             className="w-full bg-surface-2 border border-gray-600 focus:border-orange-400 text-fg py-2.5 px-3 rounded-xl outline-none text-sm font-bold"
           >
@@ -90,14 +90,14 @@ export default function SpoilageModal() {
           </select>
         </div>
         <div>
-          <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Notes (optional)</label>
+          <label className="text-xs font-bold text-fg/70 uppercase tracking-wider block mb-1">Notes (optional)</label>
           <input type="text" placeholder="Additional details..." value={spoilageForm.note}
             onChange={e => setSpoilageForm(f => ({ ...f, note: e.target.value }))}
             className="w-full bg-surface-2 border border-gray-700 focus:border-orange-400 text-fg py-2.5 px-3 rounded-xl outline-none text-sm"
           />
         </div>
         <div className="flex gap-3 mt-2">
-          <button onClick={() => setSpoilageModal(null)} className="flex-1 py-3 bg-surface-2 border border-white/10 text-fg/50 font-bold rounded-xl hover:text-fg transition text-sm uppercase">Cancel</button>
+          <button onClick={() => setSpoilageModal(null)} className="flex-1 py-3 bg-surface-2 border border-white/10 text-fg/75 font-bold rounded-xl hover:text-fg transition text-sm uppercase">Cancel</button>
           <button
             disabled={spoilageLoading || !spoilageForm.qty || !spoilageForm.reason}
             onClick={submit}

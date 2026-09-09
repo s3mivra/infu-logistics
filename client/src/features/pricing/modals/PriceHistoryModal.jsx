@@ -19,12 +19,12 @@ export default function PriceHistoryModal() {
         <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-3 flex-shrink-0">
           <div>
             <h2 className="text-xl font-bold text-fg flex items-center gap-2"><History size={18} className="text-accent"/> Price History: <span className="text-accent">{priceHistoryProduct?.name}</span></h2>
-            <p className="text-[10px] text-gray-500 mt-0.5">
+            <p className="text-[10px] text-fg/70 mt-0.5">
               Current: <span className="text-fg font-bold">{money(priceHistoryProduct?.basePrice)}</span>
               {priceHistory.length > 0 && ` · ${priceHistory.length} change${priceHistory.length === 1 ? '' : 's'} recorded`}
             </p>
           </div>
-          <button onClick={() => setPriceHistoryOpen(false)} className="text-gray-400 hover:text-fg font-bold text-xl">✕</button>
+          <button onClick={() => setPriceHistoryOpen(false)} className="text-fg/70 hover:text-fg font-bold text-xl">✕</button>
         </div>
 
         <div className="overflow-y-auto custom-scrollbar flex-1">
@@ -33,7 +33,7 @@ export default function PriceHistoryModal() {
               screen most often gets opened to answer. */}
           {pricePending?.length > 0 && (
             <div className="mb-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3">
-              <p className="text-[10px] font-black uppercase tracking-widest text-yellow-400 mb-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-warning mb-2">
                 Awaiting Approval - not applied yet
               </p>
               <ul className="space-y-2">
@@ -41,13 +41,13 @@ export default function PriceHistoryModal() {
                   <li key={r._id} className="text-xs">
                     {r.changes.map((c, i) => (
                       <div key={i} className="flex items-center gap-2 font-mono">
-                        <span className="text-fg/50">{c.label}</span>
-                        <span className="text-fg/40 line-through">{money(c.oldValue)}</span>
-                        <span className="text-fg/30">→</span>
-                        <span className="text-yellow-400 font-black">{money(c.newValue)}</span>
+                        <span className="text-fg/75">{c.label}</span>
+                        <span className="text-fg/70 line-through">{money(c.oldValue)}</span>
+                        <span className="text-fg/65">→</span>
+                        <span className="text-warning font-black">{money(c.newValue)}</span>
                       </div>
                     ))}
-                    <p className="text-[10px] text-fg/40 mt-0.5">
+                    <p className="text-[10px] text-fg/70 mt-0.5">
                       requested by {r.requestedBy || 'someone'} · {new Date(r.date).toLocaleDateString()}
                       {r.reason && <span className="italic"> · "{r.reason}"</span>}
                     </p>
@@ -57,28 +57,28 @@ export default function PriceHistoryModal() {
             </div>
           )}
           {priceHistoryLoading ? (
-            <p className="text-gray-500 text-sm text-center py-8">Loading…</p>
+            <p className="text-fg/70 text-sm text-center py-8">Loading…</p>
           ) : priceHistory.length === 0 ? (
             pricePending?.length > 0
-              ? <p className="text-gray-500 text-sm text-center py-8">No changes applied yet - the request above is still waiting.</p>
-              : <p className="text-gray-500 text-sm text-center py-8">No price or cost changes recorded yet - still at its original price.</p>
+              ? <p className="text-fg/70 text-sm text-center py-8">No changes applied yet - the request above is still waiting.</p>
+              : <p className="text-fg/70 text-sm text-center py-8">No price or cost changes recorded yet - still at its original price.</p>
           ) : (
             <ul className="space-y-2">
               {priceHistory.map((h, i) => (
                 <li key={i} className="bg-page-bg border border-white/10 rounded-lg px-4 py-3">
                   <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">
+                    <span className="text-[10px] text-fg/70 font-bold uppercase tracking-widest">
                       As of {new Date(h.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                       <span className="text-gray-600 font-normal normal-case ml-1.5">{new Date(h.date).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
                     </span>
-                    <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${h.type === 'price' ? 'bg-accent/20 text-accent' : 'bg-orange-500/20 text-orange-400'}`}>
+                    <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${h.type === 'price' ? 'bg-accent/20 text-accent' : 'bg-orange-500/20 text-warning'}`}>
                       {h.type === 'price' ? 'Price' : 'Recipe Cost'}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 mt-1.5 font-mono">
-                    <span className="text-fg/40 text-sm line-through">{money(h.oldValue)}</span>
-                    <span className="text-fg/30">→</span>
-                    <span className={`text-lg font-black ${Number(h.newValue) > Number(h.oldValue) ? 'text-red-400' : 'text-green-400'}`}>{money(h.newValue)}</span>
+                    <span className="text-fg/70 text-sm line-through">{money(h.oldValue)}</span>
+                    <span className="text-fg/65">→</span>
+                    <span className={`text-lg font-black ${Number(h.newValue) > Number(h.oldValue) ? 'text-danger' : 'text-success'}`}>{money(h.newValue)}</span>
                   </div>
                   {h.reason && <p className="text-fg/60 text-xs mt-1.5 italic">"{h.reason}"</p>}
                   {/* A change made through the queue names both people: who
@@ -87,7 +87,7 @@ export default function PriceHistoryModal() {
                   {h.viaApproval
                     ? <p className="text-[10px] text-gray-600 mt-1">
                         requested by {h.requestedBy || '-'} · approved by {h.approvedBy || '-'}
-                        <span className="ml-1.5 text-[9px] font-black uppercase bg-green-500/15 text-green-500 px-1.5 py-0.5 rounded">reviewed</span>
+                        <span className="ml-1.5 text-[9px] font-black uppercase bg-green-500/15 text-success px-1.5 py-0.5 rounded">reviewed</span>
                       </p>
                     : h.changedBy && <p className="text-[10px] text-gray-600 mt-1">by {h.changedBy}</p>}
                 </li>
