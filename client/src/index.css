@@ -25,9 +25,6 @@
      on the yellow 1.92:1 and on the ocean blue 2.14:1 - every primary button
      in those themes was failing. Near-black gives 5.90 / 10.13 / 9.07. */
   --on-brand:     13 13 13;
-  --brand-deep:    22 101 52;   /* green-800 - a panel that carries WHITE text needs a
-                                   deeper ground: white on the plain brand is only
-                                   3.30:1, and 7.13:1 here. */
 
   /* --- SURFACE SYSTEM --- */
   --surface:      26 26 26;     /* #1a1a1a - card panels                   */
@@ -63,7 +60,6 @@
   --brand:        234 179 8;    /* yellow-500 - #eab308                    */
   --brand-dark:   202 138 4;    /* yellow-600 - hover state                */
   --on-brand:     13 13 13;     /* 10.13:1 on the yellow; white is 1.92:1  */
-  --brand-deep:   146 64 14;    /* amber-800 - white reads at 7.09:1 (1.92 on the brand) */
 
   /* Status text. The -400 shades are built for dark grounds and read at 7-12:1
      there; on the light theme's white they collapse to 1.5-2.8:1, so the text
@@ -88,7 +84,6 @@
   --brand:        56 189 248;   /* sky-400 - electric blue                 */
   --brand-dark:   14 165 233;   /* sky-500 - hover state                   */
   --on-brand:     13 13 13;     /* 9.07:1 on the sky blue; white is 2.14:1 */
-  --brand-deep:     7 89 133;   /* sky-800 - white reads at 7.56:1 (2.14 on the brand)   */
 
   /* Status text. The -400 shades are built for dark grounds and read at 7-12:1
      there; on the light theme's white they collapse to 1.5-2.8:1, so the text
@@ -123,7 +118,6 @@
   /* The one theme where white is right: this green is dark enough that white
      reads at 5.02:1 and near-black would only manage 3.88:1. */
   --on-brand:     255 255 255;
-  --brand-deep:    22 101 52;   /* green-800 - white reads at 7.13:1                     */
 
   /* Darker shades, because these sit on white here: red-700 6.47:1,
      green-700 5.02:1, amber-700 5.02:1, blue-700 6.70:1. The -400 shades

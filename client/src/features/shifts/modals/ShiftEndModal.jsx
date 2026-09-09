@@ -148,7 +148,7 @@ export default function ShiftEndModal() {
 
               <button
                 onClick={performLogout}
-                className="text-xs text-gray-600 hover:text-danger transition text-center w-full"
+                className="text-xs text-fg/70 hover:text-danger transition text-center w-full"
               >
                 Skip & force logout (emergency only)
               </button>

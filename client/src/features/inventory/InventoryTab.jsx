@@ -211,10 +211,10 @@ export default function InventoryTab({ ctx }) {
         <div className="flex flex-col gap-6">
 
           {/* FULL-WIDTH: Main Tables */}
-          <div className="bg-brand-deep border border-white/15 rounded-xl p-6 flex flex-col h-fit">
+          <div className="bg-accent border border-accentShadow rounded-xl p-6 flex flex-col h-fit">
             
             {/* Header & Sub-Tabs */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 border-b border-white/10 pb-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 border-b border-white/20 pb-4">
               <h3 className="text-xl font-bold text-white">Inventory Hub</h3>
               
               {/* --- NEW: THE SUB-TAB TOGGLE --- */}
@@ -253,18 +253,18 @@ export default function InventoryTab({ ctx }) {
                   <Download size={11} className="rotate-180" /> Import
                   <input type="file" accept=".xlsx,.xls,.csv" onChange={e => { parseImportFile(e.target.files?.[0]); e.target.value = ''; }} className="hidden" />
                 </label>
-                <button onClick={downloadImportTemplate} title="Download CSV template" className="text-[10px] bg-accent border border-white/10 hover:bg-brand-dark text-on-brand px-2.5 py-1.5 rounded font-bold uppercase tracking-wider transition min-h-[32px]">
+                <button onClick={downloadImportTemplate} title="Download CSV template" className="text-[10px] bg-accent border border-white hover:bg-brand-dark text-on-brand px-2.5 py-1.5 rounded font-bold uppercase tracking-wider transition min-h-[32px]">
                   Template
                 </button>
                 {/* PDF is for printing and signing; the spreadsheet is for
                     working with. Both, because they are not the same job. */}
-                <button onClick={() => downloadDataset?.('inventory')} className="text-[10px] bg-accent border border-white/10 text-on-brand px-3 py-1.5 rounded hover:bg-brand-dark transition font-bold uppercase tracking-wider min-h-[32px]">
+                <button onClick={() => downloadDataset?.('inventory')} className="text-[10px] bg-accent border border-white text-on-brand px-3 py-1.5 rounded hover:bg-brand-dark transition font-bold uppercase tracking-wider min-h-[32px]">
                   Export Excel
                 </button>
-                <button onClick={exportInventoryToPDF} className="text-[10px] bg-accent border border-white/10 text-on-brand px-3 py-1.5 rounded hover:bg-brand-dark transition font-bold uppercase tracking-wider min-h-[32px]">
+                <button onClick={exportInventoryToPDF} className="text-[10px] bg-accent border border-white text-on-brand px-3 py-1.5 rounded hover:bg-brand-dark transition font-bold uppercase tracking-wider min-h-[32px]">
                   Export PDF
                 </button>
-                <button onClick={exportProductionHistoryPDF} title="Every batch dated by production instead of expiry (beans, etc.), across the whole catalogue" className="text-[10px] bg-accent border border-white/10 text-on-brand px-3 py-1.5 rounded hover:bg-brand-dark transition font-bold uppercase tracking-wider min-h-[32px]">
+                <button onClick={exportProductionHistoryPDF} title="Every batch dated by production instead of expiry (beans, etc.), across the whole catalogue" className="text-[10px] bg-accent border border-white text-on-brand px-3 py-1.5 rounded hover:bg-brand-dark transition font-bold uppercase tracking-wider min-h-[32px]">
                   Production History
                 </button>
               </div>
@@ -314,7 +314,7 @@ export default function InventoryTab({ ctx }) {
                       value={invSearch}
                       onChange={e => { setInvSearch(e.target.value); }}
                       placeholder="Search items…"
-                      className="w-full bg-white/5 border border-white/10 rounded-lg pl-8 pr-3 py-2 text-xs text-on-brand placeholder-white focus:outline-none focus:border-brand"
+                      className="w-full bg-white/5 border border-white rounded-lg pl-8 pr-3 py-2 text-xs text-on-brand placeholder-white focus:outline-none focus:border-brand"
                     />
                     {invSearch && (
                       <button onClick={() => setInvSearch('')} className="absolute right-2 top-1/3 -translate-y-1/2 text-white hover:text-white">
@@ -328,7 +328,7 @@ export default function InventoryTab({ ctx }) {
                     <select
                       value={invCategoryFilter}
                       onChange={e => { setInvCategoryFilter(e.target.value); }}
-                      className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-on-brand focus:outline-none focus:border-brand"
+                      className="bg-white/5 border border-white rounded-lg px-3 py-2 text-xs text-on-brand focus:outline-none focus:border-brand"
                     >
                       <option value="">All Categories</option>
                       {invCategories.map(c => <option key={c} value={c}>{c}</option>)}
@@ -339,7 +339,7 @@ export default function InventoryTab({ ctx }) {
                   <select
                     value={invSort}
                     onChange={e => { setInvSort(e.target.value); }}
-                    className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-on-brand focus:outline-none focus:border-brand"
+                    className="bg-white/5 border border-white rounded-lg px-3 py-2 text-xs text-on-brand focus:outline-none focus:border-brand"
                   >
                     <option value="name-asc">Name A → Z</option>
                     <option value="name-desc">Name Z → A</option>
@@ -367,7 +367,7 @@ export default function InventoryTab({ ctx }) {
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
-                    <tr className="text-white border-b border-white/10">
+                    <tr className="text-white border-b border-white/20">
                       <th className="pb-3">Item Name</th>
                       <th className="pb-3 text-right">Live Qty</th>
                       <th className="pb-3 text-right">Threshold</th>
@@ -471,7 +471,7 @@ export default function InventoryTab({ ctx }) {
                                   setMenuPosition({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
                                   setOpenActionMenu(item._id);
                                 }}
-                                className="p-2 rounded-lg bg-white/5 hover:bg-white/15 text-on-brand hover:text-fg transition min-h-[36px] min-w-[36px] flex items-center justify-center"
+                                className="p-2 rounded-lg bg-white/5 hover:bg-white/15 text-on-brand hover:text-white transition min-h-[36px] min-w-[36px] flex items-center justify-center"
                               >
                                 <MoreVertical size={16} />
                               </button>
@@ -481,10 +481,10 @@ export default function InventoryTab({ ctx }) {
                                   style={{ top: menuPosition.top, right: menuPosition.right }}
                                   className="fixed z-[9999] bg-sidebar-bg border border-white/15 rounded-xl shadow-2xl min-w-[150px] py-1 animate-scale-in origin-top-right"
                                 >
-                                  <button onClick={() => { fetchStockHistory(item); setOpenActionMenu(null); }} disabled={historyLoading} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-accent transition disabled:opacity-50 disabled:cursor-wait">
+                                  <button onClick={() => { fetchStockHistory(item); setOpenActionMenu(null); }} disabled={historyLoading} className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-accent transition disabled:opacity-50 disabled:cursor-wait">
                                     {historyLoading ? 'Loading…' : 'History'}
                                   </button>
-                                  <button onClick={() => { openEditInventory(item); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-info transition">
+                                  <button onClick={() => { openEditInventory(item); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-info transition">
                                     Edit
                                   </button>
                                   <button onClick={() => {
@@ -492,7 +492,7 @@ export default function InventoryTab({ ctx }) {
                                     setSpoilageModal({ item });
                                     setSpoilageForm({ qty: isExpired ? itemDisplay(item).packQty.toString() : '', reason: isExpired ? 'Spoilage' : '', note: isExpired ? `Auto-flagged expired (${fmtMDY(item.expiryDate)})` : '' });
                                     setOpenActionMenu(null);
-                                  }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-fg/70 hover:bg-white/8 hover:text-warning transition">
+                                  }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-warning transition">
                                     Waste
                                   </button>
                                   <div className="border-t border-white/8 mx-2 my-1" />
@@ -632,7 +632,7 @@ export default function InventoryTab({ ctx }) {
                   <button 
                     onClick={() => setInvPage(prev => Math.max(prev - 1, 1))}
                     disabled={invPage === 1}
-                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === 1 ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === 1 ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
                   >
                     <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                   </button>
@@ -642,7 +642,7 @@ export default function InventoryTab({ ctx }) {
                   <button 
                     onClick={() => setInvPage(prev => Math.min(prev + 1, totalInvPages))}
                     disabled={invPage === totalInvPages}
-                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === totalInvPages ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === totalInvPages ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
                   >
                     <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                   </button>
@@ -844,7 +844,7 @@ export default function InventoryTab({ ctx }) {
                                   placeholder={isLocked ? "LOCKED" : "Count…"}
                                   disabled={isLocked}
                                   className={`w-24 bg-page-bg border rounded p-1.5 outline-none text-center text-sm font-mono tabular-nums transition
-                                    ${isLocked ? 'border-white/10 text-gray-600 bg-gray-900/20' :
+                                    ${isLocked ? 'border-white/10 text-fg/70 bg-gray-900/20' :
                                       hasInput && variance < 0 ? 'border-red-500 text-fg shadow-[0_0_10px_rgba(239,68,68,0.1)]' :
                                       hasInput && variance > 0 ? 'border-green-500 text-fg' :
                                       hasInput && variance === 0 ? 'border-gray-600 text-fg' :
@@ -875,7 +875,7 @@ export default function InventoryTab({ ctx }) {
                       <button 
                         onClick={() => setInvPage(prev => Math.max(prev - 1, 1))}
                         disabled={invPage === 1}
-                        className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === 1 ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                        className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === 1 ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
                       >
                         <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                       </button>
@@ -885,7 +885,7 @@ export default function InventoryTab({ ctx }) {
                       <button 
                         onClick={() => setInvPage(prev => Math.min(prev + 1, totalInvPages))}
                         disabled={invPage === totalInvPages}
-                        className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === totalInvPages ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                        className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${invPage === totalInvPages ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
                       >
                         <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                       </button>

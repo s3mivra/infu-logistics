@@ -1548,8 +1548,8 @@ export default function LedgerTab({ ctx }) {
                     onKeyDown={e => { if (e.key === 'Enter') addCoaChild(); }}
                     className="flex-1 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm font-bold outline-none focus:border-brand/60 placeholder-white/25" />
                   <button onClick={addCoaChild} disabled={coaBusy}
-                    className="bg-brand text-on-brand font-black text-xs uppercase tracking-widest px-5 py-2.5 rounded-xl hover:bg-brand-dark transition disabled:opacity-50">
-                    <Plus size={14} className="inline -mt-0.5" /> Add
+                    className="shrink-0 whitespace-nowrap inline-flex items-center justify-center gap-1.5 bg-brand text-on-brand font-black text-xs uppercase tracking-widest px-5 py-2.5 rounded-xl hover:bg-brand-dark transition disabled:opacity-50">
+                    <Plus size={14} /> Add
                   </button>
                 </div>
               </div>
@@ -1719,9 +1719,9 @@ export default function LedgerTab({ ctx }) {
                     <tbody>
                       {entry.lines.map((line, idx) => (
                         <tr key={idx} className="border-t border-gray-800/50">
-                          <td className={`py-1 ${line.credit > 0 ? 'pl-6 text-fg' : 'text-gray-600'}`}>{line.accountCode} - {line.accountName}</td>
-                          <td className="py-1 text-right text-gray-600">{line.debit > 0 ? line.debit.toFixed(2) : ''}</td>
-                          <td className="py-1 text-right text-gray-600">{line.credit > 0 ? line.credit.toFixed(2) : ''}</td>
+                          <td className={`py-1 ${line.credit > 0 ? 'pl-6 text-fg' : 'text-fg/70'}`}>{line.accountCode} - {line.accountName}</td>
+                          <td className="py-1 text-right text-fg/70">{line.debit > 0 ? line.debit.toFixed(2) : ''}</td>
+                          <td className="py-1 text-right text-fg/70">{line.credit > 0 ? line.credit.toFixed(2) : ''}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1734,7 +1734,7 @@ export default function LedgerTab({ ctx }) {
                   <button 
                     onClick={() => setAccountingPage(prev => Math.max(prev - 1, 1))}
                     disabled={accountingPage === 1}
-                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${accountingPage === 1 ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-fg hover:border-accent hover:text-accent'}`}
+                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${accountingPage === 1 ? 'bg-gray-800 text-fg/70 cursor-not-allowed' : 'bg-surface border border-gray-700 text-fg hover:border-accent hover:text-accent'}`}
                   >
                     <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                   </button>
@@ -1744,7 +1744,7 @@ export default function LedgerTab({ ctx }) {
                   <button 
                     onClick={() => setAccountingPage(prev => Math.min(prev + 1, totalAccountingPages))}
                     disabled={accountingPage === totalAccountingPages}
-                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${accountingPage === totalAccountingPages ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface border border-gray-700 text-fg hover:border-accent hover:text-accent'}`}
+                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${accountingPage === totalAccountingPages ? 'bg-gray-800 text-fg/70 cursor-not-allowed' : 'bg-surface border border-gray-700 text-fg hover:border-accent hover:text-accent'}`}
                   >
                     <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                   </button>

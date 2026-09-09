@@ -805,7 +805,7 @@ export default function OrdersTab({ ctx }) {
                                 order.status === 'Refunded'            ? 'bg-purple-500 text-white' :
                                 'bg-gray-500 text-white'
                               }`}>{order.status}</span>
-                              <span className="text-gray-600 text-[9px]">{new Date(order.createdAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                              <span className="text-fg/70 text-[9px]">{new Date(order.createdAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
                             </div>
                           </div>
                           <div className="flex items-center gap-1 flex-shrink-0">
@@ -889,7 +889,7 @@ export default function OrdersTab({ ctx }) {
                                             what squeezed both into an unreadable, overlapping mess on a
                                             narrow (phone-width) POS screen. Price/discount now gets its
                                             own row below instead, same idea as the SC/PWD cards. */}
-                                        <span className={`block font-semibold text-sm leading-snug ${item.itemStatus === 'Delivered' ? 'text-gray-600 line-through' : 'text-black'}`}>
+                                        <span className={`block font-semibold text-sm leading-snug ${item.itemStatus === 'Delivered' ? 'text-fg/70 line-through' : 'text-black'}`}>
                                           {item.quantity}x {item.name}
                                         </span>
                                         {(item.fulfilledQty || 0) > 0 && (item.fulfilledQty || 0) < (item.quantity || 0) && (
@@ -986,12 +986,12 @@ export default function OrdersTab({ ctx }) {
                                         {item.selectedAddOns && item.selectedAddOns.length > 0 && (
                                           <div className="pl-5 mt-1 space-y-0.5">
                                             {item.selectedAddOns.map((addon, aIdx) => (
-                                              <div key={aIdx} className="flex justify-between items-center text-[10px] text-gray-600">
+                                              <div key={aIdx} className="flex justify-between items-center text-[10px] text-fg/70">
                                                 <span className="flex items-center gap-1">
                                                   <ChevronRight size={8} className="flex-shrink-0" /> {addon.name} <span className="opacity-70">(+P{addon.price})</span>
                                                 </span>
                                                 {order.status === 'Pending' && (
-                                                  <button onClick={() => removeAddOnFromOrder(order, item.originalIdx, aIdx)} className="text-gray-600 hover:text-danger transition p-0.5 rounded">
+                                                  <button onClick={() => removeAddOnFromOrder(order, item.originalIdx, aIdx)} className="text-fg/70 hover:text-danger transition p-0.5 rounded">
                                                     <X size={10} />
                                                   </button>
                                                 )}
@@ -1016,16 +1016,16 @@ export default function OrdersTab({ ctx }) {
                                       <div className="flex items-center gap-2">
                                         <span className="text-fg/70 text-[10px] font-black uppercase tracking-wider">Complimentary</span>
                                         {order.complimentaryReferenceNumber && (
-                                          <span className="text-gray-600 text-[9px] font-mono">{order.complimentaryReferenceNumber}</span>
+                                          <span className="text-fg/70 text-[9px] font-mono">{order.complimentaryReferenceNumber}</span>
                                         )}
                                       </div>
                                       <div className="text-fg/70 text-[9px]">
-                                        <span className="text-gray-600">Reason:</span> {COMP_REASON_LABELS[order.complimentaryReasonType] || '-'}
+                                        <span className="text-fg/70">Reason:</span> {COMP_REASON_LABELS[order.complimentaryReasonType] || '-'}
                                       </div>
                                       {order.complimentaryReasonNote && (
-                                        <div className="text-gray-600 text-[9px] italic truncate">&ldquo;{order.complimentaryReasonNote}&rdquo;</div>
+                                        <div className="text-fg/70 text-[9px] italic truncate">&ldquo;{order.complimentaryReasonNote}&rdquo;</div>
                                       )}
-                                      <div className="text-gray-600 text-[9px]">
+                                      <div className="text-fg/70 text-[9px]">
                                         <span className="text-gray-700">For:</span> {compEmpName} &nbsp;·&nbsp; <span className="text-gray-700">By:</span> {order.complimentaryApprovedBy || activeAdmin?.name || '-'}
                                       </div>
                                       {order.complimentaryApprovedAt && (

@@ -324,7 +324,7 @@ export default function AnalyticsTab({ ctx }) {
               )}
               <div className="flex-1 flex flex-col min-h-0">
                 {dailyRevenue.length === 0 ? (
-                  <p className="text-gray-600 text-sm text-center py-4">No daily data available.</p>
+                  <p className="text-fg/70 text-sm text-center py-4">No daily data available.</p>
                 ) : (
                   <>
                     {/* Vertical bar graph - last 30 days, tallest bar = best day */}
@@ -369,7 +369,7 @@ export default function AnalyticsTab({ ctx }) {
                         {item.isNewSku || item.trendPct == null ? (
                           <span className="flex items-center gap-0.5 text-[10px] font-black px-2 py-0.5 rounded bg-blue-500/20 text-info">NEW SKU</span>
                         ) : (
-                          <span className={`flex items-center gap-0.5 text-[10px] font-black px-2 py-0.5 rounded ${item.trend > 0.1 ? 'bg-red-100/40 text-danger' : item.trend < -0.1 ? 'bg-green-900/30 text-success' : 'bg-accent/10 text-accent'}`}>
+                          <span className={`flex items-center gap-0.5 text-[10px] font-black px-2 py-0.5 rounded ${item.trend > 0.1 ? 'bg-danger/15 text-danger' : item.trend < -0.1 ? 'bg-green-900/30 text-success' : 'bg-accent/10 text-accent'}`}>
                             {item.trend > 0.1 ? <ArrowUp size={10}/> : item.trend < -0.1 ? <ArrowDown size={10}/> : null}
                             {Math.abs((item.trendPct ?? item.trend * 100)).toFixed(0)}% {item.trend > 0.1 ? 'rising' : item.trend < -0.1 ? 'easing' : 'stable'}
                           </span>
@@ -402,7 +402,7 @@ export default function AnalyticsTab({ ctx }) {
                           <span className="text-fg/80 truncate font-semibold">{item.itemName}</span>
                           <span className="text-fg/70 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit} left</span>
                         </div>
-                        <span className={`font-black text-xs whitespace-nowrap px-2 py-1 rounded ${item.daysOfSupply <= 3 ? 'bg-red-100/60 text-danger animate-pulse' : item.daysOfSupply <= 7 ? 'bg-yellow-200/30 text-warning' : 'bg-orange-200/20 text-warning'}`}>
+                        <span className={`font-black text-xs whitespace-nowrap px-2 py-1 rounded min-w-[74px] text-center shrink-0 ${item.daysOfSupply <= 3 ? 'bg-danger/15 text-danger animate-pulse' : item.daysOfSupply <= 7 ? 'bg-warning/15 text-warning' : 'bg-warning/10 text-warning'}`}>
                           {item.daysOfSupply <= 0 ? 'OUT' : `~${Math.floor(item.daysOfSupply)}d left`}
                         </span>
                       </div>

@@ -71,7 +71,7 @@ const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
                 <button
                   onClick={() => setHistoryPage(p => Math.max(p - 1, 1))}
                   disabled={historyPage === 1}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${historyPage === 1 ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface-2 border border-gray-700 text-fg hover:border-accent hover:text-accent'}`}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${historyPage === 1 ? 'bg-gray-800 text-fg/70 cursor-not-allowed' : 'bg-surface-2 border border-gray-700 text-fg hover:border-accent hover:text-accent'}`}
                 >
                   <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                 </button>
@@ -81,7 +81,7 @@ const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
                 <button
                   onClick={() => setHistoryPage(p => Math.min(p + 1, totalHistPages))}
                   disabled={historyPage === totalHistPages}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${historyPage === totalHistPages ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-surface-2 border border-gray-700 text-fg hover:border-accent hover:text-accent'}`}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${historyPage === totalHistPages ? 'bg-gray-800 text-fg/70 cursor-not-allowed' : 'bg-surface-2 border border-gray-700 text-fg hover:border-accent hover:text-accent'}`}
                 >
                   <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                 </button>

@@ -69,7 +69,7 @@ export default function PriceHistoryModal() {
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <span className="text-[10px] text-fg/70 font-bold uppercase tracking-widest">
                       As of {new Date(h.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-                      <span className="text-gray-600 font-normal normal-case ml-1.5">{new Date(h.date).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
+                      <span className="text-fg/70 font-normal normal-case ml-1.5">{new Date(h.date).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
                     </span>
                     <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${h.type === 'price' ? 'bg-accent/20 text-accent' : 'bg-orange-500/20 text-warning'}`}>
                       {h.type === 'price' ? 'Price' : 'Recipe Cost'}
@@ -85,11 +85,11 @@ export default function PriceHistoryModal() {
                       asked for it and who allowed it. One made directly by an
                       approver just names them. */}
                   {h.viaApproval
-                    ? <p className="text-[10px] text-gray-600 mt-1">
+                    ? <p className="text-[10px] text-fg/70 mt-1">
                         requested by {h.requestedBy || '-'} · approved by {h.approvedBy || '-'}
                         <span className="ml-1.5 text-[9px] font-black uppercase bg-green-500/15 text-success px-1.5 py-0.5 rounded">reviewed</span>
                       </p>
-                    : h.changedBy && <p className="text-[10px] text-gray-600 mt-1">by {h.changedBy}</p>}
+                    : h.changedBy && <p className="text-[10px] text-fg/70 mt-1">by {h.changedBy}</p>}
                 </li>
               ))}
             </ul>

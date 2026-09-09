@@ -260,7 +260,7 @@ export default function PricingTab({ ctx }) {
                             </div>
                             {row.isBase && (
                               <button onClick={() => fetchPriceHistory(row.product)} title="Price history"
-                                className="text-gray-600 hover:text-accent p-1 rounded hover:bg-white/10 transition">
+                                className="text-fg/70 hover:text-accent p-1 rounded hover:bg-white/10 transition">
                                 <History size={12} />
                               </button>
                             )}
@@ -297,7 +297,7 @@ export default function PricingTab({ ctx }) {
                                 {row.hasOverride && <span className="ml-1 text-[9px] text-yellow-600 font-bold">✎</span>}
                               </span>
                             ) : (
-                              <span className="text-gray-600 text-[10px]">set cost</span>
+                              <span className="text-fg/70 text-[10px]">set cost</span>
                             )}
                             {!row.hasOverride && <span className="text-[10px] text-gray-700 group-hover:text-warning">✎</span>}
                           </div>
@@ -325,7 +325,7 @@ export default function PricingTab({ ctx }) {
                               className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition border ${
                                 isUnavailable
                                   ? 'bg-red-500 text-white border-red-500 hover:bg-green-500 hover:text-white hover:border-green-500'
-                                  : 'bg-transparent text-gray-600 border-white/10 hover:bg-red-500 hover:text-white hover:border-red-500'
+                                  : 'bg-transparent text-fg/70 border-white/10 hover:bg-red-500 hover:text-white hover:border-red-500'
                               }`}
                             >
                               {isUnavailable ? 'REMOVED' : 'LIVE'}
@@ -343,7 +343,7 @@ export default function PricingTab({ ctx }) {
                               className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition border ${
                                 row.product.isOutOfStock
                                   ? 'bg-amber-500 text-white border-amber-500 hover:bg-emerald-500 hover:text-white hover:border-emerald-500'
-                                  : 'bg-transparent text-gray-600 border-white/10 hover:bg-amber-500 hover:text-white hover:border-amber-500'
+                                  : 'bg-transparent text-fg/70 border-white/10 hover:bg-amber-500 hover:text-white hover:border-amber-500'
                               }`}
                             >
                               {row.product.isOutOfStock ? 'OOS' : 'OK'}
@@ -363,7 +363,7 @@ export default function PricingTab({ ctx }) {
                 <button
                   onClick={() => setLocalPage(prev => Math.max(prev - 1, 1))}
                   disabled={localPage === 1}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${localPage === 1 ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${localPage === 1 ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
                 >
                   <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                 </button>
@@ -373,7 +373,7 @@ export default function PricingTab({ ctx }) {
                 <button
                   onClick={() => setLocalPage(prev => Math.min(prev + 1, localTotalPages))}
                   disabled={localPage === localTotalPages}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${localPage === localTotalPages ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${localPage === localTotalPages ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
                 >
                   <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                 </button>
@@ -652,7 +652,7 @@ export default function PricingTab({ ctx }) {
                 <button
                   onClick={() => setTierPage(prev => Math.max(prev - 1, 1))}
                   disabled={tierPage === 1}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${tierPage === 1 ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${tierPage === 1 ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
                 >
                   <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                 </button>
@@ -662,7 +662,7 @@ export default function PricingTab({ ctx }) {
                 <button
                   onClick={() => setTierPage(prev => Math.min(prev + 1, tierTotalPages))}
                   disabled={tierPage === tierTotalPages}
-                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${tierPage === tierTotalPages ? 'bg-white/10 text-gray-600 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
+                  className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${tierPage === tierTotalPages ? 'bg-white/10 text-fg/70 cursor-not-allowed' : 'bg-surface border border-white/10 text-fg hover:border-accent hover:text-accent'}`}
                 >
                   <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                 </button>

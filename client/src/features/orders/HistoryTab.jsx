@@ -347,7 +347,7 @@ export default function HistoryTab({ ctx }) {
                   </thead>
                   <tbody>
                     {shiftHistory.length === 0 ? (
-                      <tr><td colSpan="9" className="py-8 text-center text-gray-600 font-bold uppercase tracking-widest text-xs">No shift records found.</td></tr>
+                      <tr><td colSpan="9" className="py-8 text-center text-fg/70 font-bold uppercase tracking-widest text-xs">No shift records found.</td></tr>
                     ) : shiftHistory.map(sh => (
                       <tr key={sh._id} className={`border-b border-white/10 hover:bg-white/2 transition ${sh.isLive || sh.status === 'Open' ? 'bg-yellow-500/5 border-l-2 border-l-yellow-500' : ''}`}>
                         <td className="p-3 font-bold text-fg">{sh.cashierName}</td>
