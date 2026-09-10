@@ -228,14 +228,44 @@ export default function ProductsTab({ ctx }) {
   // "Not from inventory" ingredient - filtered water is the case this exists
   // for. Measured and recorded so the drink is repeatable, but nothing to
   // deduct: you never bought units of it, so nothing can run out.
-  const [nonStockName, setNonStockName] = React.useState('');
-  const [nonStockUnit, setNonStockUnit] = React.useState('ml');
+  // Keyed per picker ('base', or 'size-0', 'size-1'...) so the base recipe and
+  // every extra size keep their own draft. A single shared pair would have one
+  // half-typed ingredient following you between size tabs.
+  const [nonStockDraft, setNonStockDraft] = React.useState({});
+  const nsDraft = (key) => nonStockDraft[key] || { name: '', unit: 'ml' };
+  const setNsDraft = (key, patch) =>
+    setNonStockDraft(d => ({ ...d, [key]: { ...nsDraft(key), ...patch } }));
   // A fixed list rather than free text: a typo here becomes a unit nobody can
   // read back later, and unlike a stocked ingredient there is no inventory item
   // to correct it against. Nothing is converted or deducted for a non-stock
   // line, so the unit is purely how a person reads the quantity - which is why
   // lb can sit alongside the metric units the rest of the app converts between.
   const NON_STOCK_UNITS = ['ml', 'L', 'g', 'kg', 'lb', 'pcs'];
+
+  const renderNonStockAdder = (key, sizeIndex) => {
+    const d = nsDraft(key);
+    return (
+      <div className="mt-3 pt-3 border-t border-white/40">
+        <div className="text-[10px] text-white uppercase font-black mb-2 tracking-widest">Not from inventory</div>
+        <div className="flex flex-wrap gap-2">
+          <input type="text" value={d.name} placeholder="e.g. Filtered Water"
+            onChange={e => setNsDraft(key, { name: e.target.value })}
+            className="flex-1 min-w-[130px] bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-brand-text font-bold outline-none" />
+          <select value={d.unit}
+            onChange={e => setNsDraft(key, { unit: e.target.value })}
+            className="w-20 bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-brand-text font-bold outline-none">
+            {NON_STOCK_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+          <button type="button"
+            onClick={() => { addNonStockToRecipe?.(d.name, d.unit, sizeIndex); setNsDraft(key, { name: '' }); }}
+            className="bg-accent text-on-brand px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-accent/90 transition">
+            Add
+          </button>
+        </div>
+        <p className="text-[9px] text-white/80 mt-1.5 leading-snug">Recorded on the recipe, never deducted from stock and never costed - for things you do not buy by the unit, like filtered water.</p>
+      </div>
+    );
+  };
 
   // Material pickers are a scrolling list of the WHOLE inventory, which is fine
   // at a dozen items and unusable at two hundred - finding "Biscoff Cookies"
@@ -1300,25 +1330,7 @@ export default function ProductsTab({ ctx }) {
                         )}
                       </div>
                     </div>
-                    <div className="mt-3 pt-3 border-t border-white/40">
-                      <div className="text-[10px] text-white uppercase font-black mb-2 tracking-widest">Not from inventory</div>
-                      <div className="flex flex-wrap gap-2">
-                        <input type="text" value={nonStockName} placeholder="e.g. Filtered Water"
-                          onChange={e => setNonStockName(e.target.value)}
-                          className="flex-1 min-w-[130px] bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-brand-text font-bold outline-none" />
-                        <select value={nonStockUnit}
-                          onChange={e => setNonStockUnit(e.target.value)}
-                          className="w-20 bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-brand-text font-bold outline-none">
-                          {NON_STOCK_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                        </select>
-                        <button type="button"
-                          onClick={() => { addNonStockToRecipe?.(nonStockName, nonStockUnit, null); setNonStockName(''); }}
-                          className="bg-accent text-on-brand px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-accent/90 transition">
-                          Add
-                        </button>
-                      </div>
-                      <p className="text-[9px] text-white/80 mt-1.5 leading-snug">Recorded on the recipe, never deducted from stock and never costed - for things you do not buy by the unit, like filtered water.</p>
-                    </div>
+                    {renderNonStockAdder('base', null)}
                   </div>
                 </div>
 
@@ -1393,12 +1405,13 @@ export default function ProductsTab({ ctx }) {
                               return (
                               <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, idx)} className="w-full text-left px-3 py-2 text-xs text-brand-text font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
                                 <span className="truncate pr-2">{inv.itemName}</span>
-                                <span className="text-fg shrink-0 font-mono">₱{packCost.toFixed(2)}/{dispUnit}</span>
+                                <span className="text-black shrink-0 font-mono">₱{packCost.toFixed(2)}/{dispUnit}</span>
                               </button>
                               );
                             })}
                           </div>
                         </div>
+                        {renderNonStockAdder(`size-${idx}`, idx)}
                       </div>
                     </div>
                   ))}

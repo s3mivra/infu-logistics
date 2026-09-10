@@ -1494,7 +1494,7 @@ export default function LedgerTab({ ctx }) {
                 )}
                 <div className="flex flex-col sm:flex-row gap-2">
                   <select value={coaParent} onChange={e => setCoaParent(e.target.value)}
-                    className="flex-1 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm font-bold outline-none focus:border-brand/60">
+                    className="flex-1 min-w-0 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm font-bold outline-none focus:border-brand/60">
                     <option value="">Select parent account…</option>
                     {coaParents.map(p => (
                       <option key={p.code} value={p.code}>{p.code} · {p.name}{p.isParent ? ' (header)' : ''}</option>
@@ -1503,7 +1503,7 @@ export default function LedgerTab({ ctx }) {
                   <input type="text" placeholder="New account name" value={coaNewName}
                     onChange={e => setCoaNewName(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') addCoaChild(); }}
-                    className="flex-1 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm font-bold outline-none focus:border-brand/60 placeholder-white/25" />
+                    className="flex-1 min-w-0 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm font-bold outline-none focus:border-brand/60 placeholder-white/25" />
                   <button onClick={addCoaChild} disabled={coaBusy}
                     className="shrink-0 whitespace-nowrap inline-flex items-center justify-center gap-1.5 bg-brand text-on-brand font-black text-xs uppercase tracking-widest px-5 py-2.5 rounded-xl hover:bg-brand-dark transition disabled:opacity-50">
                     <Plus size={14} /> Add
@@ -2185,7 +2185,7 @@ export default function LedgerTab({ ctx }) {
                   <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Pick a range and run the log</div>
                 ) : (
                   <>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))]">
                       <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Changes</p>
                         <p className="text-xl font-black tabular-nums text-fg">{priceChangeLog.summary.total}</p>
@@ -2431,7 +2431,7 @@ export default function LedgerTab({ ctx }) {
                   <div className="py-12 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Loading check register…</div>
                 ) : (
                   <>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))]">
                       {/* On-hand checks whose date has arrived: money sitting in
                           a drawer that could be in the bank today. */}
                       <div className="rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-3">
@@ -2712,7 +2712,7 @@ export default function LedgerTab({ ctx }) {
                     ].map(b => (
                       <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.bg}`}>
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
-                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/60'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                        <p className={`text-lg sm:text-xl font-black tabular-nums mt-1 whitespace-nowrap ${b.amt > 0 ? b.color : 'text-fg/60'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                       </div>
                     ))}
                   </div>
@@ -3522,11 +3522,11 @@ export default function LedgerTab({ ctx }) {
                   { label: '91+',     sub: 'days',       amt: ab.over, color: 'text-danger',    bg: 'bg-red-500/10 border-red-500/20' },
                 ];
                 return (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))]">
                     {buckets.map(b => (
                       <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.bg}`}>
                         <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
-                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/60'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                        <p className={`text-lg sm:text-xl font-black tabular-nums mt-1 whitespace-nowrap ${b.amt > 0 ? b.color : 'text-fg/60'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                       </div>
                     ))}
                   </div>
@@ -3879,11 +3879,11 @@ export default function LedgerTab({ ctx }) {
                       <h3 className="text-sm font-black text-fg uppercase tracking-wider">A/P Aging</h3>
                       <span className="ml-auto text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">FIFO - oldest paid first</span>
                     </div>
-                    <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="p-4 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))]">
                       {buckets.map(b => (
                         <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.bg}`}>
                           <p className="text-[10px] font-black uppercase tracking-widest text-fg/70">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
-                          <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/60'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                          <p className={`text-lg sm:text-xl font-black tabular-nums mt-1 whitespace-nowrap ${b.amt > 0 ? b.color : 'text-fg/60'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                         </div>
                       ))}
                     </div>

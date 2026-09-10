@@ -105,9 +105,14 @@ const COMP_REASON_LABELS = {
 // verify the user's role and auto-place them in the right room (server-decided,
 // not client-declared - see io.use in server.js). The token is re-read on every
 // (re)connect, so a fresh token after a refresh is picked up automatically.
+// transports: WebSocket first, then long-polling as a fallback. It used to be
+// websocket-only with upgrade:false, which meant that if anything between the
+// browser and the server declined to forward the upgrade - a proxy, a CDN, a
+// captive network - realtime did not degrade, it simply died, silently: no new
+// orders appearing, no stock updates, and nothing on screen saying so. Polling
+// is heavier, so it is the fallback rather than the default.
 const socket = io(API_URL, {
-  transports: ['websocket'],
-  upgrade: false,
+  transports: ['websocket', 'polling'],
   auth: (cb) => {
     try { cb({ token: auth.getToken?.() || '' }); }
     catch { cb({ token: '' }); }
@@ -121,8 +126,23 @@ const socket = io(API_URL, {
 // right before the page would be frozen, and reconnect if it's restored
 // from bfcache (pageshow fires with persisted:true) - same recovery the
 // existing 'connect' handler below already does after any other drop.
+// Connection failures were completely invisible: there is no connect_error
+// handler anywhere in the app, so a socket that could never establish just left
+// the dashboard quietly not-live - orders arriving with nobody told. Logged with
+// the transport that failed, because "websocket failed, polling worked" is the
+// signature of a proxy that will not forward an upgrade, and that is worth
+// knowing rather than guessing at.
+socket.on('connect_error', (err) => {
+  console.warn('[socket] connect failed:', err?.message || err, '| transport:', socket.io?.engine?.transport?.name || 'unknown');
+});
+
 if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => { try { socket.disconnect(); } catch { /* already gone */ } });
+  // Only disconnect a socket that actually got up. Calling disconnect() while
+  // the handshake is still in flight is what logs "WebSocket is closed before
+  // the connection is established" - harmless, but indistinguishable in the
+  // console from a genuine failure, which made a real problem impossible to
+  // spot among the noise.
+  window.addEventListener('pagehide', () => { try { if (socket.connected) socket.disconnect(); } catch { /* already gone */ } });
   window.addEventListener('pageshow', (e) => { if (e.persisted) { try { socket.connect(); } catch { /* ignore */ } } });
 }
 

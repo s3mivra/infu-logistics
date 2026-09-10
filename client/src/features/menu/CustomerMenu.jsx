@@ -19,7 +19,13 @@ const DEFAULT_DEPARTMENT = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
 // logistics business has no kitchen, so "Send to Kitchen" on its QR menu was
 // naming a station that doesn't exist. Mirrors SEND_TARGET in OrdersTab.
 const SEND_TARGET = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
-const socket = io(API_URL, { transports: ['websocket'], upgrade: false });
+// transports: WebSocket first, then long-polling as a fallback. It used to be
+// websocket-only with upgrade:false, which meant that if anything between the
+// browser and the server declined to forward the upgrade - a proxy, a CDN, a
+// captive network - realtime did not degrade, it simply died, silently: no new
+// orders appearing, no stock updates, and nothing on screen saying so. Polling
+// is heavier, so it is the fallback rather than the default.
+const socket = io(API_URL, { transports: ['websocket', 'polling'] });
 // See AdminDashboard.jsx for why: an open socket blocks bfcache, so
 // disconnect before the page would be frozen and reconnect if restored from it.
 if (typeof window !== 'undefined') {
