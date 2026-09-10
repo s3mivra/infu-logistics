@@ -279,10 +279,16 @@ const BCRYPT_ROUNDS = 12;
 // holds cash from: every Completed cash sale, PLUS any in-progress (Preparing/Ready)
 // cash order that already has amountTendered recorded. Pending/Cancelled/Voided/
 // Parked are excluded (no cash collected, or cash reversed).
-const shiftCashFilter = (cashierName, shiftStart) => ({
-  cashier: cashierName,
+// On a SHARED drawer the cashier name must not narrow this. Every cash sale
+// rung on that drawer went into the same physical till whoever rang it, so
+// filtering by name would leave each person's expected cash short by everyone
+// else's takings - and the drawer would read as a large loss at every close.
+// Pass cashierName as null for a drawer session; the time window is then the
+// whole boundary, which is exactly what a single till means.
+const shiftCashFilter = (cashierName, shiftStart, shiftEnd = null) => ({
+  ...(cashierName ? { cashier: cashierName } : {}),
   paymentMethod: 'Cash',
-  createdAt: { $gte: shiftStart },
+  createdAt: shiftEnd ? { $gte: shiftStart, $lte: shiftEnd } : { $gte: shiftStart },
   $or: [
     { status: 'Completed' },
     { status: { $in: ['Preparing', 'Ready'] }, amountTendered: { $gt: 0 } },
@@ -1742,20 +1748,85 @@ StockCardSchema.index({ inventoryId: 1, date: -1 });
 const StockCard = mongoose.model('StockCard', StockCardSchema);
 
 // --- SHIFT MANAGEMENT SCHEMA ---
+// A Shift is a CASH DRAWER session, not a person's working day - who worked is
+// ClockEntry's job, and who sold what is stamped on each order.
+//
+// `scope` decides who the session belongs to:
+//   'cashier' - the original model: one float per person. Correct when each
+//               cashier has their own till.
+//   'drawer'  - one session for the shop's single drawer. Whoever opens it
+//               declares the float, everyone rings on it under their own
+//               login, one person counts at close. A bar where three baristas
+//               share one drawer CANNOT use 'cashier': each would declare the
+//               same physical float, so the books would believe three times the
+//               money was in the till, and every variance computed against it
+//               would be arithmetic about a drawer that never existed.
+// Stamped on every record so old and new sessions stay tellable apart forever.
 const ShiftSchema = new mongoose.Schema({
+  scope:           { type: String, enum: ['cashier', 'drawer'], default: 'cashier', index: true },
   cashierId:       { type: String, required: true },
   cashierName:     { type: String, required: true },
+  // Who opened and who closed. On a shared drawer these are often different
+  // people, and "who counted this" is the first question asked about a
+  // variance - cashierName alone cannot answer it.
+  openedBy:        { type: String, default: '' },
+  closedBy:        { type: String, default: '' },
   startingCash:    { type: Number, required: true, default: 0 },
   shiftStart:      { type: Date, default: Date.now },
   shiftEnd:        Date,
   salesTotal:      { type: Number, default: 0 },   // Cash sales only during this shift
-  expectedCash:    Number,                          // startingCash + salesTotal
-  actualCash:      Number,                          // What cashier counted at close
+  // Cash added to or taken from the drawer mid-session: breaking a note for
+  // change, buying milk out of the till, dropping takings to the safe. Without
+  // these the expected figure is wrong the first time anyone touches the
+  // drawer for anything but a sale, and staff quickly learn to ignore a
+  // variance that is never right.
+  //
+  // RECONCILIATION ONLY - these post NO journal entry, deliberately. The money
+  // leaving for milk becomes an expense when the expense is filed, and a safe
+  // drop becomes a deposit when the deposit is recorded; each of those already
+  // writes its own entry. Posting here as well would credit the same cash
+  // twice.
+  movements:       [{
+    type:   { type: String, enum: ['in', 'out'], required: true },
+    amount: { type: Number, required: true },
+    reason: { type: String, default: '' },
+    by:     { type: String, default: '' },
+    at:     { type: Date, default: Date.now },
+  }],
+  payInsTotal:     { type: Number, default: 0 },
+  payOutsTotal:    { type: Number, default: 0 },
+  expectedCash:    Number,                          // startingCash + salesTotal + payIns - payOuts
+  actualCash:      Number,                          // What was counted at close
   variance:        Number,                          // actualCash - expectedCash
+  // Set when |variance| exceeds the configured threshold. Small differences are
+  // normal and escalating all of them means none of them get looked at.
+  needsReview:     { type: Boolean, default: false },
+  // Closed by the system because the session outran its maximum length, not by
+  // a person counting the till.
+  //
+  // A cash drawer is NEVER auto-closed with an invented count. Writing
+  // actualCash = expectedCash would manufacture a perfect reconciliation for a
+  // drawer nobody looked in, post a variance of zero that means nothing, and
+  // destroy the one control the whole feature exists to provide. A
+  // system-closed session therefore carries NO actualCash and NO variance -
+  // it is bounded, flagged, and left for a human to reconcile.
+  systemClosed:    { type: Boolean, default: false },
   depositedAmount: { type: Number, default: 0 },   // Total posted to bank this shift
   isReconciled:    { type: Boolean, default: false },
   status:          { type: String, default: 'Open' } // 'Open' | 'Closed' | 'Reconciled'
 }, { timestamps: true });
+ShiftSchema.index({ scope: 1, status: 1 });
+// At most ONE open drawer session, enforced by the database rather than by a
+// check in the route. Three baristas arriving together and logging in within
+// the same instant each found no open session and each created one - three
+// floats against one till, which is the exact double-count this whole model
+// exists to prevent. A read-then-write cannot be made safe here; a partial
+// unique index can. The start route catches the duplicate-key error and joins
+// the session that won instead.
+ShiftSchema.index(
+  { scope: 1, status: 1 },
+  { unique: true, partialFilterExpression: { scope: 'drawer', status: 'Open' }, name: 'one_open_drawer' },
+);
 const Shift = mongoose.model('Shift', ShiftSchema);
 
 // ── STAFF CLOCK ENTRIES ──────────────────────────────────────────────────────

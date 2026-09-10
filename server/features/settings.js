@@ -225,10 +225,24 @@ app.get('/api/public/portal-settings', async (req, res) => {
 // general escape hatch for reading settings without a token.
 app.get('/api/settings/public', async (req, res) => {
   try {
-    const row = await Settings.findOne({ key: 'requireCashShift' }).lean();
+    const [row, sharedRow] = await Promise.all([
+      Settings.findOne({ key: 'requireCashShift' }).lean(),
+      Settings.findOne({ key: 'sharedDrawer' }).lean(),
+    ]);
+    const sharedDrawer = sharedRow?.value === true;
+    // Whether the shop's one drawer is already open. The login screen needs it
+    // BEFORE anyone authenticates: on a shared drawer the float is declared
+    // once by whoever opens up, and asking the second and third person of the
+    // morning for a starting cash amount invites them to type the same figure
+    // again - which is the exact double-count the shared drawer exists to
+    // prevent. Discloses only that the till is open, which anyone standing at
+    // the counter can already see.
+    const drawerOpen = sharedDrawer
+      ? Boolean(await mongoose.model('Shift').exists({ scope: 'drawer', status: 'Open' }))
+      : false;
     // Unset means the historical behaviour: required. Preserves every existing
     // deployment's current login flow until someone explicitly turns it off.
-    res.json({ success: true, requireCashShift: row?.value !== false });
+    res.json({ success: true, requireCashShift: row?.value !== false, sharedDrawer, drawerOpen });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
@@ -382,6 +396,38 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
       const saved = await Settings.findOneAndUpdate({ key: 'branchCode' }, { value: code }, { upsert: true, returnDocument: 'after' });
       invalidateBranchCodeCache();
       emitToAll('settingsUpdated', { key: 'branchCode', value: code });
+      return res.json({ success: true, setting: saved });
+    }
+
+    // Cash-drawer controls, coerced on the way in for the same reason module
+    // switches are: a form posting the string "false" is truthy in JavaScript,
+    // and a shared drawer that silently stays on because of it would have every
+    // cashier ringing into one float they never agreed to.
+    if (req.params.key === 'sharedDrawer' || req.params.key === 'blindClose') {
+      const flag = truthy(value, false);
+      const saved = await Settings.findOneAndUpdate({ key: req.params.key }, { value: flag }, { upsert: true, returnDocument: 'after' });
+      emitToAll('settingsUpdated', { key: req.params.key, value: flag });
+      return res.json({ success: true, setting: saved });
+    }
+    // Maximum hours a drawer session may stay open; 0 disables the boundary.
+    // A duration rather than a clock time, because a 24/7 counter is busiest at
+    // the hour a midnight cut-off would fire.
+    if (req.params.key === 'drawerMaxHours') {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0 || n > 168) {
+        return res.status(400).json({ success: false, error: 'Session limit must be between 0 hours (off) and 168 (one week).' });
+      }
+      const saved = await Settings.findOneAndUpdate({ key: 'drawerMaxHours' }, { value: n }, { upsert: true, returnDocument: 'after' });
+      emitToAll('settingsUpdated', { key: 'drawerMaxHours', value: n });
+      return res.json({ success: true, setting: saved });
+    }
+    if (req.params.key === 'varianceThreshold') {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ success: false, error: 'The variance threshold must be zero or a positive amount.' });
+      }
+      const saved = await Settings.findOneAndUpdate({ key: 'varianceThreshold' }, { value: n }, { upsert: true, returnDocument: 'after' });
+      emitToAll('settingsUpdated', { key: 'varianceThreshold', value: n });
       return res.json({ success: true, setting: saved });
     }
 

@@ -119,7 +119,7 @@ const readFontScale = () => {
 export default function SettingsTab({ ctx }) {
   const {
     systemSettings = {}, toggleQROrders, toggleAutoClose, toggleImages,
-    toggleRequireCashShift,
+    toggleRequireCashShift, toggleSharedDrawer, toggleBlindClose, saveVarianceThreshold, saveDrawerMaxHours,
     isSuperAdmin, setChangePwModal, setChangePwError, BIZ_NAME, activeAdmin,
     saveSetting, apiFetch,
   } = ctx;
@@ -162,6 +162,10 @@ export default function SettingsTab({ ctx }) {
   const qrOn    = systemSettings.isAcceptingQROrders !== false;
   const autoOn  = systemSettings.autoCloseEnabled !== false;
   const cashShiftOn = systemSettings.requireCashShift !== false;
+  const sharedDrawerOn = systemSettings.sharedDrawer === true;
+  const blindOn = systemSettings.blindClose !== false;
+  const varThreshold = Number.isFinite(Number(systemSettings.varianceThreshold)) ? Number(systemSettings.varianceThreshold) : 50;
+  const drawerMaxHours = Number.isFinite(Number(systemSettings.drawerMaxHours)) ? Number(systemSettings.drawerMaxHours) : 0;
   const imgOn   = systemSettings.imagesEnabled !== false;
 
   const [theme, setTheme] = useState(readTheme);
@@ -265,6 +269,36 @@ export default function SettingsTab({ ctx }) {
                 : 'Login skips the starting-cash prompt entirely - for shops with no cash drawer to reconcile.'}>
               <Toggle on={cashShiftOn} onChange={toggleRequireCashShift} />
             </SettingRow>
+            <SettingRow icon={DollarSign} title="One Shared Cash Drawer"
+              desc={sharedDrawerOn
+                ? 'One till for the shop: the float is declared once, everyone rings on it, one person counts at close.'
+                : 'Each cashier declares their own float and answers for their own till.'}>
+              <Toggle on={sharedDrawerOn} onChange={toggleSharedDrawer} />
+            </SettingRow>
+            {sharedDrawerOn && (
+              <>
+                <SettingRow icon={DollarSign} title="Blind Close"
+                  desc={blindOn
+                    ? 'Whoever counts cannot see the expected total first - the only way a variance means anything.'
+                    : 'The expected total is visible before counting. A short drawer can be written up as an exact one.'}>
+                  <Toggle on={blindOn} onChange={toggleBlindClose} />
+                </SettingRow>
+                <SettingRow icon={Clock} title="Session Limit (hours)"
+                  desc={drawerMaxHours > 0
+                    ? `A drawer open longer than ${drawerMaxHours}h is closed uncounted and flagged, so a forgotten close cannot sweep the next day's sales into it. Set 0 to turn this off.`
+                    : 'No limit: a drawer stays open until somebody closes it. Set a number of hours to bound it - useful where the shop never shuts.'}>
+                  <input type="number" min="0" max="168" step="1" defaultValue={drawerMaxHours}
+                    onBlur={e => { if (Number(e.target.value) !== drawerMaxHours) saveDrawerMaxHours?.(e.target.value); }}
+                    className="w-24 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg text-right font-bold outline-none focus:border-accent" />
+                </SettingRow>
+                <SettingRow icon={DollarSign} title="Variance Alert Threshold"
+                  desc={`Closes more than this far out are flagged for review. Small differences are normal; escalating all of them means none get looked at.`}>
+                  <input type="number" min="0" step="1" defaultValue={varThreshold}
+                    onBlur={e => { if (Number(e.target.value) !== varThreshold) saveVarianceThreshold?.(e.target.value); }}
+                    className="w-24 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg text-right font-bold outline-none focus:border-accent" />
+                </SettingRow>
+              </>
+            )}
             <SettingRow icon={ImageIcon} title="Product Images"
               desc={imgOn ? 'Product images show across the menu, portal & lists.' : 'Images are hidden app-wide (faster, text-only).'}>
               <Toggle on={imgOn} onChange={toggleImages} />

@@ -36,6 +36,7 @@ import MenuImportModal from '../products/modals/MenuImportModal';
 import PartialFulfillModal from '../orders/modals/PartialFulfillModal';
 import ClockModal from './modals/ClockModal';
 import ChangePasswordModal from './modals/ChangePasswordModal';
+import CashDrawerModal from './modals/CashDrawerModal';
 import * as ui from '../../shared/ui';
 // Tabs are lazy-loaded so only the active tab's code ships on first dashboard
 // paint; the rest load on demand when the operator opens them.
@@ -532,15 +533,28 @@ export default function AdminDashboard() {
   // shop that never runs a cash drawer can turn this off so login stops
   // asking for a number nobody is counting.
   const [requireCashShift, setRequireCashShift] = useState(true);
+  // On a shared drawer the float is declared once, by whoever opens up. Asking
+  // the second and third person of the morning for a starting cash amount
+  // invites them to type the same figure again, which is the exact double-count
+  // the shared drawer exists to prevent - so the field is hidden once the till
+  // is open, and their login simply joins the session.
+  const [sharedDrawer, setSharedDrawer] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   useEffect(() => {
     (async () => {
       try {
         const res = await fetch(`${API_URL}/api/settings/public`);
         const d = await res.json();
-        if (d.success) setRequireCashShift(d.requireCashShift !== false);
+        if (d.success) {
+          setRequireCashShift(d.requireCashShift !== false);
+          setSharedDrawer(d.sharedDrawer === true);
+          setDrawerOpen(d.drawerOpen === true);
+        }
       } catch { /* default stays required - the safer failure mode */ }
     })();
   }, []);
+  // True when this login must not be asked for a float.
+  const joiningOpenDrawer = sharedDrawer && drawerOpen;
   const [shiftEndModal, setShiftEndModal] = useState(false);
   const [shiftReconcile, setShiftReconcile] = useState({ actualCash: '', result: null });
   const [shiftEndLoading, setShiftEndLoading] = useState(false);
@@ -865,6 +879,58 @@ export default function AdminDashboard() {
     return response;
   }, []);
 
+  // ── SHARED CASH DRAWER ─────────────────────────────────────────────────────
+  // The shop's one till, when sharedDrawer is on. Kept separate from logout on
+  // purpose: a barista finishing their shift must not close a drawer that still
+  // holds money and that other people are still selling into.
+  const [cashDrawerModal, setCashDrawerModal] = useState(false);
+  const [drawerSession, setDrawerSession] = useState(null);
+  const [drawerBusy, setDrawerBusy] = useState(false);
+  const [drawerMovement, setDrawerMovement] = useState({ type: 'out', amount: '', reason: '' });
+
+  const fetchDrawerSession = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/shifts/current');
+      const d = await r.json();
+      if (d.success) {
+        setDrawerSession(d.shift || null);
+        // The server is the authority on whether the shared drawer is on; the
+        // pre-login public read can be stale by the time someone opens this.
+        if (typeof d.sharedDrawer === 'boolean') setSharedDrawer(d.sharedDrawer);
+      }
+    } catch { /* leave the last-known session on a transient failure */ }
+  }, [apiFetch]);
+
+  const openCashDrawer = async () => { await fetchDrawerSession(); setCashDrawerModal(true); };
+
+  const submitDrawerMovement = async () => {
+    const amt = parseFloat(drawerMovement.amount);
+    if (!(amt > 0)) return ui.alert('Enter a positive amount.');
+    if (!drawerMovement.reason.trim()) return ui.alert('Say what this cash was for - an unexplained movement is indistinguishable from missing money.');
+    setDrawerBusy(true);
+    try {
+      const r = await apiFetch('/api/shifts/movement', {
+        method: 'POST',
+        body: JSON.stringify({ type: drawerMovement.type, amount: amt, reason: drawerMovement.reason.trim() }),
+      });
+      const d = await r.json();
+      if (!d.success) return ui.alert(d.error || 'Could not record that.');
+      setDrawerMovement({ type: 'out', amount: '', reason: '' });
+      await fetchDrawerSession();
+    } catch { ui.alert('Network error.'); }
+    finally { setDrawerBusy(false); }
+  };
+
+  // Hands over to the existing end-of-shift count, which already posts the
+  // close and shows the variance.
+  const openShiftEndFromDrawer = (handover = false) => {
+    setDrawerHandover(handover);
+    setCashDrawerModal(false);
+    setShiftReconcile({ actualCash: '', result: null });
+    setShiftEndModal(true);
+  };
+
+
   // Optional accounting modules, read once and shared: the sidebar decides
   // whether to show a tab and the tab needs the same answer.
   //
@@ -909,7 +975,7 @@ export default function AdminDashboard() {
       // Non-superadmins must declare their opening cash - unless the shop has
       // turned that requirement off entirely (Settings → System → Require
       // Cash Shift on Login), in which case nobody is asked, superadmin or not.
-      if (requireCashShift && !isSuperAdminLogin && (!startingCash || isNaN(cashAmount) || cashAmount < 0)) {
+      if (requireCashShift && !joiningOpenDrawer && !isSuperAdminLogin && (!startingCash || isNaN(cashAmount) || cashAmount < 0)) {
         setLoginError('Please enter a valid Starting Cash amount (₱0 or more).');
         return;
       }
@@ -921,14 +987,42 @@ export default function AdminDashboard() {
 
       // Superadmin, or any role once the shop has turned the requirement off,
       // logs the shift at ₱0 when nothing was entered.
-      const finalCash = (isSuperAdminLogin || !requireCashShift) ? (isNaN(cashAmount) ? 0 : cashAmount) : cashAmount;
+      const finalCash = (isSuperAdminLogin || !requireCashShift || joiningOpenDrawer) ? (isNaN(cashAmount) ? 0 : cashAmount) : cashAmount;
       try {
         const shiftRes = await fetch(`${API_URL}/api/shifts/start`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${data.token}` },
           body: JSON.stringify({ startingCash: finalCash })
         });
-        if (!shiftRes.ok) console.warn('Shift record failed to save - check server logs.');
+        if (!shiftRes.ok) {
+          console.warn('Shift record failed to save - check server logs.');
+        } else {
+          // Joining an open till means taking on cash somebody else counted.
+          // The response used to be discarded, so the incoming shift was told
+          // nothing about the money they had just become responsible for -
+          // they simply were not asked for a float and the field vanished.
+          // Say what they are accepting, and from whom.
+          //
+          // Shown AFTER authentication rather than on the login form on
+          // purpose: the pre-login settings endpoint is public, and putting a
+          // cash figure on it would let anyone polling the URL learn how much
+          // is in the till.
+          const sd = await shiftRes.json().catch(() => null);
+          if (sd?.success && sd.joined && sd.shift) {
+            const float = Number(sd.shift.startingCash || 0);
+            const opener = sd.shift.openedBy || sd.shift.cashierName || 'someone';
+            const openedAt = sd.shift.shiftStart ? new Date(sd.shift.shiftStart).toLocaleString() : '';
+            const NL = String.fromCharCode(10);
+            ui.alert([
+              'You have joined the open drawer.',
+              '',
+              `Opened by ${opener}${openedAt ? ` on ${openedAt}` : ''}.`,
+              `Cash handed over: ₱${float.toLocaleString('en-PH', { minimumFractionDigits: 2 })}.`,
+              '',
+              'Count the till if that does not match what is in front of you, and tell a manager before ringing anything.',
+            ].join(NL));
+          }
+        }
       } catch {
         console.warn('Shift start request failed - shift may not be recorded.');
       }
@@ -944,11 +1038,46 @@ export default function AdminDashboard() {
   const handleLogout = () => {
     // Owner/superadmin isn't a tracked cashier - no register count required; log out directly.
     if (activeAdmin?.role === 'superadmin') { performLogout(); return; }
+    // On a shared drawer the till belongs to the shop, not to whoever happens
+    // to be leaving. Counting it here would close it under everyone still
+    // selling, and hand this one person a variance for a day's takings they
+    // did not ring.
+    //
+    // The exception is the last person out. Nobody can be certain who that is -
+    // someone logging out may be back in five minutes - so the closest honest
+    // signal is used: if no other staff member is still clocked in, offer the
+    // count. Offer, not force; skipping it leaves the drawer open for the next
+    // person, and the Cash Drawer panel can always close it deliberately.
+    if (sharedDrawer) {
+      (async () => {
+        try {
+          const r = await apiFetch('/api/shifts/current');
+          const d = await r.json();
+          const stillOpen = d?.success && d.shift;
+          const alone = stillOpen && (d.shift.othersOnDuty || 0) === 0;
+          if (alone && await ui.confirm('Nobody else is clocked in. Count the drawer and close it before you go?')) {
+            setDrawerHandover(false);
+            setShiftReconcile({ actualCash: '', result: null });
+            setShiftEndModal(true);
+            return;
+          }
+        } catch { /* a failed check must never trap someone in the app */ }
+        performLogout();
+      })();
+      return;
+    }
+    setDrawerHandover(false);
     setShiftReconcile({ actualCash: '', result: null });
     setShiftEndModal(true);
   };
 
   // Called when cashier confirms End-of-Shift cash count
+  // `handover` closes the session and immediately reopens one with the counted
+  // cash as its float - the money is still physically in the till, so the next
+  // person should not have to retype the figure they just watched being
+  // counted. Set when the count was started from the Cash Drawer panel rather
+  // than from logging out.
+  const [drawerHandover, setDrawerHandover] = useState(false);
   const handleEndShift = async () => {
     // Use denomination total if bills were counted; fall back to manual entry
     const actual = denomTotal > 0 ? denomTotal : parseFloat(shiftReconcile.actualCash);
@@ -957,7 +1086,7 @@ export default function AdminDashboard() {
     try {
       const res = await apiFetch('/api/shifts/end', {
         method: 'POST',
-        body: JSON.stringify({ actualCash: actual })
+        body: JSON.stringify({ actualCash: actual, handover: drawerHandover })
       });
       const data = await res.json();
       if (data.success) {
@@ -6063,6 +6192,51 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       if (d.success) { fetchSettings(); setRequireCashShift(next); }
     } catch (err) { console.error('toggleRequireCashShift', err); }
   };
+  // ── Shared cash drawer settings ────────────────────────────────────────────
+  // Off by default, so an existing deployment keeps per-cashier floats until
+  // someone deliberately switches. Only ever affects the NEXT session opened -
+  // shifts already open or closed are untouched, and each carries its own
+  // `scope` so the two models stay tellable apart in history forever.
+  const toggleSharedDrawer = async () => {
+    const next = systemSettings.sharedDrawer !== true;
+    if (next && !await ui.confirm('Switch to one shared cash drawer? The float is declared once by whoever opens up, everyone rings on the same till, and one person counts at close. Shifts already open are left as they are.')) return;
+    try {
+      const res = await apiFetch('/api/settings/sharedDrawer', { method: 'PATCH', body: JSON.stringify({ value: next }) });
+      const d = await res.json();
+      if (d.success) { fetchSettings(); setSharedDrawer(next); }
+    } catch (err) { console.error('toggleSharedDrawer', err); }
+  };
+  const toggleBlindClose = async () => {
+    const next = systemSettings.blindClose === false;
+    if (!next && !await ui.confirm('Show the expected total before counting? Whoever counts will be able to read the figure they are meant to reach, so a short drawer can quietly be written up as an exact one.')) return;
+    try {
+      const res = await apiFetch('/api/settings/blindClose', { method: 'PATCH', body: JSON.stringify({ value: next }) });
+      const d = await res.json(); if (d.success) fetchSettings();
+    } catch (err) { console.error('toggleBlindClose', err); }
+  };
+  // Maximum hours a drawer session may stay open; 0 turns the boundary off.
+  // A duration rather than a midnight cut-off, because a 24/7 counter is at its
+  // busiest at the hour a clock-time close would fire.
+  const saveDrawerMaxHours = async (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0 || n > 168) return ui.alert('Enter between 0 hours (off) and 168 (one week).');
+    try {
+      const res = await apiFetch('/api/settings/drawerMaxHours', { method: 'PATCH', body: JSON.stringify({ value: n }) });
+      const d = await res.json();
+      if (d.success) fetchSettings(); else ui.alert(d.error || 'Could not save that.');
+    } catch (err) { console.error('saveDrawerMaxHours', err); }
+  };
+
+  const saveVarianceThreshold = async (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return ui.alert('The threshold must be zero or a positive amount.');
+    try {
+      const res = await apiFetch('/api/settings/varianceThreshold', { method: 'PATCH', body: JSON.stringify({ value: n }) });
+      const d = await res.json();
+      if (d.success) fetchSettings(); else ui.alert(d.error || 'Could not save that.');
+    } catch (err) { console.error('saveVarianceThreshold', err); }
+  };
+
   // Superadmin-only: enable/disable the automatic midnight close & day archive.
   const toggleAutoClose = async () => {
     const next = systemSettings.autoCloseEnabled === false; // currently off → turning on
@@ -7440,7 +7614,14 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-fg placeholder-white/20 text-center py-3 rounded-xl outline-none mb-3 font-bold tracking-widest transition"
             required
           />
-          {requireCashShift && (
+          {/* The till is already open, so this login joins it. Saying so beats
+              silently removing a field somebody expected to fill in. */}
+          {joiningOpenDrawer && (
+            <p className="text-[11px] text-fg/70 font-bold text-center mb-2">
+              The drawer is already open - you will join the current session. No starting cash needed.
+            </p>
+          )}
+          {requireCashShift && !joiningOpenDrawer && (
             <div className="relative mb-1">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-text font-black text-lg pointer-events-none">₱</span>
               <input
@@ -7750,6 +7931,15 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             action). Hidden for superadmin: they're already exempt from the
             clock-in gate below (owners aren't tracked for attendance), so
             this button was just nagging someone the app never blocks. */}
+        {/* Only where the shop runs one shared till. Its own button because
+            closing the drawer is a decision, not a side effect of logging out. */}
+        {sharedDrawer && (
+          <button onClick={openCashDrawer}
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm text-fg/70 hover:text-fg hover:bg-white/5 transition">
+            <Banknote size={15} />
+            Cash Drawer
+          </button>
+        )}
         {!isSuperAdmin && (
           <button onClick={handleClockButton}
             className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-white bg-amber-500 hover:bg-amber-600' : clockStatus.isClockedIn ? 'text-white bg-accent hover:bg-accent/80' : 'text-fg/70 hover:text-fg hover:bg-white/5'}`}>
@@ -7848,6 +8038,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     // Needed by the command palette: module-gated screens must not be offered
     // when the module is off, and the Admin Panel is a route, not a tab.
     moduleOn, navigate,
+    // Shared cash drawer
+    sharedDrawer, cashDrawerModal, setCashDrawerModal, drawerSession, drawerBusy,
+    drawerMovement, setDrawerMovement, submitDrawerMovement, openShiftEndFromDrawer, openCashDrawer,
     // ── Core helpers ────────────────────────────────────────────────────────
     fetchOrders, fetchData, fetchERPData, fetchEODData,
     // Pause socket-triggered auto-refreshes during a long sequential bulk op
@@ -7865,6 +8058,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     shiftEndModal, setShiftEndModal, shiftEndLoading, shiftReconcile, setShiftReconcile,
     handleEndShift, handleBankDeposit, performLogout, startingCash,
     requireCashShift, toggleRequireCashShift,
+    toggleSharedDrawer, toggleBlindClose, saveVarianceThreshold, saveDrawerMaxHours,
     depositAmount, setDepositAmount, depositError, setDepositError, depositLoading,
     // ── Stock history / import / partial fulfil modals ──────────────────────
     submitImport, loadPdfLibs, addLogoToPDF, pdfMoney,
@@ -8392,6 +8586,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
       {/* ── CHANGE PASSWORD MODAL ─────────────────────────────────────────── */}
       <ChangePasswordModal />
+      <CashDrawerModal />
 
       <SpoilageModal />
 
