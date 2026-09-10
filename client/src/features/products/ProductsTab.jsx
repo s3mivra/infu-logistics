@@ -225,6 +225,12 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
 // ── ProductsTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function ProductsTab({ ctx }) {
+  // "Not from inventory" ingredient - filtered water is the case this exists
+  // for. Measured and recorded so the drink is repeatable, but nothing to
+  // deduct: you never bought units of it, so nothing can run out.
+  const [nonStockName, setNonStockName] = React.useState('');
+  const [nonStockUnit, setNonStockUnit] = React.useState('ml');
+
   // Destructure everything from ctx
   // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
@@ -235,7 +241,7 @@ export default function ProductsTab({ ctx }) {
   const {
     API_URL, AUDIT_PAGE_SIZE, BIZ_NAME, COMP_REASON_LABELS, FRONTEND_URL,
     HIST_PAGE_SIZE, POS_PER_PAGE, SHIFT_HIST_PAGE_SIZE, accountingItemsPerPage, accountingPage,
-    activeAdmin, activeInventoryItem, activeTab, addInventory, addMaterialToRecipe,
+    activeAdmin, activeInventoryItem, activeTab, addInventory, addMaterialToRecipe, addNonStockToRecipe,
     addOnForm, addSize, analyticsData, analyticsLoading, apiFetch,
     applyComplimentary, applyDiscount, applyItemDiscount, arOutstanding, archiveDay,
     archivedOrders, auditCancelPage, auditCompPage, auditDiscPage, auditFilter,
@@ -1269,6 +1275,23 @@ export default function ProductsTab({ ctx }) {
                           })
                         )}
                       </div>
+                    </div>
+                    <div className="mt-3 pt-3 border-t border-white/40">
+                      <div className="text-[10px] text-white uppercase font-black mb-2 tracking-widest">Not from inventory</div>
+                      <div className="flex flex-wrap gap-2">
+                        <input type="text" value={nonStockName} placeholder="e.g. Filtered Water"
+                          onChange={e => setNonStockName(e.target.value)}
+                          className="flex-1 min-w-[130px] bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-brand-text font-bold outline-none" />
+                        <input type="text" value={nonStockUnit} placeholder="ml"
+                          onChange={e => setNonStockUnit(e.target.value)}
+                          className="w-16 bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-brand-text font-bold outline-none" />
+                        <button type="button"
+                          onClick={() => { addNonStockToRecipe?.(nonStockName, nonStockUnit, null); setNonStockName(''); }}
+                          className="bg-accent text-on-brand px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-accent/90 transition">
+                          Add
+                        </button>
+                      </div>
+                      <p className="text-[9px] text-white/80 mt-1.5 leading-snug">Recorded on the recipe, never deducted from stock and never costed &mdash; for things you do not buy by the unit, like filtered water.</p>
                     </div>
                   </div>
                 </div>

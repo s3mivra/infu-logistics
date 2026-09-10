@@ -5,6 +5,7 @@ import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
 import ExpensesPage from './ExpensesPage';
 import * as ui from '../../shared/ui';
+import { LEDGER_TAB_GROUPS, REPORT_TAB_GROUPS } from '../dashboard/navRegistry';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
@@ -107,6 +108,7 @@ export default function LedgerTab({ ctx }) {
     advCancelModal, setAdvCancelModal, submitCancelAdvance,
     obEntry, obRows, setObRows, obMeta, setObMeta, obBusy, fetchOpeningBalances, submitOpeningBalances, balanceSheetAccounts,
     exportBusy, downloadDataset, downloadAccountBalances,
+    exportAllBusy, downloadAllExports,
     profitByCategory, fetchProfitByCategory,
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
@@ -159,6 +161,18 @@ export default function LedgerTab({ ctx }) {
     discountPercent: 0, affectInventory: false, isComplimentary: false,
   });
   const [bdCart, setBdCart] = useState([]); // [{ productId, productCode, name, price, quantity }]
+  // Tenancy Health scans every businessType-carrying collection (~two dozen),
+  // and nearly all of them are clean, so defects are what the panel shows by
+  // default and the full list is opt-in.
+  const [tenancyShowAll, setTenancyShowAll] = useState(false);
+  // Export All defaults to the current month: the journal export is capped at
+  // one quarter server-side, so a wide-open default would just fail.
+  const [exportAllRange, setExportAllRange] = useState(() => {
+    const now = new Date();
+    const iso = (d) => d.toISOString().slice(0, 10);
+    return { start: iso(new Date(now.getFullYear(), now.getMonth(), 1)), end: iso(now) };
+  });
+  const [exportAllReports, setExportAllReports] = useState(true);
   const [bdSearch, setBdSearch] = useState('');
   const [bdBusy, setBdBusy] = useState(false);
 
@@ -978,64 +992,8 @@ export default function LedgerTab({ ctx }) {
     } finally { setBillImporting(false); }
   };
 
-  const REPORT_TAB_GROUPS = [
-    ['Sales', [
-      ['salessummary',  'Sales Summary',          BarChart3],
-      ['salesline',     'Sales Line Items',       FileText],
-      ['payments',      'By Payment',             Banknote],
-      ['profitcat',     'By Category',            BarChart2],
-      ['menueng',       'Menu Engineering',       TrendingUp],
-    ]],
-    ['Receivable', [
-      ['arreport',      'A/R Report',             Truck],
-      ['collections',   'Collections',            Banknote],
-    ]],
-    ['Payable', [
-      ['apreport',      'A/P Report',             Receipt],
-      ['supplierpay',   'Supplier Payments',      Banknote],
-      ['checkvouchers', 'Check Vouchers',         Receipt],
-      ['advances',      'Advances',               HandCoins],
-    ]],
-    ['Financials', [
-      ['pnlmonthly',    'Monthly P&L',            BarChart3],
-      ['bsmonthly',     'Monthly Balance Sheet',  BarChart3],
-      ['percentagetax', 'Percentage Tax',         FileText],
-    ]],
-    ['Operations', [
-      ['pricelog',      'Price Changes',          TrendingUp],
-      ['variance',      'Cashier Variance',       Users],
-      ['commissions',   'Commissions',            Users],
-    ]],
-  ];
-  const LEDGER_TAB_GROUPS = [
-    ['Books', [
-      ['journal',    'General Ledger',      FileText],
-      ['trial',      'Trial Balance',       BarChart2],
-      ['pnl',        'P&L',                 TrendingUp],
-      ['balance',    'Balance Sheet',       BarChart2],
-    ]],
-    ['AR & AP', [
-      ['araap',      'AR & AP',             Truck],
-      ['bills',      'Bills (AP)',          Receipt],
-    ]],
-    ['Cash Out', [
-      ['revolving',  'Revolving Funds',     RefreshCw],
-      ['expenses',   'Expenses',            Receipt],
-    ]],
-    ['Setup', [
-      ['accperiods', 'Accounts & Periods',  Settings],
-      ['backdate',   'Backdate Sale',       Clock],
-      // Always visible to any staff - the server itself scopes what comes back:
-      // without requisitions.view you only ever see your OWN filed slips (so you
-      // can check "is my request still pending"), not anyone else's. Approve or
-      // Reject still require requisitions.approve regardless.
-      ['approvals',  'Approvals',           ShieldCheck],
-      // Tenancy Health had a panel but no way in - the only diagnostic that
-      // answers "is every document stamped with this server's business type",
-      // which is what a mis-scoped report looks like from the outside.
-      ['tenancy',    'Tenancy Health',      ShieldCheck],
-    ]],
-  ];
+  // The sub-nav lists live in navRegistry.js, shared with the Ctrl+K palette so
+  // a page added here is searchable without being registered a second time.
 
   return (
         <div className="space-y-4">
@@ -1195,7 +1153,7 @@ export default function LedgerTab({ ctx }) {
                 </div>
               </div>
               {tb?.error ? (
-                <p className="text-red-300 text-sm font-bold">{tb.error}</p>
+                <p className="text-danger text-sm font-bold">{tb.error}</p>
               ) : !tb ? (
                 <p className="text-fg/70 text-sm">Loading…</p>
               ) : (
@@ -1380,7 +1338,7 @@ export default function LedgerTab({ ctx }) {
                 {ptax && !ptax.error && <button onClick={exportPercentageTaxPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
               </div>
               {ptax?.error ? (
-                <p className="text-red-300 text-sm font-bold">{ptax.error}</p>
+                <p className="text-danger text-sm font-bold">{ptax.error}</p>
               ) : ptax && !ptax.error ? (
                 <div className="space-y-1">
                   <p className="text-fg/70 text-xs mb-2">{ptax.orders} completed order(s) in range.</p>
@@ -1389,7 +1347,7 @@ export default function LedgerTab({ ctx }) {
                     return (
                       <div key={i} className={`flex justify-between text-sm py-2 ${isTax ? 'border-t-2 border-white/20 mt-1 font-black text-fg' : 'border-b border-white/5'}`}>
                         <span className={isTax ? '' : 'text-fg/60'}>{l.label}</span>
-                        <span className={`font-mono font-bold ${isTax ? 'text-brand-text' : l.amount < 0 ? 'text-red-300' : 'text-fg/85'}`}>{money2(l.amount)}</span>
+                        <span className={`font-mono font-bold ${isTax ? 'text-brand-text' : l.amount < 0 ? 'text-danger' : 'text-fg/85'}`}>{money2(l.amount)}</span>
                       </div>
                     );
                   })}
@@ -1623,7 +1581,7 @@ export default function LedgerTab({ ctx }) {
                         disabled={jeForm.lines.length <= 2}
                         title={jeForm.lines.length <= 2 ? 'A journal entry needs at least 2 lines' : 'Remove this line'}
                         onClick={() => setJeForm({ ...jeForm, lines: jeForm.lines.filter((_, i) => i !== idx) })}
-                        className="text-white hover:text-red-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                        className="text-white hover:text-danger disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <X size={14} />
                       </button>
@@ -5794,6 +5752,52 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
+          {ledgerSubTab === 'exportall' && (
+            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-6">
+              <div>
+                <h3 className="text-xl font-black text-fg flex items-center gap-2"><Download size={18} className="text-brand-text"/> Export All</h3>
+                <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Every dataset in one workbook, plus the ledger reports</p>
+              </div>
+
+              <div className="bg-page-bg border border-white/10 rounded-xl p-4 space-y-3">
+                <p className="text-[10px] uppercase tracking-widest text-fg/70 font-bold">Date range</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input type="date" value={exportAllRange.start}
+                    onChange={e => setExportAllRange(r => ({ ...r, start: e.target.value }))}
+                    className="bg-surface border border-white/15 text-fg rounded-lg px-3 py-2 text-sm" />
+                  <span className="text-fg/70 text-xs font-bold">to</span>
+                  <input type="date" value={exportAllRange.end}
+                    onChange={e => setExportAllRange(r => ({ ...r, end: e.target.value }))}
+                    className="bg-surface border border-white/15 text-fg rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <p className="text-[10px] text-fg/70">Applies only to the date-filtered datasets (orders, journal entries, stock movements, expenses). Everything else exports in full.</p>
+                <label className="flex items-center gap-2 text-xs font-bold text-fg/70 cursor-pointer">
+                  <input type="checkbox" checked={exportAllReports} onChange={e => setExportAllReports(e.target.checked)} />
+                  Also download the Journal and Audit Log reports as separate CSV files
+                </label>
+              </div>
+
+              <div className="text-xs text-fg/70 space-y-1">
+                <p className="text-[10px] uppercase tracking-widest font-bold text-fg/70">What you get</p>
+                <p><span className="text-fg font-bold">full-export-&lt;date&gt;.xlsx</span> - one sheet per dataset, led by a Contents sheet listing row counts and flagging any sheet that hit the row cap, plus Account Balances and Valid Values for reference.</p>
+                {exportAllReports && (
+                  <p><span className="text-fg font-bold">journal_*.csv</span> and <span className="text-fg font-bold">audit_log_*.csv</span> - streamed row-per-line ledgers, kept as their own files. The journal is capped at one quarter per export.</p>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={() => downloadAllExports?.({ start: exportAllRange.start, end: exportAllRange.end, includeReports: exportAllReports })}
+                  disabled={!!exportAllBusy || !exportAllRange.start || !exportAllRange.end}
+                  className="bg-brand text-on-brand font-black px-4 py-2 rounded-lg uppercase tracking-widest text-xs hover:bg-brand/90 transition disabled:opacity-50">
+                  {exportAllBusy ? 'Working…' : 'Export Everything'}
+                </button>
+                {exportAllBusy && <span className="text-xs text-fg/70 italic">{exportAllBusy}</span>}
+              </div>
+              <p className="text-[10px] text-fg/70">Large exports take a while - each dataset is fetched in turn. Your browser may ask permission to save several files.</p>
+            </div>
+          )}
+
           {ledgerSubTab === 'tenancy' && (
             <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-6">
               <div>
@@ -5809,7 +5813,9 @@ export default function LedgerTab({ ctx }) {
                     <p className="text-[10px] uppercase tracking-widest text-fg/70 font-bold mb-1">Current Business Type</p>
                     <p className="text-2xl font-black text-brand-text">{tenancyReport.currentBusinessType}</p>
                     <p className={`mt-2 text-[10px] uppercase tracking-widest font-black ${tenancyReport.isClean ? 'text-success' : 'text-warning'}`}>
-                      {tenancyReport.isClean ? '✓ Clean - all docs stamped' : '⚠ Some docs need attention'}
+                      {tenancyReport.isClean
+                        ? `✓ Clean - all docs stamped across ${tenancyReport.scannedCollections} collections`
+                        : `⚠ ${(tenancyReport.flagged || []).length} of ${tenancyReport.scannedCollections} collections need attention`}
                     </p>
                   </div>
                   <div className="overflow-x-auto">
@@ -5822,26 +5828,32 @@ export default function LedgerTab({ ctx }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {tenancyReport.rows.map(r => (
+                        {(tenancyShowAll ? tenancyReport.rows : (tenancyReport.flagged || [])).map(r => (
                           <tr key={r.collection} className="border-b border-white/5">
                             <td className="py-2 text-fg font-bold">{r.collection}</td>
                             <td className={`py-2 text-right font-mono tabular-nums ${r.missingBusinessType > 0 ? 'text-warning font-black' : 'text-fg/70'}`}>{r.missingBusinessType.toLocaleString()}</td>
                             <td className={`py-2 text-right font-mono tabular-nums ${r.otherBusinessType > 0 ? 'text-danger font-black' : 'text-fg/70'}`}>{r.otherBusinessType.toLocaleString()}</td>
                           </tr>
                         ))}
+                        {!tenancyShowAll && (tenancyReport.flagged || []).length === 0 && (
+                          <tr><td colSpan={3} className="py-3 text-fg/70 italic">No mis-stamped or unstamped docs in any scanned collection.</td></tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button onClick={fetchTenancyReport} className="bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold px-4 py-2 rounded-lg uppercase tracking-widest text-xs transition">
                       Refresh
+                    </button>
+                    <button onClick={() => setTenancyShowAll(v => !v)} className="bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold px-4 py-2 rounded-lg uppercase tracking-widest text-xs transition">
+                      {tenancyShowAll ? 'Show Only Issues' : `Show All ${tenancyReport.scannedCollections} Collections`}
                     </button>
                     <button onClick={runTenancyRebackfill} disabled={tenancyBusy}
                       className="bg-brand text-on-brand font-black px-4 py-2 rounded-lg uppercase tracking-widest text-xs hover:bg-brand/90 transition disabled:opacity-50">
                       {tenancyBusy ? 'Running…' : 'Run Re-Backfill'}
                     </button>
                   </div>
-                  <p className="text-[10px] text-fg/70">"Other businessType" docs belong to another tenant on the same database. Re-backfill only stamps docs missing the field - it never overwrites an existing different value.</p>
+                  <p className="text-[10px] text-fg/70">Scans every collection carrying a business type. "Other businessType" means the doc is stamped for the other deployment (fb vs log) - hub partners are separate databases and never write here, so a foreign stamp is a mis-stamp. Re-backfill only stamps docs missing the field - it never overwrites an existing different value.</p>
                 </>
               )}
             </div>

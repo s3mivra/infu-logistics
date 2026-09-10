@@ -114,7 +114,7 @@ export default function EditInventoryModal() {
               <input type="date" value={editInvForm.expiryDate} onChange={e => set({ expiryDate: e.target.value })}
                 className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold outline-none focus:border-brand/60" />
               {editInvForm.expiryDate && (
-                <button type="button" onClick={() => set({ expiryDate: '' })} className="text-[10px] text-danger hover:text-red-300 mt-1 font-bold uppercase">Clear expiry</button>
+                <button type="button" onClick={() => set({ expiryDate: '' })} className="text-[10px] text-danger hover:text-danger mt-1 font-bold uppercase">Clear expiry</button>
               )}
             </div>
             <div>

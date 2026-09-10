@@ -290,42 +290,77 @@ app.get('/api/admin/storage-overview', verifyToken, requireSuperAdmin, async (re
   }
 });
 
+// ── TENANCY HEALTH ───────────────────────────────────────────────────────────
+// Every doc in this deployment should carry this server's BUSINESS_TYPE, so the
+// report is: per collection, how many docs are missing the stamp, and how many
+// carry the *other* type. Both are defects - partners linked through the hub are
+// separate deployments with their own databases (partnerSlug is a MONGO_URI
+// slug, not a businessType), so a foreign stamp here is always a mis-stamp, not
+// a tenant sharing the database.
+//
+// The collection list is derived from the Mongoose registry rather than typed
+// out, because the hand-written version covered 4 of the 24 schemas that carry
+// the field while the screen claimed to check every doc.
+//
+// EXCLUDED: `Tenant.businessType` describes what kind of business that tenant
+// row *is* - a `log` tenant listed on an `fb` server is correct data, not a
+// mis-stamp - so scanning it would report permanent phantom defects.
+const TENANCY_SCAN_EXCLUDE = new Set(['Tenant']);
+
+const tenancyModels = () =>
+  Object.entries(mongoose.models)
+    .filter(([name, model]) =>
+      !TENANCY_SCAN_EXCLUDE.has(name) && !!model.schema.path('businessType'))
+    .map(([name, model]) => ({ name, model }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+const TENANCY_MISSING = { $or: [{ businessType: { $exists: false } }, { businessType: null }, { businessType: '' }] };
+
 app.get('/api/admin/tenancy-report', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const missing = { $or: [{ businessType: { $exists: false } }, { businessType: null }, { businessType: '' }] };
     const wrong = { businessType: { $exists: true, $nin: [null, '', BUSINESS_TYPE] } };
-    const [oMiss, oWrong, pMiss, pWrong, iMiss, iWrong, cMiss, cWrong] = await Promise.all([
-      Order.countDocuments(missing),     Order.countDocuments(wrong),
-      Product.countDocuments(missing),   Product.countDocuments(wrong),
-      Inventory.countDocuments(missing), Inventory.countDocuments(wrong),
-      Category.countDocuments(missing),  Category.countDocuments(wrong),
-    ]);
-    const rows = [
-      { collection: 'Order',     missingBusinessType: oMiss, otherBusinessType: oWrong },
-      { collection: 'Product',   missingBusinessType: pMiss, otherBusinessType: pWrong },
-      { collection: 'Inventory', missingBusinessType: iMiss, otherBusinessType: iWrong },
-      { collection: 'Category',  missingBusinessType: cMiss, otherBusinessType: cWrong },
-    ];
+    const models = tenancyModels();
+    const rows = await Promise.all(models.map(async ({ name, model }) => {
+      // A collection that was never created counts as zero rather than failing
+      // the whole report - a fresh deployment has most of these empty.
+      const [missingBusinessType, otherBusinessType] = await Promise.all([
+        model.countDocuments(TENANCY_MISSING).catch(() => 0),
+        model.countDocuments(wrong).catch(() => 0),
+      ]);
+      return { collection: name, missingBusinessType, otherBusinessType };
+    }));
     const isClean = rows.every(r => r.missingBusinessType === 0 && r.otherBusinessType === 0);
-    res.json({ success: true, currentBusinessType: BUSINESS_TYPE, rows, isClean });
+    // Clean collections are the common case and crowd out the defects, so the
+    // UI is told which rows matter instead of having to re-derive it.
+    const flagged = rows.filter(r => r.missingBusinessType > 0 || r.otherBusinessType > 0);
+    res.json({
+      success: true,
+      currentBusinessType: BUSINESS_TYPE,
+      rows,
+      flagged,
+      scannedCollections: rows.length,
+      isClean,
+    });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
-// Manual re-run of the stamping migration. Idempotent - only touches docs missing the field.
+// Manual re-run of the stamping migration. Idempotent - only touches docs
+// missing the field, and never overwrites an existing (even wrong) value.
+// Scans the same derived model list as the report, so the button can actually
+// clear what the report shows.
 app.post('/api/admin/tenancy-rebackfill', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const flt = { $or: [{ businessType: { $exists: false } }, { businessType: null }, { businessType: '' }] };
-    const [bO, bP, bI, bC] = await Promise.all([
-      Order.updateMany(flt, { $set: { businessType: BUSINESS_TYPE } }),
-      Product.updateMany(flt, { $set: { businessType: BUSINESS_TYPE } }),
-      Inventory.updateMany(flt, { $set: { businessType: BUSINESS_TYPE } }),
-      Category.updateMany(flt, { $set: { businessType: BUSINESS_TYPE } }),
-    ]);
-    const stamped = { Order: bO.modifiedCount, Product: bP.modifiedCount, Inventory: bI.modifiedCount, Category: bC.modifiedCount };
-    await logAudit(req, { action: 'rebackfill', entity: 'Tenancy', entityId: BUSINESS_TYPE, after: stamped });
-    res.json({ success: true, stamped });
+    const models = tenancyModels();
+    const results = await Promise.all(models.map(async ({ name, model }) => {
+      const r = await model.updateMany(TENANCY_MISSING, { $set: { businessType: BUSINESS_TYPE } }).catch(() => ({ modifiedCount: 0 }));
+      return [name, r.modifiedCount || 0];
+    }));
+    const stamped = Object.fromEntries(results);
+    const totalStamped = results.reduce((s, [, n]) => s + n, 0);
+    await logAudit(req, { action: 'rebackfill', entity: 'Tenancy', entityId: BUSINESS_TYPE, after: { stamped, totalStamped } });
+    res.json({ success: true, stamped, totalStamped });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

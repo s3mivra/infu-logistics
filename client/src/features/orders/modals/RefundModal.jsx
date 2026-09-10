@@ -207,7 +207,7 @@ export default function RefundModal() {
           {mode === 'items' && <InventoryActionPicker hint='Applies only to the selected items/qty above - the rest of the order is untouched.' />}
           {mode === 'exchange' && <InventoryActionPicker hint="Applies to the returned item(s) above, if any. The replacement is always deducted from stock like a normal sale." />}
 
-          <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-2 text-xs text-red-300">
+          <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-2 text-xs text-danger">
             {mode === 'full' && <>⚠ Returns ₱{(parseFloat(refundForm.refundAmount)||refundModal.total).toFixed(2)} to customer. Creates reversal journal entry. Cannot be undone.</>}
             {mode === 'items' && <>⚠ Refunds the selected item(s)/qty only. Creates a reversal journal entry. Cannot be undone, but the rest of the order can still be refunded later.</>}
             {mode === 'exchange' && <>⚠ Processes the return and the replacement together as one entry on this order. Cannot be undone.</>}

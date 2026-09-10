@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Factory, Plus, Trash2, Check, X, Package, Clock, ClipboardCheck } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
@@ -24,7 +24,7 @@ const FULFILLMENT_CLS = {
 // shape already used for petty-cash and procurement, just for stock instead
 // of money. See server/features/production.js for the approval-time logic.
 export default function ProductionTab({ ctx }) {
-  const { apiFetch, inventory = [], stockCategories = [], stockLocations = [], can, fetchERPData, itemDisplay, exportProductionOrdersPDF } = ctx;
+  const { apiFetch, inventory = [], products = [], stockCategories = [], stockLocations = [], can, fetchERPData, itemDisplay, exportProductionOrdersPDF } = ctx;
   const canApprove = can('production.approve');
 
   // Quantities throughout this tab are entered in PIECES, same convention as
@@ -88,6 +88,80 @@ export default function ProductionTab({ ctx }) {
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // ── BUILD FROM RECIPE ──────────────────────────────────────────────────────
+  // A cafe makes Spanish Milk, Breve Milk and cold brew from bought-in stock,
+  // and the recipe for each is already on file - it is what the POS deducts
+  // when one is sold. Filing the batch that PRODUCES them, though, meant
+  // re-picking every ingredient and re-typing every quantity, every time. The
+  // two drift apart the moment a recipe is edited, and nothing warns you.
+  //
+  // So: pick the thing you are making, say how many, and the materials are the
+  // recipe scaled by that number. Still fully editable afterwards - a real
+  // batch is not always exactly the book quantity.
+  const [recipeProductId, setRecipeProductId] = useState('');
+  const [recipeBatchQty, setRecipeBatchQty] = useState('');
+
+  // Only products whose recipe actually points at stock are offerable: a
+  // recipe line with no invId names an ingredient the system cannot deduct,
+  // so it could not drive a production order.
+  const recipeProducts = useMemo(
+    () => (products || [])
+      .filter(p => (p.baseRecipe || []).some(r => r.invId && Number(r.qty) > 0))
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))),
+    [products],
+  );
+
+  const applyRecipe = () => {
+    const product = recipeProducts.find(p => p._id === recipeProductId);
+    const batch = parseFloat(recipeBatchQty);
+    if (!product) return ui.alert('Choose what you are making.');
+    if (!batch || batch <= 0) return ui.alert('Enter how many you are making.');
+
+    const lines = [];
+    const missing = [];
+    const short = [];
+    for (const r of product.baseRecipe || []) {
+      if (!r.invId || !(Number(r.qty) > 0)) continue;
+      const item = inventory.find(i => String(i._id) === String(r.invId));
+      // A recipe can outlive the stock item it names - say so rather than
+      // silently filing a batch that is missing an ingredient.
+      if (!item) { missing.push(r.name || 'an unnamed ingredient'); continue; }
+      const { perPiece, label, onHandPieces } = pieceInfo(item);
+      // Recipe qty is base units per ONE unit of the product, so the batch
+      // multiplies it directly.
+      const baseQty = +(Number(r.qty) * batch).toFixed(6);
+      const pieces = +(baseQty / perPiece).toFixed(4);
+      if (pieces > onHandPieces + 1e-6) short.push(`${item.itemName} (need ${pieces} ${label}, have ${onHandPieces})`);
+      lines.push({ invId: item._id, name: item.itemName, pieceLabel: label, pieces, baseQty });
+    }
+
+    if (lines.length === 0) return ui.alert(`No usable recipe lines on ${product.name}. Check that its ingredients are linked to stock items.`);
+
+    setMaterials(lines);
+
+    // Point the output at the matching stock item where one exists, so the
+    // batch adds to it rather than creating a duplicate under the same name.
+    const outItem = inventory.find(i => String(i.itemName || '').trim().toUpperCase() === String(product.name || '').trim().toUpperCase());
+    if (outItem) {
+      setOutputType('existing');
+      setOutputInvId(outItem._id);
+    } else {
+      setOutputType('new');
+      setOutputName(product.name || '');
+    }
+    setOutputQty(String(batch));
+
+    // Shortages warn but do not block. Filing is a REQUEST - approval is what
+    // actually consumes stock, and the server re-checks availability then. A
+    // batch is often planned before the delivery it depends on lands.
+    const notes = [];
+    if (missing.length) notes.push(`Skipped ${missing.length} ingredient(s) no longer in stock records: ${missing.join(', ')}.`);
+    if (short.length) notes.push(`Not enough on hand for: ${short.join('; ')}. You can still file this - stock is checked again at approval.`);
+    if (notes.length) ui.alert(notes.join(String.fromCharCode(10, 10)));
+  };
+
+
+
   const outputItem = outputType === 'existing' ? inventory.find(i => i._id === outputInvId) : null;
   const outputPieceInfo = pieceInfo(outputItem);
 
@@ -109,6 +183,7 @@ export default function ProductionTab({ ctx }) {
     setOutputType('existing'); setOutputInvId(''); setOutputName(''); setOutputUnit('pcs'); setOutputPackSize(''); setOutputQty('');
     setOutputStockCategory(''); setOutputStockLocation(''); setOutputExpiryDate('');
     setProductionDate(new Date().toISOString().slice(0, 10)); setNotes('');
+    setRecipeProductId(''); setRecipeBatchQty('');
   };
 
   const addMaterial = () => {
@@ -259,6 +334,36 @@ export default function ProductionTab({ ctx }) {
       {formOpen && (
         <div className="bg-surface border border-white/10 rounded-xl p-5 mb-6 space-y-5">
           {/* Materials */}
+          {/* Build from a recipe - the fast path. The recipe is already on
+              file (it is what the POS deducts on a sale); this fills the
+              materials from it instead of re-typing them each batch. */}
+          {recipeProducts.length > 0 && (
+            <div className="bg-page-bg border border-white/10 rounded-lg p-3">
+              <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-2">Build from a recipe</p>
+              <div className="flex flex-wrap gap-2">
+                <select value={recipeProductId} onChange={e => setRecipeProductId(e.target.value)}
+                  className="flex-1 min-w-[200px] bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent">
+                  <option value="">What are you making?</option>
+                  {recipeProducts.map(p => (
+                    <option key={p._id} value={p._id}>
+                      {p.name} ({(p.baseRecipe || []).filter(r => r.invId).length} ingredients)
+                    </option>
+                  ))}
+                </select>
+                <input type="number" min="0" step="0.01" placeholder="How many"
+                  value={recipeBatchQty} onChange={e => setRecipeBatchQty(e.target.value)}
+                  className="w-28 bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+                <button onClick={applyRecipe}
+                  className="bg-accent text-on-brand px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-accent/90 transition">
+                  Fill materials
+                </button>
+              </div>
+              <p className="text-[10px] text-fg/70 mt-2">
+                Replaces the material list below with the recipe multiplied by the batch size, and points the output at the matching stock item. Edit anything afterwards &mdash; a real batch is not always the book quantity.
+              </p>
+            </div>
+          )}
+
           <div>
             <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-2">Materials consumed</p>
             <div className="flex flex-wrap gap-2 mb-2">

@@ -857,11 +857,11 @@ export default function InventoryTab({ ctx }) {
                               </div>
                             </td>
 
-                            <td className={`py-4 text-right font-black font-mono text-sm w-[12.5%] align-top pt-6 tabular-nums ${variance < 0 ? 'text-red-300' : variance > 0 ? 'text-success' : 'text-white'}`}>
+                            <td className={`py-4 text-right font-black font-mono text-sm w-[12.5%] align-top pt-6 tabular-nums ${variance < 0 ? 'text-danger' : variance > 0 ? 'text-success' : 'text-white'}`}>
                               {hasInput ? `${varianceDisplay > 0 ? '+' : ''}${fmt(varianceDisplay)} ${eff.unit}` : '-'}
                             </td>
 
-                            <td className={`py-4 text-right font-mono text-xs pr-2 font-bold w-[12.5%] align-top pt-6 ${financialImpact < 0 ? 'text-red-300' : financialImpact > 0 ? 'text-success' : 'text-white'}`}>
+                            <td className={`py-4 text-right font-mono text-xs pr-2 font-bold w-[12.5%] align-top pt-6 ${financialImpact < 0 ? 'text-danger' : financialImpact > 0 ? 'text-success' : 'text-white'}`}>
                               {hasInput ? formattedImpact : '-'}
                             </td>
                           </tr>
@@ -980,7 +980,7 @@ export default function InventoryTab({ ctx }) {
                         const minDisp = d.isPacked ? Math.ceil(rawMin).toLocaleString() : rawMin.toLocaleString(undefined, { maximumFractionDigits: 3 });
                         return (
                           <div key={i._id} className="flex justify-between text-xs">
-                            <span className="text-red-300 font-bold">{i.itemName}</span>
+                            <span className="text-danger font-bold">{i.itemName}</span>
                             <span className="text-danger font-mono tabular-nums">{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? 'pcs' : d.unit} (min: {minDisp})</span>
                           </div>
                         );
@@ -994,11 +994,11 @@ export default function InventoryTab({ ctx }) {
                       <Clock size={13} /> Expiry Watch
                       <span className="ml-auto text-[9px] bg-orange-500 text-white px-1.5 py-0.5 rounded">{watch.length}</span>
                     </h4>
-                    {watch.filter(i => i._days < 0).length > 0 && <p className="text-[10px] text-red-300 font-black uppercase tracking-wider">{watch.filter(i => i._days < 0).length} Expired - log spoilage</p>}
+                    {watch.filter(i => i._days < 0).length > 0 && <p className="text-[10px] text-danger font-black uppercase tracking-wider">{watch.filter(i => i._days < 0).length} Expired - log spoilage</p>}
                     <div className="space-y-1 max-h-36 overflow-y-auto custom-scrollbar">
                       {watch.map((i, wi) => {
                         const txt = i._days < 0 ? `${Math.abs(i._days)}d ago` : i._days === 0 ? 'today' : `in ${i._days}d`;
-                        const color = i._days < 0 ? 'text-red-300' : i._days <= (i.expiryWarnDays || 7) ? 'text-yellow-300' : 'text-orange-300/80';
+                        const color = i._days < 0 ? 'text-danger' : i._days <= (i.expiryWarnDays || 7) ? 'text-yellow-300' : 'text-orange-300/80';
                         const d = itemDisplay(i);
                         return (
                           <div key={`${i._id}-${i.expiryDate}-${wi}`} className="flex justify-between text-xs items-center">

@@ -26,6 +26,7 @@ import RevolvingFundReplenishModal from '../ledger/modals/RevolvingFundReplenish
 import RefundModal from '../orders/modals/RefundModal';
 import NotificationBell from '../notifications/NotificationBell';
 import CommandPalette from './CommandPalette';
+import { visibleNavGroups, navLabel } from './navRegistry';
 import ShiftEndModal from '../shifts/modals/ShiftEndModal';
 import StockHistoryModal from '../inventory/modals/StockHistoryModal';
 import PriceHistoryModal from '../pricing/modals/PriceHistoryModal';
@@ -722,6 +723,21 @@ export default function AdminDashboard() {
   const toggleOpsTools = () => setOpsToolsOpen(v => {
     const next = !v;
     try { localStorage.setItem('semivra_ops_tools_open', next ? '1' : '0'); } catch { /* ignore */ }
+    return next;
+  });
+
+  // Which sidebar groups are folded shut. The nav carries up to eighteen
+  // destinations in one scrolling column, so the half you are not working in
+  // spends the day pushing the half you are below the fold. Folding is
+  // per-group and remembered per browser; nothing is hidden by default, so an
+  // untouched install looks exactly as it did.
+  const [collapsedNavGroups, setCollapsedNavGroups] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('semivra_nav_collapsed') || '[]')); } catch { return new Set(); }
+  });
+  const toggleNavGroup = (key) => setCollapsedNavGroups(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    try { localStorage.setItem('semivra_nav_collapsed', JSON.stringify([...next])); } catch { /* ignore */ }
     return next;
   });
 
@@ -1527,7 +1543,15 @@ export default function AdminDashboard() {
     try {
       const r = await apiFetch('/api/admin/tenancy-rebackfill', { method: 'POST' });
       const d = await r.json();
-      if (d.success) { await fetchTenancyReport(); ui.alert(`Stamped: Orders ${d.stamped.Order}, Products ${d.stamped.Product}, Inventory ${d.stamped.Inventory}, Categories ${d.stamped.Category}.`); }
+      if (d.success) {
+        await fetchTenancyReport();
+        // The backfill now sweeps every businessType-carrying collection, so the
+        // summary lists what it actually touched instead of a fixed four.
+        const touched = Object.entries(d.stamped || {}).filter(([, n]) => n > 0);
+        ui.alert(touched.length
+          ? `Stamped ${d.totalStamped} doc(s): ${touched.map(([k, n]) => `${k} ${n}`).join(", ")}.`
+          : "Nothing to stamp - every doc already carries a business type.");
+      }
       else ui.alert(d.error || 'Re-backfill failed.');
     } finally { setTenancyBusy(false); }
   };
@@ -3826,6 +3850,19 @@ const updateStatus = async (orderId, newStatus) => {
     };
     socket.on('newOrder', onUsed);
 
+    // Scanned, but not yet ordered. The phone tells the server the moment the
+    // menu page opens; until this existed the code stayed on screen through the
+    // whole time the customer was browsing, so anyone else who scanned it
+    // landed on the SAME session - and whichever of them ordered first closed
+    // it under the other. The customer who scanned keeps their session (a new
+    // code is minted under a new table id and leaves theirs alone), so this
+    // only changes what the next person sees.
+    const onClaimed = (payload) => {
+      if (payload?.table !== autoTableId) return;
+      replace('That code was just scanned.');
+    };
+    socket.on('qrSessionClaimed', onClaimed);
+
     // The ten-minute lapse. Checked once a second so the countdown on screen
     // is honest, which is the point of showing it at all.
     const tick = setInterval(() => {
@@ -3834,7 +3871,7 @@ const updateStatus = async (orderId, newStatus) => {
       }
     }, 1000);
 
-    return () => { socket.off('newOrder', onUsed); clearInterval(tick); };
+    return () => { socket.off('newOrder', onUsed); socket.off('qrSessionClaimed', onClaimed); clearInterval(tick); };
     // handleShowQR is stable enough for this - it only reads apiFetch - and
     // adding it would re-subscribe on every render of a 6,000-line component.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4873,6 +4910,120 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     finally { setExportBusy(''); }
   };
 
+  // ── EXPORT EVERYTHING ──────────────────────────────────────────────────────
+  // One action for "give me all of it". Tabular data becomes a single workbook
+  // with a sheet per dataset, because a dozen separate .xlsx files in a
+  // downloads folder is not an archive anyone can use. The two streamed CSV
+  // reports (journal, audit log) stay separate files - they are row-per-line
+  // ledgers with their own date semantics, and folding them into the workbook
+  // would misrepresent them as just another dataset.
+  //
+  // A Contents sheet leads, listing every dataset with its row count and
+  // whether it hit the server's row cap. Without it a truncated sheet looks
+  // exactly like a complete one.
+  const [exportAllBusy, setExportAllBusy] = useState('');
+  const downloadAllExports = async ({ start, end, includeReports = true } = {}) => {
+    setExportAllBusy('Reading dataset list…');
+    try {
+      const listRes = await apiFetch('/api/export/datasets');
+      const list = await listRes.json();
+      if (!list.success) { ui.alert(list.error || 'Could not read the dataset list.'); return; }
+
+      const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+      const contents = [['Dataset', 'Rows', 'Date filtered', 'Complete?']];
+      const failed = [];
+      // Excel caps sheet names at 31 chars and forbids duplicates.
+      const used = new Set();
+      const sheetName = (label) => {
+                const base = (String(label).replace(/[^\w -]+/g, '-').trim() || 'Sheet').slice(0, 31);
+        let name = base, n = 2;
+        while (used.has(name)) { name = `${base.slice(0, 28)}-${n++}`; }
+        used.add(name);
+        return name;
+      };
+
+      for (const ds of list.datasets) {
+        setExportAllBusy(`Exporting ${ds.label}…`);
+        try {
+          const qs = new URLSearchParams();
+          if (ds.dateFiltered && start) qs.set('start', start);
+          if (ds.dateFiltered && end) qs.set('end', end);
+          const res = await apiFetch(`/api/export/${ds.key}${qs.toString() ? `?${qs}` : ''}`);
+          const d = await res.json();
+          if (!d.success) { failed.push([ds.label, d.error || 'export failed']); continue; }
+          XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([d.columns, ...d.rows]), sheetName(d.label || ds.label));
+          contents.push([
+            d.label || ds.label,
+            d.rows.length,
+            ds.dateFiltered ? `${start || 'all'} to ${end || 'all'}` : 'no',
+            d.truncated ? `TRUNCATED at ${d.limit}` : 'complete',
+          ]);
+        } catch (err) {
+          failed.push([ds.label, 'network error']);
+        }
+      }
+
+      if (!used.size) { ui.alert('Nothing was exported - every dataset failed.'); return; }
+
+      // Reference sheets, same as a template carries, so codes in the data can
+      // be read without a second download.
+      setExportAllBusy('Adding reference sheets…');
+      try {
+        const acc = await (await apiFetch('/api/export/account-balances')).json();
+        if (acc.success) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([acc.columns, ...acc.rows]), sheetName('Account Balances'));
+      } catch { /* the archive is still usable without it */ }
+      try {
+        const vv = await (await apiFetch('/api/export/valid-values')).json();
+        if (vv.success) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([vv.columns, ...vv.rows]), sheetName('Valid Values'));
+      } catch { /* the archive is still usable without it */ }
+
+      if (failed.length) { contents.push([], ['Not exported', 'Reason'], ...failed); }
+      contents.push([], ['Generated', new Date().toLocaleString()]);
+      // Prepended, so Contents is the sheet the workbook opens on.
+      const wbContents = XLSX.utils.aoa_to_sheet(contents);
+      wb.SheetNames.unshift('Contents');
+      wb.Sheets.Contents = wbContents;
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `full-export-${stamp}.xlsx`);
+
+      // ── The streamed CSV reports, as their own files ────────────────────────
+      if (includeReports && start && end) {
+        const saveCsv = async (url, filename) => {
+          const res = await apiFetch(url);
+          const text = await res.text();
+          // A failed stream returns JSON, not CSV - saving that as .csv hands
+          // the user a file full of an error message.
+          if (text.trim().startsWith('{')) {
+            let msg = 'export failed';
+            try { msg = JSON.parse(text).error || msg; } catch { /* keep default */ }
+            failed.push([filename, msg]);
+            return;
+          }
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(a.href);
+        };
+        setExportAllBusy('Exporting journal…');
+        // The journal export caps the range at one quarter server-side.
+        await saveCsv(`/api/journal/export?start=${start}&end=${end}`, `journal_${start}_to_${end}.csv`);
+        setExportAllBusy('Exporting audit log…');
+        await saveCsv(`/api/audit-logs/export?start=${start}&end=${end}`, `audit_log_${start}_to_${end}.csv`);
+      }
+
+      const truncated = contents.filter(r => String(r[3] || '').startsWith('TRUNCATED')).length;
+      const notes = [];
+      if (truncated) notes.push(`${truncated} dataset(s) hit the row cap - narrow the date range for the rest`);
+      if (failed.length) notes.push(`${failed.length} item(s) could not be exported (listed on the Contents sheet)`);
+      ui.alert(notes.length ? `Export finished. ${notes.join('. ')}.` : 'Export finished.');
+    } catch (err) {
+      ui.alert('Export failed.');
+    } finally { setExportAllBusy(''); }
+  };
+
   // ── MENU BACKUP / RESTORE ──────────────────────────────────────────────────
   // Download the whole menu as one file, and load it back later. Different from
   // the spreadsheet import above: that reads a sheet a human typed, this is an
@@ -5542,6 +5693,19 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     if (sizeIndex === null) { setFormData({ ...formData, baseRecipe: [...(formData.baseRecipe || []), material] });
     } else { const newSizes = [...formData.sizes]; newSizes[sizeIndex].recipe = [...(newSizes[sizeIndex].recipe || []), material]; setFormData({ ...formData, sizes: newSizes }); }
   };
+  // A recipe line that is measured but is not stock - filtered water is the
+  // case this exists for. It has no inventory item behind it, so nothing is
+  // deducted when the drink sells and nothing can run out; it is there so the
+  // recipe records how much goes in, which is what makes two baristas produce
+  // the same cold brew. Cost stays at zero deliberately: see the zRecipe note
+  // in server.js for why an invented cost has nowhere to balance.
+  const addNonStockToRecipe = (name, unit, sizeIndex = null) => {
+    const clean = String(name || '').trim();
+    if (!clean) return;
+    const material = { name: clean, qty: 0, cost: 0, unit: String(unit || '').trim() || 'ml', packBase: 1, nonStock: true };
+    if (sizeIndex === null) { setFormData({ ...formData, baseRecipe: [...(formData.baseRecipe || []), material] });
+    } else { const newSizes = [...formData.sizes]; newSizes[sizeIndex].recipe = [...(newSizes[sizeIndex].recipe || []), material]; setFormData({ ...formData, sizes: newSizes }); }
+  };
   const updateMaterialQty = (val, matIndex, sizeIndex = null) => {
     const newQty = parseFloat(val) || 0;
     if (sizeIndex === null) { const newRecipe = [...formData.baseRecipe]; newRecipe[matIndex].qty = newQty; setFormData({ ...formData, baseRecipe: newRecipe });
@@ -5551,13 +5715,28 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     if (sizeIndex === null) { setFormData({ ...formData, baseRecipe: formData.baseRecipe.filter((_, i) => i !== matIndex) });
     } else { const newSizes = [...formData.sizes]; newSizes[sizeIndex].recipe = newSizes[sizeIndex].recipe.filter((_, i) => i !== matIndex); setFormData({ ...formData, sizes: newSizes }); }
   };
-  const calcRecipeCost = (recipe) => (recipe || []).reduce((sum, item) => sum + (item.qty * item.cost), 0);
+  // Non-stock lines are excluded, so this preview matches the COGS the server
+  // actually books (orders.js skips any ingredient that resolves to no
+  // inventory item). Counting them here would quietly overstate the cost of
+  // every drink containing one.
+  const calcRecipeCost = (recipe) => (recipe || [])
+    .filter(item => !item.nonStock)
+    .reduce((sum, item) => sum + (item.qty * item.cost), 0);
 
   // --- ESTIMATED MENU STOCK CALCULATOR ---
   const getEstimatedStock = (recipe) => {
     if (!recipe || recipe.length === 0) return null;
+    // A recipe made only of non-stock ingredients has nothing that can run out,
+    // so it has no stock estimate at all - `null` (not applicable), the same
+    // answer an empty recipe gives. Reporting 0 would read as "cannot make any".
+    if ((recipe || []).every(m => m.nonStock)) return null;
     let minServings = Infinity;
     for (let mat of recipe) {
+      // A non-stock ingredient never limits how many you can make - there is no
+      // quantity of it to run out. Without this skip it would fall through to
+      // the `return 0` below and report every drink containing filtered water
+      // as unmakeable.
+      if (mat.nonStock) continue;
       const invItem = inventory.find(i => i._id === mat.invId);
       if (!invItem) return 0;
       let possibleServings;
@@ -7452,98 +7631,79 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       </div>
 
       {/* Nav */}
-      <nav className="p-3 space-y-0.5 md:flex-1 md:min-h-0 md:overflow-y-auto custom-scrollbar">
-        <p className="text-[9px] text-fg/80 font-bold uppercase tracking-[0.2em] px-4 pt-2 pb-1">Operations</p>
-        {[
-          { id: 'orders', label: 'Orders & POS', icon: ShoppingCart, perm: 'orders.view' },
-          { id: 'inventory', label: 'Inventory & Stock', icon: Package, perm: 'inventory.view' },
-          { id: 'hub', label: 'Hub', icon: Network, perm: 'inventory.view' },
-          // Raw materials -> finished item, approval-gated. Was logistics-only,
-          // which hid it from exactly the business that needs it most: a cafe
-          // makes its own Spanish Milk, Breve Milk, Biscoff Based and cold brew
-          // from bought-in stock, and those in turn are recipe materials. With
-          // no way to file a batch they sat at zero cost and zero quantity, so
-          // every drink built on them was uncostable and unsellable.
-          { id: 'production', label: 'Production', icon: Factory, perm: 'inventory.view' },
-          { id: 'procurement', label: 'Procurement', icon: Truck, perm: 'procurement.view' },
-          { id: 'clients', label: 'Clients', icon: Users, perm: 'orders.view' },
-          // Prices asked for, not sales made. Lives beside Clients because
-          // that is who asks, and nothing on it touches the books.
-          { id: 'quotations', label: 'Quotations', icon: FileText, perm: 'orders.view' },
-          { id: 'products', label: 'Menu Setup', icon: ChefHat, perm: 'products.view' },
-        ].filter(({ perm }) => can(perm)).map(({ id, label, icon: Icon }) => {
-          // invBadgeCount and invBadgeColor are hoisted to component scope above
-          const badgeCount = id === 'inventory' ? invBadgeCount : 0;
-          const badgeColor = id === 'inventory' ? invBadgeColor : 'bg-red-500';
-          return (
-            <button key={id}
-              onClick={() => { setActiveTab(id); setNavMode('libellus'); closeFn?.(); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
-                ${activeTab === id && navMode === 'libellus' ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}
-            >
-              <Icon size={16} />
-              {label}
-              {badgeCount > 0 && <span className={`ml-auto text-[9px] text-fg font-black px-1.5 py-0.5 rounded-full ${badgeColor}`}>{badgeCount}</span>}
-              {activeTab === id && navMode === 'libellus' && badgeCount === 0 && <ChevronRight size={13} className="ml-auto" />}
-            </button>
-          );
-        })}
+      {/* Nav - rendered from navRegistry.js, which the Ctrl+K palette reads
+          too. They were separate hand-written lists before and had drifted:
+          three destinations were missing from search, and Production carried
+          the wrong nav mode there, so jumping to it left nothing highlighted.
 
-        {(() => {
-          // Management tabs gated by granular permission. History still depends on
-          // superadmin-only server routes, so it stays superadmin-only; Pricing
-          // Control's only server calls (/api/discounts - promos, PWD/Senior
-          // discounts) are requireStaff, not superadmin-only, so it's gated on
-          // products.manage like Menu Setup - a hardcoded isSuperAdmin here made
-          // any non-superadmin staff (managers, custom roles with products.manage)
-          // unable to find or CRUD promos/discounts at all.
-          // Default sub-tab for each grouped tab, set on click so switching between
-          // Ledger and Reports (both rendered by LedgerTab) lands on the right page.
-          const mgmtItems = [
-            { id: 'analytics', label: 'Analytics',       icon: BarChart3,   show: can('analytics.view') },
-            { id: 'reports',   label: 'Reports',         icon: BarChart2,   show: can('reports.view'), sub: 'salessummary' },
-            { id: 'ledger',    label: 'Ledger',          icon: FileText,    show: can('accounting.view'), sub: 'journal' },
-            { id: 'pricing',   label: 'Pricing Control', icon: DollarSign,  show: can('products.manage') },
-            { id: 'history',   label: 'Shifts & Cash',   icon: Clock,       show: isSuperAdmin },
-            { id: 'audit',     label: 'Audit Report',    icon: ShieldCheck, show: can('audit.view') },
-            { id: 'fixedassets', label: 'Fixed Assets',  icon: Building2,   show: can('accounting.view') },
-            // Optional modules: each appears only where the business has
-            // switched it on. A cafe on percentage tax withholds nothing, and
-            // a screen it can never use is noise on the sidebar.
-            { id: 'bankrec',   label: 'Bank Reconciliation', icon: Landmark, show: can('accounting.view') && moduleOn('bankReconciliation') },
-            { id: 'wht',       label: 'Withholding Tax', icon: Receipt,   show: can('accounting.view') && moduleOn('withholdingTax') },
-            { id: 'payroll',   label: 'Payroll',         icon: Users,     show: can('accounting.view') && moduleOn('payroll') },
-          ].filter(it => it.show);
-          if (mgmtItems.length === 0 && !isSuperAdmin) return null;
-          return (
-            <>
-              <p className="text-[9px] text-fg/80 font-bold uppercase tracking-[0.2em] px-4 pt-4 pb-1">Management</p>
-              {mgmtItems.map(({ id, label, icon: Icon, sub }) => (
-                <button key={id}
-                  onClick={() => { setActiveTab(id); setNavMode('negotium'); closeFn?.(); if (id === 'analytics') { fetchAnalytics(); fetchTurnover(); fetchSalesTrend(); } if (sub) setLedgerSubTab(sub); }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
-                    ${activeTab === id && navMode === 'negotium' ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}
+          Each group folds shut. Eighteen destinations in one scrolling column
+          meant the half you were not using pushed the half you were below the
+          fold; folding the other one gives that space back. Nothing starts
+          folded, so this looks unchanged until someone chooses otherwise. */}
+      <nav className="p-3 space-y-0.5 md:flex-1 md:min-h-0 md:overflow-y-auto custom-scrollbar">
+        {visibleNavGroups({ can, isSuperAdmin, moduleOn, businessType: BUSINESS_TYPE })
+          .filter(g => g.key !== 'system')
+          .map(group => {
+            const collapsed = collapsedNavGroups.has(group.key);
+            // Never let a fold hide where you actually are.
+            const holdsActive = group.items.some(it => it.id === activeTab && navMode === group.mode);
+            const hidden = collapsed && !holdsActive;
+            return (
+              <div key={group.key}>
+                <button
+                  onClick={() => toggleNavGroup(group.key)}
+                  aria-expanded={!hidden}
+                  className="w-full flex items-center gap-1.5 px-4 pt-4 pb-1 text-[9px] text-fg/80 font-bold uppercase tracking-[0.2em] hover:text-fg transition"
                 >
-                  <Icon size={16} />
-                  {label}
-                  {activeTab === id && navMode === 'negotium' && <ChevronRight size={13} className="ml-auto" />}
+                  {hidden ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+                  {group.label}
+                  {hidden && <span className="ml-auto text-[9px] text-fg/60 font-black normal-case tracking-normal">{group.items.length}</span>}
                 </button>
-              ))}
-              {isSuperAdmin && (
-                // Superadmin-only deep link - the Admin Panel page (user, client-
-                // account, role & tenant management), outside the tabbed dashboard.
-                <button key="admin-panel"
-                  onClick={() => { closeFn?.(); navigate('/admin/admin-panel'); }}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm text-fg/75 hover:text-fg hover:bg-white/5"
-                >
-                  <ShieldCheck size={16} className="text-brand-text shrink-0" />
-                  <span className="whitespace-nowrap">Admin Panel</span>
-                  <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand border border-brand text-on-brand px-1.5 py-0.5 rounded">Super</span>
-                </button>
-              )}
-            </>
-          );
-        })()}
+                {!hidden && group.items.map(item => {
+                  const Icon = item.icon;
+                  const label = navLabel(item, BUSINESS_TYPE);
+                  const active = activeTab === item.id && navMode === group.mode;
+                  // invBadgeCount and invBadgeColor are hoisted to component scope above
+                  const badgeCount = item.id === 'inventory' ? invBadgeCount : 0;
+                  const badgeColor = item.id === 'inventory' ? invBadgeColor : 'bg-red-500';
+                  return (
+                    <button key={item.id}
+                      onClick={() => {
+                        closeFn?.();
+                        if (item.route) { navigate(item.route); return; }
+                        setActiveTab(item.id);
+                        setNavMode(group.mode);
+                        if (item.sub) setLedgerSubTab(item.sub);
+                        if (item.id === 'analytics') { fetchAnalytics(); fetchTurnover(); fetchSalesTrend(); }
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
+                        ${active ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}
+                    >
+                      <Icon size={16} />
+                      {label}
+                      {badgeCount > 0 && <span className={`ml-auto text-[9px] text-fg font-black px-1.5 py-0.5 rounded-full ${badgeColor}`}>{badgeCount}</span>}
+                      {active && badgeCount === 0 && <ChevronRight size={13} className="ml-auto" />}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+
+        {isSuperAdmin && (
+          // Superadmin-only deep link - the Admin Panel page (user, client-
+          // account, role & tenant management), outside the tabbed dashboard.
+          // Declared in navRegistry's `system` group so search can find it;
+          // rendered here rather than in a group because of its own styling.
+          <button key="admin-panel"
+            onClick={() => { closeFn?.(); navigate('/admin/admin-panel'); }}
+            className="w-full flex items-center gap-3 px-4 py-3 mt-1 rounded-xl text-left transition font-bold text-sm text-fg/75 hover:text-fg hover:bg-white/5"
+          >
+            <ShieldCheck size={16} className="text-brand-text shrink-0" />
+            <span className="whitespace-nowrap">Admin Panel</span>
+            <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand border border-brand text-on-brand px-1.5 py-0.5 rounded">Super</span>
+          </button>
+        )}
       </nav>
 
       {/* Bottom */}
@@ -7651,6 +7811,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     // ── Shared data ─────────────────────────────────────────────────────────
     orders, archivedOrders, products, categories, inventory, discounts, globalAddOns,
     users, activeAdmin, isSuperAdmin, canVoidRefund, can,
+    // Needed by the command palette: module-gated screens must not be offered
+    // when the module is off, and the Admin Panel is a route, not a tab.
+    moduleOn, navigate,
     // ── Core helpers ────────────────────────────────────────────────────────
     fetchOrders, fetchData, fetchERPData, fetchEODData,
     // Pause socket-triggered auto-refreshes during a long sequential bulk op
@@ -7766,6 +7929,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     menuImportModal, setMenuImportModal, menuImportRows, setMenuImportRows, menuImportSubmitting,
     menuBackupBusy, downloadMenuBackup, menuRestoreModal, setMenuRestoreModal, openMenuRestore, runMenuRestore,
     exportBusy, downloadDataset, downloadAccountBalances,
+    exportAllBusy, downloadAllExports,
     downloadMenuImportTemplate, parseMenuImportFile, submitMenuImport,
     rsFile, rsPreview, rsBusy, rsCreateMissing, setRsCreateMissing, openRecipeSheet, closeRecipeSheet, submitRecipeSheet,
     rsDrafts, rsPrices, setRsPrice,
@@ -7884,7 +8048,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     // ── Order Notes ─────────────────────────────────────────────────────────
     posNotes, setPosNotes,
     deleteProduct, deleteCategory, deleteAddOn,
-    updateSize, removeSize, addSize, addMaterialToRecipe, updateMaterialQty, removeMaterial,
+    updateSize, removeSize, addSize, addMaterialToRecipe, addNonStockToRecipe, updateMaterialQty, removeMaterial,
     calcRecipeCost, getEstimatedStock, handleImageUpload,
     // ── Orders interactive handlers ──────────────────────────────────────────
     updateItemStatus, removeAddOnFromOrder,
@@ -8002,7 +8166,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
       {/* ── OFFLINE / SYNC BANNER ─────────────────────────────────────────── */}
       {(!isOnline || queuedCount > 0) && (
-        <div className={`mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border ${isOnline ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
+        <div className={`mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border ${isOnline ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-red-500/10 border-red-500/30 text-danger'}`}>
           {isOnline ? <CloudOff size={18} className="shrink-0" /> : <WifiOff size={18} className="shrink-0" />}
           <div className="flex-1 min-w-0">
             <p className="font-black text-sm leading-tight">

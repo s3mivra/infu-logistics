@@ -217,7 +217,13 @@ export default function CustomerMenu() {
         }
 
         // --- IF NO ACTIVE ORDER, CHECK THE SESSION NORMALLY ---
-        const heartbeatRes = await fetch(`${API_URL}/api/sessions/${session}/heartbeat`, { method: 'POST' });
+        // /claim rather than /heartbeat: it validates and extends the session
+        // exactly the same way, and additionally tells the server this code has
+        // now been opened - which is the only way a scan becomes visible to it.
+        // The counter swaps in a fresh code on the back of that, so the next
+        // customer never scans a code someone else is already ordering on.
+        // Reloading this page claims nothing twice, so staff are notified once.
+        const heartbeatRes = await fetch(`${API_URL}/api/sessions/${session}/claim`, { method: 'POST' });
         const heartbeatData = await heartbeatRes.json();
 
         if (heartbeatData.success) {

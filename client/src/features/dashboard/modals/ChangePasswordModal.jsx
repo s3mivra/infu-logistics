@@ -16,7 +16,7 @@ export default function ChangePasswordModal() {
               className="text-fg/70 hover:text-fg text-xl font-bold">✕</button>
           </div>
           {changePwError && (
-            <div className="bg-red-900/30 border border-red-500/40 rounded-xl px-4 py-3 text-xs text-red-300 font-bold">{changePwError}</div>
+            <div className="bg-red-900/30 border border-red-500/40 rounded-xl px-4 py-3 text-xs text-danger font-bold">{changePwError}</div>
           )}
           {[
             ['Current Password', 'currentPassword', 'Your existing password'],

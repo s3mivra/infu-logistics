@@ -15,7 +15,28 @@ const THEMES = ['default', 'yellow', 'ocean', 'light'];
 
 // Screens worth auditing: each puts a different mix of labels, table headers,
 // status chips and buttons on screen. An empty dashboard proves nothing.
-const SCREENS = ['Orders & POS', 'Inventory & Stock', 'Clients', 'Ledger', 'Quotations', 'Analytics', 'Reports'];
+const SCREENS = ['Orders & POS', 'Inventory & Stock', 'Clients', 'Ledger', 'Quotations', 'Analytics', 'Reports', 'Pricing Control', 'Production'];
+
+// Sub-pages worth auditing in their own right. The walk above only ever sees a
+// tab's DEFAULT page, so panels living behind a sub-nav were never measured -
+// which is how a screen can pass this audit and still be unreadable. Each entry
+// is [group tab, page tab]: the ledger sub-nav is two-level, and a page button
+// only exists while its own group is the active one.
+// Panels behind a collapsed form: the audit only sees what is rendered, so a
+// closed form means its contents are never measured. Each entry is the button
+// that opens one on that screen.
+const EXPANDERS = {
+  Production: ['New Production Order'],
+};
+
+const SUB_SCREENS = {
+  Ledger: [
+    ['Setup', 'Tenancy Health'],
+    ['Setup', 'Export All'],
+    ['Books', 'Trial Balance'],
+    ['Cash Out', 'Expenses'],
+  ],
+};
 
 // Runs inside the page. Returns every leaf text node that misses its WCAG AA
 // threshold, with enough detail to find it again.
@@ -100,6 +121,13 @@ for (const theme of THEMES) {
 
     const failures = [];
     let measured = 0;
+    // Counted so a sub-page that silently fails to open cannot be mistaken for
+    // one that opened and was clean - the same trap the `measured` guard below
+    // exists for.
+    let subScreensVisited = 0;
+    const subScreensExpected = Object.values(SUB_SCREENS).reduce((n, list) => n + list.length, 0);
+    let expandersOpened = 0;
+    const expandersExpected = Object.values(EXPANDERS).reduce((n, list) => n + list.length, 0);
 
     for (const screen of SCREENS) {
       const nav = page.getByRole('button', { name: new RegExp('^' + screen.replace(/[.*+?^${}()|[\]\\&]/g, '\\$&')) }).first();
@@ -111,12 +139,46 @@ for (const theme of THEMES) {
       const r = await page.evaluate(auditContrast);
       measured += r.measured;
       for (const b of r.bad) failures.push({ ...b, screen });
+
+      for (const opener of EXPANDERS[screen] || []) {
+        const btn = page.getByRole('button', { name: new RegExp('^' + opener) }).first();
+        if (await btn.count() === 0) continue;
+        await btn.click();
+        await page.waitForTimeout(400);
+        const opened = await page.evaluate(auditContrast);
+        expandersOpened += 1;
+        measured += opened.measured;
+        for (const b of opened.bad) failures.push({ ...b, screen: `${screen} › ${opener}` });
+      }
+
+      for (const [group, page_] of SUB_SCREENS[screen] || []) {
+        const groupBtn = page.getByRole('button', { name: new RegExp('^' + group + '$') }).first();
+        if (await groupBtn.count() === 0) continue;
+        await groupBtn.click();
+        const pageBtn = page.getByRole('button', { name: new RegExp('^' + page_) }).first();
+        if (await pageBtn.count() === 0) continue;
+        await pageBtn.click();
+        await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+        await page.waitForTimeout(600);
+        const sub = await page.evaluate(auditContrast);
+        subScreensVisited += 1;
+        measured += sub.measured;
+        for (const b of sub.bad) failures.push({ ...b, screen: `${screen} › ${page_}` });
+      }
     }
 
     // Guards against the failure mode this test is most prone to: passing
     // because it looked at nothing. If the walk stops finding text, that is a
     // broken test, not a readable app.
     expect(measured, 'the audit found no text to measure - the walk is broken').toBeGreaterThan(150);
+    expect(
+      subScreensVisited,
+      `only ${subScreensVisited} of ${subScreensExpected} sub-pages opened - a renamed tab makes this audit skip them silently`,
+    ).toBe(subScreensExpected);
+    expect(
+      expandersOpened,
+      `only ${expandersOpened} of ${expandersExpected} collapsed panels opened - their contents went unmeasured`,
+    ).toBe(expandersExpected);
 
     const worst = failures.sort((a, b) => a.ratio - b.ratio).slice(0, 15);
     expect(

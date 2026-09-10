@@ -97,6 +97,127 @@ export default function PricingTab({ ctx }) {
   // The append mini-form for a quantity break, shown while a per_product cell
   // is open - separate from the flat-price input above it, since the two
   // save independently (see saveTierBulkBreaks in AdminDashboard.jsx).
+  // ── AUTOMATIC DISCOUNTS (DiscountRule engine) ──────────────────────────────
+  // The server-side rule engine has had full CRUD and an /evaluate endpoint all
+  // along with nothing calling it. This is the missing UI.
+  //
+  // Distinct from the "Manual Discounts" panel beside the price table, which
+  // manages the flat `Discount` list a cashier picks by hand (PWD, Senior). A
+  // rule here fires on its own when its conditions hold - "spend over 1000 on a
+  // Tuesday". The engine only ever SUGGESTS a percent; it is applied through
+  // the order's existing discountPercent field, so the VAT and ledger maths are
+  // untouched by anything on this panel.
+  const [autoRules, setAutoRules] = useState(null);
+  const [autoRuleBusy, setAutoRuleBusy] = useState(false);
+  // The manual-discount form had no busy state at all: on a slow connection it
+  // looked like nothing had happened, so the natural response was to press Save
+  // again. The server now collapses those repeat presses, but the real fix is
+  // to stop inviting them - the button says what it is doing and cannot be
+  // pressed twice.
+  const [discountSaving, setDiscountSaving] = useState(false);
+  const [autoRuleForm, setAutoRuleForm] = useState({
+    name: '', percent: '', minSubtotal: '', daysOfWeek: [], startDate: '', endDate: '', segment: '', priority: 0,
+  });
+  const [autoRuleEditId, setAutoRuleEditId] = useState(null);
+  const DOW = [['Sun', 0], ['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4], ['Fri', 5], ['Sat', 6]];
+
+  const fetchAutoRules = React.useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/discount-rules');
+      const d = await r.json();
+      if (d.success) setAutoRules(d.rules || []);
+      else setAutoRules([]);
+    } catch { setAutoRules([]); }
+  }, [apiFetch]);
+
+  React.useEffect(() => { if (activeTab === 'pricing' && autoRules === null) fetchAutoRules(); }, [activeTab, autoRules, fetchAutoRules]);
+
+  const resetAutoRuleForm = () => {
+    setAutoRuleEditId(null);
+    setAutoRuleForm({ name: '', percent: '', minSubtotal: '', daysOfWeek: [], startDate: '', endDate: '', segment: '', priority: 0 });
+  };
+
+  const submitAutoRule = async (e) => {
+    e.preventDefault();
+    if (autoRuleBusy) return;
+    const name = autoRuleForm.name.trim();
+    const percent = Number(autoRuleForm.percent);
+    if (!name) return ui.alert('Give the rule a name.');
+    if (!(percent > 0 && percent <= 100)) return ui.alert('Percent must be between 1 and 100.');
+    if (autoRuleForm.startDate && autoRuleForm.endDate && autoRuleForm.startDate > autoRuleForm.endDate) {
+      return ui.alert('The end date cannot be before the start date.');
+    }
+    setAutoRuleBusy(true);
+    try {
+      const payload = {
+        name, percent,
+        minSubtotal: autoRuleForm.minSubtotal === '' ? null : Number(autoRuleForm.minSubtotal),
+        daysOfWeek: autoRuleForm.daysOfWeek,
+        startDate: autoRuleForm.startDate || null,
+        endDate: autoRuleForm.endDate || null,
+        segment: autoRuleForm.segment.trim(),
+        priority: Number(autoRuleForm.priority) || 0,
+      };
+      const r = autoRuleEditId
+        ? await apiFetch(`/api/discount-rules/${autoRuleEditId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        : await apiFetch('/api/discount-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const d = await r.json();
+      if (!d.success) return ui.alert(d.error || 'Could not save the rule.');
+      resetAutoRuleForm();
+      await fetchAutoRules();
+    } catch { ui.alert('Network error while saving the rule.'); }
+    finally { setAutoRuleBusy(false); }
+  };
+
+  const editAutoRule = (rule) => {
+    const iso = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
+    setAutoRuleEditId(rule._id);
+    setAutoRuleForm({
+      name: rule.name || '', percent: String(rule.percent ?? ''),
+      minSubtotal: rule.minSubtotal == null ? '' : String(rule.minSubtotal),
+      daysOfWeek: rule.daysOfWeek || [], startDate: iso(rule.startDate), endDate: iso(rule.endDate),
+      segment: rule.segment || '', priority: rule.priority || 0,
+    });
+  };
+
+  const toggleAutoRule = async (rule) => {
+    setAutoRuleBusy(true);
+    try {
+      await apiFetch(`/api/discount-rules/${rule._id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: !rule.active }),
+      });
+      await fetchAutoRules();
+    } catch { ui.alert('Network error.'); }
+    finally { setAutoRuleBusy(false); }
+  };
+
+  const deleteAutoRule = async (rule) => {
+    if (!(await ui.confirm(`Delete the automatic discount "${rule.name}"?`))) return;
+    setAutoRuleBusy(true);
+    try {
+      await apiFetch(`/api/discount-rules/${rule._id}`, { method: 'DELETE' });
+      if (autoRuleEditId === rule._id) resetAutoRuleForm();
+      await fetchAutoRules();
+    } catch { ui.alert('Network error.'); }
+    finally { setAutoRuleBusy(false); }
+  };
+
+  // Reads a rule back as the sentence it actually means. "10% - min 1000, Tue"
+  // is quicker to audit than a row of columns, and mistakes stand out.
+  const describeAutoRule = (r) => {
+    const bits = [];
+    if (r.minSubtotal != null) bits.push(`orders of ₱${Number(r.minSubtotal).toLocaleString()} or more`);
+    if (r.daysOfWeek?.length) bits.push(`on ${r.daysOfWeek.slice().sort().map(d => DOW[d]?.[0]).join(', ')}`);
+    if (r.segment) bits.push(`for ${r.segment} clients`);
+    if (r.startDate || r.endDate) {
+      const f = (d) => new Date(d).toLocaleDateString();
+      bits.push(r.startDate && r.endDate ? `between ${f(r.startDate)} and ${f(r.endDate)}`
+        : r.startDate ? `from ${f(r.startDate)}` : `until ${f(r.endDate)}`);
+    }
+    return bits.length ? bits.join(', ') : 'every order, always';
+  };
+
   const [newBreakQty, setNewBreakQty] = useState('');
   const [newBreakPrice, setNewBreakPrice] = useState('');
 
@@ -247,7 +368,7 @@ export default function PricingTab({ ctx }) {
                               onKeyDown={(e) => { if (e.key === 'Enter') handleInlinePriceUpdate(row.productId, row.sizeIndex); }}
                             />
                             <button onClick={() => handleInlinePriceUpdate(row.productId, row.sizeIndex)} className="text-success hover:text-green-300 flex items-center"><Check size={14} /></button>
-                            <button onClick={() => setEditPriceId(null)} className="text-danger hover:text-red-300">✕</button>
+                            <button onClick={() => setEditPriceId(null)} className="text-danger hover:text-danger">✕</button>
                           </div>
                         ) : (
                           <div className="inline-flex items-center gap-1.5">
@@ -284,7 +405,7 @@ export default function PricingTab({ ctx }) {
                               onKeyDown={(e) => { if (e.key === 'Enter') handleInlineCostUpdate(row.productId, row.sizeIndex); if (e.key === 'Escape') setEditCostId(null); }}
                             />
                             <button onClick={() => handleInlineCostUpdate(row.productId, row.sizeIndex)} className="text-success hover:text-green-300"><Check size={12} /></button>
-                            <button onClick={() => setEditCostId(null)} className="text-danger hover:text-red-300 text-[10px]">✕</button>
+                            <button onClick={() => setEditCostId(null)} className="text-danger hover:text-danger text-[10px]">✕</button>
                           </div>
                         ) : (
                           <div
@@ -384,7 +505,11 @@ export default function PricingTab({ ctx }) {
           {/* RIGHT COLUMN: Discount CRUD */}
           {/* Changed width breaks to lg:w-80 so it perfectly fits beside the table on tablets */}
           <div className="w-full lg:w-80 xl:w-96 bg-surface border border-white/10 rounded-xl p-6 min-h-[400px] lg:min-h-0 lg:h-full overflow-y-auto custom-scrollbar flex flex-col">
-            <h3 className="text-xl font-bold mb-4 text-brand-text border-b border-white/10 pb-2">Discount Rules</h3>
+            {/* Renamed from "Discount Rules": the conditional engine below is also
+                called discount rules, and two panels with one name in the same
+                screen is how the wrong one gets edited. */}
+            <h3 className="text-xl font-bold mb-4 text-brand-text border-b border-white/10 pb-2">Manual Discounts</h3>
+            <p className="text-[10px] text-fg/70 -mt-3 mb-4">Picked by hand at the register - PWD, Senior Citizen, staff.</p>
             
             <div className="flex-1 overflow-y-auto mb-6 pr-2 scrollbar-thin scrollbar-thumb-gray-700">
               <div className="space-y-3">
@@ -418,13 +543,17 @@ export default function PricingTab({ ctx }) {
               <form 
                 onSubmit={async (e) => {
                   e.preventDefault();
+                  if (discountSaving) return;
                   if (!discountForm.name || !discountForm.percentage) return;
-                  await apiFetch(`/api/discounts`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: discountForm.name, percentage: Number(discountForm.percentage) })
-                  });
-                  setDiscountForm({ name: '', percentage: '' });
-                  fetchData(); // Refresh the list
+                  setDiscountSaving(true);
+                  try {
+                    await apiFetch(`/api/discounts`, {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ name: discountForm.name, percentage: Number(discountForm.percentage) })
+                    });
+                    setDiscountForm({ name: '', percentage: '' });
+                    fetchData(); // Refresh the list
+                  } finally { setDiscountSaving(false); }
                 }} 
                 className="space-y-3"
               >
@@ -436,9 +565,162 @@ export default function PricingTab({ ctx }) {
                   <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Percentage (%)</label>
                   <input type="number" placeholder="e.g., 20" max="100" min="1" value={discountForm.percentage} onChange={(e) => setDiscountForm({...discountForm, percentage: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" required />
                 </div>
-                <button type="submit" className="w-full bg-accent text-on-brand font-black py-3 rounded hover:bg-brand-dark transition shadow-lg shadow-accent/20 uppercase tracking-wider text-xs">
-                  Save Rule
+                <button type="submit" disabled={discountSaving}
+                  className="w-full bg-accent text-on-brand font-black py-3 rounded hover:bg-brand-dark transition shadow-lg shadow-accent/20 uppercase tracking-wider text-xs disabled:opacity-50">
+                  {discountSaving ? 'Saving…' : 'Save Discount'}
                 </button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {/* AUTOMATIC DISCOUNTS - the conditional rule engine                */}
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        <div className="bg-surface border border-white/10 rounded-xl p-6 mt-6">
+          <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-4 flex-wrap gap-2">
+            <h3 className="text-xl font-bold text-brand-text flex items-center gap-2">
+              <Zap size={18} /> Automatic Discounts
+            </h3>
+            <button onClick={fetchAutoRules} className="text-[10px] bg-accent/10 hover:bg-accent/20 text-brand-text px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition shrink-0">
+              Refresh
+            </button>
+          </div>
+          <p className="text-[11px] text-fg/70 mb-4 leading-relaxed">
+            Rules that apply on their own when their conditions hold &mdash; spend &#8369;1,000 on a Tuesday, get 10% off.
+            Every condition you fill in must be true; the ones you leave blank are not checked.
+            Rules do not stack: the best single match wins, and <span className="text-fg font-bold">Priority</span> breaks a tie between equal percentages.
+            The discount is applied through the order&apos;s existing discount field, so nothing here changes how VAT or the ledger are computed.
+          </p>
+
+          <div className="flex flex-col lg:flex-row gap-6">
+            {/* EXISTING RULES */}
+            <div className="flex-1 min-w-0">
+              {autoRules === null ? (
+                <p className="text-sm text-fg/70 italic">Loading rules&hellip;</p>
+              ) : autoRules.length === 0 ? (
+                <div className="bg-page-bg border border-white/10 rounded-lg p-6 text-center">
+                  <p className="text-sm text-fg/70 italic">No automatic discounts yet.</p>
+                  <p className="text-[11px] text-fg/70 mt-1">Add one on the right and it starts applying at the register straight away.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {autoRules.map(r => (
+                    <div key={r._id} className={`bg-page-bg border rounded-lg p-3 flex items-start justify-between gap-3 ${r.active ? 'border-white/10' : 'border-white/5 opacity-60'}`}>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-bold text-fg text-sm truncate">{r.name}</p>
+                          <span className="text-xs font-mono font-black text-brand-text">{r.percent}% OFF</span>
+                          {!r.active && <span className="text-[9px] uppercase tracking-widest font-black text-warning border border-warning/40 rounded px-1.5 py-0.5">Paused</span>}
+                          {!!r.priority && <span className="text-[9px] uppercase tracking-widest font-bold text-fg/70">Priority {r.priority}</span>}
+                        </div>
+                        <p className="text-[11px] text-fg/70 mt-0.5">Applies to {describeAutoRule(r)}.</p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button onClick={() => editAutoRule(r)} disabled={autoRuleBusy}
+                          className="text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-2 py-1 rounded font-bold uppercase tracking-wider transition disabled:opacity-40">
+                          Edit
+                        </button>
+                        <button onClick={() => toggleAutoRule(r)} disabled={autoRuleBusy}
+                          title={r.active ? 'Stop this rule applying, without deleting it' : 'Start applying this rule again'}
+                          className="text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-2 py-1 rounded font-bold uppercase tracking-wider transition disabled:opacity-40">
+                          {r.active ? 'Pause' : 'Resume'}
+                        </button>
+                        <button onClick={() => deleteAutoRule(r)} disabled={autoRuleBusy}
+                          className="text-[10px] bg-danger/10 hover:bg-danger/20 text-danger px-2 py-1 rounded font-bold uppercase tracking-wider transition disabled:opacity-40">
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* ADD / EDIT */}
+            <div className="w-full lg:w-96 shrink-0 bg-page-bg border border-white/10 rounded-lg p-4">
+              <h4 className="text-sm font-bold text-fg uppercase tracking-wider mb-3">
+                {autoRuleEditId ? 'Edit Rule' : 'New Automatic Discount'}
+              </h4>
+              <form onSubmit={submitAutoRule} className="space-y-3">
+                <div>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Rule Name</label>
+                  <input type="text" required value={autoRuleForm.name} placeholder="e.g., Tuesday Bulk Deal"
+                    onChange={e => setAutoRuleForm(f => ({ ...f, name: e.target.value }))}
+                    className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Discount (%)</label>
+                    <input type="number" required min="1" max="100" value={autoRuleForm.percent} placeholder="10"
+                      onChange={e => setAutoRuleForm(f => ({ ...f, percent: e.target.value }))}
+                      className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Priority</label>
+                    <input type="number" value={autoRuleForm.priority} title="Higher wins when two rules grant the same percent"
+                      onChange={e => setAutoRuleForm(f => ({ ...f, priority: e.target.value }))}
+                      className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Minimum Order Subtotal</label>
+                  <input type="number" min="0" value={autoRuleForm.minSubtotal} placeholder="Leave blank for any amount"
+                    onChange={e => setAutoRuleForm(f => ({ ...f, minSubtotal: e.target.value }))}
+                    className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Days of the Week</label>
+                  <div className="flex flex-wrap gap-1">
+                    {DOW.map(([label, n]) => {
+                      const on = autoRuleForm.daysOfWeek.includes(n);
+                      return (
+                        <button type="button" key={n}
+                          onClick={() => setAutoRuleForm(f => ({
+                            ...f,
+                            daysOfWeek: on ? f.daysOfWeek.filter(d => d !== n) : [...f.daysOfWeek, n],
+                          }))}
+                          className={`text-[10px] px-2 py-1 rounded font-bold uppercase tracking-wider transition border ${on ? 'bg-accent text-on-brand border-accent' : 'border-white/15 text-fg/70 hover:text-fg hover:bg-white/5'}`}>
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-fg/70 mt-1">None selected means any day. Days are read in Manila time.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Starts</label>
+                    <input type="date" value={autoRuleForm.startDate}
+                      onChange={e => setAutoRuleForm(f => ({ ...f, startDate: e.target.value }))}
+                      className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Ends</label>
+                    <input type="date" value={autoRuleForm.endDate}
+                      onChange={e => setAutoRuleForm(f => ({ ...f, endDate: e.target.value }))}
+                      className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Client Segment</label>
+                  <input type="text" value={autoRuleForm.segment} placeholder="Leave blank for every buyer"
+                    onChange={e => setAutoRuleForm(f => ({ ...f, segment: e.target.value }))}
+                    className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
+                  <p className="text-[10px] text-fg/70 mt-1">Must match a tag on the client account exactly, including capitals.</p>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <button type="submit" disabled={autoRuleBusy}
+                    className="flex-1 bg-accent text-on-brand font-black py-2.5 rounded hover:bg-brand-dark transition uppercase tracking-wider text-xs disabled:opacity-50">
+                    {autoRuleBusy ? 'Saving…' : autoRuleEditId ? 'Save Changes' : 'Add Rule'}
+                  </button>
+                  {autoRuleEditId && (
+                    <button type="button" onClick={resetAutoRuleForm} disabled={autoRuleBusy}
+                      className="px-4 border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 rounded font-bold uppercase tracking-wider text-xs transition disabled:opacity-50">
+                      Cancel
+                    </button>
+                  )}
+                </div>
               </form>
             </div>
           </div>
@@ -563,7 +845,7 @@ export default function PricingTab({ ctx }) {
                                   </div>
                                 )}
                                 <button onClick={save} title="Save price" className="text-success hover:text-green-300"><Check size={14} /></button>
-                                <button onClick={() => setEditTierCell(null)} title="Cancel" className="text-danger hover:text-red-300">✕</button>
+                                <button onClick={() => setEditTierCell(null)} title="Cancel" className="text-danger hover:text-danger">✕</button>
                                 <button
                                   onClick={() => fetchTierPriceHistory(t._id, isPerProduct ? p._id : null, t.name, isPerProduct ? p.name : null, isPerProduct ? price : t.percent)}
                                   title="Price history" className="text-fg/65 hover:text-brand-text"

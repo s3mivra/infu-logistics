@@ -292,6 +292,11 @@ async function applyStatsDelta(order, sign, session) {
 // through here first instead of trusting ing.invId - falls back to a live
 // name match, returns null (same as "unresolvable" today) if neither hits.
 async function resolveIngInvId(ing, session) {
+  // A non-stock ingredient never resolves to inventory, whatever it is called.
+  // Without this the name fallback below would silently start deducting the day
+  // somebody happened to create a stock item called "FILTERED WATER" - the
+  // recipe would not have changed, but every sale would begin draining it.
+  if (ing?.nonStock) return null;
   if (ing?.invId) {
     const byId = await Inventory.findById(ing.invId, { _id: 1 }).session(session);
     if (byId) return ing.invId;

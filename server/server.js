@@ -16,6 +16,7 @@ import crypto from 'crypto';
 import pino from 'pino';
 import pinoHttp from 'pino-http';
 import { assertBalanced, debitAccountFor, suggestedSettleAccount } from './lib/ledger.js';
+import { createIdempotencyMiddleware } from './lib/idempotency.js';
 import { ACCOUNTS, EXPENSE_CATEGORIES, CODE_MAP } from './lib/chartOfAccounts.js';
 import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf } from './lib/units.js';
 import { title, code, lower, freeText, zTitle, zText, zMoneyLoose } from './lib/normalize.js';
@@ -182,6 +183,12 @@ app.use(pinoHttp({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(cookieParser());
+
+// Collapses duplicate POSTs that are in flight at the same time, so a laggy
+// connection cannot turn one press of a Create button into several records.
+// Must sit after express.json (it fingerprints the parsed body) and before the
+// feature routes. See lib/idempotency.js for why in-flight only.
+app.use(createIdempotencyMiddleware({ log }));
 
 // ── STANDARDISED LEDGER REFERENCE GENERATOR ─────────────────────────────────────
 //
@@ -386,9 +393,17 @@ const addonSchema    = z.object({
 });
 
 // Reusable recipe-line shape
+// `nonStock` marks an ingredient that is real in the recipe but is not stock -
+// filtered water being the case that forced it. It is measured and written down
+// so a drink can be made the same way twice, but there is nothing to deduct: you
+// never bought units of it, so no quantity can run out. Its cost stays out of
+// COGS too - a cost with no purchase behind it has no credit side, and the
+// filter and water bill are already expenses in the P&L, so charging drinks for
+// water as well would count the same money twice.
 const zRecipe = z.array(z.object({
   invId: z.string().optional(), name: z.string().optional(),
   qty: z.number().optional(), cost: z.number().optional(), unit: z.string().optional(),
+  nonStock: z.boolean().optional(),
 })).optional();
 
 // Mass-assignment fixes: each schema OMITS server-controlled fields
@@ -917,7 +932,7 @@ const ModifierGroupSchema = new mongoose.Schema({
   isRequired: { type: Boolean, default: true },
   minSelect:  { type: Number, default: 1 },
   maxSelect:  { type: Number, default: 1 },
-  options:    [{ name: String, price: { type: Number, default: 0 }, recipe: [{ invId: String, name: String, qty: Number, unit: String }] }]
+  options:    [{ name: String, price: { type: Number, default: 0 }, recipe: [{ invId: String, name: String, qty: Number, unit: String, nonStock: Boolean }] }]
 }, { timestamps: true });
 const ModifierGroup = mongoose.model('ModifierGroup', ModifierGroupSchema);
 
@@ -952,7 +967,7 @@ const AddOnSchema = new mongoose.Schema({
   name: { type: String, required: true },
   price: { type: Number, required: true },
   category: { type: String, default: 'Extras' },
-  recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }]
+  recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean }]
 }, { timestamps: true });
 const AddOn = mongoose.model('AddOn', AddOnSchema);
 
@@ -1021,15 +1036,15 @@ const ProductSchema = new mongoose.Schema({
   }],
   baseSize: String,
   costOverride: Number,
-  baseRecipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }],
+  baseRecipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean }],
   sizes: [{
     sizeCode: String,
     name: String,
     price: Number,
     costOverride: Number,
-    recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }]
+    recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean }]
   }],
-  addOns: [{ name: String, price: Number, recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }] }],
+  addOns: [{ name: String, price: Number, recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean }] }],
   image: String,
   // Renamed from "86'd". `isAvailable === false` means REMOVED from the menu
   // (and from reporting too - unless the product still has stock, in which
@@ -1338,7 +1353,14 @@ const QRSessionSchema = new mongoose.Schema({
   sessionId: { type: String, unique: true },
   table: String,
   isActive: { type: Boolean, default: true },
-  expiresAt: Date
+  expiresAt: Date,
+  // Set the moment the customer's phone actually opens the menu page, which is
+  // the only reliable signal that a code has been scanned - a scan is otherwise
+  // invisible to the server. The staff screen swaps in a fresh code on the back
+  // of it, so the next person to walk up never scans a code someone else is
+  // already ordering on. Stays null for a code that was displayed and never
+  // used.
+  claimedAt: { type: Date, default: null }
 });
 const QRSession = mongoose.model('QRSession', QRSessionSchema);
 
@@ -2443,6 +2465,12 @@ const PurchaseOrderSchema = new mongoose.Schema({
   receivedAt:   { type: Date, default: null },
   receivedBy:   { type: String, default: '' },
   createdBy:    { type: String, default: '' },
+  // Every other export-scoped model carries this, and data-export.js already
+  // filtered POs by it - against a field the schema never declared, so the
+  // Purchase Orders export silently returned zero rows however many POs
+  // existed. Same shape and default as the rest; the tenancy re-backfill
+  // stamps the existing docs.
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
   tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
 }, { timestamps: true });
 const PurchaseOrder = mongoose.model('PurchaseOrder', PurchaseOrderSchema);

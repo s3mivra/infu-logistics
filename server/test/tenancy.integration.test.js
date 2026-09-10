@@ -168,3 +168,113 @@ describe('Phase 2b - per-tenant read scoping: DISABLED (tenantScope is now a no-
     expect(list.body.orders.map(o => o.orderNumber)).toContain(create.body.order.orderNumber);
   });
 });
+
+// ── TENANCY HEALTH REPORT ────────────────────────────────────────────────────
+// The report and the re-backfill used to name four collections by hand while
+// two dozen schemas carry `businessType`, so most mis-stamps were invisible and
+// the "Run Re-Backfill" button could not clear what the screen did show. Both
+// now derive their model list from the Mongoose registry. These tests seed real
+// defects and assert on the behaviour that matters before it is ever pointed at
+// production data: what gets counted, what gets stamped, and what is left alone.
+describe('tenancy health report', () => {
+  // Docs are inserted through .collection so Mongoose defaults do not quietly
+  // stamp businessType for us - a defect the report cannot see is not a test.
+  const insertRaw = async (model, doc) => mongoose.model(model).collection.insertOne(doc);
+
+  it('scans every collection carrying businessType, not a hardcoded four', async () => {
+    const res = await request(app).get('/api/admin/tenancy-report').set(auth(superToken));
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    // The regression this replaces: 4 collections reported as "every doc".
+    expect(res.body.scannedCollections).toBeGreaterThan(4);
+    expect(res.body.rows.length).toBe(res.body.scannedCollections);
+    const scanned = res.body.rows.map(r => r.collection);
+    // Collections that were invisible to the old hand-written list.
+    for (const name of ['Bill', 'PurchaseOrder', 'StockTransfer']) {
+      expect(scanned).toContain(name);
+    }
+    expect(res.body.currentBusinessType).toBe('fb');
+  });
+
+  it('excludes Tenant, whose businessType describes the tenant rather than stamping ownership', async () => {
+    const Tenant = mongoose.model('Tenant');
+    // A logistics tenant listed on an fb server is correct data. If Tenant were
+    // scanned this row would be reported as a mis-stamp forever, and no
+    // re-backfill could ever clear it.
+    await Tenant.create({ name: 'Partner Logistics', slug: 'partner-log', businessType: 'log' });
+    const res = await request(app).get('/api/admin/tenancy-report').set(auth(superToken));
+    expect(res.body.rows.map(r => r.collection)).not.toContain('Tenant');
+  });
+
+  it('counts unstamped docs as missing and other-deployment docs as wrong', async () => {
+    await insertRaw('Bill', { supplierName: 'Unstamped Co', total: 100 });
+    await insertRaw('Bill', { supplierName: 'Wrong Tenant Co', total: 100, businessType: 'log' });
+
+    const res = await request(app).get('/api/admin/tenancy-report').set(auth(superToken));
+    const bill = res.body.rows.find(r => r.collection === 'Bill');
+    expect(bill.missingBusinessType).toBeGreaterThanOrEqual(1);
+    expect(bill.otherBusinessType).toBeGreaterThanOrEqual(1);
+
+    expect(res.body.isClean).toBe(false);
+    // Flagged is what the UI shows by default, so it must carry the defect.
+    expect(res.body.flagged.map(r => r.collection)).toContain('Bill');
+    // ...and must never carry a clean collection.
+    for (const r of res.body.flagged) {
+      expect(r.missingBusinessType + r.otherBusinessType).toBeGreaterThan(0);
+    }
+  });
+
+  it('re-backfill stamps missing docs but never overwrites a different business type', async () => {
+    const Bill = mongoose.model('Bill');
+    const run = await request(app).post('/api/admin/tenancy-rebackfill').set(auth(superToken)).send({});
+    expect(run.status).toBe(200);
+    expect(run.body.success).toBe(true);
+    expect(run.body.totalStamped).toBeGreaterThanOrEqual(1);
+    expect(run.body.stamped.Bill).toBeGreaterThanOrEqual(1);
+
+    // The previously unstamped doc now carries this deployment's type...
+    const fixed = await Bill.collection.findOne({ supplierName: 'Unstamped Co' });
+    expect(fixed.businessType).toBe('fb');
+    // ...while the foreign-stamped doc is untouched. Overwriting it would be a
+    // guess about which deployment the record belongs to, so the report keeps
+    // reporting it and a human decides.
+    const untouched = await Bill.collection.findOne({ supplierName: 'Wrong Tenant Co' });
+    expect(untouched.businessType).toBe('log');
+
+    const after = await request(app).get('/api/admin/tenancy-report').set(auth(superToken));
+    const bill = after.body.rows.find(r => r.collection === 'Bill');
+    expect(bill.missingBusinessType).toBe(0);
+    expect(bill.otherBusinessType).toBeGreaterThanOrEqual(1);
+  });
+
+  it('is superadmin-only', async () => {
+    const res = await request(app).get('/api/admin/tenancy-report').set(auth(cashierToken));
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+});
+
+// ── EXPORT SCOPING vs SCHEMA ─────────────────────────────────────────────────
+// data-export.js scopes a fixed list of models by `{ businessType }`. If a model
+// on that list has no such field in its schema, Mongoose (strictQuery off by
+// default in v9) passes the filter straight to MongoDB, it matches nothing, and
+// the export returns zero rows while still reporting success - which is how the
+// Purchase Orders export came to silently omit every PO.
+describe('export scoping matches the schema', () => {
+  it('every model data-export scopes by businessType actually declares it', () => {
+    // Mirrors the SCOPED set in features/data-export.js.
+    const SCOPED = ['Inventory', 'Product', 'Order', 'Category', 'Bill', 'CheckVoucher', 'Advance', 'PurchaseOrder', 'FixedAsset'];
+    const missing = SCOPED.filter(name => !mongoose.model(name).schema.path('businessType'));
+    expect(missing, `these models are filtered by businessType but do not have the field, so their export returns nothing: ${missing.join(', ')}`).toEqual([]);
+  });
+
+  it('regression: the Purchase Orders export returns the POs that exist', async () => {
+    const PurchaseOrder = mongoose.model('PurchaseOrder');
+    await PurchaseOrder.create({ poNumber: 'PO-EXPORT-1', supplier: 'Export Probe', status: 'Ordered', lines: [] });
+    const res = await request(app).get('/api/export/purchaseOrders').set(auth(superToken));
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    // The bug was zero rows alongside success:true.
+    expect(res.body.rows.length).toBeGreaterThan(0);
+    expect(JSON.stringify(res.body.rows)).toContain('PO-EXPORT-1');
+  });
+});

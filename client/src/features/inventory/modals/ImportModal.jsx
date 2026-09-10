@@ -100,7 +100,7 @@ export default function ImportModal() {
                     <tr className={`border-b border-white/5 ${isErr ? 'bg-red-500/10' : isBatch ? 'bg-purple-500/5' : ''}`}>
                       <td className="px-4 py-2.5 text-fg font-bold">
                         {r.itemCode && <span className="text-fg/65 font-mono text-[10px] mr-1.5">{r.itemCode}</span>}
-                        {r.itemName || <span className="text-red-300">(missing)</span>}
+                        {r.itemName || <span className="text-danger">(missing)</span>}
                         {r._needsSize && (
                           <span title="No unit/size found in the name or a Unit column - imported as pcs. Edit the item afterward to set its real size." className="ml-1.5 text-[9px] font-black bg-amber-500 text-white border border-amber-500/40 px-1.5 py-0.5 rounded uppercase align-middle">SET SIZE</span>
                         )}

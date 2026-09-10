@@ -197,6 +197,52 @@ app.post('/api/sessions/generate', verifyToken, requireStaff, async (req, res) =
   }
 });
 
+// The customer's phone calls this the moment the menu page opens, which is as
+// close to "the code was scanned" as the server can get - a scan itself never
+// reaches us, and the keep-alive heartbeat below only fires every two minutes,
+// so waiting for that left a freshly-scanned code on display for up to two
+// minutes with someone already ordering on it.
+//
+// Deliberately open (no auth): the caller is a customer's phone holding nothing
+// but the session id from the QR. Claiming is idempotent and reveals nothing -
+// a repeat call (a reload, a second tab) returns the same answer and does not
+// re-notify staff, so a customer refreshing the page cannot make the counter
+// cycle through codes.
+app.post('/api/sessions/:id/claim', async (req, res) => {
+  try {
+    const session = await QRSession.findOne({ sessionId: req.params.id, isActive: true });
+    if (!session) return res.status(404).json({ success: false, error: 'Session closed or invalid' });
+    if (new Date() > session.expiresAt) {
+      session.isActive = false;
+      await session.save();
+      return res.status(403).json({ success: false, error: 'Session expired' });
+    }
+
+    const firstClaim = !session.claimedAt;
+    if (firstClaim) {
+      session.claimedAt = new Date();
+      // Opening the menu counts as activity, same as a heartbeat would.
+      session.expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+      await session.save();
+      // emitToOps, not emitToMgr: 'manager' is superadmin/admin only, while
+      // every authenticated user joins 'cashier' - and it is usually a cashier
+      // holding the screen that shows this code. Sent to managers alone, the
+      // code would simply never rotate for the person actually displaying it.
+      // The payload is a session id and table the same staff member just
+      // generated and is looking at, so it reveals nothing new.
+      //
+      // The screen showing this code swaps in a new one; the session just
+      // claimed stays alive, so whoever scanned keeps ordering on it - a new
+      // code is minted under a new table id and does not touch it.
+      emitToOps('qrSessionClaimed', { sessionId: session.sessionId, table: session.table });
+    }
+    res.json({ success: true, table: session.table, firstClaim });
+  } catch (err) {
+    captureError(req, err);
+    res.status(500).json({ success: false });
+  }
+});
+
 // The customer's phone calls this to stay alive
 app.post('/api/sessions/:id/heartbeat', async (req, res) => {
   try {
