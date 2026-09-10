@@ -314,25 +314,48 @@ const tenancyModels = () =>
     .map(([name, model]) => ({ name, model }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-const TENANCY_MISSING = { $or: [{ businessType: { $exists: false } }, { businessType: null }, { businessType: '' }] };
+// Deliberately NOT `$or` with `$exists: false`. That form cannot use an index -
+// `$exists: false` forces a full collection scan, and wrapping it in `$or`
+// stops the other branches using one either. Across two dozen collections that
+// is ~46 full scans per report, which is what made this screen sit on "Loading
+// report..." on a real database while being instant on an empty one.
+//
+// `{ field: null }` already matches documents where the field is MISSING as
+// well as explicitly null, and a standard (non-sparse) index stores a missing
+// field as null - so `$in: [null, '']` covers all three cases and reads from
+// the index. Every scanned model indexes businessType.
+const TENANCY_MISSING = { businessType: { $in: [null, ''] } };
+
+// A cap so one slow collection cannot hang the whole request - the report is a
+// diagnostic, and a partial answer that arrives beats a spinner that never
+// resolves. Surfaced per collection below rather than failing the report.
+const TENANCY_COUNT_TIMEOUT_MS = 8000;
 
 app.get('/api/admin/tenancy-report', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const wrong = { businessType: { $exists: true, $nin: [null, '', BUSINESS_TYPE] } };
+    // $nin over an indexed field is an index scan; $exists is dropped because
+    // $nin already excludes null and '' explicitly, and keeping it would push
+    // this back to a collection scan for no gain.
+    const wrong = { businessType: { $nin: [null, '', BUSINESS_TYPE] } };
     const models = tenancyModels();
     const rows = await Promise.all(models.map(async ({ name, model }) => {
       // A collection that was never created counts as zero rather than failing
       // the whole report - a fresh deployment has most of these empty.
-      const [missingBusinessType, otherBusinessType] = await Promise.all([
-        model.countDocuments(TENANCY_MISSING).catch(() => 0),
-        model.countDocuments(wrong).catch(() => 0),
-      ]);
-      return { collection: name, missingBusinessType, otherBusinessType };
+      // A collection that times out reports as `unknown` rather than as a
+      // confident zero - "we could not check this" and "this is clean" must
+      // never look the same on a screen whose whole job is to find defects.
+      let timedOut = false;
+      const count = (filter) => model.countDocuments(filter).maxTimeMS(TENANCY_COUNT_TIMEOUT_MS)
+        .catch(() => { timedOut = true; return 0; });
+      const [missingBusinessType, otherBusinessType] = await Promise.all([count(TENANCY_MISSING), count(wrong)]);
+      return { collection: name, missingBusinessType, otherBusinessType, timedOut };
     }));
-    const isClean = rows.every(r => r.missingBusinessType === 0 && r.otherBusinessType === 0);
+    // A timed-out collection is not evidence of cleanliness, so it cannot count
+    // toward a clean bill of health.
+    const isClean = rows.every(r => !r.timedOut && r.missingBusinessType === 0 && r.otherBusinessType === 0);
     // Clean collections are the common case and crowd out the defects, so the
     // UI is told which rows matter instead of having to re-derive it.
-    const flagged = rows.filter(r => r.missingBusinessType > 0 || r.otherBusinessType > 0);
+    const flagged = rows.filter(r => r.timedOut || r.missingBusinessType > 0 || r.otherBusinessType > 0);
     res.json({
       success: true,
       currentBusinessType: BUSINESS_TYPE,

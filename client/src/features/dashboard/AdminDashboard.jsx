@@ -1534,8 +1534,22 @@ export default function AdminDashboard() {
   // ── Tenancy backfill report ─────────────────────────────────────────────────
   const [tenancyReport, setTenancyReport] = useState(null);
   const [tenancyBusy, setTenancyBusy] = useState(false);
+  // The failure path used to be `catch { /* ignore */ }` with state set only on
+  // success, so anything that went wrong - a timeout, a 500, a dropped
+  // connection - left the panel reading "Loading report..." forever with no way
+  // to tell a slow check from a broken one. It reports what happened now, and
+  // offers the retry that a spinner cannot.
+  const [tenancyError, setTenancyError] = useState('');
   const fetchTenancyReport = useCallback(async () => {
-    try { const r = await apiFetch('/api/admin/tenancy-report'); const d = await r.json(); if (d.success) setTenancyReport(d); } catch { /* ignore */ }
+    setTenancyError('');
+    try {
+      const r = await apiFetch('/api/admin/tenancy-report');
+      const d = await r.json();
+      if (d.success) setTenancyReport(d);
+      else setTenancyError(d.error || 'The report could not be built.');
+    } catch {
+      setTenancyError('Could not reach the server. Check the connection and try again.');
+    }
   }, []);
   const runTenancyRebackfill = async () => {
     if (!(await ui.confirm('Stamp current businessType on every legacy doc that is missing it?'))) return;
@@ -7852,7 +7866,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     // ── Backdated Sales (superadmin) ──
     backdateForm, setBackdateForm, backdateBusy, submitBackdateSale,
     // ── Tenancy ──
-    tenancyReport, tenancyBusy, fetchTenancyReport, runTenancyRebackfill,
+    tenancyReport, tenancyBusy, tenancyError, fetchTenancyReport, runTenancyRebackfill,
     // ── Client accounts (for per-product per-client discount picker) ──
     clientAccounts,
     // ── Price tiers (for the per-product segment override picker) ──

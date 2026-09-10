@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { login, loginField } from './helpers.js';
 
-// Auth-flow E2E — verifies the dual-token system end to end.
+// Auth-flow E2E - verifies the dual-token system end to end.
 // Requires the backend running against a TEST db with a seeded Super Admin whose
 // password matches E2E_ADMIN_PASS (defaults to the dev seed password).
 

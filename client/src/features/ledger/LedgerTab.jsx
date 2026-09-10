@@ -127,7 +127,7 @@ export default function LedgerTab({ ctx }) {
     periodCloseForm, setPeriodCloseForm,
     auditLogEntries, auditLogPage, auditLogPages, auditLogFilter, setAuditLogFilter, fetchAuditLog,
     paymentMap, fetchPaymentMap, savePaymentMapping, resetPaymentMapping,
-    tenancyReport, tenancyBusy, fetchTenancyReport, runTenancyRebackfill,
+    tenancyReport, tenancyBusy, tenancyError, fetchTenancyReport, runTenancyRebackfill,
     backdateForm, setBackdateForm, backdateBusy, submitBackdateSale,
   } = ctx;
 
@@ -5805,8 +5805,16 @@ export default function LedgerTab({ ctx }) {
                 <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Verify every doc is stamped with this server's business type</p>
               </div>
 
-              {!tenancyReport ? (
-                <p className="text-fg/70 text-sm italic">Loading report…</p>
+              {tenancyError && !tenancyReport ? (
+                <div className="bg-page-bg border border-danger/40 rounded-xl p-4">
+                  <p className="text-danger text-sm font-bold">{tenancyError}</p>
+                  <button onClick={fetchTenancyReport}
+                    className="mt-3 bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold px-4 py-2 rounded-lg uppercase tracking-widest text-xs transition">
+                    Try Again
+                  </button>
+                </div>
+              ) : !tenancyReport ? (
+                <p className="text-fg/70 text-sm italic">Checking every collection…</p>
               ) : (
                 <>
                   <div className="bg-page-bg border border-white/10 rounded-xl p-4">
@@ -5831,8 +5839,8 @@ export default function LedgerTab({ ctx }) {
                         {(tenancyShowAll ? tenancyReport.rows : (tenancyReport.flagged || [])).map(r => (
                           <tr key={r.collection} className="border-b border-white/5">
                             <td className="py-2 text-fg font-bold">{r.collection}</td>
-                            <td className={`py-2 text-right font-mono tabular-nums ${r.missingBusinessType > 0 ? 'text-warning font-black' : 'text-fg/70'}`}>{r.missingBusinessType.toLocaleString()}</td>
-                            <td className={`py-2 text-right font-mono tabular-nums ${r.otherBusinessType > 0 ? 'text-danger font-black' : 'text-fg/70'}`}>{r.otherBusinessType.toLocaleString()}</td>
+                            <td className={`py-2 text-right font-mono tabular-nums ${r.timedOut ? 'text-warning' : r.missingBusinessType > 0 ? 'text-warning font-black' : 'text-fg/70'}`}>{r.timedOut ? 'timed out' : r.missingBusinessType.toLocaleString()}</td>
+                            <td className={`py-2 text-right font-mono tabular-nums ${r.timedOut ? 'text-warning' : r.otherBusinessType > 0 ? 'text-danger font-black' : 'text-fg/70'}`}>{r.timedOut ? '-' : r.otherBusinessType.toLocaleString()}</td>
                           </tr>
                         ))}
                         {!tenancyShowAll && (tenancyReport.flagged || []).length === 0 && (

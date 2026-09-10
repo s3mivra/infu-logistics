@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { login } from './helpers.js';
 
-// Lightweight smoke test — app loads and the dashboard renders after login with no
+// Lightweight smoke test - app loads and the dashboard renders after login with no
 // console errors. Catches the "white screen / broken build" class of bug.
 
 test('app loads the login screen', async ({ page }) => {

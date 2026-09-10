@@ -587,7 +587,7 @@ export default function PricingTab({ ctx }) {
             </button>
           </div>
           <p className="text-[11px] text-fg/70 mb-4 leading-relaxed">
-            Rules that apply on their own when their conditions hold &mdash; spend &#8369;1,000 on a Tuesday, get 10% off.
+            Rules that apply on their own when their conditions hold - spend &#8369;1,000 on a Tuesday, get 10% off.
             Every condition you fill in must be true; the ones you leave blank are not checked.
             Rules do not stack: the best single match wins, and <span className="text-fg font-bold">Priority</span> breaks a tie between equal percentages.
             The discount is applied through the order&apos;s existing discount field, so nothing here changes how VAT or the ledger are computed.

@@ -1378,7 +1378,7 @@ export default function SuperAdminPanel() {
           <div className="flex-1 p-6 space-y-3">
             <div className="bg-white/5 border border-white/10 rounded-xl p-4">
               <p className="text-[11px] text-fg/75 leading-relaxed">
-                A tier is a class of customer &mdash; <span className="text-fg/80 font-bold">Dealer</span>, <span className="text-fg/80 font-bold">Satellite</span>, <span className="text-fg/80 font-bold">Wholesale</span>.
+                A tier is a class of customer - <span className="text-fg/80 font-bold">Dealer</span>, <span className="text-fg/80 font-bold">Satellite</span>, <span className="text-fg/80 font-bold">Wholesale</span>.
                 Give it either a flat <span className="text-fg/80 font-bold">Default %</span> off every product, or a full <span className="text-fg/80 font-bold">Price List</span> with an
                 exact price per product. Assign a client to a tier in <span className="text-fg/80 font-bold">Client Accounts</span>.
               </p>
@@ -1490,7 +1490,7 @@ export default function SuperAdminPanel() {
                             return (
                               <td key={t._id} className="px-4 py-2.5 text-right font-mono tabular-nums">
                                 {price === null ? (
-                                  <span className="text-fg/60">&mdash;</span>
+                                  <span className="text-fg/60">-</span>
                                 ) : (
                                   <span className={off > 0 ? 'text-brand-text font-bold' : 'text-fg/70'}>
                                     ₱{price.toFixed(2)}
@@ -2435,7 +2435,7 @@ export default function SuperAdminPanel() {
           <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col animate-fade-in">
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 flex-shrink-0">
               <div>
-                <h2 className="font-black text-fg text-lg">{productPriceModal.tier?.name} &mdash; Prices</h2>
+                <h2 className="font-black text-fg text-lg">{productPriceModal.tier?.name} - Prices</h2>
                 <p className="text-fg/70 text-xs mt-0.5">
                   One price per product. Blank = this tier grants no discount on that product.
                 </p>

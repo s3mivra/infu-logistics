@@ -359,7 +359,7 @@ export default function ProductionTab({ ctx }) {
                 </button>
               </div>
               <p className="text-[10px] text-fg/70 mt-2">
-                Replaces the material list below with the recipe multiplied by the batch size, and points the output at the matching stock item. Edit anything afterwards &mdash; a real batch is not always the book quantity.
+                Replaces the material list below with the recipe multiplied by the batch size, and points the output at the matching stock item. Edit anything afterwards - a real batch is not always the book quantity.
               </p>
             </div>
           )}

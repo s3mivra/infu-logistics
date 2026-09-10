@@ -230,6 +230,24 @@ export default function ProductsTab({ ctx }) {
   // deduct: you never bought units of it, so nothing can run out.
   const [nonStockName, setNonStockName] = React.useState('');
   const [nonStockUnit, setNonStockUnit] = React.useState('ml');
+  // A fixed list rather than free text: a typo here becomes a unit nobody can
+  // read back later, and unlike a stocked ingredient there is no inventory item
+  // to correct it against. Nothing is converted or deducted for a non-stock
+  // line, so the unit is purely how a person reads the quantity - which is why
+  // lb can sit alongside the metric units the rest of the app converts between.
+  const NON_STOCK_UNITS = ['ml', 'L', 'g', 'kg', 'lb', 'pcs'];
+
+  // Material pickers are a scrolling list of the WHOLE inventory, which is fine
+  // at a dozen items and unusable at two hundred - finding "Biscoff Cookies"
+  // meant scrolling a 28px-tall window. Keyed per picker so the base recipe and
+  // each size keep their own query; a shared one would filter every list at
+  // once while you typed into a single box.
+  const [matSearch, setMatSearch] = React.useState({});
+  const matchesMat = (inv, key) => {
+    const q = String(matSearch[key] || '').trim().toLowerCase();
+    if (!q) return true;
+    return String(inv.itemName || '').toLowerCase().includes(q);
+  };
 
   // Destructure everything from ctx
   // ── Auto-generated from ctx - do NOT edit manually.
@@ -1254,11 +1272,17 @@ export default function ProductsTab({ ctx }) {
                     })}
                     <div className="mt-4 pt-3 border-t border-white">
                       <div className="text-[10px] text-white uppercase font-black mb-2 tracking-widest flex items-center gap-1"><Plus size={12}/> Tap to Add Material</div>
+                      <input type="text" value={matSearch['base'] || ''}
+                        onChange={e => setMatSearch(m => ({ ...m, ['base']: e.target.value }))}
+                        placeholder="Search materials..."
+                        className="w-full mb-2 bg-white border border-white/10 rounded-lg px-3 py-1.5 text-xs text-brand-text font-bold outline-none placeholder-black/40" />
                       <div className="max-h-32 overflow-y-auto bg-white border border-white/10 rounded-lg custom-scrollbar p-1">
                         {inventory.length === 0 ? (
                           <p className="p-2 text-xs text-brand-text italic font-medium">No inventory available.</p>
+                        ) : inventory.filter(i => matchesMat(i, 'base')).length === 0 ? (
+                          <p className="p-2 text-xs text-brand-text italic font-medium">Nothing matches that search.</p>
                         ) : (
-                          inventory.map(inv => {
+                          inventory.filter(i => matchesMat(i, 'base')).map(inv => {
                             // packInfo already works out BOTH the pack label
                             // ("377g", "kg", "L") and the cost of one of those.
                             // Pairing its cost with a different unit label is
@@ -1282,16 +1306,18 @@ export default function ProductsTab({ ctx }) {
                         <input type="text" value={nonStockName} placeholder="e.g. Filtered Water"
                           onChange={e => setNonStockName(e.target.value)}
                           className="flex-1 min-w-[130px] bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-brand-text font-bold outline-none" />
-                        <input type="text" value={nonStockUnit} placeholder="ml"
+                        <select value={nonStockUnit}
                           onChange={e => setNonStockUnit(e.target.value)}
-                          className="w-16 bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-brand-text font-bold outline-none" />
+                          className="w-20 bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-brand-text font-bold outline-none">
+                          {NON_STOCK_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                        </select>
                         <button type="button"
                           onClick={() => { addNonStockToRecipe?.(nonStockName, nonStockUnit, null); setNonStockName(''); }}
                           className="bg-accent text-on-brand px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-accent/90 transition">
                           Add
                         </button>
                       </div>
-                      <p className="text-[9px] text-white/80 mt-1.5 leading-snug">Recorded on the recipe, never deducted from stock and never costed &mdash; for things you do not buy by the unit, like filtered water.</p>
+                      <p className="text-[9px] text-white/80 mt-1.5 leading-snug">Recorded on the recipe, never deducted from stock and never costed - for things you do not buy by the unit, like filtered water.</p>
                     </div>
                   </div>
                 </div>
@@ -1353,8 +1379,14 @@ export default function ProductsTab({ ctx }) {
                         })}
                         <div className="mt-4 pt-3 border-t border-white">
                           <div className="text-[10px] text-white uppercase font-black mb-2 tracking-widest flex items-center gap-1"><Plus size={12}/> Tap to Add Material</div>
+                          <input type="text" value={matSearch[`size-${idx}`] || ''}
+                            onChange={e => setMatSearch(m => ({ ...m, [`size-${idx}`]: e.target.value }))}
+                            placeholder="Search materials..."
+                            className="w-full mb-2 bg-white border border-white/10 rounded-lg px-3 py-1.5 text-xs text-brand-text font-bold outline-none placeholder-black/40" />
                           <div className="max-h-28 overflow-y-auto bg-white border border-white/10 rounded-lg custom-scrollbar p-1">
-                            {inventory.map(inv => {
+                            {inventory.filter(i => matchesMat(i, `size-${idx}`)).length === 0 ? (
+                              <p className="p-2 text-xs text-brand-text italic font-medium">Nothing matches that search.</p>
+                            ) : inventory.filter(i => matchesMat(i, `size-${idx}`)).map(inv => {
                               const pack = packInfo ? packInfo(inv) : { packBase: 1, label: inv.unit, cost: inv.unitCost || 0 };
                               const dispUnit = BUSINESS_TYPE === 'log' ? 'pcs' : pack.label;
                               const packCost = pack.cost || 0;
