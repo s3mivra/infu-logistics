@@ -404,6 +404,12 @@ const zRecipe = z.array(z.object({
   invId: z.string().optional(), name: z.string().optional(),
   qty: z.number().optional(), cost: z.number().optional(), unit: z.string().optional(),
   nonStock: z.boolean().optional(),
+  // How many BASE units make up one pack of this ingredient (377 for a 377g
+  // can, 1000 for a 1L carton). `qty` is stored in base units, so without this
+  // the editor cannot turn it back into the "1 carton" a person typed - it was
+  // being dropped on save, and the edit form then reset every quantity to one
+  // full pack to compensate, silently discarding what the user had entered.
+  packBase: z.number().optional(),
 })).optional();
 
 // Mass-assignment fixes: each schema OMITS server-controlled fields
@@ -932,7 +938,7 @@ const ModifierGroupSchema = new mongoose.Schema({
   isRequired: { type: Boolean, default: true },
   minSelect:  { type: Number, default: 1 },
   maxSelect:  { type: Number, default: 1 },
-  options:    [{ name: String, price: { type: Number, default: 0 }, recipe: [{ invId: String, name: String, qty: Number, unit: String, nonStock: Boolean }] }]
+  options:    [{ name: String, price: { type: Number, default: 0 }, recipe: [{ invId: String, name: String, qty: Number, unit: String, nonStock: Boolean, packBase: Number }] }]
 }, { timestamps: true });
 const ModifierGroup = mongoose.model('ModifierGroup', ModifierGroupSchema);
 
@@ -967,7 +973,7 @@ const AddOnSchema = new mongoose.Schema({
   name: { type: String, required: true },
   price: { type: Number, required: true },
   category: { type: String, default: 'Extras' },
-  recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean }]
+  recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean, packBase: Number }]
 }, { timestamps: true });
 const AddOn = mongoose.model('AddOn', AddOnSchema);
 
@@ -1036,15 +1042,15 @@ const ProductSchema = new mongoose.Schema({
   }],
   baseSize: String,
   costOverride: Number,
-  baseRecipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean }],
+  baseRecipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean, packBase: Number }],
   sizes: [{
     sizeCode: String,
     name: String,
     price: Number,
     costOverride: Number,
-    recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean }]
+    recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean, packBase: Number }]
   }],
-  addOns: [{ name: String, price: Number, recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean }] }],
+  addOns: [{ name: String, price: Number, recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean, packBase: Number }] }],
   image: String,
   // Renamed from "86'd". `isAvailable === false` means REMOVED from the menu
   // (and from reporting too - unless the product still has stock, in which

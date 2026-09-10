@@ -792,13 +792,34 @@ export default function ProductsTab({ ctx }) {
                           bulkBreaks: (p.bulkBreaks || []).map(b => ({ minQty: Number(b.minQty || 0), percent: Number(b.percent || 0) })),
                           clientBulkBreaks: (p.clientBulkBreaks || []).map(b => ({ clientId: String(b.clientId || ''), minQty: Number(b.minQty || 0), price: Number(b.price || 0) })),
                           baseSize: p.baseSize || '',
-                          sizes: p.sizes || [], image: p.image || '',
+                          image: p.image || '',
+                          // Backfill packBase ONLY. This used to also set
+                          // `qty: pb`, which reset every ingredient to one full
+                          // pack every time the product was opened - and since
+                          // packBase was never persisted, that branch ran on
+                          // EVERY edit. Enter 0.15 of a carton, save, reopen,
+                          // and it was silently back to 1, taking the recipe
+                          // cost with it. qty is already in base units and is
+                          // the user's own number: never recompute it here.
                           baseRecipe: (p.baseRecipe || []).map(mat => {
                             if (mat.packBase > 0) return mat;
                             const invItem = inventory.find(inv => inv._id === mat.invId);
                             const pb = invItem && packInfo ? (packInfo(invItem).packBase || 1) : 1;
-                            return { ...mat, qty: pb, packBase: pb };
+                            return { ...mat, packBase: pb };
                           }),
+                          // Size recipes were never backfilled at all, so their
+                          // quantities rendered in raw base units (150 instead
+                          // of 0.15 of a carton). Same treatment, same rule -
+                          // packBase only, qty untouched.
+                          sizes: (p.sizes || []).map(sz => ({
+                            ...sz,
+                            recipe: (sz.recipe || []).map(mat => {
+                              if (mat.packBase > 0) return mat;
+                              const invItem = inventory.find(inv => inv._id === mat.invId);
+                              const pb = invItem && packInfo ? (packInfo(invItem).packBase || 1) : 1;
+                              return { ...mat, packBase: pb };
+                            }),
+                          })),
                           addOns: p.addOns || [],
                           modifierGroups: (p.modifierGroups || []).map(mg => (mg && mg._id) ? mg._id : mg),
                           imageUrl: (p.image || '').startsWith('http') ? p.image : ''
