@@ -331,25 +331,43 @@ const TENANCY_MISSING = { businessType: { $in: [null, ''] } };
 // resolves. Surfaced per collection below rather than failing the report.
 const TENANCY_COUNT_TIMEOUT_MS = 8000;
 
+// One collection's counts. Shared by the full report and the per-collection
+// mode below, so the two can never disagree about what counts as a defect.
+// $nin over an indexed field is an index scan; $exists is dropped because $nin
+// already excludes null and '' explicitly, and keeping it would push this back
+// to a collection scan for no gain.
+const tenancyRowFor = async ({ name, model }) => {
+  const wrong = { businessType: { $nin: [null, '', BUSINESS_TYPE] } };
+  // A collection that times out reports as `timedOut` rather than as a
+  // confident zero - "we could not check this" and "this is clean" must never
+  // look the same on a screen whose whole job is to find defects. A collection
+  // that was never created simply counts as zero.
+  let timedOut = false;
+  const count = (filter) => model.countDocuments(filter).maxTimeMS(TENANCY_COUNT_TIMEOUT_MS)
+    .catch(() => { timedOut = true; return 0; });
+  const [missingBusinessType, otherBusinessType] = await Promise.all([count(TENANCY_MISSING), count(wrong)]);
+  return { collection: name, missingBusinessType, otherBusinessType, timedOut };
+};
+
+// The names to scan, so a client can walk them one at a time and show real
+// progress. A single request that answers everything at once can only ever be
+// shown as a spinner, which cannot tell "nearly done" from "stuck".
+app.get('/api/admin/tenancy-report/collections', verifyToken, requireSuperAdmin, async (req, res) => {
+  res.json({ success: true, currentBusinessType: BUSINESS_TYPE, collections: tenancyModels().map(m => m.name) });
+});
+
 app.get('/api/admin/tenancy-report', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    // $nin over an indexed field is an index scan; $exists is dropped because
-    // $nin already excludes null and '' explicitly, and keeping it would push
-    // this back to a collection scan for no gain.
-    const wrong = { businessType: { $nin: [null, '', BUSINESS_TYPE] } };
-    const models = tenancyModels();
-    const rows = await Promise.all(models.map(async ({ name, model }) => {
-      // A collection that was never created counts as zero rather than failing
-      // the whole report - a fresh deployment has most of these empty.
-      // A collection that times out reports as `unknown` rather than as a
-      // confident zero - "we could not check this" and "this is clean" must
-      // never look the same on a screen whose whole job is to find defects.
-      let timedOut = false;
-      const count = (filter) => model.countDocuments(filter).maxTimeMS(TENANCY_COUNT_TIMEOUT_MS)
-        .catch(() => { timedOut = true; return 0; });
-      const [missingBusinessType, otherBusinessType] = await Promise.all([count(TENANCY_MISSING), count(wrong)]);
-      return { collection: name, missingBusinessType, otherBusinessType, timedOut };
-    }));
+    const all = tenancyModels();
+    // ?collection=Name checks one. Anything not in the scan list is refused
+    // rather than looked up by name, so this cannot be used to count documents
+    // in an arbitrary model.
+    if (req.query.collection) {
+      const one = all.find(m => m.name === String(req.query.collection));
+      if (!one) return res.status(404).json({ success: false, error: 'Not a scanned collection.' });
+      return res.json({ success: true, currentBusinessType: BUSINESS_TYPE, row: await tenancyRowFor(one) });
+    }
+    const rows = await Promise.all(all.map(tenancyRowFor));
     // A timed-out collection is not evidence of cleanliness, so it cannot count
     // toward a clean bill of health.
     const isClean = rows.every(r => !r.timedOut && r.missingBusinessType === 0 && r.otherBusinessType === 0);

@@ -1689,17 +1689,55 @@ export default function AdminDashboard() {
   // to tell a slow check from a broken one. It reports what happened now, and
   // offers the retry that a spinner cannot.
   const [tenancyError, setTenancyError] = useState('');
+  // { done, total, current } while a check runs. The report used to be one
+  // request answering everything at once, which can only ever be drawn as a
+  // spinner - and a spinner cannot tell "nearly done" from "stuck". Walking the
+  // collections individually makes the bar a count of real work finished.
+  const [tenancyProgress, setTenancyProgress] = useState(null);
   const fetchTenancyReport = useCallback(async () => {
     setTenancyError('');
+    setTenancyReport(null);
     try {
-      const r = await apiFetch('/api/admin/tenancy-report');
-      const d = await r.json();
-      if (d.success) setTenancyReport(d);
-      else setTenancyError(d.error || 'The report could not be built.');
+      const lr = await apiFetch('/api/admin/tenancy-report/collections');
+      const list = await lr.json();
+      if (!list.success) { setTenancyError(list.error || 'The report could not be built.'); return; }
+      const names = list.collections || [];
+      const rows = new Array(names.length);
+      let done = 0;
+      let next = 0;
+      setTenancyProgress({ done: 0, total: names.length, current: '' });
+      // A failed or unreachable collection is reported as unchecked, never as
+      // clean - on this screen those two must not look the same.
+      const unchecked = (name) => ({ collection: name, missingBusinessType: 0, otherBusinessType: 0, timedOut: true });
+      const worker = async () => {
+        while (next < names.length) {
+          const i = next++;
+          try {
+            const r = await apiFetch(`/api/admin/tenancy-report?collection=${encodeURIComponent(names[i])}`);
+            const d = await r.json();
+            rows[i] = d.success && d.row ? d.row : unchecked(names[i]);
+          } catch {
+            rows[i] = unchecked(names[i]);
+          }
+          done += 1;
+          setTenancyProgress({ done, total: names.length, current: names[i] });
+        }
+      };
+      // Four at a time: quick enough to finish promptly, gentle enough not to
+      // queue two dozen counts against the database at once.
+      await Promise.all(Array.from({ length: Math.min(4, names.length) }, worker));
+      const isClean = rows.every(r => !r.timedOut && r.missingBusinessType === 0 && r.otherBusinessType === 0);
+      const flagged = rows.filter(r => r.timedOut || r.missingBusinessType > 0 || r.otherBusinessType > 0);
+      setTenancyReport({
+        success: true, currentBusinessType: list.currentBusinessType,
+        rows, flagged, scannedCollections: rows.length, isClean,
+      });
     } catch {
       setTenancyError('Could not reach the server. Check the connection and try again.');
+    } finally {
+      setTenancyProgress(null);
     }
-  }, []);
+  }, [apiFetch]);
   const runTenancyRebackfill = async () => {
     if (!(await ui.confirm('Stamp current businessType on every legacy doc that is missing it?'))) return;
     setTenancyBusy(true);
@@ -5085,106 +5123,182 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   // whether it hit the server's row cap. Without it a truncated sheet looks
   // exactly like a complete one.
   const [exportAllBusy, setExportAllBusy] = useState('');
-  const downloadAllExports = async ({ start, end, includeReports = true } = {}) => {
-    setExportAllBusy('Reading dataset list…');
+  // { done, total, label } while an export runs. Counts finished steps - each
+  // dataset, reference sheet and CSV is one - so the bar reports real work
+  // rather than animating to reassure.
+  const [exportProgress, setExportProgress] = useState(null);
+  // The dataset registry, so the export screen can offer each one as a
+  // checkbox instead of an all-or-nothing button.
+  const [exportDatasets, setExportDatasets] = useState(null);
+  const fetchExportDatasets = useCallback(async () => {
     try {
-      const listRes = await apiFetch('/api/export/datasets');
-      const list = await listRes.json();
-      if (!list.success) { ui.alert(list.error || 'Could not read the dataset list.'); return; }
+      const r = await apiFetch('/api/export/datasets');
+      const d = await r.json();
+      setExportDatasets(d.success ? (d.datasets || []) : []);
+    } catch { setExportDatasets([]); }
+  }, [apiFetch]);
 
-      const XLSX = await import('xlsx');
-      const wb = XLSX.utils.book_new();
-      const contents = [['Dataset', 'Rows', 'Date filtered', 'Complete?']];
-      const failed = [];
-      // Excel caps sheet names at 31 chars and forbids duplicates.
+  // `datasets`: keys to include, or null for all of them.
+  // `reports`:  any of journal, auditlog (their own CSV files) and
+  //             accountBalances, validValues (sheets in the workbook).
+  // Either list may be empty, which is how "datasets only" and "reports only"
+  // work. Tabular data goes in one workbook led by a Contents sheet; the two
+  // streamed ledgers stay separate files, because they are row-per-posting
+  // records with their own date rules, not just another table.
+  const downloadAllExports = async ({ start, end, datasets = null, reports = ['journal', 'auditlog', 'accountBalances', 'validValues'] } = {}) => {
+    const rep = new Set(reports || []);
+    const failed = [];
+    const contents = [['Item', 'Rows', 'Date range', 'Status']];
+    setExportAllBusy('Preparing...');
+    try {
+      let list = exportDatasets;
+      if (!list) {
+        const lr = await apiFetch('/api/export/datasets');
+        const ld = await lr.json();
+        if (!ld.success) { ui.alert(ld.error || 'Could not read the dataset list.'); return; }
+        list = ld.datasets || [];
+      }
+      const chosen = datasets === null ? list : list.filter(d => datasets.includes(d.key));
+      const csvs = ['journal', 'auditlog'].filter(k => rep.has(k));
+      const wantsSheets = chosen.length > 0 || rep.has('accountBalances') || rep.has('validValues');
+      const total = chosen.length
+        + (rep.has('accountBalances') ? 1 : 0)
+        + (rep.has('validValues') ? 1 : 0)
+        + csvs.length
+        + (wantsSheets ? 1 : 0);
+      if (total === 0) { ui.alert('Pick at least one dataset or report.'); return; }
+
+      let done = 0;
+      const step = (label) => { setExportAllBusy(label); setExportProgress({ done, total, label }); };
+      const tick = () => { done += 1; setExportProgress(p => ({ ...(p || {}), done, total })); };
+      const range = `${start || 'all'} to ${end || 'all'}`;
+
+      const XLSX = wantsSheets ? await import('xlsx') : null;
+      const wb = wantsSheets ? XLSX.utils.book_new() : null;
+      // Excel caps sheet names at 31 characters and refuses duplicates.
       const used = new Set();
       const sheetName = (label) => {
-                const base = (String(label).replace(/[^\w -]+/g, '-').trim() || 'Sheet').slice(0, 31);
-        let name = base, n = 2;
+        const base = (String(label).replace(/[^\w -]+/g, '-').trim() || 'Sheet').slice(0, 31);
+        let name = base;
+        let n = 2;
         while (used.has(name)) { name = `${base.slice(0, 28)}-${n++}`; }
         used.add(name);
         return name;
       };
+      const addSheet = (label, columns, rows) =>
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([columns, ...rows]), sheetName(label));
 
-      for (const ds of list.datasets) {
-        setExportAllBusy(`Exporting ${ds.label}…`);
+      for (const ds of chosen) {
+        step(`Exporting ${ds.label}...`);
         try {
           const qs = new URLSearchParams();
           if (ds.dateFiltered && start) qs.set('start', start);
           if (ds.dateFiltered && end) qs.set('end', end);
           const res = await apiFetch(`/api/export/${ds.key}${qs.toString() ? `?${qs}` : ''}`);
           const d = await res.json();
-          if (!d.success) { failed.push([ds.label, d.error || 'export failed']); continue; }
-          XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([d.columns, ...d.rows]), sheetName(d.label || ds.label));
-          contents.push([
-            d.label || ds.label,
-            d.rows.length,
-            ds.dateFiltered ? `${start || 'all'} to ${end || 'all'}` : 'no',
-            d.truncated ? `TRUNCATED at ${d.limit}` : 'complete',
-          ]);
-        } catch (err) {
+          if (!d.success) {
+            failed.push([ds.label, d.error || 'export failed']);
+          } else {
+            addSheet(d.label || ds.label, d.columns, d.rows);
+            contents.push([
+              d.label || ds.label, d.rows.length,
+              ds.dateFiltered ? range : 'not date filtered',
+              d.truncated ? `TRUNCATED at ${d.limit}` : 'complete',
+            ]);
+          }
+        } catch {
           failed.push([ds.label, 'network error']);
         }
+        tick();
       }
 
-      if (!used.size) { ui.alert('Nothing was exported - every dataset failed.'); return; }
+      // Reference sheets, so codes in the data can be read without a second
+      // download. Now optional, since "datasets only" should mean exactly that.
+      if (rep.has('accountBalances')) {
+        step('Adding Account Balances...');
+        try {
+          const acc = await (await apiFetch('/api/export/account-balances')).json();
+          if (acc.success) {
+            addSheet('Account Balances', acc.columns, acc.rows);
+            contents.push(['Account Balances', acc.rows.length, 'as of today', 'complete']);
+          } else failed.push(['Account Balances', acc.error || 'export failed']);
+        } catch { failed.push(['Account Balances', 'network error']); }
+        tick();
+      }
+      if (rep.has('validValues')) {
+        step('Adding Valid Values...');
+        try {
+          const vv = await (await apiFetch('/api/export/valid-values')).json();
+          if (vv.success) {
+            addSheet('Valid Values', vv.columns, vv.rows);
+            contents.push(['Valid Values', vv.rows.length, 'reference', 'complete']);
+          } else failed.push(['Valid Values', vv.error || 'export failed']);
+        } catch { failed.push(['Valid Values', 'network error']); }
+        tick();
+      }
 
-      // Reference sheets, same as a template carries, so codes in the data can
-      // be read without a second download.
-      setExportAllBusy('Adding reference sheets…');
-      try {
-        const acc = await (await apiFetch('/api/export/account-balances')).json();
-        if (acc.success) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([acc.columns, ...acc.rows]), sheetName('Account Balances'));
-      } catch { /* the archive is still usable without it */ }
-      try {
-        const vv = await (await apiFetch('/api/export/valid-values')).json();
-        if (vv.success) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([vv.columns, ...vv.rows]), sheetName('Valid Values'));
-      } catch { /* the archive is still usable without it */ }
+      // The streamed CSV reports, as their own files. Run before the workbook
+      // is written so a failed one is listed on its Contents sheet too.
+      const saveCsv = async (url, filename, label) => {
+        const res = await apiFetch(url);
+        const text = await res.text();
+        // A failed stream returns JSON, not CSV - saving that as .csv would
+        // hand the user a file full of an error message.
+        if (text.trim().startsWith('{')) {
+          let msg = 'export failed';
+          try { msg = JSON.parse(text).error || msg; } catch { /* keep default */ }
+          failed.push([label, msg]);
+          return;
+        }
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        contents.push([label, '-', range, `downloaded as ${filename}`]);
+      };
+      const CSV_SPEC = {
+        journal: { label: 'General Journal (CSV)', url: `/api/journal/export?start=${start}&end=${end}`, file: `journal_${start}_to_${end}.csv` },
+        auditlog: { label: 'Audit Log (CSV)', url: `/api/audit-logs/export?start=${start}&end=${end}`, file: `audit_log_${start}_to_${end}.csv` },
+      };
+      for (const k of csvs) {
+        const spec = CSV_SPEC[k];
+        if (!start || !end) {
+          failed.push([spec.label, 'needs a date range']);
+        } else {
+          step(`Exporting ${spec.label}...`);
+          try { await saveCsv(spec.url, spec.file, spec.label); }
+          catch { failed.push([spec.label, 'network error']); }
+        }
+        tick();
+      }
 
-      if (failed.length) { contents.push([], ['Not exported', 'Reason'], ...failed); }
-      contents.push([], ['Generated', new Date().toLocaleString()]);
-      // Prepended, so Contents is the sheet the workbook opens on.
-      const wbContents = XLSX.utils.aoa_to_sheet(contents);
-      wb.SheetNames.unshift('Contents');
-      wb.Sheets.Contents = wbContents;
-
-      const stamp = new Date().toISOString().slice(0, 10);
-      XLSX.writeFile(wb, `full-export-${stamp}.xlsx`);
-
-      // ── The streamed CSV reports, as their own files ────────────────────────
-      if (includeReports && start && end) {
-        const saveCsv = async (url, filename) => {
-          const res = await apiFetch(url);
-          const text = await res.text();
-          // A failed stream returns JSON, not CSV - saving that as .csv hands
-          // the user a file full of an error message.
-          if (text.trim().startsWith('{')) {
-            let msg = 'export failed';
-            try { msg = JSON.parse(text).error || msg; } catch { /* keep default */ }
-            failed.push([filename, msg]);
-            return;
-          }
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
-          a.download = filename;
-          a.click();
-          URL.revokeObjectURL(a.href);
-        };
-        setExportAllBusy('Exporting journal…');
-        // The journal export caps the range at one quarter server-side.
-        await saveCsv(`/api/journal/export?start=${start}&end=${end}`, `journal_${start}_to_${end}.csv`);
-        setExportAllBusy('Exporting audit log…');
-        await saveCsv(`/api/audit-logs/export?start=${start}&end=${end}`, `audit_log_${start}_to_${end}.csv`);
+      if (wantsSheets) {
+        step('Writing the workbook...');
+        if (!used.size) {
+          failed.push(['Workbook', 'every selected sheet failed, so there was nothing to save']);
+        } else {
+          if (failed.length) contents.push([], ['Not exported', 'Reason'], ...failed);
+          contents.push([], ['Generated', new Date().toLocaleString()]);
+          // Prepended, so Contents is the sheet the workbook opens on.
+          wb.SheetNames.unshift('Contents');
+          wb.Sheets.Contents = XLSX.utils.aoa_to_sheet(contents);
+          XLSX.writeFile(wb, `export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+        }
+        tick();
       }
 
       const truncated = contents.filter(r => String(r[3] || '').startsWith('TRUNCATED')).length;
       const notes = [];
       if (truncated) notes.push(`${truncated} dataset(s) hit the row cap - narrow the date range for the rest`);
-      if (failed.length) notes.push(`${failed.length} item(s) could not be exported (listed on the Contents sheet)`);
+      if (failed.length) notes.push(`${failed.length} item(s) could not be exported${wantsSheets && used.size ? ' (listed on the Contents sheet)' : ''}: ${failed.map(f => f[0]).join(', ')}`);
       ui.alert(notes.length ? `Export finished. ${notes.join('. ')}.` : 'Export finished.');
-    } catch (err) {
+    } catch {
       ui.alert('Export failed.');
-    } finally { setExportAllBusy(''); }
+    } finally {
+      setExportAllBusy('');
+      setExportProgress(null);
+    }
   };
 
   // ── MENU BACKUP / RESTORE ──────────────────────────────────────────────────
@@ -8080,7 +8194,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     // ── Backdated Sales (superadmin) ──
     backdateForm, setBackdateForm, backdateBusy, submitBackdateSale,
     // ── Tenancy ──
-    tenancyReport, tenancyBusy, tenancyError, fetchTenancyReport, runTenancyRebackfill,
+    tenancyReport, tenancyBusy, tenancyError, tenancyProgress, fetchTenancyReport, runTenancyRebackfill,
     // ── Client accounts (for per-product per-client discount picker) ──
     clientAccounts,
     // ── Price tiers (for the per-product segment override picker) ──
@@ -8157,7 +8271,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     menuImportModal, setMenuImportModal, menuImportRows, setMenuImportRows, menuImportSubmitting,
     menuBackupBusy, downloadMenuBackup, menuRestoreModal, setMenuRestoreModal, openMenuRestore, runMenuRestore,
     exportBusy, downloadDataset, downloadAccountBalances,
-    exportAllBusy, downloadAllExports,
+    exportAllBusy, downloadAllExports, exportProgress, exportDatasets, fetchExportDatasets,
     downloadMenuImportTemplate, parseMenuImportFile, submitMenuImport,
     rsFile, rsPreview, rsBusy, rsCreateMissing, setRsCreateMissing, openRecipeSheet, closeRecipeSheet, submitRecipeSheet,
     rsDrafts, rsPrices, setRsPrice,

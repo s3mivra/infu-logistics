@@ -108,7 +108,7 @@ export default function LedgerTab({ ctx }) {
     advCancelModal, setAdvCancelModal, submitCancelAdvance,
     obEntry, obRows, setObRows, obMeta, setObMeta, obBusy, fetchOpeningBalances, submitOpeningBalances, balanceSheetAccounts,
     exportBusy, downloadDataset, downloadAccountBalances,
-    exportAllBusy, downloadAllExports,
+    exportAllBusy, downloadAllExports, exportProgress, exportDatasets, fetchExportDatasets,
     profitByCategory, fetchProfitByCategory,
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
@@ -127,7 +127,7 @@ export default function LedgerTab({ ctx }) {
     periodCloseForm, setPeriodCloseForm,
     auditLogEntries, auditLogPage, auditLogPages, auditLogFilter, setAuditLogFilter, fetchAuditLog,
     paymentMap, fetchPaymentMap, savePaymentMapping, resetPaymentMapping,
-    tenancyReport, tenancyBusy, tenancyError, fetchTenancyReport, runTenancyRebackfill,
+    tenancyReport, tenancyBusy, tenancyError, tenancyProgress, fetchTenancyReport, runTenancyRebackfill,
     backdateForm, setBackdateForm, backdateBusy, submitBackdateSale,
   } = ctx;
 
@@ -172,7 +172,34 @@ export default function LedgerTab({ ctx }) {
     const iso = (d) => d.toISOString().slice(0, 10);
     return { start: iso(new Date(now.getFullYear(), now.getMonth(), 1)), end: iso(now) };
   });
-  const [exportAllReports, setExportAllReports] = useState(true);
+  // What to export. A key that is missing counts as selected, so everything is
+  // ticked until someone chooses otherwise; the presets write explicit values.
+  const [exportPicked, setExportPicked] = useState({ ds: {}, rep: {} });
+  const EXPORT_REPORTS = [
+    { key: 'journal', label: 'General Journal', note: 'CSV file, one line per posting - capped at one quarter' },
+    { key: 'auditlog', label: 'Audit Log', note: 'CSV file - who changed what, and when' },
+    { key: 'accountBalances', label: 'Account Balances', note: 'Sheet in the workbook - every account and its balance' },
+    { key: 'validValues', label: 'Valid Values', note: 'Sheet in the workbook - accepted values for each column' },
+  ];
+
+  // One progress bar for both long-running screens. It shows finished steps
+  // out of the total, so it only ever moves when real work completes - a
+  // spinner cannot tell "nearly done" from "stuck", and that was the problem.
+  const renderProgress = (prog, fallback) => {
+    if (!prog) return null;
+    const pct = prog.total > 0 ? Math.round((prog.done / prog.total) * 100) : 0;
+    return (
+      <div className="space-y-1.5" role="progressbar" aria-valuemin={0} aria-valuemax={prog.total} aria-valuenow={prog.done}>
+        <div className="flex justify-between gap-3 text-[10px] font-bold uppercase tracking-widest text-fg/70">
+          <span className="truncate">{prog.label || fallback}</span>
+          <span className="tabular-nums shrink-0">{prog.done} / {prog.total} - {pct}%</span>
+        </div>
+        <div className="h-2 bg-page-bg border border-white/10 rounded-full overflow-hidden">
+          <div className="h-full bg-brand transition-all duration-300" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    );
+  };
   const [bdSearch, setBdSearch] = useState('');
   const [bdBusy, setBdBusy] = useState(false);
 
@@ -893,6 +920,11 @@ export default function LedgerTab({ ctx }) {
     if (ledgerSubTab === 'salesline' && !salesLineItems) fetchSalesLineItems();
     if (ledgerSubTab === 'backdate' && !bdHistory) fetchBdHistory(1);
     if (ledgerSubTab === 'backdate' && !bdQueue) fetchBdQueue(1);
+    // Tenancy Health had no entry here at all, so opening the page never
+    // started the check: it sat on its loading line indefinitely, and the only
+    // buttons that could start it appear after a result or an error.
+    if (ledgerSubTab === 'tenancy' && !tenancyReport && !tenancyProgress) fetchTenancyReport?.();
+    if (ledgerSubTab === 'exportall' && !exportDatasets) fetchExportDatasets?.();
   }, [ledgerSubTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Which Payment Routing parent groups (111000 / 112000 / etc.) are expanded.
@@ -5752,11 +5784,89 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
-          {ledgerSubTab === 'exportall' && (
+          {ledgerSubTab === 'exportall' && (() => {
+            const dsList = exportDatasets || [];
+            const dsOn = (k) => exportPicked.ds[k] !== false;
+            const repOn = (k) => exportPicked.rep[k] !== false;
+            const pickedDs = dsList.filter(d => dsOn(d.key)).map(d => d.key);
+            const pickedRep = EXPORT_REPORTS.filter(r => repOn(r.key)).map(r => r.key);
+            // A date range only matters if something picked actually uses it.
+            const needsRange = pickedRep.some(k => k === 'journal' || k === 'auditlog')
+              || dsList.some(d => dsOn(d.key) && d.dateFiltered);
+            const nothing = pickedDs.length === 0 && pickedRep.length === 0;
+            const count = pickedDs.length + pickedRep.length;
+            const preset = (dsVal, repVal) => setExportPicked({
+              ds: Object.fromEntries(dsList.map(d => [d.key, dsVal])),
+              rep: Object.fromEntries(EXPORT_REPORTS.map(r => [r.key, repVal])),
+            });
+            const setGroup = (group, val) => setExportPicked(prev => ({
+              ...prev,
+              [group]: Object.fromEntries((group === 'ds' ? dsList : EXPORT_REPORTS).map(x => [x.key, val])),
+            }));
+            const toggle = (group, key) => setExportPicked(prev => ({
+              ...prev, [group]: { ...prev[group], [key]: prev[group][key] === false },
+            }));
+            const chip = (on) => `flex items-center gap-2 text-xs font-bold px-3 py-2 rounded-lg border cursor-pointer transition min-w-0 ${
+              on ? 'border-brand/60 bg-brand/10 text-fg' : 'border-white/10 text-fg/70 hover:text-fg hover:bg-white/5'}`;
+            const presetBtn = 'text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-lg border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 transition disabled:opacity-40';
+            return (
             <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-6">
               <div>
-                <h3 className="text-xl font-black text-fg flex items-center gap-2"><Download size={18} className="text-brand-text"/> Export All</h3>
-                <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Every dataset in one workbook, plus the ledger reports</p>
+                <h3 className="text-xl font-black text-fg flex items-center gap-2"><Download size={18} className="text-brand-text"/> Export</h3>
+                <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Pick datasets, reports, or both</p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => preset(true, true)} disabled={!!exportAllBusy} className={presetBtn}>Everything</button>
+                <button onClick={() => preset(true, false)} disabled={!!exportAllBusy} className={presetBtn}>Datasets only</button>
+                <button onClick={() => preset(false, true)} disabled={!!exportAllBusy} className={presetBtn}>Reports only</button>
+                <button onClick={() => preset(false, false)} disabled={!!exportAllBusy} className={presetBtn}>Clear</button>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="bg-page-bg border border-white/10 rounded-xl p-4 min-w-0">
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <p className="text-[10px] uppercase tracking-widest text-fg/70 font-bold">Datasets ({pickedDs.length} of {dsList.length})</p>
+                    <div className="flex gap-3 text-[10px] font-bold uppercase tracking-widest">
+                      <button onClick={() => setGroup('ds', true)} className="text-brand-text hover:underline">All</button>
+                      <button onClick={() => setGroup('ds', false)} className="text-fg/70 hover:text-fg">None</button>
+                    </div>
+                  </div>
+                  {exportDatasets === null ? (
+                    <p className="text-sm text-fg/70 italic">Loading datasets...</p>
+                  ) : (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {dsList.map(d => (
+                        <label key={d.key} className={chip(dsOn(d.key))}>
+                          <input type="checkbox" checked={dsOn(d.key)} onChange={() => toggle('ds', d.key)} />
+                          <span className="truncate">{d.label}</span>
+                          {d.dateFiltered && <span className="ml-auto text-[9px] uppercase tracking-widest text-fg/70 shrink-0">dated</span>}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-page-bg border border-white/10 rounded-xl p-4 min-w-0">
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <p className="text-[10px] uppercase tracking-widest text-fg/70 font-bold">Reports ({pickedRep.length} of {EXPORT_REPORTS.length})</p>
+                    <div className="flex gap-3 text-[10px] font-bold uppercase tracking-widest">
+                      <button onClick={() => setGroup('rep', true)} className="text-brand-text hover:underline">All</button>
+                      <button onClick={() => setGroup('rep', false)} className="text-fg/70 hover:text-fg">None</button>
+                    </div>
+                  </div>
+                  <div className="grid gap-2">
+                    {EXPORT_REPORTS.map(r => (
+                      <label key={r.key} className={chip(repOn(r.key))}>
+                        <input type="checkbox" checked={repOn(r.key)} onChange={() => toggle('rep', r.key)} />
+                        <span className="min-w-0">
+                          <span className="block truncate">{r.label}</span>
+                          <span className="block text-[10px] text-fg/70 font-normal">{r.note}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <div className="bg-page-bg border border-white/10 rounded-xl p-4 space-y-3">
@@ -5770,33 +5880,29 @@ export default function LedgerTab({ ctx }) {
                     onChange={e => setExportAllRange(r => ({ ...r, end: e.target.value }))}
                     className="bg-surface border border-white/15 text-fg rounded-lg px-3 py-2 text-sm" />
                 </div>
-                <p className="text-[10px] text-fg/70">Applies only to the date-filtered datasets (orders, journal entries, stock movements, expenses). Everything else exports in full.</p>
-                <label className="flex items-center gap-2 text-xs font-bold text-fg/70 cursor-pointer">
-                  <input type="checkbox" checked={exportAllReports} onChange={e => setExportAllReports(e.target.checked)} />
-                  Also download the Journal and Audit Log reports as separate CSV files
-                </label>
+                <p className="text-[10px] text-fg/70">
+                  {needsRange
+                    ? 'Used by the dated datasets and by the Journal and Audit Log files. Everything else exports in full.'
+                    : 'Nothing you have picked uses a date range - it will all export in full.'}
+                </p>
               </div>
 
-              <div className="text-xs text-fg/70 space-y-1">
-                <p className="text-[10px] uppercase tracking-widest font-bold text-fg/70">What you get</p>
-                <p><span className="text-fg font-bold">full-export-&lt;date&gt;.xlsx</span> - one sheet per dataset, led by a Contents sheet listing row counts and flagging any sheet that hit the row cap, plus Account Balances and Valid Values for reference.</p>
-                {exportAllReports && (
-                  <p><span className="text-fg font-bold">journal_*.csv</span> and <span className="text-fg font-bold">audit_log_*.csv</span> - streamed row-per-line ledgers, kept as their own files. The journal is capped at one quarter per export.</p>
-                )}
-              </div>
+              {exportProgress && renderProgress(exportProgress, 'Working...')}
 
               <div className="flex flex-wrap items-center gap-3">
                 <button
-                  onClick={() => downloadAllExports?.({ start: exportAllRange.start, end: exportAllRange.end, includeReports: exportAllReports })}
-                  disabled={!!exportAllBusy || !exportAllRange.start || !exportAllRange.end}
+                  onClick={() => downloadAllExports?.({ start: exportAllRange.start, end: exportAllRange.end, datasets: pickedDs, reports: pickedRep })}
+                  disabled={!!exportAllBusy || nothing || exportDatasets === null || (needsRange && (!exportAllRange.start || !exportAllRange.end))}
                   className="bg-brand text-on-brand font-black px-4 py-2 rounded-lg uppercase tracking-widest text-xs hover:bg-brand/90 transition disabled:opacity-50">
-                  {exportAllBusy ? 'Working…' : 'Export Everything'}
+                  {exportAllBusy ? 'Working...' : nothing ? 'Pick something to export' : `Export ${count} item${count === 1 ? '' : 's'}`}
                 </button>
-                {exportAllBusy && <span className="text-xs text-fg/70 italic">{exportAllBusy}</span>}
               </div>
-              <p className="text-[10px] text-fg/70">Large exports take a while - each dataset is fetched in turn. Your browser may ask permission to save several files.</p>
+              <p className="text-[10px] text-fg/70">
+                Datasets and the reference sheets go into one workbook, led by a Contents sheet that lists row counts and flags any sheet that hit the row cap. The Journal and Audit Log download as their own CSV files. Your browser may ask permission to save several files.
+              </p>
             </div>
-          )}
+            );
+          })()}
 
           {ledgerSubTab === 'tenancy' && (
             <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-6">
@@ -5814,7 +5920,11 @@ export default function LedgerTab({ ctx }) {
                   </button>
                 </div>
               ) : !tenancyReport ? (
-                <p className="text-fg/70 text-sm italic">Checking every collection…</p>
+                tenancyProgress
+                  ? renderProgress(
+                      { ...tenancyProgress, label: tenancyProgress.current ? `Checked ${tenancyProgress.current}` : 'Starting...' },
+                      'Checking collections...')
+                  : <p className="text-fg/70 text-sm italic">Starting the check...</p>
               ) : (
                 <>
                   <div className="bg-page-bg border border-white/10 rounded-xl p-4">
