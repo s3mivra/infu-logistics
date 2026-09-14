@@ -182,6 +182,56 @@ export default function registerDataExport(ctx) {
       const limit = Math.min(MAX_ROWS, Math.max(1, parseInt(req.query.limit) || 5000));
       const docs = await Model.find(q).sort(def.sort || { _id: -1 }).limit(limit).lean();
 
+      // Opt-in: datasets that cost recipes read ingredient costs as they are
+      // NOW. A recipe line carries a cost snapshot from the day the ingredient
+      // was added, and pricing a menu on stale snapshots is how a margin looks
+      // healthy for months after the supplier raised the price. Loaded once
+      // per export, not per product.
+      let inv = null;
+      if (def.withInventory) {
+        const items = await mongoose.model('Inventory')
+          .find(scopeFor('Inventory', req), { itemName: 1, unitCost: 1, unit: 1, packSize: 1, unitMultiplier: 1, displayUnit: 1 })
+          .lean();
+        inv = {
+          byId: new Map(items.map(i => [String(i._id), i])),
+          // Name fallback mirrors how a sale resolves an ingredient with no
+          // stock link (resolveIngInvId in orders.js), so the export costs a
+          // recipe the same way the till will.
+          byName: new Map(items.map(i => [String(i.itemName || '').toUpperCase(), i])),
+        };
+      }
+
+      // Stock categories are linked to item codes: a category's prefix is the
+      // code with its 4-digit sequence removed (G10001 -> G1), the same rule
+      // the "next code" generator uses. An fb import never stores a category
+      // on the item, so without this every row exported a blank Category even
+      // though the code already says which section it belongs to.
+      // Both business types group stock into stock categories. The difference
+      // is what they are shared with: in log the stock item IS the catalogue
+      // entry, so stock and menu share one set of categories; in fb the menu
+      // has its own product categories and stock keeps a separate set. Either
+      // way the inventory export carries the stock category.
+      if (def.withStockCategories && StockCategory) {
+        const cats = await StockCategory
+          .find({ businessType: BUSINESS_TYPE, isActive: { $ne: false } }, { name: 1, prefix: 1 })
+          .lean().catch(() => []);
+        const withPrefix = cats
+          .filter(c => c.prefix)
+          .map(c => ({ name: c.name, prefix: String(c.prefix).toUpperCase().trim() }))
+          // Longest first, so G10 wins over G1 for a code that matches both.
+          .sort((a, b) => b.prefix.length - a.prefix.length);
+        const categoryForCode = (code) => {
+          const c = String(code || '').toUpperCase().trim();
+          if (!c || !withPrefix.length) return '';
+          const derived = c.length > 4 && /^\d{4}$/.test(c.slice(-4)) ? c.slice(0, -4) : '';
+          const exact = derived && withPrefix.find(x => x.prefix === derived);
+          if (exact) return exact.name;
+          const hit = withPrefix.find(x => c.startsWith(x.prefix));
+          return hit ? hit.name : '';
+        };
+        inv = { ...(inv || {}), categoryForCode, useCategories: true };
+      }
+
       let rows;
       if (key === 'expenses') {
         // Expenses are journal entries whose debit side is an expense account,
@@ -202,15 +252,24 @@ export default function registerDataExport(ctx) {
             credLine?.accountName || '', e.description || '',
           ]);
         }
+      } else if (def.buildRows) {
+        // Whole-list builder, for a sheet whose rows depend on each other -
+        // the inventory export puts a category header row before each group,
+        // which no per-item row function can know to do.
+        rows = def.buildRows(docs, inv);
       } else if (def.expand) {
-        rows = docs.flatMap(def.expand);
+        // Called explicitly rather than passed straight to flatMap/map, which
+        // would hand the array index in as the second argument.
+        rows = docs.flatMap(d => def.expand(d, inv));
       } else {
-        rows = docs.map(def.toRow);
+        rows = docs.map(d => def.toRow(d, inv));
       }
 
       res.json({
         success: true, dataset: key, label: def.label,
-        columns: def.columns, rows,
+        // A dataset may drop columns that mean nothing for this business type,
+        // so an fb sheet is not padded with a category that never exists.
+        columns: def.columnsFor ? def.columnsFor(inv) : def.columns, rows,
         // Said plainly: a clipped export must never be mistaken for the whole set.
         truncated: docs.length === limit, limit,
       });

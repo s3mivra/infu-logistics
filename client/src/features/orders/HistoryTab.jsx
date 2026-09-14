@@ -29,7 +29,7 @@ export default function HistoryTab({ ctx }) {
     currentInventory, currentOrders, currentPage, currentPricingProducts, currentProducts,
     dailyMovement, deleteAddOn, deleteCategory, deleteInventory, deleteProduct,
     departmentFilter, discountForm, discountInputs, discountList, discounts,
-    displayOrders, downloadImportTemplate, downloadJournalCsv, editInvForm, editInvModal,
+    displayOrders, downloadImportTemplate, editInvForm, editInvModal,
     editInvSubmitting, editPriceId, editPriceVal, editingCategory, editingProduct,
     effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,

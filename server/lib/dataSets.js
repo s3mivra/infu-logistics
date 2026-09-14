@@ -23,6 +23,47 @@
 // everything here is testable without a database.
 
 const money = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const round4 = (n) => Math.round((Number(n) || 0) * 1e4) / 1e4;
+const round6 = (n) => Math.round((Number(n) || 0) * 1e6) / 1e6;
+// "1kg", "377g", "2L", "750ml", "100pcs" - the size as it is written on the
+// pack and in the product sheet. packSize is held in display units, so a
+// fraction of a kg or L reads back in g or ml the way it is sold.
+// One recipe line resolved against live stock. Same rules a sale uses: a
+// non-stock line (filtered water) is never stock and never costed; otherwise
+// match by stock link, then by name. A line whose stock item no longer exists
+// falls back to the cost it carried when added, and says so - a silent zero
+// would make the drink look cheaper than it is.
+const resolveLine = (line, inv) => {
+  if (line?.nonStock) {
+    return { link: 'Not from inventory', item: null, perBase: 0, packBase: Number(line.packBase) > 0 ? Number(line.packBase) : null };
+  }
+  const item = inv
+    ? ((line?.invId && inv.byId.get(String(line.invId))) || (line?.name && inv.byName.get(String(line.name).toUpperCase())) || null)
+    : null;
+  const mult = item && Number(item.unitMultiplier) > 0 ? Number(item.unitMultiplier) : 1;
+  const packBase = Number(line?.packBase) > 0
+    ? Number(line.packBase)
+    : (item && Number(item.packSize) > 0 ? Number(item.packSize) * mult : null);
+  return {
+    link: item ? 'Linked' : 'Missing - cost from when it was added',
+    item,
+    perBase: item ? (Number(item.unitCost) || 0) : (Number(line?.cost) || 0),
+    packBase,
+  };
+};
+// Same exclusion as Menu Setup's calcRecipeCost: non-stock lines cost nothing.
+const recipeCost = (recipe, inv) => (recipe || [])
+  .filter(l => !l?.nonStock)
+  .reduce((sum, l) => sum + (Number(l.qty) || 0) * resolveLine(l, inv).perBase, 0);
+
+const packLabel = (pack, disp) => {
+  if (!(pack > 0)) return '';
+  const u = String(disp || '');
+  const trim = (x) => String(Math.round(x * 1000) / 1000);
+  if (u === 'kg' && pack < 1) return `${trim(pack * 1000)}g`;
+  if (u === 'L' && pack < 1) return `${trim(pack * 1000)}ml`;
+  return `${trim(pack)}${u}`;
+};
 const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 const yes = (b) => (b ? 'Yes' : 'No');
 
@@ -30,10 +71,99 @@ const yes = (b) => (b ? 'Yes' : 'No');
 // `importable` marks the datasets an import actually exists for - the rest are
 // export-only on purpose. Importing posted ledger rows would let someone
 // rewrite history through a spreadsheet, so those are deliberately one-way.
+// ── Inventory export, in the import sheet's own shape ──────────────────────
+export const INVENTORY_IMPORT_COLUMNS = ['Code', 'Product', 'Qty Unit', 'SRP', 'Unit Cost', 'Expiry date', 'Production date'];
+const CATEGORY_INFO_COLUMNS = ['Category', 'Category Source'];
+const INVENTORY_INFO_COLUMNS = [
+  'Category', 'Category Source', 'Pack', 'Display Unit', 'Qty (display unit)', 'Cost per Display Unit',
+  'Total Value', 'Low Stock At', 'Location', 'Base Unit', 'Qty (base)', 'Cost per Base Unit',
+];
+// The same trailing-size pattern the importer uses (PACK_SIZE_RE in
+// AdminDashboard's inventory parser). A name that already ends in a size is
+// left alone rather than given a second one.
+const IMPORT_PACK_RE = /\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|L|l|ml|pcs|pc|piece)\b(\s*\([^)]*\))?\s*$/i;
+const round9 = (n) => Math.round((Number(n) || 0) * 1e9) / 1e9;
+const isoDay = (d) => {
+  if (!d) return '';
+  const t = new Date(d);
+  return Number.isNaN(t.getTime()) ? '' : t.toISOString().slice(0, 10);
+};
+// Pack size written from BASE units, not the stored display unit, so it
+// parses back identically however the item was set up: 1000 g -> "1kg",
+// 377 g -> "377g", 2500 ml -> "2.5L", 100 pcs -> "100pcs". The importer turns
+// "377g" into 0.377 kg, and kg is always 1000 g, so the pack round-trips.
+const basePackLabel = (packBase, base) => {
+  const t = (x) => String(Math.round(x * 1000) / 1000);
+  if (base === 'g') return packBase >= 1000 ? `${t(packBase / 1000)}kg` : `${t(packBase)}g`;
+  if (base === 'ml') return packBase >= 1000 ? `${t(packBase / 1000)}L` : `${t(packBase)}ml`;
+  return `${t(packBase)}pcs`;
+};
+// One sheet row per stock lot, or one row for the item when its lots do not
+// account for all of it. Repeating a code in one import is how the importer
+// adds a second expiry lot, so writing each lot separately keeps every expiry
+// date instead of collapsing them to the soonest.
+const inventorySheetRows = (i, category, categorySource) => {
+  const base = i.unit || 'pcs';
+  // Without a pack size, quantity and cost go out in the importer's canonical
+  // display unit - kg, L or pcs - with the unit written into Qty Unit.
+  const canonFactor = base === 'g' || base === 'ml' ? 1000 : 1;
+  const canonUnit = base === 'g' ? 'kg' : base === 'ml' ? 'L' : 'pcs';
+  const mult = Number(i.unitMultiplier) > 0 ? Number(i.unitMultiplier) : 1;
+  const pack = Number(i.packSize) > 0 ? Number(i.packSize) : null;
+  const packBase = pack ? pack * mult : null;
+  const perBase = Number(i.unitCost) || 0;
+  const qtyBase = Number(i.stockQty) || 0;
+  const name = String(i.itemName || '');
+  const label = packBase ? basePackLabel(packBase, base) : '';
+  const product = label && !IMPORT_PACK_RE.test(name) ? `${name} ${label}` : name;
+
+  const batches = (i.expiryBatches || []).filter(b => Number(b.qty) > 0);
+  const batchTotal = batches.reduce((sum, b) => sum + Number(b.qty), 0);
+  // stockQty is the source of truth; batches are the audit trail of it. Only
+  // split into lots when they add up, or a re-import would change the count.
+  const lots = batches.length > 1 && Math.abs(batchTotal - qtyBase) < 1e-6
+    ? batches.map(b => ({
+        qty: Number(b.qty),
+        expiry: b.expiryDate,
+        production: b.productionDate,
+        cost: Number(b.unitCost) > 0 ? Number(b.unitCost) : perBase,
+      }))
+    : [{
+        qty: qtyBase,
+        expiry: i.expiryDate || batches[0]?.expiryDate,
+        production: batches[0]?.productionDate,
+        cost: perBase,
+      }];
+
+  return lots.map(lot => {
+    const expiry = isoDay(lot.expiry);
+    return [
+      i.itemCode || '',
+      product,
+      // With a pack in the name, Qty Unit is a plain count of packs and Unit
+      // Cost is per pack - the importer multiplies and divides by the pack
+      // size itself. Without one, the unit is written in and cost is per unit.
+      packBase ? round9(lot.qty / packBase) : `${round9(lot.qty / canonFactor)} ${canonUnit}`,
+      Number(i.srp) > 0 ? money(i.srp) : '',
+      // Six decimals, not two: a cost blended across deliveries (P65.8734 a
+      // can) must re-import to the same stored cost, not a rounded one.
+      packBase ? round6(lot.cost * packBase) : round6(lot.cost * canonFactor),
+      expiry,
+      // The importer only uses a production date when there is no expiry.
+      expiry ? '' : isoDay(lot.production),
+      // ── reference only; not read on import ──
+      category, categorySource, label, i.displayUnit || canonUnit,
+      round4(lot.qty / mult), money(perBase * mult),
+      money(lot.qty * lot.cost), money(i.lowStockThreshold), i.stockLocation || '',
+      base, round4(lot.qty), round6(perBase),
+    ];
+  });
+};
+
 export const DATASETS = {
   // ── Master data ──────────────────────────────────────────────────────────
   inventory: {
-    label: 'Inventory', model: 'Inventory', importable: true,
+    label: 'Inventory', model: 'Inventory', importable: true, withStockCategories: true,
     sort: { itemName: 1 },
     importSpec: {
       endpoint: '/api/inventory/import',
@@ -49,23 +179,155 @@ export const DATASETS = {
         { name: 'stockLocation', note: 'Where it is kept.', example: 'Main bar' },
       ],
     },
-    columns: ['Item Code', 'Item Name', 'Category', 'Unit', 'Qty', 'Unit Cost', 'Total Value', 'Low Stock At', 'Location'],
-    toRow: (i) => [
-      i.itemCode || '', i.itemName || '', i.stockCategory || '', i.unit || '',
-      money(i.stockQty), money(i.unitCost), money((i.stockQty || 0) * (i.unitCost || 0)),
-      money(i.lowStockThreshold), i.stockLocation || '',
-    ],
+    // Written in the SAME shape the Inventory tab's Import reads, so an export
+    // can be imported straight back - into this system or a new one - and land
+    // on the same stored figures. The first seven columns are exactly the
+    // import sheet: Code, Product (with the pack size written into the name,
+    // e.g. "BEANS PROFILE(2) 1kg"), Qty Unit, SRP, Unit Cost, Expiry date,
+    // Production date. Everything after them is reference only; the importer
+    // does not read those columns.
+    //
+    // Categories are carried the way the import sheet carries them: a header
+    // row with the category name in Code and everything else blank, before
+    // each group. The importer has no Category column - a header row is the
+    // only thing it reads a category from.
+    //
+    // Stock is STORED in base units (g / ml / pcs) with cost per base unit.
+    // This export used to print those storage values straight out: BEANS 1kg
+    // bought at P386 came out as "g, 0.39" - a unit nobody buys in, rounded
+    // until P386 read as P390, and a sheet no importer could take back.
+    columns: [...INVENTORY_IMPORT_COLUMNS, ...INVENTORY_INFO_COLUMNS],
+    // Category columns only where stock has categories - logistics. In fb the
+    // categories belong to menu products, and a stock sheet with a Category
+    // column that is always blank only suggests something is missing.
+    columnsFor: (ctx) => (ctx?.useCategories
+      ? [...INVENTORY_IMPORT_COLUMNS, ...INVENTORY_INFO_COLUMNS]
+      : [...INVENTORY_IMPORT_COLUMNS, ...INVENTORY_INFO_COLUMNS.filter(c => !CATEGORY_INFO_COLUMNS.includes(c))]),
+    buildRows: (docs, ctx) => {
+      const useCats = !!ctx?.useCategories;
+      const width = INVENTORY_IMPORT_COLUMNS.length + INVENTORY_INFO_COLUMNS.length - (useCats ? 0 : CATEGORY_INFO_COLUMNS.length);
+      const groups = new Map();
+      for (const i of docs) {
+        // fb: no categories at all, so every item lands in one group and no
+        // header row is written.
+        const fromCode = useCats && !i.stockCategory && ctx?.categoryForCode ? ctx.categoryForCode(i.itemCode) : '';
+        const category = useCats ? (i.stockCategory || fromCode || '') : '';
+        const source = !useCats ? '' : (i.stockCategory ? 'Item' : (fromCode ? 'Code prefix' : ''));
+        if (!groups.has(category)) groups.set(category, []);
+        groups.get(category).push({ i, category, source });
+      }
+      // Uncategorised items FIRST. The importer applies the last header it saw
+      // to every row after it, so an uncategorised item placed after a header
+      // would silently be filed under that header's category on re-import.
+      const keys = [...groups.keys()].sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)));
+      const byCode = (x, y) => {
+        const a = String(x.i.itemCode || ''), b = String(y.i.itemCode || '');
+        if (!a && b) return 1;
+        if (a && !b) return -1;
+        return a.localeCompare(b) || String(x.i.itemName || '').localeCompare(String(y.i.itemName || ''));
+      };
+      const out = [];
+      for (const k of keys) {
+        if (k) {
+          const header = new Array(width).fill('');
+          header[0] = k;
+          out.push(header);
+        }
+        for (const x of groups.get(k).sort(byCode)) {
+          for (const row of inventorySheetRows(x.i, x.category, x.source)) {
+            // Category and Category Source are the first two reference columns.
+            if (!useCats) row.splice(INVENTORY_IMPORT_COLUMNS.length, CATEGORY_INFO_COLUMNS.length);
+            out.push(row);
+          }
+        }
+      }
+      return out;
+    },
   },
 
+  // This used to report that a drink had "3" recipe lines and nothing else -
+  // not what they were, how much, or what they cost. Recipe cost and margin
+  // are now included, priced on ingredient costs as they are today (see
+  // withInventory in data-export.js). New columns are appended, so anything
+  // reading the existing ones by position is undisturbed. The line-by-line
+  // view is the separate Recipes dataset below.
   products: {
-    label: 'Products', model: 'Product', importable: true,
+    label: 'Products', model: 'Product', importable: true, withInventory: true,
     sort: { category: 1, name: 1 },
-    columns: ['Product Code', 'Name', 'Category', 'Base Price', 'Base Size', 'Barcode', 'Available', 'Archived', 'Recipe Lines', 'Sizes'],
-    toRow: (p) => [
-      p.productCode || '', p.name || '', p.category || '', money(p.basePrice),
-      p.baseSize || '', p.barcode || '', yes(p.isAvailable !== false), yes(p.isArchived),
-      (p.baseRecipe || []).length, (p.sizes || []).length,
+    columns: [
+      'Product Code', 'Name', 'Category', 'Base Price', 'Base Size', 'Barcode', 'Available', 'Archived', 'Recipe Lines', 'Sizes',
+      'Recipe Cost', 'Margin %', 'Cost Override', 'Size Prices',
     ],
+    toRow: (p, inv) => {
+      const cost = recipeCost(p.baseRecipe, inv);
+      const price = Number(p.basePrice) || 0;
+      return [
+        p.productCode || '', p.name || '', p.category || '', money(p.basePrice),
+        p.baseSize || '', p.barcode || '', yes(p.isAvailable !== false), yes(p.isArchived),
+        (p.baseRecipe || []).length, (p.sizes || []).length,
+        money(cost),
+        price > 0 ? Math.round(((price - cost) / price) * 1000) / 10 : '',
+        Number(p.costOverride) > 0 ? money(p.costOverride) : '',
+        (p.sizes || []).map(sz => `${sz.name || ''} ${money(sz.price)}`.trim()).join('; '),
+      ];
+    },
+  },
+
+  // Every recipe line, one row each - written in Menu Setup's own import shape,
+  // so the sheet can be imported straight back to move a menu or restore one.
+  // The leading columns are exactly the menu import sheet (Category, Product,
+  // SRP, Size, Ingredient, Qty, Unit) plus Stock Link, which marks a non-stock
+  // ingredient (filtered water) so it comes back as one. Qty is in storage
+  // units (g / ml / pcs), which the importer converts exactly. Everything after
+  // Stock Link is reference only.
+  //
+  // Add-on recipes are listed for reference with Recipe "Add-on: ...". The menu
+  // importer skips those rows: the sheet has no add-on column, and taking them
+  // in would fold every add-on ingredient into the drink's base recipe.
+  recipes: {
+    label: 'Recipes', model: 'Product', withInventory: true,
+    sort: { category: 1, name: 1 },
+    columns: [
+      'Category', 'Product', 'SRP', 'Size', 'Ingredient', 'Qty', 'Unit', 'Stock Link',
+      'Product Code', 'Recipe', 'Qty (packs)', 'Pack', 'Cost per Base Unit', 'Line Cost',
+    ],
+    expand: (p, inv) => {
+      if (p.isArchived) return [];            // not on sale; only noise here
+      const out = [];
+      const priceCell = (price) => (price === undefined || price === null || price === '' ? '' : money(price));
+      // A drink, or a size, with no recipe lines still needs a row - without
+      // it the importer would never see that name or its price.
+      const bare = (recipeLabel, size, price) => [
+        p.category || '', p.name || '', priceCell(price), size, '', '', '', '',
+        p.productCode || '', recipeLabel, '', '', '', '',
+      ];
+      const lineRow = (recipeLabel, size, price, l) => {
+        const r = resolveLine(l, inv);
+        const qty = Number(l.qty) || 0;
+        // Storage unit for stock (g / ml / pcs) - the unit the importer
+        // converts from. A non-stock line keeps the unit it was written in.
+        const unit = l.nonStock ? (l.unit || 'ml') : (r.item ? (r.item.unit || '') : '');
+        return [
+          p.category || '', p.name || '', priceCell(price), size,
+          l.name || '', round6(qty), unit, r.link,
+          p.productCode || '', recipeLabel,
+          r.packBase ? round4(qty / r.packBase) : '',
+          r.item ? packLabel(Number(r.item.packSize) || null, r.item.displayUnit || r.item.unit) : '',
+          round6(r.perBase),
+          money(l.nonStock ? 0 : qty * r.perBase),
+        ];
+      };
+      const add = (recipeLabel, size, price, lines) => {
+        if (!(lines || []).length) { out.push(bare(recipeLabel, size, price)); return; }
+        for (const l of lines) out.push(lineRow(recipeLabel, size, price, l));
+      };
+      add('Base', '', p.basePrice, p.baseRecipe);
+      for (const sz of p.sizes || []) add(`Size: ${sz.name || ''}`, sz.name || '', sz.price, sz.recipe);
+      for (const a of p.addOns || []) {
+        for (const l of a.recipe || []) out.push(lineRow(`Add-on: ${a.name || ''}`, '', '', l));
+      }
+      return out;
+    },
   },
 
   clients: {

@@ -1197,6 +1197,22 @@ items: [{
   scPwdOrder: { type: String, default: 'vat-first' },
   // --- ENTERPRISE FIELDS ---
   cashier: { type: String, default: 'System', index: true },
+  // --- AMENDMENTS (POST /api/orders/:id/amend) ---
+  // Changes made to an order's lines BEFORE it is completed - a client who
+  // ordered too much, a line out of stock. Nothing has posted yet at that
+  // stage, so the order is corrected in place; this history keeps what it
+  // was, who changed it, and why. Completed orders are never amended - they
+  // go through refunds instead.
+  revision: { type: Number, default: 0 },
+  amendments: [{
+    revision:    Number,
+    at:          { type: Date, default: Date.now },
+    by:          String,
+    reason:      String,
+    totalBefore: Number,
+    totalAfter:  Number,
+    changes:     [{ name: String, from: Number, to: Number }],
+  }],
   // --- PARTIAL FULFILLMENT (logistics - single order, fulfilled in batches) ---
   amountPaid:       { type: Number, default: 0 },        // cash/AR collected so far
   depositRemaining: { type: Number, default: 0 },        // prepaid-but-unfulfilled value held as Customer Deposits
@@ -2694,6 +2710,11 @@ const AdvanceSchema = new mongoose.Schema({
   type:           { type: String, enum: ADVANCE_TYPES, required: true },
   payeeName:      { type: String, required: true },
   payeeId:        { type: String, default: '' },
+  // Customer deposits only: the ClientAccount the money came from. Set, the
+  // deposit shows on that client's row, in their portal, and can only be
+  // applied to that client's orders. Blank = a deposit from someone with no
+  // account (kept working for walk-in style deposits).
+  clientId:       { type: String, default: '', index: true },
   amount:         { type: Number, required: true },
   // How much has been cleared so far. status is derived from this vs amount.
   liquidatedAmount: { type: Number, default: 0 },
@@ -3228,7 +3249,9 @@ const validateOrderMath = (order) => {
 
   if (Math.abs(expectedGross - order.subtotal) > TOLERANCE) return { valid: false, error: `Gross mismatch. Expected P${expectedGross.toFixed(2)}, got P${order.subtotal}` };
   if (Math.abs(expected.vatAmount - order.vatAmount) > TOLERANCE) return { valid: false, error: `VAT invalid. Expected P${expected.vatAmount.toFixed(2)}, got P${order.vatAmount}` };
-  if (Math.abs(expected.total - order.total) > TOLERANCE) return { valid: false, error: `Total invalid. Expected P${expected.total.toFixed(2)}, got P${order.total}` };
+  // The delivery fee is added after VAT and discounts, outside the sale itself.
+  const expectedTotal = expected.total + (Number(order.deliveryFee) || 0);
+  if (Math.abs(expectedTotal - order.total) > TOLERANCE) return { valid: false, error: `Total invalid. Expected P${expectedTotal.toFixed(2)}, got P${order.total}` };
 
   return { valid: true };
 };

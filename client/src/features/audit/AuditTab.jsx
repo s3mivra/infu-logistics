@@ -24,7 +24,7 @@ export default function AuditTab({ ctx }) {
     currentInventory, currentOrders, currentPage, currentPricingProducts, currentProducts,
     dailyMovement, deleteAddOn, deleteCategory, deleteInventory, deleteProduct,
     departmentFilter, discountForm, discountInputs, discountList, discounts,
-    displayOrders, downloadImportTemplate, downloadJournalCsv, editInvForm, editInvModal,
+    displayOrders, downloadImportTemplate, editInvForm, editInvModal,
     editInvSubmitting, editPriceId, editPriceVal, editingCategory, editingProduct,
     effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
@@ -76,7 +76,7 @@ export default function AuditTab({ ctx }) {
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
     users, varianceNoteMode, varianceReasons,
     auditLogs, auditLogsPage, auditLogsTotal, AUDIT_LOGS_PAGE_SIZE, fetchAuditLogs,
-    auditLogFilters, setAuditLogFilters, exportAuditLogsCsv, exportAuditLogsPdf,
+    auditLogFilters, setAuditLogFilters, exportAuditLogsRangePdf, exportAuditLogsPdf,
   } = ctx;
 
   const now    = new Date();
@@ -374,18 +374,18 @@ export default function AuditTab({ ctx }) {
                   <RefreshCw size={11} /> Load
                 </button>
                 <button
-                  onClick={exportAuditLogsCsv}
-                  title="Export CSV for the selected date range (start/end required, max 92 days)"
+                  onClick={exportAuditLogsRangePdf}
+                  title="PDF report of the whole selected date range, with the action and user filters (start/end required, max 92 days)"
                   className="flex items-center gap-1 px-3 py-1 rounded-lg bg-white/5 text-fg/75 hover:text-fg hover:bg-white/10 text-xs font-bold transition"
                 >
-                  <Download size={11} /> CSV
+                  <Download size={11} /> PDF (date range)
                 </button>
                 <button
                   onClick={exportAuditLogsPdf}
-                  title="Export the currently loaded page as PDF"
+                  title="PDF of just the entries loaded on screen now"
                   className="flex items-center gap-1 px-3 py-1 rounded-lg bg-white/5 text-fg/75 hover:text-fg hover:bg-white/10 text-xs font-bold transition"
                 >
-                  <FileText size={11} /> PDF
+                  <FileText size={11} /> PDF (this page)
                 </button>
               </div>
               {auditLogs.length === 0 ? (

@@ -491,12 +491,18 @@ export default function ClientOrderPage() {
   }, [fetchProducts]);
 
   // Client's own orders → status queue sidebar
+  const [myDeposits, setMyDeposits] = useState(null); // { balance, items }
   const fetchMyOrders = useCallback(async () => {
     if (!token) return;
     try {
       const res = await fetch(`${API_URL}/api/client/orders`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (data.success) setMyOrders(data.orders || []);
+      // Deposits ride on the profile; refreshed with the orders so a deposit
+      // staff just applied disappears from the balance at the same moment.
+      const pr = await fetch(`${API_URL}/api/client/profile`, { headers: { Authorization: `Bearer ${token}` } });
+      const pd = await pr.json();
+      if (pd.success) setMyDeposits(pd.profile.deposits || null);
     } catch { /* ignore */ }
   }, [token]);
 
@@ -1162,6 +1168,16 @@ export default function ClientOrderPage() {
                 </div>
               </div>
 
+              {(slipOrder.amendments || []).length > 0 && (
+                <div className="px-5 pb-3">
+                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-neutral-400 mb-1">Changes to this order</p>
+                  {slipOrder.amendments.map(a => (
+                    <p key={a.revision} className="text-[11px] text-neutral-600 leading-snug">
+                      {new Date(a.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {(a.changes || []).map(c => c.to === 0 ? `${c.name} removed` : `${c.name} ${c.from} → ${c.to}`).join(', ')} · {a.reason}
+                    </p>
+                  ))}
+                </div>
+              )}
               {/* Notes & terms */}
               {slipOrder.orderNotes && (
                 <div className="px-5 pb-3">
@@ -1392,6 +1408,15 @@ export default function ClientOrderPage() {
                 <X size={16} />
               </button>
             </div>
+            {myDeposits?.balance > 0 && (
+              <div className="mx-4 mt-3 rounded-xl border border-green-500/25 bg-green-500/10 px-3 py-2.5">
+                <div className="flex justify-between items-baseline text-xs">
+                  <span className="text-fg/75 font-bold">Deposit on file</span>
+                  <span className="text-success font-black tabular-nums">{peso(myDeposits.balance)}</span>
+                </div>
+                <p className="text-[10px] text-fg/65 mt-0.5">Paid ahead of your orders. Our team applies it to your next invoice.</p>
+              </div>
+            )}
             {/* Filter chips - group the many granular statuses into what a client
                 actually asks about: still moving, partial, cancelled, or done. */}
             <div className="flex gap-1.5 px-4 py-2.5 overflow-x-auto scrollbar-hide custom-scrollbar border-b border-white/5 flex-shrink-0">
@@ -1483,6 +1508,9 @@ export default function ClientOrderPage() {
 
                     <div className="p-4 cursor-pointer" onClick={() => setSlipOrder(o)}>
                       {v.msg && <p className="text-fg/75 text-[11px] leading-snug mb-2.5">{v.msg}</p>}
+                      {o.revision > 0 && (
+                        <p className="text-sky-400 text-[11px] leading-snug mb-2.5 font-bold">Updated by our team{o.amendments?.length ? `: ${o.amendments[o.amendments.length - 1].reason}` : ''}</p>
+                      )}
 
                       {/* Item summary */}
                       <div className="space-y-1.5">
@@ -1642,6 +1670,12 @@ export default function ClientOrderPage() {
                     <div className="flex justify-between text-xs">
                       <span className="text-fg/70">Client code</span>
                       <span className="text-fg font-mono">{clientInfo.clientCode}</span>
+                    </div>
+                  )}
+                  {myDeposits?.balance > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-fg/70">Deposit on file</span>
+                      <span className="text-success font-bold tabular-nums">{peso(myDeposits.balance)}</span>
                     </div>
                   )}
                   <div>

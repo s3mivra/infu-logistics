@@ -65,6 +65,20 @@ export default function registerClients(ctx) {
         paymentMethod: 1, isComplimentary: 1, arSettled: 1, isParked: 1, arPaidAmount: 1,
       }).lean();
 
+      // Open customer deposits per client - money they have paid us ahead of
+      // any order, which offsets what they owe.
+      const depositByClient = new Map();
+      if (showMoney && ctx.Advance) {
+        const deps = await ctx.Advance.find({
+          businessType: BUSINESS_TYPE, ...tenantScope(req),
+          type: 'customer', clientId: { $in: ids }, status: { $in: ['Open', 'Partially Liquidated'] },
+        }, { clientId: 1, amount: 1, liquidatedAmount: 1 }).lean();
+        for (const d of deps) {
+          const left = (Number(d.amount) || 0) - (Number(d.liquidatedAmount) || 0);
+          depositByClient.set(d.clientId, (depositByClient.get(d.clientId) || 0) + left);
+        }
+      }
+
       const byClient = new Map(ids.map(id => [id, []]));
       for (const o of orders) {
         const key = (o.clientAccountId && byClient.has(String(o.clientAccountId)))
@@ -120,6 +134,7 @@ export default function registerClients(ctx) {
           creditLimit: limit,
           available: limit === null ? null : Math.max(0, Math.round((limit - exposure) * 100) / 100),
           overLimit: limit !== null && exposure > limit,
+          deposits: Math.round((depositByClient.get(String(c._id)) || 0) * 100) / 100,
         };
       });
 

@@ -8,6 +8,7 @@ import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
 import { resolveTierPercent } from '../lib/priceTiers.js';
+import { buildSalePriceMap, saleUnitPrice, activeSalesQuery } from '../lib/salePricing.js';
 
 export default function registerOrders(ctx) {
   const {
@@ -490,6 +491,204 @@ app.get('/api/orders/:id', async (req, res) => {
   }
 });
 
+// Per-line discount and VAT classification for a set of order lines, from the
+// product records and the buyer's client/segment/tier context. Shared by order
+// creation and order amendment so an amended line is priced by exactly the
+// same rules it was first rung up under - a quantity cut that drops below a
+// bulk break loses that break, and nothing else changes.
+const buildLinePricing = async (req, items, { buyerClientId = '', buyerSegments = [] } = {}) => {
+  const _prodIds = items.map(i => i.productId).filter(Boolean);
+  const _prodNames = items.map(i => i.name).filter(Boolean);
+  const _discProds = await Product.find(
+    { $or: [{ _id: { $in: _prodIds } }, { name: { $in: _prodNames } }] },
+    { _id: 1, name: 1, basePrice: 1, discountPercent: 1, clientDiscounts: 1, segmentDiscounts: 1, bulkBreaks: 1, clientBulkBreaks: 1, vatExempt: 1 }
+  ).lean();
+  const _discById = new Map(_discProds.map(p => [String(p._id), p]));
+  const _discByName = new Map(_discProds.map(p => [p.name, p]));
+  // The buyer's price-tier context, and the per-product discount decision
+  // itself, both come from the shared resolver (lib/discounts.js) - the
+  // SAME function the pre-checkout price display (products.js) uses, so a
+  // buyer is never shown one price and charged a different one.
+  const { tierDefaultPct: _tierDefaultPct, perProductTiers: _perProductTiers } = await loadTierContext({
+    PriceTier, businessType: BUSINESS_TYPE, tenantScope, req, buyerSegments: buyerSegments,
+  });
+  const productDiscPct = (item) => {
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    return resolveEffectiveDiscountPercent(p, {
+      buyerClientId: buyerClientId, buyerSegments: buyerSegments,
+      tierDefaultPct: _tierDefaultPct, perProductTiers: _perProductTiers,
+    });
+  };
+  // Quantity-break bulk pricing, independent of clientDiscounts/segmentDiscounts
+  // above - combined via Math.max where it's applied, never stacked.
+  const bulkQtyDiscPct = (item) => {
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    const breaks = p?.bulkBreaks || [];
+    if (!breaks.length) return 0;
+    const qty = Number(item.quantity || 0);
+    const qualifying = breaks.filter(b => qty >= Number(b.minQty || 0));
+    if (!qualifying.length) return 0;
+    return Math.max(0, Math.min(100, Math.max(...qualifying.map(b => Number(b.percent || 0)))));
+  };
+  // Per-CLIENT quantity breaks, unlike bulkQtyDiscPct above which applies to
+  // any buyer. These are quoted as a real PRICE ("once you order 50+, it's
+  // PHP 180 each"), not a discount percent, so the tier's price is converted
+  // to an equivalent percent-off-basePrice here - same conversion PriceTier's
+  // per_product mode already does - and then combined into the same Math.max
+  // as every other discount. A buyer who isn't this named client never sees it.
+  const clientBulkQtyDiscPct = (item) => {
+    if (!buyerClientId) return 0;
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    const breaks = (p?.clientBulkBreaks || []).filter(b => String(b.clientId) === String(buyerClientId));
+    if (!breaks.length) return 0;
+    const qty = Number(item.quantity || 0);
+    const qualifying = breaks.filter(b => qty >= Number(b.minQty || 0));
+    if (!qualifying.length) return 0;
+    const base = Number(p?.basePrice) || 0;
+    if (base <= 0) return 0;
+    // The best (lowest) quoted price among qualifying tiers, converted to
+    // the discount percent that would produce it.
+    const bestPrice = Math.max(0, Math.min(...qualifying.map(b => Math.max(0, Number(b.price) || 0))));
+    return Math.max(0, Math.min(100, +(100 - (bestPrice / base) * 100).toFixed(4)));
+  };
+  // TIER-scoped quantity breaks - unlike clientBulkQtyDiscPct above (one
+  // named client) and bulkQtyDiscPct (any buyer), this applies to every
+  // client tagged into a per_product tier the buyer belongs to. "Anyone in
+  // Kape Sinukuan Price who orders 20+ of this pays ₱550 each." resolveTier
+  // Percent already knows how to pick the better of the tier's flat rate and
+  // a qualifying break (lib/priceTiers.js) - this just supplies the
+  // quantity it needs, which the static pricing table never has.
+  const tierBulkQtyDiscPct = (item) => {
+    if (!_perProductTiers.length) return 0;
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    if (!p) return 0;
+    const qty = Number(item.quantity || 0);
+    const pcts = _perProductTiers.map(t => resolveTierPercent(p, t, qty)).filter(v => v !== null);
+    return pcts.length ? Math.max(0, Math.min(100, Math.max(...pcts))) : 0;
+  };
+
+  // Server-authoritative VAT classification, same rule as the discount lookup:
+  // never trust a client-supplied flag, resolve it from the product record.
+  const productIsExempt = (item) => {
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    return p?.vatExempt === true;
+  };
+  const linePercent = (item) => Math.max(productDiscPct(item), bulkQtyDiscPct(item), clientBulkQtyDiscPct(item), tierBulkQtyDiscPct(item));
+  return { linePercent, productIsExempt };
+};
+
+// Unit prices come from the catalogue, never from the request.
+//
+// The POS, the client portal and the public QR menu all send a `price` on each
+// line because that is what they display - and until this existed, the order
+// was charged exactly that. Anyone holding a portal login or a table QR could
+// post a ₱1 sack. Every line is now re-priced from the records:
+//
+//   combo line        the combo's own price
+//   product line      the size price if a size was picked, else the active
+//                     sale price, else the base price
+//   add-ons           the product's own add-on, a global add-on, or a
+//                     "Group: Option" modifier choice - by name
+//   accepted quote    a client ordering what they accepted pays the quoted
+//                     price for that product (and no discount on top of it -
+//                     the quote already is the agreed number)
+//
+// A line that matches nothing in the catalogue is a staff-entered open item
+// and keeps its price when staff ring it up; from a client or a QR menu it is
+// refused. Returns { error } or { quoteIds } (quotations to link to the order).
+const resolveCatalogPrices = async (req, items, { selfService, buyerClientId }) => {
+  const Sale = mongoose.model('Sale');
+  const Quotation = mongoose.model('Quotation');
+  const ids = [...new Set(items.map(i => String(i.productId || '')).filter(id => mongoose.Types.ObjectId.isValid(id)))];
+  const names = [...new Set(items.filter(i => !i.productId).map(i => i.name).filter(Boolean))];
+  const [prods, combos, globalAddOns, groups, sales, quotes] = await Promise.all([
+    Product.find({ $or: [{ _id: { $in: ids } }, { name: { $in: names } }] }, { name: 1, basePrice: 1, sizes: 1, addOns: 1, isArchived: 1, isAvailable: 1 }).lean(),
+    Combo.find({ _id: { $in: ids } }, { name: 1, price: 1 }).lean(),
+    AddOn.find({}, { name: 1, price: 1 }).lean(),
+    ModifierGroup.find({}, { name: 1, options: 1 }).lean(),
+    Sale.find(activeSalesQuery()).lean(),
+    selfService && buyerClientId
+      ? Quotation.find({ clientAccountId: String(buyerClientId), status: 'Accepted', $or: [{ orderId: null }, { orderId: { $exists: false } }] }).lean()
+      : [],
+  ]);
+  const prodById = new Map(prods.map(p => [String(p._id), p]));
+  const prodByName = new Map(prods.map(p => [p.name, p]));
+  const comboById = new Map(combos.map(c => [String(c._id), c]));
+  const { map: saleMap } = buildSalePriceMap(sales);
+
+  // Accepted, not-yet-ordered quote lines this client may order at the quoted price.
+  const quoted = new Map(); // key (productId or name) -> { price, quoteId }
+  for (const q of quotes) {
+    if (q.validUntil && new Date(q.validUntil) < new Date()) continue;
+    for (const l of (q.lines || [])) {
+      if (l.quotedPrice == null) continue;
+      const key = l.productId ? `id:${l.productId}` : `name:${l.name}`;
+      quoted.set(key, { price: Number(l.quotedPrice), quoteId: String(q._id) });
+    }
+  }
+  const quoteIds = new Set();
+
+  const addOnPrice = (product, addOnName) => {
+    const own = (product?.addOns || []).find(a => a.name === addOnName);
+    if (own) return Number(own.price) || 0;
+    const global = globalAddOns.find(a => a.name === addOnName);
+    if (global) return Number(global.price) || 0;
+    for (const g of groups) {
+      const prefix = `${g.name}: `;
+      if (addOnName.startsWith(prefix)) {
+        const opt = (g.options || []).find(o => o.name === addOnName.slice(prefix.length));
+        if (opt) return Number(opt.price) || 0;
+      }
+    }
+    return null;
+  };
+
+  for (const item of items) {
+    const qKey = item.productId ? `id:${item.productId}` : `name:${item.name}`;
+    if (quoted.has(qKey)) {
+      const hit = quoted.get(qKey);
+      item.price = hit.price;
+      item.selectedAddOns = [];
+      item._quoted = true;
+      quoteIds.add(hit.quoteId);
+      continue;
+    }
+    if (item.isCombo) {
+      const combo = comboById.get(String(item.productId));
+      if (!combo) return { error: `The combo "${item.name}" is no longer available.` };
+      item.price = Number(combo.price) || 0;
+      continue;
+    }
+    const product = item.productId ? prodById.get(String(item.productId)) : prodByName.get(item.name);
+    if (!product) {
+      if (selfService) return { error: `"${item.name}" is not on the menu.` };
+      continue; // staff open item - keeps its entered price
+    }
+    if (selfService && (product.isArchived || product.isAvailable === false)) {
+      return { error: `${product.name} is not available right now.` };
+    }
+    // A size is identified by sizeName, or by the "Name (Size)" label the POS builds.
+    const sizeName = item.sizeName
+      || ((item.name || '').startsWith(`${product.name} (`) && item.name.endsWith(')') ? item.name.slice(product.name.length + 2, -1) : '');
+    const size = sizeName ? (product.sizes || []).find(s => s.name === sizeName) : null;
+    if (sizeName && !size && selfService) return { error: `${product.name} does not come in ${sizeName}.` };
+    const sale = saleUnitPrice(product, saleMap[String(product._id)]);
+    item.price = size ? Number(size.price) || 0 : (sale != null ? sale : Number(product.basePrice) || 0);
+
+    if ((item.selectedAddOns || []).length) {
+      for (const a of item.selectedAddOns) {
+        const price = addOnPrice(product, a.name);
+        if (price == null) {
+          if (selfService) return { error: `The option "${a.name}" is not available for ${product.name}.` };
+          continue;
+        }
+        a.price = price;
+      }
+    }
+  }
+  return { quoteIds: [...quoteIds] };
+};
+
 app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
   // Declared outside the try block on purpose: the E11000 handler in catch{}
   // below needs it, and a try{}-scoped const is NOT visible inside its own
@@ -575,6 +774,13 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       }
     }
 
+    // Re-price every line from the catalogue (see resolveCatalogPrices).
+    const priced = await resolveCatalogPrices(req, items, {
+      selfService: isClientOrder || !!req.qrSession,
+      buyerClientId: isClientOrder ? String(req.user.clientId || req.user._id || '') : '',
+    });
+    if (priced.error) return res.status(400).json({ success: false, error: priced.error });
+
     // Authoritative department stamping - look up each product's category and resolve to Kitchen/Bar.
     // Combos resolve from their component products: all-Bar → Bar, otherwise Kitchen.
     {
@@ -625,14 +831,6 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // Per-product (and optional per-client) discount lookup. Server-authoritative -
     // never trust a client-side discount field. If the buyer is a logged-in client
     // and the product has a matching clientDiscounts entry, that override wins.
-    const _prodIds = items.map(i => i.productId).filter(Boolean);
-    const _prodNames = items.map(i => i.name).filter(Boolean);
-    const _discProds = await Product.find(
-      { $or: [{ _id: { $in: _prodIds } }, { name: { $in: _prodNames } }] },
-      { _id: 1, name: 1, basePrice: 1, discountPercent: 1, clientDiscounts: 1, segmentDiscounts: 1, bulkBreaks: 1, clientBulkBreaks: 1, vatExempt: 1 }
-    ).lean();
-    const _discById = new Map(_discProds.map(p => [String(p._id), p]));
-    const _discByName = new Map(_discProds.map(p => [p.name, p]));
     // Buyer identity for per-client discount resolution. Authenticated client
     // wins; otherwise we fall back to the admin-on-behalf clientAccountId.
     const _buyerClientId = isClientOrder
@@ -649,67 +847,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
         _buyerSegments = buyerAcct?.segments || [];
       } catch { /* ignore - no segment discount applies */ }
     }
-    // The buyer's price-tier context, and the per-product discount decision
-    // itself, both come from the shared resolver (lib/discounts.js) - the
-    // SAME function the pre-checkout price display (products.js) uses, so a
-    // buyer is never shown one price and charged a different one.
-    const { tierDefaultPct: _tierDefaultPct, perProductTiers: _perProductTiers } = await loadTierContext({
-      PriceTier, businessType: BUSINESS_TYPE, tenantScope, req, buyerSegments: _buyerSegments,
-    });
-    const productDiscPct = (item) => {
-      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
-      return resolveEffectiveDiscountPercent(p, {
-        buyerClientId: _buyerClientId, buyerSegments: _buyerSegments,
-        tierDefaultPct: _tierDefaultPct, perProductTiers: _perProductTiers,
-      });
-    };
-    // Quantity-break bulk pricing, independent of clientDiscounts/segmentDiscounts
-    // above - combined via Math.max where it's applied, never stacked.
-    const bulkQtyDiscPct = (item) => {
-      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
-      const breaks = p?.bulkBreaks || [];
-      if (!breaks.length) return 0;
-      const qty = Number(item.quantity || 0);
-      const qualifying = breaks.filter(b => qty >= Number(b.minQty || 0));
-      if (!qualifying.length) return 0;
-      return Math.max(0, Math.min(100, Math.max(...qualifying.map(b => Number(b.percent || 0)))));
-    };
-    // Per-CLIENT quantity breaks, unlike bulkQtyDiscPct above which applies to
-    // any buyer. These are quoted as a real PRICE ("once you order 50+, it's
-    // PHP 180 each"), not a discount percent, so the tier's price is converted
-    // to an equivalent percent-off-basePrice here - same conversion PriceTier's
-    // per_product mode already does - and then combined into the same Math.max
-    // as every other discount. A buyer who isn't this named client never sees it.
-    const clientBulkQtyDiscPct = (item) => {
-      if (!_buyerClientId) return 0;
-      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
-      const breaks = (p?.clientBulkBreaks || []).filter(b => String(b.clientId) === String(_buyerClientId));
-      if (!breaks.length) return 0;
-      const qty = Number(item.quantity || 0);
-      const qualifying = breaks.filter(b => qty >= Number(b.minQty || 0));
-      if (!qualifying.length) return 0;
-      const base = Number(p?.basePrice) || 0;
-      if (base <= 0) return 0;
-      // The best (lowest) quoted price among qualifying tiers, converted to
-      // the discount percent that would produce it.
-      const bestPrice = Math.max(0, Math.min(...qualifying.map(b => Math.max(0, Number(b.price) || 0))));
-      return Math.max(0, Math.min(100, +(100 - (bestPrice / base) * 100).toFixed(4)));
-    };
-    // TIER-scoped quantity breaks - unlike clientBulkQtyDiscPct above (one
-    // named client) and bulkQtyDiscPct (any buyer), this applies to every
-    // client tagged into a per_product tier the buyer belongs to. "Anyone in
-    // Kape Sinukuan Price who orders 20+ of this pays ₱550 each." resolveTier
-    // Percent already knows how to pick the better of the tier's flat rate and
-    // a qualifying break (lib/priceTiers.js) - this just supplies the
-    // quantity it needs, which the static pricing table never has.
-    const tierBulkQtyDiscPct = (item) => {
-      if (!_perProductTiers.length) return 0;
-      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
-      if (!p) return 0;
-      const qty = Number(item.quantity || 0);
-      const pcts = _perProductTiers.map(t => resolveTierPercent(p, t, qty)).filter(v => v !== null);
-      return pcts.length ? Math.max(0, Math.min(100, Math.max(...pcts))) : 0;
-    };
+    const { linePercent, productIsExempt } = await buildLinePricing(req, items, { buyerClientId: _buyerClientId, buyerSegments: _buyerSegments });
 
     // Per-item pass resolves only the PRODUCT-level discounts. Order-level
     // discount and VAT are settled afterwards in one place, because with
@@ -718,12 +856,6 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     let totalProductDisc = 0;
     let baseAfterProductDisc = 0;
     let exemptAfterProductDisc = 0;
-    // Server-authoritative VAT classification, same rule as the discount lookup:
-    // never trust a client-supplied flag, resolve it from the product record.
-    const productIsExempt = (item) => {
-      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
-      return p?.vatExempt === true;
-    };
     const validatedItems = items.map(item => {
       item.hasDiscount = true;
       // Calculate Add-Ons Total
@@ -735,7 +867,8 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       // client/segment/default rate with any qualifying bulk-quantity break
       // (universal, tier-wide, or client-specific), taking whichever is
       // higher (never stacked).
-      const prodPct = Math.max(productDiscPct(item), bulkQtyDiscPct(item), clientBulkQtyDiscPct(item), tierBulkQtyDiscPct(item));
+      // A quoted price is the agreed number - no discount comes off it.
+      const prodPct = item._quoted ? 0 : linePercent(item);
       const prodDisc = +(itemBase * prodPct / 100).toFixed(2);
       item.productDiscountPercent = prodPct;
       totalProductDisc += prodDisc;
@@ -924,6 +1057,14 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       ...(paymentCheckDate && { paymentCheckDate }),
     });
 
+    // An accepted quote is used up by the order placed against it.
+    if (priced.quoteIds?.length) {
+      await mongoose.model('Quotation').updateMany(
+        { _id: { $in: priced.quoteIds } },
+        { $set: { orderId: newOrder._id, orderNumber: newOrder.orderNumber } },
+      );
+    }
+
     emitToOps('newOrder', newOrder);
     res.json({ success: true, order: newOrder });
   } catch (error) {
@@ -1007,6 +1148,227 @@ app.delete('/api/orders/:id/complimentary', verifyToken, requireStaff, async (re
   } catch (err) {
     console.error(err);
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// Recompute an order's money fields from its lines, using the VAT rate, SC/PWD
+// basis and order discount stamped on the order itself. Shared by the status
+// route and order amendment.
+const recomputeOrderTotals = (order) => {
+  // --- BULLETPROOF MATH RECALCULATION ---
+  let totalGross = 0;
+  let lineDiscTotal = 0;
+  let baseAfterLineDisc = 0;
+  let discountableBase = 0;
+  let exemptBase = 0;
+
+  order.items.forEach(item => {
+    const price = item.price || 0;
+    const qty = item.quantity || 1;
+    const addOnTotal = (item.selectedAddOns || []).reduce((sum, a) => sum + Number(a.price || 0), 0);
+    const itemBase = (price + addOnTotal) * qty;
+
+    totalGross += itemBase;
+    const getsDiscount = item.hasDiscount !== false;
+    // Effective per-line discount: MAX of the server-resolved per-product /
+    // per-client discount (productDiscountPercent, set at order create) and
+    // the cashier per-item override (discountPercent). The MAX guarantees a
+    // status change can never silently strip a buyer's negotiated rate.
+    const prodPct = Number(item.productDiscountPercent || 0);
+    const cashierPct = Number(item.discountPercent || 0);
+    const linePct = Math.max(prodPct, cashierPct);
+    const lineDisc = +(itemBase * linePct / 100).toFixed(2);
+
+    lineDiscTotal += lineDisc;
+    baseAfterLineDisc += itemBase - lineDisc;
+    if (item.vatExempt === true) exemptBase += itemBase - lineDisc;
+    // A line already carrying its own discount, or one the cashier excluded,
+    // is not eligible for the order-wide percentage on top.
+    if (linePct === 0 && getsDiscount) discountableBase += itemBase;
+  });
+
+  // Rate and SC/PWD basis come from the ORDER, not from current settings -
+  // editing a historical order must not re-price it under a rule that was
+  // adopted afterwards.
+  const editVat = order.isComplimentary
+    ? { total: 0, vatAmount: 0, vatableSales: 0, vatExemptSales: 0,
+        discount: +baseAfterLineDisc.toFixed(2), rate: Number(order.vatRate || 0) }
+    : computeOrderVat({
+        grossInclusive: baseAfterLineDisc,
+        discountableGross: discountableBase,
+        exemptGross: exemptBase,
+        discountPercent: Number(order.discountPercent || 0),
+        vatEnabled: Number(order.vatRate || 0) > 0,
+        vatRate: Number(order.vatRate || 0),
+        isVatExempt: !!order.isVatExempt,
+        scPwdOrder: order.scPwdOrder === 'discount-first' ? 'discount-first' : 'vat-first',
+        vatInclusive: order.isVatInclusive !== false,
+      });
+
+  order.subtotal = Number(totalGross.toFixed(2));
+  order.discount = Number((lineDiscTotal + editVat.discount).toFixed(2));
+  order.vatAmount = Number(editVat.vatAmount.toFixed(2));
+  order.vatableSales = Number(editVat.vatableSales.toFixed(2));
+  order.vatExemptSales = Number(editVat.vatExemptSales.toFixed(2));
+  // The delivery fee sits outside VAT and discounts (see order creation) and
+  // must survive every recalculation - it used to be dropped here, so a
+  // delivery order lost its fee the moment its status changed.
+  order.total = Number((editVat.total + (Number(order.deliveryFee) || 0)).toFixed(2));
+};
+
+// --- AMEND: correct an order's lines before it is completed ---
+// The professional line between "edit" and "refund": until an order is
+// Completed nothing has posted - no stock left, no revenue, no receivable - so
+// changing what was ordered is a correction to a sales order, not a change to
+// the books. It is done in place, with a required reason and a kept history.
+// Once Completed, the order is an invoice and only refunds may change it.
+//
+// Body: { changes: [{ index, quantity }], adds: [{ productId, quantity }], reason }.
+// quantity 0 removes a line. An added product already on the order (same
+// product, no add-ons) just raises that line's quantity. Changed and added
+// lines are priced by the same rules as order creation, so cutting below a
+// bulk break loses that break. Products that need a size or option picked
+// (required modifier groups) cannot be added here - that is a new order.
+const AMEND_BLOCKED = ['Completed', 'Cancelled', 'Voided', 'Refunded', 'Partially Fulfilled'];
+app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('orders.manage'), async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Order not found.' });
+    const order = await Order.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+
+    if (order.status === 'Completed') return res.status(409).json({ success: false, error: 'Completed orders cannot be amended. Use a refund for returned or excess items.' });
+    if (AMEND_BLOCKED.includes(order.status)) return res.status(409).json({ success: false, error: `A ${String(order.status).toLowerCase()} order cannot be amended.` });
+    if (order.isParked) return res.status(409).json({ success: false, error: 'Resume the parked order and change it in the cart.' });
+    if ((order.items || []).some(i => (i.fulfilledQty || 0) > 0) || (order.depositRemaining || 0) > 0) {
+      return res.status(409).json({ success: false, error: 'Part of this order was already fulfilled. Use Drop Remaining for the undelivered units.' });
+    }
+    if ((order.payments || []).length > 0) return res.status(409).json({ success: false, error: 'This order already has split payments recorded. Cancel it and place a corrected order.' });
+
+    const reason = String(req.body?.reason || '').trim().slice(0, 300);
+    if (!reason) return res.status(400).json({ success: false, error: 'A reason is required to amend an order.' });
+
+    const changes = Array.isArray(req.body?.changes) ? req.body.changes : [];
+    const wholeUnits = BUSINESS_TYPE === 'log';
+    const wanted = new Map();
+    for (const ch of changes) {
+      const idx = Number(ch?.index);
+      const qty = Number(ch?.quantity);
+      if (!Number.isInteger(idx) || !order.items[idx]) return res.status(400).json({ success: false, error: 'One of the changed lines does not exist on this order.' });
+      if (!Number.isFinite(qty) || qty < 0 || (wholeUnits && !Number.isInteger(qty))) {
+        return res.status(400).json({ success: false, error: `Invalid quantity for ${order.items[idx].name}.` });
+      }
+      if (qty !== Number(order.items[idx].quantity)) wanted.set(idx, qty);
+    }
+
+    // New products. Priced from the product record, never from the request.
+    const adds = Array.isArray(req.body?.adds) ? req.body.adds : [];
+    const newLines = [];
+    if (adds.length) {
+      const ids = adds.map(a => String(a?.productId || ''));
+      if (ids.some(id => !mongoose.Types.ObjectId.isValid(id))) return res.status(400).json({ success: false, error: 'One of the added products does not exist.' });
+      const [prods, cats] = await Promise.all([
+        Product.find({ _id: { $in: ids } }, { name: 1, basePrice: 1, category: 1, productCode: 1, isAvailable: 1, isArchived: 1, modifierGroups: 1 }).lean(),
+        Category.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }, { name: 1, department: 1 }).lean(),
+      ]);
+      const byId = new Map(prods.map(p => [String(p._id), p]));
+      const deptOf = new Map(cats.map(c => [c.name, c.department]));
+      const defaultDept = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
+      for (const a of adds) {
+        const p = byId.get(String(a.productId));
+        const qty = Number(a?.quantity);
+        if (!p || p.isArchived) return res.status(400).json({ success: false, error: 'One of the added products does not exist.' });
+        if (p.isAvailable === false) return res.status(400).json({ success: false, error: `${p.name} is not available.` });
+        if ((p.modifierGroups || []).length) return res.status(400).json({ success: false, error: `${p.name} needs options picked - add it as a new order.` });
+        if (!Number.isFinite(qty) || qty <= 0 || (wholeUnits && !Number.isInteger(qty))) return res.status(400).json({ success: false, error: `Invalid quantity for ${p.name}.` });
+        const same = order.items.findIndex(it => String(it.productId) === String(p._id) && !it.isCombo && !(it.selectedAddOns || []).length);
+        if (same >= 0) {
+          wanted.set(same, (wanted.has(same) ? wanted.get(same) : Number(order.items[same].quantity)) + qty);
+        } else {
+          newLines.push({
+            productId: String(p._id), productCode: p.productCode, name: p.name, price: Number(p.basePrice) || 0,
+            quantity: qty, department: deptOf.get(p.category) || defaultDept, itemStatus: 'Received',
+          });
+        }
+      }
+    }
+
+    if (wanted.size === 0 && newLines.length === 0) return res.status(400).json({ success: false, error: 'Nothing was changed.' });
+    const kept = order.items.filter((it, i) => (wanted.has(i) ? wanted.get(i) : it.quantity) > 0);
+    if (kept.length === 0 && newLines.length === 0) return res.status(400).json({ success: false, error: 'An order needs at least one line. Cancel the order instead.' });
+
+    // Re-price only the changed lines, as the original buyer.
+    const buyerClientId = String(order.clientId || order.clientAccountId || '');
+    let buyerSegments = [];
+    if (buyerClientId && mongoose.Types.ObjectId.isValid(buyerClientId)) {
+      const acct = await ClientAccount.findById(buyerClientId, { segments: 1 }).lean();
+      buyerSegments = acct?.segments || [];
+    }
+    const changedLines = [...wanted.keys()].map(i => ({ productId: order.items[i].productId, name: order.items[i].name, quantity: wanted.get(i) }));
+    const { linePercent, productIsExempt } = await buildLinePricing(req, [...changedLines, ...newLines], { buyerClientId, buyerSegments });
+
+    const totalBefore = Number(order.total) || 0;
+    const changeLog = [];
+    for (const [i, qty] of wanted) {
+      const it = order.items[i];
+      changeLog.push({ name: it.name, from: Number(it.quantity), to: qty });
+      it.quantity = qty;
+      if (qty > 0 && !it.isCombo) it.productDiscountPercent = linePercent({ productId: it.productId, name: it.name, quantity: qty });
+    }
+    for (const line of newLines) {
+      changeLog.push({ name: line.name, from: 0, to: line.quantity });
+      order.items.push({ ...line, productDiscountPercent: linePercent(line), vatExempt: productIsExempt(line) });
+    }
+    order.items = order.items.filter(it => it.quantity > 0);
+    order.markModified('items');
+    recomputeOrderTotals(order);
+
+    const math = validateOrderMath(order);
+    if (!math.valid) return res.status(400).json({ success: false, error: `SYSTEM AUDIT REJECTED: ${math.error}` });
+
+    // Growing an on-account order spends more credit - the same gate as creation.
+    const totalAfter = Number(order.total) || 0;
+    if (totalAfter > totalBefore + 0.005 && buyerClientId && order.paymentMethod !== 'Cash' && !order.isComplimentary) {
+      const [modeRow, globalRow, client] = await Promise.all([
+        Settings.findOne({ key: 'creditLimitMode' }).lean(),
+        Settings.findOne({ key: 'globalCreditLimit' }).lean(),
+        ClientAccount.findById(buyerClientId).lean(),
+      ]);
+      const limit = resolveCreditLimit({ mode: modeRow?.value, globalLimit: globalRow?.value, clientLimit: client?.creditLimit });
+      if (limit !== null) {
+        const openRows = await Order.find({
+          businessType: BUSINESS_TYPE, _id: { $ne: order._id },
+          $or: [{ clientAccountId: buyerClientId }, { clientId: buyerClientId }],
+          status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
+          isParked: { $ne: true }, paymentMethod: { $ne: 'Cash' }, isComplimentary: { $ne: true }, arSettled: { $ne: true },
+        }, { total: 1, arPaidAmount: 1 }).lean();
+        const outstanding = openRows.reduce((sum, r) => sum + arBalance(r), 0);
+        const credit = checkCreditAvailable({ limit, outstanding, orderTotal: totalAfter });
+        if (!credit.allowed) {
+          return res.status(409).json({ success: false, error: `Credit limit reached. Limit ₱${credit.limit.toFixed(2)}, other orders owing ₱${credit.outstanding.toFixed(2)}, this order would be ₱${totalAfter.toFixed(2)}.` });
+        }
+      }
+    }
+
+    // Cash already tendered at Preparing: the change due follows the new total.
+    if (order.amountTendered) order.changeDue = Number(Math.max(0, order.amountTendered - totalAfter).toFixed(2));
+
+    order.revision = (order.revision || 0) + 1;
+    order.amendments.push({ revision: order.revision, by: req.user?.name || '', reason, totalBefore, totalAfter, changes: changeLog });
+    await order.save();
+
+    await logAudit(req, {
+      action: 'amend', entity: 'Order', entityId: order._id,
+      after: { orderNumber: order.orderNumber, revision: order.revision, reason, totalBefore, totalAfter, changes: changeLog },
+    });
+    emitToOps('orderUpdated', order.toObject());
+    res.json({
+      success: true, order,
+      ...(order.amountTendered && order.amountTendered < totalAfter ? { shortBy: Number((totalAfter - order.amountTendered).toFixed(2)) } : {}),
+    });
+  } catch (err) {
+    console.error('POST /api/orders/:id/amend failed', err);
+    captureError(req, err);
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
 });
 
@@ -1124,62 +1486,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       order.markModified('items'); 
     }
 
-    // --- BULLETPROOF MATH RECALCULATION ---
-    let totalGross = 0;
-    let lineDiscTotal = 0;
-    let baseAfterLineDisc = 0;
-    let discountableBase = 0;
-    let exemptBase = 0;
-
-    order.items.forEach(item => {
-      const price = item.price || 0;
-      const qty = item.quantity || 1;
-      const addOnTotal = (item.selectedAddOns || []).reduce((sum, a) => sum + Number(a.price || 0), 0);
-      const itemBase = (price + addOnTotal) * qty;
-
-      totalGross += itemBase;
-      const getsDiscount = item.hasDiscount !== false;
-      // Effective per-line discount: MAX of the server-resolved per-product /
-      // per-client discount (productDiscountPercent, set at order create) and
-      // the cashier per-item override (discountPercent). The MAX guarantees a
-      // status change can never silently strip a buyer's negotiated rate.
-      const prodPct = Number(item.productDiscountPercent || 0);
-      const cashierPct = Number(item.discountPercent || 0);
-      const linePct = Math.max(prodPct, cashierPct);
-      const lineDisc = +(itemBase * linePct / 100).toFixed(2);
-
-      lineDiscTotal += lineDisc;
-      baseAfterLineDisc += itemBase - lineDisc;
-      if (item.vatExempt === true) exemptBase += itemBase - lineDisc;
-      // A line already carrying its own discount, or one the cashier excluded,
-      // is not eligible for the order-wide percentage on top.
-      if (linePct === 0 && getsDiscount) discountableBase += itemBase;
-    });
-
-    // Rate and SC/PWD basis come from the ORDER, not from current settings -
-    // editing a historical order must not re-price it under a rule that was
-    // adopted afterwards.
-    const editVat = order.isComplimentary
-      ? { total: 0, vatAmount: 0, vatableSales: 0, vatExemptSales: 0,
-          discount: +baseAfterLineDisc.toFixed(2), rate: Number(order.vatRate || 0) }
-      : computeOrderVat({
-          grossInclusive: baseAfterLineDisc,
-          discountableGross: discountableBase,
-          exemptGross: exemptBase,
-          discountPercent: Number(order.discountPercent || 0),
-          vatEnabled: Number(order.vatRate || 0) > 0,
-          vatRate: Number(order.vatRate || 0),
-          isVatExempt: !!order.isVatExempt,
-          scPwdOrder: order.scPwdOrder === 'discount-first' ? 'discount-first' : 'vat-first',
-          vatInclusive: order.isVatInclusive !== false,
-        });
-
-    order.subtotal = Number(totalGross.toFixed(2));
-    order.discount = Number((lineDiscTotal + editVat.discount).toFixed(2));
-    order.vatAmount = Number(editVat.vatAmount.toFixed(2));
-    order.vatableSales = Number(editVat.vatableSales.toFixed(2));
-    order.vatExemptSales = Number(editVat.vatExemptSales.toFixed(2));
-    order.total = Number(editVat.total.toFixed(2));
+    recomputeOrderTotals(order);
 
     // Cash tendered - only for cash orders transitioning to Preparing
     if (status === 'Preparing' && amountTendered !== undefined && (order.paymentMethod === 'Cash' || paymentMethod === 'Cash')) {

@@ -82,7 +82,9 @@ describe('the template is the sheet to fill in, not an empty export', () => {
       itemCode: 'RM-9', itemName: 'Alaska Milk', unit: 'ml',
       stockQty: 2000, unitCost: 0.5, stockCategory: 'Dairy',
     });
-    const [row] = (await get('/api/export/inventory')).body.rows;
+    // Found by code rather than taken as the first row: the export now writes
+    // a category header row before each group, as the import sheet does.
+    const row = (await get('/api/export/inventory')).body.rows.find(r => r[0] === 'RM-9');
     expect(row).toContain('RM-9');
     expect(row).toContain('Alaska Milk');
     // Total value is derived, not stored - worth exporting, easy to get wrong.

@@ -12,6 +12,7 @@
 // are carried onto the journal entry description so the ledger says WHY.
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
+import { arBalance } from '../lib/credit.js';
 
 export default function registerAdvances(ctx) {
   const {
@@ -27,6 +28,7 @@ export default function registerAdvances(ctx) {
     ADVANCE_ACCOUNTS,
     Bill,
     Order,
+    ClientAccount,
     CheckVoucher,
     JournalEntry,
     assertBalanced,
@@ -59,6 +61,7 @@ export default function registerAdvances(ctx) {
       const q = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
       if (ADVANCE_TYPES.includes(req.query.type)) q.type = req.query.type;
       if (req.query.status) q.status = req.query.status;
+      if (req.query.clientId) q.clientId = String(req.query.clientId);
       if (req.query.start || req.query.end) {
         q.date = {};
         // dayStart/dayEnd, not new Date(): a bare YYYY-MM-DD is parsed by JS as
@@ -98,7 +101,8 @@ export default function registerAdvances(ctx) {
   // deposit is a liability, not a disbursement.
   app.post('/api/advances', verifyToken, ...canPostAcct, async (req, res) => {
     try {
-      const { type, payeeName, payeeId, amount, purpose, sourceAccount, referenceNumber, date } = req.body || {};
+      const { type, payeeId, amount, purpose, sourceAccount, referenceNumber, date, clientId: rawClientId } = req.body || {};
+      let { payeeName } = req.body || {};
       // When the money actually moved. An advance is usually recorded after
       // the fact - the cash left on Friday, someone files it on Monday - so
       // stamping 'now' puts it in the wrong period and the ledger stops
@@ -110,6 +114,16 @@ export default function registerAdvances(ctx) {
       const lock = await periodLockFor(txnDate);
       if (lock) return res.status(423).json({ success: false, error: `Period ${lock.year}-${String(lock.month).padStart(2, '0')} is closed. Reopen the period first.` });
       if (!ADVANCE_TYPES.includes(type)) return res.status(400).json({ success: false, error: `type must be one of: ${ADVANCE_TYPES.join(', ')}.` });
+      // A customer deposit can be tied to a client account. The client's name
+      // then becomes the payee, so the two can never disagree.
+      let client = null;
+      if (rawClientId) {
+        if (type !== 'customer') return res.status(400).json({ success: false, error: 'Only a customer deposit can be linked to a client account.' });
+        if (!mongoose.Types.ObjectId.isValid(rawClientId)) return res.status(400).json({ success: false, error: 'Client not found.' });
+        client = await ClientAccount.findOne({ _id: rawClientId, ...tenantScope(req) }, { name: 1 }).lean();
+        if (!client) return res.status(400).json({ success: false, error: 'Client not found.' });
+        payeeName = client.name;
+      }
       if (!String(payeeName || '').trim()) return res.status(400).json({ success: false, error: 'A payee name is required.' });
       const amt = money(amount);
       if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Amount must be positive.' });
@@ -156,6 +170,7 @@ export default function registerAdvances(ctx) {
         businessType: BUSINESS_TYPE, ...tenantScope(req),
         branchCode: await currentBranchCode(),
         advanceNumber, type, payeeName: String(payeeName).trim(), payeeId: String(payeeId || ''),
+        clientId: client ? String(client._id) : '',
         amount: amt, purpose: purpose || '', account: ctl.code,
         sourceAccount: srcCode, sourceAccountName: srcName,
         referenceNumber: referenceNumber || '', journalEntryRef: reference,
@@ -182,9 +197,11 @@ export default function registerAdvances(ctx) {
   //   bill         applied to a payable    DR 220000   / CR 170200
   //   order        applied to a receivable DR 260200   / CR 120000
   //
-  // Deliberately does NOT touch the Bill's paidAmount or the Order's
-  // arPaidAmount: applying an advance settles the ledger position, and the
-  // document's own payment history is a separate, explicit action.
+  // An order liquidation also records a payment on the order itself (the same
+  // way applying client credit does). Crediting 120000 without moving the
+  // order's arPaidAmount left the A/R screens showing the full balance while
+  // the ledger said it was partly paid - the two stopped agreeing.
+  // Bill liquidations still only move the ledger.
   app.post('/api/advances/:id/liquidate', verifyToken, ...canPostAcct, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
@@ -208,7 +225,8 @@ export default function registerAdvances(ctx) {
       if (!validMethods.includes(method)) {
         return res.status(400).json({ success: false, error: `method for a ${advance.type} advance must be one of: ${validMethods.join(', ')}.` });
       }
-      const amt = money(amount !== undefined && amount !== null && amount !== '' ? amount : outstanding);
+      const amountGiven = amount !== undefined && amount !== null && amount !== '';
+      let amt = money(amountGiven ? amount : outstanding);
       if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Amount must be positive.' });
       if (amt > outstanding + 0.01) {
         return res.status(400).json({ success: false, error: `Amount exceeds what is left on this advance (P${outstanding.toFixed(2)} of P${advance.amount.toFixed(2)}).` });
@@ -234,6 +252,20 @@ export default function registerAdvances(ctx) {
         if (!mongoose.Types.ObjectId.isValid(orderId)) return res.status(400).json({ success: false, error: 'A valid orderId is required.' });
         order = await Order.findOne({ _id: orderId, businessType: BUSINESS_TYPE, ...tenantScope(req) });
         if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+        // Only a completed on-account sale has a receivable to relieve. A cash
+        // sale never touched 120000, and an unfinished order has not posted its
+        // receivable yet - crediting A/R for either would drive it negative.
+        if (order.status !== 'Completed') return res.status(400).json({ success: false, error: 'The order must be Completed before a deposit can be applied to it.' });
+        if (order.paymentMethod === 'Cash' || order.isComplimentary) return res.status(400).json({ success: false, error: 'This order has no receivable to apply a deposit against.' });
+        const orderClient = String(order.clientId || order.clientAccountId || '');
+        if (advance.clientId && orderClient !== advance.clientId) {
+          return res.status(400).json({ success: false, error: `This deposit belongs to ${advance.payeeName} - apply it to one of their orders.` });
+        }
+        const orderOwes = arBalance(order);
+        if (orderOwes <= 0) return res.status(409).json({ success: false, error: 'This order has no outstanding balance.' });
+        // No amount given = use as much of the deposit as this order can take.
+        if (!amountGiven) amt = money(Math.min(outstanding, orderOwes));
+        if (amt > orderOwes + 0.01) return res.status(400).json({ success: false, error: `Cannot apply more than the order's outstanding balance (P${orderOwes.toFixed(2)}).` });
         contra = { code: '120000', name: 'Accounts Receivable' };
       }
 
@@ -253,6 +285,23 @@ export default function registerAdvances(ctx) {
         description: `Liquidation of advance ${advance.advanceNumber} (${advance.payeeName}) via ${method}${note ? ` - ${note}` : ''}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}`,
         lines, totalDebit: amt, totalCredit: amt,
       });
+
+      if (order) {
+        order.arPayments.push({
+          amount: amt, paymentMethod: 'Customer Deposit',
+          referenceNumber: referenceNumber || advance.advanceNumber,
+          note: note || `Deposit ${advance.advanceNumber} applied`,
+          collectionDate: txnDate, depositDate: txnDate,
+          recordedBy: req.user?.name || '', journalRef: reference,
+        });
+        order.arPaidAmount = money((order.arPaidAmount || 0) + amt);
+        order.arSettled = order.arPaidAmount >= (order.total || 0) - 0.01;
+        order.arSettledAt = txnDate;
+        order.arSettledAmount = order.arPaidAmount;
+        order.arSettledMethod = 'Customer Deposit';
+        order.arSettledReference = referenceNumber || advance.advanceNumber;
+        await order.save();
+      }
 
       advance.liquidatedAmount = money((advance.liquidatedAmount || 0) + amt);
       advance.status = statusFor(advance);

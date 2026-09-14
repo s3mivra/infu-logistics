@@ -18,16 +18,19 @@ const SEVERITY = {
 
 // How often to refresh while the tab is open. Deliberately slow - none of these
 // signals change second-to-second, and the POS tablet has better things to do.
-const POLL_MS = 120000;
 
 // `align` controls which way the dropdown opens. The default 'right' suits a
 // top bar (panel hangs left from the button); 'left' is for the desktop
 // sidebar, where a right-anchored panel would run off the left of the screen.
 export default function NotificationBell({ align = 'right', full = false }) {
-  const { apiFetch, setActiveTab, setLedgerSubTab } = useDashboard();
+  // The feed lives on the dashboard and is shared with the Inventory badge.
+  // The bell used to fetch its own copy every two minutes while the badge
+  // recounted instantly in the browser, so the two could show different
+  // numbers for the same stock. One feed, read in both places, cannot.
+  const { setActiveTab, setLedgerSubTab, notifData, notifLoading, loadNotifications } = useDashboard();
   const [open, setOpen] = useState(false);
-  const [data, setData] = useState({ items: [], count: 0, criticalCount: 0 });
-  const [loading, setLoading] = useState(false);
+  const data = notifData || { items: [], count: 0, criticalCount: 0 };
+  const loading = !!notifLoading;
   const panelRef = useRef(null);
   const btnRef = useRef(null);
   // Screen position for the panel. It is rendered through a portal (see below),
@@ -60,27 +63,8 @@ export default function NotificationBell({ align = 'right', full = false }) {
   // 401 handling clears auth state asynchronously - there's a window where
   // this component is still mounted and the interval is still armed. Once a
   // poll comes back 401, stop scheduling more instead of retrying blind.
-  const deadSessionRef = useRef(false);
-  const load = useCallback(async () => {
-    if (deadSessionRef.current) return;
-    setLoading(true);
-    try {
-      const res = await apiFetch('/api/notifications');
-      if (res.status === 401) { deadSessionRef.current = true; return; }
-      const d = await res.json();
-      if (d?.success) setData({ items: d.items || [], count: d.count || 0, criticalCount: d.criticalCount || 0 });
-    } catch {
-      // A failed poll is not worth a toast - the bell simply keeps its last
-      // known state and tries again on the next tick.
-    } finally { setLoading(false); }
-  }, [apiFetch]);
-
-  useEffect(() => {
-    deadSessionRef.current = false; // a fresh mount means a fresh (or renewed) session
-    load();
-    const t = setInterval(load, POLL_MS);
-    return () => clearInterval(t);
-  }, [load]);
+  // Refresh button: refetch the shared feed on demand.
+  const load = useCallback(() => { loadNotifications?.(); }, [loadNotifications]);
 
   // Close on outside click and on Esc.
   useEffect(() => {

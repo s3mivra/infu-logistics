@@ -1653,12 +1653,22 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       // Stock item names are always ALL CAPS, matching the billing statement
       // convention - normalize here so a mixed-case sheet still comes in consistent.
       const itemName = upper(row.itemName || row.product || row.name || '');
-      // Category (and the linked Product/menu-setup sync it triggers below) is a
-      // logistics-only concept - an fb import brings in raw inventory data (stock,
-      // cost, expiry) only, and never touches menu setup even if the sheet has one.
-      const categoryName = BUSINESS_TYPE === 'log' ? String(row.category || '').trim() : '';
+      // The sheet's section header (COFFEE & TEA, POWDERS...) is the item's
+      // STOCK category, in both business types. It used to be discarded for fb,
+      // because category was tied to the menu-setup sync below - but that sync
+      // is its own switch (syncProduct, log-only). In fb, stock categories are a
+      // separate set from the menu's product categories, so storing one here
+      // never touches the menu; dropping it meant an fb import, including
+      // re-importing the app's own export, lost every item's category.
+      const categoryName = String(row.category || '').trim();
       if (categoryName) await resolveStockCategory(categoryName, itemCode);
       const srp = row.srp !== undefined && row.srp !== '' ? parseFloat(row.srp) : null;
+      // Warning level and storage place, as written by the app's own export.
+      // Absent or blank means "leave it as it is", never "reset to nothing".
+      const lowStockFromSheet = row.lowStockThreshold !== undefined && row.lowStockThreshold !== ''
+        && Number.isFinite(parseFloat(row.lowStockThreshold))
+        ? Math.max(0, parseFloat(row.lowStockThreshold)) : null;
+      const stockLocationFromSheet = String(row.stockLocation || '').trim().slice(0, 120);
       // In log mode the product IS the stocked good, so EVERY imported item gets a
       // linked Product (menu entry), with or without a category on the sheet - a
       // missing category falls back to a general bucket. fb never syncs products
@@ -1772,6 +1782,12 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         existing.unitMultiplier = mult;
         if (baseUnit) existing.unit = baseUnit;
         if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
+        // SRP was parsed from the sheet and then never saved, so importing a
+        // price list - or moving stock between systems - dropped every
+        // selling price. A blank SRP cell leaves the current one alone.
+        if (srp != null && !Number.isNaN(srp) && srp > 0) existing.srp = srp;
+        if (lowStockFromSheet != null) existing.lowStockThreshold = lowStockFromSheet;
+        if (stockLocationFromSheet) existing.stockLocation = stockLocationFromSheet;
         if (categoryName && !existing.stockCategory) existing.stockCategory = categoryName;
 
         existing.expiryBatches = addBatch(existing.expiryBatches || [], {
@@ -1845,6 +1861,12 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         existing.unitMultiplier = mult;
         if (baseUnit) existing.unit = baseUnit;
         if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
+        // SRP was parsed from the sheet and then never saved, so importing a
+        // price list - or moving stock between systems - dropped every
+        // selling price. A blank SRP cell leaves the current one alone.
+        if (srp != null && !Number.isNaN(srp) && srp > 0) existing.srp = srp;
+        if (lowStockFromSheet != null) existing.lowStockThreshold = lowStockFromSheet;
+        if (stockLocationFromSheet) existing.stockLocation = stockLocationFromSheet;
         if (categoryName && !existing.stockCategory) existing.stockCategory = categoryName;
 
         // Expiry batches:
@@ -1961,10 +1983,12 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           stockQty: newBaseQty,
           unit: baseUnit,
           unitCost: newCostPerBase != null ? newCostPerBase : 0,
-          lowStockThreshold: 0,
+          lowStockThreshold: lowStockFromSheet != null ? lowStockFromSheet : 0,
+          ...(stockLocationFromSheet ? { stockLocation: stockLocationFromSheet } : {}),
           displayUnit,
           unitMultiplier: mult,
           packSize: packSizeFromExcel,
+          ...(srp != null && !Number.isNaN(srp) && srp > 0 ? { srp } : {}),
           expiryBatches: initialBatches,
           expiryDate: soonestExpiry(initialBatches),
           businessType: BUSINESS_TYPE,

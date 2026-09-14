@@ -41,6 +41,19 @@ const SEND_TARGET = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
 
 // ── OrdersTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
+// Soft, tinted status pills - the colour still says the state at a glance
+// without every card shouting in solid red or yellow.
+const ORDER_STATUS_TONE = {
+  Reserved:              'bg-purple-500/15 text-purple-300',
+  Pending:               'bg-red-500/15 text-danger',
+  Preparing:             'bg-yellow-500/15 text-warning',
+  Ready:                 'bg-blue-500/15 text-blue-300',
+  'Partially Delivered': 'bg-orange-500/15 text-warning',
+  'Partially Fulfilled': 'bg-orange-500/15 text-warning',
+  Completed:             'bg-green-500/15 text-success',
+  Refunded:              'bg-purple-500/15 text-purple-300',
+};
+
 export default function OrdersTab({ ctx }) {
   // Destructure everything from ctx
   // ── Auto-generated from ctx - do NOT edit manually.
@@ -62,7 +75,7 @@ export default function OrdersTab({ ctx }) {
     currentInventory, currentOrders, currentPage, currentPricingProducts, currentProducts,
     dailyMovement, deleteAddOn, deleteCategory, deleteInventory, deleteProduct,
     departmentFilter, discountForm, discountInputs, discountList, discounts,
-    displayOrders, downloadImportTemplate, downloadJournalCsv, editInvForm, editInvModal,
+    displayOrders, downloadImportTemplate, editInvForm, editInvModal,
     editInvSubmitting, editPriceId, editPriceVal, editingCategory, editingProduct,
     effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
@@ -125,6 +138,7 @@ export default function OrdersTab({ ctx }) {
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
     users, varianceNoteMode, varianceReasons,
     systemSettings = {},
+    can,
   } = ctx;
 
   // The POS VAT row follows the business's registration in Settings. A non-VAT
@@ -149,6 +163,41 @@ export default function OrdersTab({ ctx }) {
   // of every card to sit unused. Collapsed by default, and opened for you when
   // the order already carries one so an applied discount is never hidden.
   const [discountsOpen, setDiscountsOpen] = React.useState({});
+
+  // Amend: correct an open order's quantities before it is completed. Once it
+  // is Completed it is an invoice, and only a refund may change it.
+  const [amendModal, setAmendModal] = React.useState(null); // { order, qty: [], reason, busy, error }
+  const canAmend = (order) => (isSuperAdmin || can?.('orders.manage'))
+    && !order.isParked
+    && !['Completed', 'Cancelled', 'Voided', 'Refunded', 'Partially Fulfilled'].includes(order.status)
+    && !(order.items || []).some(i => (i.fulfilledQty || 0) > 0)
+    && !((order.payments || []).length > 0);
+  const openAmend = (order) => setAmendModal({ order, qty: (order.items || []).map(i => String(i.quantity)), adds: [], search: '', reason: '', busy: false, error: '' });
+  // Products that can be added in place: sellable, and not needing a size or
+  // option picked (those go through a new order - the server enforces the same).
+  const amendableProducts = React.useMemo(() => (products || []).filter(p =>
+    p.isAvailable !== false && !p.isArchived && (p.basePrice || 0) > 0 && !(p.modifierGroups || []).length
+  ), [products]);
+  const submitAmend = async () => {
+    const m = amendModal;
+    const changes = m.order.items
+      .map((it, index) => ({ index, quantity: Number(m.qty[index]) }))
+      .filter(c => c.quantity !== Number(m.order.items[c.index].quantity));
+    const adds = m.adds.filter(a => Number(a.quantity) > 0).map(a => ({ productId: a.productId, quantity: Number(a.quantity) }));
+    if (!changes.length && !adds.length) return setAmendModal({ ...m, error: 'Change a quantity or add a product.' });
+    if (!m.reason.trim()) return setAmendModal({ ...m, error: 'Say why the order is changing.' });
+    setAmendModal({ ...m, busy: true, error: '' });
+    try {
+      const res = await apiFetch(`/api/orders/${m.order._id}/amend`, { method: 'POST', body: JSON.stringify({ changes, adds, reason: m.reason.trim() }) });
+      const d = await res.json();
+      if (!d.success) return setAmendModal({ ...m, busy: false, error: d.error || 'Could not amend the order.' });
+      setAmendModal(null);
+      fetchOrders();
+      ui.alert(`${d.order.orderNumber} amended (Rev ${d.order.revision}). New total ₱${Number(d.order.total).toFixed(2)}.${d.shortBy ? ` Cash tendered is now short by ₱${d.shortBy.toFixed(2)}.` : ''}`);
+    } catch {
+      setAmendModal({ ...m, busy: false, error: 'Network error - nothing was changed.' });
+    }
+  };
 
   return (
           <div className="w-full">
@@ -704,17 +753,13 @@ export default function OrdersTab({ ctx }) {
                   const tables = Object.values(tableMap).sort((a,b) => a.table.localeCompare(b.table));
                   return (
                     <div className="mb-4 flex flex-wrap gap-2 items-center">
-                      <span className="text-[10px] text-fg/65 font-black uppercase tracking-widest shrink-0">Active Tables:</span>
+                      <span className="text-[11px] text-fg/55 font-semibold shrink-0">{BUSINESS_TYPE === 'log' ? 'Active' : 'Active tables'}</span>
                       {tables.map(({ table, count, status }) => (
                         <button key={table}
                           onClick={() => { setOrderFilter('All'); setOrderSearch(table); }}
                           title={`${count} order${count !== 1 ? 's' : ''} - click to filter`}
-                          className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider border transition hover:opacity-90
-                            ${status === 'Ready'     ? 'bg-blue-500 text-white border-blue-500' :
-                              status === 'Preparing'  ? 'bg-yellow-500 text-white border-yellow-500' :
-                              status === 'Pending'    ? 'bg-red-500 text-white border-red-500' :
-                              status === 'Reserved'   ? 'bg-purple-500 text-white border-purple-500' :
-                                                        'bg-orange-500 text-white border-orange-500'}`}>
+                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition hover:opacity-90
+                            ${ORDER_STATUS_TONE[status] || 'bg-orange-500/15 text-warning'} border-transparent`}>
                           {table}
                           {count > 1 && <span className="bg-white/20 rounded px-1">{count}</span>}
                         </button>
@@ -726,7 +771,7 @@ export default function OrdersTab({ ctx }) {
                 {/* Capped at 3 columns even on the widest screens - a 4th
                     column left each order card too narrow for its item
                     names/discount rows to lay out without squeezing. */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
                   {displayOrders.length === 0 ? (
                     <div className="col-span-full flex flex-col items-center justify-center py-20 px-6 text-center">
                       <div className="w-16 h-16 rounded-2xl bg-surface-2 border border-white/5 flex items-center justify-center mb-5">
@@ -769,110 +814,112 @@ export default function OrdersTab({ ctx }) {
                       (order.status === 'Cancelled' || order.status === 'Voided') ? 'border-l-gray-600' :
                       'border-l-red-500';
                     return (
-                      <div key={order._id} className={`bg-surface rounded-xl border border-l-4 flex flex-col shadow-lg transition-all
-                        ${allDeptDone && order.status !== 'Completed' ? 'border-green-500/40 border-l-green-500' : `border-white/5 ${statusBorderColor}`}
+                      <div key={order._id} className={`bg-surface rounded-xl border border-l-4 flex flex-col shadow-sm transition-all
+                        ${allDeptDone && order.status !== 'Completed' ? 'border-green-500/30 border-l-green-500' : `border-white/5 ${statusBorderColor}`}
                         ${(order.status === 'Cancelled' || order.status === 'Voided' || order.status === 'Refunded') ? 'opacity-60' : ''}`}>
 
-                        {/* HEADER - only chevron collapses */}
-                        <div className="flex justify-between items-center px-4 pt-4 pb-3 gap-2">
-                          <div className="flex flex-col min-w-0 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-fg font-black text-sm">{order.orderNumber}</span>
-                              {order.customerName && (
-                                <span className="text-[11px] bg-white/10 text-fg px-2 py-0.5 rounded font-semibold">{order.customerName}</span>
+                        {/* HEADER - number and actions on one line, then who and
+                            how, then status. Only the chevron collapses. */}
+                        <div className="px-4 pt-3.5 pb-3 flex flex-col gap-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-fg font-black text-sm whitespace-nowrap tabular-nums">{order.orderNumber}</span>
+                            <div className="flex items-center gap-0.5 flex-shrink-0 text-fg/55">
+                              {order.isParked && (
+                                <button onClick={() => resumeParked(order._id)} className="mr-1 px-2.5 py-1 bg-brand text-on-brand rounded-md text-[10px] font-black uppercase tracking-wider hover:bg-brand/90 transition flex items-center gap-1">
+                                  <ShoppingCart size={11} /> Resume
+                                </button>
                               )}
-                              {order.table && <span className="text-[11px] text-fg/70 font-bold uppercase tracking-wider">({order.table})</span>}
-                              {allDeptDone && order.status !== 'Completed' && (
-                                <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-green-500 text-white border border-green-500 flex items-center gap-1">
-                                  <CheckCircle size={9}/> All Done
-                                </span>
+                              {canAmend(order) && (
+                                <button onClick={() => openAmend(order)} className="p-1.5 rounded-md hover:bg-white/10 hover:text-fg transition" title="Amend order (before completion)" aria-label="Amend order">
+                                  <Edit size={14} />
+                                </button>
                               )}
-                            </div>
-                            {order.orderNotes && (
-                              <p className="text-[10px] text-yellow-white mt-1 bg-yellow-500 border border-yellow-500 rounded px-2 py-1 flex items-start gap-1">
-                                <span className="shrink-0 mt-0.5">📝</span>
-                                <span className="italic">{order.orderNotes}</span>
-                              </p>
-                            )}
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                                order.status === 'Reserved'            ? 'bg-purple-500 text-white' :
-                                order.status === 'Pending'             ? 'bg-red-500 text-white' :
-                                order.status === 'Preparing'           ? 'bg-yellow-500 text-white' :
-                                order.status === 'Ready'               ? 'bg-blue-500 text-white' :
-                                order.status === 'Partially Delivered' ? 'bg-orange-500 text-white' :
-                                order.status === 'Completed'           ? 'bg-green-500 text-white' :
-                                order.status === 'Refunded'            ? 'bg-purple-500 text-white' :
-                                'bg-gray-500 text-white'
-                              }`}>{order.status}</span>
-                              <span className="text-fg/70 text-[9px]">{new Date(order.createdAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                              <button onClick={() => printKitchenTicket(order)} className="p-1.5 rounded-md hover:bg-white/10 hover:text-fg transition" title={`${SEND_TARGET} ticket (no prices)`} aria-label={`Print ${SEND_TARGET} ticket`}>
+                                <ChefHat size={14} />
+                              </button>
+                              {BUSINESS_TYPE !== 'log' ? (
+                                <button onClick={() => printOrderSlip(order)} className="p-1.5 rounded-md hover:bg-white/10 hover:text-fg transition" title="Print receipt" aria-label="Print receipt">
+                                  <Printer size={14} />
+                                </button>
+                              ) : (
+                                <>
+                                  <button onClick={() => printBillingStatement(order)} className="p-1.5 rounded-md hover:bg-white/10 hover:text-fg transition" title="Print billing statement" aria-label="Print billing statement">
+                                    <FileText size={14} />
+                                  </button>
+                                  <button onClick={() => printDeliveryReceipt(order)} className="p-1.5 rounded-md hover:bg-white/10 hover:text-fg transition" title="Print delivery receipt (original + duplicate)" aria-label="Print delivery receipt">
+                                    <Truck size={14} />
+                                  </button>
+                                </>
+                              )}
+                              <button
+                                onClick={() => setCollapsedOrders(prev => ({ ...prev, [order._id]: !prev[order._id] }))}
+                                className="p-1.5 rounded-md hover:bg-white/10 hover:text-fg transition"
+                                aria-label={collapsedOrders[order._id] ? 'Expand order' : 'Collapse order'}
+                              >
+                                {collapsedOrders[order._id] ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                              </button>
                             </div>
                           </div>
-                          <div className="flex items-center gap-1 flex-shrink-0">
-                            {order.isParked && (
-                              <button onClick={() => resumeParked(order._id)} className="px-3 py-1.5 bg-brand text-on-brand rounded-lg text-[11px] font-black uppercase tracking-wider hover:bg-brand/90 transition flex items-center gap-1">
-                                <ShoppingCart size={12} /> Resume
-                              </button>
+                          {(order.customerName || order.table) && (
+                            <p className="text-[13px] leading-snug min-w-0">
+                              {order.customerName && <span className="text-fg font-semibold">{order.customerName}</span>}
+                              {order.customerName && order.table && <span className="text-fg/40"> · </span>}
+                              {order.table && <span className="text-fg/65">{order.table}</span>}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${ORDER_STATUS_TONE[order.status] || 'bg-white/10 text-fg/70'}`}>{order.status}</span>
+                            {order.revision > 0 && (
+                              <span title={(order.amendments || []).map(a => `Rev ${a.revision} · ${a.by}: ${a.reason}`).join('\n')}
+                                className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-400">
+                                Rev {order.revision}
+                              </span>
                             )}
-                            <button onClick={() => printKitchenTicket(order)} className="p-1.5 bg-white/5 text-orange-400/60 rounded-lg hover:bg-orange-500/10 hover:text-warning transition" title={`${SEND_TARGET} Ticket (no prices)`}>
-                              <ChefHat size={13} />
-                            </button>
-                            {BUSINESS_TYPE !== 'log' && (
-                              <button onClick={() => printOrderSlip(order)} className="p-1.5 bg-white/5 text-fg/70 rounded-lg hover:bg-white/10 hover:text-fg transition" title="Print Receipt">
-                                <Printer size={13} />
-                              </button>
+                            {allDeptDone && order.status !== 'Completed' && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-500/15 text-success flex items-center gap-1">
+                                <CheckCircle size={10}/> All done
+                              </span>
                             )}
-                            {BUSINESS_TYPE === 'log' && (
-                              <button onClick={() => printBillingStatement(order)} className="p-1.5 bg-white/5 text-blue-400/70 rounded-lg hover:bg-blue-500/10 hover:text-blue-300 transition" title="Print Billing Statement">
-                                <FileText size={13} />
-                              </button>
-                            )}
-                            {BUSINESS_TYPE === 'log' && (
-                              <button onClick={() => printDeliveryReceipt(order)} className="p-1.5 bg-white/5 text-brand/70 rounded-lg hover:bg-brand/10 hover:text-brand-text transition" title="Print Delivery Receipt (2 copies: original + duplicate)">
-                                <Truck size={13} />
-                              </button>
-                            )}
-                            <button
-                              onClick={() => setCollapsedOrders(prev => ({ ...prev, [order._id]: !prev[order._id] }))}
-                              className="p-1.5 bg-white/5 text-fg/70 rounded-lg hover:bg-white/10 hover:text-fg transition"
-                            >
-                              {collapsedOrders[order._id] ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
-                            </button>
+                            <span className="text-fg/50 text-[10px] ml-auto tabular-nums">{new Date(order.createdAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
                           </div>
+                          {order.orderNotes && (
+                            <p className="text-[11px] text-fg/85 bg-yellow-500/10 border-l-2 border-yellow-500/60 rounded-r px-2 py-1 italic">
+                              {order.orderNotes}
+                            </p>
+                          )}
                         </div>
 
-                        {/* DELIVERY/PICKUP INFO STRIP - only when there's actually
-                            something to show, else it renders as an empty gray bar. */}
-                        {['Manual Delivery','Pickup','Grab Delivery','Foodpanda'].includes(order.table)
+                        {/* DELIVERY / PICKUP DETAILS - only when there is something to show. */}
+                        {['Manual Delivery','Pickup','Grab Delivery','Foodpanda','Lalamove'].includes(order.table)
                           && (order.customerPhone || order.deliveryAddress || order.deliveryFee > 0 || order.scheduledTime || order.dispatchStatus) && (
-                          <div className="mx-4 mb-2 bg-black/30 rounded-lg px-3 py-2 border border-white/5 text-[10px] space-y-1">
-                            {order.customerPhone && <div className="flex items-center gap-1.5 text-fg/70"><span className="font-black text-fg/70 uppercase tracking-widest">Phone</span> {order.customerPhone}</div>}
-                            {order.deliveryAddress && <div className="flex items-center gap-1.5 text-fg/70"><span className="font-black text-fg/70 uppercase tracking-widest">Address</span> {order.deliveryAddress}</div>}
-                            {order.deliveryFee > 0 && <div className="flex items-center gap-1.5 text-fg/70"><span className="font-black text-fg/70 uppercase tracking-widest">Delivery Fee</span> ₱{order.deliveryFee.toFixed(2)}</div>}
-                            {order.scheduledTime && <div className="flex items-center gap-1.5 text-fg/70"><span className="font-black text-fg/70 uppercase tracking-widest">Scheduled</span> {order.scheduledTime}</div>}
+                          <dl className="mx-4 mb-3 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-[11px]">
+                            {order.customerPhone && <><dt className="text-fg/50">Phone</dt><dd className="text-fg/85 tabular-nums">{order.customerPhone}</dd></>}
+                            {order.deliveryAddress && <><dt className="text-fg/50">Address</dt><dd className="text-fg/85">{order.deliveryAddress}</dd></>}
+                            {order.deliveryFee > 0 && <><dt className="text-fg/50">Delivery fee</dt><dd className="text-fg/85 tabular-nums">₱{order.deliveryFee.toFixed(2)}</dd></>}
+                            {order.scheduledTime && <><dt className="text-fg/50">Scheduled</dt><dd className="text-fg/85">{order.scheduledTime}</dd></>}
                             {/* DISPATCH PIPELINE */}
                             {order.dispatchStatus && (
-                              <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-white/30 mt-1">
-                                <span className="font-black text-fg/70 uppercase tracking-widest">Dispatch</span>
+                              <div className="col-span-2 flex items-center gap-1.5 flex-wrap pt-1.5 mt-0.5 border-t border-white/5">
+                                <span className="text-fg/50">Dispatch</span>
                                 {(['Preparing','Out for Delivery','Awaiting Pickup','Delivered','Picked Up']).map(s => {
                                   const isActive = order.dispatchStatus === s;
                                   return (
                                     <button key={s} onClick={async () => {
                                       const res = await apiFetch(`/api/orders/${order._id}/dispatch`, { method: 'PATCH', body: JSON.stringify({ dispatchStatus: s }) });
                                       if (res.ok) fetchOrders();
-                                    }} className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider transition ${isActive ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/70 hover:bg-white/10 hover:text-fg'}`}>
+                                    }} className={`px-2 py-0.5 rounded-full text-[10px] font-semibold transition ${isActive ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/65 hover:bg-white/10 hover:text-fg'}`}>
                                       {s}
                                     </button>
                                   );
                                 })}
                               </div>
                             )}
-                          </div>
+                          </dl>
                         )}
 
                         {!collapsedOrders[order._id] && (
-                          <div className="px-4 pb-4 flex flex-col gap-3 border-t border-white/30 pt-3">
-                            <div className="space-y-2 max-h-56 overflow-y-auto custom-scrollbar pr-1">
+                          <div className="px-4 pb-4 flex flex-col gap-3 border-t border-white/5 pt-3">
+                            <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar pr-1">
                               {(BUSINESS_TYPE === 'log' ? ['Logistics', 'Warehouse'] : ['Kitchen', 'Bar']).map(dept => {
                                 const deptItems = order.items
                                   .map((item, idx) => ({ ...item, originalIdx: idx }))
@@ -880,16 +927,16 @@ export default function OrdersTab({ ctx }) {
                                 if (deptItems.length === 0) return null;
                                 if (departmentFilter !== 'All' && departmentFilter !== dept) return null;
                                 return (
-                                  <div key={dept} className="bg-white rounded-lg p-2.5 border border-white/5">
-                                    <h4 className="text-[9px] uppercase text-brand-text font-black mb-2 tracking-widest">{dept}</h4>
+                                  <div key={dept}>
+                                    <h4 className="text-[10px] uppercase text-fg/45 font-bold mb-1 tracking-wider">{dept}</h4>
                                     {deptItems.map(item => (
-                                      <div key={item.originalIdx} className="mb-2 last:mb-0">
+                                      <div key={item.originalIdx} className="py-1.5 border-b border-white/5 last:border-0">
                                         {/* Name always gets the FULL row width - a long product name
                                             competing side-by-side with the price/discount column was
                                             what squeezed both into an unreadable, overlapping mess on a
                                             narrow (phone-width) POS screen. Price/discount now gets its
                                             own row below instead, same idea as the SC/PWD cards. */}
-                                        <span className={`block font-semibold text-sm leading-snug ${item.itemStatus === 'Delivered' ? 'text-fg/70 line-through' : 'text-black'}`}>
+                                        <span className={`block font-semibold text-sm leading-snug ${item.itemStatus === 'Delivered' ? 'text-fg/70 line-through' : 'text-fg'}`}>
                                           {item.quantity}x {item.name}
                                         </span>
                                         {(item.fulfilledQty || 0) > 0 && (item.fulfilledQty || 0) < (item.quantity || 0) && (
@@ -900,17 +947,17 @@ export default function OrdersTab({ ctx }) {
                                         {(item.fulfilledQty || 0) >= (item.quantity || 0) && (item.quantity || 0) > 0 && order.status === 'Partially Fulfilled' && (
                                           <span className="text-[9px] font-black uppercase tracking-wider text-emerald-600 flex items-center gap-0.5 mt-0.5"><Check size={9} /> Fully fulfilled</span>
                                         )}
-                                        <div className="flex items-center justify-end gap-1 mt-1">
+                                        <div className="flex items-center justify-end gap-1 mt-0.5">
                                             {(order.status === 'Preparing' || order.status === 'Ready') ? (
                                               <>
                                                 {item.itemStatus === 'Received' && (
-                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Preparing')} className="bg-yellow-500 text-white border border-yellow-500 hover:bg-yellow-400 hover:text-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition">Prep</button>
+                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Preparing')} className="bg-yellow-500/15 text-warning hover:bg-yellow-500/25 px-2.5 py-0.5 rounded-full text-[10px] font-bold transition">Start prep</button>
                                                 )}
                                                 {item.itemStatus === 'Preparing' && (
-                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Finished')} className="bg-accent text-on-brand border border-accent hover:bg-accent hover:text-on-brand/20 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition">Finish</button>
+                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Finished')} className="bg-brand/15 text-brand-text hover:bg-brand/25 px-2.5 py-0.5 rounded-full text-[10px] font-bold transition">Mark ready</button>
                                                 )}
                                                 {item.itemStatus === 'Finished' && departmentFilter === 'All' && (
-                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Delivered')} className="bg-green-500 text-white border border-green-500 hover:bg-green-400 hover:text-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition flex items-center gap-1">
+                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Delivered')} className="bg-green-500/15 text-success hover:bg-green-500/25 px-2.5 py-0.5 rounded-full text-[10px] font-bold transition flex items-center gap-1">
                                                     <Truck size={9} /> Give
                                                   </button>
                                                 )}
@@ -936,7 +983,7 @@ export default function OrdersTab({ ctx }) {
                                                 // department-filtered fulfillment view (Logistics, Warehouse,
                                                 // Kitchen, Bar) is meant to be read-only on price, same as the
                                                 // Promo/Complimentary controls elsewhere in this card.
-                                                const canEditPct = order.status === 'Pending' && departmentFilter === 'All';
+                                                const canEditPct = order.status === 'Pending' && departmentFilter === 'All' && (discountsOpen[order._id] || itemPct > 0);
                                                 return (
                                                   <div className="flex flex-col items-end gap-1">
                                                     {/* Discount context sits ABOVE the price, only when one
@@ -945,15 +992,15 @@ export default function OrdersTab({ ctx }) {
                                                         row carrying a redundant "0%" edit box. */}
                                                     {effPct > 0 && (
                                                       <div className="flex items-center gap-1.5">
-                                                        <span className="text-fg/65 line-through text-[10px] font-mono">P{lineGross.toFixed(2)}</span>
-                                                        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${isClientRate ? 'bg-emerald-500 text-white' : 'bg-amber-500 text-white'}`}>
+                                                        <span className="text-fg/65 line-through text-[10px] font-mono">₱{lineGross.toFixed(2)}</span>
+                                                        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${isClientRate ? 'bg-emerald-500/15 text-success' : 'bg-amber-500/15 text-warning'}`}>
                                                           {isClientRate ? `Client −${effPct}%` : `−${effPct}%`}
                                                         </span>
                                                       </div>
                                                     )}
                                                     <div className="flex items-center gap-1.5">
-                                                      <span className={`font-mono font-bold text-sm ${effPct > 0 ? 'text-brand-text' : 'text-black'}`}>
-                                                        P{(lineGross * (1 - effPct / 100)).toFixed(2)}
+                                                      <span className={`font-mono font-bold text-sm ${effPct > 0 ? 'text-brand-text' : 'text-fg'}`}>
+                                                        ₱{(lineGross * (1 - effPct / 100)).toFixed(2)}
                                                       </span>
                                                       {canEditPct && (
                                                         <div className="relative">
@@ -963,9 +1010,9 @@ export default function OrdersTab({ ctx }) {
                                                             value={item.discountPercent || ''}
                                                             onChange={e => applyItemDiscount(order._id, item.originalIdx, e.target.value)}
                                                             title="Cashier discount override for this line"
-                                                            className="w-12 bg-white border border-black/20 rounded pl-1.5 pr-4 py-0.5 text-black text-[10px] font-bold outline-none focus:border-brand/60 placeholder-black/30 tabular-nums"
+                                                            className="w-12 bg-white/5 border border-white/10 rounded pl-1.5 pr-4 py-0.5 text-fg text-[10px] font-bold outline-none focus:border-brand/60 placeholder:text-fg/30 tabular-nums"
                                                           />
-                                                          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-black/60 text-[9px] font-bold pointer-events-none">%</span>
+                                                          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-fg/50 text-[9px] font-bold pointer-events-none">%</span>
                                                         </div>
                                                       )}
                                                     </div>
@@ -988,7 +1035,7 @@ export default function OrdersTab({ ctx }) {
                                             {item.selectedAddOns.map((addon, aIdx) => (
                                               <div key={aIdx} className="flex justify-between items-center text-[10px] text-fg/70">
                                                 <span className="flex items-center gap-1">
-                                                  <ChevronRight size={8} className="flex-shrink-0" /> {addon.name} <span className="opacity-70">(+P{addon.price})</span>
+                                                  <ChevronRight size={8} className="flex-shrink-0" /> {addon.name} <span className="opacity-70">(+₱{addon.price})</span>
                                                 </span>
                                                 {order.status === 'Pending' && (
                                                   <button onClick={() => removeAddOnFromOrder(order, item.originalIdx, aIdx)} className="text-fg/70 hover:text-danger transition p-0.5 rounded">
@@ -1007,7 +1054,7 @@ export default function OrdersTab({ ctx }) {
                             </div>
 
                             {order.status === 'Pending' && departmentFilter === 'All' && (
-                              <div className="flex flex-col gap-1.5 border-t border-white/30 pt-2.5">
+                              <div className="flex flex-col gap-1.5 border-t border-white/5 pt-2.5">
                                 {isComp ? (
                                   /* ── APPLIED STATE: audit badge ── */
                                   <div className="flex items-start gap-2 bg-white/3 border border-white/10 rounded-lg p-2">
@@ -1026,10 +1073,10 @@ export default function OrdersTab({ ctx }) {
                                         <div className="text-fg/70 text-[9px] italic truncate">&ldquo;{order.complimentaryReasonNote}&rdquo;</div>
                                       )}
                                       <div className="text-fg/70 text-[9px]">
-                                        <span className="text-gray-700">For:</span> {compEmpName} &nbsp;·&nbsp; <span className="text-gray-700">By:</span> {order.complimentaryApprovedBy || activeAdmin?.name || '-'}
+                                        <span className="text-fg/60">For:</span> {compEmpName} &nbsp;·&nbsp; <span className="text-fg/60">By:</span> {order.complimentaryApprovedBy || activeAdmin?.name || '-'}
                                       </div>
                                       {order.complimentaryApprovedAt && (
-                                        <div className="text-gray-700 text-[9px]">{new Date(order.complimentaryApprovedAt).toLocaleString()}</div>
+                                        <div className="text-fg/60 text-[9px]">{new Date(order.complimentaryApprovedAt).toLocaleString()}</div>
                                       )}
                                     </div>
                                     <button onClick={() => removeComplimentary(order._id)} className="flex-shrink-0 bg-red-500 hover:bg-red-600 text-white p-1 rounded font-black transition" title="Remove Complimentary">
@@ -1093,9 +1140,9 @@ export default function OrdersTab({ ctx }) {
                               </div>
                             )}
 
-                            {departmentFilter === 'All' && (<div className="bg-white rounded-lg p-3 space-y-1.5">
+                            {departmentFilter === 'All' && (<div className="border-t border-white/5 pt-3 space-y-1.5">
                               {order.status === 'Completed' && order.paymentMethod && (
-                                <div className="flex justify-between text-[11px] text-black">
+                                <div className="flex justify-between text-[11px] text-fg">
                                   <span>Payment</span>
                                   <span className="font-mono text-brand/80 font-bold">{order.paymentMethod}</span>
                                 </div>
@@ -1104,12 +1151,12 @@ export default function OrdersTab({ ctx }) {
                                   come off. Printing it above an identical Total is
                                   two rows saying one thing. */}
                               {Math.abs(order.subtotal - displayTotal) > 0.005 && (
-                                <div className="flex justify-between text-[11px] text-black/60">
-                                  <span>Gross</span><span className="font-mono">P{order.subtotal.toFixed(2)}</span>
+                                <div className="flex justify-between text-[11px] text-fg/60">
+                                  <span>Gross</span><span className="font-mono">₱{order.subtotal.toFixed(2)}</span>
                                 </div>
                               )}
                               {vatOn && (
-                                <div className="flex justify-between items-center text-[11px] text-black">
+                                <div className="flex justify-between items-center text-[11px] text-fg">
                                   <div className="flex items-center gap-2">
                                     {/* Rate comes from the ORDER, not from settings - an order rung
                                         up before VAT was switched on genuinely carries 0%. */}
@@ -1124,7 +1171,7 @@ export default function OrdersTab({ ctx }) {
                                       </span>
                                     )}
                                   </div>
-                                  <span className="font-mono">P{order.vatAmount.toFixed(2)}</span>
+                                  <span className="font-mono">₱{order.vatAmount.toFixed(2)}</span>
                                 </div>
                               )}
                               {(() => {
@@ -1142,7 +1189,7 @@ export default function OrdersTab({ ctx }) {
                                     {order.status === 'Pending' && (
                                       <button
                                         onClick={() => setDiscountsOpen(prev => ({ ...prev, [order._id]: !open }))}
-                                        className="w-full flex items-center justify-between text-[10px] uppercase tracking-wider text-black/60 hover:text-black transition py-0.5"
+                                        className="w-full flex items-center justify-between text-[10px] uppercase tracking-wider text-fg/60 hover:text-fg transition py-0.5"
                                       >
                                         <span className="flex items-center gap-1.5">
                                           <Tag size={10} />
@@ -1152,23 +1199,23 @@ export default function OrdersTab({ ctx }) {
                                           {/* Only while shut - the row below shows the
                                               same figure once it is open. */}
                                           {!open && displayDiscount > 0 && (
-                                            <span className="text-danger font-mono">-P{displayDiscount.toFixed(2)}</span>
+                                            <span className="text-danger font-mono">-₱{displayDiscount.toFixed(2)}</span>
                                           )}
                                           {open ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
                                         </span>
                                       </button>
                                     )}
                                     {(open || order.status !== 'Pending') && (
-                                    <div className="flex justify-between items-center text-[11px] text-black border-b border-white/5 pb-1.5">
+                                    <div className="flex justify-between items-center text-[11px] text-fg border-b border-white/5 pb-1.5">
                                       <div className="flex items-center gap-2 flex-1 pr-2">
                                         <span className="whitespace-nowrap uppercase tracking-wider text-[9px]">Promo</span>
                                         {order.status === 'Pending' && (
                                           hasScpwd ? (
-                                            <span className="text-[9px] text-black italic ml-auto">SC/PWD active</span>
+                                            <span className="text-[9px] text-fg italic ml-auto">SC/PWD active</span>
                                           ) : (
                                             <div className="flex gap-1 items-center flex-1 justify-end">
                                               <select
-                                                className="w-full max-w-[110px] bg-white border border-black rounded px-1 text-[10px] text-black outline-none h-6"
+                                                className="w-full max-w-[130px] bg-page-bg border border-white/10 rounded px-1 text-[10px] text-fg outline-none h-6"
                                                 value={discountInputs[order._id] || ''}
                                                 onChange={(e) => setDiscountInputs(prev => ({ ...prev, [order._id]: e.target.value }))}
                                               >
@@ -1183,13 +1230,13 @@ export default function OrdersTab({ ctx }) {
                                           )
                                         )}
                                       </div>
-                                      <span className="text-danger whitespace-nowrap font-mono">-P{displayDiscount.toFixed(2)}</span>
+                                      <span className="text-danger whitespace-nowrap font-mono">-₱{displayDiscount.toFixed(2)}</span>
                                     </div>
                                     )}
                                     {open && scpwdDiscounts.length > 0 && order.status === 'Pending' && (
                                       <div className="border-b border-white/5 pb-1.5 space-y-1">
                                         {hasPromo ? (
-                                          <span className="text-[9px] uppercase tracking-wider text-black italic">SC/PWD - Promo active</span>
+                                          <span className="text-[9px] uppercase tracking-wider text-fg italic">SC/PWD - Promo active</span>
                                         ) : (
                                           <>
                                             <button
@@ -1207,14 +1254,14 @@ export default function OrdersTab({ ctx }) {
                                               // one character per line when the available width collapsed.
                                               <div className="max-h-[180px] overflow-y-auto custom-scrollbar space-y-2 pt-1 pr-1">
                                                 {order.items.map((item, idx) => (
-                                                  <div key={idx} className="bg-black/[0.03] rounded-lg px-2 py-1.5">
-                                                    <span className="block text-[11px] text-black font-semibold leading-snug">{item.quantity}x {item.name}</span>
+                                                  <div key={idx} className="bg-white/[0.03] rounded-lg px-2 py-1.5">
+                                                    <span className="block text-[11px] text-fg font-semibold leading-snug">{item.quantity}x {item.name}</span>
                                                     <div className="flex items-center justify-end gap-1.5 mt-1">
                                                       {item.discountPercent > 0 && (
                                                         <span className="text-brand-text font-mono text-[10px] whitespace-nowrap font-bold">-{item.discountPercent}%</span>
                                                       )}
                                                       <select
-                                                        className="bg-white border border-black rounded text-[10px] text-black outline-none px-1.5 py-1 h-7 cursor-pointer w-[92px]"
+                                                        className="bg-page-bg border border-white/10 rounded text-[10px] text-fg outline-none px-1.5 py-1 h-7 cursor-pointer w-[110px]"
                                                         value={item.discountPercent || ''}
                                                         onChange={(e) => applyItemDiscount(order._id, idx, e.target.value)}
                                                       >
@@ -1235,9 +1282,9 @@ export default function OrdersTab({ ctx }) {
                                   </>
                                 );
                               })()}
-                              <div className="flex justify-between font-black text-base pt-1 border-t border-gray">
-                                <span className="text-black">Total</span>
-                                <span className="text-brand-text font-mono tracking-wider">P{displayTotal.toFixed(2)}</span>
+                              <div className="flex justify-between items-baseline font-black text-base pt-2 border-t border-white/5">
+                                <span className="text-fg">Total</span>
+                                <span className="text-fg tabular-nums">₱{displayTotal.toFixed(2)}</span>
                               </div>
                             </div>)}
 
@@ -1277,7 +1324,7 @@ export default function OrdersTab({ ctx }) {
                                       <div className="flex gap-2">
                                         <button
                                           onClick={() => updateStatus(order._id, 'Preparing')}
-                                          className="flex-1 bg-yellow-500 text-black py-2.5 rounded-lg hover:bg-yellow-400 font-black text-xs uppercase tracking-widest transition"
+                                          className="flex-1 bg-yellow-500 text-fg py-2.5 rounded-lg hover:bg-yellow-400 font-black text-xs uppercase tracking-widest transition"
                                         >
                                           Send to {SEND_TARGET}
                                         </button>
@@ -1425,7 +1472,7 @@ export default function OrdersTab({ ctx }) {
                                               type="number"
                                               min="0"
                                               step="0.01"
-                                              placeholder={`≥ P${displayTotal.toFixed(2)}`}
+                                              placeholder={`≥ ₱${displayTotal.toFixed(2)}`}
                                               value={cashTendered[order._id] || ''}
                                               onChange={(e) => setCashTendered(prev => ({ ...prev, [order._id]: e.target.value }))}
                                               className="flex-1 bg-white/5 border border-white/10 focus:border-accent/50 rounded-lg px-2 py-1.5 text-sm font-mono text-fg outline-none"
@@ -1435,7 +1482,7 @@ export default function OrdersTab({ ctx }) {
                                           {changeDue !== null && (
                                             <div className={`flex justify-between text-xs font-black px-1 ${isUnderpaid ? 'text-danger' : 'text-success'}`}>
                                               <span>{isUnderpaid ? 'SHORT' : 'CHANGE'}</span>
-                                              <span className="font-mono">P{Math.abs(changeDue).toFixed(2)}</span>
+                                              <span className="font-mono">₱{Math.abs(changeDue).toFixed(2)}</span>
                                             </div>
                                           )}
                                         </div>
@@ -1456,17 +1503,17 @@ export default function OrdersTab({ ctx }) {
                                           }
                                           setTimeout(() => updateStatus(order._id, 'Preparing'), 0);
                                         }}
-                                        className={`w-full py-3 rounded-xl font-black text-xs uppercase tracking-widest transition ${(isUnderpaid || missingRef) ? 'bg-gray-600 text-fg/70 cursor-not-allowed' : 'bg-accent text-on-brand hover:bg-accentShadow shadow-lg shadow-accent/20'}`}
+                                        className={`w-full py-3 rounded-lg font-black text-sm transition ${(isUnderpaid || missingRef) ? 'bg-white/10 text-fg/50 cursor-not-allowed' : 'bg-accent text-on-brand hover:bg-accentShadow'}`}
                                       >
-                                        {missingRef ? `${isCheck ? 'Check No.' : 'Ref No.'} Required` : `Pay & Send to ${SEND_TARGET}`}
+                                        {missingRef ? `${isCheck ? 'Check No.' : 'Ref No.'} Required` : `Pay & send to ${SEND_TARGET}`}
                                       </button>
                                       <div className="flex gap-2">
                                         {BUSINESS_TYPE === 'log' && (order.items?.length > 0) && (
-                                          <button onClick={() => openPartial(order)} className="flex-1 border border-amber-500/30 text-warning py-2 rounded-lg hover:bg-amber-500/10 font-bold text-[10px] transition uppercase tracking-widest">
-                                            Partial Fulfill
+                                          <button onClick={() => openPartial(order)} className="flex-1 border border-amber-500/30 text-warning py-2 rounded-lg hover:bg-amber-500/10 font-bold text-[11px] transition">
+                                            Partial fulfill
                                           </button>
                                         )}
-                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="flex-1 border border-red-500/30 text-danger py-2 rounded-lg hover:bg-red-500/10 font-bold text-[10px] transition uppercase tracking-widest">
+                                        <button onClick={() => updateStatus(order._id, 'Cancelled')} className="flex-1 border border-red-500/30 text-danger py-2 rounded-lg hover:bg-red-500/10 font-bold text-[11px] transition">
                                           Drop
                                         </button>
                                       </div>
@@ -1486,19 +1533,19 @@ export default function OrdersTab({ ctx }) {
                                 }, 0);
                                 return (
                                   <div className="flex flex-col gap-2">
-                                    <div className="flex flex-col gap-1 bg-amber-500 border border-amber-500 rounded-lg px-3 py-2">
-                                      <span className="flex items-center gap-2 text-white text-[10px] font-black uppercase tracking-widest">
+                                    <div className="flex flex-col gap-1 bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2">
+                                      <span className="flex items-center gap-2 text-warning text-[11px] font-bold">
                                         <Package size={12} className="flex-shrink-0" />
                                         Partially fulfilled · {doneQty}/{totalQty} units{order.depositRemaining > 0 ? ' · prepaid' : ''}
                                       </span>
                                       {remainingValue > 0 && (
-                                        <span className="text-white/90 text-[10px] font-bold tracking-wide">Remaining to fulfill: ₱{remainingValue.toFixed(2)}</span>
+                                        <span className="text-fg/75 text-[11px]">Remaining to fulfill: ₱{remainingValue.toFixed(2)}</span>
                                       )}
                                     </div>
                                     <button onClick={() => openPartial(order)} className="w-full bg-accent text-on-brand py-2.5 rounded-lg hover:bg-accentShadow font-black text-xs uppercase tracking-widest transition">
                                       Fulfill Remaining
                                     </button>
-                                    <button onClick={() => dropRemaining(order)} className="bg-red-500 text-white py-2 px-4 rounded-lg hover:bg-red-500 hover:text-fg font-black text-[11px] transition uppercase border border-red-500/20">Drop Remaining</button>
+                                    <button onClick={() => dropRemaining(order)} className="w-full border border-red-500/30 text-danger py-2 rounded-lg hover:bg-red-500/10 font-bold text-[11px] transition">Drop remaining</button>
                                   </div>
                                 );
                               })()}
@@ -1506,9 +1553,9 @@ export default function OrdersTab({ ctx }) {
                               {order.status === 'Preparing' && (
                                 <div className="flex flex-col gap-2">
                                   {deliveredCount > 0 && (
-                                    <div className="flex items-center gap-2 bg-green-500 border border-green-500 rounded-lg px-3 py-2">
+                                    <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">
                                       <Truck size={12} className="text-success flex-shrink-0" />
-                                      <span className="text-white text-[10px] font-black uppercase tracking-widest">{deliveredCount}/{viewItems.length} Given to Customer</span>
+                                      <span className="text-success text-[11px] font-bold">{deliveredCount}/{viewItems.length} given to customer</span>
                                     </div>
                                   )}
                                   {departmentFilter !== 'All' ? (
@@ -1527,16 +1574,16 @@ export default function OrdersTab({ ctx }) {
                                       <CheckCircle size={13} /> Complete Order
                                     </button>
                                   ) : order.items.every(i => i.itemStatus === 'Finished' || i.itemStatus === 'Delivered') ? (
-                                    <div className="flex items-center justify-center gap-2 bg-blue-500 border border-blue-500 text-white rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
+                                    <div className="flex items-center justify-center gap-2 bg-blue-500/10 border border-blue-500/20 text-blue-300 rounded-lg text-[11px] font-bold py-2.5">
                                       <Truck size={11} /> Give items above to complete
                                     </div>
                                   ) : (
-                                    <div className="flex items-center justify-center bg-black/20 border border-white/5 text-fg/70 rounded-lg text-[10px] font-bold uppercase tracking-widest py-2.5">
-                                      In Preparation...
+                                    <div className="flex items-center justify-center bg-white/[0.03] border border-white/5 text-fg/65 rounded-lg text-[11px] font-semibold py-2.5">
+                                      In preparation…
                                     </div>
                                   )}
                                   {departmentFilter === 'All' && !allDelivered && (
-                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="w-full bg-red-500 text-white py-2 rounded-lg hover:bg-red-400 hover:text-fg font-black text-xs transition uppercase border border-red-500">Drop Order</button>
+                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="w-full border border-red-500/30 text-danger py-2 rounded-lg hover:bg-red-500/10 font-bold text-[11px] transition">Drop order</button>
                                   )}
                                 </div>
                               )}
@@ -1600,6 +1647,102 @@ export default function OrdersTab({ ctx }) {
               </>
             )}
 
+
+            {amendModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !amendModal.busy && setAmendModal(null)}>
+                <div role="dialog" aria-modal="true" aria-labelledby="amend-title" className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                  <h2 id="amend-title" className="font-black text-fg text-lg">Amend {amendModal.order.orderNumber}</h2>
+                  <p className="text-xs text-fg/70 mt-1 mb-4">Correct the order before it is completed. Set 0 to remove a line. Prices are recalculated, so a smaller quantity can lose a bulk discount. The client sees the change and the reason in their portal.</p>
+                  <div className="space-y-2 mb-3">
+                    {amendModal.order.items.map((it, i) => {
+                      const changed = Number(amendModal.qty[i]) !== Number(it.quantity);
+                      return (
+                        <div key={i} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${changed ? 'border-sky-500/40 bg-sky-500/5' : 'border-white/10'}`}>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-fg font-bold truncate">{it.name}</p>
+                            <p className="text-[10px] text-fg/60">Ordered {it.quantity}{changed ? ` → ${amendModal.qty[i] || 0}` : ''}</p>
+                          </div>
+                          <label htmlFor={`amend-qty-${i}`} className="sr-only">New quantity for {it.name}</label>
+                          <input id={`amend-qty-${i}`} type="number" min="0" step={BUSINESS_TYPE === 'log' ? '1' : 'any'} value={amendModal.qty[i]}
+                            onChange={e => setAmendModal(m => ({ ...m, qty: m.qty.map((q, j) => (j === i ? e.target.value : q)), error: '' }))}
+                            className="w-20 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg text-right tabular-nums outline-none focus:border-brand" />
+                        </div>
+                      );
+                    })}
+                    {amendModal.adds.map((a, k) => (
+                      <div key={a.productId} className="flex items-center gap-3 rounded-lg border border-emerald-500/40 bg-emerald-500/5 px-3 py-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-fg font-bold truncate">{a.name}</p>
+                          <p className="text-[10px] text-success">New line · ₱{Number(a.price).toFixed(2)} each</p>
+                        </div>
+                        <label htmlFor={`amend-add-${k}`} className="sr-only">Quantity for {a.name}</label>
+                        <input id={`amend-add-${k}`} type="number" min="1" step={BUSINESS_TYPE === 'log' ? '1' : 'any'} value={a.quantity}
+                          onChange={e => setAmendModal(m => ({ ...m, adds: m.adds.map((x, j) => (j === k ? { ...x, quantity: e.target.value } : x)), error: '' }))}
+                          className="w-20 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg text-right tabular-nums outline-none focus:border-brand" />
+                        <button onClick={() => setAmendModal(m => ({ ...m, adds: m.adds.filter((_, j) => j !== k) }))} className="p-1 text-fg/60 hover:text-danger" aria-label={`Remove ${a.name}`}>
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="relative mb-4">
+                    <label htmlFor="amend-search" className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Add a product</label>
+                    <div className="relative">
+                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg/50 pointer-events-none" />
+                      <input id="amend-search" type="text" value={amendModal.search} autoComplete="off"
+                        onChange={e => setAmendModal(m => ({ ...m, search: e.target.value }))}
+                        placeholder="Search by name or code…"
+                        className="w-full bg-white/5 border border-white/10 rounded-lg pl-8 pr-3 py-2 text-sm text-fg outline-none focus:border-brand" />
+                    </div>
+                    {amendModal.search.trim().length > 0 && (() => {
+                      const q = amendModal.search.trim().toLowerCase();
+                      const taken = new Set(amendModal.adds.map(a => a.productId));
+                      const hits = amendableProducts
+                        .filter(p => !taken.has(String(p._id)) && (p.name.toLowerCase().includes(q) || String(p.productCode || '').toLowerCase().includes(q)))
+                        .slice(0, 6);
+                      return (
+                        <div className="absolute z-10 left-0 right-0 mt-1 bg-sidebar-bg border border-white/10 rounded-lg shadow-xl overflow-hidden">
+                          {hits.length === 0 ? (
+                            <p className="px-3 py-2.5 text-xs text-fg/60">No matching product. Items that need options picked must go on a new order.</p>
+                          ) : hits.map(p => {
+                            const onOrder = amendModal.order.items.some(it => String(it.productId) === String(p._id));
+                            return (
+                              <button key={p._id}
+                                onClick={() => setAmendModal(m => ({ ...m, search: '', adds: [...m.adds, { productId: String(p._id), name: p.name, price: p.basePrice, quantity: '1' }] }))}
+                                className="w-full flex items-center justify-between gap-3 px-3 py-2 text-left hover:bg-white/5 transition">
+                                <span className="text-sm text-fg truncate">{p.name}{onOrder && <span className="text-[10px] text-fg/60"> · adds to the existing line</span>}</span>
+                                <span className="text-xs text-fg/70 tabular-nums shrink-0">₱{Number(p.basePrice).toFixed(2)}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <label htmlFor="amend-reason" className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Reason *</label>
+                  <textarea id="amend-reason" rows={2} value={amendModal.reason}
+                    onChange={e => setAmendModal(m => ({ ...m, reason: e.target.value, error: '' }))}
+                    placeholder="e.g. Client called - only needs 50 sacks"
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand mb-3" />
+                  {(amendModal.order.amendments || []).length > 0 && (
+                    <div className="mb-3 text-[11px] text-fg/65 space-y-1">
+                      {amendModal.order.amendments.map(a => (
+                        <p key={a.revision}>Rev {a.revision} · {a.by} · {a.changes.map(c => `${c.name} ${c.from}→${c.to}`).join(', ')} · “{a.reason}”</p>
+                      ))}
+                    </div>
+                  )}
+                  {amendModal.error && <p className="text-xs text-danger mb-3" role="alert">{amendModal.error}</p>}
+                  <div className="flex gap-2">
+                    <button onClick={() => setAmendModal(null)} disabled={amendModal.busy} className="flex-1 border border-white/10 text-fg/80 py-2.5 rounded-lg text-xs font-bold uppercase tracking-widest hover:bg-white/5">Cancel</button>
+                    <button onClick={submitAmend} disabled={amendModal.busy} className="flex-1 bg-brand text-on-brand py-2.5 rounded-lg text-xs font-black uppercase tracking-widest hover:bg-brand/90 disabled:opacity-50">
+                      {amendModal.busy ? 'Saving…' : 'Amend Order'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
   );
 }

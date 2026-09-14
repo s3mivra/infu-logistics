@@ -6,6 +6,7 @@ import { parseBulkRecipes, parseDrinkSheet, collectMaterials, buildProductDraft 
 import { splitUpdate } from '../lib/changeApproval.js';
 import { hasPermission } from '../lib/authz.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
+import { buildSalePriceMap, saleUnitPrice, activeSalesQuery } from '../lib/salePricing.js';
 
 export default function registerProducts(ctx) {
   const {
@@ -357,36 +358,15 @@ app.get('/api/products', async (req, res) => {
     // Overlay active sale pricing (fixed_price / percent_off rules).
     // Threshold rules are returned as activeSaleThresholds alongside products
     // so the POS can apply them when the order subtotal is known client-side.
-    const now = new Date();
-    const activeSales = await Sale.find({ isActive: true, startsAt: { $lte: now }, endsAt: { $gte: now } }).lean();
-    const thresholdRules = [];
-    const salePriceMap = {};   // productId → { salePrice, saleName, salePercent }
-    for (const sale of activeSales) {
-      for (const rule of (sale.rules || [])) {
-        if (rule.ruleType === 'threshold') {
-          thresholdRules.push({ saleName: sale.name, productId: rule.productId, productName: rule.productName, thresholdAmount: rule.thresholdAmount, discountPercent: rule.discountPercent });
-        } else if (rule.productId) {
-          const pid = String(rule.productId);
-          const existing = salePriceMap[pid];
-          // Last sale wins if multiple overlap; could extend to "lowest price" if needed
-          if (rule.ruleType === 'fixed_price') {
-            salePriceMap[pid] = { salePrice: rule.salePrice, saleName: sale.name, salePercent: null };
-          } else if (rule.ruleType === 'percent_off' && !existing?.salePrice) {
-            salePriceMap[pid] = { salePercent: rule.discountPercent, saleName: sale.name, salePrice: null };
-          }
-        }
-      }
-    }
+    // Same rules the order route charges by - see lib/salePricing.js.
+    const activeSales = await Sale.find(activeSalesQuery()).lean();
+    const { map: salePriceMap, thresholdRules } = buildSalePriceMap(activeSales);
     products.forEach(p => {
       const overlay = salePriceMap[String(p._id)];
       if (overlay) {
         p.saleName = overlay.saleName;
-        if (overlay.salePrice != null) {
-          p.activeSalePrice = overlay.salePrice;
-        } else if (overlay.salePercent != null) {
-          p.activeSalePrice = +(p.basePrice * (1 - overlay.salePercent / 100)).toFixed(2);
-          p.activeSalePercent = overlay.salePercent;
-        }
+        p.activeSalePrice = saleUnitPrice(p, overlay);
+        if (overlay.salePrice == null && overlay.salePercent != null) p.activeSalePercent = overlay.salePercent;
       }
     });
 
@@ -1075,6 +1055,16 @@ app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res
           for (const ing of (Array.isArray(list) ? list : [])) {
             const ingName = String(ing?.name || '').trim();
             if (!ingName) continue;
+            // A non-stock ingredient (filtered water) is recorded, never matched
+            // to stock and never costed - see the zRecipe note in server.js.
+            // Treating it as an ordinary line made it "unmatched" and silently
+            // dropped it, so a menu re-imported from its own export lost water
+            // from every drink that used it.
+            if (ing?.nonStock) {
+              const q = Number(ing.qty) || 0;
+              if (q > 0) out.push({ name: ingName, qty: q, cost: 0, unit: String(ing.unit || '').trim() || 'ml', nonStock: true, packBase: 1 });
+              continue;
+            }
             const item = matchIngredient(ingName, ing.unit);
             if (!item) { unmatched.push(ingName); continue; }
             const baseQty = displayToBase(Number(ing.qty) || 0, ing.unit || item.unit);

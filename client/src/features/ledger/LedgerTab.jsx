@@ -41,7 +41,7 @@ export default function LedgerTab({ ctx }) {
     currentInventory, currentOrders, currentPage, currentPricingProducts, currentProducts,
     dailyMovement, deleteAddOn, deleteCategory, deleteInventory, deleteProduct,
     departmentFilter, discountForm, discountInputs, discountList, discounts,
-    displayOrders, downloadImportTemplate, downloadJournalCsv, editInvForm, editInvModal,
+    displayOrders, downloadImportTemplate, editInvForm, editInvModal,
     editInvSubmitting, editPriceId, editPriceVal, editingCategory, editingProduct,
     effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
@@ -129,6 +129,7 @@ export default function LedgerTab({ ctx }) {
     paymentMap, fetchPaymentMap, savePaymentMapping, resetPaymentMapping,
     tenancyReport, tenancyBusy, tenancyError, tenancyProgress, fetchTenancyReport, runTenancyRebackfill,
     backdateForm, setBackdateForm, backdateBusy, submitBackdateSale,
+    clientAccounts,
   } = ctx;
 
   // ── Stage 2 report views: self-contained fetches via ctx.apiFetch ──────────
@@ -176,8 +177,8 @@ export default function LedgerTab({ ctx }) {
   // ticked until someone chooses otherwise; the presets write explicit values.
   const [exportPicked, setExportPicked] = useState({ ds: {}, rep: {} });
   const EXPORT_REPORTS = [
-    { key: 'journal', label: 'General Journal', note: 'CSV file, one line per posting - capped at one quarter' },
-    { key: 'auditlog', label: 'Audit Log', note: 'CSV file - who changed what, and when' },
+    { key: 'journal', label: 'General Journal', note: 'PDF report, one line per posting, with totals - capped at one quarter' },
+    { key: 'auditlog', label: 'Audit Log', note: 'PDF report - who changed what, and when' },
     { key: 'accountBalances', label: 'Account Balances', note: 'Sheet in the workbook - every account and its balance' },
     { key: 'validValues', label: 'Valid Values', note: 'Sheet in the workbook - accepted values for each column' },
   ];
@@ -3230,7 +3231,7 @@ export default function LedgerTab({ ctx }) {
                             <td className="py-2.5">
                               <span className={`text-[9px] font-black uppercase px-2 py-1 rounded ${typeCls}`}>{a.type}</span>
                             </td>
-                            <td className="py-2.5 text-fg/70 text-xs">{a.payeeName}</td>
+                            <td className="py-2.5 text-fg/70 text-xs">{a.payeeName}{a.clientId && <span className="block text-[9px] text-fg/65">client account</span>}</td>
                             <td className="py-2.5 text-fg/70 text-xs max-w-[180px] truncate" title={a.purpose || ''}>{a.purpose || '-'}</td>
                             <td className="py-2.5 text-fg/75 text-xs">{new Date(a.date).toLocaleDateString()}</td>
                             <td className="py-2.5 text-right tabular-nums text-fg/70">{peso(a.amount)}</td>
@@ -3284,7 +3285,7 @@ export default function LedgerTab({ ctx }) {
                     <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Type</label>
                     <div className="grid grid-cols-3 gap-2 mb-4">
                       {[['employee', 'Employee'], ['supplier', 'Supplier'], ['customer', 'Customer']].map(([v, label]) => (
-                        <button key={v} onClick={() => setAdvIssueModal(f => ({ ...f, type: v }))}
+                        <button key={v} onClick={() => setAdvIssueModal(f => ({ ...f, type: v, ...(v !== 'customer' ? { clientId: '' } : {}) }))}
                           className={`px-2 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition ${
                             advIssueModal.type === v ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/75 hover:text-fg'}`}>
                           {label}
@@ -3292,10 +3293,28 @@ export default function LedgerTab({ ctx }) {
                       ))}
                     </div>
 
+                    {advIssueModal.type === 'customer' && (clientAccounts || []).length > 0 && (
+                      <>
+                        <label htmlFor="adv-client" className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Client account</label>
+                        <select id="adv-client" value={advIssueModal.clientId || ''}
+                          onChange={e => {
+                            const c = clientAccounts.find(x => String(x._id) === e.target.value);
+                            setAdvIssueModal(f => ({ ...f, clientId: e.target.value, payeeName: c ? (c.name || c.username) : f.payeeName }));
+                          }}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-1 outline-none focus:border-brand">
+                          <option value="">No account - type a name below</option>
+                          {clientAccounts.map(c => (
+                            <option key={c._id} value={c._id}>{c.name || c.username}{c.clientCode ? ` (${c.clientCode})` : ''}</option>
+                          ))}
+                        </select>
+                        <p className="text-[10px] text-fg/65 mb-4">Linked deposits show on the client's row and in their portal, and can only be applied to their orders.</p>
+                      </>
+                    )}
+
                     <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">
                       {advIssueModal.type === 'customer' ? 'Customer' : advIssueModal.type === 'supplier' ? 'Supplier' : 'Employee'} name
                     </label>
-                    <input type="text" value={advIssueModal.payeeName} autoFocus
+                    <input type="text" value={advIssueModal.payeeName} autoFocus disabled={!!advIssueModal.clientId}
                       onChange={e => setAdvIssueModal(f => ({ ...f, payeeName: e.target.value }))}
                       placeholder="Who is this for?"
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
@@ -3436,7 +3455,9 @@ export default function LedgerTab({ ctx }) {
                       })()}
 
                       {advLiqModal.method === 'order' && (() => {
-                        const open = arOutstanding?.orders || [];
+                        // A deposit linked to a client can only be applied to that client's orders.
+                        const open = (arOutstanding?.orders || []).filter(o =>
+                          !advLiqModal.advance.clientId || String(o.clientId || o.clientAccountId || '') === advLiqModal.advance.clientId);
                         return (
                           <>
                             <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Order to apply to</label>
@@ -5898,7 +5919,7 @@ export default function LedgerTab({ ctx }) {
                 </button>
               </div>
               <p className="text-[10px] text-fg/70">
-                Datasets and the reference sheets go into one workbook, led by a Contents sheet that lists row counts and flags any sheet that hit the row cap. The Journal and Audit Log download as their own CSV files. Your browser may ask permission to save several files.
+                Datasets and the reference sheets go into one workbook, led by a Contents sheet that lists row counts and flags any sheet that hit the row cap. The Journal and Audit Log download as their own PDF reports. Your browser may ask permission to save several files.
               </p>
             </div>
             );

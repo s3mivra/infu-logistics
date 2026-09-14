@@ -199,6 +199,7 @@ export default function ClientsTab() {
               {data.showMoney && <>
                 <th className="text-right py-3">Owing (A/R)</th>
                 <th className="text-right py-3">Committed</th>
+                <th className="text-right py-3" title="Paid ahead of any order, not yet applied">Deposits</th>
                 <th className="text-right py-3 px-4">Limit / Left</th>
               </>}
             </tr>
@@ -206,7 +207,7 @@ export default function ClientsTab() {
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={data.showMoney ? 7 : 4} className="py-14 text-center text-fg/65 font-bold">
+                <td colSpan={data.showMoney ? 8 : 4} className="py-14 text-center text-fg/65 font-bold">
                   {loading ? 'Loading…' : q ? 'No clients match that search.' : 'No client accounts yet - add one in the Admin Panel.'}
                 </td>
               </tr>
@@ -232,6 +233,7 @@ export default function ClientsTab() {
                   {data.showMoney && <>
                     <td className="py-3 text-right tabular-nums font-black text-fg/100">{c.aged?.total ? peso(c.aged.total) : '-'}</td>
                     <td className="py-3 text-right tabular-nums text-brand/80">{c.exposure ? peso(c.exposure) : '-'}</td>
+                    <td className="py-3 text-right tabular-nums text-success">{c.deposits ? peso(c.deposits) : '-'}</td>
                     <td className="py-3 px-4 text-right tabular-nums text-xs">
                       {c.creditLimit === null || c.creditLimit === undefined
                         ? <span className="text-fg/100">No limit</span>
@@ -244,7 +246,7 @@ export default function ClientsTab() {
 
                 {expanded === c._id && (
                   <tr className="bg-page-bg/40">
-                    <td colSpan={data.showMoney ? 7 : 4} className="px-4 py-3">
+                    <td colSpan={data.showMoney ? 8 : 4} className="px-4 py-3">
                       {data.showMoney && c.aged && (
                         <div className="flex flex-wrap gap-2 mb-3">
                           {[['Current', c.aged.current], ['31-60', c.aged.d31_60], ['61-90', c.aged.d61_90], ['91+', c.aged.d90_plus]].map(([lbl, amt]) => (

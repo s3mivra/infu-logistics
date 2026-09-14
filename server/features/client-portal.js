@@ -230,7 +230,7 @@ app.get('/api/client/orders', verifyClientToken, async (req, res) => {
     const orders = await Order.find(
       { clientId: String(clientId) },
       // orderNotes is the client's own text - it belongs on their order slip.
-      { orderNumber: 1, billingNumber: 1, status: 1, total: 1, items: 1, paymentMethod: 1, createdAt: 1, transactionType: 1, clientReceived: 1, orderNotes: 1 }
+      { orderNumber: 1, billingNumber: 1, status: 1, total: 1, items: 1, paymentMethod: 1, createdAt: 1, transactionType: 1, clientReceived: 1, orderNotes: 1, revision: 1, 'amendments.revision': 1, 'amendments.at': 1, 'amendments.reason': 1, 'amendments.changes': 1 }
     ).sort({ createdAt: -1 }).limit(30).lean();
     res.json({ success: true, orders });
   } catch (err) {
@@ -292,6 +292,19 @@ const ownClient = async (req) => {
   return ClientAccount.findById(clientId);
 };
 
+const ownDeposits = async (me) => {
+  if (!ctx.Advance) return { balance: 0, items: [] };
+  const rows = await ctx.Advance.find({
+    businessType: BUSINESS_TYPE, clientId: String(me._id), type: 'customer',
+    status: { $in: ['Open', 'Partially Liquidated'] },
+  }, { advanceNumber: 1, amount: 1, liquidatedAmount: 1, purpose: 1, date: 1 }).sort({ date: -1 }).lean();
+  const items = rows.map(a => ({
+    number: a.advanceNumber, purpose: a.purpose || '', date: a.date,
+    amount: a.amount, remaining: Math.round((a.amount - (a.liquidatedAmount || 0)) * 100) / 100,
+  }));
+  return { balance: Math.round(items.reduce((s, i) => s + i.remaining, 0) * 100) / 100, items };
+};
+
 app.get('/api/client/profile', verifyClientToken, async (req, res) => {
   try {
     const me = await ownClient(req);
@@ -302,6 +315,9 @@ app.get('/api/client/profile', verifyClientToken, async (req, res) => {
       // Whether this buyer is quoted before they buy. The portal reads it to
       // decide whether the cart asks for a price or places an order.
       requiresQuote: me.requiresQuote === true,
+      // Deposits they have paid ahead of an order, still unused. Staff apply
+      // them to an order; the client only sees the balance and each deposit.
+      deposits: await ownDeposits(me),
     } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
