@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { dayStart, dayEnd } from '../lib/reportRange.js';
+import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { bucketFor, resolveClientKey } from '../lib/credit.js';
 import { captureError } from '../lib/errorLog.js';
 import { sectionAncestor } from '../lib/chartOfAccounts.js';
@@ -177,6 +178,7 @@ export default function registerReports(ctx) {
     openBreak,
     BREAK_CAP_MIN,
     RevolvingFundSchema,
+    Advance,
     RevolvingFund,
     RevolvingFundTxSchema,
     RevolvingFundTx,
@@ -198,9 +200,8 @@ export default function registerReports(ctx) {
 app.get('/api/reports/pnl', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
-    const startDate = start ? dayStart(start) : new Date(new Date().setHours(0,0,0,0));
-    const endDate = end ? dayEnd(end) : new Date();
-    endDate.setHours(23,59,59,999);
+    const startDate = start ? dayStart(start) : dayStart(businessDateStr());
+    const endDate = end ? dayEnd(end) : dayEnd(businessDateStr());
 
     const agg = await JournalEntry.aggregate([
       { $match: { date: { $gte: startDate, $lte: endDate } } },
@@ -378,8 +379,7 @@ app.get('/api/reports/pnl-monthly', verifyToken, ...canViewReports, async (req, 
   try {
     const { start, end } = req.query;
     const startDate = start ? dayStart(start) : new Date(new Date().getFullYear(), 0, 1);
-    const endDate = end ? dayEnd(end) : new Date();
-    if (!end) endDate.setHours(23, 59, 59, 999);
+    const endDate = end ? dayEnd(end) : dayEnd(businessDateStr());
 
     const agg = await JournalEntry.aggregate([
       { $match: { date: { $gte: startDate, $lte: endDate } } },
@@ -455,8 +455,7 @@ app.get('/api/reports/pnl-monthly', verifyToken, ...canViewReports, async (req, 
 // ============================================================
 app.get('/api/reports/balance-sheet', verifyToken, ...canViewReports, async (req, res) => {
   try {
-    const asOf = req.query.asOf ? dayEnd(req.query.asOf) : new Date();
-    if (!req.query.asOf) asOf.setHours(23, 59, 59, 999);
+    const asOf = req.query.asOf ? dayEnd(req.query.asOf) : dayEnd(businessDateStr());
 
     const agg = await JournalEntry.aggregate([
       { $match: { date: { $lte: asOf } } },
@@ -501,8 +500,7 @@ app.get('/api/reports/balance-sheet-monthly', verifyToken, ...canViewReports, as
   try {
     const { start, end } = req.query;
     const startDate = start ? dayStart(start) : new Date(new Date().getFullYear(), 0, 1);
-    const endDate = end ? dayEnd(end) : new Date();
-    if (!end) endDate.setHours(23, 59, 59, 999);
+    const endDate = end ? dayEnd(end) : dayEnd(businessDateStr());
 
     const agg = await JournalEntry.aggregate([
       { $match: { date: { $lte: endDate } } }, // everything up to range end (balances are cumulative)
@@ -601,7 +599,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
       Order.aggregate([
         { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: day60ago } } },
         { $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Asia/Manila' } },
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: businessTimeZone() } },
           net:  { $sum: { $cond: ['$isComplimentary', 0, '$total'] } },
         }},
         { $sort: { _id: 1 } },
@@ -1176,12 +1174,11 @@ app.get('/api/reports/sales-trend', verifyToken, ...canViewReports, async (req, 
     const defaultEnd = new Date();
     const defaultStart = new Date(defaultEnd.getTime() - (days - 1) * 86400000);
     // Default window must be expressed in the SAME timezone the buckets are
-    // grouped by (Asia/Manila, below), or "today" resolves to a UTC date whose
-    // Manila day-end can fall before the current moment - silently dropping
-    // sales made during Manila's early-morning hours. en-CA gives YYYY-MM-DD.
-    const manilaDateStr = (d) => d.toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
-    const startStr = req.query.start || manilaDateStr(defaultStart);
-    const endStr = req.query.end || manilaDateStr(defaultEnd);
+    // grouped by (the business's own, below), or "today" resolves to a UTC date
+    // whose local day-end can fall before the current moment - silently dropping
+    // sales made during the early-morning hours.
+    const startStr = req.query.start || businessDateStr(defaultStart);
+    const endStr = req.query.end || businessDateStr(defaultEnd);
     const range = validateDateRange(startStr, endStr);
     if (!range.ok) return res.status(400).json({ success: false, error: range.error });
     const { startDate, endDate } = range;
@@ -1196,7 +1193,7 @@ app.get('/api/reports/sales-trend', verifyToken, ...canViewReports, async (req, 
       Order.aggregate([
         { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: startDate, $lte: endDate } } },
         { $group: {
-            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Asia/Manila' } },
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: businessTimeZone() } },
             net: { $sum: { $cond: ['$isComplimentary', 0, '$total'] } },
         }},
         { $sort: { _id: 1 } },
@@ -1371,11 +1368,10 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (re
       return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
     }
     const startDate = dayStart(start);
-    const endDate = dayStart(end);
+    const endDate = dayEnd(end);
     if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
       return res.status(400).json({ success: false, error: 'Invalid date range.' });
     }
-    endDate.setHours(23, 59, 59, 999);
 
     // A VAT-registered business owes 12% VAT and is NOT liable for the 3%
     // percentage tax (NIRC §116) - the two are mutually exclusive. Returning a
@@ -1423,6 +1419,221 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (re
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
+// ============================================================
+// VAT RETURN - what was collected, what is creditable, what is owed.
+//
+// Read straight from the ledger rather than recomputed from orders: the
+// accounts ARE the return. Output VAT (230300) is what customers paid on our
+// sales; input VAT (170300) is VAT charged by VAT-registered suppliers, which
+// is creditable against it. The difference is what goes to the BIR.
+//
+// A non-VAT business gets an explicit "not applicable" instead of a page of
+// zeroes it might mistake for a filing obligation - the mirror of what the
+// percentage-tax report does for a VAT-registered one.
+// ============================================================
+app.get('/api/reports/vat', verifyToken, ...canViewReports, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) {
+      return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
+    }
+    const startDate = dayStart(start);
+    const endDate = dayEnd(end);
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      return res.status(400).json({ success: false, error: 'Invalid date range.' });
+    }
+
+    const vatRow = await Settings.findOne({ key: 'vatEnabled' }).lean();
+    const vatOn = vatRow?.value === true || vatRow?.value === 'true';
+    if (!vatOn) {
+      return res.json({
+        success: true,
+        notApplicable: true,
+        reason: 'This business is not VAT-registered. It files the 3% percentage tax under NIRC §116 instead - see the Percentage Tax report.',
+        period: { start: startDate, end: endDate },
+        outputVat: 0, inputVat: 0, netPayable: 0, vatableSales: 0, vatExemptSales: 0, lines: [],
+      });
+    }
+
+    const movement = async (code) => {
+      const [row] = await JournalEntry.aggregate([
+        { $match: { date: { $gte: startDate, $lte: endDate } } },
+        { $unwind: '$lines' },
+        { $match: { 'lines.accountCode': code } },
+        { $group: {
+          _id: null,
+          debit: { $sum: { $ifNull: ['$lines.debit', 0] } },
+          credit: { $sum: { $ifNull: ['$lines.credit', 0] } },
+        } },
+      ]);
+      return { debit: +(row?.debit || 0).toFixed(2), credit: +(row?.credit || 0).toFixed(2) };
+    };
+
+    // Output VAT sits on the credit side (collected), less any debits from
+    // refunds and voids. Input VAT is the mirror image.
+    const out = await movement('230300');
+    const inp = await movement('170300');
+    const outputVat = +(out.credit - out.debit).toFixed(2);
+    const inputVat = +(inp.debit - inp.credit).toFixed(2);
+    const netPayable = +(outputVat - inputVat).toFixed(2);
+
+    // Sales split, from the orders themselves: the return asks for VATable and
+    // VAT-exempt (SC/PWD) sales, which the ledger's revenue total does not
+    // separate.
+    const [sales] = await Order.aggregate([
+      { $match: { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: startDate, $lte: endDate } } },
+      { $group: {
+        _id: null,
+        vatableSales: { $sum: { $ifNull: ['$vatableSales', 0] } },
+        vatExemptSales: { $sum: { $ifNull: ['$vatExemptSales', 0] } },
+        orders: { $sum: 1 },
+      } },
+    ]);
+
+    res.json({
+      success: true,
+      period: { start: startDate, end: endDate },
+      orders: sales?.orders || 0,
+      vatableSales: +(sales?.vatableSales || 0).toFixed(2),
+      vatExemptSales: +(sales?.vatExemptSales || 0).toFixed(2),
+      outputVat, inputVat, netPayable,
+      lines: [
+        { label: 'VATable sales (net of VAT)', amount: +(sales?.vatableSales || 0).toFixed(2) },
+        { label: 'VAT-exempt sales (SC/PWD)', amount: +(sales?.vatExemptSales || 0).toFixed(2) },
+        { label: 'Output VAT collected on sales', amount: outputVat },
+        { label: 'Less: input VAT on purchases', amount: -inputVat },
+        { label: netPayable >= 0 ? 'VAT payable to the BIR' : 'Excess input VAT carried forward', amount: netPayable },
+      ],
+    });
+  } catch (err) {
+    log.error({ err }, 'VAT report failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ============================================================
+// BOOKS HEALTH - do the documents and the ledger still agree?
+//
+// Every screen in the app is a subledger: open invoices, unpaid bills, stock on
+// the shelf, deposits held, petty cash. Each has a control account in the
+// general ledger that is supposed to equal it. An entry posted to the right
+// account in the wrong amount - or a document changed without its entry -
+// breaks that equality silently, and the first symptom is usually an
+// accountant's question months later.
+//
+// This runs the checks an accountant would run, in one pass, and names the
+// difference. Every line is derived: nothing here writes, and a red line points
+// at the subledger to reconcile rather than inviting a plug entry.
+// ============================================================
+app.get('/api/reports/books-health', verifyToken, ...canViewReports, async (req, res) => {
+  try {
+    const scope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+    // Ledger balances, in each account's natural direction, so a positive
+    // number always means "what the account is supposed to hold".
+    const glRows = await JournalEntry.aggregate([
+      { $unwind: '$lines' },
+      { $group: {
+        _id: '$lines.accountCode',
+        debit: { $sum: { $ifNull: ['$lines.debit', 0] } },
+        credit: { $sum: { $ifNull: ['$lines.credit', 0] } },
+      } },
+    ]);
+    const gl = new Map(glRows.map(r => {
+      const natural = normalBalanceForCode(r._id) === 'Debit' ? r.debit - r.credit : r.credit - r.debit;
+      return [String(r._id), r2(natural)];
+    }));
+    const glOf = (...codes) => r2(codes.reduce((s, c) => s + (gl.get(c) || 0), 0));
+
+    const [orders, bills, inventory, clients, suppliers, advances, funds] = await Promise.all([
+      Order.find({ ...scope, status: { $nin: ['Cancelled', 'Voided', 'Parked'] } },
+        { total: 1, arPaidAmount: 1, arSettled: 1, paymentMethod: 1, isComplimentary: 1, status: 1, isParked: 1, depositRemaining: 1, depositAccount: 1, arPayments: 1 }).lean(),
+      Bill.find({ ...scope, status: { $in: ['Approved', 'Partially Paid'] } }, { amount: 1, paidAmount: 1 }).lean(),
+      Inventory.find(scope, { stockQty: 1, unitCost: 1 }).lean(),
+      ClientAccount.find(tenantScope(req), { creditBalance: 1 }).lean(),
+      Supplier.find(tenantScope(req), { creditBalance: 1 }).lean(),
+      Advance.find({ ...scope, status: { $in: ['Open', 'Partially Liquidated'] } }, { type: 1, amount: 1, liquidatedAmount: 1 }).lean(),
+      RevolvingFund.find({ ...scope, isActive: true }, { currentBalance: 1 }).lean(),
+    ]);
+
+    // A/R: what completed, unsettled, non-cash sales still owe.
+    const arDocs = r2(orders
+      .filter(o => o.status === 'Completed' && o.paymentMethod !== 'Cash' && !o.isComplimentary && o.arSettled !== true && o.isParked !== true)
+      .reduce((s, o) => s + Math.max(0, (Number(o.total) || 0) - (Number(o.arPaidAmount) || 0)), 0));
+
+    const apDocs = r2(bills.reduce((s, b) => s + Math.max(0, (Number(b.amount) || 0) - (Number(b.paidAmount) || 0)), 0));
+    const stockDocs = r2(inventory.reduce((s, i) => s + (Number(i.stockQty) || 0) * (Number(i.unitCost) || 0), 0));
+    const clientCredit = r2(clients.reduce((s, c) => s + (Number(c.creditBalance) || 0), 0));
+    const supplierCredit = r2(suppliers.reduce((s, x) => s + (Number(x.creditBalance) || 0), 0));
+    const advanceLeft = (type) => r2(advances.filter(a => a.type === type)
+      .reduce((s, a) => s + ((Number(a.amount) || 0) - (Number(a.liquidatedAmount) || 0)), 0));
+    const fundDocs = r2(funds.reduce((s, f) => s + (Number(f.currentBalance) || 0), 0));
+
+    // Deposits: prepaid-but-undelivered value on orders, plus customer advances
+    // recorded on the Advances screen. Legacy orders sit in 260000.
+    const orderDeposits = orders.filter(o => (o.depositRemaining || 0) > 0);
+    const depositsNew = r2(orderDeposits.filter(o => (o.depositAccount || '260200') === '260200').reduce((s, o) => s + o.depositRemaining, 0) + advanceLeft('customer'));
+    const depositsLegacy = r2(orderDeposits.filter(o => o.depositAccount === '260000').reduce((s, o) => s + o.depositRemaining, 0));
+
+    // Checks received and not yet cleared or bounced.
+    const checksOnHand = r2(orders.reduce((s, o) => s + (o.arPayments || [])
+      .filter(p => ['On Hand', 'Deposited'].includes(p.checkStatus))
+      .reduce((t, p) => t + (Number(p.amount) || 0), 0), 0));
+
+    const check = (key, label, documents, ledger, fix) => {
+      const difference = r2(documents - ledger);
+      return { key, label, documents: r2(documents), ledger: r2(ledger), difference, ok: Math.abs(difference) < 0.01, fix };
+    };
+
+    const checks = [
+      check('ar', 'Receivables', arDocs, glOf('120000'), 'Open invoices in the A/R Report should add up to Accounts Receivable.'),
+      check('ap', 'Payables', apDocs, glOf('220000'), 'Unpaid approved bills should add up to Accounts Payable.'),
+      check('inventory', 'Inventory', stockDocs, glOf('130000'), 'Stock on hand × unit cost should equal the Inventory account. Balance Sheet → Reconcile Inventory posts the difference.'),
+      check('deposits', 'Customer deposits', depositsNew, glOf('260200'), 'Deposits held on orders and on the Advances screen should equal Customer Advances / Deposits.'),
+      ...(depositsLegacy > 0 || Math.abs(glOf('260000')) > 0.01
+        ? [check('depositsLegacy', 'Customer deposits (pre-change)', depositsLegacy, glOf('260000'), 'Deposits started before deposits moved to 260200. Clears itself as those orders finish.')]
+        : []),
+      check('clientCredit', 'Client credit balances', clientCredit, glOf('260100'), 'Credit balances on client accounts should equal Client Credit Balance.'),
+      check('supplierCredit', 'Supplier credit balances', supplierCredit, glOf('160100'), 'Credit balances on suppliers should equal Supplier Credit Balance.'),
+      check('employeeAdvances', 'Employee advances', advanceLeft('employee'), glOf('170100'), 'Open employee advances should equal Advances to Employees.'),
+      check('supplierAdvances', 'Supplier advances', advanceLeft('supplier'), glOf('170200'), 'Open supplier advances and prepaid POs should equal Advances to Suppliers.'),
+      check('revolvingFunds', 'Petty cash / revolving funds', fundDocs, glOf('114000'), 'Fund balances should equal Petty Cash / Revolving Fund.'),
+      check('checks', 'Checks on hand', checksOnHand, glOf('115000'), 'Checks received and not yet cleared should equal Checks on Hand.'),
+    ];
+
+    // The accounting equation, from the ledger alone.
+    let assets = 0, liabilities = 0, equity = 0, income = 0, expenses = 0;
+    for (const [code, amount] of gl) {
+      const head = String(code)[0];
+      if (head === '1') assets += amount;
+      else if (head === '2') liabilities += amount;
+      else if (head === '3') equity += amount;
+      else if (head === '4' || head === '8') income += amount;
+      else expenses += amount;
+    }
+    const earnings = r2(income - expenses);
+    const equation = {
+      key: 'equation', label: 'Assets = Liabilities + Equity',
+      documents: r2(assets), ledger: r2(liabilities + equity + earnings),
+      difference: r2(assets - (liabilities + equity + earnings)),
+      ok: Math.abs(r2(assets - (liabilities + equity + earnings))) < 0.01,
+      fix: 'Every entry balances individually, so a difference here means an account is classified under the wrong head.',
+    };
+
+    res.json({
+      success: true,
+      checkedAt: new Date(),
+      checks: [...checks, equation],
+      failing: [...checks, equation].filter(c => !c.ok).length,
+      vat: { outputVat: glOf('230300'), inputVat: glOf('170300'), netPayable: r2(glOf('230300') - glOf('170300')) },
+    });
+  } catch (err) {
+    log.error({ err }, 'Books health report failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 // ============================================================
 // A/R REPORT - every open receivable as of a date, aged, with what has
 // already been collected against it.

@@ -187,7 +187,7 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
 // Main component
 // ---------------------------------------------------------------------------
 
-const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false, permissions: [], customPerms: false, commissionRate: '' };
+const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false, permissions: [], customPerms: false, commissionRate: '', employeeNumber: '', sssNumber: '', philhealthNumber: '', pagibigNumber: '', tin: '' };
 
 export default function SuperAdminPanel() {
   const navigate = useNavigate();
@@ -423,7 +423,13 @@ export default function SuperAdminPanel() {
 
   const openEditModal = useCallback((user) => {
     const perms = Array.isArray(user.permissions) ? user.permissions : [];
-    setForm({ name: user.name, password: '', role: user.role, showPassword: false, permissions: perms, customPerms: perms.length > 0, commissionRate: user.commissionRate ?? '' });
+    setForm({
+      name: user.name, password: '', role: user.role, showPassword: false,
+      permissions: perms, customPerms: perms.length > 0, commissionRate: user.commissionRate ?? '',
+      employeeNumber: user.employeeNumber || '', sssNumber: user.sssNumber || '',
+      philhealthNumber: user.philhealthNumber || '', pagibigNumber: user.pagibigNumber || '',
+      tin: user.tin || '',
+    });
     setFormErrors({});
     setModal({ open: true, mode: 'edit', user });
   }, []);
@@ -480,6 +486,11 @@ export default function SuperAdminPanel() {
         const body = { name: form.name.trim(), role: form.role, permissions: permsPayload };
         if (form.password) body.password = form.password;
         if (form.commissionRate !== '') body.commissionRate = form.commissionRate;
+        // Payroll copies these onto each run, so they are worth having on file
+        // before the first payslip rather than after the first filing.
+        for (const key of ['employeeNumber', 'sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin']) {
+          body[key] = form[key] || '';
+        }
         const res = await apiFetch(`/api/users/${modal.user._id}`, {
           method: 'PATCH',
           body: JSON.stringify(body),
@@ -934,7 +945,7 @@ export default function SuperAdminPanel() {
   };
 
   const openClientCreate = () => {
-    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '', creditTermsDays: '', segments: '', requiresQuote: false });
+    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '', creditTermsDays: '', segments: '', requiresQuote: false, isVatRegistered: false, tin: '', registeredName: '', registeredAddress: '' });
     setClientFormError('');
     setClientModal({ open: true, mode: 'create', client: null });
   };
@@ -942,7 +953,7 @@ export default function SuperAdminPanel() {
   const openClientEdit = (client) => {
     // null/undefined means "no limit set"; 0 is a real value (cash only), so it
     // must render as "0" rather than collapsing to an empty field.
-    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false, creditLimit: client.creditLimit === null || client.creditLimit === undefined ? '' : String(client.creditLimit), creditTermsDays: client.creditTermsDays === null || client.creditTermsDays === undefined ? '' : String(client.creditTermsDays), segments: (client.segments || []).join(', '), requiresQuote: client.requiresQuote === true });
+    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false, creditLimit: client.creditLimit === null || client.creditLimit === undefined ? '' : String(client.creditLimit), creditTermsDays: client.creditTermsDays === null || client.creditTermsDays === undefined ? '' : String(client.creditTermsDays), segments: (client.segments || []).join(', '), requiresQuote: client.requiresQuote === true, isVatRegistered: client.isVatRegistered === true, tin: client.tin || '', registeredName: client.registeredName || '', registeredAddress: client.registeredAddress || '' });
     setClientFormError('');
     setClientModal({ open: true, mode: 'edit', client });
     fetchClientPricing(client._id);
@@ -1008,13 +1019,13 @@ export default function SuperAdminPanel() {
       if (clientModal.mode === 'create') {
         const res = await apiFetch('/api/client-accounts', {
           method: 'POST',
-          body: JSON.stringify({ username: clientForm.username.trim(), password: clientForm.password, name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments, requiresQuote: !!clientForm.requiresQuote }),
+          body: JSON.stringify({ username: clientForm.username.trim(), password: clientForm.password, name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments, requiresQuote: !!clientForm.requiresQuote, isVatRegistered: !!clientForm.isVatRegistered, tin: clientForm.tin.trim(), registeredName: clientForm.registeredName.trim(), registeredAddress: clientForm.registeredAddress.trim() }),
         });
         const data = await res.json();
         if (data.success) { showToast('Client account created.'); closeClientModal(); fetchClients(); }
         else setClientFormError(data.error || 'Failed to create client.');
       } else {
-        const body = { name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments, requiresQuote: !!clientForm.requiresQuote };
+        const body = { name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments, requiresQuote: !!clientForm.requiresQuote, isVatRegistered: !!clientForm.isVatRegistered, tin: clientForm.tin.trim(), registeredName: clientForm.registeredName.trim(), registeredAddress: clientForm.registeredAddress.trim() };
         if (clientForm.username.trim()) body.username = clientForm.username.trim();
         if (clientForm.password) body.password = clientForm.password;
         const res = await apiFetch(`/api/client-accounts/${clientModal.client._id}`, { method: 'PATCH', body: JSON.stringify(body) });
@@ -2127,6 +2138,32 @@ export default function SuperAdminPanel() {
                 </div>
               )}
 
+              {/* The numbers payroll has to quote when it remits what it withheld.
+                  Edit mode only, same as the commission rate: a brand-new login
+                  is usually created before HR has the paperwork. */}
+              {modal.mode === 'edit' && (
+                <div>
+                  <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Payroll & statutory numbers</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {[
+                      ['employeeNumber', 'Employee no.', 'EMP-001'],
+                      ['tin', 'TIN', '000-000-000-000'],
+                      ['sssNumber', 'SSS no.', '00-0000000-0'],
+                      ['philhealthNumber', 'PhilHealth no.', '00-000000000-0'],
+                      ['pagibigNumber', 'Pag-IBIG MID', '0000-0000-0000'],
+                    ].map(([key, label, placeholder]) => (
+                      <div key={key}>
+                        <label htmlFor={`staff-${key}`} className="text-[10px] font-bold text-fg/60 block mb-1">{label}</label>
+                        <input id={`staff-${key}`} type="text" value={form[key] || ''}
+                          onChange={e => handleFormChange(key, e.target.value)} placeholder={placeholder}
+                          className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-3 py-2.5 rounded-xl outline-none transition text-sm" />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-fg/65 mt-1.5">Copied onto each payroll run when it is created, and printed on the payslip. Leave blank if the paperwork is not in yet.</p>
+                </div>
+              )}
+
               {/* Granular permissions - override the role defaults per user */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
@@ -2646,6 +2683,49 @@ export default function SuperAdminPanel() {
                   </span>
                 </span>
               </label>
+
+              {/* A VAT-registered BUYER cannot claim the VAT they pay us unless
+                  their invoice carries their registered name, TIN and address.
+                  Off by default - most customers are not registered. */}
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!clientForm.isVatRegistered}
+                  onChange={e => setClientForm(f => ({ ...f, isVatRegistered: e.target.checked }))}
+                  className="mt-0.5"
+                />
+                <span className="min-w-0">
+                  <span className="block text-[11px] font-bold text-fg">VAT-registered customer</span>
+                  <span className="block text-[10px] text-fg/70 leading-relaxed mt-0.5">
+                    Their invoices are made out to the registered details below, so they can claim the VAT.
+                  </span>
+                </span>
+              </label>
+
+              {clientForm.isVatRegistered && (
+                <div className="space-y-2.5 border-l-2 border-brand/30 pl-3">
+                  <div>
+                    <label htmlFor="client-tin" className="text-[10px] font-bold text-fg/70 uppercase tracking-wider block mb-1">TIN</label>
+                    <input id="client-tin" type="text" value={clientForm.tin}
+                      onChange={e => setClientForm(f => ({ ...f, tin: e.target.value }))}
+                      placeholder="000-000-000-00000"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
+                  </div>
+                  <div>
+                    <label htmlFor="client-regname" className="text-[10px] font-bold text-fg/70 uppercase tracking-wider block mb-1">Registered name</label>
+                    <input id="client-regname" type="text" value={clientForm.registeredName}
+                      onChange={e => setClientForm(f => ({ ...f, registeredName: e.target.value }))}
+                      placeholder="As registered with the BIR"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
+                  </div>
+                  <div>
+                    <label htmlFor="client-regaddr" className="text-[10px] font-bold text-fg/70 uppercase tracking-wider block mb-1">Registered address</label>
+                    <input id="client-regaddr" type="text" value={clientForm.registeredAddress}
+                      onChange={e => setClientForm(f => ({ ...f, registeredAddress: e.target.value }))}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Price Tier</label>

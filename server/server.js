@@ -1,5 +1,7 @@
 ﻿import 'dotenv/config';
 import express from 'express';
+import { businessDayStart, businessDateStr, businessClosingDateStr, setBusinessTimeZone, isValidTimeZone, DEFAULT_BUSINESS_TZ } from './lib/businessTime.js';
+import { deliveryFeeVat } from './lib/vatPosting.js';
 import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
@@ -11,7 +13,7 @@ import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import compression from 'compression';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import crypto from 'crypto';
 import pino from 'pino';
 import pinoHttp from 'pino-http';
@@ -48,6 +50,8 @@ import registerPurchaseOrders from './features/purchase-orders.js';
 import registerBills from './features/bills.js';
 import registerCheckVouchers from './features/check-vouchers.js';
 import registerAdvances from './features/advances.js';
+import registerReservations from './features/reservations.js';
+import registerBackup from './features/backup.js';
 import registerDataExport from './features/data-export.js';
 import registerFixedAssets from './features/fixed-assets.js';
 import registerRequisitions from './features/requisitions.js';
@@ -548,7 +552,12 @@ const rateLimitKey = (req) => {
       if (decoded?._id) return String(decoded._id);
     } catch { /* fall through to IP */ }
   }
-  return req.ip;
+  // An IPv6 client is handed a whole /64 of its own, so keying on the exact
+  // address lets one caller rotate through addresses and reset its own bucket
+  // at will. ipKeyGenerator collapses the address to its subnet, which is the
+  // unit an ISP actually assigns - and is what express-rate-limit warns about
+  // when a custom keyGenerator returns req.ip raw.
+  return ipKeyGenerator(req.ip);
 };
 const generalApiLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
@@ -567,6 +576,28 @@ app.use('/api', generalApiLimiter);
 // a named, exported function so integration tests can seed legacy data and invoke it.
 const runStartupTasks = async () => {
     log.info('Connected to MongoDB Atlas');
+    // The business's own clock drives every day boundary - report ranges, the
+    // EOD lock, the midnight close. A setting rather than an env var, so a shop
+    // can move or open abroad without a redeploy; the server's own timezone no
+    // longer decides when a day ends.
+    try {
+      const row = await Settings.findOne({ key: 'businessTimeZone' }).lean();
+      const zone = setBusinessTimeZone(row?.value || DEFAULT_BUSINESS_TZ);
+      log.info({ timeZone: zone }, 'Business day boundaries use this timezone (Settings > Time zone)');
+    } catch { /* never let a clock check stop the server booting */ }
+
+    // Build the indexes the reports depend on. Mongoose creates them lazily,
+    // which means an existing deployment upgrading to this version would keep
+    // scanning whole collections until something happened to touch each model.
+    // createIndexes (not syncIndexes) is additive - it never drops an index
+    // somebody added by hand. Failures are logged, not fatal: a slow report is
+    // better than a server that will not start.
+    (async () => {
+      for (const name of ['JournalEntry', 'AuditLog', 'Order', 'StockCard', 'Inventory', 'Bill']) {
+        try { await mongoose.model(name).createIndexes(); }
+        catch (e) { log.warn({ err: e, model: name }, 'Index build failed - reports on this collection may be slow'); }
+      }
+    })();
     try {
       const adminCount = await User.countDocuments();
       if (adminCount === 0) {
@@ -1190,11 +1221,26 @@ items: [{
   // system-wide; with VAT live it would have exempted every legacy order and
   // quietly zeroed the output VAT on all of them.
   isVatExempt: { type: Boolean, default: false },
+  // WHO the SC/PWD discount was given to. The 20% discount and the VAT
+  // exemption are granted against a specific ID, and the BIR expects the
+  // cardholder's name and ID number recorded against the sale - a discount with
+  // nobody's name on it is the one an examiner disallows. Captured at the
+  // register when the discount is applied; blank on every other sale.
+  scPwdName:     { type: String, default: '' },
+  scPwdIdNumber: { type: String, default: '' },
+  // 'Senior Citizen' or 'PWD' - they are different laws (RA 9994 / RA 10754)
+  // and are reported separately.
+  scPwdKind:     { type: String, default: '' },
   // Which SC/PWD basis was in force when this order was rung up. Stamped per
   // order, not read from settings at read time: changing the setting must never
   // retroactively alter a receipt that has already been issued, and the math
   // validator has to be able to reproduce a historical total exactly.
   scPwdOrder: { type: String, default: 'vat-first' },
+  // Whether the delivery charge on THIS sale carried VAT. A delivery service is
+  // generally part of gross receipts and VATable, but some businesses bill it as
+  // a pure pass-through of a third-party courier's fee - so it is the business's
+  // own answer, stamped per order rather than read from settings at print time.
+  deliveryFeeVatable: { type: Boolean, default: false },
   // --- ENTERPRISE FIELDS ---
   cashier: { type: String, default: 'System', index: true },
   // --- AMENDMENTS (POST /api/orders/:id/amend) ---
@@ -1215,7 +1261,10 @@ items: [{
   }],
   // --- PARTIAL FULFILLMENT (logistics - single order, fulfilled in batches) ---
   amountPaid:       { type: Number, default: 0 },        // cash/AR collected so far
-  depositRemaining: { type: Number, default: 0 },        // prepaid-but-unfulfilled value held as Customer Deposits
+  depositRemaining: { type: Number, default: 0 },
+  // Which liability account holds that deposit (260200 for new deposits; legacy
+  // orders were booked to 260000). Released from the same account it went into.
+  depositAccount: { type: String, default: '' },        // prepaid-but-unfulfilled value held as Customer Deposits
   // When the remaining units of a partially-fulfilled order are dropped, the
   // order finalizes as Completed at the fulfilled quantity and the dropped units
   // are recorded here (they carry no ledger entries - they were never fulfilled).
@@ -1367,6 +1416,11 @@ items: [{
   // ── Logistics fields ──────────────────────────────────────────────────────
   // billingNumber: monthly-reset sequential ref (YYYY-MM-XXXX), log mode only
   billingNumber:   { type: String, default: '' },
+  // The serial number on the registered receipt/invoice this sale was issued
+  // under. Assigned once, when the sale COMPLETES - a sale that never completed
+  // was never issued a receipt, and burning a serial on it would leave a gap
+  // nobody can account for. Continues from the series configured in Settings.
+  orNumber:        { type: String, default: '', index: true },
   termsOfPayment:  { type: String, default: '' },
   // Client who placed the order (log mode; blank for fb/POS-originated orders)
   clientId:        { type: String, default: '' },
@@ -1407,6 +1461,11 @@ const InventorySchema = new mongoose.Schema({
   stockLocation: { type: String, default: '', index: true },
   stockCategory: { type: String, default: '', index: true },
   stockQty: { type: Number, default: 0 },           // ALWAYS stored in base unit (g/ml/pcs) for recipe precision
+  // Held for a named client and not sellable to anyone else (see the Reservation
+  // model below). Always in base units, like stockQty. Available to sell is
+  // stockQty - reservedQty; the reserving client's own order releases its hold
+  // before it deducts, so a reservation never blocks the sale it was made for.
+  reservedQty: { type: Number, default: 0 },
   unit: String,                                       // base unit: 'g', 'ml', 'pcs'
   unitCost: { type: Number, default: 0 },             // ALWAYS per base unit (e.g. P0.07/ml when 1L costs P70)
   lowStockThreshold: { type: Number, default: 0 },
@@ -1686,6 +1745,17 @@ JournalEntrySchema.pre('validate', function () {
   this.totalCredit = Math.round(lines.reduce((s, l) => s + (Number(l.credit) || 0), 0) * 100) / 100;
 });
 
+// The ledger is the one collection that only ever grows, and nearly every
+// report reads it by DATE (P&L, balance sheet, VAT return, percentage tax) or
+// by ACCOUNT (books health, trial balance). Without these, each of those scans
+// every entry ever written - fine on day one, minutes long after a year of
+// trading. The reference index backs the 'find this document's entry' lookups
+// that voids, refunds and reversals do.
+JournalEntrySchema.index({ date: -1 });
+JournalEntrySchema.index({ businessType: 1, date: -1 });
+JournalEntrySchema.index({ 'lines.accountCode': 1, date: -1 });
+JournalEntrySchema.index({ reference: 1 });
+JournalEntrySchema.index({ supplierId: 1, date: -1 });
 const JournalEntry = mongoose.model('JournalEntry', JournalEntrySchema);
 
 // --- CUMULATIVE DASHBOARD COUNTERS ---
@@ -1808,6 +1878,14 @@ const ShiftSchema = new mongoose.Schema({
     reason: { type: String, default: '' },
     by:     { type: String, default: '' },
     at:     { type: Date, default: Date.now },
+    // Cash out of the till is either money SPENT (an expense, filed here and
+    // then, so the ledger loses the cash at the same moment the drawer does)
+    // or money MOVED (a safe drop, change fund) that some other document -
+    // the bank deposit - accounts for. 'filed' says which, so an unexplained
+    // pay-out cannot quietly leave book cash higher than the till.
+    expenseAccount: { type: String, default: '' },
+    journalRef:     { type: String, default: '' },
+    filed:          { type: Boolean, default: false },
   }],
   payInsTotal:     { type: Number, default: 0 },
   payOutsTotal:    { type: Number, default: 0 },
@@ -2149,6 +2227,17 @@ const UserSchema = new mongoose.Schema({
   // GET /api/reports/commissions in reports.js). 0 = no commission, the
   // default for every existing account until explicitly set.
   commissionRate: { type: Number, default: 0, min: 0, max: 100 },
+  // The numbers every Philippine employer has to quote when it remits what it
+  // withheld. Payroll could compute the deductions but had nowhere to record
+  // WHOSE account each one belongs to, so the monthly remittance had to be
+  // assembled by hand from someone's spreadsheet. Blank until entered; a
+  // payslip simply omits whichever is missing.
+  sssNumber:       { type: String, default: '' },
+  philhealthNumber:{ type: String, default: '' },
+  pagibigNumber:   { type: String, default: '' },
+  tin:             { type: String, default: '' },
+  // What HR calls this person, as distinct from userCode (a login sequence).
+  employeeNumber:  { type: String, default: '' },
   // Granular RBAC: explicit permission override. Empty ⇒ fall back to the role's
   // defaults (see lib/authz.js resolvePermissions). Ignored for superadmin (full).
   permissions: { type: [String], default: [] },
@@ -2185,6 +2274,13 @@ const ClientAccountSchema = new mongoose.Schema({
   //   0     = an explicit "no credit at all" (different from null on purpose).
   // Whether either limit is enforced at all is decided by the `creditLimitMode`
   // setting; see resolveCreditLimit().
+  // A VAT-registered BUYER needs a VAT invoice in their own registered name,
+  // with their TIN and registered address on it, or they cannot claim the
+  // input VAT they just paid us. Blank for ordinary customers.
+  isVatRegistered: { type: Boolean, default: false },
+  tin:           { type: String, default: '' },
+  registeredName:{ type: String, default: '' },
+  registeredAddress: { type: String, default: '' },
   creditLimit:   { type: Number, default: null },
   // Payment terms in days for on-account (non-cash) sales. When a non-cash order
   // Completes, this is snapshotted onto the order to compute its A/R due date
@@ -2344,6 +2440,12 @@ const AuditLogSchema = new mongoose.Schema({
   details: { type: Object },
   timestamp: { type: Date, default: Date.now }
 });
+// The audit log grows faster than anything except the ledger, and the Audit
+// Report reads it by date, by user and by action.
+AuditLogSchema.index({ createdAt: -1 });
+AuditLogSchema.index({ userId: 1, createdAt: -1 });
+AuditLogSchema.index({ action: 1, createdAt: -1 });
+AuditLogSchema.index({ targetReference: 1 });
 const AuditLog = mongoose.model('AuditLog', AuditLogSchema);
 
 // (Auth middleware - verifyToken, requireStaff, verifyClientToken, requireSuperAdmin,
@@ -2468,6 +2570,14 @@ const SupplierSchema = new mongoose.Schema({
   email:         { type: String, default: '' },
   address:       { type: String, default: '' },
   notes:         { type: String, default: '' },
+  // A supplier's TIN and registered name are what a 2307 is made out to, and
+  // what substantiates input VAT claimed on their invoice. Without them the
+  // certificate cannot be filed and the credit has nothing behind it.
+  tin:           { type: String, default: '' },
+  registeredName:{ type: String, default: '' },
+  // Whether they charge VAT - decides whether input VAT is claimable on what
+  // they bill, which is the question the receiving and bill screens ask.
+  isVatRegistered: { type: Boolean, default: false },
   isActive:      { type: Boolean, default: true },
   tenantId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   // Catalog: what this supplier says they sell + their quoted price - set by staff,
@@ -2540,6 +2650,33 @@ const PurchaseOrderSchema = new mongoose.Schema({
     expiryDate:  { type: Date, default: null },             // optional expiry for the incoming stock
     productionDate: { type: Date, default: null },          // for goods with no real expiry (beans, etc.)
     receivedQty: { type: Number, default: null },           // null until reconciled
+    // Goods sent back to the supplier off this line - short-shipped, damaged,
+    // wrong item, off-spec. Kept separately from receivedQty so the delivery
+    // record still says what actually arrived; what we KEPT is the difference.
+    returnedQty: { type: Number, default: 0 },
+  }],
+  // Whether the VAT on this delivery was taken as creditable input VAT. A
+  // return has to give back exactly what was claimed, and asking the operator
+  // again at return time would let the two answers disagree.
+  inputVatClaimed: { type: Boolean, default: false },
+  // Goods sent back after receiving. Each one is a debit memo: stock leaves,
+  // and what the supplier is owed drops by the same amount (or, if their
+  // invoice is already paid, it becomes credit they hold for us).
+  returns: [{
+    returnNumber: { type: String, default: '' },
+    reason:       { type: String, default: '' },
+    amount:       { type: Number, default: 0 },      // gross, as the supplier billed it
+    vatAmount:    { type: Number, default: 0 },      // input VAT given back inside `amount`
+    appliedToBills: { type: Number, default: 0 },    // how much reduced an open bill
+    creditToSupplier: { type: Number, default: 0 },  // the rest: credit they now hold for us
+    reference:    { type: String, default: '' },     // the JournalEntry this posted under
+    lines: [{
+      itemName: { type: String, default: '' },
+      qty:      { type: Number, default: 0 },        // in the PO's own pack/unit
+      amount:   { type: Number, default: 0 },
+    }],
+    by:           { type: String, default: '' },
+    at:           { type: Date, default: Date.now },
   }],
   // Paid before the goods arrive. That is NOT a payable - nothing is owed,
   // the supplier owes US delivery - so it books a supplier advance (170200)
@@ -2598,6 +2735,12 @@ const BillSchema = new mongoose.Schema({
   description:       { type: String, default: '' },               // required context for Manual bills
   amount:            { type: Number, required: true },
   expenseAccountCode:{ type: String, default: '' },               // Manual bills only - which account to debit on approval
+  // VAT charged by a VAT-registered supplier, inside `amount`. Creditable
+  // against output VAT, so on approval it is split out of the cost and held in
+  // 170300 rather than expensed. Only meaningful while the business itself is
+  // VAT-registered; false leaves the bill posting exactly as it always did.
+  claimInputVat:     { type: Boolean, default: false },
+  inputVatAmount:    { type: Number, default: 0 },
   status:            { type: String, default: 'Pending', enum: BILL_STATUSES, index: true },
   dueDate:           { type: Date, default: null },                // when the supplier expects payment
   scheduledPaymentDate: { type: Date, default: null },              // when WE plan to pay it - only settable once Approved
@@ -2750,6 +2893,57 @@ const AdvanceSchema = new mongoose.Schema({
 AdvanceSchema.index({ businessType: 1, date: -1 });
 AdvanceSchema.index({ businessType: 1, type: 1, status: 1 });
 const Advance = mongoose.model('Advance', AdvanceSchema);
+
+// ── STOCK RESERVATION ────────────────────────────────────────────────────────
+// Stock held for a named client, usually because they have paid a deposit
+// against it. Until now nothing held stock at all: an order only touches
+// inventory when it COMPLETES, so goods promised to one client could be sold to
+// somebody else in the meantime and the promise quietly broke.
+//
+// A reservation raises Inventory.reservedQty. Everyone else sells against
+// stockQty - reservedQty, so held stock is invisible to other sales. The
+// reserving client's own order releases its hold immediately before it deducts,
+// so the reservation never blocks the sale it exists for.
+//
+// It ends one of four ways, and only 'Open' holds anything:
+//   Released   the order it was held for completed (or staff released it)
+//   Cancelled  called off by hand
+//   Expired    nobody collected; swept once the date passes
+const RESERVATION_STATUSES = ['Open', 'Released', 'Cancelled', 'Expired'];
+const ReservationSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  reservationNumber: { type: String, index: true },
+  branchCode:   { type: String, default: '', index: true },
+  clientId:     { type: String, default: '', index: true },
+  clientName:   { type: String, default: '' },
+  // The order this stock is held for, when it was reserved from one. Completing
+  // that order releases the hold automatically.
+  orderId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null, index: true },
+  orderNumber:  { type: String, default: '' },
+  // What a deposit, if any, was taken against it - so the two are traceable to
+  // each other without reading notes.
+  advanceId:    { type: mongoose.Schema.Types.ObjectId, ref: 'Advance', default: null },
+  items: [{
+    invId:    { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', required: true },
+    itemName: { type: String, default: '' },
+    // Base units, same as Inventory.stockQty - a reservation in display units
+    // would need re-deriving every time the item's pack size changed.
+    qty:      { type: Number, required: true },
+    releasedQty: { type: Number, default: 0 },
+  }],
+  status:       { type: String, enum: RESERVATION_STATUSES, default: 'Open', index: true },
+  // A hold with no end date is stock nobody can sell and nobody remembers.
+  expiresAt:    { type: Date, default: null, index: true },
+  note:         { type: String, default: '' },
+  createdBy:    { type: String, default: '' },
+  closedBy:     { type: String, default: '' },
+  closedAt:     { type: Date, default: null },
+  closeReason:  { type: String, default: '' },
+}, { timestamps: true });
+ReservationSchema.index({ businessType: 1, status: 1, expiresAt: 1 });
+const Reservation = mongoose.model('Reservation', ReservationSchema);
+
 
 // ── FIXED ASSET ──────────────────────────────────────────────────────────────
 // Equipment, furniture, vehicles - what the business owns and writes down over
@@ -2929,6 +3123,14 @@ const PayrollRunSchema = new mongoose.Schema({
   lines: [{
     employeeName: { type: String, required: true },
     employeeId:   { type: String, default: '' },
+    // Copied from the staff record when the run is created, not looked up when
+    // the payslip is printed: a payslip is a record of what was remitted under
+    // which account number at the time, and a number corrected next year must
+    // not silently rewrite the slips already issued under the old one.
+    sssNumber:        { type: String, default: '' },
+    philhealthNumber: { type: String, default: '' },
+    pagibigNumber:    { type: String, default: '' },
+    tin:              { type: String, default: '' },
     grossPay:     { type: Number, default: 0 },
     sss:          { type: Number, default: 0 },
     philhealth:   { type: Number, default: 0 },
@@ -3100,11 +3302,11 @@ const generateNextSequence = async (_Model, prefix, _fieldName) => {
 function scheduleMidnightArchive() {
   const now = new Date();
   
-  // 1. Calculate precise time to Midnight in the Philippines (Asia/Manila)
-  const manilaDate = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Manila" }));
-  const manilaMidnight = new Date(manilaDate);
-  manilaMidnight.setHours(24, 0, 0, 0); 
-  const msToMidnight = manilaMidnight.getTime() - manilaDate.getTime();
+  // 1. Time until midnight on the BUSINESS's clock (Settings -> Time zone),
+  //    not the server's - the day this closes has to be the same day the
+  //    reports and the EOD count cover.
+  const tomorrow = businessDateStr(new Date(now.getTime() + 26 * 3600000));
+  const msToMidnight = Math.max(1000, businessDayStart(tomorrow).getTime() - now.getTime());
 
   // 2. Set the countdown timer
   setTimeout(async () => {
@@ -3149,7 +3351,11 @@ function scheduleMidnightArchive() {
       }
 
       // Step D: 🚨 LOCK THE REGISTER IN THE EOD RECORD 🚨
-      const closedDateStr = manilaDate.toLocaleDateString('en-CA'); // YYYY-MM-DD
+      // The day being closed is the one that just ENDED - this runs a moment
+      // after the business's own midnight, so "today" on the business clock is
+      // already the new day. Locking under that date would lock a day that has
+      // not been traded yet and leave the day just closed unlocked.
+      const closedDateStr = businessClosingDateStr();
       await EODRecord.findOneAndUpdate(
         { dateString: closedDateStr },
         { status: 'LOCKED', lockedAt: new Date(), lockedBy: 'SYSTEM AUTO-CLOSE' },
@@ -3247,10 +3453,16 @@ const validateOrderMath = (order) => {
         vatInclusive: order.isVatInclusive !== false,
       });
 
+  // A VATable delivery charge carries VAT of its own; zero for everyone else.
+  const feeVat = deliveryFeeVat(order);
+
   if (Math.abs(expectedGross - order.subtotal) > TOLERANCE) return { valid: false, error: `Gross mismatch. Expected P${expectedGross.toFixed(2)}, got P${order.subtotal}` };
-  if (Math.abs(expected.vatAmount - order.vatAmount) > TOLERANCE) return { valid: false, error: `VAT invalid. Expected P${expected.vatAmount.toFixed(2)}, got P${order.vatAmount}` };
-  // The delivery fee is added after VAT and discounts, outside the sale itself.
-  const expectedTotal = expected.total + (Number(order.deliveryFee) || 0);
+  const expectedVat = expected.vatAmount + feeVat;
+  if (Math.abs(expectedVat - order.vatAmount) > TOLERANCE) return { valid: false, error: `VAT invalid. Expected P${expectedVat.toFixed(2)}, got P${order.vatAmount}` };
+  // The delivery fee is added after VAT and discounts. When the business bills
+  // it as VATable, exclusive pricing puts that VAT on top of the fee as well.
+  const expectedTotal = expected.total + (Number(order.deliveryFee) || 0)
+    + (order.isVatInclusive === false ? feeVat : 0);
   if (Math.abs(expectedTotal - order.total) > TOLERANCE) return { valid: false, error: `Total invalid. Expected P${expectedTotal.toFixed(2)}, got P${order.total}` };
 
   return { valid: true };
@@ -3835,6 +4047,8 @@ const ctx = {
   ADVANCE_ACCOUNTS,
   AdvanceSchema,
   Advance,
+  Reservation,
+  RESERVATION_STATUSES,
   emitToOps,
   emitToAll,
   emitToMgr,
@@ -3897,6 +4111,8 @@ registerPurchaseOrders(ctx);
 registerBills(ctx);
 registerCheckVouchers(ctx);
 registerAdvances(ctx);
+registerReservations(ctx);
+registerBackup(ctx);
 registerDataExport(ctx);
 registerFixedAssets(ctx);
 registerBankReconciliation(ctx);
@@ -3941,7 +4157,7 @@ if (!IS_TEST) {
 // Exported for in-process integration tests (supertest + socket.io-client). Importing
 // the module still connects to MONGO_URI; tests point that at an in-memory MongoDB.
 // `server` (the http.Server) is exported so socket tests can listen on an ephemeral port.
-export { app, server, runStartupTasks };
+export { app, server, runStartupTasks, scheduleMidnightArchive };
 
 const shutdown = async (signal, exitCode = 0) => {
   log.info({ signal }, 'Shutting down gracefully');

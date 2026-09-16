@@ -55,7 +55,17 @@ export function resolveBillingLetterhead(settings = {}) {
       : '',
   );
   const slipFooter = pick(s.portalSlipFooter);
-  return { logo, logoColor, logoRadius, companyName, addressLines, phone, email, announcement, supportLink, accountName, paymentInstructions, slipFooter };
+  // A VAT-registered seller's TIN belongs on every document it issues - a VAT
+  // invoice without it does not support the buyer's input-VAT claim.
+  const vatRegistered = s.vatEnabled === true;
+  const tin = pick(s.businessTin) || '';
+  // What makes a printed receipt a REGISTERED receipt: the authority it was
+  // issued under and the machine that issued it. Blank until the business has
+  // them, and printed only when filled in - a made-up permit number is worse
+  // than none at all.
+  const birPermitNo = pick(s.birPermitNo) || '';
+  const birMachineId = pick(s.birMachineId) || '';
+  return { logo, logoColor, logoRadius, companyName, addressLines, phone, email, announcement, supportLink, accountName, paymentInstructions, slipFooter, vatRegistered, tin, birPermitNo, birMachineId };
 }
 
 const DEFAULT_TERMS = [
@@ -75,6 +85,11 @@ const DEFAULT_TERMS = [
 //   subFields     : [{ label, value }]  (2-col grid)
 //   schedRows     : [{ label, value }]  optional gray box
 //   items         : [{ code, desc, qty, unitPrice, total }]
+//   itemColumns   : optional column spec for documents whose table is not a
+//                   price list - a statement of account runs date / reference /
+//                   particulars / charges / payments / balance instead. Each is
+//                   { label, key, align?, money? }; omitted keeps the five
+//                   columns every quote and invoice has always printed.
 //   totals        : [{ label, value, grand }]
 //   termsTitle    : heading above the terms list (default 'Terms and Conditions')
 //   terms         : [string]  (defaults to DEFAULT_TERMS)
@@ -89,6 +104,7 @@ export function buildBillingDocHTML({
   subFields = [],
   schedRows = [],
   items = [],
+  itemColumns = null,
   totals = [],
   termsTitle = 'Terms and Conditions',
   terms = null,
@@ -117,13 +133,25 @@ export function buildBillingDocHTML({
     ${schedRows.map(r => `<tr><td class="lbl">${esc(r.label)}</td><td>${esc(r.value)}</td></tr>`).join('')}
   </table></div>` : '';
 
-  const itemsHTML = items.map(it => `<tr>
+  const itemsHTML = itemColumns
+    ? items.map(it => `<tr>${itemColumns.map(col => {
+        const raw = it[col.key];
+        const cell = col.money ? money(raw) : esc(raw == null ? '' : raw);
+        return `<td style="text-align:${col.align || 'left'}">${cell}</td>`;
+      }).join('')}</tr>`).join('')
+    : items.map(it => `<tr>
     <td class="code">${esc(it.code || '')}</td>
     <td class="desc">${esc(it.desc || '')}</td>
     <td class="qty">${esc(it.qty)}</td>
     <td class="price">${money(it.unitPrice)}</td>
     <td class="total">${money(it.total)}</td>
   </tr>`).join('');
+
+  const itemHeadHTML = itemColumns
+    ? itemColumns.map(col => `<th style="text-align:${col.align || 'left'}">${esc(col.label)}</th>`).join('')
+    : `<th>Code</th><th>Description</th>
+      <th class="r" style="text-align:center">Qty</th>
+      <th class="r">Unit Price</th><th class="r">Total Price</th>`;
 
   const totalsHTML = totals.map(t =>
     `<div class="totals-row${t.grand ? ' grand' : ''}"><div class="tl">${esc(t.label)}</div><div class="tr">${money(t.value)}</div></div>`
@@ -213,6 +241,9 @@ ${copies.map(copyLabel => `
     </div>
     ${lh.addressLines.map(a => `<div class="addr">${esc(a)}</div>`).join('')}
     ${lh.phone ? `<div class="addr">${esc(lh.phone)}</div>` : ''}
+    ${lh.tin ? `<div class="addr">${lh.vatRegistered ? 'VAT REG TIN' : 'TIN'}: ${esc(lh.tin)}</div>` : ''}
+    ${lh.birPermitNo ? `<div class="addr">Permit / ATP No.: ${esc(lh.birPermitNo)}</div>` : ''}
+    ${lh.birMachineId ? `<div class="addr">Machine ID: ${esc(lh.birMachineId)}</div>` : ''}
   </div>
 
   <div class="title-wrap">
@@ -228,11 +259,7 @@ ${copies.map(copyLabel => `
   ${schedHTML}
 
   <table class="items">
-    <thead><tr>
-      <th>Code</th><th>Description</th>
-      <th class="r" style="text-align:center">Qty</th>
-      <th class="r">Unit Price</th><th class="r">Total Price</th>
-    </tr></thead>
+    <thead><tr>${itemHeadHTML}</tr></thead>
     <tbody>${itemsHTML}</tbody>
   </table>
 

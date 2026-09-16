@@ -661,7 +661,7 @@ export default function AdminDashboard() {
   // Recent expenses + per-category totals backing the Expenses page.
   const [expenseList, setExpenseList] = useState({ expenses: [], byCategory: [], total: 0 });
   const [expenseCategories, setExpenseCategories] = useState([]);
-  const [expenseForm, setExpenseForm] = useState({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', date: new Date().toISOString().slice(0,10) });
+  const [expenseForm, setExpenseForm] = useState({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', claimInputVat: false, date: new Date().toISOString().slice(0,10) });
   const [expenseSubmitting, setExpenseSubmitting] = useState(false);
   const [settleModal, setSettleModal] = useState(null); // { order }
   // `collectionDate` is when the money left the client's hands; `depositDate`
@@ -892,7 +892,7 @@ export default function AdminDashboard() {
   const [cashDrawerModal, setCashDrawerModal] = useState(false);
   const [drawerSession, setDrawerSession] = useState(null);
   const [drawerBusy, setDrawerBusy] = useState(false);
-  const [drawerMovement, setDrawerMovement] = useState({ type: 'out', amount: '', reason: '' });
+  const [drawerMovement, setDrawerMovement] = useState({ type: 'out', amount: '', reason: '', expenseAccount: '' });
 
   const fetchDrawerSession = useCallback(async () => {
     try {
@@ -907,7 +907,19 @@ export default function AdminDashboard() {
     } catch { /* leave the last-known session on a transient failure */ }
   }, [apiFetch]);
 
-  const openCashDrawer = async () => { await fetchDrawerSession(); setCashDrawerModal(true); };
+  const openCashDrawer = async () => {
+    await fetchDrawerSession();
+    // Categories for "what was it spent on" - a pay-out files its expense on
+    // the spot. Whoever is on the till may not be allowed to read them; the
+    // picker simply does not appear then.
+    if (expenseCategories.length === 0) {
+      try {
+        const res = await apiFetch('/api/expenses/categories');
+        if (res.ok) { const d = await res.json(); if (d.success) setExpenseCategories(d.categories || []); }
+      } catch { /* the drawer still opens without it */ }
+    }
+    setCashDrawerModal(true);
+  };
 
   const submitDrawerMovement = async () => {
     const amt = parseFloat(drawerMovement.amount);
@@ -917,11 +929,16 @@ export default function AdminDashboard() {
     try {
       const r = await apiFetch('/api/shifts/movement', {
         method: 'POST',
-        body: JSON.stringify({ type: drawerMovement.type, amount: amt, reason: drawerMovement.reason.trim() }),
+        body: JSON.stringify({
+          type: drawerMovement.type, amount: amt, reason: drawerMovement.reason.trim(),
+          ...(drawerMovement.type === 'out' && drawerMovement.expenseAccount
+            ? { expenseAccount: drawerMovement.expenseAccount }
+            : {}),
+        }),
       });
       const d = await r.json();
       if (!d.success) return ui.alert(d.error || 'Could not record that.');
-      setDrawerMovement({ type: 'out', amount: '', reason: '' });
+      setDrawerMovement({ type: 'out', amount: '', reason: '', expenseAccount: '' });
       await fetchDrawerSession();
     } catch { ui.alert('Network error.'); }
     finally { setDrawerBusy(false); }
@@ -2562,6 +2579,29 @@ const updateStatus = async (orderId, newStatus) => {
     if (isRemoving) setDiscountInputs(prev => ({ ...prev, [orderId]: '' }));
   };
 
+  // Who an SC/PWD discount was given to. Both the 20% and the VAT exemption
+  // are granted against a named ID, and the sale cannot complete without them.
+  const [scPwdEntry, setScPwdEntry] = useState({});   // orderId -> { name, idNumber, kind }
+  const saveScPwdId = async (orderId) => {
+    const entry = scPwdEntry[orderId] || {};
+    if (!String(entry.name || '').trim() || !String(entry.idNumber || '').trim()) {
+      return ui.alert('Enter the cardholder\'s name and ID number as written on the card.');
+    }
+    try {
+      const res = await apiFetch(`/api/orders/${orderId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          scPwdName: entry.name.trim(),
+          scPwdIdNumber: entry.idNumber.trim(),
+          scPwdKind: entry.kind || 'Senior Citizen',
+        }),
+      });
+      const d = await res.json();
+      if (!d.success) return ui.alert(d.error || 'Could not save the card details.');
+      fetchOrders();
+    } catch { ui.alert('Network error.'); }
+  };
+
   const applyItemDiscount = async (orderId, itemIndex, discountPercent) => {
     try {
       // We send this to your existing order update route, specifically targeting the items array
@@ -3554,7 +3594,7 @@ const updateStatus = async (orderId, newStatus) => {
       const data = await res.json();
       if (data.success) {
         setExpenseModal(false);
-        setExpenseForm({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', date: new Date().toISOString().slice(0,10) });
+        setExpenseForm({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', claimInputVat: false, date: new Date().toISOString().slice(0,10) });
         // Refresh the Expenses page list so the new entry appears immediately -
         // on a page (unlike the old popup) the result is visible right there.
         fetchExpenses();
@@ -3939,6 +3979,10 @@ const updateStatus = async (orderId, newStatus) => {
           order.customerPhone ? { label: 'Phone', value: order.customerPhone } : null,
           order.deliveryAddress ? { label: 'Address', value: order.deliveryAddress } : null,
           order.scheduledTime ? { label: 'Sched', value: order.scheduledTime } : null,
+          // The card the discount was granted against. Printed on the receipt
+          // because that is the copy the customer keeps and the examiner asks for.
+          order.scPwdName ? { label: order.scPwdKind === 'PWD' ? 'PWD Name' : 'SC Name', value: order.scPwdName } : null,
+          order.scPwdIdNumber ? { label: 'ID No.', value: order.scPwdIdNumber } : null,
           !order.isComplimentary ? { label: 'Payment', value: order.paymentMethod || 'Cash' } : null,
         ].filter(Boolean),
         lineItems,
@@ -4248,6 +4292,7 @@ const updateStatus = async (orderId, newStatus) => {
           addedStock: restockBase, totalCost,
           expiryDate: invFormEff.expiryDate || null, productionDate: invFormEff.productionDate || null,
           creditAccount: invFormEff.creditAccount || '111000',
+          claimInputVat: invForm.claimInputVat === true,
           revolvingFundId: invFormEff.revolvingFundId || undefined,
           supplierId: invFormEff.supplierId || undefined,
           supplierName: invFormEff.supplierName || undefined,
@@ -4272,6 +4317,7 @@ const updateStatus = async (orderId, newStatus) => {
       };
 
       payload.creditAccount = invForm.creditAccount || '111000';
+      payload.claimInputVat = invForm.claimInputVat === true;
       if (invForm.revolvingFundId) payload.revolvingFundId = invForm.revolvingFundId;
       if (invForm.supplierId) payload.supplierId = invForm.supplierId;
       if (invForm.supplierName) payload.supplierName = invForm.supplierName;
@@ -5038,6 +5084,201 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   // work. Tabular data goes in one workbook led by a Contents sheet; the two
   // streamed ledgers stay separate files, because they are row-per-posting
   // records with their own date rules, not just another table.
+  // ── FULL BACKUP ───────────────────────────────────────────────────────────
+  // The dataset exports above are reports: chosen columns, derived figures, for
+  // a person to read. They cannot rebuild the system - no ids, no settings, no
+  // counters - so restoring from one leaves a database that looks similar and
+  // behaves differently.
+  //
+  // This is the other thing: every document of every collection in ONE
+  // workbook, one sheet per collection. Each row carries the document itself in
+  // __doc (split across __doc2, __doc3… when a document is longer than a cell
+  // can hold), which is what Restore reads back. The readable columns beside it
+  // are there so the file is still worth opening by hand.
+  const BACKUP_CELL = 30000;   // Excel's own limit is 32,767 characters
+  const BACKUP_PAGE = 1000;    // records per read, so no single response is huge
+  const BACKUP_RESTORE_SLICE = 250;  // records per write, well inside the 10MB body limit
+  const BACKUP_HUGE = 100000;  // past this, a server-side dump is the better tool
+  const [backupBusy, setBackupBusy] = useState('');
+  // { done, total, label } while a backup or restore runs. Counts records, so
+  // the bar tracks real work rather than animating to reassure.
+  const [backupProgress, setBackupProgress] = useState(null);
+
+  const downloadFullBackup = async () => {
+    if (backupBusy) return;
+    setBackupBusy('Counting records…');
+    setBackupProgress(null);
+    try {
+      // What is here, before reading any of it - so the progress figure is real
+      // and a big database can be warned about before the wait starts.
+      const sumRes = await apiFetch('/api/backup/summary');
+      const summary = await sumRes.json();
+      if (!summary.success) { ui.alert(summary.error || 'Could not read the database.'); return; }
+      if (summary.documents > BACKUP_HUGE && !(await ui.confirm(
+        `This database holds ${summary.documents.toLocaleString()} records. Building the file in the browser may take a while and needs a lot of memory.`
+        + String.fromCharCode(10, 10)
+        + 'For a database this size a server-side dump (scripts/backup-mongo.sh) is the safer tool. Carry on anyway?'))) return;
+
+      // Read a page at a time. The whole database never sits in one response,
+      // and the count moves while it works.
+      const snap = { takenAt: new Date(), businessType: summary.businessType, format: 1, documents: 0, collections: [] };
+      let read = 0;
+      for (const { name, count } of summary.collections) {
+        const docs = [];
+        for (let skip = 0; skip < count; skip += BACKUP_PAGE) {
+          setBackupBusy(`Reading ${name}…`);
+          setBackupProgress({ done: read, total: summary.documents, label: name });
+          const r = await apiFetch(`/api/backup/snapshot?collection=${encodeURIComponent(name)}&skip=${skip}&limit=${BACKUP_PAGE}`);
+          const d = await r.json();
+          if (!d.success) { ui.alert(d.error || `Could not read ${name}.`); return; }
+          docs.push(...d.docs);
+          read += d.docs.length;
+          if (d.done) break;
+        }
+        snap.documents += docs.length;
+        snap.collections.push({ name, count: docs.length, docs });
+      }
+
+      setBackupBusy('Building the workbook…');
+      setBackupProgress({ done: snap.documents, total: snap.documents, label: 'Writing the file' });
+      const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+
+      // A contents sheet first, so whoever opens the file knows what it is,
+      // when it was taken, and what it holds.
+      const contents = [
+        ['SEMIVRA FULL BACKUP'],
+        ['Taken', new Date(snap.takenAt).toLocaleString()],
+        ['Business type', snap.businessType],
+        ['Format', snap.format],
+        ['Documents', snap.documents],
+        [],
+        ['This file can be restored: Ledger → Export All → Restore backup.'],
+        ['Each sheet is one collection. The __doc column holds the record itself - do not edit it by hand.'],
+        [],
+        ['Collection', 'Rows'],
+        ...snap.collections.map(c => [c.name, c.count]),
+      ];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(contents), 'Contents');
+
+      for (const col of snap.collections) {
+        // A sheet per collection, even an empty one: restoring then knows the
+        // collection was empty rather than missing from the backup.
+        const rows = col.docs.map(doc => {
+          const json = JSON.stringify(doc);
+          const row = {
+            _id: String(doc._id || ''),
+            // One human-readable handle, whichever the document happens to have.
+            summary: doc.orderNumber || doc.reference || doc.name || doc.itemName || doc.billNumber
+              || doc.reservationNumber || doc.advanceNumber || doc.voucherNumber || doc.key || doc.username || '',
+            date: doc.date || doc.createdAt || '',
+          };
+          for (let i = 0; i * BACKUP_CELL < json.length; i++) {
+            row[i === 0 ? '__doc' : `__doc${i + 1}`] = json.slice(i * BACKUP_CELL, (i + 1) * BACKUP_CELL);
+          }
+          return row;
+        });
+        const sheet = XLSX.utils.json_to_sheet(rows.length ? rows : [{ _id: '', summary: '', date: '', __doc: '' }]);
+        // Sheet names are capped at 31 characters by the format itself.
+        XLSX.utils.book_append_sheet(wb, sheet, col.name.slice(0, 31));
+      }
+
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+      XLSX.writeFile(wb, `semivra-backup-${snap.businessType}-${stamp}.xlsx`);
+      ui.alert(`Backup saved: ${snap.documents.toLocaleString()} record(s) across ${snap.collections.length} collections.`);
+    } catch (err) {
+      console.error('downloadFullBackup', err);
+      ui.alert('Could not build the backup file.');
+    } finally { setBackupBusy(''); setBackupProgress(null); }
+  };
+
+  // Restoring puts the file back, collection by collection, replacing what is
+  // here now. Deliberately not silent: it says what it is about to overwrite and
+  // needs typed confirmation, because this is the one action that can throw away
+  // a working database.
+  const restoreFullBackup = async (file) => {
+    if (!file || backupBusy) return;
+    setBackupBusy('Reading the file…');
+    setBackupProgress(null);
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+
+      const contents = wb.Sheets.Contents
+        ? XLSX.utils.sheet_to_json(wb.Sheets.Contents, { header: 1 })
+        : null;
+      const stamp = (label) => (contents || []).find(r => r[0] === label)?.[1];
+      if (!contents || stamp('Business type') === undefined) {
+        ui.alert('That does not look like a backup file. Pick the .xlsx that Download backup produced.');
+        return;
+      }
+      const fileType = String(stamp('Business type')).toLowerCase();
+
+      const collections = [];
+      for (const name of wb.SheetNames) {
+        if (name === 'Contents') continue;
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[name]);
+        const docs = [];
+        for (const row of rows) {
+          const parts = Object.keys(row).filter(k => k === '__doc' || /^__doc\d+$/.test(k))
+            .sort((a, b) => (a === '__doc' ? 0 : Number(a.slice(5))) - (b === '__doc' ? 0 : Number(b.slice(5))))
+            .map(k => row[k]);
+          const json = parts.join('');
+          if (!json) continue;
+          try { docs.push(JSON.parse(json)); }
+          catch { /* a hand-edited row - skipped rather than aborting the restore */ }
+        }
+        collections.push({ name, docs });
+      }
+      const total = collections.reduce((s, c) => s + c.docs.length, 0);
+      if (!total) { ui.alert('That backup has no records in it.'); return; }
+
+      const ok = await ui.confirm(
+        `Restore ${total.toLocaleString()} record(s) from ${new Date(stamp('Taken') || Date.now()).toLocaleString()}?`
+        + String.fromCharCode(10, 10)
+        + 'Everything currently in this system is replaced by what is in the file. This cannot be undone.',
+      );
+      if (!ok) return;
+
+      let restored = 0;
+      const failures = [];
+      for (let i = 0; i < collections.length; i++) {
+        const c = collections[i];
+        if (!c.docs.length) continue;
+        // Sent in slices: one request per collection would breach the server's
+        // body limit on any sizeable collection, and the whole restore would
+        // fail on the largest - exactly the data you most want back.
+        // Only the FIRST slice replaces; the rest add to it, or each slice
+        // would wipe the one before it.
+        for (let from = 0; from < c.docs.length; from += BACKUP_RESTORE_SLICE) {
+          const slice = c.docs.slice(from, from + BACKUP_RESTORE_SLICE);
+          setBackupBusy(`Restoring ${c.name}…`);
+          setBackupProgress({ done: restored, total, label: c.name });
+          const res = await apiFetch('/api/backup/restore', {
+            method: 'POST',
+            body: JSON.stringify({
+              collection: c.name, docs: slice,
+              replace: from === 0, businessType: fileType, confirm: 'RESTORE',
+            }),
+          });
+          const d = await res.json();
+          if (!d.success) { failures.push(`${c.name}: ${d.error}`); break; }
+          restored += d.restored;
+          if (d.failed > 0) failures.push(`${c.name}: ${d.failed} row(s) refused`);
+        }
+      }
+
+      ui.alert(
+        `Restored ${restored.toLocaleString()} record(s).`
+        + (failures.length ? `${String.fromCharCode(10, 10)}${failures.slice(0, 6).join(String.fromCharCode(10))}` : '')
+        + `${String.fromCharCode(10, 10)}Reload the app to work with the restored data.`,
+      );
+    } catch (err) {
+      console.error('restoreFullBackup', err);
+      ui.alert('Could not read that backup file.');
+    } finally { setBackupBusy(''); setBackupProgress(null); }
+  };
+
   const downloadAllExports = async ({ start, end, datasets = null, reports = ['journal', 'auditlog', 'accountBalances', 'validValues'] } = {}) => {
     const rep = new Set(reports || []);
     const failed = [];
@@ -6654,6 +6895,18 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     const transactionNo = order.billingNumber || order.orderNumber || '-';
     const isDelivery = ['Manual Delivery', 'Lalamove'].includes(order.table);
 
+    // Who the invoice is made out to. A VAT-registered buyer is invoiced in
+    // their REGISTERED name with their TIN and registered address; that is what
+    // makes the document usable for their own input-VAT claim. Everyone else is
+    // billed to the name on the order, exactly as before.
+    const buyer = (clientAccounts || []).find(c =>
+      String(c._id) === String(order.clientId || order.clientAccountId || ''));
+    const billTo = {
+      name: (buyer?.isVatRegistered && buyer?.registeredName) || buyer?.name || order.customerName || '',
+      tin: buyer?.tin || '',
+      address: buyer?.registeredAddress || '',
+    };
+
     const items = (order.items || []).map(item => {
       const addOnTotal = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
       const unitPrice  = item.price + addOnTotal;
@@ -6679,9 +6932,17 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       dateStr,
       settings: systemSettings,
       metaFields: [
-        { label: 'Invoice For', value: order.customerName || '' },
+        { label: 'Invoice For', value: billTo.name },
+        // A VAT-registered buyer needs their registered name, TIN and address on
+        // the invoice, or they cannot claim the VAT they just paid.
+        ...(billTo.tin ? [{ label: 'TIN', value: billTo.tin }] : []),
+        ...(billTo.address ? [{ label: 'Registered Address', value: billTo.address }] : []),
+        ...(order.scPwdName ? [{ label: order.scPwdKind === 'PWD' ? 'PWD Cardholder' : 'Senior Citizen', value: `${order.scPwdName} (ID ${order.scPwdIdNumber})` }] : []),
         { label: 'Payable To', value: '' },
         { label: 'Transaction No.', value: transactionNo },
+        // The registered serial, once the sale has completed and been issued
+        // one. An unfinished order has no receipt number to show.
+        ...(order.orNumber ? [{ label: 'OR No.', value: order.orNumber }] : []),
       ],
       subFields: [
         { label: 'Terms of Payment', value: order.paymentMethod || '' },
@@ -6693,6 +6954,13 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         { label: 'Subtotal', value: order.subtotal || order.total || 0 },
         { label: 'Discount', value: order.discount || 0 },
         { label: 'Delivery Fee', value: order.deliveryFee || 0 },
+        // The VAT split, from the order's own stamped figures - a VAT invoice
+        // has to show what part of the total is tax.
+        ...((order.vatAmount || 0) > 0 ? [
+          { label: 'VATable Sales', value: order.vatableSales || 0 },
+          ...((order.vatExemptSales || 0) > 0 ? [{ label: 'VAT-Exempt Sales', value: order.vatExemptSales }] : []),
+          { label: 'VAT (' + Math.round((order.vatRate || 0) * 100) + '%)', value: order.vatAmount },
+        ] : []),
         { label: 'TOTAL', value: order.total || 0, grand: true },
       ],
       // Prepared By pre-filled with whoever rang up the sale (falls back to the
@@ -7045,7 +7313,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   // ── Bills (AP approval workflow) ────────────────────────────────────────────
   const [bills, setBills] = useState(null);
   const [billsFilter, setBillsFilter] = useState('Pending');
-  const [billCreate, setBillCreate] = useState({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000' });
+  const [billCreate, setBillCreate] = useState({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000', claimInputVat: false });
   const [billPayModal, setBillPayModal] = useState(null); // the bill being paid
   const [billPayFrom, setBillPayFrom] = useState('111000');
   const [billPayReference, setBillPayReference] = useState('');
@@ -7327,11 +7595,12 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       const res = await apiFetch('/api/bills', { method: 'POST', body: JSON.stringify({
         supplierId: billCreate.supplierId, description: billCreate.description.trim(),
         amount: amt, dueDate: billCreate.dueDate || null, expenseAccountCode: billCreate.expenseAccountCode,
+        claimInputVat: billCreate.claimInputVat === true,
       }) });
       const d = await res.json();
       if (d.success) {
         ui.alert('Bill created (Pending approval).');
-        setBillCreate({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000' });
+        setBillCreate({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000', claimInputVat: false });
         fetchBills();
       } else ui.alert(d.error || 'Failed to create bill.');
     } catch { ui.alert('Network error.'); }
@@ -8114,6 +8383,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     compReasonTypes, setCompReasonTypes, compReasonNotes, setCompReasonNotes,
     paymentSelections, setPaymentSelections,
     paymentRefs, setPaymentRefs, paymentCheckDates, setPaymentCheckDates,
+    scPwdEntry, setScPwdEntry, saveScPwdId,
     submitManualOrder, openProductModal, confirmPosItem,
     ordersPage, setOrdersPage, ordersItemsPerPage,
     // ── Inventory ───────────────────────────────────────────────────────────
@@ -8134,6 +8404,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     menuBackupBusy, downloadMenuBackup, menuRestoreModal, setMenuRestoreModal, openMenuRestore, runMenuRestore,
     exportBusy, downloadDataset, downloadAccountBalances,
     exportAllBusy, downloadAllExports, exportProgress, exportDatasets, fetchExportDatasets,
+    backupBusy, backupProgress, downloadFullBackup, restoreFullBackup,
     downloadMenuImportTemplate, parseMenuImportFile, submitMenuImport,
     rsFile, rsPreview, rsBusy, rsCreateMissing, setRsCreateMissing, openRecipeSheet, closeRecipeSheet, submitRecipeSheet,
     rsDrafts, rsPrices, setRsPrice,

@@ -359,6 +359,12 @@ app.patch('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => 
   try {
     const { name, password, role, permissions, commissionRate } = req.body;
     const updates = {};
+    // The statutory account numbers. Stored as typed - the agencies' formats
+    // differ and change, and a validator that guesses wrong would block a
+    // legitimate number rather than catch a wrong one.
+    for (const key of ['sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin', 'employeeNumber']) {
+      if (req.body[key] !== undefined) updates[key] = String(req.body[key] || '').trim().slice(0, 40);
+    }
     if (name) updates.name = name.trim();
     if (role) updates.role = role;
     if (Array.isArray(permissions)) updates.permissions = permissions.filter((k) => PERMISSION_KEYS.has(k));
@@ -375,7 +381,7 @@ app.patch('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => 
     // Any privilege change (password/role/permissions) revokes sessions → re-login
     // so the new permission set is minted into a fresh token.
     if (updates.password || updates.role || updates.permissions) await revokeUserSessions(req.params.id);
-    res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user), commissionRate: user.commissionRate } });
+    res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user), commissionRate: user.commissionRate, sssNumber: user.sssNumber, philhealthNumber: user.philhealthNumber, pagibigNumber: user.pagibigNumber, tin: user.tin, employeeNumber: user.employeeNumber } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

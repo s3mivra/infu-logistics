@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Users, Plus, RefreshCw, X, Trash2, Check, Banknote, FileText, ChevronLeft,
+  Users, Plus, RefreshCw, X, Trash2, Check, Banknote, FileText, ChevronLeft, Printer,
 } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
+import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import * as ui from '../../shared/ui';
 
 // Payroll - what the work cost, and what each person took home.
@@ -33,13 +34,16 @@ const netOf = (l) => num(l.grossPay) - num(l.sss) - num(l.philhealth) - num(l.pa
   - num(l.withholdingTax) - num(l.otherDeductions);
 
 export default function PayrollTab() {
-  const { apiFetch } = useDashboard();
+  const { apiFetch, systemSettings = {} } = useDashboard();
   const [runs, setRuns] = useState([]);
   const [totals, setTotals] = useState({ gross: 0, net: 0, unpaid: 0 });
   const [liabilities, setLiabilities] = useState([]);
   const [loading, setLoading] = useState(false);
   const [draftOpen, setDraftOpen] = useState(false);
   const [openRun, setOpenRun] = useState(null);
+  // The filing view: what to hand each agency, employee by employee, under
+  // their own account number.
+  const [remitOpen, setRemitOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -72,7 +76,7 @@ export default function PayrollTab() {
   };
 
   if (openRun) {
-    return <RunDetail run={openRun} apiFetch={apiFetch}
+    return <RunDetail run={openRun} apiFetch={apiFetch} systemSettings={systemSettings}
       onBack={() => { setOpenRun(null); load(); }} />;
   }
 
@@ -85,6 +89,10 @@ export default function PayrollTab() {
         <button onClick={load} disabled={loading}
           className="flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
           <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Refresh
+        </button>
+        <button onClick={() => setRemitOpen(true)}
+          className="flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition">
+          <FileText size={12} /> Remittance
         </button>
         <button onClick={() => setDraftOpen(true)}
           className="flex items-center gap-1.5 text-[10px] bg-brand hover:bg-brand/90 text-on-brand px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition">
@@ -192,6 +200,8 @@ export default function PayrollTab() {
           onClose={() => setDraftOpen(false)}
           onDone={() => { setDraftOpen(false); load(); }} />
       )}
+
+      {remitOpen && <RemittanceModal apiFetch={apiFetch} onClose={() => setRemitOpen(false)} />}
     </div>
   );
 }
@@ -336,7 +346,153 @@ function DraftModal({ apiFetch, onClose, onDone }) {
   );
 }
 
-function RunDetail({ run, apiFetch, onBack }) {
+// One person's payslip, on the shop's own letterhead. Built from the run's own
+// stored line, not from the staff record as it stands today - the slip has to
+// say what was actually withheld, under the number it was withheld against.
+function printPayslip(run, line, settings) {
+  const deductions = [
+    ['SSS', line.sss, line.sssNumber],
+    ['PhilHealth', line.philhealth, line.philhealthNumber],
+    ['Pag-IBIG', line.pagibig, line.pagibigNumber],
+    ['Withholding tax', line.withholdingTax, line.tin],
+    ['Other deductions', line.otherDeductions, ''],
+  ].filter(([, amt]) => Number(amt) > 0);
+
+  printBillingDoc(buildBillingDocHTML({
+    docTitle: 'PAYSLIP',
+    dateLabel: 'Pay date',
+    dateStr: shortDate(run.payDate),
+    settings,
+    metaFields: [
+      { label: 'Employee', value: line.employeeName },
+      { label: 'Employee No.', value: line.employeeId || '' },
+      { label: 'Pay Period', value: `${shortDate(run.periodStart)} - ${shortDate(run.periodEnd)}` },
+      ...(line.tin ? [{ label: 'TIN', value: line.tin }] : []),
+      ...(line.sssNumber ? [{ label: 'SSS No.', value: line.sssNumber }] : []),
+      ...(line.philhealthNumber ? [{ label: 'PhilHealth No.', value: line.philhealthNumber }] : []),
+      ...(line.pagibigNumber ? [{ label: 'Pag-IBIG MID', value: line.pagibigNumber }] : []),
+      { label: 'Payroll Ref.', value: run.reference },
+    ],
+    itemColumns: [
+      { label: 'Description', key: 'desc' },
+      { label: 'Reference', key: 'ref' },
+      { label: 'Amount', key: 'amount', align: 'right', money: true },
+    ],
+    items: [
+      { desc: 'Gross pay', ref: '', amount: line.grossPay },
+      ...deductions.map(([label, amt, ref]) => ({ desc: `Less: ${label}`, ref: ref || '', amount: amt })),
+    ],
+    totals: [
+      { label: 'Gross pay', value: line.grossPay },
+      { label: 'Total deductions', value: Number(line.grossPay || 0) - Number(line.netPay || 0) },
+      { label: 'NET PAY', value: line.netPay, grand: true },
+    ],
+    termsTitle: 'Please note',
+    terms: [
+      'The deductions above are withheld from your pay and remitted to the agency shown against each one.',
+      'Keep this payslip - it is your record of what was withheld under your own account numbers.',
+      'If anything here does not agree with your records, raise it with the office before the next pay date.',
+    ],
+    signatures: ['PREPARED BY: Signature over Printed Name / Date', 'RECEIVED BY: Signature over Printed Name / Date'],
+    copies: ['EMPLOYEE COPY'],
+  }));
+}
+
+// What each agency is owed for a period, broken down by member. The agencies do
+// not accept a lump sum: every one of them wants the amount against the
+// individual's own account number, which is why the numbers are on the run.
+function RemittanceModal({ apiFetch, onClose }) {
+  const monthStart = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1).toISOString().slice(0, 10); };
+  const [agency, setAgency] = useState('sss');
+  const [range, setRange] = useState({ start: monthStart(), end: new Date().toISOString().slice(0, 10) });
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const d = await (await apiFetch(`/api/payroll-runs/remittance?agency=${agency}&start=${range.start}&end=${range.end}`)).json();
+        if (live) setData(d.success ? d : null);
+      } catch { if (live) setData(null); }
+      finally { if (live) setLoading(false); }
+    })();
+    return () => { live = false; };
+  }, [apiFetch, agency, range.start, range.end]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={onClose}>
+      <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-3xl my-8" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
+          <div>
+            <h2 className="font-black text-fg text-lg">Remittance</h2>
+            <p className="text-xs text-fg/70">What to file, and under whose number.</p>
+          </div>
+          <button onClick={onClose} className="text-fg/70 hover:text-fg transition"><X size={18} /></button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-white/10">
+          {[['sss', 'SSS'], ['philhealth', 'PhilHealth'], ['pagibig', 'Pag-IBIG'], ['tax', 'Withholding tax']].map(([key, label]) => (
+            <button key={key} onClick={() => setAgency(key)}
+              className={`text-[10px] px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition ${agency === key ? 'bg-brand text-on-brand' : 'border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5'}`}>
+              {label}
+            </button>
+          ))}
+          <div className="flex items-center gap-2 ml-auto">
+            <input type="date" value={range.start} onChange={e => setRange(r => ({ ...r, start: e.target.value }))} className={numCls + ' w-36 text-left'} />
+            <span className="text-fg/50 text-xs">to</span>
+            <input type="date" value={range.end} onChange={e => setRange(r => ({ ...r, end: e.target.value }))} className={numCls + ' w-36 text-left'} />
+          </div>
+        </div>
+
+        <div className="p-5 max-h-[60vh] overflow-y-auto">
+          {loading || !data ? (
+            <p className="text-fg/65 text-sm font-bold py-6 text-center">{loading ? 'Adding it up…' : 'Nothing to remit for this period.'}</p>
+          ) : data.rows.length === 0 ? (
+            <p className="text-fg/65 text-sm font-bold py-6 text-center">No approved runs in this period.</p>
+          ) : (
+            <>
+              {data.missingNumbers.length > 0 && (
+                <p className="mb-3 text-[11px] font-bold text-warning bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2">
+                  No account number on file for: {data.missingNumbers.join(', ')}. Add it under their staff record before filing.
+                </p>
+              )}
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-[9px] font-black uppercase tracking-widest text-fg/70 border-b border-white/10">
+                    <th className="text-left py-2">Employee</th>
+                    <th className="text-left py-2">{data.agency.label} no.</th>
+                    <th className="text-right py-2">Gross pay</th>
+                    <th className="text-right py-2">To remit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rows.map(r => (
+                    <tr key={`${r.employeeName}-${r.idNumber}`} className="border-b border-white/5">
+                      <td className="py-2 font-bold text-fg">{r.employeeName}</td>
+                      <td className={`py-2 font-mono ${r.idNumber ? 'text-fg/70' : 'text-warning'}`}>{r.idNumber || 'not on file'}</td>
+                      <td className="py-2 text-right tabular-nums text-fg/75">{peso(r.grossPay)}</td>
+                      <td className="py-2 text-right tabular-nums font-black text-fg">{peso(r.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t border-white/10 text-fg font-black">
+                    <td className="py-2" colSpan={3}>Total to remit ({data.agency.accountName})</td>
+                    <td className="py-2 text-right tabular-nums">{peso(data.total)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RunDetail({ run, apiFetch, systemSettings = {}, onBack }) {
   const [fresh, setFresh] = useState(run);
   useEffect(() => {
     (async () => {
@@ -374,6 +530,7 @@ function RunDetail({ run, apiFetch, onBack }) {
                 <th className="text-right px-3 py-2.5">Tax</th>
                 <th className="text-right px-3 py-2.5">Other</th>
                 <th className="text-right px-3 py-2.5">Take-home</th>
+                <th className="px-3 py-2.5" />
               </tr>
             </thead>
             <tbody>
@@ -382,6 +539,15 @@ function RunDetail({ run, apiFetch, onBack }) {
                   <td className="px-3 py-2.5 font-bold text-fg">
                     {l.employeeName}
                     {l.employeeId && <span className="block text-[10px] text-fg/70">{l.employeeId}</span>}
+                    {/* The numbers each deduction is remitted under, as they
+                        stood when this run was made. */}
+                    {(l.sssNumber || l.philhealthNumber || l.pagibigNumber || l.tin) && (
+                      <span className="block text-[9px] text-fg/55 leading-snug">
+                        {[l.sssNumber && `SSS ${l.sssNumber}`, l.philhealthNumber && `PH ${l.philhealthNumber}`,
+                          l.pagibigNumber && `HDMF ${l.pagibigNumber}`, l.tin && `TIN ${l.tin}`]
+                          .filter(Boolean).join(' · ')}
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-fg">{peso(l.grossPay)}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-fg/75">{peso(l.sss)}</td>
@@ -390,6 +556,10 @@ function RunDetail({ run, apiFetch, onBack }) {
                   <td className="px-3 py-2.5 text-right tabular-nums text-fg/75">{peso(l.withholdingTax)}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-fg/75">{peso(l.otherDeductions)}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums font-black text-fg">{peso(l.netPay)}</td>
+                  <td className="px-3 py-2.5 text-right">
+                    <button onClick={() => printPayslip(fresh, l, systemSettings)} title="Print this payslip"
+                      className="p-1.5 rounded-lg text-fg/60 hover:bg-white/10 hover:text-fg transition"><Printer size={13} /></button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -403,6 +573,7 @@ function RunDetail({ run, apiFetch, onBack }) {
                 <td className="px-3 py-2.5 text-right tabular-nums text-fg/60">{peso(fresh.totals?.withholdingTax)}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums text-fg/60">{peso(fresh.totals?.otherDeductions)}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{peso(fresh.totals?.net)}</td>
+                <td />
               </tr>
             </tfoot>
           </table>

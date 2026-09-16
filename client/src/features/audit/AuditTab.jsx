@@ -274,6 +274,7 @@ export default function AuditTab({ ctx }) {
                           <th className="px-5 py-2.5">Date / Time</th>
                           <th className="px-5 py-2.5">Customer</th>
                           <th className="px-5 py-2.5">Type</th>
+                          <th className="px-5 py-2.5">Cardholder / ID</th>
                           <th className="px-5 py-2.5">Applied By</th>
                           <th className="px-5 py-2.5 text-right">Discount Amt</th>
                           <th className="px-5 py-2.5 text-right">Net Total</th>
@@ -285,6 +286,11 @@ export default function AuditTab({ ctx }) {
                             <td className="px-5 py-2.5 text-xs text-fg/60 font-mono">{fmtDate(o.createdAt)}</td>
                             <td className="px-5 py-2.5 text-xs text-fg/60 font-bold">{o.customerName || '-'}</td>
                             <td className="px-5 py-2.5 text-xs text-brand/80 font-bold">{o.discountType || 'Promo'}</td>
+                            {/* An SC/PWD discount is granted against a named card - this is the
+                                column an examiner reads. */}
+                            <td className="px-5 py-2.5 text-xs text-fg/60">
+                              {o.scPwdName ? <>{o.scPwdName}<span className="block text-[10px] font-mono text-fg/45">{o.scPwdIdNumber}</span></> : '-'}
+                            </td>
                             <td className="px-5 py-2.5 text-xs text-fg/60">{o.discountBy || o.cashier || '-'}</td>
                             <td className="px-5 py-2.5 text-xs text-right font-mono text-brand-text">-₱{(o.discount || 0).toFixed(2)}</td>
                             <td className="px-5 py-2.5 text-xs text-right font-mono text-fg/70">₱{(o.total || 0).toFixed(2)}</td>

@@ -230,7 +230,7 @@ app.get('/api/client/orders', verifyClientToken, async (req, res) => {
     const orders = await Order.find(
       { clientId: String(clientId) },
       // orderNotes is the client's own text - it belongs on their order slip.
-      { orderNumber: 1, billingNumber: 1, status: 1, total: 1, items: 1, paymentMethod: 1, createdAt: 1, transactionType: 1, clientReceived: 1, orderNotes: 1, revision: 1, 'amendments.revision': 1, 'amendments.at': 1, 'amendments.reason': 1, 'amendments.changes': 1 }
+      { orderNumber: 1, billingNumber: 1, orNumber: 1, status: 1, total: 1, items: 1, paymentMethod: 1, createdAt: 1, transactionType: 1, clientReceived: 1, orderNotes: 1, revision: 1, 'amendments.revision': 1, 'amendments.at': 1, 'amendments.reason': 1, 'amendments.changes': 1 }
     ).sort({ createdAt: -1 }).limit(30).lean();
     res.json({ success: true, orders });
   } catch (err) {
@@ -455,7 +455,7 @@ const cleanPhone = (v) => String(v ?? '').trim().slice(0, 40);
 
 app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { username, password, name, paymentMethod, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote } = req.body;
+    const { username, password, name, paymentMethod, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote, isVatRegistered, tin, registeredName, registeredAddress } = req.body;
     // Usernames are stored lowercase so "KasaLokal" and "kasalokal" are the same
     // account - mixed case here is the classic duplicate-login bug.
     const cleanUsername = lower(username);
@@ -474,7 +474,7 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
     const clientCode = await generateNextSequence(ClientAccount, 'CUS-1000', 'clientCode');
     const emailVal = cleanEmail(email);
     if (emailVal === null) return res.status(400).json({ success: false, error: 'Email is not a valid address.' });
-    const client = await ClientAccount.create({ clientCode, username: cleanUsername, password: hashed, name: cleanName, paymentMethod: paymentMethod || 'Cash', creditLimit: parseCreditLimit(creditLimit), creditTermsDays: parseTermsDays(creditTermsDays), segments: cleanSegments, phone: cleanPhone(phone), email: emailVal, contactNotes: String(contactNotes ?? '').trim().slice(0, 1000), requiresQuote: requiresQuote === true });
+    const client = await ClientAccount.create({ clientCode, username: cleanUsername, password: hashed, name: cleanName, paymentMethod: paymentMethod || 'Cash', creditLimit: parseCreditLimit(creditLimit), creditTermsDays: parseTermsDays(creditTermsDays), segments: cleanSegments, phone: cleanPhone(phone), email: emailVal, contactNotes: String(contactNotes ?? '').trim().slice(0, 1000), requiresQuote: requiresQuote === true, isVatRegistered: isVatRegistered === true, tin: String(tin ?? '').trim().slice(0, 30), registeredName: String(registeredName ?? '').trim().slice(0, 200), registeredAddress: String(registeredAddress ?? '').trim().slice(0, 300) });
     res.json({ success: true, client: { _id: client._id, clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, creditLimit: client.creditLimit, creditTermsDays: client.creditTermsDays, segments: client.segments, phone: client.phone, email: client.email, contactNotes: client.contactNotes } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -568,11 +568,17 @@ app.post('/api/client-accounts/import', verifyToken, requireSuperAdmin, async (r
 
 app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { username, password, name, paymentMethod, isActive, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote } = req.body;
+    const { username, password, name, paymentMethod, isActive, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote, isVatRegistered, tin, registeredName, registeredAddress } = req.body;
     const update = {};
     // Which buyers are quoted before they buy. Sent explicitly so it can be
     // switched off again, not just on.
     if (typeof requiresQuote === 'boolean') update.requiresQuote = requiresQuote;
+    // A VAT-registered buyer's invoice details. Sent explicitly so they can be
+    // cleared again; without a TIN their invoice cannot support an input-VAT claim.
+    if (typeof isVatRegistered === 'boolean') update.isVatRegistered = isVatRegistered;
+    if (tin !== undefined) update.tin = String(tin ?? '').trim().slice(0, 30);
+    if (registeredName !== undefined) update.registeredName = String(registeredName ?? '').trim().slice(0, 200);
+    if (registeredAddress !== undefined) update.registeredAddress = String(registeredAddress ?? '').trim().slice(0, 300);
     if (username) update.username = lower(username);
     if (name) update.name = title(name);
     if (paymentMethod) update.paymentMethod = paymentMethod;

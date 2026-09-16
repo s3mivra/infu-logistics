@@ -108,6 +108,9 @@ export const LEDGER_TAB_GROUPS = [
     // server's business type", which is what a mis-scoped report looks like
     // from the outside.
     ['tenancy', 'Tenancy Health', ShieldCheck],
+    // Does each subledger still add up to its control account? A balanced
+    // ledger can still disagree with the invoice list behind it.
+    ['bookshealth', 'Books Health', ShieldCheck],
     // Every per-screen export in one action - the alternative is visiting a
     // dozen tabs and assembling the archive by hand.
     ['exportall', 'Export All', Download],
@@ -136,6 +139,10 @@ export const REPORT_TAB_GROUPS = [
     ['pnlmonthly', 'Monthly P&L', BarChart3],
     ['bsmonthly', 'Monthly Balance Sheet', BarChart3],
     ['percentagetax', 'Percentage Tax', FileText],
+    // Only one of these two ever applies: a VAT-registered business files VAT,
+    // everyone else files the 3% percentage tax. Each report says so when it is
+    // the one that does not apply, rather than showing a page of zeroes.
+    ['vatreturn', 'VAT Return', FileText],
   ]],
   ['Operations', [
     ['pricelog', 'Price Changes', TrendingUp],

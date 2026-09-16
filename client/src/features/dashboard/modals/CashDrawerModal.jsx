@@ -13,7 +13,7 @@ export default function CashDrawerModal() {
   const {
     cashDrawerModal, setCashDrawerModal,
     drawerSession, drawerBusy, drawerMovement, setDrawerMovement,
-    submitDrawerMovement, openShiftEndFromDrawer,
+    submitDrawerMovement, openShiftEndFromDrawer, expenseCategories = [],
   } = useDashboard();
 
   if (!cashDrawerModal) return null;
@@ -115,8 +115,30 @@ export default function CashDrawerModal() {
                   {drawerBusy ? 'Saving…' : 'Record'}
                 </button>
               </div>
+
+              {/* Money SPENT out of the till files its expense here and now, so
+                  the books lose the cash at the same moment the drawer does.
+                  Money MOVED (a safe drop) is accounted for by the deposit. */}
+              {drawerMovement.type === 'out' && expenseCategories.length > 0 && (
+                <div className="mt-2">
+                  <label htmlFor="drawer-expense" className="text-[10px] uppercase tracking-widest text-fg/70 font-bold block mb-1">
+                    What was it spent on?
+                  </label>
+                  <select id="drawer-expense" value={drawerMovement.expenseAccount || ''}
+                    onChange={e => setDrawerMovement(m => ({ ...m, expenseAccount: e.target.value }))}
+                    className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent">
+                    <option value="">Not spent - moving cash (safe drop, change fund)</option>
+                    {expenseCategories.map(c => (
+                      <option key={c.code} value={c.code}>{c.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <p className="text-[10px] text-fg/70 mt-2 leading-snug">
-                Keeps the drawer count honest. It does not post to the ledger - the expense or deposit does that when you file it, and recording both would count the same money twice.
+                {drawerMovement.type === 'out' && drawerMovement.expenseAccount
+                  ? 'Files the expense now, so this cash leaves the books at the same time it leaves the till. Do not file it again under Expenses.'
+                  : 'Keeps the drawer count honest. Cash that was moved rather than spent is accounted for by its deposit; cash that was spent should pick a category above, or it will show as unfiled when the drawer is closed.'}
               </p>
             </div>
 

@@ -33,6 +33,29 @@ export default function ProductionTab({ ctx }) {
   // pack size just falls back to its plain display unit (perPiece = 1), so
   // nothing changes for unpacked items. See itemDisplay()/packInfo() in
   // AdminDashboard.jsx.
+  // What a production run may be counted in, per item. Forcing everything into
+  // "pieces" is wrong the moment a batch uses 1.7 L of milk: the person making
+  // it thinks in litres, and a packed 1L carton counted as "1.7 pcs" is a
+  // quantity nobody would write down that way. Each option carries how many
+  // BASE units (g/ml/pcs) one of it is worth, which is what the server stores.
+  const unitOptions = (item) => {
+    if (!item) return [{ label: 'units', factor: 1 }];
+    const d = itemDisplay ? itemDisplay(item) : null;
+    const baseUnit = item.unit || 'units';
+    const displayUnit = item.displayUnit || baseUnit;
+    const perDisplay = Number(item.unitMultiplier) || 1;   // e.g. 1000 ml per L
+    const out = [];
+    // A packed item keeps pieces as its first option - that is how a carton or
+    // a sack is counted - but no longer as its only one.
+    if (d?.isPacked && Number(d.packBase) > 0) out.push({ label: 'pcs', factor: Number(d.packBase) });
+    if (perDisplay > 1) out.push({ label: displayUnit, factor: perDisplay });
+    out.push({ label: baseUnit, factor: 1 });
+    // Dedupe by label, keeping the first (most natural) reading.
+    return out.filter((o, i) => out.findIndex(x => x.label === o.label) === i);
+  };
+  // How much is on hand, expressed in a chosen unit.
+  const onHandIn = (item, factor) => +(((item?.stockQty || 0) / (factor || 1)).toFixed(4));
+
   const pieceInfo = (item) => {
     const d = item && itemDisplay ? itemDisplay(item) : null;
     const perPiece = Number(d?.isPacked ? d.packBase : 1) || 1;
@@ -74,7 +97,12 @@ export default function ProductionTab({ ctx }) {
   const [formOpen, setFormOpen] = useState(false);
   const [materials, setMaterials] = useState([]); // [{invId, name, pieceLabel, pieces, baseQty}]
   const [matPick, setMatPick] = useState('');
-  const [matQty, setMatQty] = useState(''); // pieces
+  const [matQty, setMatQty] = useState('');
+  // Which unit that quantity is in - blank means the item's most natural one
+  // (pieces for a packed carton, litres for milk, kilos for beans).
+  const [matUnit, setMatUnit] = useState('');
+  // Same idea for the output quantity; blank means that item's natural unit.
+  const [outputQtyUnit, setOutputQtyUnit] = useState('');
   const [outputType, setOutputType] = useState('existing'); // 'existing' | 'new'
   const [outputInvId, setOutputInvId] = useState('');
   const [outputName, setOutputName] = useState('');
@@ -126,13 +154,15 @@ export default function ProductionTab({ ctx }) {
       // A recipe can outlive the stock item it names - say so rather than
       // silently filing a batch that is missing an ingredient.
       if (!item) { missing.push(r.name || 'an unnamed ingredient'); continue; }
-      const { perPiece, label, onHandPieces } = pieceInfo(item);
       // Recipe qty is base units per ONE unit of the product, so the batch
-      // multiplies it directly.
+      // multiplies it directly. It is then shown in whichever unit reads most
+      // naturally for that ingredient - litres of milk, not 1700 ml.
       const baseQty = +(Number(r.qty) * batch).toFixed(6);
-      const pieces = +(baseQty / perPiece).toFixed(4);
-      if (pieces > onHandPieces + 1e-6) short.push(`${item.itemName} (need ${pieces} ${label}, have ${onHandPieces})`);
-      lines.push({ invId: item._id, name: item.itemName, pieceLabel: label, pieces, baseQty });
+      const [natural] = unitOptions(item);
+      const shown = +(baseQty / natural.factor).toFixed(4);
+      const available = onHandIn(item, natural.factor);
+      if (shown > available + 1e-6) short.push(`${item.itemName} (need ${shown} ${natural.label}, have ${available})`);
+      lines.push({ invId: item._id, name: item.itemName, pieceLabel: natural.label, pieces: shown, baseQty });
     }
 
     if (lines.length === 0) return ui.alert(`No usable recipe lines on ${product.name}. Check that its ingredients are linked to stock items.`);
@@ -164,6 +194,10 @@ export default function ProductionTab({ ctx }) {
 
   const outputItem = outputType === 'existing' ? inventory.find(i => i._id === outputInvId) : null;
   const outputPieceInfo = pieceInfo(outputItem);
+  // The same choice the materials get: a batch that yields 12 L of cold brew is
+  // entered as 12 L, whatever pack size the item happens to carry.
+  const outputUnitOptions = unitOptions(outputItem);
+  const outputUnitChoice = outputUnitOptions.find(o => o.label === outputQtyUnit) || outputUnitOptions[0];
 
   const fetchOrders = useCallback(async (status) => {
     setLoading(true);
@@ -179,7 +213,7 @@ export default function ProductionTab({ ctx }) {
   useEffect(() => { fetchOrders(statusFilter); }, [fetchOrders, statusFilter]);
 
   const resetForm = () => {
-    setMaterials([]); setMatPick(''); setMatQty('');
+    setMaterials([]); setMatPick(''); setMatQty(''); setMatUnit(''); setOutputQtyUnit('');
     setOutputType('existing'); setOutputInvId(''); setOutputName(''); setOutputUnit('pcs'); setOutputPackSize(''); setOutputQty('');
     setOutputStockCategory(''); setOutputStockLocation(''); setOutputExpiryDate('');
     setProductionDate(new Date().toISOString().slice(0, 10)); setNotes('');
@@ -188,14 +222,21 @@ export default function ProductionTab({ ctx }) {
 
   const addMaterial = () => {
     const item = inventory.find(i => i._id === matPick);
-    const pieces = parseFloat(matQty);
+    const entered = parseFloat(matQty);
     if (!item) return ui.alert('Pick a material.');
-    if (!pieces || pieces <= 0) return ui.alert('Enter a positive quantity.');
+    if (!entered || entered <= 0) return ui.alert('Enter a positive quantity.');
     if (materials.some(m => m.invId === item._id)) return ui.alert(`${item.itemName} is already in this order - remove it first to change the quantity.`);
-    const { perPiece, label, onHandPieces } = pieceInfo(item);
-    if (pieces > onHandPieces + 1e-6) return ui.alert(`Only ${onHandPieces} ${label} of ${item.itemName} on hand.`);
-    setMaterials(m => [...m, { invId: item._id, name: item.itemName, pieceLabel: label, pieces, baseQty: +(pieces * perPiece).toFixed(6) }]);
-    setMatPick(''); setMatQty('');
+    // Whatever unit was chosen, the server is sent base units.
+    const opts = unitOptions(item);
+    const chosen = opts.find(o => o.label === matUnit) || opts[0];
+    const available = onHandIn(item, chosen.factor);
+    if (entered > available + 1e-6) return ui.alert(`Only ${available} ${chosen.label} of ${item.itemName} on hand.`);
+    setMaterials(m => [...m, {
+      invId: item._id, name: item.itemName,
+      pieceLabel: chosen.label, pieces: entered,
+      baseQty: +(entered * chosen.factor).toFixed(6),
+    }]);
+    setMatPick(''); setMatQty(''); setMatUnit('');
   };
   const removeMaterial = (invId) => setMaterials(m => m.filter(x => x.invId !== invId));
 
@@ -205,10 +246,12 @@ export default function ProductionTab({ ctx }) {
     if (outputType === 'new' && !outputName.trim()) return ui.alert('Name the new product.');
     const qtyEntered = parseFloat(outputQty);
     if (!qtyEntered || qtyEntered <= 0) return ui.alert('Enter a positive output quantity.');
-    // 'existing' output is also counted in pieces (of that item's own pack
-    // size); 'new' output has no item yet to derive a pack size from, so it's
-    // entered directly in outputUnit's base units.
-    const outputBaseQty = outputType === 'existing' ? +(qtyEntered * outputPieceInfo.perPiece).toFixed(6) : qtyEntered;
+    // 'existing' output is counted in whichever of that item's units was
+    // chosen; 'new' output has no item yet to derive units from, so it is
+    // entered directly in the unit typed beside its name.
+    const outputBaseQty = outputType === 'existing'
+      ? +(qtyEntered * (outputUnitChoice?.factor || 1)).toFixed(6)
+      : qtyEntered;
 
     setSubmitting(true);
     try {
@@ -367,21 +410,35 @@ export default function ProductionTab({ ctx }) {
           <div>
             <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-2">Materials consumed</p>
             <div className="flex flex-wrap gap-2 mb-2">
-              <select value={matPick} onChange={e => setMatPick(e.target.value)}
+              <select value={matPick} onChange={e => { setMatPick(e.target.value); setMatUnit(''); }}
                 className="flex-1 min-w-[200px] bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent">
                 <option value="">Choose an item…</option>
                 {inventory.map(i => {
-                  const { label, onHandPieces } = pieceInfo(i);
-                  return <option key={i._id} value={i._id}>{i.itemName} ({onHandPieces} {label} on hand)</option>;
+                  const [natural] = unitOptions(i);
+                  return <option key={i._id} value={i._id}>{i.itemName} ({onHandIn(i, natural.factor)} {natural.label} on hand)</option>;
                 })}
               </select>
-              <input type="number" min="0" step="0.01" placeholder={matPick ? pieceInfo(inventory.find(i => i._id === matPick)).label : 'Qty'}
+              <input type="number" min="0" step="any" placeholder="Qty" aria-label="Quantity"
                 value={matQty} onChange={e => setMatQty(e.target.value)}
                 className="w-24 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+              {/* The unit this quantity is in. A batch that uses 1.7 L of milk
+                  is entered as 1.7 L, not as a fraction of a carton. */}
+              {(() => {
+                const item = inventory.find(i => i._id === matPick);
+                const opts = unitOptions(item);
+                return (
+                  <select value={matUnit || opts[0].label} onChange={e => setMatUnit(e.target.value)}
+                    aria-label="Unit" disabled={!matPick}
+                    className="w-24 bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-sm text-fg outline-none focus:border-accent disabled:opacity-50">
+                    {opts.map(o => <option key={o.label} value={o.label}>{o.label}</option>)}
+                  </select>
+                );
+              })()}
               <button onClick={addMaterial} className="bg-accent/15 text-brand-text px-3 py-2 rounded-lg font-bold text-xs uppercase hover:bg-accent/25 transition">Add</button>
             </div>
-            {/* Quantities are counted in pieces - for a packed item ("...377G")
-                1 piece = 377g, not the raw gram figure. */}
+            {/* Each line carries the unit it was entered in; the server is sent
+                base units either way, so a line reads the way the person making
+                the batch would say it out loud. */}
             {materials.length > 0 && (
               <ul className="space-y-1.5">
                 {materials.map(m => (
@@ -409,12 +466,12 @@ export default function ProductionTab({ ctx }) {
             </div>
 
             {outputType === 'existing' ? (
-              <select value={outputInvId} onChange={e => setOutputInvId(e.target.value)}
+              <select value={outputInvId} onChange={e => { setOutputInvId(e.target.value); setOutputQtyUnit(''); }}
                 className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent mb-2">
                 <option value="">Choose the item to add to…</option>
                 {inventory.map(i => {
-                  const { label, onHandPieces } = pieceInfo(i);
-                  return <option key={i._id} value={i._id}>{i.itemName} ({onHandPieces} {label} on hand)</option>;
+                  const [natural] = unitOptions(i);
+                  return <option key={i._id} value={i._id}>{i.itemName} ({onHandIn(i, natural.factor)} {natural.label} on hand)</option>;
                 })}
               </select>
             ) : (
@@ -445,10 +502,24 @@ export default function ProductionTab({ ctx }) {
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <input type="number" min="0" step="0.01"
-                placeholder={outputType === 'existing' ? `Output quantity (${outputPieceInfo.label})` : `Output quantity (${outputUnit || 'units'})`}
-                value={outputQty} onChange={e => setOutputQty(e.target.value)}
-                className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+              {/* Counted in whichever unit the output is naturally measured
+                  in - litres of cold brew, kilos of ground coffee, pieces of a
+                  packed item. */}
+              <div className="flex gap-2">
+                <input type="number" min="0" step="any" aria-label="Output quantity"
+                  placeholder="Output quantity"
+                  value={outputQty} onChange={e => setOutputQty(e.target.value)}
+                  className="flex-1 min-w-0 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+                {outputType === 'existing' ? (
+                  <select value={outputQtyUnit || outputUnitOptions[0].label} onChange={e => setOutputQtyUnit(e.target.value)}
+                    aria-label="Output unit" disabled={!outputInvId}
+                    className="w-24 bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-sm text-fg outline-none focus:border-accent disabled:opacity-50">
+                    {outputUnitOptions.map(o => <option key={o.label} value={o.label}>{o.label}</option>)}
+                  </select>
+                ) : (
+                  <span className="w-24 flex items-center justify-center text-xs text-fg/60 border border-white/10 rounded-lg">{outputUnit || 'units'}</span>
+                )}
+              </div>
               <div>
                 <label className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Production date</label>
                 <input type="date" value={productionDate} onChange={e => setProductionDate(e.target.value)}

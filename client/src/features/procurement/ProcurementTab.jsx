@@ -393,7 +393,7 @@ export default function ProcurementTab({ ctx }) {
   };
 
   // ── Supplier CRUD form ──────────────────────────────────────────────────────
-  const blankSupplier = { name: '', contactPerson: '', phone: '', email: '', address: '', notes: '' };
+  const blankSupplier = { name: '', contactPerson: '', phone: '', email: '', address: '', notes: '', tin: '', registeredName: '', isVatRegistered: false };
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [supplierEditId, setSupplierEditId] = useState(null);
   const [supplierForm, setSupplierForm] = useState(blankSupplier);
@@ -470,6 +470,7 @@ export default function ProcurementTab({ ctx }) {
     setSupplierForm(s ? {
       name: s.name || '', contactPerson: s.contactPerson || '', phone: s.phone || '',
       email: s.email || '', address: s.address || '', notes: s.notes || '',
+      tin: s.tin || '', registeredName: s.registeredName || '', isVatRegistered: s.isVatRegistered === true,
     } : blankSupplier);
     setShowSupplierForm(true);
   };
@@ -722,6 +723,42 @@ export default function ProcurementTab({ ctx }) {
   const [receiveExpiry, setReceiveExpiry] = useState({});
   const [receiveProduction, setReceiveProduction] = useState({});
   const [receiveNotes, setReceiveNotes] = useState('');
+  // Goods going BACK. Opened from a PO that has already been received - the
+  // quantities offered are what is still returnable on each line.
+  const [returnPo, setReturnPo] = useState(null);
+  const [returnQtys, setReturnQtys] = useState({});
+  const [returnReason, setReturnReason] = useState('');
+  const [returning, setReturning] = useState(false);
+  // Whether this delivery's supplier charged VAT we can credit. Off unless the
+  // business is VAT-registered, where it decides how the receipt is costed.
+  const [receiveClaimVat, setReceiveClaimVat] = useState(false);
+
+  // What is still returnable on a line: what arrived, less what already went back.
+  const returnableOf = (l) => Math.max(0, (Number(l.receivedQty) || 0) - (Number(l.returnedQty) || 0));
+
+  const openReturn = (po) => {
+    setReturnPo(po);
+    setReturnQtys({});
+    setReturnReason('');
+    setError('');
+  };
+
+  const submitReturn = async () => {
+    if (!returnPo) return;
+    setReturning(true);
+    try {
+      const lines = (returnPo.lines || [])
+        .map((l, i) => ({ lineId: l._id, index: i, qty: Number(returnQtys[l._id || i]) || 0 }))
+        .filter(r => r.qty > 0);
+      const res = await apiFetch(`/api/purchase-orders/${returnPo._id}/return`, {
+        method: 'POST', body: JSON.stringify({ lines, reason: returnReason.trim() }),
+      });
+      const d = await res.json();
+      if (d.success) { setReturnPo(null); await fetchPOs(); }
+      else setError(d.error || 'Could not record the return.');
+    } catch { setError('Could not record the return.'); }
+    finally { setReturning(false); }
+  };
   const [receiving, setReceiving] = useState(false);
 
   const openReceive = (po) => {
@@ -759,7 +796,7 @@ export default function ProcurementTab({ ctx }) {
           productionDate: receiveExpiry[l._id || i] ? null : (receiveProduction[l._id || i] || null),
         }))
         .filter(r => r.receivedQty > 0); // only send lines the user actually entered a delivered qty for
-      const res = await apiFetch(`/api/purchase-orders/${po._id}/receive`, { method: 'POST', body: JSON.stringify({ received, notes: receiveNotes }) });
+      const res = await apiFetch(`/api/purchase-orders/${po._id}/receive`, { method: 'POST', body: JSON.stringify({ received, notes: receiveNotes, claimInputVat: receiveClaimVat }) });
       const d = await res.json();
       if (d.success) { setReceiveId(null); await fetchPOs(); }
       else setError(d.error || 'Failed to reconcile delivery.');
@@ -879,6 +916,9 @@ export default function ProcurementTab({ ctx }) {
                 <div className="flex items-center gap-1.5">
                   <button onClick={() => printPurchaseOrder(po)} title="Print purchase order" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 hover:text-fg transition">Print</button>
                   <span className="text-[10px] font-bold text-amber-400/70 uppercase tracking-wider">Receive rest in Receiving tab</span>
+                  {canManage && po.receivedAt && (
+                    <button onClick={() => openReturn(po)} title="Send delivered goods back to the supplier" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/70 hover:bg-amber-500/20 hover:text-amber-200 transition">Return</button>
+                  )}
                   {canManage && (
                     <button onClick={() => setStatus(po, 'Cancelled')} title="Cancel the outstanding balance - already-received stock is unaffected" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/70 hover:bg-red-500/15 hover:text-red-300 transition">Cancel rest</button>
                   )}
@@ -902,6 +942,17 @@ export default function ProcurementTab({ ctx }) {
             renderActions={(po) => (
               <div className="flex items-center gap-1.5">
                 <button onClick={() => printPurchaseOrder(po)} title="Print purchase order" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 hover:text-fg transition">Print</button>
+                {/* Damage found after the delivery was signed for is normal. The
+                    goods go back, the stock leaves, and what the supplier is
+                    owed drops with it. */}
+                {canManage && po.receivedAt && (po.lines || []).some(l => returnableOf(l) > 0) && (
+                  <button onClick={() => openReturn(po)} title="Send delivered goods back to the supplier" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/60 hover:bg-amber-500/20 hover:text-amber-200 transition">Return</button>
+                )}
+                {(po.returns || []).length > 0 && (
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-300/80" title={(po.returns || []).map(r => `${r.returnNumber}: ${r.reason}`).join('\n')}>
+                    {po.returns.length} return{po.returns.length === 1 ? '' : 's'} · {money((po.returns || []).reduce((t, r) => t + (Number(r.amount) || 0), 0))}
+                  </span>
+                )}
                 {canDelete && ['Cancelled'].includes(po.status) && (
                   <button onClick={() => deletePO(po)} className="p-1.5 rounded-lg text-fg/65 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={14} /></button>
                 )}
@@ -1141,6 +1192,15 @@ export default function ProcurementTab({ ctx }) {
                     })}
                   </div>
                   )}
+                  {systemSettings.vatEnabled === true && (
+                    <label className="flex items-start gap-2 cursor-pointer">
+                      <input type="checkbox" checked={receiveClaimVat} onChange={e => setReceiveClaimVat(e.target.checked)} className="mt-0.5 accent-brand" />
+                      <span>
+                        <span className="text-[11px] text-fg font-bold block">Supplier charged VAT (claim input VAT)</span>
+                        <span className="text-[10px] text-fg/60 leading-snug block">Splits the VAT out of this amount into Input VAT (Creditable). Tick only for a VAT-registered supplier with an official receipt. The stock is then costed net of VAT.</span>
+                      </span>
+                    </label>
+                  )}
                   <textarea value={receiveNotes} onChange={e => setReceiveNotes(e.target.value)} rows={2}
                     placeholder="Delivery notes (optional): damages, substitutions, backorders…" className="w-full bg-white border border-white/10 rounded-lg px-3 py-2 text-sm text-fg placeholder-fg/25 focus:outline-none focus:border-brand/60" />
                   <div className="flex items-center justify-end gap-2">
@@ -1157,6 +1217,61 @@ export default function ProcurementTab({ ctx }) {
           ))}
         </div>
       )}
+
+      {/* -- RETURN TO SUPPLIER (debit memo) -- */}
+      {returnPo && (() => {
+        const rows = (returnPo.lines || []).map((l, i) => ({ l, key: l._id || i, left: returnableOf(l) })).filter(x => x.left > 0);
+        const total = rows.reduce((t, { l, key }) => t + (Number(returnQtys[key]) || 0) * (Number(l.unitCost) || 0), 0);
+        const anyQty = rows.some(({ key }) => (Number(returnQtys[key]) || 0) > 0);
+        return (
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !returning && setReturnPo(null)}>
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-2xl my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+              <div>
+                <h2 className="font-black text-fg text-lg">Return to supplier</h2>
+                <p className="text-fg/60 text-xs font-bold">{returnPo.poNumber} · {returnPo.supplier || 'No supplier'}</p>
+              </div>
+              <button onClick={() => !returning && setReturnPo(null)} className="text-fg/70 hover:text-fg transition"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
+              <p className="text-[11px] text-fg/60 leading-snug">
+                The stock leaves at what it was bought for and the supplier&rsquo;s open invoice drops by the same amount. If that invoice is already paid, the balance becomes credit they hold for you.
+              </p>
+              {rows.length === 0 ? (
+                <p className="text-fg/70 text-sm font-bold py-2">Everything received on this PO has already been returned.</p>
+              ) : rows.map(({ l, key, left }) => (
+                <div key={key} className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-fg truncate">{l.itemName}</p>
+                    <p className="text-fg/60 text-xs">Received {l.receivedQty} {l.unit} @ {money(l.unitCost)} · {left} still returnable</p>
+                  </div>
+                  <input type="number" min="0" max={left} step="any" value={returnQtys[key] ?? ''}
+                    onChange={e => setReturnQtys(q => ({ ...q, [key]: e.target.value }))}
+                    className="w-24 bg-white/5 border border-white/10 focus:border-brand/60 rounded-lg px-2 py-1.5 text-sm text-right text-fg focus:outline-none" />
+                  <span className="text-fg/70 text-xs font-bold w-8">{l.unit}</span>
+                </div>
+              ))}
+              <div>
+                <label htmlFor="po-return-reason" className="text-[11px] font-black uppercase tracking-wider text-fg/70 mb-1 block">Why are they going back?</label>
+                <input id="po-return-reason" value={returnReason} onChange={e => setReturnReason(e.target.value)}
+                  placeholder="Damaged in transit, wrong item, off spec…"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm" />
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-2 px-5 py-4 border-t border-white/10">
+              <span className="text-sm font-black text-fg">{money(total)} <span className="text-fg/60 font-bold text-xs">to credit</span></span>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setReturnPo(null)} disabled={returning} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/70 hover:text-fg transition">Cancel</button>
+                <button onClick={submitReturn} disabled={returning || !anyQty || !returnReason.trim()}
+                  className="flex items-center gap-2 bg-brand text-on-brand disabled:opacity-50 font-bold text-sm px-4 py-2 rounded-xl hover:bg-brand-dark transition">
+                  {returning ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Record return
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {/* ── DRAFT / EDIT MODAL ── */}
       {showForm && (
@@ -1387,6 +1502,27 @@ export default function ProcurementTab({ ctx }) {
               <div>
                 <label className="text-[11px] font-black uppercase tracking-wider text-fg mb-1 block">Address</label>
                 <input value={supplierForm.address} onChange={e => setSupplierForm(f => ({ ...f, address: e.target.value }))} placeholder="Address" className={inputCls} />
+              </div>
+              {/* What a 2307 is made out to, and what substantiates input VAT on
+                  their invoice. Without the TIN the certificate cannot be filed. */}
+              <div>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="checkbox" checked={supplierForm.isVatRegistered === true}
+                    onChange={e => setSupplierForm(f => ({ ...f, isVatRegistered: e.target.checked }))}
+                    className="mt-0.5 accent-brand" />
+                  <span>
+                    <span className="text-[11px] font-black uppercase tracking-wider text-fg block">VAT-registered supplier</span>
+                    <span className="text-[10px] text-fg/60 leading-snug block">They charge VAT, so input VAT on their bills is claimable.</span>
+                  </span>
+                </label>
+              </div>
+              <div>
+                <label className="text-[11px] font-black uppercase tracking-wider text-fg mb-1 block">TIN</label>
+                <input value={supplierForm.tin} onChange={e => setSupplierForm(f => ({ ...f, tin: e.target.value }))} placeholder="000-000-000-00000" className={inputCls} />
+              </div>
+              <div>
+                <label className="text-[11px] font-black uppercase tracking-wider text-fg mb-1 block">Registered name</label>
+                <input value={supplierForm.registeredName} onChange={e => setSupplierForm(f => ({ ...f, registeredName: e.target.value }))} placeholder="As registered with the BIR" className={inputCls} />
               </div>
               <div>
                 <label className="text-[11px] font-black uppercase tracking-wider text-fg mb-1 block">Notes</label>

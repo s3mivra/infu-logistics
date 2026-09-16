@@ -116,6 +116,15 @@ const readFontScale = () => {
   try { return Number(localStorage.getItem('dash.fontScale')) || 100; } catch { return 100; }
 };
 
+// Offered rather than typed: a mistyped zone would be rejected by the server,
+// and a *valid but wrong* one would quietly move every report, EOD count and
+// midnight close by hours.
+const TIME_ZONES = [
+  'Asia/Manila', 'Asia/Singapore', 'Asia/Hong_Kong', 'Asia/Taipei', 'Asia/Tokyo',
+  'Asia/Seoul', 'Asia/Bangkok', 'Asia/Jakarta', 'Asia/Kuala_Lumpur', 'Asia/Dubai',
+  'Australia/Sydney', 'Europe/London', 'America/Los_Angeles', 'America/New_York', 'UTC',
+];
+
 export default function SettingsTab({ ctx }) {
   const {
     systemSettings = {}, toggleQROrders, toggleAutoClose, toggleImages,
@@ -259,6 +268,33 @@ export default function SettingsTab({ ctx }) {
                 <Toggle on={qrOn} onChange={toggleQROrders} />
               </SettingRow>
             )}
+            {/* Every day boundary in the system hangs off this: which day a
+                sale belongs to, when the EOD count locks, when the midnight
+                close fires, and the range every report covers. */}
+            <div className="flex items-start gap-4 px-4 py-4">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand-text bg-brand/15 border-brand/30">
+                <Clock size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-fg text-sm">Time zone</p>
+                <p className="text-fg/70 text-xs mt-0.5 leading-snug">
+                  The business&apos;s own clock. It decides which day a sale belongs to, when the day&apos;s count locks, and what a daily report covers - whatever timezone the server itself runs in.
+                </p>
+                <label htmlFor="biz-tz" className="sr-only">Business time zone</label>
+                <select
+                  id="biz-tz"
+                  value={systemSettings.businessTimeZone || 'Asia/Manila'}
+                  onChange={e => saveSetting?.('businessTimeZone', e.target.value)}
+                  className="mt-2 w-full max-w-xs bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition font-bold"
+                >
+                  {TIME_ZONES.map(tz => <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>)}
+                </select>
+                <p className="text-[10px] text-fg/55 mt-1.5">
+                  Changing this takes effect at once. Do it between trading days - mid-day it moves where the current day&apos;s sales are counted.
+                </p>
+              </div>
+            </div>
+
             <SettingRow icon={Clock} title="Automatic Midnight Close"
               desc={autoOn ? 'The day auto-closes & archives at midnight.' : 'Manual close required; the day stays open past midnight.'}>
               <Toggle on={autoOn} onChange={toggleAutoClose} />
@@ -474,6 +510,40 @@ export default function SettingsTab({ ctx }) {
                         </p>
                       </div>
 
+                      {/* A delivery charge is generally part of gross receipts and
+                          VATable - but a business that merely passes a courier's
+                          own fee through bills it differently, so it is asked
+                          rather than assumed. Stamped per order, so changing it
+                          never restates a receipt already issued. */}
+                      <div className="mt-4">
+                        <label className="flex items-start gap-2 cursor-pointer">
+                          <input type="checkbox" checked={systemSettings.deliveryFeeVatable === true}
+                            onChange={e => saveSetting?.('deliveryFeeVatable', e.target.checked)}
+                            className="mt-0.5 accent-brand" />
+                          <span>
+                            <span className="text-[11px] font-bold text-fg block">Delivery fees carry VAT</span>
+                            <span className="text-[10px] text-fg/60 leading-snug block">On by most businesses: the delivery service is part of gross receipts. Leave off only if you bill a courier&apos;s fee as a pass-through. Ask your accountant.</span>
+                          </span>
+                        </label>
+                      </div>
+
+                      <div className="mt-4">
+                        <label htmlFor="biz-tin" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
+                          VAT registration TIN
+                        </label>
+                        <input
+                          id="biz-tin"
+                          type="text"
+                          defaultValue={systemSettings.businessTin || ''}
+                          onBlur={e => saveSetting?.('businessTin', e.target.value.trim())}
+                          placeholder="000-000-000-00000"
+                          className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition font-bold"
+                        />
+                        <p className="text-[10px] text-fg/60 mt-1.5">
+                          Printed on every invoice and receipt. A VAT invoice without the seller&apos;s TIN does not let a VAT-registered buyer claim the VAT.
+                        </p>
+                      </div>
+
                       <div className="mt-4">
                         <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
                           Price basis
@@ -537,6 +607,43 @@ export default function SettingsTab({ ctx }) {
                       )}
                     </>
                   )}
+
+                  {/* What the receipt has to carry to BE a registered receipt:
+                      the authority/permit number it was printed or issued
+                      under, the machine it was issued from, and the serial
+                      series. Blank until the business has them, and printed
+                      only when filled in. */}
+                  <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="sm:col-span-2">
+                      <p className="text-[11px] font-bold text-fg">Receipt registration (BIR)</p>
+                      <p className="text-[10px] text-fg/60 leading-snug">Printed at the foot of every receipt and invoice. Copy these from your Authority to Print or Permit to Use.</p>
+                    </div>
+                    <div>
+                      <label htmlFor="bir-permit" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">ATP / Permit no.</label>
+                      <input id="bir-permit" type="text" defaultValue={systemSettings.birPermitNo || ''}
+                        onBlur={e => saveSetting?.('birPermitNo', e.target.value.trim())}
+                        className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm" />
+                    </div>
+                    <div>
+                      <label htmlFor="bir-min" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Machine ID / serial</label>
+                      <input id="bir-min" type="text" defaultValue={systemSettings.birMachineId || ''}
+                        onBlur={e => saveSetting?.('birMachineId', e.target.value.trim())}
+                        className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm" />
+                    </div>
+                    <div>
+                      <label htmlFor="or-prefix" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Receipt serial prefix</label>
+                      <input id="or-prefix" type="text" defaultValue={systemSettings.orPrefix || ''} placeholder="e.g. OR-"
+                        onBlur={e => saveSetting?.('orPrefix', e.target.value.trim())}
+                        className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm" />
+                    </div>
+                    <div>
+                      <label htmlFor="or-start" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Continue serials from</label>
+                      <input id="or-start" type="number" min="0" defaultValue={systemSettings.orStartNumber ?? 0}
+                        onBlur={e => saveSetting?.('orStartNumber', Number(e.target.value) || 0)}
+                        className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm" />
+                      <p className="text-[10px] text-fg/55 mt-1">Set once, before the first sale: the number your registered series is already up to.</p>
+                    </div>
+                  </div>
 
                   <p className="text-[10px] text-fg/60 mt-3 leading-relaxed">
                     Changing this affects <span className="text-fg/80 font-bold">new orders only</span>.

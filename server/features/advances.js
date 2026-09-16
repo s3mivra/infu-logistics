@@ -201,7 +201,8 @@ export default function registerAdvances(ctx) {
   // way applying client credit does). Crediting 120000 without moving the
   // order's arPaidAmount left the A/R screens showing the full balance while
   // the ledger said it was partly paid - the two stopped agreeing.
-  // Bill liquidations still only move the ledger.
+  // A bill liquidation does the same for the bill: it records a payment, so the
+  // A/P aging and the bill's own status agree with 220000.
   app.post('/api/advances/:id/liquidate', verifyToken, ...canPostAcct, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
@@ -247,6 +248,15 @@ export default function registerAdvances(ctx) {
         if (!mongoose.Types.ObjectId.isValid(billId)) return res.status(400).json({ success: false, error: 'A valid billId is required.' });
         bill = await Bill.findOne({ _id: billId, businessType: BUSINESS_TYPE, ...tenantScope(req) });
         if (!bill) return res.status(404).json({ success: false, error: 'Bill not found.' });
+        // Only an approved bill has booked its payable; paying a pending one
+        // would drive 220000 below what is actually owed.
+        if (!['Approved', 'Partially Paid'].includes(bill.status)) {
+          return res.status(409).json({ success: false, error: `Only an Approved or Partially Paid bill can be settled (this one is ${bill.status}).` });
+        }
+        const billOwes = money(bill.amount - (bill.paidAmount || 0));
+        if (billOwes <= 0) return res.status(409).json({ success: false, error: 'This bill is already fully paid.' });
+        if (!amountGiven) amt = money(Math.min(outstanding, billOwes));
+        if (amt > billOwes + 0.01) return res.status(400).json({ success: false, error: `Cannot apply more than the bill's outstanding balance (P${billOwes.toFixed(2)}).` });
         contra = { code: '220000', name: 'Accounts Payable' };
       } else if (method === 'order') {
         if (!mongoose.Types.ObjectId.isValid(orderId)) return res.status(400).json({ success: false, error: 'A valid orderId is required.' });
@@ -285,6 +295,19 @@ export default function registerAdvances(ctx) {
         description: `Liquidation of advance ${advance.advanceNumber} (${advance.payeeName}) via ${method}${note ? ` - ${note}` : ''}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}`,
         lines, totalDebit: amt, totalCredit: amt,
       });
+
+      if (bill) {
+        bill.paidAmount = money((bill.paidAmount || 0) + amt);
+        bill.status = bill.paidAmount >= bill.amount - 0.01 ? 'Paid' : 'Partially Paid';
+        bill.paidAt = txnDate;
+        bill.journalEntryRef = reference;
+        bill.payments.push({
+          amount: amt, payFromAccount: ctl.code,
+          referenceNumber: referenceNumber || `Advance ${advance.advanceNumber} applied`,
+          journalRef: reference, paidBy: req.user?.name || '',
+        });
+        await bill.save();
+      }
 
       if (order) {
         order.arPayments.push({

@@ -660,6 +660,7 @@ export default function ClientOrderPage() {
         subFields: [
           { label: 'Status', value: STATUS_VIEW(order.status).label },
           ...(order.billingNumber ? [{ label: 'Billing No.', value: order.billingNumber }] : []),
+          ...(order.orNumber ? [{ label: 'OR No.', value: order.orNumber }] : []),
           ...(order.paymentMethod ? [{ label: 'Payment', value: order.paymentMethod }] : []),
         ],
         schedRows: order.orderNotes ? [{ label: 'Notes:', value: order.orderNotes }] : [],

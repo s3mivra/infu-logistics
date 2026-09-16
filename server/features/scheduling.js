@@ -2,6 +2,7 @@
 // ScheduledShiftSchema comment in server.js for why this is separate from the
 // cash-drawer `Shift` and attendance `ClockEntry` records.
 import { captureError } from '../lib/errorLog.js';
+import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 
 export default function registerScheduling(ctx) {
   const {
@@ -48,7 +49,7 @@ export default function registerScheduling(ctx) {
   // beyond being logged in - they can never see anyone else's or any Draft.
   app.get('/api/scheduling/my-schedule', verifyToken, requireStaff, async (req, res) => {
     try {
-      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' }); // YYYY-MM-DD Manila
+      const today = businessDateStr(); // YYYY-MM-DD Manila
       const shifts = await ScheduledShift.find({
         businessType: BUSINESS_TYPE, ...tenantScope(req),
         staffId: req.user._id, status: 'Published', date: { $gte: today },

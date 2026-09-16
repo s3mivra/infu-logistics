@@ -4,6 +4,7 @@
 // booked (the POS applies the result through the existing order-level
 // discountPercent field).
 import { captureError } from '../lib/errorLog.js';
+import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 
 export default function registerDiscountRules(ctx) {
   const {
@@ -102,7 +103,7 @@ export default function registerDiscountRules(ctx) {
       const at = req.body?.at ? new Date(req.body.at) : new Date();
       // Day-of-week in Manila (the business's operating timezone), matching how
       // every other date bucket in this app is computed.
-      const manilaDow = new Date(at.toLocaleString('en-US', { timeZone: 'Asia/Manila' })).getDay();
+      const manilaDow = new Date(at.toLocaleString('en-US', { timeZone: businessTimeZone() })).getDay();
 
       // Resolve the buyer's segments: an explicit `segment`, or every segment on
       // the given clientId's account. A segment-scoped rule needs one of these.

@@ -17,12 +17,14 @@ export default function ExpensesPage() {
     expenseCategories, expenseForm, setExpenseForm, expenseSubmitting, submitExpense,
     expenseList, fetchExpenses, fetchExpenseCategories, exportExpensesPDF,
     downloadExpenseImportTemplate, parseExpenseImportExcel, expenseImportPreview, setExpenseImportPreview, expenseImporting, submitExpenseImport,
-    apiFetch,
+    apiFetch, systemSettings = {},
   } = useDashboard();
 
   // The withholding box only appears where the business actually withholds.
   const { isOn } = useModules(apiFetch);
   const withholdingOn = isOn('withholdingTax');
+  // Input VAT is only claimable by a VAT-registered business.
+  const vatOn = systemSettings.vatEnabled === true;
   const grossAmt = Number(expenseForm.amount) || 0;
   const withheldAmt = Math.round(grossAmt * (Number(expenseForm.withholdingRate) || 0)) / 100;
 
@@ -113,6 +115,19 @@ export default function ExpensesPage() {
             <input type="text" placeholder="e.g. June electricity bill" value={expenseForm.description} onChange={e => set({ description: e.target.value })}
               className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
           </div>
+          {vatOn && (
+            <div className="sm:col-span-2">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input type="checkbox" checked={expenseForm.claimInputVat === true}
+                  onChange={e => set({ claimInputVat: e.target.checked })}
+                  className="mt-0.5 accent-brand" />
+                <span>
+                  <span className="text-[11px] text-fg font-bold block">Supplier charged VAT (claim input VAT)</span>
+                  <span className="text-[10px] text-fg/60 leading-snug block">Splits the VAT out of this amount into Input VAT (Creditable). Tick only for a VAT-registered supplier with an official receipt.</span>
+                </span>
+              </label>
+            </div>
+          )}
           <div>
             <label className="text-[10px] text-fg/80 font-bold uppercase block mb-1">Vendor (optional)</label>
             <input type="text" placeholder="Meralco" value={expenseForm.vendor} onChange={e => set({ vendor: e.target.value })}

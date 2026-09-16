@@ -2,9 +2,11 @@
 // Models/helpers/middleware live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { title, lower, freeText, squish } from '../lib/normalize.js';
+import { INPUT_VAT } from '../lib/vatPosting.js';
+import { loadVatConfig } from '../lib/vatSettings.js';
 
 import { captureError } from '../lib/errorLog.js';
-import { addBatch, soonestExpiry } from '../lib/expiry.js';
+import { addBatch, soonestExpiry, consumeBatches } from '../lib/expiry.js';
 import { dayStart } from '../lib/reportRange.js';
 
 export default function registerPurchaseOrders(ctx) {
@@ -22,6 +24,7 @@ export default function registerPurchaseOrders(ctx) {
     Advance,
     CheckVoucher,
     logAudit,
+    Settings,
     PurchaseOrder,
     PO_STATUSES,
     Bill,
@@ -323,13 +326,20 @@ export default function registerPurchaseOrders(ctx) {
   // A line is routed by its purchaseType. Only `inventory` touches stock; the
   // other two never should - an espresso machine in Inventory is both an
   // overstated stock figure and something a recipe could consume.
-  const postReceiptToStock = async (req, deltas, po) => {
+  const postReceiptToStock = async (req, deltas, po, { claimInputVat = false } = {}) => {
+    const poVatCfg = await loadVatConfig(Settings);
     let totalCost = 0;
     for (const { line, delta, expiryDate, productionDate } of deltas) {
       const kind = line.purchaseType || 'inventory';
 
+      // What the supplier charges for this line, VAT included.
+      const lineGross = money(delta * (Number(line.unitCost) || 0));
+      // Creditable VAT is not part of what the goods cost: it is split out and
+      // held in 170300, so stock is never carried at a VAT-inclusive price.
+      const lineVat = claimInputVat && poVatCfg.enabled ? money(lineGross - lineGross / (1 + poVatCfg.rate)) : 0;
+      const lineCost = money(lineGross - lineVat);
+
       if (kind !== 'inventory') {
-        const lineCost = money(delta * (Number(line.unitCost) || 0));
         if (lineCost <= 0) continue;
         const out = await postNonInventoryReceipt(req, line, kind, lineCost, delta, po);
         if (out) totalCost = money(totalCost + lineCost);
@@ -342,7 +352,6 @@ export default function registerPurchaseOrders(ctx) {
 
       const basePerPack = (Number(line.packSize) || 1) * (Number(item.unitMultiplier) || 1);
       const baseQty = delta * basePerPack;
-      const lineCost = money(delta * (Number(line.unitCost) || 0));
       if (baseQty <= 0) continue;
 
       const rcvRef = await mkSeqRef('PO-RCV');
@@ -396,14 +405,15 @@ export default function registerPurchaseOrders(ctx) {
           // already settled.
           lines: [
             { accountCode: '130000', accountName: 'Inventory Asset', debit: lineCost, credit: 0 },
+            ...(lineVat > 0 ? [{ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: lineVat, credit: 0 }] : []),
             po?.prepaid
-              ? { accountCode: '170200', accountName: acctMeta('170200')?.name || 'Advances to Suppliers', debit: 0, credit: lineCost }
-              : { accountCode: '220000', accountName: 'Accounts Payable', debit: 0, credit: lineCost },
+              ? { accountCode: '170200', accountName: acctMeta('170200')?.name || 'Advances to Suppliers', debit: 0, credit: lineGross }
+              : { accountCode: '220000', accountName: 'Accounts Payable', debit: 0, credit: lineGross },
           ],
-          totalDebit: lineCost,
-          totalCredit: lineCost,
+          totalDebit: lineGross,
+          totalCredit: lineGross,
         });
-        totalCost = money(totalCost + lineCost);
+        totalCost = money(totalCost + lineGross);
       }
     }
     // The advance record must track the ledger. The journal entries above
@@ -481,13 +491,14 @@ export default function registerPurchaseOrders(ctx) {
       po.actualTotal = money(po.lines.reduce((s, l) => s + (Number(l.receivedQty) || 0) * (Number(l.unitCost) || 0), 0));
       po.receivedAt = new Date();
       po.receivedBy = req.user?.name || '';
+      if (req.body?.claimInputVat === true) po.inputVatClaimed = true;
       if (req.body?.notes !== undefined) po.notes = String(req.body.notes).slice(0, 1000);
       await po.save();
 
       // Post the delivery into stock and the books. Without this the PO flips to
       // Complete while inventory never moves - goods marked received that the
       // stock ledger never hears about.
-      const posted = await postReceiptToStock(req, deltas, po);
+      const posted = await postReceiptToStock(req, deltas, po, { claimInputVat: req.body?.claimInputVat === true });
 
       // One Bill per delivery (not per line - a supplier sends one invoice for
       // the whole shipment), awaiting approval before it can be scheduled/paid.
@@ -519,6 +530,178 @@ export default function registerPurchaseOrders(ctx) {
       logAudit?.(req, { action: 'receive', entity: 'purchase_order', entityId: po.poNumber, after: { status: po.status, actualTotal: po.actualTotal, stockPosted: posted.totalCost, billNumber: bill?.billNumber } });
       if (posted.totalCost > 0) emitToMgr?.('erpUpdated');
       res.json({ success: true, purchaseOrder: po.toObject(), bill });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  // -- RETURN TO SUPPLIER (debit memo) -------------------------------------------
+  // POST /api/purchase-orders/:id/return  { lines: [{ lineId?, index?, qty }], reason }
+  //
+  // Goods arrive damaged, short, off-spec, or simply wrong, and go back. Until
+  // now the only way to record that was an inventory adjustment, which takes the
+  // stock out but leaves the supplier's invoice standing at the full amount - so
+  // the business ends up paying for goods it returned, and the stock loss shows
+  // up as shrinkage it never suffered.
+  //
+  // A return is the mirror of the receipt it reverses: stock leaves at the cost
+  // it came in at, the creditable VAT claimed on it is given back, and the money
+  // side lands wherever the money actually is - against the supplier's still-open
+  // invoice first, and only the remainder as credit they hold for us, because a
+  // debit memo against an invoice already paid does not un-pay it.
+  app.post('/api/purchase-orders/:id/return', verifyToken, ...canManageProc, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const po = await PurchaseOrder.findOne({ _id: req.params.id, ...tenantScope(req) });
+      if (!po) return res.status(404).json({ success: false, error: 'Not found' });
+      if (!po.receivedAt) return res.status(409).json({ success: false, error: 'Nothing has been received on this PO yet, so there is nothing to send back.' });
+
+      const reason = String(req.body?.reason || '').trim();
+      if (!reason) return res.status(400).json({ success: false, error: 'Say why the goods are going back - a return with no reason cannot be explained to the supplier or to an examiner.' });
+
+      const wanted = Array.isArray(req.body?.lines) ? req.body.lines : [];
+      if (!wanted.length) return res.status(400).json({ success: false, error: 'Pick at least one line to return.' });
+
+      // Resolve each requested line against the PO, and check it against what
+      // was actually received and not already sent back.
+      const picks = [];
+      for (const w of wanted) {
+        const idx = w.lineId != null
+          ? po.lines.findIndex(l => String(l._id) === String(w.lineId))
+          : Number(w.index);
+        const line = po.lines[idx];
+        if (!line) return res.status(400).json({ success: false, error: 'One of the lines is not on this PO.' });
+        const qty = Number(w.qty) || 0;
+        if (qty <= 0) continue;
+        if ((line.purchaseType || 'inventory') !== 'inventory') {
+          return res.status(400).json({ success: false, error: 'Only stock lines can be returned here. Reverse a service or an asset through its own record.' });
+        }
+        const returnable = (Number(line.receivedQty) || 0) - (Number(line.returnedQty) || 0);
+        if (qty > returnable + 1e-9) {
+          return res.status(400).json({ success: false, error: `Only ${returnable} of ${line.itemName || 'that line'} can still be returned.` });
+        }
+        picks.push({ line, qty });
+      }
+      if (!picks.length) return res.status(400).json({ success: false, error: 'Pick at least one line to return.' });
+
+      const vatCfg = await loadVatConfig(Settings);
+      const rate = po.inputVatClaimed && vatCfg.enabled ? vatCfg.rate : 0;
+
+      const retRef = await mkSeqRef('PO-RET');
+      let grossTotal = 0, vatTotal = 0, costTotal = 0;
+      const memoLines = [];
+
+      for (const { line, qty } of picks) {
+        const gross = money(qty * (Number(line.unitCost) || 0));
+        const vat = rate > 0 ? money(gross - gross / (1 + rate)) : 0;
+        const cost = money(gross - vat);
+
+        if (line.invId && mongoose.Types.ObjectId.isValid(String(line.invId))) {
+          const item = await Inventory.findById(line.invId);
+          if (item) {
+            const basePerPack = (Number(line.packSize) || 1) * (Number(item.unitMultiplier) || 1);
+            const baseQty = qty * basePerPack;
+            // Goods can only go back if they are still on the shelf. Letting the
+            // count go negative would hide the real problem: stock recorded as
+            // returned that had already been sold or consumed.
+            if (baseQty > (Number(item.stockQty) || 0) + 1e-9) {
+              return res.status(409).json({
+                success: false,
+                error: `Only ${item.stockQty} ${item.unit || ''} of ${item.itemName} is on hand - less than this return.`.replace(/\s+/g, ' '),
+              });
+            }
+            item.stockQty = Number(((Number(item.stockQty) || 0) - baseQty).toFixed(6));
+            // The batches leave oldest-first, the same way any other issue does.
+            const consumed = consumeBatches(item.expiryBatches || [], baseQty);
+            item.expiryBatches = consumed.batches;
+            item.expiryDate = soonestExpiry(item.expiryBatches);
+            await item.save();
+
+            await StockCard.create({
+              inventoryId: item._id,
+              itemName: item.itemName,
+              type: 'Adjustment',
+              reference: retRef,
+              qtyChange: -baseQty,
+              unitCost: baseQty > 0 ? cost / baseQty : 0,
+              balanceAfter: item.stockQty,
+              remarks: `Returned to ${po.supplier || 'supplier'} on ${po.poNumber}: ${reason}`,
+            });
+          }
+        }
+
+        line.returnedQty = Number(((Number(line.returnedQty) || 0) + qty).toFixed(6));
+        grossTotal = money(grossTotal + gross);
+        vatTotal = money(vatTotal + vat);
+        costTotal = money(costTotal + cost);
+        memoLines.push({ itemName: line.itemName || '', qty, amount: gross });
+      }
+
+      if (grossTotal <= 0) return res.status(400).json({ success: false, error: 'The returned lines carry no cost, so there is nothing to credit.' });
+
+      // Where the money side lands. An unpaid invoice simply gets smaller; once
+      // it is paid, the supplier is holding our money and the balance becomes
+      // credit we can spend on the next delivery.
+      let appliedToBills = 0;
+      const openBills = po.supplierId
+        ? await Bill.find({ purchaseOrderId: po._id, status: { $nin: ['Paid', 'Rejected', 'Cancelled'] } }).sort({ createdAt: 1 })
+        : [];
+      let left = grossTotal;
+      for (const bill of openBills) {
+        if (left <= 0) break;
+        // Never below what has already been paid on it - that money really left.
+        const reducible = money(bill.amount - (bill.paidAmount || 0));
+        const cut = Math.min(reducible, left);
+        if (cut <= 0) continue;
+        bill.amount = money(bill.amount - cut);
+        bill.description = `${bill.description || ''} (less ${retRef} returned)`.trim();
+        if ((bill.paidAmount || 0) > 0 && bill.amount <= (bill.paidAmount || 0) + 0.01) {
+          bill.status = 'Paid';
+          bill.paidAt = bill.paidAt || new Date();
+        }
+        await bill.save();
+        appliedToBills = money(appliedToBills + cut);
+        left = money(left - cut);
+      }
+      const creditToSupplier = money(left);
+      if (creditToSupplier > 0 && po.supplierId && Supplier) {
+        await Supplier.updateOne({ _id: po.supplierId }, {
+          $inc: { creditBalance: creditToSupplier },
+          $push: { creditHistory: { type: 'adjusted', amount: creditToSupplier, reference: retRef, note: `Goods returned on ${po.poNumber}: ${reason}`, by: req.user?.name || '' } },
+        });
+      }
+
+      // The books. Stock leaves at what it was carried at, the input VAT claimed
+      // on it goes back, and the debit sits wherever the claim against the
+      // supplier now lives.
+      const debitLines = [];
+      if (appliedToBills > 0) debitLines.push({ accountCode: '220000', accountName: 'Accounts Payable', debit: appliedToBills, credit: 0 });
+      if (creditToSupplier > 0) debitLines.push({ accountCode: '160100', accountName: acctMeta('160100')?.name || 'Supplier Credit Balance', debit: creditToSupplier, credit: 0 });
+
+      await JournalEntry.create({
+        reference: retRef,
+        description: `Returned goods to ${po.supplier || 'supplier'} on ${po.poNumber}: ${reason}`,
+        supplierId: po.supplierId ? String(po.supplierId) : null,
+        supplierName: po.supplier || '',
+        lines: [
+          ...debitLines,
+          { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: costTotal },
+          ...(vatTotal > 0 ? [{ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: 0, credit: vatTotal }] : []),
+        ],
+        totalDebit: grossTotal,
+        totalCredit: grossTotal,
+      });
+
+      po.returns.push({
+        returnNumber: retRef, reason, amount: grossTotal, vatAmount: vatTotal,
+        appliedToBills, creditToSupplier, reference: retRef, lines: memoLines,
+        by: req.user?.name || '',
+      });
+      // What we are actually keeping, and paying for.
+      po.actualTotal = money(po.lines.reduce((sum, l) => sum + ((Number(l.receivedQty) || 0) - (Number(l.returnedQty) || 0)) * (Number(l.unitCost) || 0), 0));
+      await po.save();
+
+      logAudit?.(req, { action: 'return', entity: 'purchase_order', entityId: po.poNumber, after: { returnNumber: retRef, amount: grossTotal, appliedToBills, creditToSupplier, reason } });
+      emitToMgr?.('erpUpdated');
+      res.json({ success: true, purchaseOrder: po.toObject(), debitMemo: { returnNumber: retRef, amount: grossTotal, vatAmount: vatTotal, appliedToBills, creditToSupplier } });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
@@ -603,7 +786,7 @@ export default function registerPurchaseOrders(ctx) {
 
   app.post('/api/suppliers', verifyToken, ...canManageProc, async (req, res) => {
     try {
-      const { name, contactPerson = '', phone = '', email = '', address = '', notes = '' } = req.body || {};
+      const { name, contactPerson = '', phone = '', email = '', address = '', notes = '', tin = '', registeredName = '', isVatRegistered } = req.body || {};
       // Canonicalize before the duplicate check, so "abc trading", "ABC Trading"
       // and "  ABC   Trading " can't all become separate supplier records.
       const cleanName = title(name);
@@ -618,6 +801,9 @@ export default function registerPurchaseOrders(ctx) {
         email: lower(email).slice(0, 200),
         address: freeText(address).slice(0, 300),
         notes: freeText(notes).slice(0, 1000),
+        tin: squish(tin).slice(0, 30),
+        registeredName: freeText(registeredName).slice(0, 200),
+        isVatRegistered: isVatRegistered === true,
         ...tenantScope(req),
       });
       logAudit?.(req, { action: 'create', entity: 'supplier', entityId: supplierCode });
@@ -685,7 +871,7 @@ export default function registerPurchaseOrders(ctx) {
   app.patch('/api/suppliers/:id', verifyToken, ...canManageProc, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
-      const { name, contactPerson, phone, email, address, notes, isActive } = req.body || {};
+      const { name, contactPerson, phone, email, address, notes, isActive, tin, registeredName, isVatRegistered } = req.body || {};
       const update = {};
       if (name !== undefined) {
         const cleanName = title(name);
@@ -700,6 +886,9 @@ export default function registerPurchaseOrders(ctx) {
       if (email !== undefined) update.email = lower(email).slice(0, 200);
       if (address !== undefined) update.address = freeText(address).slice(0, 300);
       if (notes !== undefined) update.notes = freeText(notes).slice(0, 1000);
+      if (tin !== undefined) update.tin = squish(tin).slice(0, 30);
+      if (registeredName !== undefined) update.registeredName = freeText(registeredName).slice(0, 200);
+      if (typeof isVatRegistered === 'boolean') update.isVatRegistered = isVatRegistered;
       if (typeof isActive === 'boolean') update.isActive = isActive;
       const supplier = await Supplier.findOneAndUpdate(
         { _id: req.params.id, ...tenantScope(req) }, { $set: update }, { new: true }

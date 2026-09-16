@@ -3,6 +3,7 @@
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
 import { isValidBranchCode } from '../lib/branchCode.js';
+import { isValidTimeZone, setBusinessTimeZone, businessTimeZone } from '../lib/businessTime.js';
 import { moduleStates, MODULE_KEYS, truthy } from '../lib/optionalModules.js';
 
 export default function registerSettings(ctx) {
@@ -396,6 +397,45 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
       const saved = await Settings.findOneAndUpdate({ key: 'branchCode' }, { value: code }, { upsert: true, returnDocument: 'after' });
       invalidateBranchCodeCache();
       emitToAll('settingsUpdated', { key: 'branchCode', value: code });
+      return res.json({ success: true, setting: saved });
+    }
+
+    // The business's clock. Every day boundary hangs off it - report ranges,
+    // the EOD lock, the midnight close - so it is validated before it is stored
+    // and applied to the running server at once: a shop that has just told the
+    // system where it is should not have to wait for a restart to get its own
+    // day back.
+    if (req.params.key === 'businessTimeZone') {
+      const zone = String(value || '').trim();
+      if (!isValidTimeZone(zone)) {
+        return res.status(400).json({ success: false, error: 'That is not a timezone this system knows. Pick one from the list.' });
+      }
+      const saved = await Settings.findOneAndUpdate({ key: 'businessTimeZone' }, { value: zone }, { upsert: true, returnDocument: 'after' });
+      setBusinessTimeZone(zone);
+      try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: 'businessTimeZone', after: { timeZone: zone } }); } catch { /* audit is best-effort */ }
+      emitToAll('settingsUpdated', { key: 'businessTimeZone', value: zone });
+      return res.json({ success: true, setting: saved, timeZone: businessTimeZone() });
+    }
+
+    // The receipt series is a registered, gapless sequence. Where it STARTS can
+    // be declared once, before the first receipt is issued - after that, moving
+    // it would renumber receipts already in a customer's hands or skip numbers
+    // nobody can account for. The prefix and permit details stay editable; the
+    // starting number does not.
+    if (req.params.key === 'orStartNumber') {
+      const n = Math.floor(Number(value));
+      if (!Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ success: false, error: 'The starting receipt number must be zero or a positive whole number.' });
+      }
+      if (await mongoose.model('Order').exists({ orNumber: { $nin: [null, ''] } })) {
+        return res.status(409).json({
+          success: false,
+          error: 'Receipts have already been issued from this series, so its starting number can no longer be changed.',
+        });
+      }
+      const saved = await Settings.findOneAndUpdate({ key: 'orStartNumber' }, { value: n }, { upsert: true, returnDocument: 'after' });
+      try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: 'orStartNumber', after: { start: n } }); } catch { /* audit is best-effort */ }
+      emitToAll('settingsUpdated', { key: 'orStartNumber', value: n });
       return res.json({ success: true, setting: saved });
     }
 

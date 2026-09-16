@@ -84,9 +84,21 @@ describe('CODE_MAP migration table', () => {
   });
 });
 
-describe('Non-VAT compliance', () => {
-  it('has no VAT Payable account', () => {
-    for (const meta of Object.values(ACCOUNTS)) expect(meta.name.toLowerCase()).not.toMatch(/vat payable/);
+describe('VAT accounts', () => {
+  // The chart was non-VAT only, which left a VAT-registered business with
+  // nowhere to hold the VAT it collects: sales credited the gross amount to
+  // revenue and no liability existed to remit from. Both sides now exist, and
+  // they stay unused (and harmless) while VAT is switched off in Settings.
+  it('holds VAT collected on sales as a liability under Taxes Payable', () => {
+    expect(ACCOUNTS['230300']).toMatchObject({ name: 'Output VAT Payable', type: 'liability', parent: '230000' });
+    expect(isLiabilityCode('230300')).toBe(true);
+  });
+
+  it('holds creditable VAT paid on purchases as an asset, not an expense', () => {
+    expect(ACCOUNTS['170300']).toMatchObject({ name: 'Input VAT (Creditable)', type: 'asset', parent: '170000' });
+    // Never a cost: input VAT sitting in 5xxxxx/6xxxxx would overstate COGS
+    // and expenses by the VAT the business gets back.
+    expect(isCogsCode('170300')).toBe(false);
   });
 });
 

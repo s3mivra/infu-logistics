@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { resolveCreditLimit, checkCreditAvailable, arBalance } from '../lib/credit.js';
+import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { title } from '../lib/normalize.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
@@ -9,6 +10,8 @@ import { captureError } from '../lib/errorLog.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
 import { resolveTierPercent } from '../lib/priceTiers.js';
 import { buildSalePriceMap, saleUnitPrice, activeSalesQuery } from '../lib/salePricing.js';
+import { saleRevenueLines, vatShare, vatFromInclusive, deliveryFeeVat, OUTPUT_VAT } from '../lib/vatPosting.js';
+import { loadVatConfig as loadVatConfigShared } from '../lib/vatSettings.js';
 
 export default function registerOrders(ctx) {
   const {
@@ -219,6 +222,47 @@ async function runWithStatsRetry(onceFn, req, res) {
   }
 }
 
+// The registered receipt serial, issued as the sale completes: an unfinished or
+// cancelled order never had a receipt, and spending a serial on one would leave
+// a gap in the series that has to be explained to an examiner.
+//
+// Deliberately NOT inside the completion transaction. The counter is a single
+// document every completing sale touches, and adding it to a transaction that
+// already contends on the stats counters made two tills completing at the same
+// instant collide often enough to exhaust the retries and fail the sale. It
+// runs after the commit instead, as its own atomic increment, so a serial is
+// spent only by a sale that really did complete.
+const assignOrNumber = async (order) => {
+  if (!order || order.orNumber || order.isComplimentary) return order?.orNumber || '';
+  try {
+    const [prefixRow, startRow] = await Promise.all([
+      Settings.findOne({ key: 'orPrefix' }).lean(),
+      Settings.findOne({ key: 'orStartNumber' }).lean(),
+    ]);
+    const prefix = String(prefixRow?.value || '').trim();
+    const start = Math.max(0, parseInt(startRow?.value, 10) || 0);
+    const counter = await Counter.findOneAndUpdate(
+      { _id: 'OR-SERIAL' },
+      { $inc: { seq: 1 } },
+      { upsert: true, returnDocument: 'after' },
+    );
+    const orNumber = `${prefix}${String(start + (counter?.seq || 0)).padStart(8, '0')}`;
+    // Guarded on the field still being empty, so a concurrent writer can never
+    // stamp a second number over the first.
+    const wrote = await Order.updateOne({ _id: order._id, $or: [{ orNumber: '' }, { orNumber: { $exists: false } }] }, { $set: { orNumber } });
+    if (wrote.modifiedCount > 0) { order.orNumber = orNumber; return orNumber; }
+    const fresh = await Order.findById(order._id, { orNumber: 1 }).lean();
+    order.orNumber = fresh?.orNumber || '';
+    return order.orNumber;
+  } catch (err) {
+    // A missing serial is recoverable - the sale itself is already committed,
+    // and the next print or a later completion can still assign one. Failing
+    // the sale over it would be far worse.
+    console.error('[OR SERIAL] could not assign a receipt number:', err?.message || err);
+    return '';
+  }
+};
+
 // Is this a MongoDB transaction error worth retrying (another writer collided
 // with us on the same document) rather than a real failure? Shared by every
 // *Once function's catch block above so the classification can't drift
@@ -315,22 +359,10 @@ async function resolveIngInvId(ing, session) {
 //
 // Absent settings mean a non-VAT business, which is how every install behaved
 // before VAT existed - so an untouched system keeps its current totals exactly.
-async function loadVatConfig() {
-  const [enabledRow, rateRow, orderRow, inclusiveRow] = await Promise.all([
-    Settings.findOne({ key: 'vatEnabled' }).lean(),
-    Settings.findOne({ key: 'vatRate' }).lean(),
-    Settings.findOne({ key: 'scPwdOrder' }).lean(),
-    Settings.findOne({ key: 'vatInclusive' }).lean(),
-  ]);
-  return {
-    enabled: enabledRow?.value === true || enabledRow?.value === 'true',
-    rate: normaliseVatRate(rateRow?.value, DEFAULT_VAT_RATE),
-    scPwdOrder: orderRow?.value === 'discount-first' ? 'discount-first' : 'vat-first',
-    // Default true: absent setting means the Philippine retail default, which is
-    // also how every order booked before this option existed was priced.
-    inclusive: inclusiveRow ? inclusiveRow.value !== false && inclusiveRow.value !== 'false' : true,
-  };
-}
+// VAT configuration lives in lib/vatSettings.js - shared with the backdated
+// sale path and the VAT return, so every posting reads one set of rules.
+const loadVatConfig = () => loadVatConfigShared(Settings);
+
 
 // Repeat-walk-in auto-promotion: a POS sale with a real (non-"Guest") customerName
 // that isn't already tied to a ClientAccount. Once the same name has 3 Completed
@@ -602,7 +634,7 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId }) 
   const ids = [...new Set(items.map(i => String(i.productId || '')).filter(id => mongoose.Types.ObjectId.isValid(id)))];
   const names = [...new Set(items.filter(i => !i.productId).map(i => i.name).filter(Boolean))];
   const [prods, combos, globalAddOns, groups, sales, quotes] = await Promise.all([
-    Product.find({ $or: [{ _id: { $in: ids } }, { name: { $in: names } }] }, { name: 1, basePrice: 1, sizes: 1, addOns: 1, isArchived: 1, isAvailable: 1 }).lean(),
+    Product.find({ $or: [{ _id: { $in: ids } }, { name: { $in: names } }] }, { name: 1, basePrice: 1, baseSize: 1, sizes: 1, addOns: 1, isArchived: 1, isAvailable: 1 }).lean(),
     Combo.find({ _id: { $in: ids } }, { name: 1, price: 1 }).lean(),
     AddOn.find({}, { name: 1, price: 1 }).lean(),
     ModifierGroup.find({}, { name: 1, options: 1 }).lean(),
@@ -627,6 +659,15 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId }) 
     }
   }
   const quoteIds = new Set();
+  // Self-service lines always take the catalogue price. Staff at the till may
+  // ring up a different one (a negotiated price, a quote read off paper) - it
+  // stands, but every such override is returned so it lands in the audit log.
+  const overrides = [];
+  const setPrice = (target, label, catalogue) => {
+    const entered = Number(target.price);
+    if (selfService || !Number.isFinite(entered)) { target.price = catalogue; return; }
+    if (Math.abs(entered - catalogue) > 0.005) overrides.push({ item: label, catalogue, charged: entered });
+  };
 
   const addOnPrice = (product, addOnName) => {
     const own = (product?.addOns || []).find(a => a.name === addOnName);
@@ -655,8 +696,11 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId }) 
     }
     if (item.isCombo) {
       const combo = comboById.get(String(item.productId));
-      if (!combo) return { error: `The combo "${item.name}" is no longer available.` };
-      item.price = Number(combo.price) || 0;
+      if (!combo) {
+        if (selfService) return { error: `The combo "${item.name}" is no longer available.` };
+        continue;
+      }
+      setPrice(item, item.name, Number(combo.price) || 0);
       continue;
     }
     const product = item.productId ? prodById.get(String(item.productId)) : prodByName.get(item.name);
@@ -671,9 +715,12 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId }) 
     const sizeName = item.sizeName
       || ((item.name || '').startsWith(`${product.name} (`) && item.name.endsWith(')') ? item.name.slice(product.name.length + 2, -1) : '');
     const size = sizeName ? (product.sizes || []).find(s => s.name === sizeName) : null;
-    if (sizeName && !size && selfService) return { error: `${product.name} does not come in ${sizeName}.` };
+    // The menu offers the base size as its own choice ("Regular", or the
+    // product's baseSize) - that is the base price, not an extra size.
+    const isBaseSize = sizeName && !size && (sizeName === (product.baseSize || 'Regular') || sizeName === 'Regular');
+    if (sizeName && !size && !isBaseSize && selfService) return { error: `${product.name} does not come in ${sizeName}.` };
     const sale = saleUnitPrice(product, saleMap[String(product._id)]);
-    item.price = size ? Number(size.price) || 0 : (sale != null ? sale : Number(product.basePrice) || 0);
+    setPrice(item, item.name, size ? Number(size.price) || 0 : (sale != null ? sale : Number(product.basePrice) || 0));
 
     if ((item.selectedAddOns || []).length) {
       for (const a of item.selectedAddOns) {
@@ -682,11 +729,11 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId }) 
           if (selfService) return { error: `The option "${a.name}" is not available for ${product.name}.` };
           continue;
         }
-        a.price = price;
+        setPrice(a, `${item.name} + ${a.name}`, price);
       }
     }
   }
-  return { quoteIds: [...quoteIds] };
+  return { quoteIds: [...quoteIds], overrides };
 };
 
 app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
@@ -898,13 +945,25 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
         });
 
     totalDiscount = +(totalProductDisc + vatResult.discount).toFixed(2);
-    totalVat = vatResult.vatAmount;
     const vatRate = vatResult.rate;
+    // A delivery charge is generally part of gross receipts and VATable, but
+    // some businesses bill it as a pass-through of a courier's own fee. The
+    // answer is a setting, stamped on the order so a later change of mind never
+    // restates a receipt already issued.
+    const feeVatRow = await Settings.findOne({ key: 'deliveryFeeVatable' }).lean();
+    const feeIsVatable = vatCfg.enabled && (feeVatRow?.value === true || feeVatRow?.value === 'true');
+    const feeVat = deliveryFeeVat({
+      deliveryFeeVatable: feeIsVatable, vatRate, deliveryFee,
+      isVatInclusive: vatCfg.inclusive,
+    });
+    totalVat = +(vatResult.vatAmount + feeVat).toFixed(2);
     // Delivery fee is a flat pass-through add-on, not part of the sale being
     // taxed/discounted - added after VAT/discount resolve, same as every
     // export/report that already shows it as its own line item below the
     // subtotal (see printBillingStatement etc. client-side).
-    const finalTotal = +(vatResult.total + deliveryFee).toFixed(2);
+    // Under exclusive pricing a VATable fee carries its VAT on top, the same
+    // way the goods do; inclusive pricing already has it inside the fee.
+    const finalTotal = +(vatResult.total + deliveryFee + (vatCfg.inclusive === false ? feeVat : 0)).toFixed(2);
 
     const currentYear = new Date().getFullYear();
     const orderNumber = await generateNextSequence(Order, `ORD-${currentYear}`, 'orderNumber');
@@ -1023,11 +1082,12 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       subtotal: totalGross,
       vatRate: vatRate,
       vatAmount: totalVat,
-      vatableSales: vatResult.vatableSales,
+      vatableSales: +(vatResult.vatableSales + (feeVat > 0 ? deliveryFee - (vatCfg.inclusive === false ? 0 : feeVat) : 0)).toFixed(2),
       vatExemptSales: vatResult.vatExemptSales,
       // Stamped so this receipt can always be re-derived, even after the setting changes.
       scPwdOrder: vatCfg.scPwdOrder,
       isVatInclusive: vatCfg.inclusive,
+      deliveryFeeVatable: feeIsVatable && deliveryFee > 0,
       discountPercent: isComplimentary ? 0 : discountPercent,
       discount: totalDiscount,
       total: finalTotal,
@@ -1058,6 +1118,12 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     });
 
     // An accepted quote is used up by the order placed against it.
+    if (priced.overrides?.length) {
+      await logAudit(req, {
+        action: 'priceOverride', entity: 'Order', entityId: newOrder._id,
+        after: { orderNumber: newOrder.orderNumber, cashier, overrides: priced.overrides },
+      });
+    }
     if (priced.quoteIds?.length) {
       await mongoose.model('Quotation').updateMany(
         { _id: { $in: priced.quoteIds } },
@@ -1207,13 +1273,15 @@ const recomputeOrderTotals = (order) => {
 
   order.subtotal = Number(totalGross.toFixed(2));
   order.discount = Number((lineDiscTotal + editVat.discount).toFixed(2));
-  order.vatAmount = Number(editVat.vatAmount.toFixed(2));
-  order.vatableSales = Number(editVat.vatableSales.toFixed(2));
+  const feeVat = deliveryFeeVat(order);
+  order.vatAmount = Number((editVat.vatAmount + feeVat).toFixed(2));
+  order.vatableSales = Number((editVat.vatableSales + (feeVat > 0 ? (Number(order.deliveryFee) || 0) - (order.isVatInclusive === false ? 0 : feeVat) : 0)).toFixed(2));
   order.vatExemptSales = Number(editVat.vatExemptSales.toFixed(2));
   // The delivery fee sits outside VAT and discounts (see order creation) and
   // must survive every recalculation - it used to be dropped here, so a
   // delivery order lost its fee the moment its status changed.
-  order.total = Number((editVat.total + (Number(order.deliveryFee) || 0)).toFixed(2));
+  order.total = Number((editVat.total + (Number(order.deliveryFee) || 0)
+    + (order.isVatInclusive === false ? feeVat : 0)).toFixed(2));
 };
 
 // --- AMEND: correct an order's lines before it is completed ---
@@ -1390,6 +1458,13 @@ const completeOrderOnce = async (req, res, mayRetry) => {
 
   try {
     const { status, discountPercent, isVatExempt, paymentMethod, discountType, discountedIndices, items, amountTendered } = req.body;
+    // Who the SC/PWD discount belongs to. Sent from the register beside the
+    // discount itself; '' clears it when the discount is taken back off.
+    const scPwd = {
+      name: req.body.scPwdName !== undefined ? String(req.body.scPwdName).trim().slice(0, 120) : undefined,
+      id: req.body.scPwdIdNumber !== undefined ? String(req.body.scPwdIdNumber).trim().slice(0, 40) : undefined,
+      kind: req.body.scPwdKind !== undefined ? String(req.body.scPwdKind).trim().slice(0, 20) : undefined,
+    };
     const putPaymentReference = String(req.body.paymentReference || '').trim().slice(0, 60);
     
     const order = await Order.findById(req.params.id).session(session);
@@ -1479,6 +1554,10 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         order.discountType = 'None';
     }
 
+    if (scPwd.name !== undefined) order.scPwdName = scPwd.name;
+    if (scPwd.id !== undefined) order.scPwdIdNumber = scPwd.id;
+    if (scPwd.kind !== undefined) order.scPwdKind = scPwd.kind;
+
     if (discountedIndices !== undefined) {
       order.items.forEach((item, idx) => {
         item.hasDiscount = discountedIndices.includes(idx);
@@ -1507,9 +1586,27 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       return res.status(400).json({ success: false, error: `SYSTEM AUDIT REJECTED: ${validation.error}` });
     }
 
+    // An SC/PWD discount is granted against a named cardholder's ID, and both
+    // the 20% and the VAT exemption hang off it. Recorded here rather than
+    // asked for later, because after the customer has walked out nobody can
+    // supply it - and an examiner disallows the discount that has no name on
+    // it. Only enforced as the sale completes: a cashier can apply the
+    // discount, then fill the card details in before taking payment.
+    if (status === 'Completed' && wasNotCompleted && order.discountType === 'SC/PWD' && !order.isComplimentary) {
+      if (!String(order.scPwdName || '').trim() || !String(order.scPwdIdNumber || '').trim()) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({
+          success: false,
+          error: 'An SC/PWD discount needs the cardholder\'s name and ID number on the sale.',
+          needsScPwdId: true,
+        });
+      }
+    }
+
     // --- POS GUARDRAIL: CHECK IF EOD IS LOCKED ---
     if (status === 'Completed' && wasNotCompleted) {
-      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+      const todayStr = businessDateStr();
       const currentEOD = await EODRecord.findOne({ dateString: todayStr }).session(session);
       
       if (currentEOD && currentEOD.status === 'LOCKED') {
@@ -1527,6 +1624,11 @@ const completeOrderOnce = async (req, res, mayRetry) => {
     // --- THE STRICT ERP ENGINE ---
     if (status === 'Completed' && wasNotCompleted && !wasPartiallyFulfilled) {
       log.info(`\n[ERP ENGINE] Processing Order: ${order.orderNumber}...`);
+      // Stock held for this order is released the instant before it is
+      // deducted: a client's own reservation must never block the sale it was
+      // made for, and holding it a moment longer would fail the availability
+      // check on every line below.
+      await ctx.releaseReservationsForOrder?.(order._id, { by: req.user?.name || '', session });
       let totalCogs = 0;
       const stockCardBatch = [];
       const depletedInvIds = new Set(); // track inventory items that hit 0 for auto-unavailable
@@ -1563,7 +1665,8 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               if (linkInv) {
                 const deductQty = (comp.quantity || 1) * item.quantity * baseUnitsPerSale(compProduct, linkInv);
                 const updated = await Inventory.findOneAndUpdate(
-                  { _id: linkInv._id, stockQty: { $gte: deductQty } },
+                  { _id: linkInv._id, // Only stock that is not held for another client can be sold.
+                  $expr: { $gte: [{ $subtract: ['$stockQty', { $ifNull: ['$reservedQty', 0] }] }, deductQty] } },
                   { $inc: { stockQty: -deductQty } },
                   { session, returnDocument: 'after' }
                 );
@@ -1586,7 +1689,8 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               if (!invId) continue;
               const deductQty = (ing.qty * (comp.quantity || 1) * item.quantity);
               const invItem = await Inventory.findOneAndUpdate(
-                { _id: invId, stockQty: { $gte: deductQty } },
+                { _id: invId, // Only stock that is not held for another client can be sold.
+                  $expr: { $gte: [{ $subtract: ['$stockQty', { $ifNull: ['$reservedQty', 0] }] }, deductQty] } },
                 { $inc: { stockQty: -deductQty } },
                 { session, returnDocument: 'after' }
               );
@@ -1636,7 +1740,8 @@ const completeOrderOnce = async (req, res, mayRetry) => {
           if (linkInv) {
             const deductQty = item.quantity * baseUnitsPerSale(product, linkInv);
             const updated = await Inventory.findOneAndUpdate(
-              { _id: linkInv._id, stockQty: { $gte: deductQty } },
+              { _id: linkInv._id, // Only stock that is not held for another client can be sold.
+                  $expr: { $gte: [{ $subtract: ['$stockQty', { $ifNull: ['$reservedQty', 0] }] }, deductQty] } },
               { $inc: { stockQty: -deductQty } },
               { session, returnDocument: 'after' }
             );
@@ -1660,7 +1765,8 @@ const completeOrderOnce = async (req, res, mayRetry) => {
           if (!invId) continue;
           const deductQty = (ing.qty * item.quantity);
           const invItem = await Inventory.findOneAndUpdate(
-            { _id: invId, stockQty: { $gte: deductQty } },
+            { _id: invId, // Only stock that is not held for another client can be sold.
+                  $expr: { $gte: [{ $subtract: ['$stockQty', { $ifNull: ['$reservedQty', 0] }] }, deductQty] } },
             { $inc: { stockQty: -deductQty } },
             { session, returnDocument: 'after' }
           );
@@ -1705,7 +1811,8 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               if (!invId) continue;
               const deductQty = (ing.qty * item.quantity);
               const invItem = await Inventory.findOneAndUpdate(
-                { _id: invId, stockQty: { $gte: deductQty } },
+                { _id: invId, // Only stock that is not held for another client can be sold.
+                  $expr: { $gte: [{ $subtract: ['$stockQty', { $ifNull: ['$reservedQty', 0] }] }, deductQty] } },
                 { $inc: { stockQty: -deductQty } },
                 { session, returnDocument: 'after' }
               );
@@ -1782,9 +1889,20 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         }
         lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: order.discount || 0, credit: 0 });
 
-        // Non-VAT: gross receipts = net collected + discount (no VAT separation)
+        // Gross receipts = net collected + discount. When the business is
+        // VAT-registered, the VAT inside that gross belongs to the BIR, not to
+        // revenue - see lib/vatPosting.js. A delivery fee is a pass-through,
+        // not part of the sale being taxed.
         const grossSalesAmount = order.total + (order.discount || 0);
-        lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: grossSalesAmount });
+        const feeVatOnSale = deliveryFeeVat(order);
+        const feeGross = +((order.deliveryFee || 0) + (order.isVatInclusive === false ? feeVatOnSale : 0)).toFixed(2);
+        const saleGross = +(grossSalesAmount - feeGross).toFixed(2);
+        if (feeGross > 0) {
+          // The service itself, net of whatever VAT it carried.
+          lines.push({ accountCode: '420000', accountName: 'Service Sales', debit: 0, credit: +(feeGross - feeVatOnSale).toFixed(2) });
+          if (feeVatOnSale > 0) lines.push({ accountCode: OUTPUT_VAT.code, accountName: OUTPUT_VAT.name, debit: 0, credit: feeVatOnSale });
+        }
+        lines.push(...saleRevenueLines({ gross: saleGross, vatAmount: +((order.vatAmount || 0) - feeVatOnSale).toFixed(2) }));
 
         if (totalCogs > 0) {
           lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: totalCogs, credit: 0 });
@@ -1843,6 +1961,9 @@ const completeOrderOnce = async (req, res, mayRetry) => {
     await session.commitTransaction();
     session.endSession();
 
+    // The receipt's own serial, now that the sale is definitely committed.
+    if (status === 'Completed' && wasNotCompleted) await assignOrNumber(order);
+
     emitToOps('orderUpdated', order);
     // Push menuUpdated so CustomerMenu instantly re-fetches products and recomputes
     // stockAvailable - catches the moment an ingredient hits zero during service.
@@ -1886,7 +2007,7 @@ app.post('/api/orders/:id/unvoid', verifyToken, requireSuperAdmin, async (req, r
       }
 
       // Same day-close and period guards the void itself respects.
-      const orderDateStr = new Date(order.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+      const orderDateStr = businessDateStr(order.createdAt);
       const eodRecord = await EODRecord.findOne({ dateString: orderDateStr }).session(session ?? null);
       if (eodRecord?.status === 'LOCKED') {
         throw Object.assign(new Error(`EOD locked for ${orderDateStr}. Cannot un-void after the day is closed.`), { httpStatus: 403 });
@@ -1993,7 +2114,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
         return res.status(400).json({ success: false, error: 'Only completed orders can be voided.' });
     }
 
-    const orderDateStr = new Date(order.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    const orderDateStr = businessDateStr(order.createdAt);
     const eodRecord = await EODRecord.findOne({ dateString: orderDateStr }).session(session);
     if (eodRecord?.status === 'LOCKED') {
       await session.abortTransaction(); session.endSession();
@@ -2018,7 +2139,14 @@ const voidOrderOnce = async (req, res, mayRetry) => {
     const grossSalesAmount = order.total + (order.discount || 0);
 
     if (!order.isComplimentary) {
-      lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: grossSalesAmount, credit: 0 });
+      const feeVatOnSale = deliveryFeeVat(order);
+      const feeGross = +((order.deliveryFee || 0) + (order.isVatInclusive === false ? feeVatOnSale : 0)).toFixed(2);
+      const saleGross = +(grossSalesAmount - feeGross).toFixed(2);
+      if (feeGross > 0) {
+        lines.push({ accountCode: '420000', accountName: 'Service Sales', debit: +(feeGross - feeVatOnSale).toFixed(2), credit: 0 });
+        if (feeVatOnSale > 0) lines.push({ accountCode: OUTPUT_VAT.code, accountName: OUTPUT_VAT.name, debit: feeVatOnSale, credit: 0 });
+      }
+      lines.push(...saleRevenueLines({ gross: saleGross, vatAmount: +((order.vatAmount || 0) - feeVatOnSale).toFixed(2), side: 'debit' }));
       lines.push({ accountCode: cashAccount, accountName: cashAccountName, debit: 0, credit: order.total });
       if (order.discount > 0) lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: 0, credit: order.discount });
     } else {
@@ -2714,11 +2842,19 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     const cash = debitAccountFor(paymentMethod || order.paymentMethod || 'Cash');
     const lines = [];
 
+    // Prepaid, not-yet-delivered value is a customer deposit. It lives in
+    // 260200 Customer Advances / Deposits - the same account the Advances
+    // screen uses - so all money held for customers shows in one place. Orders
+    // that started a deposit before this carry on in 260000 until it clears,
+    // so each deposit is released from the account it was booked to.
+    const depAcct = order.depositAccount || ((order.depositRemaining || 0) > 0.005 ? '260000' : '260200');
+    const depName = depAcct === '260200' ? 'Customer Advances / Deposits' : 'Customer Deposits';
+
     // 1) Recognize revenue already prepaid (from the deposit) first.
     const fromDeposit = +Math.min(order.depositRemaining || 0, deltaValue).toFixed(2);
     if (fromDeposit > 0) {
-      lines.push({ accountCode: '260000', accountName: 'Customer Deposits', debit: fromDeposit, credit: 0 });
-      lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: fromDeposit });
+      lines.push({ accountCode: depAcct, accountName: depName, debit: fromDeposit, credit: 0 });
+      lines.push(...saleRevenueLines({ gross: fromDeposit, vatAmount: vatShare(order, fromDeposit) }));
       order.depositRemaining = +(order.depositRemaining - fromDeposit).toFixed(2);
     }
 
@@ -2729,10 +2865,11 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
       const remainingUnpaid = +(goodsTotal - (order.amountPaid || 0)).toFixed(2);
       const collectNow = mode === 'full' ? remainingUnpaid : needRevenue;
       lines.push({ accountCode: cash.code, accountName: cash.name, debit: collectNow, credit: 0 });
-      lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: needRevenue });
+      lines.push(...saleRevenueLines({ gross: needRevenue, vatAmount: vatShare(order, needRevenue) }));
       const toDeposit = +(collectNow - needRevenue).toFixed(2);
       if (toDeposit > 0.005) {
-        lines.push({ accountCode: '260000', accountName: 'Customer Deposits', debit: 0, credit: toDeposit });
+        lines.push({ accountCode: depAcct, accountName: depName, debit: 0, credit: toDeposit });
+        order.depositAccount = depAcct;
         order.depositRemaining = +((order.depositRemaining || 0) + toDeposit).toFixed(2);
       }
       order.amountPaid = +((order.amountPaid || 0) + collectNow).toFixed(2);
@@ -2749,7 +2886,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     //    Discounts, exactly like a normal completed sale. Cash already reflects net.
     if (discountValue > 0.005) {
       lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: discountValue, credit: 0 });
-      lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: discountValue });
+      lines.push(...saleRevenueLines({ gross: discountValue, vatAmount: vatShare(order, discountValue) }));
     }
 
     // Uniform reference: every posting for an order shares the order number (the
@@ -2834,8 +2971,9 @@ const dropRemainingOnce = async (req, res, mayRetry) => {
     if ((order.depositRemaining || 0) > 0.005) {
       const cash = debitAccountFor(order.paymentMethod || 'Cash');
       const refund = +order.depositRemaining.toFixed(2);
+      const depAcct = order.depositAccount || '260000';
       const lines = [
-        { accountCode: '260000', accountName: 'Customer Deposits', debit: refund, credit: 0 },
+        { accountCode: depAcct, accountName: depAcct === '260200' ? 'Customer Advances / Deposits' : 'Customer Deposits', debit: refund, credit: 0 },
         { accountCode: cash.code, accountName: cash.name, debit: 0, credit: refund },
       ];
       const reference = order.orderNumber;
@@ -2900,7 +3038,7 @@ const refundOnce = async (req, res, mayRetry) => {
     const reference = mkRef('REFUND', order.orderNumber);
     const creditAcct = debitAccountFor(order.paymentMethod);
     const lines = [
-      { accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: amt,  credit: 0   },
+      ...saleRevenueLines({ gross: amt, vatAmount: vatShare(order, amt), side: 'debit' }),
       { accountCode: creditAcct.code, accountName: creditAcct.name,  debit: 0,    credit: amt },
     ];
 
@@ -3098,7 +3236,7 @@ const partialRefundOnce = async (req, res, mayRetry) => {
         lines.push({ accountCode: '540000', accountName: 'Complimentary Expense', debit: 0, credit: refundAmount });
       } else {
         const creditAcct = debitAccountFor(order.paymentMethod);
-        lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: refundAmount, credit: 0 });
+        lines.push(...saleRevenueLines({ gross: refundAmount, vatAmount: vatShare(order, refundAmount), side: 'debit' }));
         lines.push({ accountCode: creditAcct.code, accountName: creditAcct.name, debit: 0, credit: refundAmount });
       }
     }
@@ -3287,20 +3425,35 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
     const returnValue = Math.max(0, Math.min(+(baseForRefund * returnFraction).toFixed(2), remainingRefundable));
 
     // --- Money: replacement charge - a real new sale, not prorated ---
-    const newCharge = +validatedNew.reduce((s, { product, qty }) => s + (Number(product.basePrice) || 0) * qty, 0).toFixed(2);
+    const listCharge = +validatedNew.reduce((s, { product, qty }) => s + (Number(product.basePrice) || 0) * qty, 0).toFixed(2);
+    // Under EXCLUSIVE pricing a product's price is its NET price and VAT is
+    // added on top, so the replacement has to carry VAT the same way the
+    // original sale did - charging the list price alone would hand over goods
+    // with the VAT unbilled. Inclusive pricing already has the VAT inside.
+    const exclusiveVat = (order.isVatInclusive === false && (order.vatRate || 0) > 0)
+      ? +(listCharge * order.vatRate).toFixed(2)
+      : 0;
+    const newCharge = +(listCharge + exclusiveVat).toFixed(2);
     const netDelta = +(newCharge - returnValue).toFixed(2); // >0 customer owes more, <0 customer gets money back
 
     const reference = await mkSeqRef('EXCHANGE');
     const lines = [];
     const creditAcct = debitAccountFor(order.paymentMethod);
+    // Two halves, posted separately rather than netted: goods went back (a
+    // reversal carrying the VAT the original sale charged) and other goods went
+    // out (a sale carrying VAT of its own). Netting them first would hide both,
+    // and under exclusive pricing would reverse VAT that was never collected.
+    if (returnValue > 0.005) {
+      lines.push(...saleRevenueLines({ gross: returnValue, vatAmount: vatShare(order, returnValue), side: 'debit' }));
+    }
+    if (newCharge > 0.005) {
+      const newVat = exclusiveVat || vatFromInclusive(newCharge, order.vatRate, order.isVatInclusive);
+      lines.push(...saleRevenueLines({ gross: newCharge, vatAmount: newVat }));
+    }
     if (Math.abs(netDelta) > 0.005) {
-      if (netDelta > 0) {
-        lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: netDelta });
-        lines.push({ accountCode: creditAcct.code, accountName: creditAcct.name, debit: netDelta, credit: 0 });
-      } else {
-        lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: -netDelta, credit: 0 });
-        lines.push({ accountCode: creditAcct.code, accountName: creditAcct.name, debit: 0, credit: -netDelta });
-      }
+      lines.push(netDelta > 0
+        ? { accountCode: creditAcct.code, accountName: creditAcct.name, debit: netDelta, credit: 0 }
+        : { accountCode: creditAcct.code, accountName: creditAcct.name, debit: 0, credit: -netDelta });
     }
 
     // --- Inventory / COGS - return side (reuses the exact restock mechanism partial-refund uses) ---

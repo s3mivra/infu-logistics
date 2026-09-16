@@ -2,7 +2,8 @@
 // worklist over the existing aging data). See the CollectionReminderSchema
 // comment in server.js: this logs manual contact, it never sends anything.
 import { ageingByClient, resolveClientKey, withArBalance, arBalance } from '../lib/credit.js';
-import { dayStart } from '../lib/reportRange.js';
+import { businessDateStr } from '../lib/businessTime.js';
+import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
 
 export default function registerCollections(ctx) {
@@ -108,7 +109,7 @@ export default function registerCollections(ctx) {
       ]);
       const lastByKey = new Map(lastReminders.map(r => [r._id, r.doc]));
 
-      const today = new Date(); today.setHours(23, 59, 59, 999);
+      const today = dayEnd(businessDateStr());
       const due = perClient
         .map(row => ({ row, last: lastByKey.get(row.client) }))
         .filter(({ last }) => !last || (last.nextFollowUpDate && new Date(last.nextFollowUpDate) <= today))
@@ -220,7 +221,7 @@ export default function registerCollections(ctx) {
       const clients = await ClientAccount.find({}, { name: 1, creditLimit: 1 }).lean();
       const { keyOf } = resolveClientKey(clients);
 
-      const today = new Date(); today.setHours(23, 59, 59, 999);
+      const today = dayEnd(businessDateStr());
       const checks = [];
       for (const o of orders) {
         for (const p of (o.arPayments || [])) {

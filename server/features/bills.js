@@ -3,6 +3,8 @@
 // See the BillSchema comment in server.js for the source:'PO' vs 'Manual'
 // distinction that drives when the A/P journal entry actually posts.
 import { captureError } from '../lib/errorLog.js';
+import { INPUT_VAT } from '../lib/vatPosting.js';
+import { loadVatConfig } from '../lib/vatSettings.js';
 
 export default function registerBills(ctx) {
   const {
@@ -19,6 +21,7 @@ export default function registerBills(ctx) {
     BUSINESS_TYPE,
     Bill,
     BILL_STATUSES,
+    Settings,
     Supplier,
     JournalEntry,
     CheckVoucher,
@@ -80,7 +83,7 @@ export default function registerBills(ctx) {
   // POST /api/bills { supplierId, description, amount, dueDate, expenseAccountCode }
   app.post('/api/bills', verifyToken, ...canPostAcct, async (req, res) => {
     try {
-      const { supplierId, description, amount, dueDate, expenseAccountCode } = req.body || {};
+      const { supplierId, description, amount, dueDate, expenseAccountCode, claimInputVat } = req.body || {};
       if (!supplierId || !mongoose.Types.ObjectId.isValid(supplierId)) {
         return res.status(400).json({ success: false, error: 'A valid supplier is required.' });
       }
@@ -108,6 +111,7 @@ export default function registerBills(ctx) {
         amount: amt,
         expenseAccountCode,
         dueDate: dueDate ? new Date(dueDate) : null,
+        claimInputVat: claimInputVat === true,
         createdBy: req.user?.name || '',
       });
 
@@ -209,17 +213,27 @@ export default function registerBills(ctx) {
         const expMeta = acctMeta(bill.expenseAccountCode);
         if (!expMeta) return res.status(400).json({ success: false, error: 'This bill\'s expense account no longer exists - cannot post.' });
         const reference = await mkSeqRef('BILL-APR');
+        // VAT charged by a VAT-registered supplier is creditable, not a cost:
+        // it comes out of the expense and is held in 170300 until it is offset
+        // against output VAT on the return.
+        const vatCfg = await loadVatConfig(Settings);
+        const inputVat = bill.claimInputVat && vatCfg.enabled
+          ? money(bill.amount - bill.amount / (1 + vatCfg.rate))
+          : 0;
+        const netCost = money(bill.amount - inputVat);
         const lines = [
-          { accountCode: bill.expenseAccountCode, accountName: expMeta.name, debit: bill.amount, credit: 0 },
+          { accountCode: bill.expenseAccountCode, accountName: expMeta.name, debit: netCost, credit: 0 },
+          ...(inputVat > 0 ? [{ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: inputVat, credit: 0 }] : []),
           { accountCode: '220000', accountName: 'Accounts Payable', debit: 0, credit: bill.amount },
         ];
         assertBalanced(lines, reference);
         await JournalEntry.create({
           date: new Date(), reference,
-          description: `Bill approved: ${bill.description} (${bill.billNumber})`,
+          description: `Bill approved: ${bill.description} (${bill.billNumber})${inputVat > 0 ? ` [input VAT ₱${inputVat.toFixed(2)}]` : ''}`,
           lines, totalDebit: bill.amount, totalCredit: bill.amount,
           supplierId: String(bill.supplierId), supplierName: bill.supplierName,
         });
+        bill.inputVatAmount = inputVat;
         bill.journalEntryRef = reference;
         emitToMgr('erpUpdated');
       }

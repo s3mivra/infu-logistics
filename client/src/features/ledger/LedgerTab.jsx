@@ -109,6 +109,7 @@ export default function LedgerTab({ ctx }) {
     obEntry, obRows, setObRows, obMeta, setObMeta, obBusy, fetchOpeningBalances, submitOpeningBalances, balanceSheetAccounts,
     exportBusy, downloadDataset, downloadAccountBalances,
     exportAllBusy, downloadAllExports, exportProgress, exportDatasets, fetchExportDatasets,
+    backupBusy, backupProgress, downloadFullBackup, restoreFullBackup,
     profitByCategory, fetchProfitByCategory,
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
@@ -130,6 +131,7 @@ export default function LedgerTab({ ctx }) {
     tenancyReport, tenancyBusy, tenancyError, tenancyProgress, fetchTenancyReport, runTenancyRebackfill,
     backdateForm, setBackdateForm, backdateBusy, submitBackdateSale,
     clientAccounts,
+    systemSettings = {},
   } = ctx;
 
   // ── Stage 2 report views: self-contained fetches via ctx.apiFetch ──────────
@@ -775,6 +777,32 @@ export default function LedgerTab({ ctx }) {
     } catch { setPtax({ error: 'Network error' }); }
     finally { setPtaxLoading(false); }
   };
+  // Books health: subledgers vs their control accounts.
+  const [bookshealth, setBooksHealth] = useState(null);
+  const [bookshealthLoading, setBooksHealthLoading] = useState(false);
+  const loadBooksHealth = async () => {
+    setBooksHealthLoading(true);
+    try {
+      const r = await apiFetch('/api/reports/books-health'); const d = await r.json();
+      setBooksHealth(d.success ? d : { error: d.error || 'Could not run the checks.' });
+    } catch { setBooksHealth({ error: 'Network error' }); }
+    finally { setBooksHealthLoading(false); }
+  };
+
+  // VAT return: output VAT collected, input VAT creditable, net owed.
+  const [vatRet, setVatRet] = useState(null);
+  const [vatRange, setVatRange] = useState({ start: '', end: '' });
+  const [vatLoading, setVatLoading] = useState(false);
+  const loadVatReturn = async () => {
+    setVatLoading(true);
+    try {
+      const q = vatRange.start && vatRange.end ? `?start=${vatRange.start}&end=${vatRange.end}` : '';
+      const r = await apiFetch(`/api/reports/vat${q}`); const d = await r.json();
+      setVatRet(d.success ? d : { error: d.error || 'Provide a start and end date.' });
+    } catch { setVatRet({ error: 'Network error' }); }
+    finally { setVatLoading(false); }
+  };
+
   const exportTrialBalancePDF = async () => {
     if (!tb || tb.error) return ui.alert('Load the Trial Balance first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
@@ -1097,6 +1125,8 @@ export default function LedgerTab({ ctx }) {
             if (id === 'pnl' && !pnlData) fetchPnl();
             if (id === 'trial') loadTrial();
             if (id === 'percentagetax') loadPtax();
+            if (id === 'vatreturn' && !vatRet) loadVatReturn();
+            if (id === 'bookshealth' && !bookshealth) loadBooksHealth();
             if (id === 'pnlmonthly' && !pnlMonthly) fetchPnlMonthly();
             if (id === 'balance' && !bsData) fetchBalanceSheet();
             if (id === 'bsmonthly' && !bsMonthly) fetchBsMonthly();
@@ -1384,6 +1414,45 @@ export default function LedgerTab({ ctx }) {
                       </div>
                     );
                   })}
+                </div>
+              ) : (
+                <p className="text-fg/70 text-sm">Pick a date range and press Compute.</p>
+              )}
+            </div>
+          )}
+
+          {ledgerSubTab === 'vatreturn' && (
+            <div className="bg-surface border border-white/10 rounded-2xl p-5 max-w-2xl">
+              <h3 className="text-lg font-black text-fg mb-1">VAT Return</h3>
+              <p className="text-fg/60 text-xs mb-4">Output VAT collected on sales, less creditable input VAT on purchases.</p>
+              <div className="flex items-end gap-2 mb-4 flex-wrap">
+                <label className="text-xs font-bold text-fg/70" htmlFor="vat-start">Start
+                  <input id="vat-start" type="date" value={vatRange.start} onChange={(e) => setVatRange((r) => ({ ...r, start: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
+                </label>
+                <label className="text-xs font-bold text-fg/70" htmlFor="vat-end">End
+                  <input id="vat-end" type="date" value={vatRange.end} onChange={(e) => setVatRange((r) => ({ ...r, end: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
+                </label>
+                <button onClick={loadVatReturn} disabled={vatLoading} className="bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm px-4 py-2 rounded-lg transition">{vatLoading ? 'Loading…' : 'Compute'}</button>
+              </div>
+              {vatRet?.error ? (
+                <p className="text-danger text-sm font-bold">{vatRet.error}</p>
+              ) : vatRet?.notApplicable ? (
+                <p className="text-fg/75 text-sm leading-snug bg-white/[0.03] border border-white/10 rounded-lg p-3">{vatRet.reason}</p>
+              ) : vatRet ? (
+                <div className="space-y-1">
+                  <p className="text-fg/70 text-xs mb-2">{vatRet.orders} completed order(s) in range.</p>
+                  {(vatRet.lines || []).map((l, i) => {
+                    const isNet = i === (vatRet.lines.length - 1);
+                    return (
+                      <div key={i} className={`flex justify-between text-sm py-2 ${isNet ? 'border-t-2 border-white/20 mt-1 font-black text-fg' : 'border-b border-white/5'}`}>
+                        <span className={isNet ? '' : 'text-fg/60'}>{l.label}</span>
+                        <span className={`font-mono font-bold ${isNet ? 'text-brand-text' : l.amount < 0 ? 'text-danger' : 'text-fg/85'}`}>{money2(l.amount)}</span>
+                      </div>
+                    );
+                  })}
+                  <p className="text-[11px] text-fg/60 pt-2 leading-snug">
+                    Read from the ledger: 230300 Output VAT Payable and 170300 Input VAT (Creditable). Input VAT only appears for purchases marked as charged VAT by a VAT-registered supplier.
+                  </p>
                 </div>
               ) : (
                 <p className="text-fg/70 text-sm">Pick a date range and press Compute.</p>
@@ -4351,6 +4420,19 @@ export default function LedgerTab({ ctx }) {
                       <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Description</label>
                       <input value={billCreate.description} onChange={e => setBillCreate(c => ({ ...c, description: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" placeholder="e.g. October warehouse rent" />
                     </div>
+                    {systemSettings.vatEnabled === true && (
+                      <div className="sm:col-span-2">
+                        <label className="flex items-start gap-2 cursor-pointer">
+                          <input type="checkbox" checked={billCreate.claimInputVat === true}
+                            onChange={e => setBillCreate(c => ({ ...c, claimInputVat: e.target.checked }))}
+                            className="mt-0.5 accent-brand" />
+                          <span>
+                            <span className="text-[11px] text-fg font-bold block">Supplier charged VAT (claim input VAT)</span>
+                            <span className="text-[10px] text-fg/60 leading-snug block">Splits the VAT out of this amount into Input VAT (Creditable) when the bill is approved. Tick only for a VAT-registered supplier with an official receipt.</span>
+                          </span>
+                        </label>
+                      </div>
+                    )}
                   </div>
                   <div className="flex justify-end">
                     <button onClick={submitCreateBill} disabled={billBusy} className="px-5 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">{billBusy ? 'Saving…' : 'Create bill'}</button>
@@ -5831,6 +5913,63 @@ export default function LedgerTab({ ctx }) {
               on ? 'border-brand/60 bg-brand/10 text-fg' : 'border-white/10 text-fg/70 hover:text-fg hover:bg-white/5'}`;
             const presetBtn = 'text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-lg border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 transition disabled:opacity-40';
             return (
+            <div className="space-y-4">
+
+            {/* The export below is a set of REPORTS - chosen columns, derived
+                figures, for a person or an accountant to read. It cannot rebuild
+                the system. The backup here is the other thing: every record, in
+                one file, and the only export that can be restored. */}
+            <div className="bg-surface border border-white/10 rounded-2xl p-6">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div className="min-w-0">
+                  <h3 className="text-xl font-black text-fg flex items-center gap-2"><ShieldCheck size={18} className="text-brand-text"/> Full backup</h3>
+                  <p className="text-fg/70 text-xs mt-1 max-w-prose leading-snug">
+                    Every record in the system - orders, ledger, stock, clients, settings, users, counters - in one workbook.
+                    This is the file to keep: it is the only export that can be restored after data is purged or lost.
+                    The report exports below are for reading, not for rebuilding.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button onClick={downloadFullBackup} disabled={!!backupBusy}
+                    className="flex items-center gap-2 bg-brand text-on-brand px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-brand/90 transition disabled:opacity-50">
+                    <Download size={14} /> {backupBusy ? backupBusy : 'Download backup'}
+                  </button>
+                  <label className={`flex items-center gap-2 border border-white/15 text-fg/80 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest transition ${backupBusy ? 'opacity-50' : 'cursor-pointer hover:bg-white/5 hover:text-fg'}`}>
+                    <RefreshCw size={14} /> Restore backup
+                    <input type="file" accept=".xlsx" className="hidden" disabled={!!backupBusy}
+                      onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; restoreFullBackup?.(f); }} />
+                  </label>
+                </div>
+              </div>
+              {backupBusy && (
+                <div className="mt-4" role="status" aria-live="polite">
+                  <div className="flex items-center justify-between gap-3 text-[11px] font-bold text-fg/80 mb-1.5">
+                    <span className="truncate">{backupBusy}</span>
+                    {backupProgress?.total > 0 && (
+                      <span className="tabular-nums shrink-0 text-fg/60">
+                        {backupProgress.done.toLocaleString()} / {backupProgress.total.toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                    {/* A known total gives a real bar; before the count comes
+                        back there is nothing honest to measure, so it paces
+                        instead of claiming progress it cannot know. */}
+                    <div
+                      className={`h-full bg-brand transition-[width] duration-300 ${backupProgress?.total > 0 ? '' : 'animate-pulse w-1/3'}`}
+                      style={backupProgress?.total > 0
+                        ? { width: `${Math.min(100, Math.round((backupProgress.done / backupProgress.total) * 100))}%` }
+                        : undefined}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <p className="text-[11px] text-warning/90 mt-3 leading-snug">
+                Restoring replaces everything currently in this system with what is in the file. Take a backup first if there is anything here worth keeping.
+              </p>
+            </div>
+
             <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-6">
               <div>
                 <h3 className="text-xl font-black text-fg flex items-center gap-2"><Download size={18} className="text-brand-text"/> Export</h3>
@@ -5922,8 +6061,80 @@ export default function LedgerTab({ ctx }) {
                 Datasets and the reference sheets go into one workbook, led by a Contents sheet that lists row counts and flags any sheet that hit the row cap. The Journal and Audit Log download as their own PDF reports. Your browser may ask permission to save several files.
               </p>
             </div>
+            </div>
             );
           })()}
+
+          {ledgerSubTab === 'bookshealth' && (
+            <div className="bg-surface border border-white/10 rounded-2xl p-5 max-w-3xl">
+              <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+                <div>
+                  <h3 className="text-lg font-black text-fg">Books Health</h3>
+                  <p className="text-fg/60 text-xs mt-0.5 max-w-prose">
+                    Every screen is a subledger - open invoices, unpaid bills, stock, deposits - and each one has an account behind it that should match. A red line means the two disagree.
+                  </p>
+                </div>
+                <button onClick={loadBooksHealth} disabled={bookshealthLoading}
+                  className="bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm px-4 py-2 rounded-lg transition disabled:opacity-50">
+                  {bookshealthLoading ? 'Checking…' : 'Run checks'}
+                </button>
+              </div>
+
+              {bookshealth?.error ? (
+                <p className="text-danger text-sm font-bold mt-4">{bookshealth.error}</p>
+              ) : bookshealth ? (
+                <div className="mt-4">
+                  <div className={`rounded-xl px-4 py-3 mb-4 border ${bookshealth.failing === 0
+                    ? 'bg-green-500/10 border-green-500/25 text-success'
+                    : 'bg-red-500/10 border-red-500/25 text-danger'}`}>
+                    <p className="font-black text-sm">
+                      {bookshealth.failing === 0
+                        ? 'Everything ties out.'
+                        : `${bookshealth.failing} check${bookshealth.failing === 1 ? '' : 's'} need attention.`}
+                    </p>
+                    <p className="text-[11px] text-fg/70 mt-0.5">Checked {new Date(bookshealth.checkedAt).toLocaleString()}</p>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm min-w-[560px]">
+                      <thead>
+                        <tr className="text-[10px] uppercase tracking-wider text-fg/50 border-b border-white/10">
+                          <th className="text-left font-bold py-2">Check</th>
+                          <th className="text-right font-bold py-2">Documents</th>
+                          <th className="text-right font-bold py-2">Ledger</th>
+                          <th className="text-right font-bold py-2">Difference</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(bookshealth.checks || []).map(c => (
+                          <tr key={c.key} className={`border-b border-white/5 ${c.ok ? '' : 'bg-red-500/[0.06]'}`}>
+                            <td className="py-2.5 pr-3">
+                              <span className="flex items-center gap-2">
+                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.ok ? 'bg-success' : 'bg-danger'}`} />
+                                <span className="text-fg font-semibold">{c.label}</span>
+                              </span>
+                              {!c.ok && <span className="block text-[11px] text-fg/60 mt-1 pl-3.5 leading-snug">{c.fix}</span>}
+                            </td>
+                            <td className="py-2.5 text-right font-mono tabular-nums text-fg/85">{money2(c.documents)}</td>
+                            <td className="py-2.5 text-right font-mono tabular-nums text-fg/85">{money2(c.ledger)}</td>
+                            <td className={`py-2.5 text-right font-mono tabular-nums font-bold ${c.ok ? 'text-fg/40' : 'text-danger'}`}>{money2(c.difference)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {(bookshealth.vat?.outputVat > 0 || bookshealth.vat?.inputVat > 0) && (
+                    <p className="text-[11px] text-fg/60 mt-3 leading-snug">
+                      VAT held: {money2(bookshealth.vat.outputVat)} collected, {money2(bookshealth.vat.inputVat)} creditable, {money2(bookshealth.vat.netPayable)} owed. See the VAT Return report.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-fg/70 text-sm mt-4">Press Run checks.</p>
+              )}
+            </div>
+          )}
 
           {ledgerSubTab === 'tenancy' && (
             <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-6">

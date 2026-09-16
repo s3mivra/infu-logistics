@@ -61,6 +61,9 @@ export const ACCOUNTS = {
   // Paid to a supplier BEFORE a bill exists (a deposit on an order). Distinct
   // from 160100, which is what is left over after OVERpaying a bill that did.
   '170200': { name: 'Advances to Suppliers',      type: 'asset', parent: '170000' },
+  // VAT paid on purchases from VAT-registered suppliers, creditable against the
+  // output VAT above. An asset until it is offset on the return.
+  '170300': { name: 'Input VAT (Creditable)',     type: 'asset', parent: '170000' },
 
   // ===== 200000 LIABILITIES =====
   '200000': { name: 'Liabilities',                type: 'liability', isParent: true },
@@ -82,6 +85,11 @@ export const ACCOUNTS = {
   // is deducted until the BIR is paid.
   '230100': { name: 'Withholding Tax Payable - Expanded',     type: 'liability', parent: '230000' },
   '230200': { name: 'Withholding Tax Payable - Compensation', type: 'liability', parent: '230000' },
+  // VAT collected on sales, held for the BIR. A VAT-registered business does
+  // not own this money: the customer paid it on top of (or inside) the price
+  // and it is remitted. Booking it into revenue would overstate both sales and
+  // profit by the VAT, and leave nothing on the balance sheet to remit from.
+  '230300': { name: 'Output VAT Payable',         type: 'liability', parent: '230000' },
   '240000': { name: 'Payroll Liabilities',        type: 'liability', isParent: true, parent: '200000' },
   // Each statutory deduction is held separately: they are remitted to three
   // different agencies on three different schedules, and one pooled balance

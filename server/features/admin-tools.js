@@ -2,6 +2,8 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
+import { saleRevenueLines, vatFromInclusive } from '../lib/vatPosting.js';
+import { loadVatConfig } from '../lib/vatSettings.js';
 
 export default function registerAdminTools(ctx) {
   const {
@@ -609,6 +611,9 @@ async function createBackdatedSale(payload, actorName) {
     }
     totalCogs = +totalCogs.toFixed(2);
 
+    const vatCfg = await loadVatConfig(Settings);
+    const backdateVat = comp ? 0 : vatFromInclusive(total - delivery, vatCfg.enabled ? vatCfg.rate : 0, vatCfg.inclusive);
+
     const [order] = await Order.create([{
       orderNumber,
       table: 'Backdated',
@@ -621,10 +626,18 @@ async function createBackdatedSale(payload, actorName) {
       subtotal: gross,
       discount,
       discountPercent: pct,
-      vatAmount: 0, vatRate: 0,
+      // A backdated sale is a real sale: if the business is VAT-registered it
+      // carried VAT on the day it happened, and the books have to show that.
+      // Under exclusive pricing the VAT was added on top of the figures on the
+      // original document, so it cannot be derived from the total here - the
+      // sale is stamped VAT-free and the document's own VAT should be entered
+      // as a journal entry.
+      vatAmount: backdateVat, vatRate: backdateVat > 0 ? vatCfg.rate : 0,
+      isVatInclusive: vatCfg.inclusive,
+      vatableSales: backdateVat > 0 ? +(total - delivery - backdateVat).toFixed(2) : 0,
       total,
       deliveryFee: delivery,
-      isVatExempt: true,
+      isVatExempt: backdateVat === 0,
       isComplimentary: comp,
       discountType: comp ? 'Complimentary' : (pct > 0 ? 'Promo' : 'None'),
       transactionType: 'NORMAL',
@@ -654,7 +667,8 @@ async function createBackdatedSale(payload, actorName) {
       // the sale (no separate COA account for it) - it must land on the
       // credit side too, or this entry stops balancing the moment `total`
       // includes it but `gross` alone doesn't.
-      lines.push({ accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: gross + delivery });
+      if (delivery > 0) lines.push({ accountCode: '420000', accountName: 'Service Sales', debit: 0, credit: delivery });
+      lines.push(...saleRevenueLines({ gross, vatAmount: backdateVat, revenueName: 'Sales Revenue' }));
     }
     if (totalCogs > 0) {
       lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: totalCogs, credit: 0 });

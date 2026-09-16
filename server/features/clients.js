@@ -9,6 +9,8 @@
 import { ageingBuckets, resolveCreditLimit, withArBalance, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
 
 import { captureError } from '../lib/errorLog.js';
+import { dayStart, dayEnd } from '../lib/reportRange.js';
+import { businessDateStr } from '../lib/businessTime.js';
 
 export default function registerClients(ctx) {
   const {
@@ -146,6 +148,147 @@ export default function registerClients(ctx) {
 
   // A single client's recent orders - loaded on demand when a row is expanded,
   // so the summary above stays one cheap call.
+
+  // -- STATEMENT OF ACCOUNT --------------------------------------------------
+  // GET /api/clients/:id/statement?start=YYYY-MM-DD&end=YYYY-MM-DD
+  //
+  // What a credit client actually asks for at the end of the month: not a list
+  // of orders, but the running account - what they owed when the period opened,
+  // every charge and every payment in date order, and what is left. The screens
+  // so far could show a balance but never how it was arrived at, so a client
+  // disputing their total had nothing to check it against and the collector had
+  // nothing to send.
+  //
+  // The opening balance is computed rather than stored: every charge raised
+  // before the window, less every payment received before it. That way the
+  // statement reconciles to the ledger no matter which period is asked for.
+  app.get('/api/clients/:id/statement', verifyToken, ...canViewClients, async (req, res) => {
+    try {
+      if (!ctx.hasPermission(req.user, 'accounting.view')) {
+        return res.status(403).json({ success: false, error: 'Viewing a statement of account needs accounting access.' });
+      }
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+        return res.status(404).json({ success: false, error: 'Not found' });
+      }
+      const client = await ClientAccount.findById(req.params.id, { password: 0 }).lean();
+      if (!client) return res.status(404).json({ success: false, error: 'Not found' });
+
+      // Default window: this month to date, on the business's own clock.
+      const end = req.query.end ? dayEnd(req.query.end) : dayEnd(businessDateStr());
+      const start = req.query.start
+        ? dayStart(req.query.start)
+        : dayStart(new Date(end.getFullYear(), end.getMonth(), 1));
+
+      // Every order this client was ever charged for. A statement that only
+      // fetched the window could not know what was carried into it.
+      const orders = await Order.find({
+        businessType: BUSINESS_TYPE,
+        ...tenantScope(req),
+        ...orderMatchesClient(req.params.id),
+        status: LIVE_STATUSES,
+        createdAt: { $lte: end },
+      }, {
+        orderNumber: 1, billingNumber: 1, orNumber: 1, status: 1, total: 1, createdAt: 1,
+        paymentMethod: 1, isComplimentary: 1, arSettled: 1, arPaidAmount: 1, arPayments: 1,
+        dueDate: 1,
+      }).sort({ createdAt: 1 }).lean();
+
+      // A charge is what went onto the account: a credit sale that is neither
+      // complimentary nor settled in cash at the counter.
+      const isCharge = (o) => o.paymentMethod !== 'Cash' && o.isComplimentary !== true;
+
+      // Every movement, charges and payments alike, on one timeline.
+      const moves = [];
+      for (const o of orders) {
+        if (!isCharge(o)) continue;
+        moves.push({
+          at: o.createdAt,
+          kind: 'charge',
+          reference: o.billingNumber || o.orderNumber || '',
+          orNumber: o.orNumber || '',
+          description: `Order ${o.orderNumber || ''}`.trim(),
+          dueDate: o.dueDate || null,
+          charge: Math.round((Number(o.total) || 0) * 100) / 100,
+          payment: 0,
+        });
+        for (const pmt of (o.arPayments || [])) {
+          moves.push({
+            at: pmt.collectionDate || pmt.createdAt || o.createdAt,
+            kind: 'payment',
+            reference: pmt.referenceNumber || '',
+            description: `Payment on ${o.billingNumber || o.orderNumber || 'account'}${pmt.paymentMethod ? ` (${pmt.paymentMethod})` : ''}`,
+            charge: 0,
+            payment: Math.round((Number(pmt.amount) || 0) * 100) / 100,
+          });
+        }
+      }
+      moves.sort((a, b) => new Date(a.at) - new Date(b.at));
+
+      const r2 = (n) => Math.round(n * 100) / 100;
+      // Brought forward: everything that happened before the window opened.
+      let opening = 0;
+      for (const m of moves) {
+        if (new Date(m.at) >= start) break;
+        opening = r2(opening + m.charge - m.payment);
+      }
+
+      // The window itself, with the balance carried down each line - the column
+      // a client reads first when checking a statement against their own books.
+      let running = opening;
+      const rows = [];
+      let charges = 0, payments = 0;
+      for (const m of moves) {
+        const at = new Date(m.at);
+        if (at < start || at > end) continue;
+        running = r2(running + m.charge - m.payment);
+        charges = r2(charges + m.charge);
+        payments = r2(payments + m.payment);
+        rows.push({ ...m, at, balance: running });
+      }
+      const closing = running;
+
+      // Ageing of what is still open as of the statement date, so the client can
+      // see which of it is overdue rather than just the total.
+      const openCharges = orders
+        .filter(o => isCharge(o) && o.status === 'Completed' && o.arSettled !== true)
+        .map(o => ({ createdAt: o.createdAt, total: r2((Number(o.total) || 0) - (Number(o.arPaidAmount) || 0)) }))
+        .filter(o => o.total > 0.005);
+      const aged = ageingBuckets(openCharges, end);
+
+      // Money they have already handed over that is not yet against an order -
+      // it offsets what the statement says they owe.
+      let deposits = 0;
+      if (ctx.Advance) {
+        const deps = await ctx.Advance.find({
+          businessType: BUSINESS_TYPE, ...tenantScope(req),
+          type: 'customer', clientId: String(client._id), status: { $in: ['Open', 'Partially Liquidated'] },
+        }, { amount: 1, liquidatedAmount: 1 }).lean();
+        deposits = r2(deps.reduce((t, d) => t + (Number(d.amount) || 0) - (Number(d.liquidatedAmount) || 0), 0));
+      }
+
+      res.json({
+        success: true,
+        client: {
+          _id: String(client._id), name: client.name, clientCode: client.clientCode,
+          phone: client.phone || '', email: client.email || '',
+          tin: client.tin || '', registeredName: client.registeredName || '',
+          registeredAddress: client.registeredAddress || '',
+          creditTermsDays: client.creditTermsDays ?? null,
+        },
+        period: { start, end },
+        openingBalance: opening,
+        rows,
+        totals: { charges, payments },
+        closingBalance: closing,
+        aged,
+        deposits,
+        netDue: r2(closing - deposits),
+      });
+    } catch (err) {
+      (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+    }
+  });
+
   app.get('/api/clients/:id/orders', verifyToken, ...canViewClients, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) {

@@ -37,7 +37,7 @@ export default function registerDataExport(ctx) {
 
   // Only these models are scoped by businessType; the rest are global to the
   // deployment (see the menu-backup notes - scoping them returns nothing).
-  const SCOPED = new Set(['Inventory', 'Product', 'Order', 'Category', 'Bill', 'CheckVoucher', 'Advance', 'PurchaseOrder', 'FixedAsset']);
+  const SCOPED = new Set(['Inventory', 'Product', 'Order', 'Category', 'Bill', 'CheckVoucher', 'Advance', 'PurchaseOrder', 'FixedAsset', 'Reservation']);
 
   const scopeFor = (modelName, req) =>
     (SCOPED.has(modelName) ? { businessType: BUSINESS_TYPE, ...tenantScope(req) } : {});

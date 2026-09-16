@@ -422,6 +422,20 @@ export const DATASETS = {
     ],
   },
 
+  // Stock held for a client is a real commitment against the stock figure -
+  // an export of inventory without it overstates what is actually sellable.
+  reservations: {
+    label: 'Reserved Stock', model: 'Reservation',
+    sort: { createdAt: -1 },
+    columns: ['Reservation No', 'Branch', 'Held For', 'Order', 'Items', 'Held Qty', 'Status', 'Held Until', 'Note', 'Created'],
+    toRow: (r) => [
+      r.reservationNumber || '', r.branchCode || '', r.clientName || '', r.orderNumber || '',
+      (r.items || []).map(i => i.itemName).join('; '),
+      (r.items || []).reduce((s, i) => s + ((i.qty || 0) - (i.releasedQty || 0)), 0),
+      r.status || '', day(r.expiresAt), r.note || '', day(r.createdAt),
+    ],
+  },
+
   checkVouchers: {
     label: 'Check Vouchers', model: 'CheckVoucher',
     sort: { date: -1 },

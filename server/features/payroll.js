@@ -70,11 +70,41 @@ export default function registerPayroll(ctx) {
     return {
       employeeName: String(raw.employeeName).trim(),
       employeeId: String(raw.employeeId || '').trim(),
+      sssNumber: String(raw.sssNumber || '').trim(),
+      philhealthNumber: String(raw.philhealthNumber || '').trim(),
+      pagibigNumber: String(raw.pagibigNumber || '').trim(),
+      tin: String(raw.tin || '').trim(),
       grossPay: gross, sss, philhealth, pagibig, withholdingTax, otherDeductions,
       netPay: money(gross - deductions),
       notes: String(raw.notes || '').slice(0, 200),
     };
   }
+
+  // Fill in each employee's statutory numbers from their staff record, unless
+  // the caller supplied them. Done when the run is built, so the numbers are
+  // frozen onto the payslip rather than followed by reference - correcting a
+  // number next year must not rewrite the slips already issued under the old.
+  const withStaffNumbers = async (lines) => {
+    const User = mongoose.models.User;
+    if (!User) return lines;
+    const names = [...new Set(lines.map(l => String(l?.employeeName || '').trim()).filter(Boolean))];
+    if (!names.length) return lines;
+    const staff = await User.find({ name: { $in: names } },
+      { name: 1, sssNumber: 1, philhealthNumber: 1, pagibigNumber: 1, tin: 1, employeeNumber: 1 }).lean();
+    const byName = new Map(staff.map(u => [u.name, u]));
+    return lines.map((l) => {
+      const u = byName.get(String(l?.employeeName || '').trim());
+      if (!u) return l;
+      return {
+        ...l,
+        employeeId: l.employeeId || u.employeeNumber || '',
+        sssNumber: l.sssNumber || u.sssNumber || '',
+        philhealthNumber: l.philhealthNumber || u.philhealthNumber || '',
+        pagibigNumber: l.pagibigNumber || u.pagibigNumber || '',
+        tin: l.tin || u.tin || '',
+      };
+    });
+  };
 
   const sum = (lines, field) => money(lines.reduce((s, l) => s + (l[field] || 0), 0));
   const totalsFor = (lines) => ({
@@ -109,6 +139,77 @@ export default function registerPayroll(ctx) {
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
+  // -- WHAT TO REMIT, AND UNDER WHOSE NUMBER ---------------------------------
+  // GET /api/payroll-runs/remittance?agency=sss|philhealth|pagibig|tax&start=&end=
+  //
+  // The liabilities summary says how much is owed to each agency. That is not
+  // what the agency asks for: every one of them wants the amount broken down by
+  // employee, against that employee's own account number. Without this the
+  // monthly filing was assembled by hand from the payslips, which is where the
+  // numbers get transposed.
+  //
+  // Only Approved and Paid runs count - a draft has not been committed to the
+  // books, so remitting against it would pay over money never withheld.
+  const AGENCIES = {
+    sss:        { field: 'sss',             idField: 'sssNumber',        label: 'SSS',        code: '240100' },
+    philhealth: { field: 'philhealth',      idField: 'philhealthNumber', label: 'PhilHealth', code: '240200' },
+    pagibig:    { field: 'pagibig',         idField: 'pagibigNumber',    label: 'Pag-IBIG',   code: '240300' },
+    tax:        { field: 'withholdingTax',  idField: 'tin',              label: 'Withholding tax', code: '230200' },
+  };
+
+  app.get('/api/payroll-runs/remittance', verifyToken, ...canView, async (req, res) => {
+    try {
+      const agency = AGENCIES[String(req.query.agency || 'sss').toLowerCase()];
+      if (!agency) {
+        return res.status(400).json({ success: false, error: 'Pick one of: sss, philhealth, pagibig, tax.' });
+      }
+      const end = req.query.end ? dayEnd(req.query.end) : dayEnd(new Date());
+      const start = req.query.start
+        ? dayStart(req.query.start)
+        : dayStart(new Date(end.getFullYear(), end.getMonth(), 1));
+
+      const runs = await PayrollRun.find({
+        businessType: BUSINESS_TYPE, ...tenantScope(req),
+        status: { $in: ['Approved', 'Paid'] },
+        payDate: { $gte: start, $lte: end },
+      }).sort({ payDate: 1 }).lean();
+
+      // One row per employee across the period, not one per run - the agency
+      // files a single figure per member per month.
+      const byEmployee = new Map();
+      for (const run of runs) {
+        for (const line of run.lines || []) {
+          const amount = money(line[agency.field] || 0);
+          if (amount <= 0) continue;
+          const key = `${line.employeeName}|${line[agency.idField] || ''}`;
+          const row = byEmployee.get(key) || {
+            employeeName: line.employeeName,
+            employeeId: line.employeeId || '',
+            idNumber: line[agency.idField] || '',
+            grossPay: 0, amount: 0, runs: [],
+          };
+          row.grossPay = money(row.grossPay + (line.grossPay || 0));
+          row.amount = money(row.amount + amount);
+          if (!row.runs.includes(run.reference)) row.runs.push(run.reference);
+          byEmployee.set(key, row);
+        }
+      }
+      const rows = [...byEmployee.values()].sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+
+      res.json({
+        success: true,
+        agency: { key: String(req.query.agency || 'sss').toLowerCase(), label: agency.label, accountCode: agency.code, accountName: nameOf(agency.code) },
+        period: { start, end },
+        rows,
+        total: money(rows.reduce((t, r) => t + r.amount, 0)),
+        // Named so the filing clerk can chase the gaps BEFORE the deadline
+        // rather than discovering them in a rejected submission.
+        missingNumbers: rows.filter(r => !r.idNumber).map(r => r.employeeName),
+        runCount: runs.length,
+      });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
   app.get('/api/payroll-runs/:id', verifyToken, ...canView, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
@@ -135,7 +236,7 @@ export default function registerPayroll(ctx) {
       }
 
       let built;
-      try { built = lines.map(buildLine); }
+      try { built = (await withStaffNumbers(lines)).map(buildLine); }
       catch (e) { return res.status(400).json({ success: false, error: e.message }); }
 
       const run = await PayrollRun.create({
@@ -166,7 +267,7 @@ export default function registerPayroll(ctx) {
       if (run.status !== 'Draft') return res.status(409).json({ success: false, error: `Only a draft can be edited (this one is ${run.status}).` });
 
       if (Array.isArray(req.body?.lines)) {
-        try { run.lines = req.body.lines.map(buildLine); }
+        try { run.lines = (await withStaffNumbers(req.body.lines)).map(buildLine); }
         catch (e) { return res.status(400).json({ success: false, error: e.message }); }
         run.totals = totalsFor(run.lines);
       }
@@ -297,6 +398,7 @@ export default function registerPayroll(ctx) {
       });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
+
 
   // ── WHAT IS STILL OWED TO THE AGENCIES ────────────────────────────────────
   app.get('/api/payroll-runs/liabilities/summary', verifyToken, ...canView, async (req, res) => {

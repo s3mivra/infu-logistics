@@ -1,6 +1,7 @@
 ﻿import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Users, Search, ChevronDown, ChevronRight, RefreshCw, AlertCircle, Upload, FileText, Download } from 'lucide-react';
 import * as ui from '../../shared/ui';
+import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import { io } from 'socket.io-client';
 import { useDashboard } from '../dashboard/DashboardContext';
 
@@ -28,13 +29,24 @@ if (typeof window !== 'undefined') {
 const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 
 export default function ClientsTab() {
-  const { apiFetch, downloadDataset } = useDashboard();
+  const { apiFetch, downloadDataset, systemSettings = {} } = useDashboard();
   const [importing, setImporting] = useState(false);
   const [data, setData] = useState({ clients: [], showMoney: false, mode: 'off' });
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState(null);
   const [orders, setOrders] = useState({});   // clientId -> orders[]
+  // The statement of account being looked at: which client, over what period.
+  // Defaults to the current month, which is what a client asks for.
+  const [soaFor, setSoaFor] = useState(null);
+  const [soa, setSoa] = useState(null);
+  const [soaRange, setSoaRange] = useState(() => {
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    const d = (x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+    return { start: d(first), end: d(now) };
+  });
+  const [soaLoading, setSoaLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,6 +95,84 @@ export default function ClientsTab() {
       const d = await res.json();
       if (d.success) setOrders(o => ({ ...o, [id]: d.orders || [] }));
     } catch { /* row simply stays empty */ }
+  };
+
+  // The statement itself. Refetched whenever the period changes, because the
+  // opening balance depends entirely on where the window starts.
+  const loadStatement = useCallback(async (client, range) => {
+    setSoaLoading(true);
+    try {
+      const res = await apiFetch(`/api/clients/${client._id}/statement?start=${range.start}&end=${range.end}`);
+      const d = await res.json();
+      setSoa(d.success ? d : null);
+    } catch { setSoa(null); }
+    finally { setSoaLoading(false); }
+  }, [apiFetch]);
+
+  const openStatement = (client) => {
+    setSoaFor(client);
+    setSoa(null);
+    loadStatement(client, soaRange);
+  };
+
+  const fmtDay = (d) => new Date(d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  // Printed on the shop's own letterhead, with the running balance column the
+  // client will check against their own books.
+  const printStatement = () => {
+    if (!soa) return;
+    printBillingDoc(buildBillingDocHTML({
+      docTitle: 'STATEMENT OF ACCOUNT',
+      dateLabel: 'Statement date',
+      dateStr: fmtDay(soa.period.end),
+      settings: systemSettings,
+      metaFields: [
+        { label: 'Account', value: soa.client.registeredName || soa.client.name },
+        { label: 'Client Code', value: soa.client.clientCode || '' },
+        ...(soa.client.tin ? [{ label: 'TIN', value: soa.client.tin }] : []),
+        ...(soa.client.registeredAddress ? [{ label: 'Registered Address', value: soa.client.registeredAddress }] : []),
+        { label: 'Period', value: `${fmtDay(soa.period.start)} - ${fmtDay(soa.period.end)}` },
+      ],
+      subFields: [
+        ...(soa.client.creditTermsDays != null ? [{ label: 'Terms', value: `${soa.client.creditTermsDays} days` }] : []),
+        ...(soa.client.phone ? [{ label: 'Contact', value: soa.client.phone }] : []),
+      ],
+      schedRows: [
+        { label: 'Current:', value: peso(soa.aged.current) },
+        { label: '31-60 days:', value: peso(soa.aged.d31_60) },
+        { label: '61-90 days:', value: peso(soa.aged.d61_90) },
+        { label: 'Over 90 days:', value: peso(soa.aged.d90_plus) },
+      ],
+      itemColumns: [
+        { label: 'Date', key: 'date' },
+        { label: 'Reference', key: 'ref' },
+        { label: 'Particulars', key: 'particulars' },
+        { label: 'Charges', key: 'charge', align: 'right', money: true },
+        { label: 'Payments', key: 'payment', align: 'right', money: true },
+        { label: 'Balance', key: 'balance', align: 'right', money: true },
+      ],
+      items: [
+        { date: fmtDay(soa.period.start), ref: '', particulars: 'Balance brought forward', charge: null, payment: null, balance: soa.openingBalance },
+        ...soa.rows.map(r => ({
+          date: fmtDay(r.at), ref: r.reference || '', particulars: r.description || '',
+          charge: r.charge || null, payment: r.payment || null, balance: r.balance,
+        })),
+      ],
+      totals: [
+        { label: 'Charges this period', value: soa.totals.charges },
+        { label: 'Payments received', value: soa.totals.payments },
+        ...(soa.deposits > 0 ? [{ label: 'Less deposits on hand', value: soa.deposits }] : []),
+        { label: 'AMOUNT DUE', value: soa.netDue, grand: true },
+      ],
+      termsTitle: 'Please note',
+      terms: [
+        'This statement covers the period shown above. Balances carried forward are from earlier periods.',
+        'Please settle the amount due on or before the terms agreed on your account.',
+        'If any entry does not agree with your records, tell us within 7 days of receiving this statement.',
+      ],
+      signatures: ['PREPARED BY: Signature over Printed Name / Date', 'RECEIVED BY: Signature over Printed Name / Date'],
+      copies: ['ORIGINAL'],
+    }));
   };
 
   const term = q.trim().toLowerCase();
@@ -263,6 +353,12 @@ export default function ClientsTab() {
                           )}
                         </div>
                       )}
+                      {data.showMoney && (
+                        <button onClick={() => openStatement(c)}
+                          className="mb-3 flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand-text px-3 py-2 rounded-xl font-bold uppercase tracking-wider transition">
+                          <FileText size={13} /> Statement of account
+                        </button>
+                      )}
                       {!orders[c._id] ? (
                         <p className="text-fg/65 text-xs font-bold py-2">Loading orders…</p>
                       ) : orders[c._id].length === 0 ? (
@@ -306,6 +402,92 @@ export default function ClientsTab() {
           </tbody>
         </table>
       </div>
+
+      {soaFor && (
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => setSoaFor(null)}>
+          <div className="bg-surface border border-white/10 rounded-2xl w-full max-w-3xl my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
+              <div className="min-w-0">
+                <h2 className="font-black text-fg text-lg truncate">Statement of account</h2>
+                <p className="text-fg/60 text-xs font-bold truncate">{soaFor.name}{soaFor.clientCode ? ` · ${soaFor.clientCode}` : ''}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="date" value={soaRange.start}
+                  onChange={e => { const r = { ...soaRange, start: e.target.value }; setSoaRange(r); loadStatement(soaFor, r); }}
+                  className="bg-white/5 border border-white/10 focus:border-brand rounded-lg px-2 py-1.5 text-xs text-fg outline-none" />
+                <span className="text-fg/50 text-xs">to</span>
+                <input type="date" value={soaRange.end}
+                  onChange={e => { const r = { ...soaRange, end: e.target.value }; setSoaRange(r); loadStatement(soaFor, r); }}
+                  className="bg-white/5 border border-white/10 focus:border-brand rounded-lg px-2 py-1.5 text-xs text-fg outline-none" />
+              </div>
+            </div>
+
+            <div className="p-5 max-h-[65vh] overflow-y-auto">
+              {soaLoading || !soa ? (
+                <p className="text-fg/65 text-sm font-bold py-6 text-center">{soaLoading ? 'Building the statement…' : 'Nothing to show for this period.'}</p>
+              ) : (
+                <>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-fg/70 text-[9px] uppercase tracking-widest border-b border-white/10">
+                        <th className="text-left py-1.5">Date</th>
+                        <th className="text-left py-1.5">Reference</th>
+                        <th className="text-left py-1.5">Particulars</th>
+                        <th className="text-right py-1.5">Charges</th>
+                        <th className="text-right py-1.5">Payments</th>
+                        <th className="text-right py-1.5">Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-b border-white/5">
+                        <td className="py-1.5 text-fg/80">{fmtDay(soa.period.start)}</td>
+                        <td />
+                        <td className="py-1.5 text-fg/70 italic">Balance brought forward</td>
+                        <td /><td />
+                        <td className="py-1.5 text-right tabular-nums font-bold text-fg">{peso(soa.openingBalance)}</td>
+                      </tr>
+                      {soa.rows.map((r, i) => (
+                        <tr key={`${r.reference}-${i}`} className="border-b border-white/5">
+                          <td className="py-1.5 text-fg/80 whitespace-nowrap">{fmtDay(r.at)}</td>
+                          <td className="py-1.5 font-mono text-fg/60">{r.reference}</td>
+                          <td className="py-1.5 text-fg/80">{r.description}</td>
+                          <td className="py-1.5 text-right tabular-nums text-fg/80">{r.charge ? peso(r.charge) : ''}</td>
+                          <td className="py-1.5 text-right tabular-nums text-emerald-300/80">{r.payment ? peso(r.payment) : ''}</td>
+                          <td className="py-1.5 text-right tabular-nums font-bold text-fg">{peso(r.balance)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  <div className="flex flex-wrap gap-2 mt-4">
+                    {[['Current', soa.aged.current], ['31-60', soa.aged.d31_60], ['61-90', soa.aged.d61_90], ['91+', soa.aged.d90_plus]].map(([lbl, amt]) => (
+                      <span key={lbl} className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs">
+                        <span className="text-fg/70 font-bold">{lbl}</span>
+                        <span className={`font-black tabular-nums ml-2 ${amt > 0 ? 'text-fg' : 'text-fg/60'}`}>{peso(amt)}</span>
+                      </span>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-white/10">
+              <div className="text-sm">
+                <span className="text-fg/60 font-bold text-xs uppercase tracking-wider mr-2">Amount due</span>
+                <span className="font-black text-fg tabular-nums">{peso(soa?.netDue || 0)}</span>
+                {soa?.deposits > 0 && <span className="text-fg/55 text-xs font-bold ml-2">after {peso(soa.deposits)} on deposit</span>}
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setSoaFor(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/70 hover:text-fg transition">Close</button>
+                <button onClick={printStatement} disabled={!soa}
+                  className="flex items-center gap-2 bg-brand text-on-brand disabled:opacity-50 font-bold text-sm px-4 py-2 rounded-xl hover:bg-brand-dark transition">
+                  <FileText size={15} /> Print
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

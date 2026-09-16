@@ -3,6 +3,7 @@ import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, Trending
 import * as ui from '../../shared/ui';
 import StockTaxonomyPanel from './StockTaxonomyPanel';
 import StockTransferPanel from './StockTransferPanel';
+import ReservationsPanel from './ReservationsPanel';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
@@ -98,6 +99,8 @@ export default function InventoryTab({ ctx }) {
     totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
     users, varianceNoteMode, varianceReasons, historyLoading,
+    systemSettings = {},
+    clientAccounts = [], can,
   } = ctx;
 
   // Which row's action menu is open (by item._id), null = all closed
@@ -239,6 +242,12 @@ export default function InventoryTab({ ctx }) {
                   Places &amp; Categories
                 </button>
                 <button
+                  onClick={() => setInvSubTab('reserved')}
+                  className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'reserved' ? 'bg-accent text-on-brand shadow-md' : 'text-fg/70 hover:text-brand-text'}`}
+                >
+                  Reserved
+                </button>
+                <button
                   onClick={() => { setInvSubTab('transfers'); fetchStockTransfers(); }}
                   className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'transfers' ? 'bg-accent text-on-brand shadow-md' : 'text-fg/70 hover:text-brand-text'}`}
                 >
@@ -280,6 +289,17 @@ export default function InventoryTab({ ctx }) {
                 deleteStockCategory={deleteStockCategory}
                 backfillStockCategoryPrefixes={backfillStockCategoryPrefixes}
                 renumberStockCategory={renumberStockCategory}
+              />
+            )}
+
+            {invSubTab === 'reserved' && (
+              <ReservationsPanel
+                apiFetch={apiFetch}
+                inventory={inventory}
+                clientAccounts={clientAccounts}
+                itemDisplay={itemDisplay}
+                isSuperAdmin={isSuperAdmin}
+                can={can}
               />
             )}
 
@@ -370,6 +390,7 @@ export default function InventoryTab({ ctx }) {
                     <tr className="text-on-brand border-b border-white/20">
                       <th className="pb-3">Item Name</th>
                       <th className="pb-3 text-right">Live Qty</th>
+                      <th className="pb-3 text-right" title="Held for a client - not sellable to anyone else">Held</th>
                       <th className="pb-3 text-right">Threshold</th>
                       <th className="pb-3">Unit</th>
                       <th className="pb-3 text-right">Unit Cost</th>
@@ -434,6 +455,13 @@ export default function InventoryTab({ ctx }) {
                         </td>
                         {(() => { const d = itemDisplay(item); return (<>
                         <td className={`py-3 text-right font-bold tabular-nums ${isLow ? 'text-danger' : 'text-on-brand'}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
+                        {/* Stock promised to one client. Still on the shelf and still
+                            in Live Qty, but no other order can take it. */}
+                        <td className="py-3 text-right tabular-nums text-xs font-mono">
+                          {(item.reservedQty || 0) > 0
+                            ? <span className="text-warning font-bold" title="Held for a client">{((item.stockQty || 0) > 0 ? d.packQty * ((item.reservedQty || 0) / item.stockQty) : 0).toLocaleString(undefined, { maximumFractionDigits: 3 })}</span>
+                            : <span className="text-on-brand/40">-</span>}
+                        </td>
                         <td className="py-3 text-right text-on-brand text-xs font-mono tabular-nums">{effThreshold > 0 ? (<>{(() => {
                           const raw = effThreshold / (d.packBase || 1);
                           // pcs are indivisible - round a fractional auto-threshold UP
@@ -1227,6 +1255,17 @@ export default function InventoryTab({ ctx }) {
                         </optgroup>
                       )}
                     </select>
+                    {systemSettings.vatEnabled === true && (
+                      <label className="flex items-start gap-2 cursor-pointer mt-2">
+                        <input type="checkbox" checked={invForm.claimInputVat === true}
+                          onChange={e => setInvForm({ ...invForm, claimInputVat: e.target.checked })}
+                          className="mt-0.5 accent-brand" />
+                        <span>
+                          <span className="text-[11px] text-fg font-bold block">Supplier charged VAT (claim input VAT)</span>
+                          <span className="text-[10px] text-fg/60 leading-snug block">Splits the VAT out of this amount into Input VAT (Creditable). Tick only for a VAT-registered supplier with an official receipt. The stock is then costed net of VAT.</span>
+                        </span>
+                      </label>
+                    )}
                     {/* On credit, the liability needs a name against it or
                         "how much do we owe X" can't be answered later. */}
                     {String(invForm.creditAccount || '').startsWith('220') && !invForm.revolvingFundId && (

@@ -118,6 +118,7 @@ export default function OrdersTab({ ctx }) {
     posPayments, setPosPayments,
     modifierGroups, printKitchenTicket,
     paymentRefs, setPaymentRefs, paymentCheckDates, setPaymentCheckDates,
+    scPwdEntry, setScPwdEntry, saveScPwdId,
     paymentMethodGroups, setPayQrOpen,
     refundModal, setRefundModal, handleRefund, openPartial, dropRemaining,
     combos, addComboToPosCart,
@@ -172,6 +173,19 @@ export default function OrdersTab({ ctx }) {
     && !['Completed', 'Cancelled', 'Voided', 'Refunded', 'Partially Fulfilled'].includes(order.status)
     && !(order.items || []).some(i => (i.fulfilledQty || 0) > 0)
     && !((order.payments || []).length > 0);
+  // Holding an open order's stock keeps it off everyone else's orders until
+  // this one completes - the promise a client has usually paid a deposit on.
+  const holdStock = async (order) => {
+    if (!(await ui.confirm(`Hold this order's stock for ${order.customerName || 'this client'}? Nobody else's order can take it until this one completes.`))) return;
+    try {
+      const res = await apiFetch('/api/reservations', { method: 'POST', body: JSON.stringify({ orderId: order._id }) });
+      const d = await res.json();
+      if (!d.success) return ui.alert(d.error || 'Could not hold that stock.');
+      ui.alert(`${d.reservation.reservationNumber} holds this order's stock until ${new Date(d.reservation.expiresAt).toLocaleDateString()}. Completing the order releases it.`);
+      fetchOrders();
+    } catch { ui.alert('Network error.'); }
+  };
+
   const openAmend = (order) => setAmendModal({ order, qty: (order.items || []).map(i => String(i.quantity)), adds: [], search: '', reason: '', busy: false, error: '' });
   // Products that can be added in place: sellable, and not needing a size or
   // option picked (those go through a new order - the server enforces the same).
@@ -829,6 +843,11 @@ export default function OrdersTab({ ctx }) {
                                   <ShoppingCart size={11} /> Resume
                                 </button>
                               )}
+                              {canAmend(order) && (order.clientId || order.clientAccountId) && (
+                                <button onClick={() => holdStock(order)} className="p-1.5 rounded-md hover:bg-white/10 hover:text-fg transition" title="Hold this order's stock for the client" aria-label="Hold stock for this order">
+                                  <Lock size={14} />
+                                </button>
+                              )}
                               {canAmend(order) && (
                                 <button onClick={() => openAmend(order)} className="p-1.5 rounded-md hover:bg-white/10 hover:text-fg transition" title="Amend order (before completion)" aria-label="Amend order">
                                   <Edit size={14} />
@@ -993,8 +1012,8 @@ export default function OrdersTab({ ctx }) {
                                                     {effPct > 0 && (
                                                       <div className="flex items-center gap-1.5">
                                                         <span className="text-fg/65 line-through text-[10px] font-mono">₱{lineGross.toFixed(2)}</span>
-                                                        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${isClientRate ? 'bg-emerald-500/15 text-success' : 'bg-amber-500/15 text-warning'}`}>
-                                                          {isClientRate ? `Client −${effPct}%` : `−${effPct}%`}
+                                                        <span title={isClientRate ? 'Set by a pricing rule: client rate, customer tier, or bulk quantity break' : 'Discount entered at the register'} className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${isClientRate ? 'bg-emerald-500/15 text-success' : 'bg-amber-500/15 text-warning'}`}>
+                                                          {isClientRate ? `Price rule −${effPct}%` : `Cashier −${effPct}%`}
                                                         </span>
                                                       </div>
                                                     )}
@@ -1235,6 +1254,47 @@ export default function OrdersTab({ ctx }) {
                                     )}
                                     {open && scpwdDiscounts.length > 0 && order.status === 'Pending' && (
                                       <div className="border-b border-white/5 pb-1.5 space-y-1">
+                                        {/* The discount belongs to a named card. Asked for here, while
+                                            the customer is still at the counter - the sale will not
+                                            complete without it. */}
+                                        {hasScpwd && (() => {
+                                          const entry = scPwdEntry?.[order._id] || {};
+                                          const saved = order.scPwdName && order.scPwdIdNumber;
+                                          return (
+                                            <div className={`rounded-lg px-2 py-2 mb-1.5 border ${saved ? 'border-green-500/25 bg-green-500/5' : 'border-amber-500/40 bg-amber-500/5'}`}>
+                                              {saved ? (
+                                                <p className="text-[10px] text-fg/85">
+                                                  <span className="font-bold">{order.scPwdKind || 'SC/PWD'}:</span> {order.scPwdName} · {order.scPwdIdNumber}
+                                                </p>
+                                              ) : (
+                                                <>
+                                                  <p className="text-[10px] font-bold text-warning mb-1.5">Card details required before payment</p>
+                                                  <div className="flex flex-wrap gap-1.5">
+                                                    <select value={entry.kind || 'Senior Citizen'}
+                                                      onChange={e => setScPwdEntry(prev => ({ ...prev, [order._id]: { ...entry, kind: e.target.value } }))}
+                                                      aria-label="Card type"
+                                                      className="bg-page-bg border border-white/10 rounded px-1.5 py-1 text-[10px] text-fg outline-none">
+                                                      <option>Senior Citizen</option>
+                                                      <option>PWD</option>
+                                                    </select>
+                                                    <input type="text" value={entry.name || ''} placeholder="Cardholder name"
+                                                      onChange={e => setScPwdEntry(prev => ({ ...prev, [order._id]: { ...entry, name: e.target.value } }))}
+                                                      aria-label="Cardholder name"
+                                                      className="flex-1 min-w-[110px] bg-page-bg border border-white/10 rounded px-2 py-1 text-[10px] text-fg outline-none focus:border-brand" />
+                                                    <input type="text" value={entry.idNumber || ''} placeholder="ID number"
+                                                      onChange={e => setScPwdEntry(prev => ({ ...prev, [order._id]: { ...entry, idNumber: e.target.value } }))}
+                                                      aria-label="Card ID number"
+                                                      className="w-[110px] bg-page-bg border border-white/10 rounded px-2 py-1 text-[10px] text-fg font-mono outline-none focus:border-brand" />
+                                                    <button onClick={() => saveScPwdId?.(order._id)}
+                                                      className="bg-brand text-on-brand px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider hover:bg-brand/90 transition">
+                                                      Save
+                                                    </button>
+                                                  </div>
+                                                </>
+                                              )}
+                                            </div>
+                                          );
+                                        })()}
                                         {hasPromo ? (
                                           <span className="text-[9px] uppercase tracking-wider text-fg italic">SC/PWD - Promo active</span>
                                         ) : (

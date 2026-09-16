@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
+import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { hasPermission } from '../lib/authz.js';
 
 export default function registerShifts(ctx) {
@@ -349,7 +350,7 @@ app.post('/api/shifts/start', verifyToken, requireStaff, async (req, res) => {
 // well would credit the same cash twice.
 app.post('/api/shifts/movement', verifyToken, requireStaff, async (req, res) => {
   try {
-    const { type, amount, reason } = req.body || {};
+    const { type, amount, reason, expenseAccount, vendor, refNo } = req.body || {};
     if (!['in', 'out'].includes(String(type))) {
       return res.status(400).json({ success: false, error: 'Movement type must be "in" or "out".' });
     }
@@ -367,13 +368,34 @@ app.post('/api/shifts/movement', verifyToken, requireStaff, async (req, res) => 
     const shift = await findOpenShift(req.user, sharedDrawer);
     if (!shift) return res.status(404).json({ success: false, error: 'No open shift found.' });
 
-    shift.movements.push({ type, amount: amt, reason: why, by: req.user.name, at: new Date() });
+    // Money SPENT out of the till files its expense now: the ledger loses the
+    // cash at the same moment the drawer does. Money MOVED (safe drop, change
+    // fund) files nothing here - the deposit record accounts for it - and is
+    // left marked unfiled so it can be chased rather than forgotten.
+    let journalRef = '';
+    const spendAccount = type === 'out' ? String(expenseAccount || '').trim() : '';
+    if (spendAccount) {
+      if (typeof ctx.createExpenseEntry !== 'function') {
+        return res.status(500).json({ success: false, error: 'Expense posting is unavailable.' });
+      }
+      const posted = await ctx.createExpenseEntry(req, {
+        amount: amt, categoryCode: spendAccount, paymentMethod: 'Cash',
+        description: why, vendor, refNo,
+      });
+      if (!posted.ok) return res.status(400).json({ success: false, error: posted.error });
+      journalRef = posted.je?.reference || '';
+    }
+
+    shift.movements.push({
+      type, amount: amt, reason: why, by: req.user.name, at: new Date(),
+      expenseAccount: spendAccount, journalRef, filed: type === 'in' ? true : !!spendAccount,
+    });
     await shift.save();
     await logAudit(req, {
       action: 'cashMovement', entity: 'Shift', entityId: String(shift._id),
-      after: { type, amount: amt, reason: why },
+      after: { type, amount: amt, reason: why, expenseAccount: spendAccount, journalRef },
     });
-    res.json({ success: true, shift });
+    res.json({ success: true, shift, journalRef });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -449,6 +471,22 @@ app.post('/api/shifts/end', verifyToken, requireStaff, async (req, res) => {
 
     emitToMgr('erpUpdated'); // auto-refresh the general ledger (variance entry)
 
+    // Cash paid out that never filed an expense. The count balances (the
+    // pay-out is part of what was expected in the till), so nothing here is
+    // wrong yet - but until each one is filed or matched to a deposit, book
+    // cash is higher than the money actually is. Say so at the one moment
+    // somebody is looking at the drawer.
+    const unfiledPayOuts = (shift.movements || [])
+      .filter(m => m.type === 'out' && !m.filed)
+      .map(m => ({ amount: m.amount, reason: m.reason, by: m.by, at: m.at }));
+    if (unfiledPayOuts.length) {
+      const total = unfiledPayOuts.reduce((s, m) => s + (m.amount || 0), 0);
+      emitToMgr('mgrAlert', {
+        kind: 'unfiledPayOuts', ref: shift.closedBy || shift.cashierName,
+        message: `${unfiledPayOuts.length} pay-out(s) totalling P${total.toFixed(2)} left the till with no expense filed.`,
+      });
+    }
+
     // HANDOVER: close, then immediately reopen with the counted cash as the new
     // float. The money never left the till - somebody counted it and it is
     // still sitting there - so making the next person retype the figure they
@@ -464,19 +502,19 @@ app.post('/api/shifts/end', verifyToken, requireStaff, async (req, res) => {
           openedBy:     req.user.name,
           startingCash: actual,
         });
-        return res.json({ success: true, shift, handedOver: true, nextShift: next });
+        return res.json({ success: true, shift, handedOver: true, nextShift: next, unfiledPayOuts });
       } catch (err) {
         // Somebody else opened the drawer in the gap. Their session stands -
         // the close above is what mattered, and it is already recorded.
         if (err?.code === 11000) {
           const winner = await Shift.findOne({ scope: 'drawer', status: 'Open' });
-          return res.json({ success: true, shift, handedOver: Boolean(winner), nextShift: winner || null });
+          return res.json({ success: true, shift, handedOver: Boolean(winner), nextShift: winner || null, unfiledPayOuts });
         }
         throw err;
       }
     }
 
-    res.json({ success: true, shift, handedOver: false });
+    res.json({ success: true, shift, handedOver: false, unfiledPayOuts });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -579,7 +617,7 @@ app.post('/api/clock/in', verifyToken, requireStaff, async (req, res) => {
     const existing = await ClockEntry.findOne({ staffId: req.user._id.toString(), clockOut: { $exists: false } });
     if (existing) return res.status(400).json({ success: false, error: 'Already clocked in.' });
     const at = parseClockAt(req.body?.at);
-    const manilaDate = (at || new Date()).toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    const manilaDate = businessDateStr(at || new Date());
     const doc = { staffId: req.user._id.toString(), staffName: req.user.name, date: manilaDate };
     if (at) doc.clockIn = at;
     const entry = await ClockEntry.create(doc);

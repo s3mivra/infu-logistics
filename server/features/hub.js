@@ -3,6 +3,8 @@
 // (requireLinkToken), not JWT - each tenant has its own JWT_SECRET so
 // partner JWTs are never valid here.
 import crypto from 'node:crypto';
+import { businessDateStr } from '../lib/businessTime.js';
+import { dayEnd } from '../lib/reportRange.js';
 import { mergeTrialBalances, buildPnl, buildBalanceSheet, unknownCodes } from '../lib/consolidate.js';
 import { rollUpByLocation, parseBranchCode } from '../lib/branchCode.js';
 
@@ -999,10 +1001,10 @@ export default function registerHub(ctx) {
   const parseRange = (q) => {
     const start = q.start ? new Date(q.start) : new Date(new Date().getFullYear(), 0, 1);
     start.setHours(0, 0, 0, 0);
-    const end = q.end ? new Date(q.end) : new Date();
-    end.setHours(23, 59, 59, 999);
-    const asOf = q.asOf ? new Date(q.asOf) : end;
-    asOf.setHours(23, 59, 59, 999);
+    let end = q.end ? new Date(q.end) : new Date();
+    end = dayEnd(businessDateStr(end));
+    let asOf = q.asOf ? new Date(q.asOf) : end;
+    asOf = dayEnd(businessDateStr(asOf));
     return { start, end, asOf };
   };
 

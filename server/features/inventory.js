@@ -2,6 +2,9 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { title, upper } from '../lib/normalize.js';
+import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
+import { INPUT_VAT } from '../lib/vatPosting.js';
+import { loadVatConfig } from '../lib/vatSettings.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
@@ -187,7 +190,7 @@ export default function registerInventory(ctx) {
 app.get('/api/inventory/eod-data', verifyToken, requireStaff, async (req, res) => {
   try {
     // Get local date string (e.g., "2026-04-29")
-    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    const todayStr = businessDateStr();
     
     let eod = await EODRecord.findOne({ dateString: todayStr });
     if (!eod) eod = { status: 'OPEN', lockedAt: null };
@@ -222,7 +225,7 @@ app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => 
   session.startTransaction();
 
   try {
-    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    const todayStr = businessDateStr();
     
     // STRICT CHECK: Is it already locked?
     const existingEOD = await EODRecord.findOne({ dateString: todayStr }).session(session);
@@ -305,7 +308,7 @@ app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => 
 // --- UNLOCK / REOPEN EOD (ADMIN ONLY) ---
 app.post('/api/inventory/eod/reopen', verifyToken, requireStaff, async (req, res) => {
   try {
-    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    const todayStr = businessDateStr();
     
     // Find today's lock
     const eod = await EODRecord.findOne({ dateString: todayStr });
@@ -340,7 +343,7 @@ app.get('/api/inventory/eod-history/:dateString/variance', verifyToken, requireS
     const { dateString } = req.params;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return res.status(400).json({ success: false, error: 'Invalid date.' });
     // dateString is a Manila calendar day (see toLocaleDateString(...,
-    // {timeZone:'Asia/Manila'}) in POST /api/inventory/count above) - an
+    // (in the business's own zone, as POST /api/inventory/count does) - an
     // explicit +08:00 offset here keeps the boundary correct regardless of
     // what timezone the server process itself runs in (naive T00:00:00
     // parsing used the SERVER's local zone, which silently missed every
@@ -943,6 +946,17 @@ app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
     // provided - goods with no real expiry (roasted beans, etc.) date freshness by
     // production date instead.
     const purchRef = await mkSeqRef('INV-PURCH');
+    // Claimed input VAT comes out of the unit cost before the item is created,
+    // so stock is never carried at a price that includes creditable VAT.
+    const invVatCfg = await loadVatConfig(Settings);
+    let newItemInputVat = 0;
+    if (req.body.claimInputVat === true && invVatCfg.enabled && Number(req.body.unitCost) > 0) {
+      const grossUnit = Number(req.body.unitCost);
+      const netUnit = Math.round((grossUnit / (1 + invVatCfg.rate)) * 1e6) / 1e6;
+      newItemInputVat = Math.round((grossUnit - netUnit) * (Number(req.body.stockQty) || 0) * 100) / 100;
+      req.body.unitCost = netUnit;
+    }
+    delete req.body.claimInputVat;
     if ((req.body.expiryDate || req.body.productionDate) && req.body.stockQty > 0) {
       req.body.expiryBatches = [{
         qty: req.body.stockQty,
@@ -1015,12 +1029,13 @@ app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
       const reference = purchRef;
       const lines = [
         { accountCode: '130000', accountName: 'Inventory Asset', debit: totalCost, credit: 0 },
-        { accountCode: creditCode, accountName: creditName,   debit: 0, credit: totalCost }
+        ...(newItemInputVat > 0 ? [{ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: newItemInputVat, credit: 0 }] : []),
+        { accountCode: creditCode, accountName: creditName,   debit: 0, credit: totalCost + newItemInputVat }
       ];
       await JournalEntry.create({
         reference,
         description: `Purchased ${newItem.stockQty}${newItem.unit} of ${newItem.itemName}${isOnCredit ? ` on credit${supplierAttr.supplierName ? ` from ${supplierAttr.supplierName}` : ''}` : ''}${fund ? ` from ${fund.name}` : ''}`,
-        lines, totalDebit: totalCost, totalCredit: totalCost, ...supplierAttr,
+        lines, totalDebit: totalCost + newItemInputVat, totalCredit: totalCost + newItemInputVat, ...supplierAttr,
       });
     }
 
@@ -1098,13 +1113,22 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
     //   revolvingFundId         - receive out of a petty-cash/revolving fund;
     //     the fund's balance is actually drawn down, not just the COA account.
     supplierId, supplierName, revolvingFundId,
+    // VAT charged by a VAT-registered supplier, inside totalCost. Creditable,
+    // so the stock is valued NET of it and the VAT is held in 170300 - costing
+    // stock at the VAT-inclusive price would inflate COGS and lose the credit.
+    claimInputVat,
   } = req.body;
   const isAllowedParent = (c) => /^(111|112|113|220)/.test(String(c || ''));
   const resolved = acctMeta(rawCreditCode);
   let creditCode = (resolved && isAllowedParent(rawCreditCode)) ? rawCreditCode : '111000';
   let creditName = acctMeta(creditCode)?.name || 'Cash on Hand';
 
-  const cost = Number(totalCost) || 0;
+  const cost = Number(totalCost) || 0;          // what the supplier is paid, VAT included
+  const vatCfg = await loadVatConfig(Settings);
+  const inputVat = claimInputVat && vatCfg.enabled
+    ? Math.round((cost - cost / (1 + vatCfg.rate)) * 100) / 100
+    : 0;
+  const netCost = Math.round((cost - inputVat) * 100) / 100;   // what the stock is carried at
   const isOnCredit = String(creditCode).startsWith('220');
 
   // ── Revolving-fund funding ────────────────────────────────────────────────
@@ -1182,7 +1206,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
         // WAC (GAAP/IFRS). All values read inside the transaction - concurrent
         // restocks block on this document until commit.
         const currentTotalValue = item.stockQty * item.unitCost;
-        const newTotalValue = currentTotalValue + totalCost;
+        const newTotalValue = currentTotalValue + netCost;
         const newStockQty = item.stockQty + addedStock;
         const newUnitCost = newStockQty > 0 ? newTotalValue / newStockQty : 0;
 
@@ -1207,7 +1231,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
         await item.save({ session });
         savedItem = item;
 
-        const batchUnitCost = addedStock > 0 ? totalCost / addedStock : 0;
+        const batchUnitCost = addedStock > 0 ? netCost / addedStock : 0;
         await StockCard.create([{
           inventoryId: item._id,
           itemName: item.itemName,
@@ -1219,15 +1243,16 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
           remarks: 'Restocked inventory'
         }], { session });
 
-        if (totalCost > 0) {
+        if (cost > 0) {
           const lines = [
-            { accountCode: '130000', accountName: 'Inventory Asset', debit: totalCost, credit: 0 },
-            { accountCode: creditCode, accountName: creditName,      debit: 0, credit: totalCost }
+            { accountCode: '130000', accountName: 'Inventory Asset', debit: netCost, credit: 0 },
+            ...(inputVat > 0 ? [{ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: inputVat, credit: 0 }] : []),
+            { accountCode: creditCode, accountName: creditName,      debit: 0, credit: cost }
           ];
           await JournalEntry.create([{
             reference: rstRef,
             description: `Restocked ${addedStock}${item.unit} of ${item.itemName}${isOnCredit ? ` on credit${supplierAttr.supplierName ? ` from ${supplierAttr.supplierName}` : ''}` : ''}${fund ? ` from ${fund.name}` : ''}`,
-            lines, totalDebit: totalCost, totalCredit: totalCost,
+            lines, totalDebit: cost, totalCredit: cost,
             ...supplierAttr,
           }], { session });
         }
@@ -1257,7 +1282,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
           const item = await Inventory.findById(req.params.id);
           if (!item) { await releaseFundHold(); return res.status(404).json({ success: false, error: 'Item not found' }); }
           const currentTotalValue = item.stockQty * item.unitCost;
-          const newTotalValue = currentTotalValue + totalCost;
+          const newTotalValue = currentTotalValue + netCost;
           const newStockQty = item.stockQty + addedStock;
           const newUnitCost = newStockQty > 0 ? newTotalValue / newStockQty : 0;
           item.stockQty = newStockQty;
@@ -1268,14 +1293,15 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
             item.expiryDate = soonestExpiry(item.expiryBatches);
           }
           await item.save();
-          const batchUnitCost = addedStock > 0 ? totalCost / addedStock : 0;
+          const batchUnitCost = addedStock > 0 ? netCost / addedStock : 0;
           await StockCard.create({ inventoryId: item._id, itemName: item.itemName, type: 'Restock', reference: rstRef, qtyChange: addedStock, unitCost: batchUnitCost, balanceAfter: item.stockQty, remarks: 'Restocked inventory' });
-          if (totalCost > 0) {
+          if (cost > 0) {
             const lines = [
-              { accountCode: '130000', accountName: 'Inventory Asset', debit: totalCost, credit: 0 },
-              { accountCode: creditCode, accountName: creditName, debit: 0, credit: totalCost },
+              { accountCode: '130000', accountName: 'Inventory Asset', debit: netCost, credit: 0 },
+              ...(inputVat > 0 ? [{ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: inputVat, credit: 0 }] : []),
+              { accountCode: creditCode, accountName: creditName, debit: 0, credit: cost },
             ];
-            await JournalEntry.create({ reference: rstRef, description: `Restocked ${addedStock}${item.unit} of ${item.itemName}${isOnCredit ? ` on credit${supplierAttr.supplierName ? ` from ${supplierAttr.supplierName}` : ''}` : ''}${fund ? ` from ${fund.name}` : ''}`, lines, totalDebit: totalCost, totalCredit: totalCost, ...supplierAttr });
+            await JournalEntry.create({ reference: rstRef, description: `Restocked ${addedStock}${item.unit} of ${item.itemName}${isOnCredit ? ` on credit${supplierAttr.supplierName ? ` from ${supplierAttr.supplierName}` : ''}` : ''}${fund ? ` from ${fund.name}` : ''}`, lines, totalDebit: cost, totalCredit: cost, ...supplierAttr });
           }
           await recordFundDraw(item, rstRef);
           emitToMgr('erpUpdated');

@@ -2,6 +2,9 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { ageingBuckets, ageingByClient, resolveCreditLimit, resolveClientKey, arBalance, withArBalance, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
+import { businessDateStr } from '../lib/businessTime.js';
+import { INPUT_VAT } from '../lib/vatPosting.js';
+import { loadVatConfig } from '../lib/vatSettings.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
 import { isModuleEnabled } from '../lib/optionalModules.js';
@@ -459,8 +462,8 @@ app.get('/api/expenses', verifyToken, ...canViewAcct, async (req, res) => {
     // checking "what have we spent" almost always means.
     const now = new Date();
     const start = req.query.start ? dayStart(req.query.start) : new Date(now.getFullYear(), now.getMonth(), 1);
-    const end = req.query.end ? dayEnd(req.query.end) : now;
-    if (!req.query.end) end.setHours(23, 59, 59, 999);
+    let end = req.query.end ? dayEnd(req.query.end) : now;
+    if (!req.query.end) end = dayEnd(businessDateStr());
 
     const rows = await JournalEntry.aggregate([
       { $match: { date: { $gte: start, $lte: end } } },
@@ -509,7 +512,7 @@ app.get('/api/expenses', verifyToken, ...canViewAcct, async (req, res) => {
 // { ok:true, je } or { ok:false, error } instead of throwing/writing to
 // `res` itself, so the importer can collect one error per row without a bad
 // row aborting the whole batch.
-async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, description, vendor, refNo, date, withholdingRate, withholdingAccount }) {
+async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, description, vendor, refNo, date, withholdingRate, withholdingAccount, claimInputVat }) {
   // A closed month is closed to expenses too. Without this an expense dated
   // into a reported month posted freely, and the month's figures moved after
   // they had been signed off - the manual journal route guarded against
@@ -560,9 +563,18 @@ async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, de
   if (withheld > amt) return { ok: false, error: 'Withholding cannot exceed the amount.' };
   const netPaid = Math.round((amt - withheld) * 100) / 100;
 
+  // VAT charged by a VAT-registered supplier is creditable, not a cost: it is
+  // split out of the amount and held in 170300 until the return offsets it
+  // against output VAT. Withholding is computed on the full amount either way -
+  // it is withheld from what the supplier is paid, VAT included.
+  const vatCfg = await loadVatConfig(Settings);
+  const inputVat = claimInputVat && vatCfg.enabled ? Math.round((amt - amt / (1 + vatCfg.rate)) * 100) / 100 : 0;
+  const netCost = Math.round((amt - inputVat) * 100) / 100;
+
   const lines = [
-    { accountCode: categoryCode, accountName: acct.name, debit: amt, credit: 0 },
+    { accountCode: categoryCode, accountName: acct.name, debit: netCost, credit: 0 },
   ];
+  if (inputVat > 0) lines.push({ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: inputVat, credit: 0 });
   if (withheld > 0) {
     lines.push({ accountCode: whAccount, accountName: acctMeta(whAccount)?.name || 'Withholding Tax Payable', debit: 0, credit: withheld });
   }
@@ -1584,5 +1596,10 @@ app.get('/api/payment-methods/active', async (req, res) => {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
+
+// Cash taken out of the till for a purchase is an expense, and the shift route
+// files it through this same function - one way of recording an expense, not
+// two that can drift apart.
+ctx.createExpenseEntry = createExpenseEntry;
 
 }
