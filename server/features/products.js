@@ -1034,11 +1034,12 @@ app.post('/api/products/menu-sheet/parse', verifyToken, requireStaff, requirePer
     const nonStock = new Set();
     let stockLines = 0, nonStockLines = 0;
     for (const p of products) {
-      for (const sz of p.sizes) {
-        for (const ing of sz.ingredients) {
-          if (ing.stock) stockLines++;
-          else { nonStockLines++; nonStock.add(ing.name); }
-        }
+      // The base recipe is the sheet's first row for that drink, so it has to
+      // be counted with the rest - leaving it out understated every product by
+      // one whole size.
+      for (const ing of [...p.ingredients, ...p.sizes.flatMap(sz => sz.ingredients)]) {
+        if (ing.stock) stockLines++;
+        else { nonStockLines++; nonStock.add(ing.name); }
       }
     }
     const withProblems = products.filter(p => p.problems.length > 0);
@@ -1048,7 +1049,10 @@ app.post('/api/products/menu-sheet/parse', verifyToken, requireStaff, requirePer
       products,
       counts: {
         products: products.length,
-        sizes: products.reduce((n, p) => n + p.sizes.length, 0),
+        // Every row in the sheet is a size. The first one becomes the base
+        // size rather than an extra, so it is counted here too - the reviewer
+        // is checking this against the rows in front of them.
+        sizes: products.reduce((n, p) => n + p.sizes.length + (p.baseSize ? 1 : 0), 0),
         categories: [...new Set(products.map(p => p.category).filter(Boolean))].length,
         stockLines, nonStockLines,
         needingReview: withProblems.length,

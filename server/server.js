@@ -574,6 +574,21 @@ const generalApiLimiter = rateLimit({
 });
 app.use('/api', generalApiLimiter);
 
+// A PIN is short by design, so the route it is typed into has to be the thing
+// that makes guessing impractical. More generous than the login limiter - a bar
+// switches operators dozens of times a shift, and a real barista mistyping must
+// not lock the terminal - but still far below what guessing four digits needs.
+const pinLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 20,                  // 20 FAILED attempts per device per 10 minutes
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  keyGenerator: rateLimitKey,
+  message: { success: false, error: 'Too many wrong PINs from this device. Wait a few minutes, or sign in with a password.' },
+});
+
+
 
 // --- STARTUP TASKS (run once after DB connect) ---
 // Idempotent: seed superadmin, backfill businessType, seed payment-method sub-accounts,
@@ -2313,6 +2328,16 @@ const UserSchema = new mongoose.Schema({
   // WHOSE account each one belongs to, so the monthly remittance had to be
   // assembled by hand from someone's spreadsheet. Blank until entered; a
   // payslip simply omits whichever is missing.
+  // A short code that says WHO IS AT THE SCREEN, on a terminal several people
+  // share. Deliberately not a second password: a password is an account
+  // credential, and making someone type one to ring a drink means they will not
+  // do it - they will ring it on whoever happens to be signed in, and the sale
+  // carries the wrong name. The PIN identifies; what a person may DO still comes
+  // from their role. Stored hashed, like any other secret.
+  pinHash:         { type: String, default: '' },
+  // Failed attempts on this PIN, so a short code cannot simply be guessed.
+  pinFailedCount:  { type: Number, default: 0 },
+  pinLockedUntil:  { type: Date, default: null },
   sssNumber:       { type: String, default: '' },
   philhealthNumber:{ type: String, default: '' },
   pagibigNumber:   { type: String, default: '' },
@@ -4084,6 +4109,7 @@ const ctx = {
   currentBranchCode,
   invalidateBranchCodeCache,
   loginLimiter,
+  pinLimiter,
   orderLimiter,
   generalApiLimiter,
   runStartupTasks,

@@ -537,6 +537,15 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
     // switches are: a form posting the string "false" is truthy in JavaScript,
     // and a shared drawer that silently stays on because of it would have every
     // cashier ringing into one float they never agreed to.
+    // Lock the register after each sale, so the next one cannot be rung under
+    // the last person's name. Coerced for the same reason as the drawer flags.
+    if (req.params.key === 'askOperatorEachSale') {
+      const flag = truthy(value, false);
+      const saved = await Settings.findOneAndUpdate({ key: 'askOperatorEachSale' }, { value: flag }, { upsert: true, returnDocument: 'after' });
+      try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: 'askOperatorEachSale', after: { value: flag } }); } catch { /* audit is best-effort */ }
+      emitToAll('settingsUpdated', { key: 'askOperatorEachSale', value: flag });
+      return res.json({ success: true, setting: saved });
+    }
     if (req.params.key === 'sharedDrawer' || req.params.key === 'blindClose') {
       const flag = truthy(value, false);
       const saved = await Settings.findOneAndUpdate({ key: req.params.key }, { value: flag }, { upsert: true, returnDocument: 'after' });

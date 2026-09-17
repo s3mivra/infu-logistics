@@ -2369,6 +2369,9 @@ export default function AdminDashboard() {
       setPosSearch('');
       setPosNotes('');
       setPosGuestCount(1);
+      // The sale is rung, so the terminal goes back to nobody. Covers the
+      // queued-offline paths too: the sale happened either way.
+      lockRegisterAfterSale();
     };
 
     // OFFLINE: if the device is offline, queue the order locally and move on.
@@ -4832,6 +4835,9 @@ const updateStatus = async (orderId, newStatus) => {
       // unit conversion and category creation all happen in one place.
       const rows = msPreview.products.map(p => ({
         name: p.name, srp: p.srp, category: p.category,
+        // The sheet's first row for a drink is its base size; the rest are
+        // extras. Sending them any other way puts that size on the menu twice.
+        baseSize: p.baseSize,
         ingredients: p.ingredients,
         sizes: p.sizes.map(sz => ({ name: sz.name, price: sz.price, ingredients: sz.ingredients })),
       }));
@@ -4843,6 +4849,76 @@ const updateStatus = async (orderId, newStatus) => {
       ui.alert(`${d.created} product(s) created, ${d.updated} updated.${(d.unmatchedIngredients || []).length ? `\n\nNot linked to stock: ${d.unmatchedIngredients.join(', ')}` : ''}`);
     } catch { ui.alert('Network error.'); }
     finally { setMsBusy(false); }
+  };
+
+  // ── Who is at the screen ────────────────────────────────────────────────
+  // One tablet, several people. A password between drinks is friction nobody
+  // absorbs, so a short PIN hands the terminal over instead. It only ever
+  // identifies: what the person may do still comes from their role.
+  const [switchOpen, setSwitchOpen] = useState(false);
+  const [operators, setOperators] = useState([]);
+  const [switchPin, setSwitchPin] = useState('');
+  const [switchName, setSwitchName] = useState('');
+  const [switchBusy, setSwitchBusy] = useState(false);
+  const [switchError, setSwitchError] = useState('');
+  // Locked: the register is shut until somebody says who they are. Unlike the
+  // ordinary switch, this one cannot be waved away, because the whole point is
+  // that the next sale cannot be rung anonymously.
+  const [switchLocked, setSwitchLocked] = useState(false);
+
+  const openSwitch = async ({ locked = false } = {}) => {
+    setSwitchLocked(locked === true);
+    setSwitchOpen(true); setSwitchPin(''); setSwitchName(''); setSwitchError('');
+    try {
+      const d = await (await apiFetch('/api/users/operators')).json();
+      if (d.success) setOperators(d.operators || []);
+    } catch { /* the keypad still works without the name list */ }
+  };
+
+  const submitSwitch = async (pin = switchPin) => {
+    if (!/^\d{4,6}$/.test(pin)) { setSwitchError('Enter your 4 to 6 digit PIN.'); return; }
+    setSwitchBusy(true); setSwitchError('');
+    try {
+      const res = await apiFetch('/api/users/switch', {
+        method: 'POST',
+        body: JSON.stringify({ pin, name: switchName || undefined }),
+      });
+      const d = await res.json();
+      if (!d.success) { setSwitchError(d.error || 'That PIN was not recognised.'); setSwitchPin(''); return; }
+      // A real session for that person, so every screen and every sale from
+      // here on is theirs without any special handling. Same two steps login
+      // takes; the shift and the drawer are deliberately untouched, because the
+      // till did not change hands, only the person ringing on it.
+      auth.setToken(d.token);
+      auth.setUser(d.user);
+      setActiveAdmin(d.user);
+      setSwitchLocked(false);
+      setSwitchOpen(false);
+      ui.toast?.(`${d.user.name} is now at the register.`, { tone: 'success' });
+    } catch { setSwitchError('Could not switch. Check the connection.'); }
+    finally { setSwitchBusy(false); }
+  };
+
+  // Lock the register once a sale is rung, when the shop has asked for that.
+  //
+  // It guarantees attribution - nobody can ring a second drink under the last
+  // person's name - at the cost of a PIN on every sale, which is why it is off
+  // unless somebody deliberately turns it on.
+  //
+  // It only ever locks when somebody can actually unlock it. With the setting
+  // on and no PINs issued yet, locking would shut the till mid-service with no
+  // way back in short of signing out, so an empty operator list means the
+  // register simply stays open.
+  const lockRegisterAfterSale = async () => {
+    if (systemSettings.askOperatorEachSale !== true) return;
+    try {
+      const d = await (await apiFetch('/api/users/operators')).json();
+      const list = d?.success ? (d.operators || []) : [];
+      if (!list.length) return;
+      setOperators(list);
+      setSwitchPin(''); setSwitchName(''); setSwitchError('');
+      setSwitchLocked(true); setSwitchOpen(true);
+    } catch { /* a failed check must never lock a till nobody can reopen */ }
   };
 
   const openRecipeSheet = async (file) => {
@@ -6511,6 +6587,18 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       const d = await res.json();
       if (d.success) { fetchSettings(); setSharedDrawer(next); }
     } catch (err) { console.error('toggleSharedDrawer', err); }
+  };
+  // Ask who is ringing after every sale. Off by default: it is the right
+  // setting for a busy shared bar and the wrong one for a single-operator
+  // counter, and only the shop can say which it is.
+  const toggleAskOperatorEachSale = async () => {
+    const next = systemSettings.askOperatorEachSale !== true;
+    if (next && !await ui.confirm('Lock the register after every sale? Whoever rings the next one enters their PIN first. Attribution becomes exact, at the cost of a PIN on every sale. If nobody has a PIN yet the register stays open.')) return;
+    try {
+      const res = await apiFetch('/api/settings/askOperatorEachSale', { method: 'PATCH', body: JSON.stringify({ value: next }) });
+      const d = await res.json();
+      if (d.success) fetchSettings();
+    } catch (err) { console.error('toggleAskOperatorEachSale', err); }
   };
   const toggleBlindClose = async () => {
     const next = systemSettings.blindClose === false;
@@ -8253,6 +8341,13 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             Cash Drawer
           </button>
         )}
+        {/* Handing the terminal over. Beside Clock In because they are the two
+            things a person does when they arrive at the bar. */}
+        <button onClick={openSwitch}
+          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm text-fg/70 hover:text-fg hover:bg-white/5 transition">
+          <Users size={15} />
+          Switch User
+        </button>
         {!isSuperAdmin && (
           <button onClick={handleClockButton}
             className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-white bg-amber-500 hover:bg-amber-600' : clockStatus.isClockedIn ? 'text-white bg-accent hover:bg-accent/80' : 'text-fg/70 hover:text-fg hover:bg-white/5'}`}>
@@ -8374,6 +8469,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     handleEndShift, handleBankDeposit, performLogout, startingCash,
     requireCashShift, toggleRequireCashShift,
     toggleSharedDrawer, toggleBlindClose, saveVarianceThreshold, saveDrawerMaxHours,
+    toggleAskOperatorEachSale,
     depositAmount, setDepositAmount, depositError, setDepositError, depositLoading,
     // ── Stock history / import / partial fulfil modals ──────────────────────
     submitImport, loadPdfLibs, addLogoToPDF, pdfMoney,
@@ -8612,6 +8708,112 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   return (
     <DashboardProvider value={ctx}>
     <div className="min-h-screen bg-page-bg flex text-fg">
+
+
+      {/* ── WHO IS AT THE SCREEN ──
+          A keypad, not a login form. Typing a password to ring a drink is the
+          friction that makes people share a session, and a shared session is
+          what puts the wrong name on a sale. */}
+      {switchOpen && (
+        <div className="fixed inset-0 z-[99998] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+          onClick={() => { if (!switchBusy && !switchLocked) setSwitchOpen(false); }}>
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div>
+                <h2 className="font-black text-fg text-lg leading-none">
+                  {switchLocked ? 'Register locked' : 'Switch user'}
+                </h2>
+                <p className="text-fg/60 text-xs font-bold mt-1">
+                  {switchName
+                    ? `${switchName}, enter your PIN`
+                    : switchLocked
+                      ? 'Enter your PIN to ring the next sale'
+                      : 'Enter your PIN to take the register'}
+                </p>
+              </div>
+              {/* No way out while locked: a dismissable lock is not a lock. The
+                  escape hatch is signing out and using a password, below. */}
+              {!switchLocked && (
+                <button onClick={() => setSwitchOpen(false)} className="text-fg/60 hover:text-fg transition"><X size={18} /></button>
+              )}
+            </div>
+
+            {/* Tapping a name first is optional: PINs are unique, so the code
+                alone already identifies one person. */}
+            {operators.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-4">
+                {operators.map(o => (
+                  <button key={o._id}
+                    onClick={() => { setSwitchName(switchName === o.name ? '' : o.name); setSwitchError(''); }}
+                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition ${
+                      switchName === o.name
+                        ? 'bg-brand text-on-brand border-brand'
+                        : 'bg-white/5 text-fg/70 border-white/10 hover:text-fg hover:bg-white/10'
+                    }`}>
+                    {o.name}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-center gap-2 mb-4" aria-label="PIN entry">
+              {[0, 1, 2, 3, 4, 5].map(i => (
+                <span key={i}
+                  className={`w-3 h-3 rounded-full transition ${
+                    i < switchPin.length ? 'bg-brand' : i < 4 ? 'bg-white/15' : 'bg-white/5'
+                  }`} />
+              ))}
+            </div>
+
+            {switchError && (
+              <p className="text-danger text-xs font-bold text-center mb-3">{switchError}</p>
+            )}
+
+            <div className="grid grid-cols-3 gap-2">
+              {['1','2','3','4','5','6','7','8','9'].map(d => (
+                <button key={d} disabled={switchBusy}
+                  onClick={() => { const next = (switchPin + d).slice(0, 6); setSwitchPin(next); setSwitchError(''); if (next.length === 6) submitSwitch(next); }}
+                  className="py-4 rounded-xl bg-white/5 hover:bg-white/10 text-fg font-black text-xl transition disabled:opacity-40">
+                  {d}
+                </button>
+              ))}
+              <button disabled={switchBusy} onClick={() => { setSwitchPin(''); setSwitchError(''); }}
+                className="py-4 rounded-xl bg-white/5 hover:bg-white/10 text-fg/60 font-bold text-xs uppercase tracking-wider transition disabled:opacity-40">
+                Clear
+              </button>
+              <button disabled={switchBusy}
+                onClick={() => { const next = (switchPin + '0').slice(0, 6); setSwitchPin(next); setSwitchError(''); if (next.length === 6) submitSwitch(next); }}
+                className="py-4 rounded-xl bg-white/5 hover:bg-white/10 text-fg font-black text-xl transition disabled:opacity-40">
+                0
+              </button>
+              <button disabled={switchBusy} onClick={() => setSwitchPin(switchPin.slice(0, -1))}
+                className="py-4 rounded-xl bg-white/5 hover:bg-white/10 text-fg/60 font-bold text-xs uppercase tracking-wider transition disabled:opacity-40">
+                Back
+              </button>
+            </div>
+
+            {/* A 4 or 5 digit PIN needs a way to say "that is all of it". */}
+            <button onClick={() => submitSwitch()} disabled={switchBusy || switchPin.length < 4}
+              className="w-full mt-3 py-3 rounded-xl bg-brand hover:bg-brand/90 text-on-brand font-black text-sm uppercase tracking-wider transition disabled:opacity-40">
+              {switchBusy ? 'Checking...' : 'Take the register'}
+            </button>
+
+            <p className="text-[10px] text-fg/50 text-center mt-3 leading-snug">
+              Your PIN says who is ringing. What you can do still comes from your role.
+              No PIN yet? Ask the owner to set one, or sign out and use your password.
+            </p>
+
+            {/* Somebody without a PIN still has to be able to reach the till. A
+                locked register with no way past it stops the shop trading. */}
+            {switchLocked && (
+              <button onClick={handleLogout} disabled={switchBusy}
+                className="w-full mt-2 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-fg/70 font-bold text-xs transition disabled:opacity-40">
+                No PIN? Sign out and use a password
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── IN-APP ORDER TOASTS (sound plays on newOrder; this shows the visual) ── */}
       {orderToasts.length > 0 && (

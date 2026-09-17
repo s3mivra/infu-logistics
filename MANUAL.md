@@ -151,6 +151,7 @@ Menu Setup → **Read Menu Sheet** takes a spreadsheet of drinks written the way
 |  | 12oz Iced | `G60001/G60006` | `1/1` | … | 120 |
 
 - **A row is one size.** A row with no name in the first column is another size of the drink above it, with its own price and its own recipe.
+- **The first row of a drink becomes its base size**, and the rest become extra sizes. That is how the register lists them: the base size first, then the extras. A drink with only one row has no extra sizes at all.
 - **A name on its own row is a category heading** for everything beneath it.
 - **Ingredients come in pairs of columns:** identifiers on the left, quantities on the right, matched left to right. `G10002/Water` with `20g/35ml` means G10002 is 20 g and Water is 35 ml.
 - **An identifier that is a stock code is that inventory item**; anything else is recorded as a non-stock line - measured in the recipe, never deducted, never costed.
@@ -182,6 +183,28 @@ Menu Setup → **Read Menu Sheet** takes a spreadsheet of drinks written the way
 ## 8. Staff time tracking
 - **Clock In / Out** (and break) from the sidebar; the app tracks worked minutes for payroll.
 - **Staff Hours (owner):** paginated list of clock entries by staff and date. The owner is excluded.
+- Clocking in does **not** mean staying signed in. The entry stays open until that person clocks out, so on a shared tablet everyone can be clocked in at once while only one is at the screen.
+
+**One tablet, several people**
+
+Identity works in two tiers, the way a shared POS terminal normally does.
+
+1. **The tablet signs in once**, at open, with a real password. That lasts the day.
+2. **A short PIN says who is ringing now.** Sidebar, **Switch User**, tap your name (optional) and enter your PIN. The register is yours from that moment: sales carry your name, and you can clock in and out as yourself without a password.
+
+- **Set a PIN** per person in Superadmin, Users, edit, **Register PIN**. Four to six digits, and it has to differ from everyone else's, because a PIN on its own identifies exactly one person.
+- **A PIN identifies, it does not authorise.** What you may do still comes from your role, so a barista's PIN cannot void a sale.
+- **Manager approval at the counter:** for something the person at the screen may not do, a manager enters their PIN to approve it. That records the approval against the manager and leaves the barista signed in, so nobody has to hand over a password on the floor.
+- Wrong PINs lock that person's code for a few minutes. A password always still works.
+
+**If people forget to switch**
+
+Settings, System, **Ask Who Is Ringing, Every Sale**. Off by default. Turned on, the register locks the moment a sale is placed, and whoever rings the next one enters their PIN first. Attribution stops depending on anybody remembering to switch, at the cost of a PIN on every sale, which is why it suits a busy shared bar and not a single-operator counter.
+
+- The locked screen cannot be tapped away. It offers **No PIN? Sign out and use a password** so somebody without a PIN can still reach the till.
+- If nobody has a PIN yet, the register does not lock. The setting cannot shut a shop out of its own terminal.
+
+> Why it matters: a sale carries whoever is signed in. Without this, everything rung on somebody else's session lands on the wrong name, and **Cashier Variance** and **Commissions** follow it there without ever saying so.
 
 ## 9. Clients & receivables
 

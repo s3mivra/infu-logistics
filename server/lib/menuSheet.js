@@ -191,22 +191,28 @@ export function toImportRows(products, codeIndex = new Map()) {
       return { name: ing.ref, qty: ing.qty, unit, nonStock: true, stock: false };
     });
 
-    const sizes = p.sizes.map(sz => ({
+    const all = p.sizes.map(sz => ({
       name: sz.name, price: sz.price, row: sz.row, ingredients: resolve(sz.ingredients),
     }));
+
+    // The first row of a drink is its BASE size, and the rest are the extra
+    // sizes. Not a copy of the first into both: the register offers the base
+    // size followed by the extras, so listing the first row in both places puts
+    // "4oz Hot" on the menu twice and leaves two copies of one recipe to be
+    // kept in step by hand.
+    //
+    // This also has to be the base rather than an extra, because a size recipe
+    // REPLACES the base one at sale time instead of adding to it - an empty
+    // base means a sale naming no size deducts nothing and books no cost.
+    const [base, ...extras] = all;
 
     return {
       name: p.name,
       category: p.category,
-      srp: sizes[0]?.price ?? 0,
-      // The first size IS the base recipe. A size's recipe replaces the base
-      // one at sale time rather than adding to it, so leaving the base empty is
-      // safe only while every sale names a size. It does not: a sale with no
-      // size falls back to the base, and an empty base deducts no stock and
-      // books no cost at all. The first row of a drink is the one the sheet
-      // treats as its default, so that is what the base becomes.
-      ingredients: sizes[0]?.ingredients ?? [],
-      sizes,
+      srp: base?.price ?? 0,
+      baseSize: base?.name || '',
+      ingredients: base?.ingredients ?? [],
+      sizes: extras,
       problems: p.problems,
       nonStockNames: [...unresolved].sort(),
     };

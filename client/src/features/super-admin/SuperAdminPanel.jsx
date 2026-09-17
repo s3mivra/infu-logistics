@@ -187,7 +187,7 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
 // Main component
 // ---------------------------------------------------------------------------
 
-const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false, permissions: [], customPerms: false, commissionRate: '', employeeNumber: '', sssNumber: '', philhealthNumber: '', pagibigNumber: '', tin: '' };
+const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false, permissions: [], customPerms: false, commissionRate: '', pin: '', employeeNumber: '', sssNumber: '', philhealthNumber: '', pagibigNumber: '', tin: '' };
 
 export default function SuperAdminPanel() {
   const navigate = useNavigate();
@@ -426,6 +426,9 @@ export default function SuperAdminPanel() {
     setForm({
       name: user.name, password: '', role: user.role, showPassword: false,
       permissions: perms, customPerms: perms.length > 0, commissionRate: user.commissionRate ?? '',
+      // Never prefilled: the PIN is hashed and cannot be read back. Empty means
+      // "leave it as it is"; typing one replaces it.
+      pin: '', hasPin: !!user.hasPin || !!user.pinHash,
       employeeNumber: user.employeeNumber || '', sssNumber: user.sssNumber || '',
       philhealthNumber: user.philhealthNumber || '', pagibigNumber: user.pagibigNumber || '',
       tin: user.tin || '',
@@ -491,6 +494,9 @@ export default function SuperAdminPanel() {
         for (const key of ['employeeNumber', 'sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin']) {
           body[key] = form[key] || '';
         }
+        // Only sent when something was typed, so saving the form for another
+        // reason never wipes an existing PIN.
+        if (form.pin !== '') body.pin = form.pin;
         const res = await apiFetch(`/api/users/${modal.user._id}`, {
           method: 'PATCH',
           body: JSON.stringify(body),
@@ -2139,6 +2145,25 @@ export default function SuperAdminPanel() {
                     className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
                   />
                   <p className="text-[10px] text-fg/65 mt-1.5">Percent of this cashier's attributed sales, shown on the Commissions report.</p>
+                </div>
+              )}
+
+              {/* The terminal PIN: who is at the screen on a shared tablet. Not a
+                  second password - it identifies, and the role still decides
+                  what that person may do. */}
+              {modal.mode === 'edit' && (
+                <div>
+                  <label htmlFor="staff-pin" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
+                    Register PIN {form.hasPin && <span className="text-[9px] text-success normal-case tracking-normal">- one is set</span>}
+                  </label>
+                  <input id="staff-pin" type="text" inputMode="numeric" pattern="\d*" maxLength={6}
+                    value={form.pin || ''}
+                    onChange={e => handleFormChange('pin', e.target.value.replace(/\D/g, ''))}
+                    placeholder={form.hasPin ? 'Leave blank to keep the current PIN' : '4 to 6 digits'}
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tracking-[0.3em] font-black" />
+                  <p className="text-[10px] text-fg/65 mt-1.5">
+                    Lets this person take the register on a shared tablet without a password, so their sales and clock-ins carry their own name. Must be different from everyone else&apos;s.
+                  </p>
                 </div>
               )}
 

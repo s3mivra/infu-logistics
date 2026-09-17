@@ -153,7 +153,7 @@ describe('turning the sheet into something importable', () => {
 
   it('links an identifier that is a stock code', () => {
     const [p] = toImportRows(products, stock);
-    const beans = p.sizes[0].ingredients.find(i => i.name === 'G10002');
+    const beans = p.ingredients.find(i => i.name === 'G10002');
     expect(beans.stock).toBe(true);
     expect(beans.matchedName).toBe('Espresso Beans');
     expect(beans).toMatchObject({ qty: 20, unit: 'g' });
@@ -161,7 +161,7 @@ describe('turning the sheet into something importable', () => {
 
   it('records anything that is not a code as non-stock', () => {
     const [p] = toImportRows(products, stock);
-    const water = p.sizes[0].ingredients.find(i => i.name === 'Water');
+    const water = p.ingredients.find(i => i.name === 'Water');
     expect(water.nonStock).toBe(true);
     expect(water).toMatchObject({ qty: 35, unit: 'ml' });
     // A code that simply does not exist in stock yet shows up here too, which
@@ -171,14 +171,17 @@ describe('turning the sheet into something importable', () => {
 
   it('counts an unitless quantity as pieces, whatever the item is tracked in', () => {
     const [p] = toImportRows(products, stock);
-    const cup = p.sizes[0].ingredients.find(i => i.name === 'G60004');
+    const cup = p.ingredients.find(i => i.name === 'G60004');
     expect(cup).toMatchObject({ qty: 1, unit: 'pcs', stock: true });
   });
 
-  it('prices the product from its first size', () => {
+  it('prices the product from its first size, and names it as the base', () => {
     const [p] = toImportRows(products, stock);
     expect(p.srp).toBe(100);
+    expect(p.baseSize).toBe('8oz Hot');
     expect(p.category).toBe('Specialty');
+    // Only one row in this sheet, so there is nothing left to be an extra size.
+    expect(p.sizes).toHaveLength(0);
   });
 });
 
@@ -207,9 +210,12 @@ describe('the base recipe', () => {
     expect(p.ingredients.some(i => i.name === 'Ice')).toBe(false);
   });
 
-  it('leaves each size carrying its own recipe as well', () => {
+  it('lists only the REMAINING sizes as extras, never the base twice', () => {
     const [p] = toImportRows(sheet, new Map());
-    expect(p.sizes[0].ingredients).toHaveLength(2);
-    expect(p.sizes[1].ingredients.some(i => i.name === 'Ice')).toBe(true);
+    // The register shows the base size and then the extras, so repeating the
+    // first row here would put "8oz Hot" on the menu twice.
+    expect(p.baseSize).toBe('8oz Hot');
+    expect(p.sizes.map(sz => sz.name)).toEqual(['12oz Iced']);
+    expect(p.sizes[0].ingredients.some(i => i.name === 'Ice')).toBe(true);
   });
 });

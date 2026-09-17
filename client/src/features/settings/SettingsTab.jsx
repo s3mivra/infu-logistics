@@ -129,6 +129,7 @@ export default function SettingsTab({ ctx }) {
   const {
     systemSettings = {}, toggleQROrders, toggleAutoClose, toggleImages,
     toggleRequireCashShift, toggleSharedDrawer, toggleBlindClose, saveVarianceThreshold, saveDrawerMaxHours,
+    toggleAskOperatorEachSale,
     isSuperAdmin, setChangePwModal, setChangePwError, BIZ_NAME, activeAdmin,
     saveSetting, apiFetch,
   } = ctx;
@@ -218,6 +219,7 @@ export default function SettingsTab({ ctx }) {
   const cashShiftOn = systemSettings.requireCashShift !== false;
   const sharedDrawerOn = systemSettings.sharedDrawer === true;
   const blindOn = systemSettings.blindClose !== false;
+  const askOperatorOn = systemSettings.askOperatorEachSale === true;
   const varThreshold = Number.isFinite(Number(systemSettings.varianceThreshold)) ? Number(systemSettings.varianceThreshold) : 50;
   const drawerMaxHours = Number.isFinite(Number(systemSettings.drawerMaxHours)) ? Number(systemSettings.drawerMaxHours) : 0;
   const imgOn   = systemSettings.imagesEnabled !== false;
@@ -416,6 +418,12 @@ export default function SettingsTab({ ctx }) {
                 </SettingRow>
               </>
             )}
+            <SettingRow icon={Lock} title="Ask Who Is Ringing, Every Sale"
+              desc={askOperatorOn
+                ? 'The register locks after each sale; the next person enters their PIN first. Exact attribution, at the cost of a PIN on every sale.'
+                : 'Whoever is signed in keeps the register until somebody switches with their PIN. Fewer taps, and sales follow whoever last took it.'}>
+              <Toggle on={askOperatorOn} onChange={toggleAskOperatorEachSale} />
+            </SettingRow>
             <SettingRow icon={ImageIcon} title="Product Images"
               desc={imgOn ? 'Product images show across the menu, portal & lists.' : 'Images are hidden app-wide (faster, text-only).'}>
               <Toggle on={imgOn} onChange={toggleImages} />

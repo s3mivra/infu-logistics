@@ -82,6 +82,7 @@ export default function registerUsers(ctx) {
     modifierGroupSchema,
     mkSeqRef,
     loginLimiter,
+    pinLimiter,
     orderLimiter,
     generalApiLimiter,
     runStartupTasks,
@@ -188,7 +189,7 @@ app.get('/api/permissions', verifyToken, requireStaff, async (req, res) => {
 // Effective permissions for the caller - the client gates its UI on this.
 app.get('/api/users/me', verifyToken, requireStaff, async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('-password').lean();
+    const user = await User.findById(req.user._id).select('-password -pinHash -pinFailedCount -pinLockedUntil').lean();
     if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
     res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
@@ -235,6 +236,129 @@ app.delete('/api/roles/:id', verifyToken, requireSuperAdmin, async (req, res) =>
     await Role.findByIdAndDelete(req.params.id);
     await refreshCustomRolePerms?.();
     res.json({ success: true });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+
+// ── WHO IS AT THE SCREEN ─────────────────────────────────────────────────────
+// One tablet behind a bar, several people using it. Signing out and back in
+// with a password between drinks is friction nobody absorbs, so in practice
+// everything gets rung on whoever is still signed in - and Cashier Variance,
+// Commissions and the sale's own `cashier` all quietly follow the wrong person.
+// Nothing warns you, which is what makes it worse than an obvious bug.
+//
+// So identity works in two tiers, the way a shared POS terminal normally does:
+// the DEVICE is signed in once with a real password, and a short PIN says who
+// is ringing right now. The PIN only ever identifies; what that person may DO
+// still comes from their role, exactly as before. Switching issues a genuine
+// session for them, so every route downstream sees the right `req.user` with no
+// special handling anywhere.
+const PIN_RE = /^\d{4,6}$/;
+const PIN_MAX_ATTEMPTS = 5;
+const PIN_LOCK_MINUTES = 5;
+
+// Who can be switched to: staff with a PIN set. Names only - enough to show a
+// row to tap, and nothing that would help someone guess a code.
+app.get('/api/users/operators', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const users = await User.find({ pinHash: { $ne: '' } }, { name: 1, role: 1, userCode: 1 })
+      .sort({ name: 1 }).lean();
+    res.json({ success: true, operators: users.map(u => ({ _id: u._id, name: u.name, role: u.role, userCode: u.userCode })) });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// Hand the terminal to someone else.
+//
+// Requires an existing session: the device has to have been signed in properly
+// first. A PIN alone can never open a terminal from cold - it is the second
+// tier, not a replacement for the password.
+app.post('/api/users/switch', pinLimiter, verifyToken, requireStaff, async (req, res) => {
+  try {
+    const pin = String(req.body?.pin || '').trim();
+    const name = String(req.body?.name || '').trim();
+    if (!PIN_RE.test(pin)) return res.status(400).json({ success: false, error: 'Enter your 4 to 6 digit PIN.' });
+
+    // Named or not, the PIN is checked against a single account: PINs are
+    // unique (enforced when one is set), so a bare PIN identifies exactly one
+    // person, and tapping a name first simply narrows it sooner.
+    const candidates = name
+      ? await User.find({ name })
+      : await User.find({ pinHash: { $ne: '' } });
+
+    let matched = null;
+    for (const u of candidates) {
+      if (!u.pinHash) continue;
+      if (u.pinLockedUntil && u.pinLockedUntil > new Date()) continue;
+      if (await bcrypt.compare(pin, u.pinHash)) { matched = u; break; }
+    }
+
+    if (!matched) {
+      // A wrong PIN counts against the named account when one was given. With
+      // no name there is nobody to count it against, so the only defence is the
+      // rate limiter on the route itself.
+      if (name && candidates[0]?.pinHash) {
+        const u = candidates[0];
+        u.pinFailedCount = (u.pinFailedCount || 0) + 1;
+        if (u.pinFailedCount >= PIN_MAX_ATTEMPTS) {
+          u.pinLockedUntil = new Date(Date.now() + PIN_LOCK_MINUTES * 60000);
+          u.pinFailedCount = 0;
+        }
+        await u.save();
+        if (u.pinLockedUntil && u.pinLockedUntil > new Date()) {
+          return res.status(429).json({ success: false, error: `Too many wrong PINs. Try again in ${PIN_LOCK_MINUTES} minutes, or sign in with a password.` });
+        }
+      }
+      return res.status(401).json({ success: false, error: 'That PIN was not recognised.' });
+    }
+
+    matched.pinFailedCount = 0;
+    matched.pinLockedUntil = null;
+    await matched.save();
+
+    const token = await issueSession(res, matched, { userAgent: req.headers['user-agent'] });
+    await logAudit(req, { action: 'switch-operator', entity: 'User', entityId: matched._id, after: { to: matched.name, from: req.user?.name || '' } });
+    res.json({
+      success: true, token,
+      user: { _id: matched._id, name: matched.name, userCode: matched.userCode, role: matched.role, permissions: resolvePermissions(matched) },
+    });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// A manager approving something the person at the screen may not do: a void, a
+// refund, a large discount. Without this the only way through is for the
+// manager to sign in fully at the counter, which is how a manager password ends
+// up known to everyone on the floor. Approving does NOT switch the terminal -
+// the barista stays signed in, and the approval is recorded against the manager.
+app.post('/api/users/authorize', pinLimiter, verifyToken, requireStaff, async (req, res) => {
+  try {
+    const pin = String(req.body?.pin || '').trim();
+    const permission = String(req.body?.permission || '').trim();
+    if (!PIN_RE.test(pin)) return res.status(400).json({ success: false, error: 'Enter the manager PIN.' });
+
+    const users = await User.find({ pinHash: { $ne: '' } });
+    let approver = null;
+    for (const u of users) {
+      if (u.pinLockedUntil && u.pinLockedUntil > new Date()) continue;
+      if (await bcrypt.compare(pin, u.pinHash)) { approver = u; break; }
+    }
+    if (!approver) return res.status(401).json({ success: false, error: 'That PIN was not recognised.' });
+
+    // The PIN proves who they are; the role decides whether they may approve.
+    const allowed = approver.role === 'superadmin'
+      || !permission
+      || resolvePermissions(approver).includes(permission);
+    if (!allowed) {
+      return res.status(403).json({ success: false, error: `${approver.name} is not allowed to approve that.` });
+    }
+
+    await logAudit(req, { action: 'authorize', entity: 'User', entityId: approver._id, after: { approver: approver.name, permission, requestedBy: req.user?.name || '' } });
+    res.json({ success: true, approver: { _id: approver._id, name: approver.name, role: approver.role } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -309,8 +433,15 @@ app.post('/api/auth/logout', requireTrustedOrigin, async (req, res) => {
 
 app.get('/api/users', verifyToken, requireStaff, async (req, res) => {
   try {
-    const users = await User.find().select('-password').sort({ userCode: 1 });
-    res.json({ success: true, users });
+    // The PIN hash never leaves the server. A four digit code behind a hash is
+    // a few seconds of offline guessing, so shipping it to every till would
+    // hand over every operator identity in the shop. The screen only needs to
+    // know whether one is set.
+    const users = await User.find().select('-password -pinHash -pinFailedCount -pinLockedUntil').sort({ userCode: 1 }).lean();
+    const withPin = new Set(
+      (await User.find({ pinHash: { $ne: '' } }, { _id: 1 }).lean()).map(u => String(u._id)),
+    );
+    res.json({ success: true, users: users.map(u => ({ ...u, hasPin: withPin.has(String(u._id)) })) });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -347,7 +478,7 @@ app.put('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
       updateData.password = await bcrypt.hash(req.body.password, BCRYPT_ROUNDS);
     }
 
-    const updated = await User.findByIdAndUpdate(req.params.id, updateData, { returnDocument: 'after' }).select('-password');
+    const updated = await User.findByIdAndUpdate(req.params.id, updateData, { returnDocument: 'after' }).select('-password -pinHash -pinFailedCount -pinLockedUntil');
     if (updateData.password) await revokeUserSessions(req.params.id); // force re-login after password change
     res.json({ success: true, user: updated });
   } catch (err) {
@@ -365,6 +496,33 @@ app.patch('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => 
     for (const key of ['sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin', 'employeeNumber']) {
       if (req.body[key] !== undefined) updates[key] = String(req.body[key] || '').trim().slice(0, 40);
     }
+
+    // The terminal PIN. Empty clears it, which takes that person out of the
+    // switch list entirely.
+    if (req.body.pin !== undefined) {
+      const pin = String(req.body.pin || '').trim();
+      if (pin === '') {
+        updates.pinHash = '';
+        updates.pinFailedCount = 0;
+        updates.pinLockedUntil = null;
+      } else {
+        if (!/^\d{4,6}$/.test(pin)) {
+          return res.status(400).json({ success: false, error: 'A PIN is 4 to 6 digits.' });
+        }
+        // Unique, because a bare PIN has to identify exactly one person. Two
+        // people sharing 1234 would mean sales landing on whichever record was
+        // read first, which is the very problem this exists to solve.
+        const others = await User.find({ _id: { $ne: req.params.id }, pinHash: { $ne: '' } }, { pinHash: 1, name: 1 });
+        for (const o of others) {
+          if (await bcrypt.compare(pin, o.pinHash)) {
+            return res.status(409).json({ success: false, error: `That PIN is already used by ${o.name}. Pick another.` });
+          }
+        }
+        updates.pinHash = await bcrypt.hash(pin, BCRYPT_ROUNDS);
+        updates.pinFailedCount = 0;
+        updates.pinLockedUntil = null;
+      }
+    }
     if (name) updates.name = name.trim();
     if (role) updates.role = role;
     if (Array.isArray(permissions)) updates.permissions = permissions.filter((k) => PERMISSION_KEYS.has(k));
@@ -381,7 +539,7 @@ app.patch('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => 
     // Any privilege change (password/role/permissions) revokes sessions → re-login
     // so the new permission set is minted into a fresh token.
     if (updates.password || updates.role || updates.permissions) await revokeUserSessions(req.params.id);
-    res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user), commissionRate: user.commissionRate, sssNumber: user.sssNumber, philhealthNumber: user.philhealthNumber, pagibigNumber: user.pagibigNumber, tin: user.tin, employeeNumber: user.employeeNumber } });
+    res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user), commissionRate: user.commissionRate, sssNumber: user.sssNumber, philhealthNumber: user.philhealthNumber, pagibigNumber: user.pagibigNumber, tin: user.tin, employeeNumber: user.employeeNumber, hasPin: !!user.pinHash } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
