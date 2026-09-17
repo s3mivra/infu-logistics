@@ -23,6 +23,7 @@ export default function registerPurchaseOrders(ctx) {
     FIXED_ASSET_CLASSES,
     Advance,
     CheckVoucher,
+    issueCheckVoucher,
     logAudit,
     Settings,
     PurchaseOrder,
@@ -267,17 +268,15 @@ export default function registerPurchaseOrders(ctx) {
       lines, totalDebit: amount, totalCredit: amount,
     });
 
-    const voucherNumber = await mkSeqRef('CV');
-    await CheckVoucher.create({
-      businessType: BUSINESS_TYPE, ...tenantScope(req),
-      voucherNumber, branchCode: await currentBranchCode(),
-      payeeType: 'supplier', payeeId: String(po.supplierId || ''), payeeName: po.supplier || '',
-      amount, purpose: 'other', date: txnDate,
-      sourceAccount: srcCode, sourceAccountName: srcName,
+    const voucher = await issueCheckVoucher(req, {
+      payeeType: 'supplier', payeeId: String(po.supplierId || ''), payeeName: po.supplier || 'Supplier',
+      amount, purpose: 'advance', date: txnDate,
+      sourceAccount: srcCode,
       referenceNumber: po.poNumber || '',
       notes: `Prepayment on ${po.poNumber}`,
-      journalEntryRef: reference, issuedBy: req.user?.name || '',
+      journalEntryRef: reference,
     });
+    const voucherNumber = voucher?.voucherNumber || '';
 
     return Advance.create({
       businessType: BUSINESS_TYPE, ...tenantScope(req),

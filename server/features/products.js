@@ -3,6 +3,7 @@
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
 import { parseBulkRecipes, parseDrinkSheet, collectMaterials, buildProductDraft } from '../lib/recipeImport.js';
+import { parseMenuSheet, toImportRows } from '../lib/menuSheet.js';
 import { splitUpdate } from '../lib/changeApproval.js';
 import { hasPermission } from '../lib/authz.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
@@ -1006,6 +1007,63 @@ app.post('/api/products/recipe-sheet/parse', verifyToken, requireStaff, requireP
   }
 });
 
+
+// ── CODED MENU SHEET: PARSE ──────────────────────────────────────────────────
+// The stricter sheet (see lib/menuSheet.js): one row per size, ingredients
+// named by stock code in paired columns. Reads it and reports what it found,
+// WITHOUT writing anything, so the whole menu can be reviewed before it lands.
+//
+// Every identifier is resolved against live stock here, which is what decides
+// whether a line is a tracked ingredient or a measured non-stock one - the
+// sheet's own rule is "a code is stock, a word is not", and only the server
+// knows which codes exist.
+app.post('/api/products/menu-sheet/parse', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+    if (!rows) return res.status(400).json({ success: false, error: 'Send { rows: [[...]] } - the sheet as rows of cells.' });
+
+    const invItems = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) },
+      { itemCode: 1, itemName: 1, unit: 1, unitCost: 1 }).lean();
+    const codeIndex = new Map(invItems.filter(i => i.itemCode).map(i => [String(i.itemCode).toLowerCase().trim(), i]));
+
+    const parsed = parseMenuSheet(rows);
+    const products = toImportRows(parsed, codeIndex);
+
+    // What the reviewer needs to decide with: which lines found stock, which
+    // will be recorded as non-stock, and everything the sheet got wrong.
+    const nonStock = new Set();
+    let stockLines = 0, nonStockLines = 0;
+    for (const p of products) {
+      for (const sz of p.sizes) {
+        for (const ing of sz.ingredients) {
+          if (ing.stock) stockLines++;
+          else { nonStockLines++; nonStock.add(ing.name); }
+        }
+      }
+    }
+    const withProblems = products.filter(p => p.problems.length > 0);
+
+    res.json({
+      success: true,
+      products,
+      counts: {
+        products: products.length,
+        sizes: products.reduce((n, p) => n + p.sizes.length, 0),
+        categories: [...new Set(products.map(p => p.category).filter(Boolean))].length,
+        stockLines, nonStockLines,
+        needingReview: withProblems.length,
+      },
+      categories: [...new Set(products.map(p => p.category).filter(Boolean))],
+      // Named so a code that should have matched can be spotted: anything here
+      // that looks like a code is a stock item that does not exist yet.
+      nonStockNames: [...nonStock].sort(),
+      problems: withProblems.map(p => ({ product: p.name, problems: p.problems })),
+    });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res) => {
   try {
     const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
@@ -1016,11 +1074,14 @@ app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res
     // (spaces/punctuation stripped) index backs the fallback "contains" match.
     const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const byExactName = new Map(invItems.map(i => [String(i.itemName || '').toLowerCase().trim(), i]));
+    // A stock code is an exact identity, so it is tried first and never
+    // guessed at. The coded menu sheet names every tracked ingredient this way.
+    const byCode = new Map(invItems.filter(i => i.itemCode).map(i => [String(i.itemCode).toLowerCase().trim(), i]));
 
     const matchIngredient = (ingName, unit) => {
       const key = String(ingName || '').toLowerCase().trim();
       if (!key) return null;
-      let item = byExactName.get(key);
+      let item = byCode.get(key) || byExactName.get(key);
       if (!item) {
         const nk = norm(key);
         item = invItems.find(i => norm(i.itemName).includes(nk) || nk.includes(norm(i.itemName)));

@@ -5,6 +5,7 @@ import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
 import ExpensesPage from './ExpensesPage';
 import * as ui from '../../shared/ui';
+import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import { LEDGER_TAB_GROUPS, REPORT_TAB_GROUPS } from '../dashboard/navRegistry';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
@@ -135,6 +136,68 @@ export default function LedgerTab({ ctx }) {
   } = ctx;
 
   // ── Stage 2 report views: self-contained fetches via ctx.apiFetch ──────────
+
+  // A check voucher exists to be printed and signed - prepared, approved,
+  // received. Until now it could only be listed and voided on screen, which is
+  // the one thing a voucher is not for.
+  const printCheckVoucher = (v) => {
+    const PURPOSE_LABEL = {
+      'bill-payment': "Payment of supplier's bill",
+      'client-credit-refund': 'Refund of client credit balance',
+      payroll: 'Payroll - net pay',
+      expense: 'Operating expense',
+      'petty-cash': 'Petty cash / revolving fund',
+      advance: 'Advance payment',
+      other: 'Disbursement',
+    };
+    printBillingDoc(buildBillingDocHTML({
+      docTitle: 'CHECK VOUCHER',
+      dateLabel: 'Date',
+      dateStr: new Date(v.date).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' }),
+      settings: systemSettings,
+      metaFields: [
+        { label: 'Voucher No.', value: v.voucherNumber || '' },
+        { label: 'Pay To', value: v.payeeName || '' },
+        ...(v.branchCode ? [{ label: 'Branch', value: v.branchCode }] : []),
+        { label: 'Paid From', value: v.sourceAccountName || v.sourceAccount || '' },
+        ...(v.referenceNumber ? [{ label: 'Check / Ref No.', value: v.referenceNumber }] : []),
+      ],
+      subFields: [
+        { label: 'Purpose', value: PURPOSE_LABEL[v.purpose] || v.purpose || '' },
+        ...(v.journalEntryRef ? [{ label: 'Journal Ref.', value: v.journalEntryRef }] : []),
+      ],
+      // A voided voucher still prints - it has to be filed as evidence of the
+      // cancellation, with the reason on its face.
+      schedRows: v.status === 'Voided'
+        ? [{ label: 'VOIDED:', value: `${v.voidReason || 'No reason given'}${v.voidedBy ? ` (by ${v.voidedBy})` : ''}` }]
+        : [],
+      itemColumns: [
+        { label: 'Particulars', key: 'desc' },
+        { label: 'Reference', key: 'ref' },
+        { label: 'Amount', key: 'amount', align: 'right', money: true },
+      ],
+      items: [{
+        desc: v.notes || PURPOSE_LABEL[v.purpose] || 'Disbursement',
+        ref: v.referenceNumber || v.journalEntryRef || '',
+        amount: v.amount,
+      }],
+      totals: [{ label: 'TOTAL', value: v.amount, grand: true }],
+      termsTitle: 'Please note',
+      terms: [
+        'This voucher records a payment made out of the account shown above.',
+        'It is valid only with the authorising signature; keep it with the supporting invoice or receipt.',
+        v.status === 'Voided'
+          ? 'THIS VOUCHER HAS BEEN VOIDED. It is kept on file as the record of the cancellation - do not pay against it.'
+          : 'Sign on receipt of the amount stated.',
+      ],
+      signatures: [
+        'PREPARED BY: Signature over Printed Name / Date',
+        'APPROVED BY: Signature over Printed Name / Date',
+        'RECEIVED BY: Signature over Printed Name / Date',
+      ],
+      copies: ['ORIGINAL'],
+    }));
+  };
   const money2 = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   // journalEntries only ever holds the 500 most recent-by-date entries, so an
@@ -3127,16 +3190,22 @@ export default function LedgerTab({ ctx }) {
                             {peso(v.amount)}
                           </td>
                           <td className="py-2.5 text-right">
-                            {v.status === 'Issued' ? (
-                              <button onClick={() => setCvVoidModal({ voucher: v, reason: '', busy: false })}
-                                className="border border-red-500/40 text-danger px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-red-500/10 transition">
-                                Void
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button onClick={() => printCheckVoucher(v)} title="Print this voucher for signing"
+                                className="border border-white/15 text-fg/70 px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-white/10 hover:text-fg transition">
+                                Print
                               </button>
-                            ) : (
-                              <span className="text-[10px] font-black uppercase bg-red-500/15 text-danger px-2 py-1 rounded" title={v.voidReason || ''}>
-                                Voided
-                              </span>
-                            )}
+                              {v.status === 'Issued' ? (
+                                <button onClick={() => setCvVoidModal({ voucher: v, reason: '', busy: false })}
+                                  className="border border-red-500/40 text-danger px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-red-500/10 transition">
+                                  Void
+                                </button>
+                              ) : (
+                                <span className="text-[10px] font-black uppercase bg-red-500/15 text-danger px-2 py-1 rounded" title={v.voidReason || ''}>
+                                  Voided
+                                </span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}

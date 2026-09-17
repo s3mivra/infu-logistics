@@ -25,6 +25,7 @@ export default function registerBills(ctx) {
     Supplier,
     JournalEntry,
     CheckVoucher,
+    issueCheckVoucher,
     AuditLog,
     emitToMgr,
     verifyToken,
@@ -38,6 +39,10 @@ export default function registerBills(ctx) {
   const canPostAcct = [requireStaff, requirePermission('accounting.manage')];
 
   const money = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  // Cash, bank and e-wallet: the accounts money can actually be paid out of or
+  // received into. Shared by bill payment and the supplier-credit refund, so
+  // the two cannot disagree about what counts as a real account.
+  const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
 
   // ── LIST ─────────────────────────────────────────────────────────────────────
   // GET /api/bills?status=Pending&supplierId=...
@@ -320,7 +325,6 @@ export default function registerBills(ctx) {
       const outstanding = money(bill.amount - (bill.paidAmount || 0));
       if (outstanding <= 0) return res.status(409).json({ success: false, error: 'This bill is already fully paid.' });
 
-      const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
       const { amount, payFromAccount, referenceNumber } = req.body || {};
       const paidAmt = money(amount !== undefined && amount !== null && amount !== '' ? amount : outstanding);
       if (!paidAmt || paidAmt <= 0) return res.status(400).json({ success: false, error: 'Amount must be positive.' });
@@ -348,14 +352,10 @@ export default function registerBills(ctx) {
         supplierId: String(bill.supplierId), supplierName: bill.supplierName,
       });
 
-      const voucherNumber = await mkSeqRef('CV');
-      const voucher = await CheckVoucher.create({
-        businessType: BUSINESS_TYPE, ...tenantScope(req),
-        branchCode: await currentBranchCode(),
-        voucherNumber, payeeType: 'supplier', payeeId: String(bill.supplierId), payeeName: bill.supplierName,
-        amount: paidAmt, purpose: 'bill-payment', sourceAccount: srcCode, sourceAccountName: srcName,
-        referenceNumber: referenceNumber || '', billId: bill._id, journalEntryRef: reference,
-        issuedBy: req.user?.name || '',
+      const voucher = await issueCheckVoucher(req, {
+        payeeType: 'supplier', payeeId: String(bill.supplierId), payeeName: bill.supplierName,
+        amount: paidAmt, purpose: 'bill-payment', sourceAccount: srcCode,
+        referenceNumber, billId: bill._id, journalEntryRef: reference,
       });
 
       bill.paidAmount = money((bill.paidAmount || 0) + applied);
@@ -365,7 +365,7 @@ export default function registerBills(ctx) {
       bill.paymentReference = referenceNumber || '';
       bill.payments.push({
         amount: paidAmt, payFromAccount: srcCode, referenceNumber: referenceNumber || '',
-        checkVoucherRef: voucherNumber, journalRef: reference, paidBy: req.user?.name || '',
+        checkVoucherRef: voucher?.voucherNumber || '', journalRef: reference, paidBy: req.user?.name || '',
       });
       await bill.save();
 
@@ -378,7 +378,7 @@ export default function registerBills(ctx) {
 
       await AuditLog.create({
         userId: req.user?.name || 'System', action: 'BILL_PAID', targetReference: bill.billNumber,
-        details: { amount: paidAmt, applied, overpay, payFromAccount: srcCode, referenceNumber: referenceNumber || '', voucherNumber, supplierId: String(bill.supplierId), recordedBy: req.user?.name },
+        details: { amount: paidAmt, applied, overpay, payFromAccount: srcCode, referenceNumber: referenceNumber || '', voucherNumber: voucher?.voucherNumber || '', supplierId: String(bill.supplierId), recordedBy: req.user?.name },
       });
       emitToMgr('erpUpdated');
       res.json({ success: true, bill, voucher, overpay });
@@ -444,6 +444,67 @@ export default function registerBills(ctx) {
       res.json({ success: true, bill, supplier: { _id: supplier._id, creditBalance: supplier.creditBalance } });
     } catch (err) {
       log.error({ err }, 'POST /api/suppliers/:id/credit/apply failed');
+      (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+    }
+  });
+
+  // ── SUPPLIER CREDIT: take it back in cash ───────────────────────────────────
+  // The other way a supplier credit ends. Applying it to the next bill was the
+  // only option, so a credit held against a supplier you have stopped buying
+  // from sat on the balance sheet forever with no way to clear it.
+  //
+  // This is money coming IN - they are returning what we overpaid - so it is a
+  // receipt, not a disbursement. It deliberately issues no check voucher: a
+  // voucher documents money leaving a cash account, and nothing leaves here.
+  app.post('/api/suppliers/:id/credit/refund', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const supplier = await Supplier.findOne({ _id: req.params.id, ...tenantScope(req) });
+      if (!supplier) return res.status(404).json({ success: false, error: 'Supplier not found.' });
+
+      const available = money(supplier.creditBalance);
+      if (available <= 0) return res.status(409).json({ success: false, error: 'This supplier holds no credit to refund.' });
+
+      const { amount, referenceNumber, note, intoAccount } = req.body || {};
+      const requested = money(amount !== undefined && amount !== null && amount !== '' ? amount : available);
+      if (!requested || requested <= 0) return res.status(400).json({ success: false, error: 'Amount must be positive.' });
+      if (requested > available + 0.01) {
+        return res.status(400).json({ success: false, error: `Only P${available.toFixed(2)} of credit is available.` });
+      }
+
+      // Where the money landed. Anything that is not a cash/bank/e-wallet
+      // account would put the receipt somewhere it cannot be reconciled from.
+      const destCode = (acctMeta(intoAccount) && isCashLike(intoAccount)) ? intoAccount : '111000';
+      const destName = acctMeta(destCode)?.name || 'Cash on Hand';
+
+      const reference = await mkSeqRef('SUP-CR-REFUND');
+      const lines = [
+        { accountCode: destCode, accountName: destName, debit: requested, credit: 0 },
+        { accountCode: '160100', accountName: acctMeta('160100')?.name || 'Supplier Credit Balance (Overpayments)', debit: 0, credit: requested },
+      ];
+      assertBalanced(lines, reference);
+      await JournalEntry.create({
+        date: new Date(), reference,
+        description: `Supplier credit refunded by ${supplier.name}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}${note ? ` - ${note}` : ''}`,
+        lines, totalDebit: requested, totalCredit: requested,
+        supplierId: String(supplier._id), supplierName: supplier.name,
+      });
+
+      supplier.creditBalance = money(available - requested);
+      supplier.creditHistory.push({
+        type: 'refunded', amount: requested, reference,
+        note: note || `Refunded into ${destName}`, by: req.user?.name || '',
+      });
+      await supplier.save();
+
+      await AuditLog.create({
+        userId: req.user?.name || 'System', action: 'SUPPLIER_CREDIT_REFUNDED', targetReference: supplier.name,
+        details: { amount: requested, intoAccount: destCode, referenceNumber: referenceNumber || '', remaining: supplier.creditBalance, recordedBy: req.user?.name },
+      });
+      emitToMgr('erpUpdated');
+      res.json({ success: true, reference, supplier: { _id: supplier._id, creditBalance: supplier.creditBalance } });
+    } catch (err) {
+      log.error({ err }, 'POST /api/suppliers/:id/credit/refund failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
   });

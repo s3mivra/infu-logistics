@@ -257,6 +257,76 @@ app.get('/api/settings/modules', verifyToken, requireStaff, async (req, res) => 
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
+
+// ── WHAT STILL HAS TO BE SET BEFORE TRADING ─────────────────────────────────
+// Some settings can be put right at any time. One cannot: the receipt serial
+// start number locks the moment the first receipt is issued, because moving it
+// afterwards would renumber receipts already in customers' hands. Nothing
+// stopped a business ringing up its first sale before setting it, and by the
+// time anyone noticed it was permanent.
+//
+// So this says what is outstanding AND how long it can still be put right,
+// which is the part that actually matters.
+app.get('/api/settings/readiness', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const [rows, receiptsIssued] = await Promise.all([
+      Settings.find({ key: { $in: ['businessTimeZone', 'orStartNumber', 'orPrefix', 'birPermitNo', 'birMachineId', 'businessTin', 'vatEnabled'] } }).lean(),
+      mongoose.model('Order').countDocuments({ orNumber: { $nin: [null, ''] } }),
+    ]);
+    const val = Object.fromEntries(rows.map(r => [r.key, r.value]));
+    const isSet = (k) => val[k] !== undefined && String(val[k]).trim() !== '';
+    const serialLocked = receiptsIssued > 0;
+
+    const items = [];
+
+    // The one with a deadline.
+    if (!serialLocked) {
+      items.push({
+        key: 'orStartNumber',
+        label: 'Receipt serial start number',
+        set: isSet('orStartNumber'),
+        severity: 'locks',
+        note: isSet('orStartNumber')
+          ? `Set to ${val.orStartNumber}. Still changeable - it locks permanently once the first receipt is issued.`
+          : 'Set this to the number your registered booklet is already up to, BEFORE your first sale. It locks permanently once the first receipt is issued.',
+      });
+    }
+
+    items.push({
+      key: 'businessTimeZone',
+      label: 'Business time zone',
+      set: isSet('businessTimeZone'),
+      severity: 'important',
+      note: 'Decides which day a sale belongs to, when the day locks, and what a daily report covers. Change it between trading days, not mid-service.',
+    });
+
+    // Printed on every receipt. Fixable later, but every receipt issued before
+    // then goes out without them.
+    for (const [key, label] of [
+      ['businessTin', 'Business TIN'],
+      ['birPermitNo', 'ATP / Permit number'],
+      ['birMachineId', 'Machine ID / serial'],
+    ]) {
+      items.push({
+        key, label, set: isSet(key), severity: 'receipts',
+        note: 'Printed on every receipt and invoice. Receipts issued before it is filled in go out without it.',
+      });
+    }
+
+    const outstanding = items.filter(i => !i.set);
+    res.json({
+      success: true,
+      ready: outstanding.length === 0,
+      receiptsIssued,
+      serialLocked,
+      items,
+      outstanding: outstanding.length,
+      // The single thing worth interrupting someone for.
+      urgent: outstanding.find(i => i.severity === 'locks') || null,
+    });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 // What every document a person actually holds is called. The screen needs the
 // labels, the notes and a worked sample per series - building that list in the
 // client would mean the two ends disagreeing the moment one changes.

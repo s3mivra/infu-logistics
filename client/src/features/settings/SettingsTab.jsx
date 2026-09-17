@@ -1,5 +1,5 @@
 ﻿import React, { useCallback, useEffect, useState } from 'react';
-import { SlidersHorizontal, QrCode, Clock, DollarSign, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type, X } from 'lucide-react';
+import { SlidersHorizontal, AlertTriangle, QrCode, Clock, DollarSign, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type, X } from 'lucide-react';
 import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
 
 // ── SettingsTab - system preferences & account controls ───────────────────────
@@ -169,6 +169,22 @@ export default function SettingsTab({ ctx }) {
   }, [apiFetch]);
   useEffect(() => { loadDocSeries(); }, [loadDocSeries]);
 
+  // What still has to be set before trading - and which of it has a deadline.
+  // The receipt serial start number locks the moment the first receipt is
+  // issued, so "you can still fix this" is the part worth saying out loud.
+  const [readiness, setReadiness] = useState(null);
+  const loadReadiness = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/settings/readiness');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.success) setReadiness(d);
+    } catch { /* the card simply does not appear */ }
+  }, [apiFetch]);
+  useEffect(() => { loadReadiness(); }, [loadReadiness]);
+  // Saving anything can clear an outstanding item, so re-read after a change.
+  useEffect(() => { if (systemSettings) loadReadiness(); }, [systemSettings, loadReadiness]);
+
   // The server normalises whatever was typed (case, stray punctuation, a
   // trailing dash) and hands back the whole list with fresh samples, so the
   // screen shows the result of the rule rather than re-implementing it.
@@ -286,6 +302,42 @@ export default function SettingsTab({ ctx }) {
           <p className="text-fg/60 text-xs font-bold mt-1">System preferences &amp; account</p>
         </div>
       </div>
+
+      {/* Before the first sale, one of these can still be put right; afterwards
+          it cannot. Shown at the top because a warning further down the page
+          is a warning nobody reads in time. */}
+      {isSuperAdmin && readiness && !readiness.ready && (
+        <div className={`mb-6 rounded-2xl border px-4 py-4 ${
+          readiness.urgent ? 'bg-amber-500/10 border-amber-500/30' : 'bg-white/5 border-white/10'
+        }`}>
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={18} className={readiness.urgent ? 'text-warning shrink-0 mt-0.5' : 'text-fg/60 shrink-0 mt-0.5'} />
+            <div className="flex-1 min-w-0">
+              <p className="font-black text-fg text-sm">
+                {readiness.urgent
+                  ? 'Set this before your first sale'
+                  : `${readiness.outstanding} setting${readiness.outstanding === 1 ? '' : 's'} still to fill in`}
+              </p>
+              <ul className="mt-2 space-y-1.5">
+                {readiness.items.filter(i => !i.set).map(i => (
+                  <li key={i.key} className="text-xs leading-snug">
+                    <span className={`font-bold ${i.severity === 'locks' ? 'text-warning' : 'text-fg/80'}`}>{i.label}</span>
+                    {i.severity === 'locks' && (
+                      <span className="ml-1.5 text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-warning px-1.5 py-0.5 rounded">locks after the first receipt</span>
+                    )}
+                    <span className="block text-fg/60">{i.note}</span>
+                  </li>
+                ))}
+              </ul>
+              {readiness.serialLocked && (
+                <p className="text-[10px] text-fg/55 mt-2">
+                  The receipt series has already issued {readiness.receiptsIssued} receipt{readiness.receiptsIssued === 1 ? '' : 's'}, so its starting number is now fixed.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="space-y-6">
         {/* System toggles - superadmin only */}

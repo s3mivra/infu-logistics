@@ -736,6 +736,42 @@ export default function ProcurementTab({ ctx }) {
   const [receiveNotes, setReceiveNotes] = useState('');
   // Goods going BACK. Opened from a PO that has already been received - the
   // quantities offered are what is still returnable on each line.
+  // Taking a supplier's credit back as money. The credit builds up when a bill
+  // is overpaid; until now it could only ever be applied to the NEXT bill, so
+  // credit against a supplier you have stopped buying from sat there forever.
+  const [creditRefund, setCreditRefund] = useState(null);   // the supplier being refunded
+  const [creditRefundForm, setCreditRefundForm] = useState({ amount: '', intoAccount: '111000', referenceNumber: '', note: '' });
+  const [creditRefundBusy, setCreditRefundBusy] = useState(false);
+
+  const openCreditRefund = (s) => {
+    setCreditRefund(s);
+    setCreditRefundForm({ amount: String(s.creditBalance || ''), intoAccount: '111000', referenceNumber: '', note: '' });
+    setError('');
+  };
+
+  const submitCreditRefund = async () => {
+    const amt = parseFloat(creditRefundForm.amount);
+    if (!amt || amt <= 0) return setError('Enter the amount they returned.');
+    if (amt > (creditRefund.creditBalance || 0) + 0.01) return setError('That is more credit than this supplier holds.');
+    setCreditRefundBusy(true);
+    try {
+      const res = await apiFetch(`/api/suppliers/${creditRefund._id}/credit/refund`, {
+        method: 'POST',
+        body: JSON.stringify({
+          amount: amt,
+          intoAccount: creditRefundForm.intoAccount,
+          referenceNumber: creditRefundForm.referenceNumber.trim(),
+          note: creditRefundForm.note.trim(),
+        }),
+      });
+      const d = await res.json();
+      if (!d.success) { setError(d.error || 'Could not record the refund.'); return; }
+      setCreditRefund(null);
+      await fetchSuppliers();
+    } catch { setError('Could not record the refund.'); }
+    finally { setCreditRefundBusy(false); }
+  };
+
   const [returnPo, setReturnPo] = useState(null);
   const [returnQtys, setReturnQtys] = useState({});
   const [returnReason, setReturnReason] = useState('');
@@ -1032,6 +1068,22 @@ export default function ProcurementTab({ ctx }) {
                     {s.address && <span className="inline-flex items-center gap-1"><MapPin size={11} />{s.address}</span>}
                   </div>
                   {s.notes && <p className="text-fg/75 text-xs mt-1">{s.notes}</p>}
+                  {/* Money this supplier is holding of ours, from overpaying a
+                      bill or sending goods back. It is an asset - worth seeing
+                      on the row, not buried in the ledger. */}
+                  {s.creditBalance > 0 && (
+                    <div className="mt-1.5 inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/25 rounded-lg px-2.5 py-1">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300/90">Credit with them</span>
+                      <span className="text-xs font-black text-fg tabular-nums">{money(s.creditBalance)}</span>
+                      {canManage && (
+                        <button onClick={() => openCreditRefund(s)}
+                          title="Record money this supplier has returned to you"
+                          className="text-[10px] font-bold uppercase tracking-wider text-brand-text hover:underline">
+                          Refunded to us
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <button onClick={() => setExpandedSupplierId(isOpen ? null : s._id)}
                     className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-brand/80 hover:text-brand-text transition">
                     <Box size={12} />
@@ -1226,6 +1278,62 @@ export default function ProcurementTab({ ctx }) {
               })()}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* -- SUPPLIER CREDIT REFUNDED BACK TO US -- */}
+      {creditRefund && (
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !creditRefundBusy && setCreditRefund(null)}>
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-md my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+              <div>
+                <h2 className="font-black text-fg text-lg">Credit refunded to us</h2>
+                <p className="text-fg/60 text-xs font-bold">{creditRefund.name} &middot; holding {money(creditRefund.creditBalance)}</p>
+              </div>
+              <button onClick={() => !creditRefundBusy && setCreditRefund(null)} className="text-fg/70 hover:text-fg transition"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-[11px] text-fg/60 leading-snug">
+                Money coming back from the supplier &mdash; a returned overpayment. This is a receipt, so no
+                check voucher is issued; the credit they hold is cleared by what you record here.
+              </p>
+              <div>
+                <label htmlFor="cr-amount" className="text-[10px] font-black uppercase tracking-wider text-fg/70 mb-1 block">Amount returned</label>
+                <input id="cr-amount" type="number" min="0" step="0.01" value={creditRefundForm.amount}
+                  onChange={e => setCreditRefundForm(f => ({ ...f, amount: e.target.value }))}
+                  className={inputCls} />
+              </div>
+              <div>
+                <label htmlFor="cr-into" className="text-[10px] font-black uppercase tracking-wider text-fg/70 mb-1 block">Into which account</label>
+                <select id="cr-into" value={creditRefundForm.intoAccount}
+                  onChange={e => setCreditRefundForm(f => ({ ...f, intoAccount: e.target.value }))}
+                  className={inputCls}>
+                  {(procurementCreditAccounts || []).filter(a => /^(111|112|113)/.test(String(a.code))).map(a => (
+                    <option key={a.code} value={a.code}>{a.code} {a.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="cr-ref" className="text-[10px] font-black uppercase tracking-wider text-fg/70 mb-1 block">Their reference (optional)</label>
+                <input id="cr-ref" type="text" value={creditRefundForm.referenceNumber}
+                  onChange={e => setCreditRefundForm(f => ({ ...f, referenceNumber: e.target.value }))}
+                  placeholder="Bank transfer ref, check no." className={inputCls} />
+              </div>
+              <div>
+                <label htmlFor="cr-note" className="text-[10px] font-black uppercase tracking-wider text-fg/70 mb-1 block">Note (optional)</label>
+                <input id="cr-note" type="text" value={creditRefundForm.note}
+                  onChange={e => setCreditRefundForm(f => ({ ...f, note: e.target.value }))} className={inputCls} />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
+              <button onClick={() => setCreditRefund(null)} disabled={creditRefundBusy}
+                className="text-sm font-bold px-4 py-2 rounded-xl text-fg/70 hover:text-fg transition">Cancel</button>
+              <button onClick={submitCreditRefund} disabled={creditRefundBusy || !creditRefundForm.amount}
+                className="flex items-center gap-2 bg-brand text-on-brand disabled:opacity-50 font-bold text-sm px-4 py-2 rounded-xl hover:bg-brand-dark transition">
+                {creditRefundBusy ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Record it
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

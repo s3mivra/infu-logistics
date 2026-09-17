@@ -130,6 +130,7 @@ export default function registerFinance(ctx) {
     DEFAULT_PAYMENT_ACCOUNT_MAP,
     refreshPaymentMap,
     accountForPaymentMethod,
+    issueCheckVoucher,
     ClosedPeriodSchema,
     ClosedPeriod,
     periodLockFor,
@@ -593,7 +594,18 @@ async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, de
     totalCredit: amt,
     date: entryDate,
   });
-  return { ok: true, je };
+
+  // The document for the money going out. Declined automatically when the
+  // expense was put on account rather than paid - nothing left the drawer.
+  const voucher = await issueCheckVoucher(req, {
+    payeeType: 'other',
+    payeeName: vendor?.trim() || description.trim(),
+    amount: netPaid, purpose: 'expense', sourceAccount: credAcct.code,
+    referenceNumber: refNo?.trim() || '',
+    notes: `${cat.label}: ${description.trim()}`,
+    journalEntryRef: reference, date: entryDate,
+  });
+  return { ok: true, je, voucher };
 }
 
 // What has been withheld and not yet remitted.
@@ -1430,6 +1442,14 @@ app.post('/api/revolving-funds', verifyToken, requireSuperAdmin, async (req, res
       reference: await mkSeqRef('RF-OPEN'),
     });
 
+    // The float came out of a real account, so it is documented like any
+    // other payment out of it.
+    await issueCheckVoucher(req, {
+      payeeType: 'other', payeeName: `Petty cash: ${name}`,
+      amount: amt, purpose: 'petty-cash', sourceAccount: srcCode,
+      notes: 'Fund opened', journalEntryRef: je.reference || '',
+    });
+
     // Record opening tx
     await RevolvingFundTx.create({
       fundId: fund._id, type: 'replenishment',
@@ -1481,6 +1501,11 @@ app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, async (
       reference: await mkSeqRef('RF-OUT'),
     });
 
+    await issueCheckVoucher(req, {
+      payeeType: 'other', payeeName: description.trim() || `Petty cash: ${fund.name}`,
+      amount: amt, purpose: 'petty-cash', sourceAccount: '114000',
+      notes: `Paid out of ${fund.name}`, journalEntryRef: je.reference || '',
+    });
     const tx = await RevolvingFundTx.create({
       fundId: fund._id, type: 'disbursement', amount: amt,
       description, categoryCode: expCode,

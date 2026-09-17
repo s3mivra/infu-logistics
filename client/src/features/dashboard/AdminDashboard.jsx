@@ -4792,6 +4792,59 @@ const updateStatus = async (orderId, newStatus) => {
   // Drafts the server built: base size + extra sizes, each with its own recipe.
   const rsDrafts = (rsPreview?.drafts || []).filter(d => !d.needsReview);
 
+  // ── Coded menu sheet (F&B) ──────────────────────────────────────────────
+  // A stricter sheet than the barista workbook above: one row per size, and
+  // every ingredient named by its stock CODE with the quantity in the column
+  // beside it. Read and reviewed before anything is written, same as the rest.
+  const [msFile, setMsFile] = useState(null);
+  const [msPreview, setMsPreview] = useState(null);
+  const [msBusy, setMsBusy] = useState(false);
+
+  const closeMenuSheet = () => { setMsFile(null); setMsPreview(null); };
+
+  const openMenuSheet = async (file) => {
+    if (!file) return;
+    setMsBusy(true); setMsPreview(null);
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      // The first sheet only: this format is one table, not a workbook of them.
+      const first = wb.SheetNames[0];
+      // raw:true so a cell Excel turned into a date arrives as its serial and
+      // can be read back - formatted text would have lost the numbers.
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[first], { header: 1, defval: '', raw: true });
+      setMsFile({ name: file.name, sheet: first, rows: rows.length });
+      const res = await apiFetch('/api/products/menu-sheet/parse', { method: 'POST', body: JSON.stringify({ rows }) });
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Could not read that sheet.'); return; }
+      setMsPreview(d);
+    } catch (err) {
+      console.error('menu sheet', err);
+      ui.alert('Could not read that file.');
+    } finally { setMsBusy(false); }
+  };
+
+  const submitMenuSheet = async () => {
+    if (!msPreview) return;
+    setMsBusy(true);
+    try {
+      // Sent as the same rows the menu importer already takes, so the linking,
+      // unit conversion and category creation all happen in one place.
+      const rows = msPreview.products.map(p => ({
+        name: p.name, srp: p.srp, category: p.category,
+        ingredients: p.ingredients,
+        sizes: p.sizes.map(sz => ({ name: sz.name, price: sz.price, ingredients: sz.ingredients })),
+      }));
+      const res = await apiFetch('/api/products/import-menu', { method: 'POST', body: JSON.stringify({ rows }) });
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Import failed.'); return; }
+      closeMenuSheet();
+      fetchERPData();
+      ui.alert(`${d.created} product(s) created, ${d.updated} updated.${(d.unmatchedIngredients || []).length ? `\n\nNot linked to stock: ${d.unmatchedIngredients.join(', ')}` : ''}`);
+    } catch { ui.alert('Network error.'); }
+    finally { setMsBusy(false); }
+  };
+
   const openRecipeSheet = async (file) => {
     if (!file) return;
     setRsBusy(true); setRsPreview(null);
@@ -8424,6 +8477,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     backupBusy, backupProgress, downloadFullBackup, restoreFullBackup,
     downloadMenuImportTemplate, parseMenuImportFile, submitMenuImport,
     rsFile, rsPreview, rsBusy, rsCreateMissing, setRsCreateMissing, openRecipeSheet, closeRecipeSheet, submitRecipeSheet,
+    msFile, msPreview, msBusy, openMenuSheet, closeMenuSheet, submitMenuSheet,
     rsDrafts, rsPrices, setRsPrice,
     spoilageModal, setSpoilageModal, spoilageForm, setSpoilageForm, spoilageLoading, setSpoilageLoading,
     handleRestockSubmit, submitPhysicalCounts,

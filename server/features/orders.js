@@ -167,6 +167,7 @@ export default function registerOrders(ctx) {
     AuditLogSchema,
     AuditLog,
     CheckVoucher,
+    issueCheckVoucher,
     DiscountSchema,
     Discount,
     EODRecordSchema,
@@ -2638,21 +2639,17 @@ app.post('/api/client-accounts/:id/credit/refund', verifyToken, requireSuperAdmi
       lines, totalDebit: requested, totalCredit: requested,
     });
 
-    const voucherNumber = await mkSeqRef('CV');
-    const voucher = await CheckVoucher.create({
-      businessType: BUSINESS_TYPE, ...tenantScope(req),
-        branchCode: await currentBranchCode(),
-      voucherNumber, payeeType: 'client', payeeId: String(client._id), payeeName: client.name,
-      amount: requested, purpose: 'client-credit-refund', sourceAccount: srcCode, sourceAccountName: srcName,
-      referenceNumber: referenceNumber || '', notes: notes || '', journalEntryRef: reference,
-      issuedBy: req.user?.name || '',
+    const voucher = await issueCheckVoucher(req, {
+      payeeType: 'client', payeeId: String(client._id), payeeName: client.name,
+      amount: requested, purpose: 'client-credit-refund', sourceAccount: srcCode,
+      referenceNumber, notes, journalEntryRef: reference,
     });
 
     client.creditBalance = Math.round((client.creditBalance - requested) * 100) / 100;
     client.creditHistory.push({ type: 'refunded', amount: requested, reference, note: notes || 'Refunded to client', by: req.user?.name || '' });
     await client.save();
 
-    await logAudit(req, { action: 'refund-credit', entity: 'ClientAccount', entityId: client._id, after: { amount: requested, voucherNumber } });
+    await logAudit(req, { action: 'refund-credit', entity: 'ClientAccount', entityId: client._id, after: { amount: requested, voucherNumber: voucher?.voucherNumber || '' } });
     emitToMgr('erpUpdated');
     res.json({ success: true, voucher, client: { _id: client._id, creditBalance: client.creditBalance } });
   } catch (err) {

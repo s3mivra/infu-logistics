@@ -25,7 +25,7 @@ import { requireModule } from '../lib/optionalModules.js';
 
 export default function registerPayroll(ctx) {
   const {
-    app, mongoose, IS_PROD, log, BUSINESS_TYPE, tenantScope, logAudit,
+    app, mongoose, IS_PROD, log, BUSINESS_TYPE, tenantScope, logAudit, issueCheckVoucher,
     PayrollRun, JournalEntry, Settings,
     assertBalanced, acctMeta, mkSeqRef, currentBranchCode, periodLockFor,
     verifyToken, requireStaff, requirePermission,
@@ -371,6 +371,14 @@ export default function registerPayroll(ctx) {
         lines, totalDebit: paying, totalCredit: paying,
       });
 
+      const voucher = await issueCheckVoucher(req, {
+        payeeType: 'other',
+        payeeName: `Payroll ${run.reference} - ${run.lines.length} employee(s)`,
+        amount: paying, purpose: 'payroll', sourceAccount: cashCode,
+        notes: `Net pay for ${new Date(run.periodStart).toISOString().slice(0, 10)} to ${new Date(run.periodEnd).toISOString().slice(0, 10)}`,
+        journalEntryRef: reference, date: when,
+      });
+
       run.status = 'Paid';
       run.paymentJournalRef = reference;
       run.paidFromAccount = cashCode;
@@ -378,7 +386,7 @@ export default function registerPayroll(ctx) {
       await run.save();
 
       await logAudit(req, { action: 'update', entity: 'PayrollRun', entityId: run._id, after: { reference: run.reference, paid: paying, from: cashCode } });
-      res.json({ success: true, run, reference, paid: paying });
+      res.json({ success: true, run, reference, paid: paying, voucher });
     } catch (err) {
       log.error?.({ err }, 'POST /api/payroll-runs/:id/pay failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));

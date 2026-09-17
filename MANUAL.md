@@ -141,6 +141,24 @@ Pending ──Prepare──▶ Preparing ──▶ Ready ──Deliver──▶ 
 
 **Low-stock alerts.** Set a per-item threshold; the sidebar and table badge items at or below it.
 
+**Importing a menu sheet** · F&B
+
+Menu Setup → **Read Menu Sheet** takes a spreadsheet of drinks written the way a bar writes them:
+
+| Category & Name | Base & Extra Size | *(ingredient)* | *(quantity)* | … | Price |
+|---|---|---|---|---|---|
+| Long Black | 8oz Hot | `G60004/G60008` | `1/1` | … | 100 |
+|  | 12oz Iced | `G60001/G60006` | `1/1` | … | 120 |
+
+- **A row is one size.** A row with no name in the first column is another size of the drink above it, with its own price and its own recipe.
+- **A name on its own row is a category heading** for everything beneath it.
+- **Ingredients come in pairs of columns:** identifiers on the left, quantities on the right, matched left to right. `G10002/Water` with `20g/35ml` means G10002 is 20 g and Water is 35 ml.
+- **An identifier that is a stock code is that inventory item**; anything else is recorded as a non-stock line — measured in the recipe, never deducted, never costed.
+- **No unit means pieces.** `1/1` against a cup and a lid is one of each.
+- Nothing is written until you have seen the preview. Anything the sheet does not say clearly — a quantity with no ingredient beside it, two quantities for one ingredient — is **listed and left out**, never guessed at.
+
+> Watch for Excel turning `1/1` into a date. The importer recovers those (the two numbers survive inside the date), but it is worth formatting those columns as text in the sheet.
+
 ## 6. End-of-Day (EOD) inventory count
 1. Open the **EOD / count** flow.
 2. Enter the **physical count** for each item in display units (kg/L/pcs).
@@ -250,8 +268,6 @@ Everything that moves money or stock posts a **balanced double-entry journal ent
 | **A/P Payables** · **Bills** · **Supplier Payments** | What you owe, and paying it |
 | **Collections** | The chase list for overdue receivables, including checks |
 | **Approvals** | Requisition slips awaiting sign-off — approving one creates the PO |
-| **Check Vouchers** | The paper trail for money going out |
-| **Advances** | Client deposits and supplier prepayments |
 | **Expenses** | Record and review operating expenses |
 | **Revolving Funds** | Petty-cash pools (see below) |
 | **Sales by Payment** · **Sales Summary** | Sales broken down by method and by line |
@@ -277,6 +293,27 @@ All the report tables are **paginated** (10 rows per page).
 - **In (replenish):** top the fund back up from a chosen cash account.
 - **History:** per-fund transaction ledger, paginated.
 
+**Check vouchers** — *Reports → Payable → Check Vouchers*
+
+The document you sign for money going out, and the file that "money out" reconciles against. One is issued **automatically** whenever money actually leaves a cash, bank or e-wallet account:
+
+| What happened | Voucher purpose |
+|---|---|
+| Paid a supplier's bill | bill-payment |
+| Paid staff (payroll pay-out) | payroll |
+| Paid an expense | expense |
+| Bought or restocked inventory with money | expense |
+| Opened or topped up a petty-cash float | petty-cash |
+| Spent out of a petty-cash float | petty-cash |
+| Issued an advance, or prepaid a PO | advance |
+| Refunded a client's credit balance | client-credit-refund |
+
+- **Nothing left the drawer, no voucher.** An expense or a stock purchase put *on account* raises a payable and pays nobody; the voucher comes later, when that bill is paid.
+- **Petty cash counts.** The float is a cash account like any other, so both topping it up and spending from it are documented.
+- **Print** produces it on your letterhead with the payee, amount, account it came out of, check/reference number, purpose, journal reference, and three signature lines — prepared, approved, received.
+- **Void** requires a reason. A voided voucher still prints, with the void reason on its face, because the cancellation has to be filed too.
+- **Money coming back the other way is not a voucher.** A supplier returning an overpayment is a *receipt*, not a disbursement. Record it at **Procurement → Suppliers → Refunded to us** (it shows on the supplier's row whenever they hold credit of yours): choose which account the money landed in, and the credit clears. No voucher is issued, because nothing left.
+
 ## 14. Tax, receipts & document numbering (owner only)
 
 **VAT — on or off.** Settings → VAT.
@@ -296,6 +333,7 @@ All the report tables are **paginated** (10 rows per page).
 
 - A **receipt number is issued when a sale completes** — an unfinished or cancelled order never had a receipt, and spending a serial on one would leave a gap you'd have to explain.
 - **Set "Continue serials from" before your first sale.** It **locks permanently** once the first receipt is issued: moving it afterwards would renumber receipts already in customers' hands, or skip a block nobody can account for.
+- **Settings warns you while there is still time.** Until these are filled in, a banner at the top of Settings lists what is outstanding, flagging the serial start number as the one with a deadline. Once the first receipt is issued it stops offering it — there is no longer anything you can do about it — and says how many receipts the series has run.
 
 **Document numbering.** Settings → Document numbering. Every document a person actually holds has its own prefix, each shipped with a sensible default and a live sample of what it prints:
 
@@ -362,6 +400,9 @@ Clients → expand the client → **Statement of account** → pick the period �
 **Send goods back to a supplier**
 Procurement → the PO → **Return** → pick lines and quantities → enter a reason. The stock, the VAT and what you owe all move together.
 
+**Print a check voucher for signing**
+Reports → Payable → **Check Vouchers** → **Print** on the row.
+
 **Record an expense (owner)**
 Ledger → **Add Expense** → amount, category, paid-from (or On Account), vendor, date.
 
@@ -373,6 +414,9 @@ Payroll → **Remittance** → pick the agency and the period. Every employee's 
 
 **Correct a wrong stock figure**
 Inventory → **EOD / count** → enter the true physical count. The difference posts to variance; don't edit the number directly.
+
+**Find stock that a production batch got wrong**
+From `server/`: `node scripts/audit-production-units.mjs` lists batches whose yield looks like it was counted in the wrong unit, worst first. Add `--count-csv` for a sheet to take to the shelf: which items to count, in the unit the count screen asks for, with what the figure should come to. Read-only — it changes nothing.
 
 **Pause customer QR ordering when slammed (owner)**
 Sidebar → **QR Orders** → toggle to **CLOSED**. Switch back to **OPEN** when ready.
@@ -397,6 +441,7 @@ Sidebar → **Auto Close** → toggle **OFF** (confirm). Remember to archive the
 | Can't change "Continue serials from" | Correct — it locks once the first receipt is issued (§14). |
 | Books Health shows a non-zero difference | A subledger disagrees with its ledger account. The line names which one; the usual causes are a manual journal entry or an import posted directly to a controlled account. |
 | A day's sales landed on the wrong date | Check Settings → **Time zone**. It decides which day a sale belongs to. |
+| "Open" on another branch goes nowhere | That branch's **app** address is unknown, so the link is guessed from its API address. Set `HUB_APP_URL_PATTERN` on the server (e.g. `https://{slug}.semivra.app`) to the address staff actually use. |
 | Sale won't complete: asks for a cardholder name | An SC/PWD discount needs the cardholder's name and ID before completion (§14). |
 
 ---
@@ -416,6 +461,7 @@ Sidebar → **Auto Close** → toggle **OFF** (confirm). Remember to archive the
 - **OR No.** — the serial number on the registered official receipt for a sale.
 - **ATP / PTU** — Authority to Print / Permit to Use, the registration your receipts are issued under.
 - **Debit memo** — the record of goods sent back to a supplier and the credit due for them.
+- **Check voucher** — the document authorising and recording a payment out of a cash or bank account.
 - **SOA** — Statement of Account (what a client owes, and how it got there).
 - **Advance** — money paid before the goods or service: a client's deposit to you, or your prepayment to a supplier.
 - **Reservation** — stock held for a client and unavailable to sell to anyone else.

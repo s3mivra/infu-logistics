@@ -336,6 +336,7 @@ export default function ProductsTab({ ctx }) {
     setImportModal, setImportRows, setInvForm, setInvPage, setInvSubTab,
     menuBackupBusy, downloadMenuBackup, menuRestoreModal, setMenuRestoreModal, openMenuRestore, runMenuRestore,
     rsFile, rsPreview, rsBusy, rsCreateMissing, setRsCreateMissing, openRecipeSheet, closeRecipeSheet, submitRecipeSheet,
+    msFile, msPreview, msBusy, openMenuSheet, closeMenuSheet, submitMenuSheet,
     rsDrafts = [], rsPrices = {}, setRsPrice = () => {},
     setIsPosOpen, setIsStatusMenuOpen, setJeForm, setJournalEntries, setLedgerSubTab,
     setNewDiscount, setOrderFilter, setOrdersPage, setPaymentSelections, setPhysicalCounts,
@@ -420,6 +421,104 @@ export default function ProductsTab({ ctx }) {
                   onChange={e => { openRecipeSheet(e.target.files?.[0]); e.target.value = ''; }} />
               </label>
             </div>
+
+            {/* The coded menu sheet. F&B only: it describes drinks with sizes
+                and recipes, which is not how a logistics catalogue is built. */}
+            {BUSINESS_TYPE === 'fb' && (
+              <div className="flex flex-wrap items-center gap-2 mb-5 p-3 bg-page-bg border border-white/10 rounded-xl">
+                <div className="mr-auto min-w-0">
+                  <p className="text-[11px] font-black uppercase tracking-widest text-fg/60">Menu Sheet</p>
+                  <p className="text-[10px] text-fg/70 mt-0.5">One row per size, ingredients by stock code &mdash; e.g. <span className="font-mono">G10002/Water</span> with <span className="font-mono">20g/35ml</span>.</p>
+                </div>
+                <label className={`flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition ${msBusy ? 'opacity-40 pointer-events-none' : 'cursor-pointer'}`}>
+                  <Upload size={12} /> {msBusy ? 'Reading…' : 'Read Menu Sheet'}
+                  <input type="file" accept=".xlsx,.xls,.csv" className="hidden"
+                    onChange={e => { openMenuSheet(e.target.files?.[0]); e.target.value = ''; }} />
+                </label>
+              </div>
+            )}
+
+            {msPreview && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={closeMenuSheet}>
+                <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                  <h2 className="font-black text-fg text-lg mb-1">Menu sheet</h2>
+                  <p className="text-xs text-fg/75 mb-4 break-all">{msFile?.name} &middot; sheet &ldquo;{msFile?.sheet}&rdquo;</p>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
+                    {[
+                      ['Products', msPreview.counts.products, 'text-fg'],
+                      ['Sizes', msPreview.counts.sizes, 'text-fg'],
+                      ['Linked to stock', msPreview.counts.stockLines, 'text-success'],
+                      ['Non-stock lines', msPreview.counts.nonStockLines, 'text-fg/70'],
+                      ['Need a look', msPreview.counts.needingReview, msPreview.counts.needingReview ? 'text-warning' : 'text-fg/60'],
+                    ].map(([label, value, cls]) => (
+                      <div key={label} className="bg-page-bg border border-white/10 rounded-xl p-2.5">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-fg/60">{label}</p>
+                        <p className={`text-base font-black tabular-nums ${cls}`}>{value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Anything the sheet says that cannot be read is shown before
+                      the import runs, not swallowed by it. */}
+                  {msPreview.problems.length > 0 && (
+                    <div className="mb-4 bg-amber-500/10 border border-amber-500/25 rounded-xl p-3">
+                      <p className="text-[11px] font-black uppercase tracking-wider text-warning mb-1.5">Needs a look first</p>
+                      <ul className="space-y-1">
+                        {msPreview.problems.map(p => (
+                          <li key={p.product} className="text-[11px] text-fg/80">
+                            <span className="font-bold">{p.product}</span>: {p.problems.map(x => x.detail).join(' ')}
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="text-[10px] text-fg/60 mt-2">These lines are left out of the recipe rather than guessed at. Fix the sheet and read it again, or import now and add them by hand.</p>
+                    </div>
+                  )}
+
+                  {msPreview.nonStockNames.length > 0 && (
+                    <div className="mb-4">
+                      <p className="text-[11px] font-black uppercase tracking-wider text-fg/60 mb-1.5">Recorded as non-stock</p>
+                      <p className="text-[11px] text-fg/75 leading-snug">{msPreview.nonStockNames.join(' &middot; ')}</p>
+                      <p className="text-[10px] text-fg/60 mt-1">Measured in the recipe but never deducted and never costed. Anything here that looks like a stock code is an item that does not exist yet.</p>
+                    </div>
+                  )}
+
+                  <div className="border border-white/10 rounded-xl overflow-hidden mb-4">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-page-bg text-[9px] uppercase tracking-widest text-fg/60">
+                          <th className="text-left py-2 px-3">Product</th>
+                          <th className="text-left py-2">Category</th>
+                          <th className="text-left py-2">Sizes</th>
+                          <th className="text-right py-2 px-3">Ingredients</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {msPreview.products.map(p => (
+                          <tr key={p.name} className="border-t border-white/5">
+                            <td className="py-2 px-3 font-bold text-fg">{p.name}</td>
+                            <td className="py-2 text-fg/70">{p.category || '-'}</td>
+                            <td className="py-2 text-fg/70">{p.sizes.map(sz => `${sz.name} ${peso ? peso(sz.price) : sz.price}`).join(' · ')}</td>
+                            <td className="py-2 px-3 text-right tabular-nums text-fg/70">
+                              {p.sizes.reduce((n, sz) => n + sz.ingredients.length, 0)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex justify-end gap-2">
+                    <button onClick={closeMenuSheet} disabled={msBusy}
+                      className="text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-4 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">Cancel</button>
+                    <button onClick={submitMenuSheet} disabled={msBusy || msPreview.counts.products === 0}
+                      className="text-[10px] bg-brand hover:bg-brand/90 text-on-brand px-4 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
+                      {msBusy ? 'Importing…' : `Import ${msPreview.counts.products} product(s)`}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {rsPreview && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={closeRecipeSheet}>

@@ -30,6 +30,7 @@ export default function registerAdvances(ctx) {
     Order,
     ClientAccount,
     CheckVoucher,
+    issueCheckVoucher,
     JournalEntry,
     assertBalanced,
     acctMeta,
@@ -148,23 +149,18 @@ export default function registerAdvances(ctx) {
         lines, totalDebit: amt, totalCredit: amt,
       });
 
-      let voucher = null;
-      if (!inbound) {
-        const voucherNumber = await mkSeqRef('CV');
-        voucher = await CheckVoucher.create({
-          businessType: BUSINESS_TYPE, ...tenantScope(req),
-        branchCode: await currentBranchCode(),
-          voucherNumber,
-          payeeType: type === 'supplier' ? 'supplier' : 'other',
-          payeeId: String(payeeId || ''), payeeName,
-          amount: amt, purpose: 'other',
-          sourceAccount: srcCode, sourceAccountName: srcName,
-          date: txnDate,
-          referenceNumber: referenceNumber || '',
-          notes: `Advance ${advanceNumber}${purpose ? ` - ${purpose}` : ''}`,
-          journalEntryRef: reference, issuedBy: req.user?.name || '',
-        });
-      }
+      // Money handed out ahead of the transaction still leaves the drawer, so
+      // it is documented like any other disbursement. An INBOUND advance (a
+      // customer's deposit) is money arriving - there is nothing to disburse.
+      const voucher = inbound ? null : await issueCheckVoucher(req, {
+        payeeType: type === 'supplier' ? 'supplier' : 'other',
+        payeeId, payeeName,
+        amount: amt, purpose: 'advance',
+        sourceAccount: srcCode, date: txnDate,
+        referenceNumber,
+        notes: `Advance ${advanceNumber}${purpose ? ` - ${purpose}` : ''}`,
+        journalEntryRef: reference,
+      });
 
       const advance = await Advance.create({
         businessType: BUSINESS_TYPE, ...tenantScope(req),

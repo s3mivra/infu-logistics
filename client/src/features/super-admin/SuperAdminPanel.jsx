@@ -999,7 +999,11 @@ export default function SuperAdminPanel() {
       setClientModal(m => ({ ...m, client: { ...m.client, creditBalance: d.client.creditBalance } }));
       setClientCreditRefundForm(null);
       fetchClients();
-      showToast(`Refunded ₱${amt.toFixed(2)} via Check Voucher ${d.voucher.voucherNumber}.`);
+      // The voucher is issued alongside the refund but is not the refund: if
+      // writing it failed, the money still moved and the message must not throw.
+      showToast(d.voucher
+        ? `Refunded ₱${amt.toFixed(2)} via Check Voucher ${d.voucher.voucherNumber}.`
+        : `Refunded ₱${amt.toFixed(2)}.`);
     } catch { showToast('Network error.', 'error'); }
     finally { setClientCreditBusy(false); }
   };

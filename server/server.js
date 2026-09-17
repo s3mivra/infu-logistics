@@ -1665,7 +1665,14 @@ const LinkedBusinessSchema = new mongoose.Schema({
   role:         { type: String, enum: ['hub', 'client'], required: true },
   partnerSlug:  { type: String, required: true },
   partnerName:  String,
+  // Where this server CALLS the partner: an internal API address, typically a
+  // container hostname that only resolves inside the network.
   partnerUrl:   String,
+  // Where a PERSON goes to use that branch. Deliberately separate: the two are
+  // different addresses for different audiences, and using the API one as a
+  // link sent the operator's browser to a hostname it cannot resolve, at the
+  // API root rather than the dashboard.
+  partnerAppUrl: String,
   linkToken:    { type: String, required: true },
   status:       { type: String, enum: ['active', 'suspended'], default: 'active' },
   linkedAt:     Date,
@@ -2879,7 +2886,11 @@ const CheckVoucherSchema = new mongoose.Schema({
   payeeId:        { type: String, default: '' },                    // Supplier._id or ClientAccount._id, when applicable
   payeeName:      { type: String, required: true },
   amount:         { type: Number, required: true },
-  purpose:        { type: String, enum: ['bill-payment', 'client-credit-refund', 'supplier-credit-refund', 'other'], required: true },
+  // What the money was for. 'other' covers a disbursement with no richer
+  // classification. There is deliberately no 'supplier-credit-refund': a
+  // supplier returning our overpayment is money coming IN, and a check voucher
+  // documents money going OUT - that refund is a receipt, not a voucher.
+  purpose:        { type: String, enum: ['bill-payment', 'client-credit-refund', 'payroll', 'expense', 'petty-cash', 'advance', 'other'], required: true },
   sourceAccount:  { type: String, default: '111000' },               // which cash/bank account the money left from
   sourceAccountName: { type: String, default: '' },
   referenceNumber:{ type: String, default: '' },                    // the actual check number / bank transfer ref
@@ -2895,6 +2906,54 @@ const CheckVoucherSchema = new mongoose.Schema({
 }, { timestamps: true });
 CheckVoucherSchema.index({ businessType: 1, date: -1 });
 const CheckVoucher = mongoose.model('CheckVoucher', CheckVoucherSchema);
+
+// Cash, bank, and e-wallet accounts - the ones money can actually leave from.
+const VOUCHER_SOURCE_ACCOUNTS = /^(111|112|113|114)/;
+
+// Issue the voucher for a disbursement.
+//
+// Every payment out of a cash or bank account gets one: it is the document
+// somebody signs, and the file of them is what "money out" reconciles against.
+// Centralised because it was hand-rolled at each call site, which is how four
+// copies of the same record end up with four different shapes.
+//
+// Returns null - never throws - when there is nothing to document: money that
+// did not leave a cash account (an on-account expense raises a payable, it does
+// not pay anyone), or a zero amount. A failure to write the voucher is logged
+// loudly but does not fail the payment: the money has already moved and the
+// journal entry has already posted, so refusing the request would leave the
+// books and the response disagreeing.
+const issueCheckVoucher = async (req, {
+  payeeType = 'other', payeeId = '', payeeName, amount, purpose = 'other',
+  sourceAccount, referenceNumber = '', notes = '', billId = null,
+  journalEntryRef = '', date = null,
+} = {}) => {
+  const code = String(sourceAccount || '');
+  if (!VOUCHER_SOURCE_ACCOUNTS.test(code)) return null;
+  const amt = Math.round((Number(amount) || 0) * 100) / 100;
+  if (!(amt > 0)) return null;
+  try {
+    return await CheckVoucher.create({
+      businessType: BUSINESS_TYPE,
+      tenantId: req?.user?.tenantId || null,
+      branchCode: await currentBranchCode(),
+      voucherNumber: await mkSeqRef('CV'),
+      payeeType, payeeId: String(payeeId || ''), payeeName: String(payeeName || 'Payee'),
+      amount: amt, purpose,
+      sourceAccount: code, sourceAccountName: acctMeta(code)?.name || code,
+      referenceNumber: String(referenceNumber || ''), notes: String(notes || '').slice(0, 500),
+      billId, journalEntryRef,
+      issuedBy: req?.user?.name || '',
+      ...(date ? { date } : {}),
+    });
+  } catch (err) {
+    // Logged rather than reported through captureError: this file does not
+    // import it, and a voucher that failed to write must not take the payment
+    // down with it.
+    log.error({ err }, 'Could not issue a check voucher');
+    return null;
+  }
+};
 
 // ── ADVANCE ──────────────────────────────────────────────────────────────────
 // Money that changed hands BEFORE the transaction it belongs to exists. Three
@@ -4097,6 +4156,7 @@ const ctx = {
   DEFAULT_PAYMENT_ACCOUNT_MAP,
   refreshPaymentMap,
   accountForPaymentMethod,
+  issueCheckVoucher,
   ClosedPeriodSchema,
   ClosedPeriod,
   periodLockFor,

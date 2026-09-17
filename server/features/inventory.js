@@ -113,6 +113,7 @@ export default function registerInventory(ctx) {
     QRSession,
     InventorySchema,
     Inventory,
+    issueCheckVoucher,
     StorageLocation,
     StockCategory,
     StockTransfer,
@@ -1037,6 +1038,18 @@ app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
         description: `Purchased ${newItem.stockQty}${newItem.unit} of ${newItem.itemName}${isOnCredit ? ` on credit${supplierAttr.supplierName ? ` from ${supplierAttr.supplierName}` : ''}` : ''}${fund ? ` from ${fund.name}` : ''}`,
         lines, totalDebit: totalCost + newItemInputVat, totalCredit: totalCost + newItemInputVat, ...supplierAttr,
       });
+      // Stock bought with money rather than on credit is a disbursement, and
+      // gets the same document as any other. Buying ON credit raises a payable
+      // and pays nobody yet, so the issuer declines it on the account alone.
+      await issueCheckVoucher(req, {
+        payeeType: supplierAttr.supplierId ? 'supplier' : 'other',
+        payeeId: supplierAttr.supplierId || '',
+        payeeName: supplierAttr.supplierName || newItem.itemName,
+        amount: totalCost + newItemInputVat, purpose: 'expense',
+        sourceAccount: creditCode, referenceNumber: reference,
+        notes: `Stock purchase: ${newItem.itemName}`,
+        journalEntryRef: reference,
+      });
     }
 
     // Record the draw on the fund's own ledger. Non-fatal: stock and money have
@@ -1259,6 +1272,18 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
       });
 
       await recordFundDraw(savedItem, savedRef);
+      // Restocking with money rather than on credit is a disbursement. Issued
+      // once the stock and the entry have both landed, and declined by the
+      // issuer when it went on credit - nothing left a cash account then.
+      await issueCheckVoucher(req, {
+        payeeType: supplierAttr.supplierId ? 'supplier' : 'other',
+        payeeId: supplierAttr.supplierId || '',
+        payeeName: supplierAttr.supplierName || savedItem.itemName,
+        amount: cost, purpose: 'expense',
+        sourceAccount: creditCode, referenceNumber: savedRef,
+        notes: `Restock: ${savedItem.itemName}`,
+        journalEntryRef: savedRef,
+      });
       emitToMgr('erpUpdated');
       await logAudit(req, { action: 'restock', entity: 'Inventory', entityId: req.params.id, after: { addedStock, totalCost, creditCode, fund: fund?.name || null, supplier: supplierAttr.supplierName || null } });
       return res.json({ success: true, item: savedItem, fundedBy: fund ? { fundId: String(fund._id), name: fund.name } : null, onCredit: isOnCredit });
@@ -1304,6 +1329,18 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
             await JournalEntry.create({ reference: rstRef, description: `Restocked ${addedStock}${item.unit} of ${item.itemName}${isOnCredit ? ` on credit${supplierAttr.supplierName ? ` from ${supplierAttr.supplierName}` : ''}` : ''}${fund ? ` from ${fund.name}` : ''}`, lines, totalDebit: cost, totalCredit: cost, ...supplierAttr });
           }
           await recordFundDraw(item, rstRef);
+          // Restocking with money rather than on credit is a disbursement. Issued
+              // once the stock and the entry have both landed, and declined by the
+              // issuer when it went on credit - nothing left a cash account then.
+          await issueCheckVoucher(req, {
+            payeeType: supplierAttr.supplierId ? 'supplier' : 'other',
+            payeeId: supplierAttr.supplierId || '',
+            payeeName: supplierAttr.supplierName || item.itemName,
+            amount: cost, purpose: 'expense',
+            sourceAccount: creditCode, referenceNumber: rstRef,
+            notes: `Restock: ${item.itemName}`,
+            journalEntryRef: rstRef,
+          });
           emitToMgr('erpUpdated');
           await logAudit(req, { action: 'restock', entity: 'Inventory', entityId: req.params.id, after: { addedStock, totalCost, fallback: true, creditCode, fund: fund?.name || null, supplier: supplierAttr.supplierName || null } });
           return res.json({ success: true, item, fundedBy: fund ? { fundId: String(fund._id), name: fund.name } : null, onCredit: isOnCredit });

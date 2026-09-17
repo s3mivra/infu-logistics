@@ -26,6 +26,7 @@ export default function registerRequisitions(ctx) {
     acctMeta,
     JournalEntry,
     RevolvingFund,
+    issueCheckVoucher,
     RevolvingFundTx,
     PurchaseOrder,
     RequisitionSlip,
@@ -220,6 +221,12 @@ export default function registerRequisitions(ctx) {
           ],
           totalDebit: amt, totalCredit: amt, reference,
         });
+        await issueCheckVoucher(req, {
+          payeeType: 'other', payeeName: `Petty cash: ${slip.fundName}`,
+          amount: amt, purpose: 'petty-cash', sourceAccount: srcCode,
+          referenceNumber: slip.slipNumber || '',
+          notes: 'Fund opened', journalEntryRef: reference,
+        });
         await RevolvingFundTx.create({
           fundId: fund._id, type: 'replenishment', amount: amt,
           description: `Fund opened: initial amount [${slip.slipNumber}]`,
@@ -266,6 +273,13 @@ export default function registerRequisitions(ctx) {
           ],
           totalDebit: amt, totalCredit: amt, reference,
         });
+        await issueCheckVoucher(req, {
+          payeeType: 'other', payeeName: `Petty cash: ${fund.name}`,
+          amount: amt, purpose: 'petty-cash', sourceAccount: srcCode,
+          referenceNumber: slip.slipNumber || '',
+          notes: `Fund replenished${slip.description ? ` - ${slip.description}` : ''}`,
+          journalEntryRef: reference,
+        });
         const tx = await RevolvingFundTx.create({
           fundId: fund._id, type: 'replenishment', amount: amt,
           description: slip.description || `Replenished ₱${amt.toFixed(2)}; balance restored`,
@@ -305,6 +319,13 @@ export default function registerRequisitions(ctx) {
           ],
           totalDebit: slip.amount, totalCredit: slip.amount,
           reference,
+        });
+        await issueCheckVoucher(req, {
+          payeeType: 'other', payeeName: slip.description || `Petty cash: ${fund.name}`,
+          amount: slip.amount, purpose: 'petty-cash', sourceAccount: '114000',
+          referenceNumber: slip.slipNumber || '',
+          notes: `Paid out of ${fund.name}`,
+          journalEntryRef: reference,
         });
         const tx = await RevolvingFundTx.create({
           fundId: fund._id, type: 'disbursement', amount: slip.amount,

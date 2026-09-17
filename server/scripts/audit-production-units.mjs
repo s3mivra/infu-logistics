@@ -30,12 +30,14 @@
 //   node scripts/audit-production-units.mjs --csv > batches.csv  spreadsheet
 //   node scripts/audit-production-units.mjs --business-type=log
 //   node scripts/audit-production-units.mjs --all                every reconciled batch
+//   node scripts/audit-production-units.mjs --count-csv          a sheet to count against
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 dotenv.config();
 
 const args = process.argv.slice(2);
 const asCsv = args.includes('--csv');
+const asCountSheet = args.includes('--count-csv');
 const showAll = args.includes('--all');
 const btArg = args.find(a => a.startsWith('--business-type='));
 const BUSINESS_TYPE = (btArg ? btArg.split('=')[1] : (process.env.BUSINESS_TYPE || 'fb')).toLowerCase();
@@ -128,10 +130,65 @@ for (const o of orders) {
   if (factor > 1 && planned > 0 && Math.abs(ratio - factor) <= factor * 0.005) suspect.push(row);
 }
 
+
+// A sheet to take to the shelf.
+//
+// Correcting these means a physical count - the system's figure is exactly what
+// cannot be trusted here, and some of the excess may have been sold or consumed
+// since. So this lists WHICH items to count and what the figure should come to
+// if nothing else moved, as a sanity check against what is actually there.
+//
+// Quantities are in the unit the count screen itself asks for (packages for a
+// packed item, kg/L otherwise) - the same pack factor that caused the error is
+// the one that screen counts in, so these can be read straight across.
+function countSheet(rows) {
+  const byItem = new Map();
+  for (const r of rows) {
+    const cur = byItem.get(r.item) || { item: r.item, outputItem: r.outputItem, excess: 0, batches: [] };
+    cur.excess = r4(cur.excess + r.overstatedBy);
+    cur.batches.push(r.batch);
+    byItem.set(r.item, cur);
+  }
+  return [...byItem.values()].map((g) => {
+    const item = g.outputItem;
+    const { factor, from } = packFactorOf(item);
+    const per = factor || 1;
+    const onHand = Number(item?.stockQty) || 0;
+    const display = item?.displayUnit || item?.unit || 'units';
+
+    // What the count screen is actually asking for. A packed item is counted in
+    // PACKAGES - saying "kg" next to a figure that means "sacks" is how this
+    // whole class of mistake starts.
+    const mult = Number(item?.unitMultiplier) || 1;
+    const countIn = from === 'none' ? (item?.unit || 'units')
+      : from.startsWith('display') ? display
+      : `packs of ${r4(per / mult)}${display}`;
+
+    // More may have been sold or consumed since than was wrongly added, which
+    // puts the arithmetic below zero. Stock cannot be negative, so that is
+    // reported as what it is - a figure only the shelf can settle.
+    const expectedRaw = (onHand - g.excess) / per;
+    return {
+      item: g.item,
+      countIn,
+      onHandNow: r4(onHand / per),
+      addedInError: r4(g.excess / per),
+      expectedAfter: expectedRaw < 0 ? 'count it - more went out than was wrongly added' : r4(expectedRaw),
+      batches: g.batches.join(' '),
+    };
+  }).sort((a, b) => b.addedInError - a.addedInError);
+}
+
 suspect.sort((a, b) => b.overstatedBy - a.overstatedBy);
 const rows = showAll ? checked : suspect;
 
-if (asCsv) {
+if (asCountSheet) {
+  console.log('item,countIn,onHandNow,addedInError,expectedAfterCorrection,batches');
+  for (const r of countSheet(suspect)) {
+    const cells = [r.item, r.countIn, r.onHandNow, r.addedInError, r.expectedAfter, r.batches];
+    console.log(cells.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','));
+  }
+} else if (asCsv) {
   console.log('batch,date,item,unit,planned,actualRecorded,packFactor,factorFrom,shouldBe,overstatedBy,onHandNow');
   for (const r of rows) {
     const cells = [r.batch, new Date(r.date).toISOString().slice(0, 10), r.item, r.itemUnit,

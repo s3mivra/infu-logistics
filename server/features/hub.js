@@ -16,6 +16,27 @@ const TENANT = (() => {
 // Use {slug} as the placeholder, e.g. https://{slug}.semivra.app
 const HUB_URL_PATTERN = process.env.HUB_URL_PATTERN || 'http://{slug}-api:5002';
 const hubUrlFor = (slug) => HUB_URL_PATTERN.replace('{slug}', slug);
+
+// Where a person opens that branch, which is NOT where this server calls it.
+// HUB_URL_PATTERN points at the internal API - a container name on an internal
+// port - and handing that to a browser opens a host it cannot resolve, at the
+// API root. Set HUB_APP_URL_PATTERN to the address staff actually use, e.g.
+// https://{slug}.semivra.app
+const HUB_APP_URL_PATTERN = process.env.HUB_APP_URL_PATTERN || '';
+// Without an explicit pattern, the best guess is the API address with the
+// internal-only parts taken off: "infu-main-api:5002" is "infu-main" on the
+// standard web port. A guess is still better than a link that cannot open, and
+// it is only ever a fallback for a deployment that has not configured one.
+const appUrlFor = (slug, apiUrl) => {
+  if (HUB_APP_URL_PATTERN) return HUB_APP_URL_PATTERN.replace('{slug}', slug);
+  const raw = String(apiUrl || hubUrlFor(slug));
+  try {
+    const u = new URL(raw);
+    u.hostname = u.hostname.replace(/-api$/, '');
+    u.port = '';
+    return u.origin;
+  } catch { return raw; }
+};
 const SELF_URL = hubUrlFor(TENANT);
 
 export default function registerHub(ctx) {
@@ -135,9 +156,9 @@ export default function registerHub(ctx) {
           });
           const data = await r.json();
           if (!r.ok) throw new Error(data.error || `Partner returned ${r.status}`);
-          return { partnerSlug: link.partnerSlug, partnerName: link.partnerName, dashboardUrl: link.partnerUrl, ok: true, ...data };
+          return { partnerSlug: link.partnerSlug, partnerName: link.partnerName, dashboardUrl: link.partnerAppUrl || appUrlFor(link.partnerSlug, link.partnerUrl), ok: true, ...data };
         } catch (err) {
-          return { partnerSlug: link.partnerSlug, partnerName: link.partnerName, dashboardUrl: link.partnerUrl, ok: false, error: err.message };
+          return { partnerSlug: link.partnerSlug, partnerName: link.partnerName, dashboardUrl: link.partnerAppUrl || appUrlFor(link.partnerSlug, link.partnerUrl), ok: false, error: err.message };
         }
       }));
       res.json({ own, partners });
@@ -185,7 +206,7 @@ export default function registerHub(ctx) {
 
     await LinkedBusiness.findOneAndUpdate(
       { businessType: BUSINESS_TYPE, partnerSlug: hubSlug },
-      { role: 'client', partnerName: hubData.hubName || hubSlug, partnerUrl: hubUrl, linkToken, status: 'active', linkedAt: new Date() },
+      { role: 'client', partnerName: hubData.hubName || hubSlug, partnerUrl: hubUrl, partnerAppUrl: appUrlFor(hubSlug, hubUrl), linkToken, status: 'active', linkedAt: new Date() },
       { upsert: true, new: true },
     );
 
@@ -206,7 +227,7 @@ export default function registerHub(ctx) {
 
     await LinkedBusiness.findOneAndUpdate(
       { businessType: BUSINESS_TYPE, partnerSlug: clientSlug },
-      { role: 'hub', partnerName: clientSlug, partnerUrl: clientUrl || hubUrlFor(clientSlug), linkToken, status: 'active', linkedAt: new Date() },
+      { role: 'hub', partnerName: clientSlug, partnerUrl: clientUrl || hubUrlFor(clientSlug), partnerAppUrl: appUrlFor(clientSlug, clientUrl), linkToken, status: 'active', linkedAt: new Date() },
       { upsert: true, new: true },
     );
 
