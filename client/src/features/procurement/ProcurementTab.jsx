@@ -1294,7 +1294,7 @@ export default function ProcurementTab({ ctx }) {
             </div>
             <div className="p-5 space-y-3">
               <p className="text-[11px] text-fg/60 leading-snug">
-                Money coming back from the supplier &mdash; a returned overpayment. This is a receipt, so no
+                Money coming back from the supplier, a returned overpayment. This is a receipt, so no
                 check voucher is issued; the credit they hold is cleared by what you record here.
               </p>
               <div>

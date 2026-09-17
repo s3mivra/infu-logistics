@@ -749,7 +749,7 @@ export default function SettingsTab({ ctx }) {
             <div className="px-4 py-4">
               <p className="text-[11px] text-fg/60 leading-snug mb-3">
                 What each document is called. Renaming one changes what future documents are called
-                &mdash; it never renumbers anything already issued, and never restarts a sequence.
+                and it never renumbers anything already issued, nor restarts a sequence.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {docSeries.map(series => (

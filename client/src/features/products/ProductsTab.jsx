@@ -428,7 +428,7 @@ export default function ProductsTab({ ctx }) {
               <div className="flex flex-wrap items-center gap-2 mb-5 p-3 bg-page-bg border border-white/10 rounded-xl">
                 <div className="mr-auto min-w-0">
                   <p className="text-[11px] font-black uppercase tracking-widest text-fg/60">Menu Sheet</p>
-                  <p className="text-[10px] text-fg/70 mt-0.5">One row per size, ingredients by stock code &mdash; e.g. <span className="font-mono">G10002/Water</span> with <span className="font-mono">20g/35ml</span>.</p>
+                  <p className="text-[10px] text-fg/70 mt-0.5">One row per size, ingredients by stock code, e.g. <span className="font-mono">G10002/Water</span> with <span className="font-mono">20g/35ml</span>.</p>
                 </div>
                 <label className={`flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition ${msBusy ? 'opacity-40 pointer-events-none' : 'cursor-pointer'}`}>
                   <Upload size={12} /> {msBusy ? 'Reading…' : 'Read Menu Sheet'}
@@ -498,9 +498,18 @@ export default function ProductsTab({ ctx }) {
                           <tr key={p.name} className="border-t border-white/5">
                             <td className="py-2 px-3 font-bold text-fg">{p.name}</td>
                             <td className="py-2 text-fg/70">{p.category || '-'}</td>
-                            <td className="py-2 text-fg/70">{p.sizes.map(sz => `${sz.name} ${peso ? peso(sz.price) : sz.price}`).join(' · ')}</td>
+                            {/* The first row of the sheet is the base size, so it
+                                belongs in this column with the rest. Listing only
+                                the extras made a hot-only drink read as having no
+                                size and no ingredients at all. */}
+                            <td className="py-2 text-fg/70">
+                              {[
+                                ...(p.baseSize ? [{ name: p.baseSize, price: p.srp }] : []),
+                                ...p.sizes,
+                              ].map(sz => `${sz.name} ${peso ? peso(sz.price) : sz.price}`).join(' · ')}
+                            </td>
                             <td className="py-2 px-3 text-right tabular-nums text-fg/70">
-                              {p.sizes.reduce((n, sz) => n + sz.ingredients.length, 0)}
+                              {p.ingredients.length + p.sizes.reduce((n, sz) => n + sz.ingredients.length, 0)}
                             </td>
                           </tr>
                         ))}

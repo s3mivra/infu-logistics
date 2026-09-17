@@ -143,6 +143,51 @@ describe('a sheet the reader cannot make sense of', () => {
   });
 });
 
+
+// What the sheet does NOT say is also an instruction.
+//
+// Every row of the coded sheet is a size, so a drink listed once has one size
+// and no extras. Reading an empty size list as "nothing to write, leave what is
+// there" left a product carrying a size the shop had stopped selling, and no
+// amount of re-importing the corrected sheet could take it off the register.
+describe('re-importing a drink that lost a size', () => {
+  const HOT_ONLY = [
+    HEADER,
+    CATEGORY('Specialty Black & White'),
+    row('Long Black', '8oz Hot', [['G10002/Water', '20g/35ml']], 100),
+  ];
+
+  const commit = async (sheet, opts = {}) => {
+    const { body } = await auth('post', '/api/products/menu-sheet/parse').send({ rows: sheet });
+    const rows = body.products.map(p => ({
+      name: p.name, srp: p.srp, category: p.category, baseSize: p.baseSize, ingredients: p.ingredients,
+      sizes: p.sizes.map(sz => ({ name: sz.name, price: sz.price, ingredients: sz.ingredients })),
+    }));
+    return auth('post', '/api/products/import-menu').send({ rows, ...opts });
+  };
+
+  it('takes the dropped size off the product', async () => {
+    await commit(SHEET, { replaceSizes: true });
+    expect((await M('Product').findOne({ name: 'Long Black' }).lean()).sizes.map(s => s.name)).toEqual(['12oz Iced']);
+
+    await commit(HOT_ONLY, { replaceSizes: true });
+    const p = await M('Product').findOne({ name: 'Long Black' }).lean();
+    // One row in the sheet, one size on the menu. The iced cup is gone.
+    expect(p.sizes).toEqual([]);
+    expect(p.baseSize).toBe('8oz Hot');
+    expect(p.baseRecipe.length).toBeGreaterThan(0);
+  });
+
+  it('leaves hand-made sizes alone when the file is not authoritative', async () => {
+    await commit(SHEET, { replaceSizes: true });
+    // A spreadsheet with no size column says nothing about sizes, so wiping
+    // what an operator set up by hand would be destructive rather than tidy.
+    await commit(HOT_ONLY);
+    const p = await M('Product').findOne({ name: 'Long Black' }).lean();
+    expect(p.sizes.map(s => s.name)).toEqual(['12oz Iced']);
+  });
+});
+
 // The editor shows a product's base materials separately from each size. It was
 // coming through empty, which is not only odd to look at: a sale that names no
 // size falls back to the base recipe, and an empty one deducts no stock and

@@ -1072,6 +1072,13 @@ app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res
   try {
     const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
     if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to import.' });
+    // Whether the sheet is the whole truth about sizes.
+    //
+    // The coded menu sheet is: every row in it IS a size, so a drink it lists
+    // once has exactly one size and no extras. A hand-built spreadsheet with no
+    // size column is not, and wiping sizes an operator set up by hand because
+    // their file does not mention them would be destructive.
+    const replaceSizes = req.body?.replaceSizes === true;
 
     const invItems = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).lean();
     // Exact case-insensitive name → item, for the common case; a normalized
@@ -1191,7 +1198,14 @@ app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res
           // Only overwrite sizes when the import actually carries some -
           // otherwise re-importing a sheet without a size column would wipe
           // sizes an operator had set up by hand.
-          if (sizes.length) existing.sizes = sizes;
+          //
+          // Unless the sheet is authoritative, in which case an EMPTY list is
+          // itself the instruction. Without this a drink that used to have a
+          // second size kept it forever: the sheet said one size, the importer
+          // read "no sizes to write" as "leave them alone", and the register
+          // went on offering a size the shop had stopped selling. Re-importing
+          // the corrected sheet could never fix it, which is the worst part.
+          if (sizes.length || replaceSizes) existing.sizes = sizes;
           await existing.save();
           updated++;
           results.push({ name, ok: true, action: 'updated', matched: recipe.length + sizeLines, sizes: sizes.length, unmatched });

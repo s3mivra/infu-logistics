@@ -4841,7 +4841,9 @@ const updateStatus = async (orderId, newStatus) => {
         ingredients: p.ingredients,
         sizes: p.sizes.map(sz => ({ name: sz.name, price: sz.price, ingredients: sz.ingredients })),
       }));
-      const res = await apiFetch('/api/products/import-menu', { method: 'POST', body: JSON.stringify({ rows }) });
+      // Every row of this sheet is a size, so what it does NOT list, the
+      // product should not have. Otherwise a drink that lost a size keeps it.
+      const res = await apiFetch('/api/products/import-menu', { method: 'POST', body: JSON.stringify({ rows, replaceSizes: true }) });
       const d = await res.json();
       if (!d.success) { ui.alert(d.error || 'Import failed.'); return; }
       closeMenuSheet();
