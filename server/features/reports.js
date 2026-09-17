@@ -1548,7 +1548,7 @@ app.get('/api/reports/books-health', verifyToken, ...canViewReports, async (req,
 
     const [orders, bills, inventory, clients, suppliers, advances, funds] = await Promise.all([
       Order.find({ ...scope, status: { $nin: ['Cancelled', 'Voided', 'Parked'] } },
-        { total: 1, arPaidAmount: 1, arSettled: 1, paymentMethod: 1, isComplimentary: 1, status: 1, isParked: 1, depositRemaining: 1, depositAccount: 1, arPayments: 1 }).lean(),
+        { total: 1, arPaidAmount: 1, refundedAmount: 1, arSettled: 1, paymentMethod: 1, isComplimentary: 1, status: 1, isParked: 1, depositRemaining: 1, depositAccount: 1, arPayments: 1 }).lean(),
       Bill.find({ ...scope, status: { $in: ['Approved', 'Partially Paid'] } }, { amount: 1, paidAmount: 1 }).lean(),
       Inventory.find(scope, { stockQty: 1, unitCost: 1 }).lean(),
       ClientAccount.find(tenantScope(req), { creditBalance: 1 }).lean(),
@@ -1560,7 +1560,10 @@ app.get('/api/reports/books-health', verifyToken, ...canViewReports, async (req,
     // A/R: what completed, unsettled, non-cash sales still owe.
     const arDocs = r2(orders
       .filter(o => o.status === 'Completed' && o.paymentMethod !== 'Cash' && !o.isComplimentary && o.arSettled !== true && o.isParked !== true)
-      .reduce((s, o) => s + Math.max(0, (Number(o.total) || 0) - (Number(o.arPaidAmount) || 0)), 0));
+      // Netting the refund is what keeps this agreeing with the ledger: a
+      // partial refund credits 120000 there, so a subledger still counting the
+      // face value reports a divergence that does not exist.
+      .reduce((s, o) => s + Math.max(0, (Number(o.total) || 0) - (Number(o.refundedAmount) || 0) - (Number(o.arPaidAmount) || 0)), 0));
 
     const apDocs = r2(bills.reduce((s, b) => s + Math.max(0, (Number(b.amount) || 0) - (Number(b.paidAmount) || 0)), 0));
     const stockDocs = r2(inventory.reduce((s, i) => s + (Number(i.stockQty) || 0) * (Number(i.unitCost) || 0), 0));

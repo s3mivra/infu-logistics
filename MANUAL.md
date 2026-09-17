@@ -1,6 +1,6 @@
-# Semivra Libellus POS — Complete Manual & Tutorial
+# Semivra Libellus — Complete Manual & Tutorial
 
-_For Kasa Lokal and white-label F&B deployments · Last updated 2026-06-05_
+_Covers both deployment modes: **F&B** (cafe / restaurant POS) and **Logistics** (client ordering, delivery, procurement) · Last updated 2026-09-17_
 
 This document has two parts:
 - **Part A — Quick-Start Tutorial:** the shortest path to taking your first order and closing your first day.
@@ -9,6 +9,8 @@ This document has two parts:
 > **Roles at a glance.** The app has two kinds of users:
 > - **Owner / Superadmin** — full access: accounting, users, settings, voids, reports. Not counted as a tracked employee (excluded from staff hours, shift history, and cashier variance).
 > - **Staff / Cashier / Manager** — day-to-day POS, orders, inventory, their own shift. Locked out of accounting, user management, and other superadmin-only areas (these show a "Superadmin Only" lock).
+
+> **Two modes, one system.** A deployment runs as either **F&B** or **Logistics**. The register, inventory, shifts, and accounting work the same way in both. Logistics adds client accounts, quotations, and delivery scheduling; F&B adds table service and QR self-ordering. Sections below that apply to one mode only say so.
 
 ---
 
@@ -88,19 +90,25 @@ Pending ──Prepare──▶ Preparing ──▶ Ready ──Deliver──▶ 
 - **Pending:** placed, not yet paid or sent.
 - **Preparing:** sent to kitchen; for cash, this is where you enter cash tendered (money enters the drawer).
 - **Ready:** made, awaiting hand-off.
-- **Completed:** delivered/closed — this is when the **revenue + COGS journal entries** post and inventory deducts.
+- **Completed:** delivered/closed — this is when the **revenue + COGS journal entries** post and inventory deducts. A **receipt number (OR No.)** is issued here too (see §14).
 - **Partially Delivered:** for multi-item orders where some items are handed over now and the rest follow ("Give Partial — More Items Coming"); ERP posts on final completion.
 - **Park / Recall:** save an unpaid tab ("Park") and bring it back later from the parked list.
-- **Complimentary:** zero-charge order (booked at cost, not selling price), with a required reason.
+- **Complimentary:** zero-charge order (booked at cost, not selling price), with a required reason. No receipt number is issued — nothing was sold.
 - **Void (owner only):** reverses a completed order — restores stock and posts reversing journal entries. Use instead of editing a completed order (completed orders are locked).
-- **Refund (owner only):** posts a reversal journal for a returned/refunded sale.
+- **Refund (owner only):** posts a reversal journal for a returned/refunded sale. A **partial refund** keeps the order Completed and reduces what the customer still owes.
 
-## 4. QR self-ordering (customers)
+**Amending an order (when the customer changes their mind)**
+- An order that has been placed but **not yet completed** can be amended: change quantities, add lines, remove lines.
+- A **reason is required**, and every amendment is kept as a numbered **revision** on the order, so the original and each change remain visible.
+- **Completed orders cannot be amended** — use a refund for returned or excess items. Cancelled, voided, and refunded orders can't be amended either.
+
+## 4. QR self-ordering (customers) · F&B
 
 - Each table gets a **QR code** (generate from the POS). Scanning opens the customer menu on the guest's phone.
 - The guest builds an order against a **secure, single-use, time-limited session**; placing the order burns the session.
 - Orders flow into the same kitchen queue. A "your order is ready" notification can be pushed to the guest.
 - The owner can **open/close QR ordering** globally with the **QR Orders: OPEN/CLOSED** toggle (kitchen-busy switch). Staff POS is unaffected by this toggle.
+- **Self-service prices are enforced from the catalogue.** A price sent from a customer's own device is ignored; staff may override a price at the counter, and that override is recorded in the audit log.
 
 ## 5. Inventory & Stock
 
@@ -120,6 +128,11 @@ Pending ──Prepare──▶ Preparing ──▶ Ready ──Deliver──▶ 
 - Order completion and spoilage consume the **oldest batch first**.
 - **Manual batch add/remove (owner):** correct the physical batch breakdown. Adding a batch increases stock (booked as an inventory gain); removing one decreases stock (booked as a variance/write-off). Both keep stock and the ledger in sync — no stock "from thin air."
 
+**Stock reservations**
+- Hold stock for a client who has committed to buy it but has not collected yet. Reserved stock stays in inventory but is **not available to sell to anyone else**.
+- A reservation can carry an **expiry date**; once it passes, the hold is released automatically and the stock goes back on sale. The sweep runs when the Reservations panel is opened and again at the nightly close.
+- Releasing, cancelling, or fulfilling a reservation all log against the client it was held for.
+
 **Excel / CSV bulk import & stock-take**
 - **Import** an `.xlsx/.xls/.csv` to bulk onboard or reconcile stock. Standard header: `Code, Product, SRP, Qty Unit, Unit Cost, Expiry date` (older formats still accepted).
 - A **preview modal** shows a colour-coded diff (NEW / ↑ / ↓ / SAME / ERROR) before you commit.
@@ -134,13 +147,17 @@ Pending ──Prepare──▶ Preparing ──▶ Ready ──Deliver──▶ 
 3. The app shows **System End vs Physical**, movement (Start / In / Out), and **variance** per item.
 4. Submit to record the count and **lock** the day.
 
+> **This is also how you correct a wrong stock figure.** Don't edit the number directly — a count posts the difference to Spoilage, Variance & Waste, which is what keeps the ledger tied to the stock.
+
 ## 7. Shifts & cash control
 
 - **Start:** opening a shift requires the **starting float** (staff).
 - **During the shift:** the running **cash sales** total reflects cash that has actually entered the drawer — i.e. **completed cash sales plus paid in-progress orders** (cash tendered at the Preparing step). An order still sitting as *Pending* (not yet paid) shows ₱0 until it's taken — that's correct.
 - **End Shift:** count the drawer, enter actual cash, review **Expected vs Actual** and the **variance**. A non-zero variance posts a **Cash Short/Over** journal entry.
 - **Bank deposit:** move excess drawer cash to the bank (keeps the starting float); posts a journal entry.
+- **Pay-out from the drawer:** money taken out of the till for a small expense is filed as an expense, not lost as a variance.
 - **Shift History (owner):** full ledger of past shifts with variance colours. **X-Reading** prints a mid-shift summary PDF without closing the register.
+- **One shared drawer:** where several people ring on a single till, switch **One Shared Cash Drawer** on in Settings. The float is declared once by whoever opens up, instead of each cashier declaring the same money again.
 
 > **Owner note:** the owner/superadmin is **not** treated as a cashier. Owner shifts and clock entries are hidden from **Shift History**, **Staff Hours**, and **Cashier Variance**.
 
@@ -148,31 +165,111 @@ Pending ──Prepare──▶ Preparing ──▶ Ready ──Deliver──▶ 
 - **Clock In / Out** (and break) from the sidebar; the app tracks worked minutes for payroll.
 - **Staff Hours (owner):** paginated list of clock entries by staff and date. The owner is excluded.
 
-## 9. Accounting & Ledger (owner only)
+## 9. Clients & receivables
 
-Everything that moves money or stock posts a **balanced double-entry journal entry** automatically. The Ledger tab has these sub-views:
+For customers who buy **on account** rather than paying at the counter.
+
+- **Client accounts** carry a client code, contact details, payment terms (in days), a credit limit, and — for a VAT-registered buyer — their **registered name, TIN and registered address**, which must appear on the invoice or they cannot claim the VAT they paid you.
+- **Credit limits** can be off, per-client, a single global figure, or both. Only on-account orders count against a limit; cash sales settle immediately and are never blocked.
+- **Deposits / advances:** money a client pays ahead of any order. It offsets what they owe and is drawn down as orders complete.
+
+**Statement of account**
+Open **Clients**, expand a client, then **Statement of account**.
+- Choose the period (defaults to this month). It shows the **balance brought forward**, then every charge and payment in date order with a **running balance**, and the **amount due** at the end.
+- Refunds appear as their own credit line, so a client can see *why* the balance dropped.
+- **Ageing** (current / 31-60 / 61-90 / 91+) is shown as at the statement date, and any deposits held are netted off.
+- **Print** produces it on your letterhead, with the client's TIN and registered address when you hold them.
+
+**Collections.** The A/R views, the collections worklist and the client's own statement all read the same balance: the invoice less anything refunded and anything already collected.
+
+## 10. Procurement — suppliers, purchase orders & returns
+
+**Suppliers.** Name, contact, terms, and — for a VAT-registered supplier — their **TIN and registered name**. Each supplier can hold a price catalogue, and the **Compare Prices** panel shows who is cheapest per item.
+
+**Raising an order**
+- A **new** purchase order is filed as a **Requisition Slip** first. It becomes a real PO once approved (Ledger → Approvals), so nobody orders on the company's account without sign-off.
+- Each line is one of three kinds, and the choice decides where it lands in the books:
+
+| Line kind | Goes to | Owes |
+|---|---|---|
+| **Stock** | Inventory | Trade payable |
+| **Equipment** | Its asset class, and the asset register (depreciable from day one) | Non-trade payable |
+| **Service** | The expense account you choose | Non-trade payable |
+
+- **Prepaid orders:** paying before the goods arrive is *not* a payable — nothing is owed, the supplier owes you a delivery. It books a **supplier advance**, and receiving draws that advance down. No bill is raised for the part already paid for.
+
+**Receiving**
+- Enter what actually arrived, per line. A short delivery leaves the PO open so a follow-up delivery can top it up.
+- **Expiry or production date** is captured per line at receiving time — the real delivery's date, not whatever was guessed on the draft.
+- **Supplier charged VAT:** tick to claim the input VAT. The VAT is split out and held separately, so stock is never carried at a VAT-inclusive cost.
+- Receiving posts the stock and raises the supplier's bill for whatever is actually still owed.
+
+**Returning goods to a supplier**
+Procurement → the PO → **Return**.
+- Pick the lines and quantities, and give a **reason** (required — a return with no reason can't be explained to the supplier or to an examiner).
+- The stock leaves at the cost it came in at, and any input VAT claimed on it is given back.
+- The money side follows where the money actually is: a **prepayment** is restored first, then any **unpaid invoice** shrinks, and only the remainder becomes **credit the supplier holds** for you.
+- You can't return more than arrived, return the same goods twice, or return stock that is no longer on hand.
+
+## 11. Production batches
+
+Turning materials into something else — a sub-recipe, a repack, a finished good.
+
+1. **File the batch:** choose the materials and quantities, then what it produces (an existing item, or a brand-new one) and how much.
+2. **Approve** it.
+3. **Reconcile:** enter what *actually* came out. This is what gets added to stock — not the planned figure — so the recorded unit cost reflects the real yield.
+
+> **Units — read this one.** A batch is counted in whatever unit you think in: **ml, L, g, kg, pcs**. Whatever unit you plan in, the reconcile step **asks for the yield in that same unit**, and shows a dropdown if you want to count it differently. Switching the unit re-states the number already in the box, so the figure on screen always means what the label beside it says.
+>
+> Check the unit label before typing. "1700" against **ml** is 1.7 litres; "1700" against **pcs** of a 1-litre carton is 1,700 litres.
+
+- **Moisture loss / variance:** the gap between planned and actual is recorded, with the percentage, so a consistently short yield is visible rather than lost.
+- A batch that yields less than planned is marked **Partial**; meeting or beating the plan marks it **Complete**.
+
+## 12. Payroll
+
+Off by default — switch **Payroll** on under Settings → Accounting modules.
+
+- **Employee statutory numbers** live on the staff record (Superadmin → Users → edit): **SSS, PhilHealth, Pag-IBIG, TIN**, and an employee number. Fill these in before the first payslip.
+- **A run** is filed as a draft — gross pay and each deduction per employee. Nothing posts until it is **approved**; approving books the wages and holds each deduction in its own liability account. **Paying out** discharges what is owed to staff; the deductions stay held until each agency is paid.
+- The statutory numbers are **copied onto the run when it is created**, not read back later — so correcting a number next year never rewrites payslips already issued.
+- **Payslips** print per employee, on your letterhead, showing each deduction against the number it is remitted under.
+- **Remittance** (the Remittance button) breaks the period's total down **per employee, under their own account number**, for SSS, PhilHealth, Pag-IBIG and withholding tax — which is what each agency actually asks for. It names anyone whose number is missing, before the filing goes out.
+
+## 13. Accounting & Ledger (owner only)
+
+Everything that moves money or stock posts a **balanced double-entry journal entry** automatically. The Ledger tab carries around three dozen sub-views, grouped in the sidebar. The ones you'll use most:
 
 | Sub-tab | What it shows |
 |--------|----------------|
 | **Journal** | Every journal entry (paginated), with CSV export |
-| **P&L** | Profit & Loss over a date range — revenue, COGS, OpEx, gross/net margin |
-| **Balance Sheet** | Assets / Liabilities / Equity with a balanced-equation check |
-| **A/R Outstanding** | Non-cash sales (e-wallet/bank/delivery) awaiting settlement — **Settle** each one |
-| **A/P Payables** | Amounts you owe (on-account purchases/expenses) |
-| **Sales by Payment** | Breakdown of sales by payment method over a range |
-| **Profit by Category** | Gross profit and margin per menu category |
-| **Menu Engineering** | Stars / Plowhorses / Puzzles / Dogs classification by sales × margin |
-| **Cashier Variance** | Average drawer variance per cashier (owner excluded) |
-| **Purchase Order** | Suggested reorder quantities from usage + low-stock, with PDF export |
-| **Add Expense** | Record an operating expense (cash or on-account) |
+| **P&L** · **Monthly P&L** | Profit & Loss over a range — revenue, COGS, OpEx, gross/net margin |
+| **Balance Sheet** · **Trial Balance** | Assets / Liabilities / Equity, with a balanced-equation check |
+| **Chart of Accounts** | Every account, and where each one is used |
+| **A/R Outstanding** | Non-cash sales awaiting settlement — **Settle** each one |
+| **A/P Payables** · **Bills** · **Supplier Payments** | What you owe, and paying it |
+| **Collections** | The chase list for overdue receivables, including checks |
+| **Approvals** | Requisition slips awaiting sign-off — approving one creates the PO |
+| **Check Vouchers** | The paper trail for money going out |
+| **Advances** | Client deposits and supplier prepayments |
+| **Expenses** | Record and review operating expenses |
 | **Revolving Funds** | Petty-cash pools (see below) |
+| **Sales by Payment** · **Sales Summary** | Sales broken down by method and by line |
+| **Profit by Category** · **Menu Engineering** | Margin per category; Stars / Plowhorses / Puzzles / Dogs |
+| **Cashier Variance** · **Commissions** | Drawer variance and seller commission per person |
+| **VAT Return** · **Percentage Tax** | Both are listed; only one applies to you, and the other says so rather than showing a page of zeroes — see §14 |
+| **Books Health** | Tie-out checks — see below |
+| **Accounting Periods** | Close a month so nothing can be posted back into it |
+| **Export All Data** | Full backup — see §15 |
 
 All the report tables are **paginated** (10 rows per page).
 
 **Accounting rules to know**
-- **Non-VAT registered.** The system uses the percentage-tax model; receipts show "NON-VAT REGISTERED."
-- **Cash vs A/R.** Only physical **cash** hits Cash on Hand immediately. Bank transfer, GCash, Maya, Maribank, e-wallet, Grab, Foodpanda, and manual delivery all book to **Accounts Receivable** until you settle them via the A/R sub-tab (choose where the money was deposited).
+- **Cash vs A/R.** Only physical **cash** hits Cash on Hand immediately. Bank transfer, GCash, Maya, e-wallet, Grab, Foodpanda, on-account and manual delivery all book to **Accounts Receivable** until you settle them (choose where the money was deposited).
 - **Balanced guarantee.** Every entry is asserted to balance (debits = credits) before it's saved.
+- **Refunds reduce what is owed.** A partial refund on an on-account sale credits A/R, and every view of that debt — ageing, credit limit, collections, the client's statement — reads the reduced figure.
+
+**Books Health.** A set of tie-outs that check each subledger against its ledger account: receivables, payables, inventory, customer deposits, client and supplier credit balances, employee and supplier advances, petty cash, checks on hand, and the accounting equation itself. Every line should read **0 difference**. A non-zero line names what disagrees so it can be chased.
 
 **Revolving / petty-cash funds**
 - **Create a fund:** name, initial amount, and **Paid From** (Cash on Hand or Cash in Bank) — the chosen account is credited in the opening entry, so the float comes from a real source, not thin air.
@@ -180,41 +277,102 @@ All the report tables are **paginated** (10 rows per page).
 - **In (replenish):** top the fund back up from a chosen cash account.
 - **History:** per-fund transaction ledger, paginated.
 
-## 10. Settings (owner only)
+## 14. Tax, receipts & document numbering (owner only)
+
+**VAT — on or off.** Settings → VAT.
+- **Off (the default):** sales are reported under the **3% percentage tax**, and receipts show "NON-VAT REGISTERED".
+- **On:** the VAT you collect is held as **Output VAT** rather than counted as revenue, the VAT you pay on purchases can be claimed as **Input VAT**, and the **VAT Return** view shows what is payable. Set the **rate** (12% is standard here), whether your prices are **VAT-inclusive or exclusive**, your **VAT registration TIN**, and whether **delivery fees carry VAT**.
+- **SC/PWD:** a senior-citizen or PWD discount also exempts that sale from VAT. The **cardholder's name and ID number are required** before the sale can complete — after the customer has left, nobody can supply them, and a discount with no name on it is disallowed.
+- Changing any of this affects **new orders only**. Receipts already issued keep the rate they were rung up under.
+
+**Receipt registration (BIR).** Settings → Receipt registration.
+
+| Field | What it is |
+|---|---|
+| **ATP / Permit no.** | From your Authority to Print or Permit to Use — printed on every receipt |
+| **Machine ID / serial** | The machine receipts are issued from — printed on every receipt |
+| **Receipt serial prefix** | e.g. `OR`, giving `OR-00001251` |
+| **Continue serials from** | The number your registered series is already up to |
+
+- A **receipt number is issued when a sale completes** — an unfinished or cancelled order never had a receipt, and spending a serial on one would leave a gap you'd have to explain.
+- **Set "Continue serials from" before your first sale.** It **locks permanently** once the first receipt is issued: moving it afterwards would renumber receipts already in customers' hands, or skip a block nobody can account for.
+
+**Document numbering.** Settings → Document numbering. Every document a person actually holds has its own prefix, each shipped with a sensible default and a live sample of what it prints:
+
+Order · Billing statement · Official receipt · Quotation · Purchase order · Supplier's bill · Check voucher · Advance · Payroll run.
+
+> Renaming a series changes what **future** documents are called. It never renumbers anything already issued and never restarts a sequence — each series keeps counting where it was, under its new name.
+
+## 15. Backup & restore (owner only)
+
+- **Full backup** exports every record in the system to a single workbook — orders, inventory, clients, suppliers, the ledger, settings, everything. A progress bar shows it working; large databases are fetched in pages rather than in one go.
+- **Restore** takes that workbook back in. It asks you to type `RESTORE` to confirm, checks the file came from the same kind of business, and replaces what is there.
+- Login sessions and QR ordering sessions are deliberately **not** included — they are short-lived tokens that should die with the old database.
+
+> Take a backup before anything irreversible: a bulk import, a purge, an upgrade.
+
+## 16. Settings (owner only)
 
 | Setting | Effect |
 |--------|--------|
+| **Time zone** | The business's own clock. Decides which day a sale belongs to, when the day locks, and what a daily report covers — whatever timezone the server itself runs in. Change it between trading days |
 | **QR Orders: OPEN / CLOSED** | Globally accept or pause customer QR orders (staff POS unaffected) |
-| **Auto Close: ON / OFF** | When ON, the system auto-cancels hanging orders, archives the day, and locks the register at **midnight (PH time)**. When **OFF**, the day stays open past midnight and you must **archive/close manually** |
+| **Auto Close: ON / OFF** | When ON, the system auto-cancels hanging orders, archives the day, and locks the register at **midnight on the business clock**. When **OFF**, the day stays open and you must **archive/close manually** |
+| **Require Cash Shift on Login** | Whether staff must declare a float before starting |
+| **One Shared Cash Drawer** | One float for the shop's single till, instead of one per cashier |
+| **Product Images** | Show product images across the menu, portal and lists |
+| **VAT** | See §14 |
+| **Receipt registration / Document numbering** | See §14 |
+| **Accounting modules** | Switch **Bank Reconciliation**, **Withholding Tax** and **Payroll** on or off. A module that is off hides its screen and posts nothing |
+| **Credit limits** | Off / per-client / same for all / both |
+| **Branding** | Logo, logo background, corner radius, payment QR |
+| **Letterhead & print size** | What appears on printed documents, and the paper size |
 
 **Manual day-close / archive.** The archive sweep force-cancels any hanging orders — **Pending, Preparing, Ready, and Parked** (held unpaid tabs) — then archives the day so cancelled and parked orders are never left dangling.
 
-## 11. Superadmin Panel (owner only)
+## 17. Superadmin Panel (owner only)
 - **Users:** create staff, set roles, reset passwords, delete accounts. (Role/password changes log that user out.)
-- **Roles:** manage the role list.
+- **Commission rate:** percent of a cashier's own attributed sales, shown on the Commissions report.
+- **Payroll & statutory numbers:** employee number, TIN, SSS, PhilHealth, Pag-IBIG — see §12.
+- **Roles:** manage the role list and per-role permissions.
 - Search, filter, and batch-update users.
 
-## 12. Devices, offline & install
+## 18. Devices, offline & install
 - **Tablet-first.** Touch targets, layouts, and contrast are tuned for tablets (e.g. Amazon Fire).
 - **Install as app:** when the browser offers it, use **Install App** for a full-screen PWA.
 - **Offline-first:** if the connection drops while placing an order, it's **queued locally** and **auto-syncs** when you're back online — you won't lose the sale.
-- **Receipts/printing:** kitchen tickets and receipts print to a connected thermal printer; receipts show "NON-VAT REGISTERED" and any delivery details.
+- **Receipts/printing:** kitchen tickets and receipts print to a connected thermal printer. Receipts carry your letterhead, TIN, permit and machine ID where set, the OR number, and any delivery details.
 
 ---
 
-## 13. Common tasks — step by step
+## 19. Common tasks — step by step
 
 **Void a completed order (owner)**
 Orders → find the completed order → **Void** → enter reason. Stock is restored and reversing entries post. (You can't void an already-settled A/R order.)
 
+**Change an order the customer just placed**
+Orders → the order (not yet completed) → **Amend** → adjust quantities or lines → enter a reason. The change is kept as a numbered revision.
+
 **Settle a delivery / e-wallet sale (owner)**
 Ledger → **A/R Outstanding** → **Settle** on the order → confirm amount and the deposit account. Posts `DR cash / CR A/R`.
+
+**Send a client their statement**
+Clients → expand the client → **Statement of account** → pick the period → **Print**.
+
+**Send goods back to a supplier**
+Procurement → the PO → **Return** → pick lines and quantities → enter a reason. The stock, the VAT and what you owe all move together.
 
 **Record an expense (owner)**
 Ledger → **Add Expense** → amount, category, paid-from (or On Account), vendor, date.
 
 **Reorder stock**
 Ledger → **Purchase Order** → **Generate** → review suggested quantities → **PDF** to send to your supplier.
+
+**File this month's SSS / PhilHealth / Pag-IBIG**
+Payroll → **Remittance** → pick the agency and the period. Every employee's share, under their own number.
+
+**Correct a wrong stock figure**
+Inventory → **EOD / count** → enter the true physical count. The difference posts to variance; don't edit the number directly.
 
 **Pause customer QR ordering when slammed (owner)**
 Sidebar → **QR Orders** → toggle to **CLOSED**. Switch back to **OPEN** when ready.
@@ -224,7 +382,7 @@ Sidebar → **Auto Close** → toggle **OFF** (confirm). Remember to archive the
 
 ---
 
-## 14. Troubleshooting
+## 20. Troubleshooting
 
 | Symptom | Cause / fix |
 |--------|-------------|
@@ -232,22 +390,36 @@ Sidebar → **Auto Close** → toggle **OFF** (confirm). Remember to archive the
 | "Restoring session…" then login screen | Session expired or was revoked — log in again. |
 | Shift cash shows ₱0 after a sale | The order is still **Pending** (cash not yet collected). Send it to **Preparing** and enter cash tendered. |
 | A non-superadmin sees "Superadmin Only" locks | Expected — accounting, users, settings, voids are owner-only. |
-| Order won't change after Completed | Completed orders are locked by design — use **Void** instead. |
+| Order won't change after Completed | Completed orders are locked by design — use **Void**, **Refund**, or amend it before completion. |
 | "Too many requests" | Rate limit hit (e.g. rapid retries) — wait a moment and retry. |
 | Excel import shows ERROR rows | Fix the flagged rows (bad qty/unit/cost) and re-import; the preview won't commit errors. |
+| A production batch added far too much stock | The yield was typed against the wrong unit. Check the unit label beside the box (§11), then correct the stock with a physical count. |
+| Can't change "Continue serials from" | Correct — it locks once the first receipt is issued (§14). |
+| Books Health shows a non-zero difference | A subledger disagrees with its ledger account. The line names which one; the usual causes are a manual journal entry or an import posted directly to a controlled account. |
+| A day's sales landed on the wrong date | Check Settings → **Time zone**. It decides which day a sale belongs to. |
+| Sale won't complete: asks for a cardholder name | An SC/PWD discount needs the cardholder's name and ID before completion (§14). |
 
 ---
 
-## 15. Glossary
+## 21. Glossary
 - **COGS** — Cost of Goods Sold (recipe ingredient cost of items sold).
 - **FEFO** — First Expired, First Out (oldest-expiry batch consumed first).
-- **A/R** — Accounts Receivable (money owed to you, e.g. by delivery partners).
+- **A/R** — Accounts Receivable (money owed to you).
 - **A/P** — Accounts Payable (money you owe, e.g. on-account purchases).
 - **EOD** — End of Day (inventory count + register lock).
 - **X-Reading** — mid-shift sales summary that does **not** close the register.
 - **Variance** — Actual cash counted minus expected cash.
 - **Float / Starting Cash** — the cash you start a shift with.
 - **Non-VAT** — registered under percentage tax, not VAT.
+- **Output VAT** — VAT you collected on sales and owe to the BIR.
+- **Input VAT** — VAT you paid on purchases and can claim against output VAT.
+- **OR No.** — the serial number on the registered official receipt for a sale.
+- **ATP / PTU** — Authority to Print / Permit to Use, the registration your receipts are issued under.
+- **Debit memo** — the record of goods sent back to a supplier and the credit due for them.
+- **SOA** — Statement of Account (what a client owes, and how it got there).
+- **Advance** — money paid before the goods or service: a client's deposit to you, or your prepayment to a supplier.
+- **Reservation** — stock held for a client and unavailable to sell to anyone else.
+- **Requisition slip** — a purchase request awaiting approval; becomes a PO once approved.
 
 ---
 

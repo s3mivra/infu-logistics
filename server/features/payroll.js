@@ -168,6 +168,13 @@ export default function registerPayroll(ctx) {
         ? dayStart(req.query.start)
         : dayStart(new Date(end.getFullYear(), end.getMonth(), 1));
 
+      if ([start, end].some(d => Number.isNaN(d?.getTime?.()))) {
+        return res.status(400).json({ success: false, error: 'Those dates are not readable. Use YYYY-MM-DD.' });
+      }
+      if (end < start) {
+        return res.status(400).json({ success: false, error: 'The period ends before it starts.' });
+      }
+
       const runs = await PayrollRun.find({
         businessType: BUSINESS_TYPE, ...tenantScope(req),
         status: { $in: ['Approved', 'Paid'] },

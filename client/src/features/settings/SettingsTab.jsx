@@ -156,6 +156,35 @@ export default function SettingsTab({ ctx }) {
   }, [apiFetch]);
   useEffect(() => { loadModules(); }, [loadModules]);
 
+  // What every document a person holds is called. Served rather than hard-coded
+  // here: the sample beside each field has to be what the server will really
+  // print, not this screen's guess at it.
+  const [docSeries, setDocSeries] = useState([]);
+  const [seriesBusy, setSeriesBusy] = useState('');
+  const loadDocSeries = useCallback(async () => {
+    try {
+      const d = await (await apiFetch('/api/settings/document-series')).json();
+      if (d.success) setDocSeries(d.series || []);
+    } catch { /* the card simply stays empty rather than blocking Settings */ }
+  }, [apiFetch]);
+  useEffect(() => { loadDocSeries(); }, [loadDocSeries]);
+
+  // The server normalises whatever was typed (case, stray punctuation, a
+  // trailing dash) and hands back the whole list with fresh samples, so the
+  // screen shows the result of the rule rather than re-implementing it.
+  const saveSeriesPrefix = async (series, raw) => {
+    if (String(raw).trim().toUpperCase() === series.prefix) return;
+    setSeriesBusy(series.key);
+    try {
+      const d = await (await apiFetch(`/api/settings/${series.key}`, {
+        method: 'PATCH', body: JSON.stringify({ value: raw }),
+      })).json();
+      if (d.success && d.series) setDocSeries(d.series);
+      else await loadDocSeries();
+    } catch { await loadDocSeries(); }
+    finally { setSeriesBusy(''); }
+  };
+
   const toggleModule = async (mod) => {
     setModuleBusy(mod.key);
     try {
@@ -631,17 +660,11 @@ export default function SettingsTab({ ctx }) {
                         className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm" />
                     </div>
                     <div>
-                      <label htmlFor="or-prefix" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Receipt serial prefix</label>
-                      <input id="or-prefix" type="text" defaultValue={systemSettings.orPrefix || ''} placeholder="e.g. OR-"
-                        onBlur={e => saveSetting?.('orPrefix', e.target.value.trim())}
-                        className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm" />
-                    </div>
-                    <div>
                       <label htmlFor="or-start" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Continue serials from</label>
                       <input id="or-start" type="number" min="0" defaultValue={systemSettings.orStartNumber ?? 0}
                         onBlur={e => saveSetting?.('orStartNumber', Number(e.target.value) || 0)}
                         className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm" />
-                      <p className="text-[10px] text-fg/55 mt-1">Set once, before the first sale: the number your registered series is already up to.</p>
+                      <p className="text-[10px] text-fg/55 mt-1">Set once, before the first sale: the number your registered series is already up to. The prefix it prints under lives in Document numbering below.</p>
                     </div>
                   </div>
 
@@ -650,6 +673,51 @@ export default function SettingsTab({ ctx }) {
                     Receipts already issued keep the rate they were rung up under.
                   </p>
                 </div>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* Every business already has its own names for these - "SI-2026-000123"
+            on the books, a receipt booklet with its own series. The numbering
+            used to be fixed in code, so the system and the paperwork could only
+            ever disagree. Each series ships with a sensible default, so nothing
+            is blank on day one and a business that does not care never has to
+            look here. */}
+        {isSuperAdmin && (
+          <Card title="Document numbering">
+            <div className="px-4 py-4">
+              <p className="text-[11px] text-fg/60 leading-snug mb-3">
+                What each document is called. Renaming one changes what future documents are called
+                &mdash; it never renumbers anything already issued, and never restarts a sequence.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {docSeries.map(series => (
+                  <div key={series.key}>
+                    <label htmlFor={`series-${series.code}`} className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">
+                      {series.label}
+                      {series.registered && <span className="ml-1.5 text-[9px] text-amber-300/80 normal-case tracking-normal">registered series</span>}
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        id={`series-${series.code}`}
+                        type="text"
+                        // The server decides the final shape of a prefix, so the
+                        // field has to show what was STORED, not what was typed:
+                        // keying on the resolved value remounts it once the
+                        // answer comes back, turning "soa-" into "SOA" in place.
+                        key={`${series.key}-${series.prefix}`}
+                        defaultValue={series.prefix}
+                        placeholder={series.defaultPrefix}
+                        disabled={seriesBusy === series.key}
+                        onBlur={e => saveSeriesPrefix(series, e.target.value)}
+                        className="w-28 bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2 rounded-xl outline-none transition text-sm font-bold uppercase disabled:opacity-50"
+                      />
+                      <span className="text-[11px] text-fg/55 font-mono truncate" title={series.sample}>{series.sample}</span>
+                    </div>
+                    <p className="text-[10px] text-fg/55 mt-1 leading-snug">{series.note}</p>
+                  </div>
+                ))}
               </div>
             </div>
           </Card>

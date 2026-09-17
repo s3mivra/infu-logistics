@@ -55,7 +55,9 @@ describe('client portal: a client buys from the portal', () => {
     expect(o.clientUsername).toBe('clientA');
     expect(o.paymentMethod).toBe('Bank Transfer');     // client's preset, not a body override
     expect(o.total).toBe(100);
-    expect(o.billingNumber).toMatch(/^\d{4}-\d{2}-\d{4}$/); // logistics monthly billing ref
+    // Carries its series prefix: the counter was always keyed on BIL-, but the
+    // stored number used to drop it and print a bare 2026-09-0001.
+    expect(o.billingNumber).toMatch(/^BIL-\d{4}-\d{2}-\d{4}$/); // logistics monthly billing ref
     orderId = o._id;
     orderNumber = o.orderNumber;
   });

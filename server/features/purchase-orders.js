@@ -56,8 +56,24 @@ export default function registerPurchaseOrders(ctx) {
     money((lines || []).reduce((s, l) => s + (Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0), 0));
 
   // Normalize an incoming line into our stored shape.
+  //
+  // What a line IS has to survive this. It used to not: purchaseType and the
+  // account codes were dropped here, so every line came out as stock however it
+  // was sent. A PO for a dough mixer landed the machine in Inventory - where a
+  // recipe could consume it - and booked a TRADE payable for equipment, while
+  // the fixedAsset/expense handling downstream sat unreachable.
+  const LINE_KINDS = new Set(['inventory', 'fixedAsset', 'expense']);
   const cleanLine = (l) => ({
-    invId:             l.invId && mongoose.Types.ObjectId.isValid(l.invId) ? l.invId : null,
+    purchaseType:      LINE_KINDS.has(l.purchaseType) ? l.purchaseType : 'inventory',
+    // Each kind carries only the account that means anything for it, so a line
+    // switched from expense to stock cannot leave a stale code behind.
+    assetAccountCode:  l.purchaseType === 'fixedAsset' ? String(l.assetAccountCode || '').slice(0, 20) : '',
+    expenseAccountCode: l.purchaseType === 'expense' ? String(l.expenseAccountCode || '').slice(0, 20) : '',
+    usefulLifeMonths:  l.purchaseType === 'fixedAsset' && l.usefulLifeMonths != null ? Math.max(1, Number(l.usefulLifeMonths) || 0) : null,
+    salvageValue:      l.purchaseType === 'fixedAsset' ? Math.max(0, money(l.salvageValue)) : 0,
+    // Only stock lines point at an inventory item.
+    invId:             l.purchaseType && l.purchaseType !== 'inventory' ? null
+                       : (l.invId && mongoose.Types.ObjectId.isValid(l.invId) ? l.invId : null),
     itemName:          String(l.itemName || '').slice(0, 200),
     itemCode:          String(l.itemCode || '').slice(0, 60),
     unit:              String(l.unit || '').slice(0, 20),
@@ -73,6 +89,24 @@ export default function registerPurchaseOrders(ctx) {
     creditAccount:     l.creditAccount ? String(l.creditAccount).slice(0, 50) : null,
     receivedQty:       null,
   });
+
+  // A non-stock line has to name an account the receipt can actually post to.
+  // Without this the PO saves happily, the goods are received, and
+  // postNonInventoryReceipt quietly returns null on an unroutable code - the
+  // delivery lands with nothing whatsoever in the books.
+  const lineRoutingError = (l) => {
+    if (l.purchaseType === 'fixedAsset') {
+      if (!FIXED_ASSET_CLASSES[l.assetAccountCode]) {
+        return `"${l.itemName || 'A line'}" is equipment, so it needs an asset account (${Object.keys(FIXED_ASSET_CLASSES).join(', ')}).`;
+      }
+    } else if (l.purchaseType === 'expense') {
+      const meta = acctMeta(l.expenseAccountCode);
+      if (!meta || meta.type !== 'expense' || meta.isParent) {
+        return `"${l.itemName || 'A line'}" is a service, so it needs an expense account to charge it to.`;
+      }
+    }
+    return null;
+  };
 
   // ── LIST ────────────────────────────────────────────────────────────────────
   // GET /api/purchase-orders?status=Ordered&limit=100
@@ -117,6 +151,10 @@ export default function registerPurchaseOrders(ctx) {
         .map(cleanLine)
         .filter(l => l.itemName && l.orderedQty > 0);
       if (clean.length === 0) return res.status(400).json({ success: false, error: 'A purchase order needs at least one line with a name and quantity.' });
+      for (const l of clean) {
+        const problem = lineRoutingError(l);
+        if (problem) return res.status(400).json({ success: false, error: problem });
+      }
 
       const poNumber = await mkSeqRef('PO');
       const po = await PurchaseOrder.create({
@@ -186,6 +224,10 @@ export default function registerPurchaseOrders(ctx) {
       if (Array.isArray(lines)) {
         const clean = lines.map(cleanLine).filter(l => l.itemName && l.orderedQty > 0);
         if (clean.length === 0) return res.status(400).json({ success: false, error: 'A purchase order needs at least one line.' });
+        for (const l of clean) {
+          const problem = lineRoutingError(l);
+          if (problem) return res.status(400).json({ success: false, error: problem });
+        }
         po.lines = clean;
         po.estTotal = estTotalOf(clean);
       }
@@ -261,7 +303,7 @@ export default function registerPurchaseOrders(ctx) {
   // Both credit a NON-TRADE payable. 220000 is what we owe for goods to sell
   // or consume; owing for a machine is a different obligation and the balance
   // sheet should not merge them.
-  const postNonInventoryReceipt = async (req, line, kind, lineCost, delta, po) => {
+  const postNonInventoryReceipt = async (req, line, kind, lineCost, delta, po, { fromAdvance = 0, lineVat = 0 } = {}) => {
     const rcvRef = await mkSeqRef('PO-RCV');
     const nameOf = (c, f) => acctMeta(c)?.name || f || c;
     const label = line.itemName || line.itemCode || 'item';
@@ -278,13 +320,21 @@ export default function registerPurchaseOrders(ctx) {
       if (!meta || meta.type !== 'expense' || meta.isParent) return null;
       credCode = '225200';
     }
-    // Prepaid overrides the payable on every kind: the obligation was settled
-    // in cash up front, so what clears is the advance.
-    if (po?.prepaid) credCode = '170200';
+    // What the supplier is actually owed for this line - the cost plus any VAT
+    // being claimed back. Crediting only the net would understate the debt by
+    // exactly the VAT, and the input VAT would be claimed against nothing.
+    const lineGross = money(lineCost + lineVat);
+    // A prepayment settles the obligation up front, so what clears is the
+    // advance - but only as far as the advance actually reaches. Anything
+    // beyond it is a real payable the supplier can still invoice for.
+    const advanceShare = Math.min(money(fromAdvance), lineGross);
+    const payableShare = money(lineGross - advanceShare);
 
     const lines = [
       { accountCode: debitCode, accountName: nameOf(debitCode), debit: lineCost, credit: 0 },
-      { accountCode: credCode, accountName: nameOf(credCode), debit: 0, credit: lineCost },
+      ...(lineVat > 0 ? [{ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: lineVat, credit: 0 }] : []),
+      ...(advanceShare > 0 ? [{ accountCode: '170200', accountName: nameOf('170200', 'Advances to Suppliers'), debit: 0, credit: advanceShare }] : []),
+      ...(payableShare > 0 ? [{ accountCode: credCode, accountName: nameOf(credCode), debit: 0, credit: payableShare }] : []),
     ];
     assertBalanced(lines, rcvRef);
     await JournalEntry.create({
@@ -292,7 +342,7 @@ export default function registerPurchaseOrders(ctx) {
       description: `Received ${delta} x ${label} on ${po?.poNumber || 'PO'}${po?.supplier ? ` from ${po.supplier}` : ''} (${kind === 'fixedAsset' ? 'fixed asset' : 'expense'})`,
       supplierId: po?.supplierId ? String(po.supplierId) : null,
       supplierName: po?.supplier || '',
-      lines, totalDebit: lineCost, totalCredit: lineCost,
+      lines, totalDebit: lineGross, totalCredit: lineGross,
     });
 
     if (kind === 'fixedAsset' && FixedAsset) {
@@ -329,6 +379,20 @@ export default function registerPurchaseOrders(ctx) {
   const postReceiptToStock = async (req, deltas, po, { claimInputVat = false } = {}) => {
     const poVatCfg = await loadVatConfig(Settings);
     let totalCost = 0;
+    // How much of this delivery the prepayment still covers. A PO prepaid for
+    // less than it delivered is normal - the rest is owed - so the advance is
+    // consumed line by line and whatever it no longer reaches becomes a genuine
+    // payable rather than driving the advance account negative.
+    let advanceLeft = 0;
+    let advanceDoc = null;
+    if (po?.prepaid && po.advanceId && Advance) {
+      advanceDoc = await Advance.findById(po.advanceId);
+      if (advanceDoc && advanceDoc.status !== 'Cancelled') {
+        advanceLeft = money((advanceDoc.amount || 0) - (advanceDoc.liquidatedAmount || 0));
+      }
+    }
+    let advanceUsed = 0;
+    let payableTotal = 0;
     for (const { line, delta, expiryDate, productionDate } of deltas) {
       const kind = line.purchaseType || 'inventory';
 
@@ -341,8 +405,14 @@ export default function registerPurchaseOrders(ctx) {
 
       if (kind !== 'inventory') {
         if (lineCost <= 0) continue;
-        const out = await postNonInventoryReceipt(req, line, kind, lineCost, delta, po);
-        if (out) totalCost = money(totalCost + lineCost);
+        const share = Math.min(advanceLeft, lineGross);
+        const out = await postNonInventoryReceipt(req, line, kind, lineCost, delta, po, { fromAdvance: share, lineVat });
+        if (out) {
+          advanceLeft = money(advanceLeft - share);
+          advanceUsed = money(advanceUsed + share);
+          payableTotal = money(payableTotal + (lineGross - share));
+          totalCost = money(totalCost + lineGross);
+        }
         continue;
       }
 
@@ -390,6 +460,9 @@ export default function registerPurchaseOrders(ctx) {
       });
 
       if (lineCost > 0) {
+        // What the prepayment still covers on this line, and what is left owing.
+        const fromAdvance = Math.min(advanceLeft, lineGross);
+        const owedNow = money(lineGross - fromAdvance);
         // Credit A/P: a PO is a purchase on account. Paying the supplier is a
         // separate A/P settlement, not part of receiving the goods.
         await JournalEntry.create({
@@ -406,39 +479,35 @@ export default function registerPurchaseOrders(ctx) {
           lines: [
             { accountCode: '130000', accountName: 'Inventory Asset', debit: lineCost, credit: 0 },
             ...(lineVat > 0 ? [{ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: lineVat, credit: 0 }] : []),
-            po?.prepaid
-              ? { accountCode: '170200', accountName: acctMeta('170200')?.name || 'Advances to Suppliers', debit: 0, credit: lineGross }
-              : { accountCode: '220000', accountName: 'Accounts Payable', debit: 0, credit: lineGross },
+            ...(fromAdvance > 0 ? [{ accountCode: '170200', accountName: acctMeta('170200')?.name || 'Advances to Suppliers', debit: 0, credit: fromAdvance }] : []),
+            ...(owedNow > 0 ? [{ accountCode: '220000', accountName: 'Accounts Payable', debit: 0, credit: owedNow }] : []),
           ],
           totalDebit: lineGross,
           totalCredit: lineGross,
         });
+        advanceLeft = money(advanceLeft - fromAdvance);
+        advanceUsed = money(advanceUsed + fromAdvance);
+        payableTotal = money(payableTotal + owedNow);
         totalCost = money(totalCost + lineGross);
       }
     }
-    // The advance record must track the ledger. The journal entries above
-    // already credited 170200; without this the Advances screen would keep
-    // showing the full prepayment outstanding on an order that has arrived.
-    if (po?.prepaid && po.advanceId && totalCost > 0 && Advance) {
-      const adv = await Advance.findById(po.advanceId);
-      if (adv && adv.status !== 'Cancelled') {
-        const remaining = money(adv.amount - (adv.liquidatedAmount || 0));
-        // Capped at what is left: an over-delivery must not write the advance
-        // negative, and anything beyond the prepayment is a genuine payable
-        // the supplier can still bill for.
-        const applied = Math.min(money(totalCost), remaining);
-        if (applied > 0) {
-          adv.liquidatedAmount = money((adv.liquidatedAmount || 0) + applied);
-          adv.status = adv.liquidatedAmount >= adv.amount - 0.005 ? 'Liquidated' : 'Partially Liquidated';
-          adv.liquidations.push({
-            amount: applied, method: 'bill', reference: po.poNumber || '',
-            note: `Goods received on ${po.poNumber}`, by: req.user?.name || '',
-          });
-          await adv.save();
-        }
-      }
+    // The advance record must track the ledger exactly: it is liquidated by
+    // what the entries above actually credited to 170200, no more. Applying
+    // the whole delivery here - as this once did - would mark a prepayment
+    // fully used up by a delivery it only partly covered.
+    if (advanceDoc && advanceUsed > 0) {
+      advanceDoc.liquidatedAmount = money((advanceDoc.liquidatedAmount || 0) + advanceUsed);
+      advanceDoc.status = advanceDoc.liquidatedAmount >= advanceDoc.amount - 0.005 ? 'Liquidated' : 'Partially Liquidated';
+      advanceDoc.liquidations.push({
+        amount: advanceUsed, method: 'bill', reference: po.poNumber || '',
+        note: `Goods received on ${po.poNumber}`, by: req.user?.name || '',
+      });
+      await advanceDoc.save();
     }
-    return { totalCost };
+    // `payableTotal` is what the supplier can still invoice for - the part the
+    // prepayment did not reach. It is what a bill may be raised for; billing
+    // the whole delivery would demand money that has already left.
+    return { totalCost, payableTotal };
   };
 
   // ── RECEIVE (reconcile actual delivery) ───────────────────────────────────────
@@ -510,7 +579,10 @@ export default function registerPurchaseOrders(ctx) {
       // name with no linked Supplier record (po.supplierId unset) can't get a
       // bill. The receipt and its journal entry still post either way; this
       // only affects the approval/scheduling workflow layered on top.
-      if (posted.totalCost > 0 && po.supplierId) {
+      // A bill is a demand for payment. Raising one for a delivery already paid
+      // for in advance asks for the money twice - approve and pay it and the
+      // supplier is paid twice over, with A/P driven negative.
+      if (posted.payableTotal > 0 && po.supplierId) {
         const billNumber = await mkSeqRef('BILL');
         bill = await Bill.create({
           businessType: BUSINESS_TYPE,
@@ -521,8 +593,10 @@ export default function registerPurchaseOrders(ctx) {
           source: 'PO',
           purchaseOrderId: po._id,
           poNumber: po.poNumber,
-          description: `Delivery received on ${po.poNumber}`,
-          amount: posted.totalCost,
+          description: po.prepaid
+            ? `Delivery received on ${po.poNumber} (balance beyond the prepayment)`
+            : `Delivery received on ${po.poNumber}`,
+          amount: posted.payableTotal,
           createdBy: req.user?.name || '',
         }).catch((err) => { captureError(req, err); return null; }); // a bill-creation failure shouldn't roll back a receipt that already posted
       }
@@ -637,14 +711,44 @@ export default function registerPurchaseOrders(ctx) {
 
       if (grossTotal <= 0) return res.status(400).json({ success: false, error: 'The returned lines carry no cost, so there is nothing to credit.' });
 
-      // Where the money side lands. An unpaid invoice simply gets smaller; once
-      // it is paid, the supplier is holding our money and the balance becomes
-      // credit we can spend on the next delivery.
+      // Where the money side lands, in the order the money actually moved.
+      //
+      // A prepayment comes first: if this delivery was paid for up front, goods
+      // going back mean the supplier is once again holding our money against a
+      // delivery still owed - which is the advance, restored. Recording that as
+      // a reduction of A/P would credit back a debt that never existed, and
+      // recording it as supplier credit would quietly write the advance off.
+      let restoredToAdvance = 0;
+      let left = grossTotal;
+      let advanceDoc = null;
+      if (po.prepaid && po.advanceId && Advance) {
+        advanceDoc = await Advance.findById(po.advanceId);
+        if (advanceDoc && advanceDoc.status !== 'Cancelled') {
+          // Never more than this PO actually consumed - the rest of the
+          // prepayment is still sitting there untouched.
+          restoredToAdvance = Math.min(money(advanceDoc.liquidatedAmount || 0), left);
+          if (restoredToAdvance > 0) {
+            advanceDoc.liquidatedAmount = money((advanceDoc.liquidatedAmount || 0) - restoredToAdvance);
+            advanceDoc.status = advanceDoc.liquidatedAmount <= 0.005
+              ? 'Open'
+              : (advanceDoc.liquidatedAmount >= advanceDoc.amount - 0.005 ? 'Liquidated' : 'Partially Liquidated');
+            advanceDoc.liquidations.push({
+              amount: -restoredToAdvance, method: 'bill', reference: retRef,
+              note: `Goods returned on ${po.poNumber}: ${reason}`, by: req.user?.name || '',
+            });
+            await advanceDoc.save();
+            left = money(left - restoredToAdvance);
+          }
+        }
+      }
+
+      // Then an unpaid invoice simply gets smaller; once it is paid, the
+      // supplier is holding our money and the balance becomes credit we can
+      // spend on the next delivery.
       let appliedToBills = 0;
       const openBills = po.supplierId
         ? await Bill.find({ purchaseOrderId: po._id, status: { $nin: ['Paid', 'Rejected', 'Cancelled'] } }).sort({ createdAt: 1 })
         : [];
-      let left = grossTotal;
       for (const bill of openBills) {
         if (left <= 0) break;
         // Never below what has already been paid on it - that money really left.
@@ -673,6 +777,7 @@ export default function registerPurchaseOrders(ctx) {
       // on it goes back, and the debit sits wherever the claim against the
       // supplier now lives.
       const debitLines = [];
+      if (restoredToAdvance > 0) debitLines.push({ accountCode: '170200', accountName: acctMeta('170200')?.name || 'Advances to Suppliers', debit: restoredToAdvance, credit: 0 });
       if (appliedToBills > 0) debitLines.push({ accountCode: '220000', accountName: 'Accounts Payable', debit: appliedToBills, credit: 0 });
       if (creditToSupplier > 0) debitLines.push({ accountCode: '160100', accountName: acctMeta('160100')?.name || 'Supplier Credit Balance', debit: creditToSupplier, credit: 0 });
 
@@ -692,16 +797,16 @@ export default function registerPurchaseOrders(ctx) {
 
       po.returns.push({
         returnNumber: retRef, reason, amount: grossTotal, vatAmount: vatTotal,
-        appliedToBills, creditToSupplier, reference: retRef, lines: memoLines,
+        restoredToAdvance, appliedToBills, creditToSupplier, reference: retRef, lines: memoLines,
         by: req.user?.name || '',
       });
       // What we are actually keeping, and paying for.
       po.actualTotal = money(po.lines.reduce((sum, l) => sum + ((Number(l.receivedQty) || 0) - (Number(l.returnedQty) || 0)) * (Number(l.unitCost) || 0), 0));
       await po.save();
 
-      logAudit?.(req, { action: 'return', entity: 'purchase_order', entityId: po.poNumber, after: { returnNumber: retRef, amount: grossTotal, appliedToBills, creditToSupplier, reason } });
+      logAudit?.(req, { action: 'return', entity: 'purchase_order', entityId: po.poNumber, after: { returnNumber: retRef, amount: grossTotal, restoredToAdvance, appliedToBills, creditToSupplier, reason } });
       emitToMgr?.('erpUpdated');
-      res.json({ success: true, purchaseOrder: po.toObject(), debitMemo: { returnNumber: retRef, amount: grossTotal, vatAmount: vatTotal, appliedToBills, creditToSupplier } });
+      res.json({ success: true, purchaseOrder: po.toObject(), debitMemo: { returnNumber: retRef, amount: grossTotal, vatAmount: vatTotal, restoredToAdvance, appliedToBills, creditToSupplier } });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 

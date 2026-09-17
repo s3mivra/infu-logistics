@@ -517,10 +517,14 @@ export const DATASETS = {
   orders: {
     label: 'Orders', model: 'Order', dateField: 'createdAt',
     sort: { createdAt: -1 },
-    columns: ['Order No', 'Date', 'Customer', 'Status', 'Payment', 'Subtotal', 'Discount', 'Total', 'Items'],
+    // OR No. is what an examiner traces a sale by, and a total with no sight of
+    // what was refunded or collected against it cannot be reconciled to the
+    // books from the sheet alone.
+    columns: ['Order No', 'OR No', 'Date', 'Customer', 'Status', 'Payment', 'Subtotal', 'Discount', 'Total', 'Refunded', 'Collected', 'Items'],
     toRow: (o) => [
-      o.orderNumber || '', day(o.createdAt), o.customerName || '', o.status || '',
+      o.orderNumber || '', o.orNumber || '', day(o.createdAt), o.customerName || '', o.status || '',
       o.paymentMethod || '', money(o.subtotal), money(o.discount), money(o.total),
+      money(o.refundedAmount), money(o.arPaidAmount),
       (o.items || []).length,
     ],
   },

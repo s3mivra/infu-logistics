@@ -152,8 +152,14 @@ export default function registerRequisitions(ctx) {
       for (const l of lines) {
         const qty = Number(l.orderedQty), cost = Number(l.unitCost);
         if (!l.itemName?.trim() || !Number.isFinite(qty) || qty <= 0) return res.status(400).json({ success: false, error: 'Each line needs an item name and a positive quantity.' });
+        const kind = ['inventory', 'fixedAsset', 'expense'].includes(l.purchaseType) ? l.purchaseType : 'inventory';
         cleanLines.push({
-          invId: l.invId || null, itemName: String(l.itemName).trim(), itemCode: l.itemCode || '',
+          purchaseType: kind,
+          assetAccountCode: kind === 'fixedAsset' ? String(l.assetAccountCode || '') : '',
+          expenseAccountCode: kind === 'expense' ? String(l.expenseAccountCode || '') : '',
+          usefulLifeMonths: kind === 'fixedAsset' && l.usefulLifeMonths ? Number(l.usefulLifeMonths) || null : null,
+          salvageValue: kind === 'fixedAsset' ? Number(l.salvageValue) || 0 : 0,
+          invId: (kind === 'inventory' && l.invId) || null, itemName: String(l.itemName).trim(), itemCode: l.itemCode || '',
           unit: l.unit || '', packSize: l.packSize || null, orderedQty: qty, unitCost: Number.isFinite(cost) ? cost : 0,
           expiryDate: l.expiryDate ? new Date(l.expiryDate) : null, productionDate: l.productionDate ? new Date(l.productionDate) : null,
           expiryWarnDays: l.expiryWarnDays != null && l.expiryWarnDays !== '' ? Number(l.expiryWarnDays) || null : null,
@@ -328,6 +334,11 @@ export default function registerRequisitions(ctx) {
         status: 'Ordered', expectedDate: slip.expectedDate,
         notes: `${slip.notes || ''}${slip.notes ? ' - ' : ''}Requisition ${slip.slipNumber}`.trim(),
         lines: slip.lines.map(l => ({
+          purchaseType: l.purchaseType || 'inventory',
+          assetAccountCode: l.assetAccountCode || '',
+          expenseAccountCode: l.expenseAccountCode || '',
+          usefulLifeMonths: l.usefulLifeMonths ?? null,
+          salvageValue: l.salvageValue || 0,
           invId: l.invId, itemName: l.itemName, itemCode: l.itemCode, unit: l.unit, packSize: l.packSize,
           orderedQty: l.orderedQty, unitCost: l.unitCost, expiryDate: l.expiryDate, productionDate: l.productionDate,
           expiryWarnDays: l.expiryWarnDays, lowStockThreshold: l.lowStockThreshold,

@@ -2,6 +2,7 @@
 import express from 'express';
 import { businessDayStart, businessDateStr, businessClosingDateStr, setBusinessTimeZone, isValidTimeZone, DEFAULT_BUSINESS_TZ } from './lib/businessTime.js';
 import { deliveryFeeVat } from './lib/vatPosting.js';
+import { seriesPrefix } from './lib/docSeries.js';
 import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
@@ -461,15 +462,19 @@ const modifierGroupSchema = z.object({
 //   Atomically increments a per-prefix-per-year counter, zero-collision.
 //   e.g.  await mkSeqRef('EXP')       →  "EXP-2025-000042"
 //          await mkSeqRef('INV-SPOIL') →  "INV-SPOIL-2025-000007"
-const mkSeqRef = async (prefix) => {
+const mkSeqRef = async (code) => {
   const year    = new Date().getFullYear();
-  const key     = `${prefix}-${year}`;
+  // The counter is keyed on the CANONICAL code, never on the printed prefix:
+  // renaming a series in Settings must not restart its numbering, nor collide
+  // with numbers already issued under the old name.
+  const key     = `${code}-${year}`;
   const counter = await Counter.findOneAndUpdate(
     { _id: key },
     { $inc: { seq: 1 } },
     { upsert: true, returnDocument: 'after' }
   );
-  return `${key}-${counter.seq.toString().padStart(6, '0')}`;
+  const label = await seriesPrefix(Settings, code);
+  return `${label}-${year}-${counter.seq.toString().padStart(6, '0')}`;
 };
 
 // currentBranchCode - which inventory this deployment IS ("AC-A001").
@@ -656,6 +661,67 @@ const runStartupTasks = async () => {
       if (tStamped > 0) log.info(`✅ Backfilled tenantId on ${tStamped} doc(s) - Orders:${tO.modifiedCount} Products:${tP.modifiedCount} Inventory:${tI.modifiedCount} Categories:${tC.modifiedCount} Users:${tU.modifiedCount}`);
     } catch (err) {
       log.error({ err }, 'Tenant seed/backfill error');
+    }
+
+    // ── REFUNDED-AMOUNT BACKFILL (one-time) ───────────────────────────────
+    // Orders refunded before `refundedAmount` existed carry the credit only in
+    // refundHistory, so every A/R view still read their full face value as
+    // owed. Reconstructed here, once: EXCHANGE entries are skipped because an
+    // exchange already adjusted the order's own total, and counting both would
+    // credit it twice. Idempotent - it only touches orders that have no figure.
+    try {
+      const needing = await Order.find(
+        { refundedAmount: { $in: [null, 0] }, 'refundHistory.0': { $exists: true } },
+        { refundHistory: 1, total: 1 },
+      ).lean();
+      let healed = 0;
+      for (const o of needing) {
+        const credited = (o.refundHistory || [])
+          .filter(r => !String(r.reason || '').startsWith('EXCHANGE:'))
+          .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+        // Never more than the sale itself was worth.
+        const amount = Math.min(Math.round(credited * 100) / 100, Number(o.total) || 0);
+        if (amount > 0.005) {
+          await Order.updateOne({ _id: o._id }, { $set: { refundedAmount: amount } });
+          healed++;
+        }
+      }
+      if (healed > 0) log.info(`✅ Backfilled refundedAmount on ${healed} refunded order(s)`);
+    } catch (err) {
+      log.error({ err }, 'Refunded-amount backfill error');
+    }
+
+    // ── INPUT-VAT-CLAIMED BACKFILL (one-time) ─────────────────────────────
+    // Deliveries received before `inputVatClaimed` existed did not record
+    // whether their VAT was taken as a creditable input. Returning goods from
+    // one would then hand back the goods and the payable but NOT the input VAT,
+    // leaving the business claiming a credit on stock it no longer holds.
+    //
+    // The ledger already knows: a receipt that claimed it posted a 170300 line,
+    // and every receipt entry names the PO it belongs to. Reconstructed from
+    // that here, once. Idempotent - it only sets the flag, never clears one.
+    try {
+      const vatReceipts = await JournalEntry.find(
+        { 'lines.accountCode': '170300' },
+        { description: 1 },
+      ).lean();
+      // The document number the entry names, e.g. "PO-2026-000031". Matched
+      // loosely on shape rather than on a fixed prefix, because the prefix each
+      // series prints under is configurable.
+      const DOC_NO = /\b[A-Z][A-Z0-9/-]{0,11}-\d{4}-\d{6}\b/g;
+      const claimed = new Set();
+      for (const je of vatReceipts) {
+        for (const m of String(je.description || '').matchAll(DOC_NO)) claimed.add(m[0]);
+      }
+      if (claimed.size > 0) {
+        const res = await PurchaseOrder.updateMany(
+          { poNumber: { $in: [...claimed] }, inputVatClaimed: { $ne: true } },
+          { $set: { inputVatClaimed: true } },
+        );
+        if (res.modifiedCount > 0) log.info(`✅ Backfilled inputVatClaimed on ${res.modifiedCount} received PO(s)`);
+      }
+    } catch (err) {
+      log.error({ err }, 'Input-VAT-claimed backfill error');
     }
 
     // ── PAYMENT-METHOD SUB-ACCOUNT SEEDING ────────────────────────────────
@@ -1369,6 +1435,14 @@ items: [{
   // reads `total - arPaidAmount` (see arBalance in lib/credit.js) so a partly
   // paid invoice ages on its remaining balance, not its original face value.
   arPaidAmount: { type: Number, default: 0 },
+  // What has been refunded off this sale. A partial refund credits Accounts
+  // Receivable in the ledger - the debt really is smaller - but the order keeps
+  // its face `total`, so without this every A/R view (ageing, credit limit,
+  // collections, the client's statement) went on demanding money that had
+  // already been credited back. Kept as a running total rather than summed from
+  // refundHistory, because an EXCHANGE also writes a history entry while
+  // adjusting `total` directly, and counting both would refund it twice.
+  refundedAmount: { type: Number, default: 0 },
   // One row per collection. collectionDate = when the money was actually taken
   // in from the client (what the collector reports); depositDate = when it hit
   // the bank/fund. They are genuinely different dates - cash collected Friday
@@ -2667,6 +2741,7 @@ const PurchaseOrderSchema = new mongoose.Schema({
     reason:       { type: String, default: '' },
     amount:       { type: Number, default: 0 },      // gross, as the supplier billed it
     vatAmount:    { type: Number, default: 0 },      // input VAT given back inside `amount`
+    restoredToAdvance: { type: Number, default: 0 }, // put back onto a prepayment
     appliedToBills: { type: Number, default: 0 },    // how much reduced an open bill
     creditToSupplier: { type: Number, default: 0 },  // the rest: credit they now hold for us
     reference:    { type: String, default: '' },     // the JournalEntry this posted under
@@ -3289,13 +3364,19 @@ const getCategoryPrefix = (categoryName) => {
   return clean[0] + clean[1] + clean[clean.length - 1]; 
 };
 
-const generateNextSequence = async (_Model, prefix, _fieldName) => {
+const generateNextSequence = async (_Model, prefix, _fieldName, code = null) => {
   const counter = await Counter.findOneAndUpdate(
     { _id: prefix },
     { $inc: { seq: 1 } },
     { upsert: true, returnDocument: 'after' }
   );
-  return `${prefix}-A${counter.seq.toString().padStart(4, '0')}`;
+  // `prefix` is the counter's key and stays fixed; `code` (when given) names a
+  // configurable series, so what gets PRINTED can be renamed without moving
+  // the counter the sequence is kept in.
+  const label = code
+    ? `${await seriesPrefix(Settings, code)}${prefix.slice(prefix.indexOf('-'))}`
+    : prefix;
+  return `${label}-A${counter.seq.toString().padStart(4, '0')}`;
 };
 
 // --- MIDNIGHT AUTO-ARCHIVE SYSTEM ---
@@ -3336,6 +3417,14 @@ function scheduleMidnightArchive() {
         { $set: { isArchived: true, isParked: false } }
       );
       emitToAll('ordersArchived'); // Tell all iPads/phones to clear their screens
+
+      // Step B2: Let expired stock reservations go.
+      // The sweep is otherwise lazy - it runs when someone opens the
+      // Reservations screen - so on a deployment where nobody does, stock stays
+      // held past its expiry and quietly fails to be sellable. The close is the
+      // natural daily cadence for it.
+      try { await ctx.sweepExpiredReservations?.(); }
+      catch (err) { log.error({ err }, 'Reservation sweep during midnight close failed'); }
 
       // Step C: Take the Midnight Inventory Snapshot
       const allItems = await Inventory.find();
@@ -3698,6 +3787,14 @@ const RequisitionSlipSchema = new mongoose.Schema({
   supplierId: { type: mongoose.Schema.Types.ObjectId, ref: 'Supplier', default: null },
   expectedDate: { type: Date, default: null },
   lines: [{
+    // What the line buys, carried all the way from the requisition to the PO it
+    // becomes. Dropped here, every approved slip produced a stock line - so
+    // equipment requisitioned as equipment arrived as inventory.
+    purchaseType: { type: String, enum: ['inventory', 'fixedAsset', 'expense'], default: 'inventory' },
+    assetAccountCode: { type: String, default: '' },
+    expenseAccountCode: { type: String, default: '' },
+    usefulLifeMonths: { type: Number, default: null },
+    salvageValue: { type: Number, default: 0 },
     invId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
     itemName: { type: String, default: '' },
     itemCode: { type: String, default: '' },
@@ -3777,6 +3874,14 @@ const ProductionOrderSchema = new mongoose.Schema({
   outputName: { type: String, default: '' },
   outputQty: { type: Number, default: 0 },                  // base units produced
   outputUnit: { type: String, default: '' },
+  // The unit the person actually TYPED the quantity in - "ml", "L", "pcs".
+  // outputQty is always base units, but reconciling asks for the same figure
+  // again, and it has to be asked for in the same unit it was planned in.
+  // Without this the reconcile step picked its own unit (pieces, from the pack
+  // size in the item's name): a batch planned as 1700 ml came back as "1.7
+  // pcs", the operator retyped the 1700 they had in mind, and it was multiplied
+  // by the pack size into 1700 L of stock.
+  outputEnteredUnit: { type: String, default: '' },
   // 'new' only - base units per ONE piece (e.g. 377 for "...377G"), carried
   // onto the created Inventory item's own packSize so later production runs
   // against it can be counted in pieces too, same as every packed item.

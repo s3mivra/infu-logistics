@@ -1,12 +1,13 @@
 ﻿// orders routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { resolveCreditLimit, checkCreditAvailable, arBalance } from '../lib/credit.js';
+import { resolveCreditLimit, checkCreditAvailable, arBalance, isFullySettled } from '../lib/credit.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { title } from '../lib/normalize.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
+import { seriesPrefix, normalizePrefix } from '../lib/docSeries.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
 import { resolveTierPercent } from '../lib/priceTiers.js';
 import { buildSalePriceMap, saleUnitPrice, activeSalesQuery } from '../lib/salePricing.js';
@@ -232,33 +233,40 @@ async function runWithStatsRetry(onceFn, req, res) {
 // instant collide often enough to exhaust the retries and fail the sale. It
 // runs after the commit instead, as its own atomic increment, so a serial is
 // spent only by a sale that really did complete.
-const assignOrNumber = async (order) => {
+const assignOrNumber = async (order, attempt = 1) => {
   if (!order || order.orNumber || order.isComplimentary) return order?.orNumber || '';
   try {
     const [prefixRow, startRow] = await Promise.all([
       Settings.findOne({ key: 'orPrefix' }).lean(),
       Settings.findOne({ key: 'orStartNumber' }).lean(),
     ]);
-    const prefix = String(prefixRow?.value || '').trim();
+    // Normalised through the same registry as every other series, so a prefix
+    // typed as "OR-" and one typed as "OR" both print OR-00001251.
+    const prefix = normalizePrefix(prefixRow?.value, 'OR');
     const start = Math.max(0, parseInt(startRow?.value, 10) || 0);
     const counter = await Counter.findOneAndUpdate(
       { _id: 'OR-SERIAL' },
       { $inc: { seq: 1 } },
       { upsert: true, returnDocument: 'after' },
     );
-    const orNumber = `${prefix}${String(start + (counter?.seq || 0)).padStart(8, '0')}`;
+    const orNumber = `${prefix}-${String(start + (counter?.seq || 0)).padStart(8, '0')}`;
     // Guarded on the field still being empty, so a concurrent writer can never
     // stamp a second number over the first.
     const wrote = await Order.updateOne({ _id: order._id, $or: [{ orNumber: '' }, { orNumber: { $exists: false } }] }, { $set: { orNumber } });
     if (wrote.modifiedCount > 0) { order.orNumber = orNumber; return orNumber; }
     const fresh = await Order.findById(order._id, { orNumber: 1 }).lean();
     order.orNumber = fresh?.orNumber || '';
+    // Nobody else stamped one either, so the write simply did not land - the
+    // serial just taken is spent, and another attempt takes the next one.
+    if (!order.orNumber && attempt < 3) return assignOrNumber(order, attempt + 1);
     return order.orNumber;
   } catch (err) {
-    // A missing serial is recoverable - the sale itself is already committed,
-    // and the next print or a later completion can still assign one. Failing
-    // the sale over it would be far worse.
+    // The sale itself is already committed and a completed order is immutable,
+    // so nothing downstream will get another chance at this - but failing the
+    // sale over a receipt number would be far worse than a receipt that has to
+    // be numbered by hand. Logged loudly so it is not silent.
     console.error('[OR SERIAL] could not assign a receipt number:', err?.message || err);
+    captureError?.(null, err);
     return '';
   }
 };
@@ -471,7 +479,7 @@ app.post('/api/orders/park', verifyToken, requireStaff, async (req, res) => {
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ success: false, error: 'Cannot park an empty cart.' });
     const subtotal = items.reduce((s, i) => s + ((i.price || 0) + (i.selectedAddOns || []).reduce((a, x) => a + Number(x.price || 0), 0)) * (i.quantity || 1), 0);
     const year = new Date().getFullYear();
-    const orderNumber = await generateNextSequence(Order, `ORD-${year}`, 'orderNumber');
+    const orderNumber = await generateNextSequence(Order, `ORD-${year}`, 'orderNumber', 'ORD');
     const parked = await Order.create({
       orderNumber, items, customerName: customerName || 'Guest', table: table || 'Dine-In',
       orderNotes: (orderNotes || '').trim().slice(0, 300), guestCount: Math.max(1, parseInt(guestCount) || 1),
@@ -966,7 +974,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     const finalTotal = +(vatResult.total + deliveryFee + (vatCfg.inclusive === false ? feeVat : 0)).toFixed(2);
 
     const currentYear = new Date().getFullYear();
-    const orderNumber = await generateNextSequence(Order, `ORD-${currentYear}`, 'orderNumber');
+    const orderNumber = await generateNextSequence(Order, `ORD-${currentYear}`, 'orderNumber', 'ORD');
 
     // Generate a billing number (monthly-reset: YYYY-MM-XXXX) for every order, both
     // business types.
@@ -979,7 +987,8 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
         { $inc: { seq: 1 } },
         { upsert: true, returnDocument: 'after' }
       );
-      billingNumber = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${billingCounter.seq.toString().padStart(4, '0')}`;
+      const billingLabel = await seriesPrefix(Settings, 'BIL');
+      billingNumber = `${billingLabel}-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${billingCounter.seq.toString().padStart(4, '0')}`;
     }
 
     // Resolve payment method: client pre-set → body override → default Cash
@@ -1061,7 +1070,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
           paymentMethod: { $ne: 'Cash' },
           isComplimentary: { $ne: true },
           arSettled: { $ne: true },
-        }, { total: 1, arPaidAmount: 1 }).lean();
+        }, { total: 1, arPaidAmount: 1, refundedAmount: 1 }).lean();
         // Partial collections free up credit headroom immediately - a client who
         // has paid down half an invoice should not still be blocked for its full value.
         const outstanding = openRows.reduce((s, r) => s + arBalance(r), 0);
@@ -1408,7 +1417,7 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
           $or: [{ clientAccountId: buyerClientId }, { clientId: buyerClientId }],
           status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
           isParked: { $ne: true }, paymentMethod: { $ne: 'Cash' }, isComplimentary: { $ne: true }, arSettled: { $ne: true },
-        }, { total: 1, arPaidAmount: 1 }).lean();
+        }, { total: 1, arPaidAmount: 1, refundedAmount: 1 }).lean();
         const outstanding = openRows.reduce((sum, r) => sum + arBalance(r), 0);
         const credit = checkCreditAvailable({ limit, outstanding, orderTotal: totalAfter });
         if (!credit.allowed) {
@@ -2453,7 +2462,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
 
     const paidBefore = Math.round((Number(order.arPaidAmount) || 0) * 100) / 100;
     const paidAfter = Math.round((paidBefore + applied) * 100) / 100;
-    const fullySettled = paidAfter >= (Number(order.total) || 0) - 0.01;
+    const fullySettled = isFullySettled({ ...order.toObject?.() ?? order, arPaidAmount: paidAfter });
     const seq = (order.arPayments?.length || 0) + 1;
 
     // Sequence the reference so a second collection on the same order doesn't
@@ -2578,7 +2587,7 @@ app.post('/api/client-accounts/:id/credit/apply', verifyToken, requireSuperAdmin
     const seq = (order.arPayments?.length || 0) + 1;
     order.arPayments.push({ amount: requested, paymentMethod: 'Client Credit', referenceNumber: referenceNumber || `Credit applied (was ${reference})`, journalRef: reference, recordedBy: req.user?.name || '' });
     order.arPaidAmount = Math.round(((order.arPaidAmount || 0) + requested) * 100) / 100;
-    order.arSettled = order.arPaidAmount >= (order.total || 0) - 0.01;
+    order.arSettled = isFullySettled(order);
     if (order.arSettled) { order.arSettledAt = new Date(); order.arSettledAmount = order.arPaidAmount; order.arSettledMethod = 'Client Credit'; }
     await order.save();
 
@@ -2660,7 +2669,7 @@ app.get('/api/orders/:id/ar-payments', verifyToken, requireStaff, requirePermiss
   try {
     const order = await Order.findById(req.params.id, {
       orderNumber: 1, customerName: 1, total: 1, paymentMethod: 1, createdAt: 1,
-      arPaidAmount: 1, arPayments: 1, arSettled: 1, arDueDate: 1, arTermsDays: 1,
+      arPaidAmount: 1, refundedAmount: 1, arPayments: 1, arSettled: 1, arDueDate: 1, arTermsDays: 1,
     }).lean();
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
 
@@ -3146,6 +3155,9 @@ const refundOnce = async (req, res, mayRetry) => {
     await applyStatsDelta(order, -1, session);
     order.transactionType = 'REFUND';
     order.status = 'Refunded';
+    // What has been credited back, so nothing downstream keeps treating the
+    // face value as money still owed.
+    order.refundedAmount = Math.round((((order.refundedAmount || 0) + amt)) * 100) / 100;
     order.voidReason = `REFUND: ${reason}`;
     await order.save({ session });
     await AuditLog.create({ userId: req.user?.name, action: 'ORDER_REFUNDED', targetReference: order.orderNumber, details: { reason, refundAmount: amt, inventoryAction: isFullRefund ? invAction : 'None (partial)', refundedBy: req.user?.name } });
@@ -3335,6 +3347,18 @@ const partialRefundOnce = async (req, res, mayRetry) => {
 
     // Only once every unit of every line has been refunded does the order
     // become terminally 'Refunded' - same stats treatment as a full refund.
+    // Credited back off the sale. A partial refund leaves the order Completed
+    // and its `total` untouched, so this is the only record that the debt is
+    // now smaller - every A/R view nets it off.
+    order.refundedAmount = Math.round((((order.refundedAmount || 0) + refundAmount)) * 100) / 100;
+    // Paying off what is left settles the invoice: a refund can make an already
+    // part-paid invoice fully settled without another peso arriving.
+    if (!order.arSettled && order.paymentMethod !== 'Cash' && isFullySettled(order)) {
+      order.arSettled = true;
+      order.arSettledAt = new Date();
+      order.arSettledAmount = order.arPaidAmount || 0;
+    }
+
     const nowFullyRefunded = order.items.every(it => (Number(it.refundedQty) || 0) >= (Number(it.quantity) || 0) - 1e-6);
     if (nowFullyRefunded) {
       await applyStatsDelta(order, -1, session);

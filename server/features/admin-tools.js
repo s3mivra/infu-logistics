@@ -586,7 +586,7 @@ async function createBackdatedSale(payload, actorName) {
     const acct = accountForPaymentMethod(method);
 
     const year = dt.getFullYear();
-    const orderNumber = await generateNextSequence(Order, `ORD-${year}`, 'orderNumber');
+    const orderNumber = await generateNextSequence(Order, `ORD-${year}`, 'orderNumber', 'ORD');
 
     // Optional stock deduction + COGS - only when explicitly asked.
     let totalCogs = 0;

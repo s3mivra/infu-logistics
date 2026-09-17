@@ -38,7 +38,7 @@ describe('fb mode: core order flow', () => {
   it('order creation generates a billing number (now both business types)', async () => {
     const res = await order(1);
     expect(res.status).toBe(200);
-    expect(res.body.order.billingNumber).toMatch(/^\d{4}-\d{2}-\d{4}$/);
+    expect(res.body.order.billingNumber).toMatch(/^BIL-\d{4}-\d{2}-\d{4}$/);
     orderId = res.body.order._id;
   });
 

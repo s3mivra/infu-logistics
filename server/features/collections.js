@@ -1,7 +1,7 @@
 ﻿// collections routes - AR collection reminders (contact log + follow-up
 // worklist over the existing aging data). See the CollectionReminderSchema
 // comment in server.js: this logs manual contact, it never sends anything.
-import { ageingByClient, resolveClientKey, withArBalance, arBalance } from '../lib/credit.js';
+import { ageingByClient, resolveClientKey, withArBalance, arBalance, isFullySettled } from '../lib/credit.js';
 import { businessDateStr } from '../lib/businessTime.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
@@ -52,7 +52,7 @@ export default function registerCollections(ctx) {
       isComplimentary: { $ne: true }, arSettled: { $ne: true },
       // withArBalance restates `total` as the unpaid remainder, so a client who
       // has partly paid an aged invoice is chased for what is actually left.
-    }, { customerName: 1, total: 1, createdAt: 1, clientAccountId: 1, clientId: 1, arPaidAmount: 1 }).lean()
+    }, { customerName: 1, total: 1, createdAt: 1, clientAccountId: 1, clientId: 1, arPaidAmount: 1, refundedAmount: 1 }).lean()
       .then(withArBalance);
   }
 
@@ -214,7 +214,7 @@ export default function registerCollections(ctx) {
         // register entirely.
         arPayments: { $elemMatch: { checkNumber: { $nin: ['', null] } } },
       }, {
-        orderNumber: 1, customerName: 1, total: 1, arPaidAmount: 1, arSettled: 1,
+        orderNumber: 1, customerName: 1, total: 1, arPaidAmount: 1, refundedAmount: 1, arSettled: 1,
         arPayments: 1, clientAccountId: 1, clientId: 1, createdAt: 1,
       }).lean();
 
@@ -408,7 +408,7 @@ export default function registerCollections(ctx) {
       // and puts it back in the ageing buckets and the collection worklist.
       const paidAfter = Math.max(0, Math.round((((Number(order.arPaidAmount) || 0)) - amt) * 100) / 100);
       order.arPaidAmount = paidAfter;
-      order.arSettled = paidAfter >= (Number(order.total) || 0) - 0.01;
+      order.arSettled = isFullySettled({ ...order.toObject?.() ?? order, arPaidAmount: paidAfter });
       await order.save();
 
       try {

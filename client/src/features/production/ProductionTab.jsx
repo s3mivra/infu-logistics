@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Factory, Plus, Trash2, Check, X, Package, Clock, ClipboardCheck } from 'lucide-react';
 import * as ui from '../../shared/ui';
+import { reconcileUnitOptions as reconcileUnitsFor, plannedUnitChoice as plannedUnitFor, toBaseQty, inUnit, restateQty } from '../../shared/productionUnits';
 
 // Approval decision - Pending -> Approved/Rejected.
 const STATUS_CLS = {
@@ -64,25 +65,16 @@ export default function ProductionTab({ ctx }) {
     return { perPiece, label, onHandPieces };
   };
 
-  // Same convention applied to the RECONCILE step - "how many actually came
-  // out" should be counted in pieces too, not raw grams/ml, whenever a piece
-  // is actually defined for this output:
-  //  - 'existing' output: the item already exists in Inventory, so its own
-  //    pack size (via pieceInfo/itemDisplay) applies, same as everywhere else.
-  //  - 'new' output: the item doesn't exist until reconcile creates it, but
-  //    if a pack size was given at filing time (outputPackSize), that IS the
-  //    piece definition it'll be created with - use it the same way.
-  //  - no pack size known either way: there's genuinely no "piece" to count
-  //    (a bulk/loose-weight output), so this correctly falls back to raw units.
-  const reconcilePieceInfo = (order) => {
-    if (!order) return { perPiece: 1, label: '' };
-    if (order.outputType === 'existing') {
-      const item = inventory.find(i => i._id === order.outputInvId);
-      return pieceInfo(item);
-    }
-    if (order.outputPackSize > 0) return { perPiece: order.outputPackSize, label: 'pcs' };
-    return { perPiece: 1, label: order.outputUnit || 'units' };
+  // What the RECONCILE step may count the yield in, and which of those the
+  // batch was planned in. The arithmetic lives in shared/productionUnits.js
+  // with its own tests - this file only supplies the item's own unit list.
+  const itemUnitsFor = (order) => {
+    if (order?.outputType !== 'existing') return null;
+    const item = inventory.find(i => i._id === order.outputInvId);
+    return item ? unitOptions(item) : null;
   };
+  const reconcileUnitOptions = (order) => reconcileUnitsFor(order, itemUnitsFor(order));
+  const plannedUnitChoice = (order) => plannedUnitFor(order, itemUnitsFor(order));
 
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -92,6 +84,9 @@ export default function ProductionTab({ ctx }) {
   const [busy, setBusy] = useState(false);
   const [reconciling, setReconciling] = useState(null); // order being reconciled
   const [actualQty, setActualQty] = useState('');
+  // Which unit the actual yield is being typed in. Defaults to the unit the
+  // batch was planned in; changing it is the operator's own decision.
+  const [reconcileUnit, setReconcileUnit] = useState('');
 
   // ── Filing form ────────────────────────────────────────────────────────────
   const [formOpen, setFormOpen] = useState(false);
@@ -265,6 +260,9 @@ export default function ProductionTab({ ctx }) {
           outputUnit: outputType === 'new' ? outputUnit : undefined,
           outputPackSize: outputType === 'new' ? (outputPackSize || undefined) : undefined,
           outputQty: outputBaseQty,
+          // The unit the figure above was typed in, so reconciling can ask for
+          // the yield the same way round.
+          outputEnteredUnit: outputType === 'existing' ? (outputUnitChoice?.label || '') : (outputUnit || ''),
           outputStockCategory: outputType === 'new' ? outputStockCategory : undefined,
           outputStockLocation: outputType === 'new' ? outputStockLocation : undefined,
           outputExpiryDate: outputExpiryDate || undefined,
@@ -310,10 +308,11 @@ export default function ProductionTab({ ctx }) {
   const submitReconcile = async () => {
     const enteredQty = parseFloat(actualQty);
     if (!enteredQty || enteredQty <= 0) return ui.alert('Enter the actual quantity produced.');
-    // `actualQty` is entered in pieces (see reconcilePieceInfo) - convert to
-    // base units before sending, same as every other qty input in this tab.
-    const { perPiece } = reconcilePieceInfo(reconciling);
-    const qty = +(enteredQty * perPiece).toFixed(6);
+    // Converted from whichever unit is showing beside the box - never from a
+    // unit the operator was not looking at.
+    const opts = reconcileUnitOptions(reconciling);
+    const chosen = opts.find(o => o.label === reconcileUnit) || opts[0];
+    const qty = toBaseQty(enteredQty, chosen);
     setBusy(true);
     try {
       const res = await apiFetch(`/api/production-orders/${reconciling._id}/reconcile`, { method: 'POST', body: JSON.stringify({ actualOutputQty: qty }) });
@@ -568,7 +567,7 @@ export default function ProductionTab({ ctx }) {
                 <div>
                   <p className="font-bold text-fg text-sm">
                     {o.outputName} <span className="text-fg/70 font-normal">
-                      × {(() => { const { perPiece, label } = reconcilePieceInfo(o); return `${+(o.outputQty / perPiece).toFixed(4)} ${label}`; })()}
+                      × {(() => { const u = plannedUnitChoice(o); return `${inUnit(o.outputQty, u)} ${u.label}`; })()}
                     </span>
                   </p>
                   <p className="text-[10px] text-fg/70 mt-0.5">
@@ -594,13 +593,13 @@ export default function ProductionTab({ ctx }) {
                   this step is that yield isn't guaranteed, so the gap (if
                   any) should be visible, not just the final number. */}
               {o.actualOutputQty != null && (() => {
-                const { perPiece, label } = reconcilePieceInfo(o);
+                const choice = plannedUnitChoice(o);
                 return (
                 <p className="text-xs mb-1 flex items-center gap-2 flex-wrap">
                   <span>
-                    <span className="text-fg/70">Planned {+(o.outputQty / perPiece).toFixed(4)} {label} → Actual</span>{' '}
+                    <span className="text-fg/70">Planned {inUnit(o.outputQty, choice)} {choice.label} → Actual</span>{' '}
                     <span className={o.fulfillmentStatus === 'Partial' ? 'text-warning font-bold' : 'text-success font-bold'}>
-                      {+(o.actualOutputQty / perPiece).toFixed(4)} {label}
+                      {inUnit(o.actualOutputQty, choice)} {choice.label}
                     </span>
                   </span>
                   {/* Moisture/variance - the gap between planned and actual,
@@ -649,7 +648,7 @@ export default function ProductionTab({ ctx }) {
 
               {o.status === 'Approved' && o.fulfillmentStatus === 'Processing' && canApprove && (
                 <div className="flex items-center mt-3 pt-3 border-t border-white/5">
-                  <button onClick={() => { setReconciling(o); const { perPiece } = reconcilePieceInfo(o); setActualQty(String(+(o.outputQty / perPiece).toFixed(4))); }} disabled={busy}
+                  <button onClick={() => { setReconciling(o); const u = plannedUnitChoice(o); setReconcileUnit(u.label); setActualQty(String(inUnit(o.outputQty, u))); }} disabled={busy}
                     className="flex items-center gap-1.5 bg-accent hover:bg-accent/90 disabled:opacity-50 text-on-brand font-bold text-xs px-3 py-1.5 rounded-lg transition">
                     <ClipboardCheck size={13} /> Reconcile - confirm actual output
                   </button>
@@ -679,16 +678,30 @@ export default function ProductionTab({ ctx }) {
       {/* Reconcile modal - the manual "actual output qty" input, like typing
           a Purchase Order's received quantity. */}
       {reconciling && (() => {
-        const { perPiece, label } = reconcilePieceInfo(reconciling);
-        const plannedPieces = +(reconciling.outputQty / perPiece).toFixed(4);
+        const opts = reconcileUnitOptions(reconciling);
+        const chosen = opts.find(o => o.label === reconcileUnit) || opts[0];
+        const label = chosen?.label || '';
+        const plannedPieces = inUnit(reconciling.outputQty, chosen);
         return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setReconciling(null)}>
           <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm" onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-fg mb-1 flex items-center gap-1.5"><ClipboardCheck size={16} className="text-brand-text" /> Confirm actual output</h3>
             <p className="text-fg/75 text-xs mb-3">{reconciling.outputName} - planned {plannedPieces} {label}</p>
-            <label className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Actual quantity produced ({label})</label>
-            <input type="number" min="0" step="0.01" autoFocus value={actualQty} onChange={e => setActualQty(e.target.value)}
-              className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent mb-1" />
+            <label className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Actual quantity produced</label>
+            <div className="flex gap-2 mb-1">
+              <input type="number" min="0" step="0.01" autoFocus value={actualQty} onChange={e => setActualQty(e.target.value)}
+                className="flex-1 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+              {/* Switching unit re-states the number that is already there, so
+                  the figure on screen always means what the label says. */}
+              <select value={label} onChange={e => {
+                  const next = opts.find(o => o.label === e.target.value) || opts[0];
+                  setActualQty(restateQty(actualQty, chosen, next));
+                  setReconcileUnit(next.label);
+                }}
+                className="w-24 bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-sm text-fg outline-none focus:border-accent">
+                {opts.map(o => <option key={o.label} value={o.label}>{o.label}</option>)}
+              </select>
+            </div>
             <p className="text-[10px] text-fg/65 mb-3">
               Meets or beats {plannedPieces} {label} → marked <span className="text-success font-bold">Complete</span>.
               Falls short → marked <span className="text-warning font-bold">Partial</span>. This is what actually gets added to stock.

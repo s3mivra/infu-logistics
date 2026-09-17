@@ -1913,6 +1913,23 @@ export default function AdminDashboard() {
     ...cashAndBankAccounts, ...apAccounts,
   ], [cashAndBankAccounts, apAccounts]);
 
+  // Where a PO line for EQUIPMENT gets debited. Only the five asset classes are
+  // valid: each is paired with its own accumulated-depreciation account, which
+  // is what makes the asset depreciable. Fetched rather than derived, because
+  // the same list is what the server validates against - and a locally-built
+  // one offered the 140000 parent, which the server rightly refuses.
+  const [fixedAssetAccounts, setFixedAssetAccounts] = useState([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await apiFetch('/api/fixed-assets/classes');
+        if (!r.ok) return;   // the module may be off, or the role may not see it
+        const d = await r.json();
+        if (d.success) setFixedAssetAccounts((d.classes || []).map(c => ({ code: c.code, name: c.name })));
+      } catch { /* the picker simply stays empty */ }
+    })();
+  }, [apiFetch]);
+
   // ── Client accounts list (for per-product per-client discount picker) ──
   const [clientAccounts, setClientAccounts] = useState([]);
   const fetchClientAccounts = useCallback(async () => {
@@ -8520,6 +8537,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     billPayModal, setBillPayModal, billPayFrom, setBillPayFrom, billPayReference, setBillPayReference, submitBillPay,
     billPayAmount, setBillPayAmount, applySupplierCredit,
     expenseAccounts,
+    fixedAssetAccounts,
     // ── Order Notes ─────────────────────────────────────────────────────────
     posNotes, setPosNotes,
     deleteProduct, deleteCategory, deleteAddOn,

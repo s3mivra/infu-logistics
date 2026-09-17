@@ -66,6 +66,6 @@ describe('log mode: billing numbers still generate (make-same did not break log)
     const res = await request(app).post('/api/orders').set('Authorization', `Bearer ${staffTok}`)
       .send({ items: [{ productId: String(prod._id), name: 'FT Good', price: 100, quantity: 1 }], table: 'Pickup', paymentMethod: 'Cash' });
     expect(res.status).toBe(200);
-    expect(res.body.order.billingNumber).toMatch(/^\d{4}-\d{2}-\d{4}$/);
+    expect(res.body.order.billingNumber).toMatch(/^BIL-\d{4}-\d{2}-\d{4}$/);
   });
 });

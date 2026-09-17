@@ -64,7 +64,7 @@ export default function registerClients(ctx) {
         $or: [{ clientAccountId: { $in: ids } }, { clientId: { $in: ids } }],
       }, {
         clientAccountId: 1, clientId: 1, total: 1, status: 1, createdAt: 1,
-        paymentMethod: 1, isComplimentary: 1, arSettled: 1, isParked: 1, arPaidAmount: 1,
+        paymentMethod: 1, isComplimentary: 1, arSettled: 1, isParked: 1, arPaidAmount: 1, refundedAmount: 1,
       }).lean();
 
       // Open customer deposits per client - money they have paid us ahead of
@@ -106,7 +106,7 @@ export default function registerClients(ctx) {
         const aged = ageingBuckets(withArBalance(list.filter(o => o.status === 'Completed' && isReceivable(o))));
         const exposure = +list
           .filter(o => isLive(o) && isReceivable(o))
-          .reduce((s, o) => s + (Number(o.total) || 0), 0)
+          .reduce((s, o) => s + Math.max(0, (Number(o.total) || 0) - (Number(o.refundedAmount) || 0)), 0)
           .toFixed(2);
 
         const completed = list.filter(o => o.status === 'Completed');
@@ -178,6 +178,14 @@ export default function registerClients(ctx) {
       const start = req.query.start
         ? dayStart(req.query.start)
         : dayStart(new Date(end.getFullYear(), end.getMonth(), 1));
+      // A date the caller made up reaches Mongo as an Invalid Date and comes
+      // back as a 500; it is a bad request, and saying so is more use.
+      if ([start, end].some(d => Number.isNaN(d?.getTime?.()))) {
+        return res.status(400).json({ success: false, error: 'Those dates are not readable. Use YYYY-MM-DD.' });
+      }
+      if (end < start) {
+        return res.status(400).json({ success: false, error: 'The statement period ends before it starts.' });
+      }
 
       // Every order this client was ever charged for. A statement that only
       // fetched the window could not know what was carried into it.
@@ -189,7 +197,7 @@ export default function registerClients(ctx) {
         createdAt: { $lte: end },
       }, {
         orderNumber: 1, billingNumber: 1, orNumber: 1, status: 1, total: 1, createdAt: 1,
-        paymentMethod: 1, isComplimentary: 1, arSettled: 1, arPaidAmount: 1, arPayments: 1,
+        paymentMethod: 1, isComplimentary: 1, arSettled: 1, arPaidAmount: 1, refundedAmount: 1, arPayments: 1, refundHistory: 1,
         dueDate: 1,
       }).sort({ createdAt: 1 }).lean();
 
@@ -211,6 +219,21 @@ export default function registerClients(ctx) {
           charge: Math.round((Number(o.total) || 0) * 100) / 100,
           payment: 0,
         });
+        if ((Number(o.refundedAmount) || 0) > 0) {
+          // Dated at the refund itself where we know it, so the running balance
+          // drops on the day the credit was actually given.
+          const lastRefund = (o.refundHistory || [])
+            .filter(r => !String(r.reason || '').startsWith('EXCHANGE:'))
+            .sort((a, b) => new Date(b.at) - new Date(a.at))[0];
+          moves.push({
+            at: lastRefund?.at || o.createdAt,
+            kind: 'credit',
+            reference: lastRefund?.reference || '',
+            description: `Refund on ${o.billingNumber || o.orderNumber || 'account'}${lastRefund?.reason ? ` - ${lastRefund.reason}` : ''}`,
+            charge: 0,
+            payment: Math.round((Number(o.refundedAmount) || 0) * 100) / 100,
+          });
+        }
         for (const pmt of (o.arPayments || [])) {
           moves.push({
             at: pmt.collectionDate || pmt.createdAt || o.createdAt,
@@ -251,7 +274,7 @@ export default function registerClients(ctx) {
       // see which of it is overdue rather than just the total.
       const openCharges = orders
         .filter(o => isCharge(o) && o.status === 'Completed' && o.arSettled !== true)
-        .map(o => ({ createdAt: o.createdAt, total: r2((Number(o.total) || 0) - (Number(o.arPaidAmount) || 0)) }))
+        .map(o => ({ createdAt: o.createdAt, total: r2((Number(o.total) || 0) - (Number(o.refundedAmount) || 0) - (Number(o.arPaidAmount) || 0)) }))
         .filter(o => o.total > 0.005);
       const aged = ageingBuckets(openCharges, end);
 
@@ -301,7 +324,7 @@ export default function registerClients(ctx) {
         ...orderMatchesClient(req.params.id),
       }, {
         orderNumber: 1, billingNumber: 1, status: 1, total: 1, paymentMethod: 1,
-        createdAt: 1, arSettled: 1, items: 1, arPaidAmount: 1,
+        createdAt: 1, arSettled: 1, items: 1, arPaidAmount: 1, refundedAmount: 1,
       }).sort({ createdAt: -1 }).limit(limit).lean();
 
       res.json({

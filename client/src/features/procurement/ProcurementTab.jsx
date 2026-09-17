@@ -33,7 +33,8 @@ const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase()
 
 export default function ProcurementTab({ ctx }) {
   const { apiFetch, peso, inventory = [], isSuperAdmin, packInfo, effectiveDisplay, systemSettings = {}, loadPdfLibs,
-    stockLocations = [], stockCategories = [], procurementCreditAccounts = [], activeAdmin } = ctx;
+    stockLocations = [], stockCategories = [], procurementCreditAccounts = [], activeAdmin,
+    expenseAccounts = [], fixedAssetAccounts = [] } = ctx;
   const money = peso || ((n) => `₱${(Number(n) || 0).toFixed(2)}`);
 
   // Print a PO on the SAME A4 document template the Orders billing statement /
@@ -275,7 +276,17 @@ export default function ProcurementTab({ ctx }) {
   };
 
   // ── Draft form state ────────────────────────────────────────────────────────
-  const blankLine = () => ({ invId: null, itemName: '', itemCode: '', unit: '', packSize: '', orderedQty: '', unitCost: '', expiryDate: '', productionDate: '', expiryWarnDays: '', lowStockThreshold: '', stockLocation: '', stockCategory: '', creditAccount: '' });
+  const blankLine = () => ({ purchaseType: 'inventory', assetAccountCode: '', expenseAccountCode: '', usefulLifeMonths: '', invId: null, itemName: '', itemCode: '', unit: '', packSize: '', orderedQty: '', unitCost: '', expiryDate: '', productionDate: '', expiryWarnDays: '', lowStockThreshold: '', stockLocation: '', stockCategory: '', creditAccount: '' });
+
+  // What a PO line actually buys. Only stock touches inventory: equipment is an
+  // asset to depreciate and a service is an expense, and both owe a NON-trade
+  // payable. Buying a mixer as "stock" put the machine somewhere a recipe could
+  // consume it and booked the wrong kind of debt.
+  const LINE_KINDS = [
+    { v: 'inventory', label: 'Stock', hint: 'Goods to sell or consume.' },
+    { v: 'fixedAsset', label: 'Equipment', hint: 'An asset to depreciate.' },
+    { v: 'expense', label: 'Service', hint: 'Charged straight to an expense.' },
+  ];
   // Same forced g/mL/pcs display units the inventory uses (see lib/units).
   const UNIT_OPTIONS = ['', 'pcs', 'kg', 'L', 'g', 'ml'];
   const [showForm, setShowForm] = useState(false);
@@ -1319,12 +1330,62 @@ export default function ProcurementTab({ ctx }) {
                 <div className="space-y-2">
                   {form.lines.map((l, idx) => (
                     <div key={idx} className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-2">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {LINE_KINDS.map(k => (
+                          <button key={k.v} type="button" title={k.hint}
+                            onClick={() => updateLine(idx, { purchaseType: k.v, invId: k.v === 'inventory' ? l.invId : null })}
+                            className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg border transition ${
+                              (l.purchaseType || 'inventory') === k.v
+                                ? 'bg-brand text-on-brand border-brand'
+                                : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'
+                            }`}>
+                            {k.label}
+                          </button>
+                        ))}
+                        <span className="text-[10px] text-fg/50 ml-1">
+                          {LINE_KINDS.find(k => k.v === (l.purchaseType || 'inventory'))?.hint}
+                        </span>
+                      </div>
+
+                      {l.purchaseType === 'fixedAsset' && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Asset account</p>
+                            <select value={l.assetAccountCode || ''} onChange={e => updateLine(idx, { assetAccountCode: e.target.value })}
+                              className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60">
+                              <option value="">- Pick the asset class -</option>
+                              {(fixedAssetAccounts || []).map(a => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Useful life (months)</p>
+                            <input type="number" min="1" value={l.usefulLifeMonths || ''} placeholder="60"
+                              onChange={e => updateLine(idx, { usefulLifeMonths: e.target.value })}
+                              title="How long it will be depreciated over. The asset register is created when the delivery is received."
+                              className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg placeholder-white/25 focus:outline-none focus:border-brand/60" />
+                          </div>
+                        </div>
+                      )}
+
+                      {l.purchaseType === 'expense' && (
+                        <div>
+                          <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Charge to</p>
+                          <select value={l.expenseAccountCode || ''} onChange={e => updateLine(idx, { expenseAccountCode: e.target.value })}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60">
+                            <option value="">- Pick an expense account -</option>
+                            {(expenseAccounts || []).filter(a => String(a.code).startsWith('6')).map(a => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+                          </select>
+                        </div>
+                      )}
+
                       <div className="flex items-center gap-2">
-                        <select value={l.invId || ''} onChange={e => pickInventory(idx, e.target.value)}
-                          className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-brand/60">
-                          <option value="">Pick from inventory (or type below)</option>
-                          {inventory.map(i => <option key={i._id} value={i._id}>{i.itemName}{i.itemCode ? ` (${i.itemCode})` : ''}</option>)}
-                        </select>
+                        {(l.purchaseType || 'inventory') === 'inventory' ? (
+                          <select value={l.invId || ''} onChange={e => pickInventory(idx, e.target.value)}
+                            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-brand/60">
+                            <option value="">Pick from inventory (or type below)</option>
+                            {inventory.map(i => <option key={i._id} value={i._id}>{i.itemName}{i.itemCode ? ` (${i.itemCode})` : ''}</option>)}
+                          </select>
+                        ) : <span className="flex-1" />}
                         {form.lines.length > 1 && (
                           <button onClick={() => removeLine(idx)} className="p-1.5 rounded-lg text-fg/65 hover:bg-red-500/15 hover:text-red-300 transition"><Trash2 size={15} /></button>
                         )}

@@ -81,7 +81,7 @@ export default function registerProduction(ctx) {
   // saw on screen, not a raw g/ml number.
   app.post('/api/production-orders', verifyToken, requireStaff, async (req, res) => {
     try {
-      const { materials, outputType, outputInvId, outputName, outputQty, outputUnit, outputPackSize,
+      const { materials, outputType, outputInvId, outputName, outputQty, outputUnit, outputEnteredUnit, outputPackSize,
         outputStockCategory, outputStockLocation, outputExpiryDate, productionDate, notes } = req.body || {};
 
       if (!Array.isArray(materials) || materials.length === 0) {
@@ -149,6 +149,9 @@ export default function registerProduction(ctx) {
         outputName: cleanOutputName,
         outputQty: outQty,
         outputUnit: cleanOutputUnit,
+        // Remembered so reconciling asks for the yield in the same unit the
+        // batch was planned in, instead of choosing its own.
+        outputEnteredUnit: String(outputEnteredUnit || '').trim().slice(0, 20),
         outputPackSize: cleanOutputPackSize,
         outputStockCategory: String(outputStockCategory || '').trim(),
         outputStockLocation: String(outputStockLocation || '').trim(),

@@ -148,7 +148,7 @@ export default function ClientsTab() {
         { label: 'Reference', key: 'ref' },
         { label: 'Particulars', key: 'particulars' },
         { label: 'Charges', key: 'charge', align: 'right', money: true },
-        { label: 'Payments', key: 'payment', align: 'right', money: true },
+        { label: 'Payments / credits', key: 'payment', align: 'right', money: true },
         { label: 'Balance', key: 'balance', align: 'right', money: true },
       ],
       items: [
@@ -388,7 +388,14 @@ export default function ClientsTab() {
                                   )}
                                 </td>
                                 <td className="py-1.5 text-right tabular-nums text-fg/80">{o.itemCount}</td>
-                                <td className="py-1.5 text-right tabular-nums font-bold text-fg">{peso(o.total)}</td>
+                                <td className="py-1.5 text-right tabular-nums font-bold text-fg">
+                                  {peso(o.total)}
+                                  {/* Otherwise this row and the statement disagree, and
+                                      nobody can tell which one to believe. */}
+                                  {o.refundedAmount > 0 && (
+                                    <span className="block text-[9px] font-bold text-fg/55">less {peso(o.refundedAmount)} refunded</span>
+                                  )}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -434,7 +441,7 @@ export default function ClientsTab() {
                         <th className="text-left py-1.5">Reference</th>
                         <th className="text-left py-1.5">Particulars</th>
                         <th className="text-right py-1.5">Charges</th>
-                        <th className="text-right py-1.5">Payments</th>
+                        <th className="text-right py-1.5">Payments / credits</th>
                         <th className="text-right py-1.5">Balance</th>
                       </tr>
                     </thead>

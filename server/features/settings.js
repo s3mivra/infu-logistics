@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
+import { loadSeriesPrefixes, invalidateSeriesCache, normalizePrefix, describeSeries, isSeriesKey, seriesForKey } from '../lib/docSeries.js';
 import { isValidBranchCode } from '../lib/branchCode.js';
 import { isValidTimeZone, setBusinessTimeZone, businessTimeZone } from '../lib/businessTime.js';
 import { moduleStates, MODULE_KEYS, truthy } from '../lib/optionalModules.js';
@@ -256,6 +257,15 @@ app.get('/api/settings/modules', verifyToken, requireStaff, async (req, res) => 
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
+// What every document a person actually holds is called. The screen needs the
+// labels, the notes and a worked sample per series - building that list in the
+// client would mean the two ends disagreeing the moment one changes.
+app.get('/api/settings/document-series', verifyToken, requireStaff, async (req, res) => {
+  try {
+    res.json({ success: true, series: describeSeries(await loadSeriesPrefixes(Settings)) });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 app.get('/api/settings', verifyToken, requireStaff, async (req, res) => {
   try {
     const rows = await Settings.find().lean();
@@ -415,6 +425,20 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
       try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: 'businessTimeZone', after: { timeZone: zone } }); } catch { /* audit is best-effort */ }
       emitToAll('settingsUpdated', { key: 'businessTimeZone', value: zone });
       return res.json({ success: true, setting: saved, timeZone: businessTimeZone() });
+    }
+
+    // A document prefix is a label, not an identity: the counter behind each
+    // series is keyed on its own canonical code, so renaming one here changes
+    // what future documents are CALLED without restarting the sequence or
+    // colliding with the numbers already issued.
+    if (isSeriesKey(req.params.key)) {
+      const series = seriesForKey(req.params.key);
+      const prefix = normalizePrefix(value, series.defaultPrefix);
+      const saved = await Settings.findOneAndUpdate({ key: req.params.key }, { value: prefix }, { upsert: true, returnDocument: 'after' });
+      invalidateSeriesCache();
+      try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: req.params.key, after: { prefix } }); } catch { /* audit is best-effort */ }
+      emitToAll('settingsUpdated', { key: req.params.key, value: prefix });
+      return res.json({ success: true, setting: saved, series: describeSeries(await loadSeriesPrefixes(Settings)) });
     }
 
     // The receipt series is a registered, gapless sequence. Where it STARTS can

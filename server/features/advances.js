@@ -12,7 +12,7 @@
 // are carried onto the journal entry description so the ledger says WHY.
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
-import { arBalance } from '../lib/credit.js';
+import { arBalance, isFullySettled } from '../lib/credit.js';
 
 export default function registerAdvances(ctx) {
   const {
@@ -318,7 +318,7 @@ export default function registerAdvances(ctx) {
           recordedBy: req.user?.name || '', journalRef: reference,
         });
         order.arPaidAmount = money((order.arPaidAmount || 0) + amt);
-        order.arSettled = order.arPaidAmount >= (order.total || 0) - 0.01;
+        order.arSettled = isFullySettled(order);
         order.arSettledAt = txnDate;
         order.arSettledAmount = order.arPaidAmount;
         order.arSettledMethod = 'Customer Deposit';

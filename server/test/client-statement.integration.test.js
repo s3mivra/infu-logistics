@@ -134,3 +134,16 @@ describe('a statement of account', () => {
     expect(res.body.client.registeredName).toBe('Northwind Trading Corp.');
   });
 });
+
+describe('a statement asked for with nonsense dates', () => {
+  it('says the request is bad rather than failing with a server error', async () => {
+    const res = await auth('get', `/api/clients/${client._id}/statement?start=not-a-date&end=also-not`);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/not readable/i);
+  });
+
+  it('refuses a period that ends before it starts', async () => {
+    const res = await statement(iso(new Date()), iso(daysAgo(30)));
+    expect(res.status).toBe(400);
+  });
+});
