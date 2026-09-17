@@ -181,3 +181,35 @@ describe('turning the sheet into something importable', () => {
     expect(p.category).toBe('Specialty');
   });
 });
+
+// A size recipe replaces the base one at sale time rather than adding to it,
+// so an empty base is not harmless: a sale that names no size falls back to it,
+// deducts nothing and books no cost. The sheet's first row for a drink is its
+// default, so that is what the base has to be.
+describe('the base recipe', () => {
+  const sheet = parseMenuSheet([
+    HEADER,
+    CATEGORY('Specialty'),
+    row('Long Black', '8oz Hot', [['G10002/Water', '20g/35ml']], 100),
+    row('', '12oz Iced', [['G10002/Water', '20g/35ml'], ['Ice', '100g']], 120),
+  ]);
+
+  it('is the first size, not empty', () => {
+    const [p] = toImportRows(sheet, new Map());
+    expect(p.ingredients).toHaveLength(2);
+    expect(p.ingredients.map(i => i.name)).toEqual(['G10002', 'Water']);
+  });
+
+  it('is the FIRST size, not a merge of all of them', () => {
+    const [p] = toImportRows(sheet, new Map());
+    // Ice belongs to the iced size alone; putting it in the base would charge
+    // every sale for ice it never used.
+    expect(p.ingredients.some(i => i.name === 'Ice')).toBe(false);
+  });
+
+  it('leaves each size carrying its own recipe as well', () => {
+    const [p] = toImportRows(sheet, new Map());
+    expect(p.sizes[0].ingredients).toHaveLength(2);
+    expect(p.sizes[1].ingredients.some(i => i.name === 'Ice')).toBe(true);
+  });
+});

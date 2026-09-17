@@ -136,3 +136,27 @@ describe('a sheet the reader cannot make sense of', () => {
     expect(res.body.products[0].sizes[0].ingredients).toHaveLength(0);
   });
 });
+
+// The editor shows a product's base materials separately from each size. It was
+// coming through empty, which is not only odd to look at: a sale that names no
+// size falls back to the base recipe, and an empty one deducts no stock and
+// books no cost.
+describe('the base recipe after import', () => {
+  it('carries the first size, so a sale with no size still costs something', async () => {
+    const { body } = await auth('post', '/api/products/menu-sheet/parse').send({ rows: SHEET });
+    const rows = body.products.map(p => ({
+      name: p.name, srp: p.srp, category: p.category, ingredients: p.ingredients,
+      sizes: p.sizes.map(sz => ({ name: sz.name, price: sz.price, ingredients: sz.ingredients })),
+    }));
+    await auth('post', '/api/products/import-menu').send({ rows });
+
+    const p = await M('Product').findOne({ name: 'Long Black' }).lean();
+    expect(p.baseRecipe.length).toBeGreaterThan(0);
+
+    const beans = p.baseRecipe.find(r => r.name === 'Espresso Beans');
+    expect(beans.qty).toBe(20);
+    // The 8oz hot row is first, so the base is the hot recipe - no ice.
+    expect(p.baseRecipe.some(r => r.name === 'Ice')).toBe(false);
+    expect(p.sizes[1].recipe.some(r => r.name === 'Ice')).toBe(true);
+  });
+});

@@ -199,8 +199,13 @@ export function toImportRows(products, codeIndex = new Map()) {
       name: p.name,
       category: p.category,
       srp: sizes[0]?.price ?? 0,
-      // The sheet never carries a product-level recipe: every row is a size.
-      ingredients: [],
+      // The first size IS the base recipe. A size's recipe replaces the base
+      // one at sale time rather than adding to it, so leaving the base empty is
+      // safe only while every sale names a size. It does not: a sale with no
+      // size falls back to the base, and an empty base deducts no stock and
+      // books no cost at all. The first row of a drink is the one the sheet
+      // treats as its default, so that is what the base becomes.
+      ingredients: sizes[0]?.ingredients ?? [],
       sizes,
       problems: p.problems,
       nonStockNames: [...unresolved].sort(),
