@@ -3,6 +3,7 @@ import { Factory, Plus, Trash2, Check, X, Package, Clock, ClipboardCheck } from 
 import * as ui from '../../shared/ui';
 import { reconcileUnitOptions as reconcileUnitsFor, plannedUnitChoice as plannedUnitFor, toBaseQty, inUnit, restateQty } from '../../shared/productionUnits';
 
+import { todayStr } from '../../shared/businessDay.js';
 // Approval decision - Pending -> Approved/Rejected.
 const STATUS_CLS = {
   Pending:  'bg-yellow-500/15 text-warning',
@@ -107,7 +108,7 @@ export default function ProductionTab({ ctx }) {
   const [outputStockCategory, setOutputStockCategory] = useState('');
   const [outputStockLocation, setOutputStockLocation] = useState('');
   const [outputExpiryDate, setOutputExpiryDate] = useState('');
-  const [productionDate, setProductionDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [productionDate, setProductionDate] = useState(() => todayStr());
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -211,7 +212,7 @@ export default function ProductionTab({ ctx }) {
     setMaterials([]); setMatPick(''); setMatQty(''); setMatUnit(''); setOutputQtyUnit('');
     setOutputType('existing'); setOutputInvId(''); setOutputName(''); setOutputUnit('pcs'); setOutputPackSize(''); setOutputQty('');
     setOutputStockCategory(''); setOutputStockLocation(''); setOutputExpiryDate('');
-    setProductionDate(new Date().toISOString().slice(0, 10)); setNotes('');
+    setProductionDate(todayStr()); setNotes('');
     setRecipeProductId(''); setRecipeBatchQty('');
   };
 

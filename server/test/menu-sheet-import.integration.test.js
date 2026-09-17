@@ -91,6 +91,27 @@ describe('importing it', () => {
     expect(p.sizes.map(s => s.price)).toEqual([120]);
   });
 
+  // A recipe line is a pair: `qty` in base units, and `packBase` saying how
+  // many base units one of whatever `unit` names holds. Writing a base-unit
+  // quantity under the item's promoted DISPLAY unit broke that pair, and the
+  // editor - which is free to fill a missing packBase from the item's pack
+  // size - then showed 20g of beans as "0.02 kg" and one cup out of a sleeve
+  // of fifty as "0.02 pcs".
+  it('writes each line in the unit the stock is counted in', async () => {
+    await commit();
+    const p = await M('Product').findOne({ name: 'Long Black' }).lean();
+
+    const beans = p.baseRecipe.find(r => r.name === 'Espresso Beans');
+    expect(beans.qty).toBe(20);
+    expect(beans.unit).toBe('g');      // not 'kg', which is only how stock is shown
+    expect(beans.packBase).toBe(1);    // one base unit per unit: no pack to divide by
+
+    const cup = p.baseRecipe.find(r => r.name === '8oz Hot Cup');
+    expect(cup.qty).toBe(1);
+    expect(cup.unit).toBe('pcs');
+    expect(cup.packBase).toBe(1);
+  });
+
   it('links an ingredient by its stock code, in base units', async () => {
     await commit();
     const p = await M('Product').findOne({ name: 'Long Black' }).lean();

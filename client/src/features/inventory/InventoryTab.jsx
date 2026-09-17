@@ -255,27 +255,61 @@ export default function InventoryTab({ ctx }) {
                 </button>
               </div>
               
-              <div className="flex items-center gap-1.5">
-                {/* Direct stock import - posts straight to inventory (distinct from the
-                    Procurement "Import Excel", which creates a PO record instead). */}
-                <label className="text-[10px] bg-white border hover:bg-accent hover:border-white hover:text-on-brand text-black px-3 py-1.5 rounded font-bold uppercase tracking-wider transition cursor-pointer min-h-[32px] flex items-center gap-1">
-                  <Download size={11} className="rotate-180" /> Import
-                  <input type="file" accept=".xlsx,.xls,.csv" onChange={e => { parseImportFile(e.target.files?.[0]); e.target.value = ''; }} className="hidden" />
-                </label>
-                <button onClick={downloadImportTemplate} title="Download CSV template" className="text-[10px] bg-accent border border-white hover:bg-brand-dark text-on-brand px-2.5 py-1.5 rounded font-bold uppercase tracking-wider transition min-h-[32px]">
-                  Template
+              {/* Five toolbar buttons beside five tabs ran off the side of the
+                  screen, and the ones that fell off the edge could not be
+                  reached at all. They are occasional jobs - import a file,
+                  print a count sheet - so they belong behind the same three
+                  dots the rows already use, leaving the header to the tabs. */}
+              <div className="relative">
+                <button
+                  onClick={e => {
+                    e.stopPropagation();
+                    if (openActionMenu === 'inv-tools') { setOpenActionMenu(null); return; }
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setMenuPosition({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                    setOpenActionMenu('inv-tools');
+                  }}
+                  title="Import, template and exports"
+                  className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-on-brand transition min-h-[36px] min-w-[36px] flex items-center justify-center"
+                >
+                  <MoreVertical size={16} />
                 </button>
-                {/* PDF is for printing and signing; the spreadsheet is for
-                    working with. Both, because they are not the same job. */}
-                <button onClick={() => downloadDataset?.('inventory')} className="text-[10px] bg-accent border border-white text-on-brand px-3 py-1.5 rounded hover:bg-brand-dark transition font-bold uppercase tracking-wider min-h-[32px]">
-                  Export Excel
-                </button>
-                <button onClick={exportInventoryToPDF} className="text-[10px] bg-accent border border-white text-on-brand px-3 py-1.5 rounded hover:bg-brand-dark transition font-bold uppercase tracking-wider min-h-[32px]">
-                  Export PDF
-                </button>
-                <button onClick={exportProductionHistoryPDF} title="Every batch dated by production instead of expiry (beans, etc.), across the whole catalogue" className="text-[10px] bg-accent border border-white text-on-brand px-3 py-1.5 rounded hover:bg-brand-dark transition font-bold uppercase tracking-wider min-h-[32px]">
-                  Production History
-                </button>
+                {openActionMenu === 'inv-tools' && (
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    style={{ top: menuPosition.top, right: menuPosition.right }}
+                    className="fixed z-[9999] bg-sidebar-bg border border-white/15 rounded-xl shadow-2xl min-w-[190px] py-1 animate-scale-in origin-top-right"
+                  >
+                    {/* Direct stock import - posts straight to inventory (distinct from the
+                        Procurement "Import Excel", which creates a PO record instead). */}
+                    <label className="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition cursor-pointer">
+                      <Download size={12} className="rotate-180" /> Import stock file
+                      <input type="file" accept=".xlsx,.xls,.csv"
+                        onChange={e => { parseImportFile(e.target.files?.[0]); e.target.value = ''; setOpenActionMenu(null); }}
+                        className="hidden" />
+                    </label>
+                    <button onClick={() => { downloadImportTemplate(); setOpenActionMenu(null); }}
+                      className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition">
+                      Import template
+                    </button>
+                    <div className="border-t border-white/8 mx-2 my-1" />
+                    {/* PDF is for printing and signing; the spreadsheet is for
+                        working with. Both, because they are not the same job. */}
+                    <button onClick={() => { downloadDataset?.('inventory'); setOpenActionMenu(null); }}
+                      className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition">
+                      Export Excel
+                    </button>
+                    <button onClick={() => { exportInventoryToPDF(); setOpenActionMenu(null); }}
+                      className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition">
+                      Export PDF
+                    </button>
+                    <button onClick={() => { exportProductionHistoryPDF(); setOpenActionMenu(null); }}
+                      title="Every batch dated by production instead of expiry (beans, etc.), across the whole catalogue"
+                      className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition">
+                      Production history
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 

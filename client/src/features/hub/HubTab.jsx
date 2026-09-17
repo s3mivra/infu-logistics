@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback, Fragment } from 'react';
 import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus, LayoutGrid, BarChart3, ExternalLink, Boxes, Share2, Landmark, AlertTriangle } from 'lucide-react';
 
+import { todayStr } from '../../shared/businessDay.js';
 const statusColor = {
   // Awaiting our own approval before the partner is even told about it.
   Requested: 'bg-orange-500/15 text-warning',
@@ -177,7 +178,7 @@ export default function HubTab({ ctx }) {
   const [fin, setFin] = useState(null);
   const [finLoading, setFinLoading] = useState(false);
   const [finStart, setFinStart] = useState(`${thisYear}-01-01`);
-  const [finEnd, setFinEnd] = useState(new Date().toISOString().slice(0, 10));
+  const [finEnd, setFinEnd] = useState(todayStr());
 
   // invite / redeem
   const [inviteCode, setInviteCode]   = useState('');

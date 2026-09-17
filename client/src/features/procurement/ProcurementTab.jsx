@@ -3,6 +3,7 @@ import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRigh
 import * as ui from '../../shared/ui';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 
+import { monthStartStr, todayStr } from '../../shared/businessDay.js';
 // ── ProcurementTab - Purchase Order workflow ──────────────────────────────────
 // Two-stage tracking. LEFT tab ("Purchase Orders") drafts & tracks planned POs
 // through Ordered → Processing. RIGHT tab ("Receiving") reconciles a delivery by
@@ -413,8 +414,6 @@ export default function ProcurementTab({ ctx }) {
   const [expandedSupplierId, setExpandedSupplierId] = useState(null);
 
   // ── Vendor statement (opening balance → invoices/payments → closing balance) ──
-  const todayStr = () => new Date().toISOString().slice(0, 10);
-  const monthStartStr = () => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); };
   const [statementSupplier, setStatementSupplier] = useState(null); // supplier object
   const [statement, setStatement] = useState(null);
   const [statementRange, setStatementRange] = useState({ start: monthStartStr(), end: todayStr() });
@@ -448,7 +447,7 @@ export default function ProcurementTab({ ctx }) {
       ]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 5: { halign: 'right' }, 6: { halign: 'right' } },
     });
-    doc.save(`Procurement-History-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Procurement-History-${todayStr()}.pdf`);
   };
 
   const exportStatementToPDF = async () => {

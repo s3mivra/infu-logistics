@@ -2,6 +2,7 @@ import { Fragment } from 'react';
 import { Check, X } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
 
+import { todayStr } from '../../../shared/businessDay.js';
 // Extracted from AdminDashboard; reads shared state via useDashboard().
 export default function ImportModal() {
   const { BIZ_NAME, importModal, importProgress, importRows, importSubmitting, loadPdfLibs, peso, setImportModal, submitImport } = useDashboard();
@@ -211,7 +212,7 @@ export default function ImportModal() {
                 styles: { fontSize: 8 },
                 columnStyles: { 0: { cellWidth: 22 }, 2: { halign: 'center' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
               });
-              doc.save(`import-preview-${new Date().toISOString().slice(0,10)}.pdf`);
+              doc.save(`import-preview-${todayStr()}.pdf`);
             }} className="px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-xs uppercase tracking-wider transition min-h-[44px]">
               Export PDF
             </button>

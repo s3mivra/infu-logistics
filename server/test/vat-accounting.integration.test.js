@@ -12,6 +12,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { businessDateStr } from '../lib/businessTime.js';
 
 let ctx, app, tok, product;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -168,7 +169,9 @@ describe('a VAT-registered business', () => {
       itemName: 'Cups', unit: 'pcs', displayUnit: 'pcs', unitMultiplier: 1,
       stockQty: 10, unitCost: 112, claimInputVat: true, creditAccount: '111000',
     });                                                      // ₱120 input VAT
-    const today = new Date().toISOString().slice(0, 10);
+    // The business's own date: a VAT range is cut in the business's zone, so
+    // `toISOString()` would ask for yesterday until 8am Manila time.
+    const today = businessDateStr();
     const res = await auth('get', `/api/reports/vat?start=${today}&end=${today}`);
     expect(res.status).toBe(200);
     expect(res.body.outputVat).toBeCloseTo(120, 2);

@@ -8,6 +8,7 @@ import * as ui from '../../shared/ui';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import { LEDGER_TAB_GROUPS, REPORT_TAB_GROUPS } from '../dashboard/navRegistry';
 
+import { todayStr } from '../../shared/businessDay.js';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 // ── LedgerTab - extracted from AdminDashboard.jsx ──
@@ -222,7 +223,7 @@ export default function LedgerTab({ ctx }) {
   // ── Backdate Sale - a mini-POS: pick products, quantities, discount, comp,
   //    then record it against a past date (optionally reducing today's stock). ──
   const [bd, setBd] = useState({
-    date: new Date().toISOString().slice(0, 10),
+    date: todayStr(),
     customerName: '', paymentMethod: 'Cash', notes: '',
     discountPercent: 0, affectInventory: false, isComplimentary: false,
   });
@@ -754,7 +755,7 @@ export default function LedgerTab({ ctx }) {
         foot: [[{ content: 'Total', colSpan: 5 }, pdfMoney(d.orders.reduce((s, o) => s + (o.total || 0), 0))]],
         styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 5: { halign: 'right' } },
       });
-      doc.save(`Backdate-Sale-History-${new Date().toISOString().slice(0, 10)}.pdf`);
+      doc.save(`Backdate-Sale-History-${todayStr()}.pdf`);
     } catch { ui.alert('Failed to export backdated sales.'); }
     finally { setBdExporting(false); }
   };
@@ -881,7 +882,7 @@ export default function LedgerTab({ ctx }) {
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], fontStyle: 'bold', textColor: 255 },
       columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' } },
     });
-    doc.save(`Trial-Balance-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Trial-Balance-${todayStr()}.pdf`);
   };
   const exportPercentageTaxPDF = async () => {
     if (!ptax || ptax.error) return ui.alert('Compute the Percentage Tax report first.');
@@ -1002,7 +1003,7 @@ export default function LedgerTab({ ctx }) {
       ]),
       styles: { fontSize: 7.5 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' } },
     });
-    doc.save(`Requisition-Slips-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Requisition-Slips-${todayStr()}.pdf`);
   };
 
   // Auto-load the active view's data on entry (nav landing or sub-tab click).
@@ -1782,7 +1783,7 @@ export default function LedgerTab({ ctx }) {
                       const d = await res.json();
                       if (!d.success) { ui.alert(d.error || 'The entry was not posted.'); return; }
                       setJeForm({
-                        date: new Date().toISOString().slice(0, 10),
+                        date: todayStr(),
                         description: '',
                         lines: [{accountCode:'', accountName:'', debit:'', credit:''}, {accountCode:'', accountName:'', debit:'', credit:''}],
                       });
@@ -5330,7 +5331,7 @@ export default function LedgerTab({ ctx }) {
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Sale Date *</label>
-                        <input type="date" value={bd.date} max={new Date().toISOString().slice(0,10)}
+                        <input type="date" value={bd.date} max={todayStr()}
                           onChange={e => setBd({ ...bd, date: e.target.value })}
                           className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
                       </div>

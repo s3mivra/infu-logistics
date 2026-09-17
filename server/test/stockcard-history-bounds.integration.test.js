@@ -10,6 +10,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { businessDateStr } from '../lib/businessTime.js';
 
 let ctx, app, tok;
 const auth = (p) => request(app).get(p).set('Authorization', `Bearer ${tok}`);
@@ -27,7 +28,10 @@ const StockCard = () => mongoose.model('StockCard');
 beforeEach(async () => { await StockCard().deleteMany({}); });
 
 const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d; };
-const isoDay = (d) => d.toISOString().slice(0, 10);
+// The business's own calendar date, which is what the endpoint's range is cut
+// in. `toISOString()` is UTC and names yesterday until 8am Manila time, so
+// every bounded query here came back empty for those eight hours.
+const isoDay = (d) => businessDateStr(d);
 
 async function seedCards(rows) {
   await StockCard().insertMany(rows.map((r, i) => ({

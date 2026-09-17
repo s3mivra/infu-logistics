@@ -602,6 +602,14 @@ app.get('/api/products/menu-backup', verifyToken, requireStaff, requirePermissio
     const exportRecipe = (recipe) => (recipe || []).map(r => ({
       itemCode: codeByInvId.get(String(r.invId)) || codeByName.get(String(r.name || '').toLowerCase().trim()) || '',
       name: r.name, qty: r.qty, unit: r.unit, cost: r.cost, invId: r.invId,
+      // A measured ingredient that is not stock (filtered water, ice) has no
+      // item to match on, so without this flag the restore had nothing to tell
+      // it apart from an ingredient whose stock had gone missing - and dropped
+      // it. A backup that quietly loses the water from every drink is not a
+      // backup. packBase travels for the same reason: it is half of the pair
+      // that says what the quantity means.
+      nonStock: r.nonStock === true,
+      ...(Number(r.packBase) > 0 ? { packBase: Number(r.packBase) } : {}),
     }));
 
     res.json({
@@ -691,6 +699,21 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, require
     // A cross-dimension match is refused outright so a "ml" line can never
     // land on a pcs-tracked item and silently corrupt the cost.
     const resolveLine = (line) => {
+      // Not stock, and never was. Either the backup says so, or the line was
+      // written with neither an id nor a code - and a line that came from
+      // stock always carries at least one of those, because the export reads
+      // them straight off the live item. Trying to match it against inventory
+      // and dropping it when that failed is what emptied the water out of
+      // every recipe on the way back in.
+      if (line?.nonStock === true || (!line?.invId && !line?.itemCode)) {
+        const qty = Number(line?.qty) || 0;
+        if (!(qty > 0)) return null;
+        return {
+          name: String(line?.name || '').trim(), qty, cost: 0,
+          unit: String(line?.unit || '').trim() || 'ml',
+          nonStock: true, packBase: 1,
+        };
+      }
       let item = byId.get(String(line.invId || ''));
       if (item) matchedBy.invId++;
       if (!item && line.itemCode) {
@@ -708,7 +731,11 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, require
         invId: String(item._id), name: item.itemName,
         qty: Number(line.qty) || 0,
         cost: item.unitCost || 0,          // always re-priced from CURRENT stock
-        unit: line.unit || effectiveDisplay(item).displayUnit,
+        // `qty` is in base units, so the label has to be the unit stock is
+        // counted in and one unit has to be one base unit. Falling back to the
+        // item's promoted display unit read 260ml of milk as "260 L".
+        unit: String(line.unit || '').trim() || item.unit || effectiveDisplay(item).displayUnit,
+        ...(Number(line.packBase) > 0 ? { packBase: Number(line.packBase) } : {}),
       };
     };
     const resolveRecipe = (recipe) => (recipe || []).map(resolveLine).filter(Boolean);
@@ -1141,14 +1168,21 @@ app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res
             if (!item) { unmatched.push(ingName); continue; }
             const baseQty = displayToBase(Number(ing.qty) || 0, ing.unit || item.unit);
             if (!(baseQty > 0)) continue;
-            // The unit has to be the item's DISPLAY unit. The editor divides
-            // the stored base quantity by the item's pack size and labels it
-            // with this unit, so importing a raw "ml" against a litre-tracked
-            // item made 150ml of milk read as "150 L".
-            const eff = effectiveDisplay(item);
+            // A recipe line is a pair: `qty` in base units, and `packBase`
+            // saying how many base units one of whatever `unit` names holds.
+            // The two have to agree.
+            //
+            // The sheet is written in stock units - 20g of beans, one cup - so
+            // the line is labelled in stock units and one unit is one base
+            // unit. Labelling it with the item's promoted DISPLAY unit instead
+            // read 20g as "20 kg", and left the editor free to pair that "kg"
+            // with the item's pack size, which turned one cup out of a sleeve
+            // of fifty into "0.02 pcs".
             out.push({
               invId: String(item._id), name: item.itemName, qty: baseQty,
-              cost: item.unitCost || 0, unit: eff.displayUnit,
+              cost: item.unitCost || 0,
+              unit: String(item.unit || '').trim() || effectiveDisplay(item).displayUnit,
+              packBase: 1,
             });
           }
           return out;

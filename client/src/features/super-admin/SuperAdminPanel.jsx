@@ -1,6 +1,7 @@
 ﻿import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as auth from '../auth/auth';
+import { todayStr } from '../../shared/businessDay.js';
 import {
   Users, Shield, Menu, X, LogOut, Plus, Edit2, Trash2,
   Search, Eye, EyeOff, AlertCircle, Tag, Loader2, Lock,
@@ -742,7 +743,7 @@ export default function SuperAdminPanel() {
     ws['!cols'] = headers.map(h => ({ wch: Math.max(10, Math.min(24, h.length + 4)) }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Price Tiers');
-    XLSX.writeFile(wb, `price-tiers-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `price-tiers-${todayStr()}.xlsx`);
   };
 
   const parseTierPricingExcel = async (file) => {

@@ -41,9 +41,12 @@ const resolveLine = (line, inv) => {
     ? ((line?.invId && inv.byId.get(String(line.invId))) || (line?.name && inv.byName.get(String(line.name).toUpperCase())) || null)
     : null;
   const mult = item && Number(item.unitMultiplier) > 0 ? Number(item.unitMultiplier) : 1;
-  const packBase = Number(line?.packBase) > 0
-    ? Number(line.packBase)
-    : (item && Number(item.packSize) > 0 ? Number(item.packSize) * mult : null);
+  // "Qty (packs)" answers how much of the PACK named in the column beside it,
+  // so it can only come from the item's own pack size. A line's own packBase
+  // describes the unit that LINE is written in, which is a different question:
+  // an imported line is written in stock units and carries packBase 1, and
+  // reading that as a pack size printed 20g of beans as "20 packs".
+  const packBase = item && Number(item.packSize) > 0 ? Number(item.packSize) * mult : null;
   return {
     link: item ? 'Linked' : 'Missing - cost from when it was added',
     item,

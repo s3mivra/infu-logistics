@@ -362,6 +362,32 @@ export default function ProductsTab({ ctx }) {
     prodSearch, setProdSearch, prodFilters, setProdFilters, filteredProducts, prodFiltersActive, resetProdFilters,
   } = ctx;
 
+  // One recipe line, made safe to show in the editor.
+  //
+  // A line is a pair: `qty` is always in base units, and `packBase` says how
+  // many base units one of whatever `unit` names holds. The editor shows
+  // qty / packBase and labels it `unit`, so the two must agree.
+  //
+  // A line added by hand is written in packs ("377g", and 377 base units), and
+  // one saved before packBase existed needs that number filled in. But an
+  // IMPORTED line is written in stock units - 20g of beans, one cup - and
+  // handing it the item's pack size read one cup out of a sleeve of fifty as
+  // "0.02 pcs" and 20g of beans as "0.02 kg". So the pack size is only ever
+  // borrowed when the line is actually labelled with that item's pack.
+  const readyLine = (mat) => {
+    if (mat.packBase > 0) return mat;
+    const invItem = inventory.find(inv => String(inv._id) === String(mat.invId));
+    const pack = invItem && packInfo ? packInfo(invItem) : null;
+    if (pack && String(mat.unit || '') === String(pack.label)) {
+      return { ...mat, packBase: pack.packBase || 1 };
+    }
+    // Otherwise it is one base unit per unit, labelled the way stock is
+    // counted. The label is corrected too: an older import wrote the promoted
+    // display unit ("kg", "L") over a base-unit quantity, which read as 20 kg
+    // of beans in a cup of coffee.
+    return { ...mat, packBase: 1, unit: (invItem && invItem.unit) || mat.unit };
+  };
+
   const setFilter = (key, value) => setProdFilters({ ...prodFilters, [key]: value });
   const selectCls = 'bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-brand';
 
@@ -901,32 +927,22 @@ export default function ProductsTab({ ctx }) {
                           clientBulkBreaks: (p.clientBulkBreaks || []).map(b => ({ clientId: String(b.clientId || ''), minQty: Number(b.minQty || 0), price: Number(b.price || 0) })),
                           baseSize: p.baseSize || '',
                           image: p.image || '',
-                          // Backfill packBase ONLY. This used to also set
-                          // `qty: pb`, which reset every ingredient to one full
-                          // pack every time the product was opened - and since
-                          // packBase was never persisted, that branch ran on
-                          // EVERY edit. Enter 0.15 of a carton, save, reopen,
-                          // and it was silently back to 1, taking the recipe
-                          // cost with it. qty is already in base units and is
-                          // the user's own number: never recompute it here.
-                          baseRecipe: (p.baseRecipe || []).map(mat => {
-                            if (mat.packBase > 0) return mat;
-                            const invItem = inventory.find(inv => inv._id === mat.invId);
-                            const pb = invItem && packInfo ? (packInfo(invItem).packBase || 1) : 1;
-                            return { ...mat, packBase: pb };
-                          }),
+                          // packBase and the label only - see readyLine.
+                          // This used to also set `qty: pb`, which reset every
+                          // ingredient to one full pack every time the product
+                          // was opened, and since packBase was never persisted
+                          // that branch ran on EVERY edit. Enter 0.15 of a
+                          // carton, save, reopen, and it was silently back to
+                          // 1, taking the recipe cost with it. qty is already
+                          // in base units and is the user's own number: never
+                          // recompute it here.
+                          baseRecipe: (p.baseRecipe || []).map(readyLine),
                           // Size recipes were never backfilled at all, so their
                           // quantities rendered in raw base units (150 instead
-                          // of 0.15 of a carton). Same treatment, same rule -
-                          // packBase only, qty untouched.
+                          // of 0.15 of a carton). Same treatment, same rule.
                           sizes: (p.sizes || []).map(sz => ({
                             ...sz,
-                            recipe: (sz.recipe || []).map(mat => {
-                              if (mat.packBase > 0) return mat;
-                              const invItem = inventory.find(inv => inv._id === mat.invId);
-                              const pb = invItem && packInfo ? (packInfo(invItem).packBase || 1) : 1;
-                              return { ...mat, packBase: pb };
-                            }),
+                            recipe: (sz.recipe || []).map(readyLine),
                           })),
                           addOns: p.addOns || [],
                           modifierGroups: (p.modifierGroups || []).map(mg => (mg && mg._id) ? mg._id : mg),

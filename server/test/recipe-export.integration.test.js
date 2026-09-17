@@ -40,6 +40,11 @@ beforeAll(async () => {
       sizes: [{ name: '16oz', price: 170, recipe: [{ invId: String(milk._id), name: 'ALASKA BARISTA MILK', qty: 200, cost: 0.08, unit: '1L', packBase: 1000 }] }],
       addOns: [{ name: 'Extra Shot', price: 30, recipe: [{ invId: String(beans._id), name: 'BEANS PROFILE(2)', qty: 9, cost: 0.386 }] }],
     },
+    // A menu that came in from the coded sheet. Its lines are written in the
+    // unit stock is counted in, so one unit is one base unit - which is a
+    // different thing from the size of the bag the beans are bought in.
+    { productCode: 'IMP-1', name: 'Imported Latte', category: 'Coffee', basePrice: 150, businessType: 'fb',
+      baseRecipe: [{ invId: String(beans._id), name: 'BEANS PROFILE(2)', qty: 18, cost: 0.386, unit: 'g', packBase: 1 }] },
     { productCode: 'ESP-0', name: 'Plain Espresso', category: 'Coffee', basePrice: 90, businessType: 'fb', baseRecipe: [] },
     { productCode: 'OLD-1', name: 'Retired Drink', category: 'Coffee', basePrice: 100, isArchived: true, businessType: 'fb',
       baseRecipe: [{ invId: String(milk._id), name: 'ALASKA BARISTA MILK', qty: 100, cost: 0.08 }] },
@@ -90,6 +95,17 @@ describe('recipes export', () => {
     expect(beans[col('Pack')]).toBe('1kg');
     expect(beans[col('Stock Link')]).toBe('Linked');
     expect(beans[col('Line Cost')]).toBe(6.95);
+  });
+
+  it('counts an imported line against the bag, not against its own unit', async () => {
+    const { rows, col } = await sheet();
+    const line = rows.find(r => r[col('Product')] === 'Imported Latte');
+    expect(line[col('Qty')]).toBe(18);
+    expect(line[col('Unit')]).toBe('g');
+    // The column beside it names a 1kg bag, so this has to be a fraction of
+    // one. Reading the line's own packBase of 1 as a pack size said "18 packs".
+    expect(line[col('Pack')]).toBe('1kg');
+    expect(line[col('Qty (packs)')]).toBe(0.018);
   });
 
   it('puts size lines under their size, at the size price', async () => {

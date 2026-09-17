@@ -44,6 +44,7 @@ import {
 } from '../../shared/importSheets';
 import { LEDGER_REPORT_SPEC, ledgerReportTable } from '../../shared/ledgerReport';
 import * as ui from '../../shared/ui';
+import { monthStartStr, setClientBusinessTz, todayStr, yearStartStr } from '../../shared/businessDay.js';
 // Tabs are lazy-loaded so only the active tab's code ships on first dashboard
 // paint; the rest load on demand when the operator opens them.
 const AnalyticsTab  = lazy(() => import('../analytics/AnalyticsTab'));
@@ -350,8 +351,8 @@ export default function AdminDashboard() {
   // figure that ties to a bank statement).
   const [collectionReport, setCollectionReport] = useState(null);
   const [collRange, setCollRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
-    end: new Date().toISOString().slice(0, 10),
+    start: monthStartStr(),
+    end: todayStr(),
     basis: 'collection',
   });
   // --- CHECK REGISTER ---
@@ -362,8 +363,8 @@ export default function AdminDashboard() {
   const [canApprovePricing, setCanApprovePricing] = useState(false);
   const [priceChangeLog, setPriceChangeLog] = useState(null);
   const [priceLogRange, setPriceLogRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
-    end: new Date().toISOString().slice(0, 10),
+    start: monthStartStr(),
+    end: todayStr(),
   });
   // Requests against the product whose history is open - shown alongside the
   // applied changes so "why is this still ₱250" is answered on the same screen.
@@ -378,8 +379,8 @@ export default function AdminDashboard() {
   });
   const [supplierPayments, setSupplierPayments] = useState(null);
   const [supPayRange, setSupPayRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
-    end: new Date().toISOString().slice(0, 10),
+    start: monthStartStr(),
+    end: todayStr(),
   });
   const [checkRegister, setCheckRegister] = useState(null);
   const [checkFilter, setCheckFilter] = useState('');
@@ -389,21 +390,21 @@ export default function AdminDashboard() {
   // --- SALES BY PAYMENT ---
   const [salesByPayment, setSalesByPayment] = useState(null);
   const [sbpRange, setSbpRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10),
-    end: new Date().toISOString().slice(0,10)
+    start: monthStartStr(),
+    end: todayStr()
   });
   // --- SUMMARY SALES (by channel: cash / e-wallet / bank / delivery) ---
   const [salesSummary, setSalesSummary] = useState(null);
   const [sssRange, setSssRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10),
-    end: new Date().toISOString().slice(0,10)
+    start: monthStartStr(),
+    end: todayStr()
   });
   const [sssGroup, setSssGroup] = useState('order'); // 'order' | 'day'
   // --- SALES LINE ITEMS (one row per order item - item code + item detail) ---
   const [salesLineItems, setSalesLineItems] = useState(null);
   const [sliRange, setSliRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10),
-    end: new Date().toISOString().slice(0,10)
+    start: monthStartStr(),
+    end: todayStr()
   });
   // --- REFUND ---
   const [refundModal, setRefundModal] = useState(null);
@@ -636,22 +637,22 @@ export default function AdminDashboard() {
   const [ledgerSubTab, setLedgerSubTab] = useState('journal'); // 'journal' | 'pnl' | 'balance' | 'ar' | 'expenses'
   const [pnlData, setPnlData] = useState(null);
   const [pnlRange, setPnlRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10),
-    end: new Date().toISOString().slice(0,10)
+    start: monthStartStr(),
+    end: todayStr()
   });
   // Monthly P&L (per-month columns + ratios; period & matrix views)
   const [pnlMonthly, setPnlMonthly] = useState(null);
   const [pnlmRange, setPnlmRange] = useState({
-    start: new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10),
-    end: new Date().toISOString().slice(0,10)
+    start: yearStartStr(),
+    end: todayStr()
   });
   const [pnlmView, setPnlmView] = useState('period'); // 'period' | 'matrix'
   const [bsData, setBsData] = useState(null);
   // Monthly Balance Sheet (per-month-end columns + ratios; period & matrix views)
   const [bsMonthly, setBsMonthly] = useState(null);
   const [bsmRange, setBsmRange] = useState({
-    start: new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10),
-    end: new Date().toISOString().slice(0,10)
+    start: yearStartStr(),
+    end: todayStr()
   });
   const [bsmView, setBsmView] = useState('period');
   const [arOutstanding, setArOutstanding] = useState({ orders: [], totalOutstanding: 0 });
@@ -661,7 +662,7 @@ export default function AdminDashboard() {
   // Recent expenses + per-category totals backing the Expenses page.
   const [expenseList, setExpenseList] = useState({ expenses: [], byCategory: [], total: 0 });
   const [expenseCategories, setExpenseCategories] = useState([]);
-  const [expenseForm, setExpenseForm] = useState({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', claimInputVat: false, date: new Date().toISOString().slice(0,10) });
+  const [expenseForm, setExpenseForm] = useState({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', claimInputVat: false, date: todayStr() });
   const [expenseSubmitting, setExpenseSubmitting] = useState(false);
   const [settleModal, setSettleModal] = useState(null); // { order }
   // `collectionDate` is when the money left the client's hands; `depositDate`
@@ -1607,7 +1608,7 @@ export default function AdminDashboard() {
     // was typed. The API has always accepted a date - and locks closed months
     // against it - but the form never offered a box, so every manual entry was
     // stamped "now" and a correction to last month landed in this one.
-    date: new Date().toISOString().slice(0, 10),
+    date: todayStr(),
     description: '',
     lines: [
       { accountCode: '', accountName: '', debit: '', credit: '' },
@@ -2774,7 +2775,7 @@ const updateStatus = async (orderId, newStatus) => {
       body: arOutstanding.orders.map(o => [o.orderNumber, o.customerName, o.paymentMethod, new Date(o.createdAt).toLocaleDateString(), o.arDueDate ? new Date(o.arDueDate).toLocaleDateString() : '-', pdfMoney(o.total)]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 5: { halign: 'right' } },
     });
-    doc.save(`AR-Outstanding-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`AR-Outstanding-${todayStr()}.pdf`);
   };
 
   const exportApPDF = async () => {
@@ -2801,7 +2802,7 @@ const updateStatus = async (orderId, newStatus) => {
       body: (apData.recent || []).map(e => [new Date(e.date).toLocaleDateString(), e.reference, e.supplierName || '-', e.description, e.credit ? pdfMoney(e.credit) : '', e.debit ? pdfMoney(e.debit) : '']),
       styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' } },
     });
-    doc.save(`AP-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`AP-${todayStr()}.pdf`);
   };
 
   const exportPaymentsPDF = async () => {
@@ -2833,7 +2834,7 @@ const updateStatus = async (orderId, newStatus) => {
       body: (profitByCategory.categories || profitByCategory || []).map(c => [c.category, pdfMoney(c.revenue), pdfMoney(c.estimatedCOGS), pdfMoney(c.grossProfit), `${c.margin.toFixed(1)}%`]),
       styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
     });
-    doc.save(`Profit-By-Category-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Profit-By-Category-${todayStr()}.pdf`);
   };
 
   const exportMenuEngineeringPDF = async () => {
@@ -2849,7 +2850,7 @@ const updateStatus = async (orderId, newStatus) => {
       body: (menuEngineering.items || menuEngineering || []).map(r => [r.name, r.qty, pdfMoney(r.revenue), `${r.margin.toFixed(1)}%`, r.quadrant]),
       styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
     });
-    doc.save(`Menu-Engineering-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Menu-Engineering-${todayStr()}.pdf`);
   };
 
   const exportVariancePDF = async () => {
@@ -2865,7 +2866,7 @@ const updateStatus = async (orderId, newStatus) => {
       body: (cashierVariance.cashiers || []).map(c => [c.cashierName, c.shifts, pdfMoney(c.avgVariance), c.shortCount, pdfMoney(c.worstShort)]),
       styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
     });
-    doc.save(`Cashier-Variance-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Cashier-Variance-${todayStr()}.pdf`);
   };
 
   const exportCommissionsPDF = async () => {
@@ -2883,7 +2884,7 @@ const updateStatus = async (orderId, newStatus) => {
       styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], fontStyle: 'bold', textColor: 255 },
       columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 4: { halign: 'right' } },
     });
-    doc.save(`Commissions-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Commissions-${todayStr()}.pdf`);
   };
 
   const exportBillsPDF = async () => {
@@ -2899,7 +2900,7 @@ const updateStatus = async (orderId, newStatus) => {
       body: bills.map(b => [b.billNumber, b.supplierName || '-', b.source, b.description || b.poNumber || '-', pdfMoney(b.amount), b.status]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { halign: 'right' } },
     });
-    doc.save(`Bills-${billsFilter}-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Bills-${billsFilter}-${todayStr()}.pdf`);
   };
 
   const exportAuditLogPDF = async () => {
@@ -2915,7 +2916,7 @@ const updateStatus = async (orderId, newStatus) => {
       body: auditLogEntries.map(e => [new Date(e.timestamp).toLocaleString(), e.userId, e.action, e.targetReference, e.details ? JSON.stringify(e.details).slice(0, 120) : '-']),
       styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { cellWidth: 120 } },
     });
-    doc.save(`Audit-Log-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Audit-Log-${todayStr()}.pdf`);
   };
 
   const exportExpensesPDF = async () => {
@@ -2931,7 +2932,7 @@ const updateStatus = async (orderId, newStatus) => {
       body: expenseList.expenses.map(e => [new Date(e.date).toLocaleDateString(), e.reference, e.categoryName, e.description, pdfMoney(e.amount)]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { halign: 'right' } },
     });
-    doc.save(`Expenses-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Expenses-${todayStr()}.pdf`);
   };
 
   // ── Newly-added report exports ─────────────────────────────────────────────
@@ -2953,7 +2954,7 @@ const updateStatus = async (orderId, newStatus) => {
       ]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
     });
-    doc.save(`Stock-Transfer-History-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Stock-Transfer-History-${todayStr()}.pdf`);
   };
 
   // Batches dated by production (goods with no real expiry - beans, etc, FPFO
@@ -2980,7 +2981,7 @@ const updateStatus = async (orderId, newStatus) => {
       body: rows.map(r => [new Date(r.date).toLocaleDateString(), r.item, `${r.qty} ${r.unit}`, r.received ? new Date(r.received).toLocaleDateString() : '-', r.ref]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
     });
-    doc.save(`Production-History-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Production-History-${todayStr()}.pdf`);
   };
 
   // Production Report - reconciled Production Orders (batchNumber, planned vs
@@ -3012,7 +3013,7 @@ const updateStatus = async (orderId, newStatus) => {
         ]),
         styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
       });
-      doc.save(`Production-Report-${new Date().toISOString().slice(0, 10)}.pdf`);
+      doc.save(`Production-Report-${todayStr()}.pdf`);
     } catch { ui.alert('Failed to load production orders for the report.'); }
   };
 
@@ -3037,7 +3038,7 @@ const updateStatus = async (orderId, newStatus) => {
       ]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' } },
     });
-    doc.save(`Menu-Items-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Menu-Items-${todayStr()}.pdf`);
   };
 
   const exportRevolvingFundsPDF = async () => {
@@ -3064,7 +3065,7 @@ const updateStatus = async (orderId, newStatus) => {
         styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' } },
       });
     }
-    doc.save(`Revolving-Funds-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Revolving-Funds-${todayStr()}.pdf`);
   };
 
   const exportPricingMasterlistPDF = async () => {
@@ -3084,7 +3085,7 @@ const updateStatus = async (orderId, newStatus) => {
       }),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
     });
-    doc.save(`Pricing-Masterlist-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Pricing-Masterlist-${todayStr()}.pdf`);
   };
 
   const exportPriceTiersPDF = async () => {
@@ -3103,7 +3104,7 @@ const updateStatus = async (orderId, newStatus) => {
       ]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
     });
-    doc.save(`Market-Segment-Pricing-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Market-Segment-Pricing-${todayStr()}.pdf`);
   };
 
   // ── PRICE TIER EXCEL EXPORT/IMPORT ──────────────────────────────────────────
@@ -3148,7 +3149,7 @@ const updateStatus = async (orderId, newStatus) => {
     ws['!cols'] = headers.map(h => ({ wch: Math.max(10, Math.min(24, h.length + 4)) }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Price Tiers');
-    XLSX.writeFile(wb, `price-tiers-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `price-tiers-${todayStr()}.xlsx`);
   };
 
   // Parsed-file preview, shown before anything is written - same shape/spirit
@@ -3297,7 +3298,7 @@ const updateStatus = async (orderId, newStatus) => {
       ]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } },
     });
-    doc.save(`Shift-History-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Shift-History-${todayStr()}.pdf`);
   };
 
   const exportTimesheetsPDF = async () => {
@@ -3318,7 +3319,7 @@ const updateStatus = async (orderId, newStatus) => {
       ]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 5: { halign: 'right' } },
     });
-    doc.save(`Timesheets-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Timesheets-${todayStr()}.pdf`);
   };
 
   const fetchBalanceSheet = async () => {
@@ -3614,7 +3615,7 @@ const updateStatus = async (orderId, newStatus) => {
       const data = await res.json();
       if (data.success) {
         setExpenseModal(false);
-        setExpenseForm({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', claimInputVat: false, date: new Date().toISOString().slice(0,10) });
+        setExpenseForm({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', claimInputVat: false, date: todayStr() });
         // Refresh the Expenses page list so the new entry appears immediately -
         // on a page (unlike the old popup) the result is visible right there.
         fetchExpenses();
@@ -3639,7 +3640,7 @@ const updateStatus = async (orderId, newStatus) => {
   const downloadExpenseImportTemplate = async () => {
     const XLSX = await import('xlsx');
     const headers = ['Ref No.', 'Date', 'Category', 'Total Amount', 'Payment', 'Paid To', 'Description'];
-    const sample = ['REC-00123', new Date().toISOString().slice(0, 10), (expenseCategories[0]?.label || 'Miscellaneous Expense'), 500, (activePaymentMethods[0]?.name || 'Cash on Hand'), 'Meralco', 'July electricity bill'];
+    const sample = ['REC-00123', todayStr(), (expenseCategories[0]?.label || 'Miscellaneous Expense'), 500, (activePaymentMethods[0]?.name || 'Cash on Hand'), 'Meralco', 'July electricity bill'];
     const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
     ws['!cols'] = headers.map(h => ({ wch: Math.max(12, Math.min(28, h.length + 6)) }));
     // A reference sheet listing the exact category/payment labels this
@@ -3654,7 +3655,7 @@ const updateStatus = async (orderId, newStatus) => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Expenses');
     XLSX.utils.book_append_sheet(wb, legend, 'Valid Values');
-    XLSX.writeFile(wb, `expense-import-template-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `expense-import-template-${todayStr()}.xlsx`);
   };
 
   // { rows: [{ rowNum, refNo, date, categoryCode, categoryLabel, amount, paymentMethod, paymentMatched, vendor, description, status: 'ok'|'warn'|'error', message }], readyCount, warnCount, errorCount, totalAmount }
@@ -5122,7 +5123,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         }
       }
 
-      const stamp = new Date().toISOString().slice(0, 10);
+      const stamp = todayStr();
       XLSX.writeFile(wb, `${(label || d.label || dataset).replace(/[^\w-]+/g, '-')}-${template ? 'template' : stamp}.xlsx`);
       if (d.truncated) {
         ui.alert(`Only the first ${d.limit} rows were exported - narrow the date range for the rest.`);
@@ -5141,7 +5142,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       const XLSX = await import('xlsx');
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([d.columns, ...d.rows]), 'Account Balances');
-      XLSX.writeFile(wb, `account-balances-${asOf || new Date().toISOString().slice(0, 10)}.xlsx`);
+      XLSX.writeFile(wb, `account-balances-${asOf || todayStr()}.xlsx`);
     } catch { ui.alert('Network error during export.'); }
     finally { setExportBusy(''); }
   };
@@ -5545,7 +5546,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           // Prepended, so Contents is the sheet the workbook opens on.
           wb.SheetNames.unshift('Contents');
           wb.Sheets.Contents = XLSX.utils.aoa_to_sheet(contents);
-          XLSX.writeFile(wb, `export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+          XLSX.writeFile(wb, `export-${todayStr()}.xlsx`);
         }
         tick();
       }
@@ -5575,7 +5576,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       const res = await apiFetch(`/api/products/menu-backup${includeArchived ? '?includeArchived=true' : ''}`);
       const d = await res.json();
       if (!d.success) { ui.alert(d.error || 'Could not build the backup.'); return; }
-      const stamp = new Date().toISOString().slice(0, 10);
+      const stamp = todayStr();
       const blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -5786,7 +5787,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       // Ask for the day this report covers, not the whole trading history.
       // The filter below used to run in the browser over every stock movement
       // ever recorded, which grows without bound.
-      const dayKey = new Date().toISOString().slice(0, 10);
+      const dayKey = todayStr();
       const res = await apiFetch(`/api/inventory/history?start=${dayKey}&end=${dayKey}`);
       const data = await res.json();
       const allHistory = data.success ? data.history : [];
@@ -5796,8 +5797,8 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
       await addLogoToPDF(doc);
       doc.setFontSize(18); doc.text(`${BIZ_NAME} - Daily Inventory & Movement Report`, 14, 15);
-      const todayStr = new Date().toLocaleDateString();
-      doc.setFontSize(10); doc.text(`Date: ${todayStr} | Generated: ${new Date().toLocaleString()}`, 14, 22);
+      const printedDate = new Date().toLocaleDateString();
+      doc.setFontSize(10); doc.text(`Date: ${printedDate} | Generated: ${new Date().toLocaleString()}`, 14, 22);
       
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
@@ -6293,9 +6294,14 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         // derive how many packs the recipe calls for; otherwise assume 1 pack.
         const currentPackBase = packInfo(invItem).packBase || 1;
         let qtyBase;
-        if (mat.packBase > 0) {
+        if (mat.packBase > 1) {
           const packCount = mat.qty / mat.packBase;  // e.g. 377/377 = 1 pack
           qtyBase = packCount * currentPackBase;      // re-express in current base
+        } else if (mat.packBase === 1) {
+          // Already in base units - an imported line is written in the unit
+          // stock is counted in, one unit to one base unit. Re-expressing it
+          // against the pack would multiply it by the pack size.
+          qtyBase = mat.qty;
         } else {
           qtyBase = currentPackBase;                  // legacy: treat as 1 pack per serving
         }
@@ -6555,7 +6561,11 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
   // ── Settings / QR toggle ────────────────────────────────────────────────────
   const fetchSettings = async () => {
-    try { const res = await apiFetch('/api/settings'); const d = await res.json(); if (d.success) setSystemSettings(p => ({ ...p, ...d.settings })); }
+    // The business's own clock, handed to the date helpers. Until this lands
+    // they fall back to the device's zone, which on the shop's own tablet is
+    // already the right one - unlike UTC, which is a whole day out for the
+    // first eight hours of every Manila day.
+    try { const res = await apiFetch('/api/settings'); const d = await res.json(); if (d.success) { setSystemSettings(p => ({ ...p, ...d.settings })); setClientBusinessTz(d.settings?.businessTimeZone); } }
     catch (err) { console.error('fetchSettings', err); }
   };
   const toggleQROrders = async () => {

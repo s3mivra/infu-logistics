@@ -6,6 +6,7 @@ import {
 import { useDashboard } from '../dashboard/DashboardContext';
 import * as ui from '../../shared/ui';
 
+import { todayStr } from '../../shared/businessDay.js';
 // Fixed assets - what the business owns, what it has worn off, what it is
 // still worth.
 //
@@ -17,7 +18,7 @@ import * as ui from '../../shared/ui';
 
 const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-');
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayStr();
 
 const STATUS_TONE = {
   Active: 'text-success bg-green-400/10',

@@ -328,6 +328,80 @@ describe('restoring over a live menu', () => {
   });
 });
 
+// An ingredient that is measured but is not stock - filtered water, ice - has
+// no item to match against. The backup had no way to tell one apart from an
+// ingredient whose stock had gone missing, so restore tried to match it,
+// failed, and dropped it. A menu backed up and restored came back with the
+// water gone from every drink, which understates COGS for good.
+describe('ingredients that are not stock', () => {
+  const withWater = async () => {
+    const milk = await Inventory().findOne({ itemName: 'Full Milk' });
+    return Product().create({
+      productCode: 'BEV-0002', name: 'Cold Brew', category: 'Coffee', basePrice: 140,
+      baseRecipe: [
+        { invId: String(milk._id), name: 'Full Milk', qty: 150, cost: 0.5, unit: 'ml', packBase: 1 },
+        { name: 'Filtered Water', qty: 200, cost: 0, unit: 'ml', nonStock: true, packBase: 1 },
+      ],
+      sizes: [{ sizeCode: 'L', name: 'Large', price: 170, recipe: [
+        { name: 'Ice', qty: 100, cost: 0, unit: 'g', nonStock: true, packBase: 1 },
+      ] }],
+    });
+  };
+
+  it('says so in the file, rather than leaving it to be guessed', async () => {
+    await makeInventory('Full Milk');
+    await withWater();
+
+    const { body } = await auth('get', '/api/products/menu-backup');
+    const p = body.products.find(x => x.name === 'Cold Brew');
+    const water = p.baseRecipe.find(l => l.name === 'Filtered Water');
+    expect(water.nonStock).toBe(true);
+    expect(water.qty).toBe(200);
+    expect(p.baseRecipe.find(l => l.name === 'Full Milk').nonStock).toBe(false);
+  });
+
+  it('comes back whole, and is not reported as a missing ingredient', async () => {
+    await makeInventory('Full Milk');
+    await withWater();
+    const backup = (await auth('get', '/api/products/menu-backup')).body;
+
+    await Product().deleteMany({});
+    const res = await auth('post', '/api/products/menu-backup/restore').send({ backup });
+    expect(res.body.success).toBe(true);
+    // Water was never stock, so it is not a stock item that went missing.
+    expect(res.body.unmatchedIngredients).toEqual([]);
+
+    const restored = await Product().findOne({ name: 'Cold Brew' }).lean();
+    expect(restored.baseRecipe).toHaveLength(2);
+    const water = restored.baseRecipe.find(l => l.name === 'Filtered Water');
+    expect(water.nonStock).toBe(true);
+    expect(water.qty).toBe(200);
+    expect(water.unit).toBe('ml');
+    expect(water.cost).toBe(0);          // never costed, never deducted
+    expect(water.invId).toBeFalsy();     // and never linked to stock
+    // The size's own non-stock line survives too.
+    expect(restored.sizes[0].recipe.find(l => l.name === 'Ice').nonStock).toBe(true);
+  });
+
+  it('survives a backup made before the flag existed', async () => {
+    await makeInventory('Full Milk');
+    await withWater();
+    const backup = (await auth('get', '/api/products/menu-backup')).body;
+    // An older file carries neither the flag nor a stock id or code - and a
+    // line that came from stock always carries one of those, which is what
+    // makes this safe to read as "not stock".
+    for (const p of backup.products) {
+      for (const l of (p.baseRecipe || [])) delete l.nonStock;
+    }
+
+    await Product().deleteMany({});
+    await auth('post', '/api/products/menu-backup/restore').send({ backup });
+
+    const restored = await Product().findOne({ name: 'Cold Brew' }).lean();
+    expect(restored.baseRecipe.find(l => l.name === 'Filtered Water')).toMatchObject({ qty: 200, nonStock: true });
+  });
+});
+
 describe('who may download the menu', () => {
   it('refuses a cashier, who has products.view but not products.manage', async () => {
     // The backup carries every recipe, quantity and unit cost. /api/products

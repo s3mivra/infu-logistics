@@ -6,6 +6,7 @@ import { useDashboard } from '../dashboard/DashboardContext';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import * as ui from '../../shared/ui';
 
+import { todayStr } from '../../shared/businessDay.js';
 // Payroll - what the work cost, and what each person took home.
 //
 // Those are different numbers, and the screen keeps them visibly apart: gross
@@ -404,7 +405,7 @@ function printPayslip(run, line, settings) {
 function RemittanceModal({ apiFetch, onClose }) {
   const monthStart = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1).toISOString().slice(0, 10); };
   const [agency, setAgency] = useState('sss');
-  const [range, setRange] = useState({ start: monthStart(), end: new Date().toISOString().slice(0, 10) });
+  const [range, setRange] = useState({ start: monthStart(), end: todayStr() });
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
 

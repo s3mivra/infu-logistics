@@ -10,6 +10,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { businessDateStr } from '../lib/businessTime.js';
 
 let ctx, app, tok, client, product;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -83,7 +84,9 @@ describe('a credit sale with part of it refunded', () => {
       items: [{ itemIndex: 0, qty: 3 }], reason: 'Three arrived damaged', inventoryAction: 'None',
     });
 
-    const day = new Date().toISOString().slice(0, 10);
+    // The business's own date, which is what the statement's range is cut in.
+    // `toISOString()` would name yesterday until 8am Manila time.
+    const day = businessDateStr();
     const soa = await auth('get', `/api/clients/${client._id}/statement?start=${day}&end=${day}`);
     expect(soa.body.closingBalance).toBeCloseTo(700, 2);
     expect(soa.body.aged.total).toBeCloseTo(700, 2);

@@ -5,6 +5,7 @@ import {
 import { useDashboard } from '../dashboard/DashboardContext';
 import * as ui from '../../shared/ui';
 
+import { todayStr } from '../../shared/businessDay.js';
 // Bank reconciliation - explaining the gap between the ledger and the bank.
 //
 // The screen is a worksheet, not a report: you tick off what the statement
@@ -14,7 +15,7 @@ import * as ui from '../../shared/ui';
 
 const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-');
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayStr();
 const inputCls = 'w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg focus:border-brand/50 focus:outline-none';
 
 function Field({ label, hint, children }) {

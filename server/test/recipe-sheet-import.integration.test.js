@@ -124,8 +124,13 @@ describe('importing that draft', () => {
     const p = await M('Product').findOne({ name: 'LATTE' }).lean();
     const milk = p.baseRecipe.find(r => /milk/i.test(r.name));
     expect(milk.qty).toBe(260);          // base units, not "1 kg"
-    expect(milk.unit).toBe('L');         // the item's display unit, so the
-                                         // editor reads 260 ml and not 260 L
+    // `qty` and `unit` are a pair, and `packBase` says how many base units one
+    // of those units holds. A base-unit quantity under the item's promoted
+    // DISPLAY unit broke the pair: the editor showed 260ml of milk as "260 L",
+    // or as "0.26 L" once it filled the missing packBase from the carton size.
+    // The sheet is written in stock units, so the line is stored that way.
+    expect(milk.unit).toBe('ml');
+    expect(milk.packBase).toBe(1);
     expect(milk.invId).toBeTruthy();     // linked to live stock
   }, 30000);
 

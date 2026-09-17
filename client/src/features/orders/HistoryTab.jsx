@@ -4,6 +4,7 @@ import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
 import * as ui from '../../shared/ui';
 
+import { todayStr } from '../../shared/businessDay.js';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 // ── HistoryTab - extracted from AdminDashboard.jsx ──
@@ -109,7 +110,7 @@ export default function HistoryTab({ ctx }) {
       foot: [[{ content: 'Total', colSpan: 3 }, pdfMoney(total)]],
       styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], fontStyle: 'bold', textColor: 255 }, columnStyles: { 3: { halign: 'right' } },
     });
-    doc.save(`Bank-Deposits-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Bank-Deposits-${todayStr()}.pdf`);
   };
 
   const sssPage = usePagination(sssRows, 15);
