@@ -84,7 +84,7 @@ const INVENTORY_INFO_COLUMNS = [
 // The same trailing-size pattern the importer uses (PACK_SIZE_RE in
 // AdminDashboard's inventory parser). A name that already ends in a size is
 // left alone rather than given a second one.
-const IMPORT_PACK_RE = /\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|L|l|ml|pcs|pc|piece)\b(\s*\([^)]*\))?\s*$/i;
+const IMPORT_PACK_RE = /\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|L|l|ml|pcs|pc|piece)(?:\s*\/\s*(pack|box|bag|sleeve|case|pk))?\b(\s*\([^)]*\))?\s*$/i;
 const round9 = (n) => Math.round((Number(n) || 0) * 1e9) / 1e9;
 const isoDay = (d) => {
   if (!d) return '';
@@ -99,7 +99,11 @@ const basePackLabel = (packBase, base) => {
   const t = (x) => String(Math.round(x * 1000) / 1000);
   if (base === 'g') return packBase >= 1000 ? `${t(packBase / 1000)}kg` : `${t(packBase)}g`;
   if (base === 'ml') return packBase >= 1000 ? `${t(packBase / 1000)}L` : `${t(packBase)}ml`;
-  return `${t(packBase)}pcs`;
+  // "/pack", because the importer reads a bare piece size as describing a
+  // pack while the number beside it is the count - "50pcs | 104" is 104 cups.
+  // This sheet writes the count in PACKS for a packed item, so it has to say
+  // so, or re-importing it would bring back a fiftieth of the stock.
+  return `${t(packBase)}pcs/pack`;
 };
 // One sheet row per stock lot, or one row for the item when its lots do not
 // account for all of it. Repeating a code in one import is how the importer
@@ -118,7 +122,15 @@ const inventorySheetRows = (i, category, categorySource) => {
   const qtyBase = Number(i.stockQty) || 0;
   const name = String(i.itemName || '');
   const label = packBase ? basePackLabel(packBase, base) : '';
-  const product = label && !IMPORT_PACK_RE.test(name) ? `${name} ${label}` : name;
+  // A name that already ends in a size keeps it - unless this is a packed
+  // piece item, whose size must carry "/pack" to be read back as packs. An
+  // older name like "STRAW SMALL 100PCS" is given the qualified size instead.
+  const nameSize = name.match(IMPORT_PACK_RE);
+  const packedPieces = packBase && base === 'pcs';
+  const product = !label ? name
+    : !nameSize ? `${name} ${label}`
+    : (packedPieces && !nameSize[3]) ? `${name.slice(0, nameSize.index).trim()} ${label}${nameSize[4] ? ` ${nameSize[4].trim()}` : ''}`
+    : name;
 
   const batches = (i.expiryBatches || []).filter(b => Number(b.qty) > 0);
   const batchTotal = batches.reduce((sum, b) => sum + Number(b.qty), 0);

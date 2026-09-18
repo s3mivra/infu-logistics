@@ -14,7 +14,10 @@
 // Anchoring strictly to end-of-string without this meant "MATCHA POWDER 1KG (NW)"
 // never matched at all (the "(NW)" broke the `$` anchor), silently dropping the
 // row from import (no unit could be inferred → filtered out with zero warning).
-export const SHEET_PACK_SIZE_RE = /\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|L|l|ml|pcs|pc|piece)\b(\s*\([^)]*\))?\s*$/i;
+//
+// Groups: 1 the number, 2 the unit, 3 a "/pack"-style qualifier, 4 a note.
+// The qualifier matters for pieces only - see PIECES below.
+export const SHEET_PACK_SIZE_RE = /\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|L|l|ml|pcs|pc|piece)(?:\s*\/\s*(pack|box|bag|sleeve|case|pk))?\b(\s*\([^)]*\))?\s*$/i;
 
 // Strips ₱/commas/whitespace before parseFloat, so a currency- or
 // thousands-formatted cell (e.g. "₱1,800.00") doesn't silently truncate
@@ -99,8 +102,17 @@ export const normaliseInventoryRow = (r) => {
   const rawProduct = String(lower.product || lower.itemname || lower.item || lower.name || '').trim();
   const sizeMatch = rawProduct.match(SHEET_PACK_SIZE_RE);
   let cleanedName = rawProduct, hintedUnit = '', packSizeInDisplay = 1;
+  // PIECES. A weight or a volume in a name is always a pack: "CONDENSED MILK
+  // 377g | 10" is ten cans, because nobody counts milk in grams on a shelf. A
+  // piece count is different. "12oz ICED CUPS 50pcs | 104" says what a sleeve
+  // holds, but the 104 beside it is cups, counted one by one - and reading it as
+  // 104 sleeves put 5,200 cups on the books at a fiftieth of their price.
+  // Supplies ARE often counted by the pack, so the sheet says which it means:
+  // "STRAW SMALL 100pcs/pack | 5" is five packs, 500 straws. No qualifier on a
+  // piece size, and the number is the count.
+  let looseCount = false;
   if (sizeMatch) {
-    const trailingNote = sizeMatch[3] ? sizeMatch[3].trim() : '';
+    const trailingNote = sizeMatch[4] ? sizeMatch[4].trim() : '';
     cleanedName = (rawProduct.slice(0, sizeMatch.index).trim() + (trailingNote ? ' ' + trailingNote : '')).trim();
     const packQty = parseFloat(sizeMatch[1]);
     const rawU = sizeMatch[2].toLowerCase();
@@ -113,7 +125,9 @@ export const normaliseInventoryRow = (r) => {
     } else if (rawU === 'l') {
       hintedUnit = 'L';  packSizeInDisplay = packQty;         // 1L → 1 L
     } else if (['pc', 'pcs', 'piece'].includes(rawU)) {
-      hintedUnit = 'pcs'; packSizeInDisplay = packQty;
+      hintedUnit = 'pcs';
+      if (sizeMatch[3]) packSizeInDisplay = packQty;   // "100pcs/pack": the number is packs
+      else looseCount = true;                           // "50pcs": the number is pieces
     }
   }
 
@@ -188,8 +202,13 @@ export const normaliseInventoryRow = (r) => {
     productionDate: prodStr,
     srp,
     // Per-qty (pack) size parsed from the name, e.g. "Milk 1L" → packSize 1.
-    // null when the name carried no size hint (nothing to persist).
-    packSize: sizeMatch ? packSizeInDisplay : null,
+    // null when the name carried no size hint (nothing to persist), and null
+    // for a loose piece count, which is not a pack.
+    packSize: sizeMatch && !looseCount ? packSizeInDisplay : null,
+    // A piece count, not packs - and therefore NOT a packed item, even if an
+    // earlier import made it one. The server clears the pack on this, which
+    // is what lets a corrected sheet undo that earlier import.
+    looseCount,
     // Read from the app's own export, which writes both as reference
     // columns. Without them a re-imported file lost every warning level
     // and storage place. Blank leaves the current value alone.
@@ -224,6 +243,7 @@ export const inventoryImportPayload = (rows) => ({
     category: r.category || undefined,
     srp: r.srp === '' || r.srp === undefined ? undefined : r.srp,
     packSize: r.packSize == null ? undefined : r.packSize,
+    looseCount: r.looseCount === true ? true : undefined,
     lowStockThreshold: r.lowStockThreshold === '' || r.lowStockThreshold === undefined ? undefined : r.lowStockThreshold,
     stockLocation: r.stockLocation || undefined,
   })),

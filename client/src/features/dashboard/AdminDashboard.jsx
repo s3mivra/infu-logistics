@@ -4435,7 +4435,12 @@ const updateStatus = async (orderId, newStatus) => {
     }
     const mt = (item.itemName || '').match(PACK_RE);
     const baseFactor = PACK_TO_BASE[(item.unit || '').toLowerCase()] || 1;
-    if (mt) {
+    // A PIECE size in a name is only a pack when the name says so ("100pcs/
+    // pack"). "12OZ ICED CUPS 50PCS" is cups counted one by one, and reading
+    // its "50PCS" as a pack showed every figure divided by fifty.
+    const pieceSize = mt && ['pcs', 'pc', 'pack', 'unit'].includes(mt[2].toLowerCase());
+    const saysPack = /\d\s*(pcs|pc)\s*\/\s*(pack|box|bag|sleeve|case|pk)\b/i.test(item.itemName || '');
+    if (mt && (!pieceSize || saysPack)) {
       const val = parseFloat(mt[1]);
       const f = PACK_TO_BASE[mt[2].toLowerCase()];
       if (f !== undefined && val > 0) {

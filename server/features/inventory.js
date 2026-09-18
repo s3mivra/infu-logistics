@@ -1781,13 +1781,26 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       // packSize 1. The client pre-parses the size out of the product name and sends
       // it here; if a caller sends the raw unparsed name instead, fall back to
       // parsing it here so the size is never silently dropped.
-      let packSizeFromExcel = row.packSize !== undefined && row.packSize !== '' ? parseFloat(row.packSize) : null;
-      if (packSizeFromExcel == null || Number.isNaN(packSizeFromExcel)) {
-        const m = itemName.match(/\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|l|ml|pcs|pc)\s*$/i);
+      // A loose piece count: the row's number is pieces, so the item is NOT a
+      // packed one, whatever an earlier import made it. See PIECES in the
+      // client's importSheets.js - "12oz ICED CUPS 50pcs | 104" is 104 cups.
+      let looseCount = row.looseCount === true;
+      let packSizeFromExcel = looseCount ? null
+        : (row.packSize !== undefined && row.packSize !== '' ? parseFloat(row.packSize) : null);
+      if (!looseCount && (packSizeFromExcel == null || Number.isNaN(packSizeFromExcel))) {
+        // Same rule as the client, for a caller that sends the raw name: a
+        // weight or volume in the name is a pack, a piece count only when the
+        // name says "/pack".
+        const m = itemName.match(/\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|l|ml|pcs|pc)(?:\s*\/\s*(pack|box|bag|sleeve|case|pk))?\s*$/i);
         if (m) {
           const raw = parseFloat(m[1]);
           const u = m[2].toLowerCase();
-          packSizeFromExcel = (u === 'g' || u === 'ml') ? raw / 1000 : raw; // → kg / L
+          if (u === 'pcs' || u === 'pc') {
+            if (m[3]) packSizeFromExcel = raw;
+            else looseCount = true;
+          } else {
+            packSizeFromExcel = (u === 'g' || u === 'ml') ? raw / 1000 : raw; // → kg / L
+          }
         }
       }
       if (packSizeFromExcel != null && (Number.isNaN(packSizeFromExcel) || packSizeFromExcel <= 0)) packSizeFromExcel = null;
@@ -1844,7 +1857,8 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         existing.displayUnit = displayUnit;
         existing.unitMultiplier = mult;
         if (baseUnit) existing.unit = baseUnit;
-        if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
+        if (looseCount) existing.packSize = null;
+        else if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
         // SRP was parsed from the sheet and then never saved, so importing a
         // price list - or moving stock between systems - dropped every
         // selling price. A blank SRP cell leaves the current one alone.
@@ -1900,7 +1914,44 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           );
         }
       } else if (existing) {
+        // A loose count over an item an earlier import stored in packs.
+        //
+        // "12oz ICED CUPS 50pcs | 104" used to be read as 104 sleeves: 5,200
+        // cups at P0.064. Those were the right VALUE in the wrong unit. Taken
+        // as an ordinary recount, the row saw 5,096 cups vanish, booked them as
+        // spoilage at P0.064 - a P326 loss on the P&L that never happened - and
+        // then moved the cost to P3.20 without touching the books at all.
+        //
+        // So the stored stock is first re-expressed in pieces - quantity down
+        // by the pack, cost up by the same, value exactly unchanged, nothing to
+        // post - and only then is the row applied, as the recount it is. When
+        // the shelf matches, nothing is booked; when it does not, only the real
+        // difference is.
+        if (looseCount && existing.unit === 'pcs' && Number(existing.packSize) > 1) {
+          const pack = Number(existing.packSize);
+          const wasQty = existing.stockQty || 0;
+          const wasCost = existing.unitCost || 0;
+          existing.stockQty = +(wasQty / pack).toFixed(6);
+          existing.unitCost = +(wasCost * pack).toFixed(6);
+          existing.expiryBatches = (existing.expiryBatches || []).map(b => ({
+            ...(b.toObject ? b.toObject() : b),
+            qty: +((Number(b.qty) || 0) / pack).toFixed(6),
+            unitCost: +((Number(b.unitCost) || 0) * pack).toFixed(6),
+          }));
+          existing.packSize = null;
+          await StockCard.create([{
+            inventoryId: existing._id,
+            itemName: existing.itemName,
+            type: 'Unit Correction',
+            reference: impRef,
+            qtyChange: +(existing.stockQty - wasQty).toFixed(6),
+            balanceAfter: existing.stockQty,
+            unitCost: existing.unitCost,
+            remarks: `Counted in pieces, not packs of ${pack}: ${wasQty} at P${wasCost.toFixed(4)} is ${existing.stockQty} at P${existing.unitCost.toFixed(4)}. Value unchanged.`,
+          }], { session });
+        }
         const oldQty = existing.stockQty || 0;
+        const oldCost = existing.unitCost || 0;
         const diff = +(newBaseQty - oldQty).toFixed(6);
         // Gain/loss is a QUANTITY VARIANCE (physical count vs. book), so it must be
         // valued at the cost those units are CURRENTLY carried at on the books -
@@ -1923,7 +1974,8 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         existing.displayUnit = displayUnit;
         existing.unitMultiplier = mult;
         if (baseUnit) existing.unit = baseUnit;
-        if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
+        if (looseCount) existing.packSize = null;
+        else if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
         // SRP was parsed from the sheet and then never saved, so importing a
         // price list - or moving stock between systems - dropped every
         // selling price. A blank SRP cell leaves the current one alone.
@@ -1981,6 +2033,35 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
             reference: impRef,
             description: `Stock take import: ${existing.itemName} (${diff >= 0 ? '+' : ''}${diff.toFixed(2)} ${baseUnit} @ P${unitCostForValuation.toFixed(4)})`,
             lines, totalDebit: valueImpact, totalCredit: valueImpact
+          }], { session });
+        }
+
+        // The books have to end where the stock ends. The variance above is
+        // valued at the cost the stock was carried at, on purpose (see
+        // unitCostForValuation); but when the row also set a NEW cost, what is
+        // left on the shelf is now carried at that cost and nothing had moved
+        // the books to match. The stock read one value and the ledger another,
+        // quietly, from then on. The difference is a revaluation, booked the way
+        // the Revalue tool books one: against Owner's Capital, not the P&L,
+        // because a price correction is not a trading loss or gain.
+        const postedVariance = (diff >= 0 ? 1 : -1) * valueImpact;
+        const revaluation = +(((existing.stockQty || 0) * (existing.unitCost || 0))
+          - (oldQty * oldCost) - postedVariance).toFixed(2);
+        if (Math.abs(revaluation) >= 0.01) {
+          const lines = revaluation > 0
+            ? [
+                { accountCode: '130000', accountName: 'Inventory Asset', debit: revaluation, credit: 0 },
+                { accountCode: '310000', accountName: "Owner's Capital", debit: 0, credit: revaluation },
+              ]
+            : [
+                { accountCode: '310000', accountName: "Owner's Capital", debit: -revaluation, credit: 0 },
+                { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: -revaluation },
+              ];
+          assertBalanced(lines, `IMPORT-REVAL-${existing.itemName}`);
+          await JournalEntry.create([{
+            reference: impRef,
+            description: `Stock take import: ${existing.itemName} revalued to P${(existing.unitCost || 0).toFixed(4)} per ${baseUnit} (was P${oldCost.toFixed(4)})`,
+            lines, totalDebit: Math.abs(revaluation), totalCredit: Math.abs(revaluation),
           }], { session });
         }
 
@@ -2050,7 +2131,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           ...(stockLocationFromSheet ? { stockLocation: stockLocationFromSheet } : {}),
           displayUnit,
           unitMultiplier: mult,
-          packSize: packSizeFromExcel,
+          packSize: looseCount ? null : packSizeFromExcel,
           ...(srp != null && !Number.isNaN(srp) && srp > 0 ? { srp } : {}),
           expiryBatches: initialBatches,
           expiryDate: soonestExpiry(initialBatches),

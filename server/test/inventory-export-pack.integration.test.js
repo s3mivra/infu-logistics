@@ -52,7 +52,11 @@ describe('inventory export, in the import sheet shape', () => {
     expect(byCode.G10001[col('SRP')]).toBe(386);
     expect(byCode.G40005[col('Product')]).toBe('ALASKA CONDENSED 377g');
     expect(byCode.G40005[col('Unit Cost')]).toBe(66);
-    expect(byCode.G40007[col('Product')]).toBe('STRAW SMALL 100pcs');
+    // A piece size says "/pack": the importer reads a bare "100pcs" as the
+    // size of a sleeve with the number beside it counting PIECES (a cafe's
+    // "12oz ICED CUPS 50pcs | 104" is 104 cups). This row counts packs - 2.5
+    // below - so without the qualifier it would come back as 2.5 straws.
+    expect(byCode.G40007[col('Product')]).toBe('STRAW SMALL 100pcs/pack');
     expect(byCode.G40007[col('Unit Cost')]).toBe(45);
   });
 
