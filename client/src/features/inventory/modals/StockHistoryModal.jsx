@@ -20,8 +20,9 @@ const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
       //
       // It used to divide every figure by the pack size, which put a single
       // cup down as "-0.02" (a fiftieth of a sleeve) under a PCS header and
-      // read as though the till were deducting a fraction of a cup. The pack
-      // count is still shown underneath, so the balance still ties to the Hub.
+      // read as though the till were deducting a fraction of a cup. Nothing
+      // else is shown beside it: a pack equivalent under each line, even in
+      // small print, still put a "0.02" next to a sale of one cup.
       //
       // Logistics keeps counting in packages: there a "piece" IS the package,
       // and a can leaving as "-377 g" would be the unreadable one.
@@ -36,15 +37,14 @@ const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
       // Cost is quoted per pack whichever way quantities are shown: a pack is
       // what is bought and what an invoice prices.
       const fmtCost = (c) => (c || 0) * (hPack?.packBase || 1);
-      const fmtPacks = (n) => `${(+(Number(n || 0) / (hPack?.packBase || 1)).toFixed(3)).toLocaleString()} ${PACK_UNIT}`;
-      const showPacksUnder = asDeducted && packed;
+
       return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-surface p-6 rounded-xl border border-gray-700 shadow-2xl flex flex-col max-w-5xl w-full max-h-[85vh]">
             <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-3 flex-shrink-0">
               <div>
                 <h2 className="text-xl font-bold text-fg">Stock Card: <span className="text-brand-text">{historyItemName}</span></h2>
-                {stockHistory.length > 0 && <p className="text-[10px] text-fg/70 mt-0.5">{stockHistory.length} entries total{hUnit ? ` · qty in ${hUnit}` : ''}{showPacksUnder && hPack?.label ? ` · ${hPack.label} per pack` : ''}</p>}
+                {stockHistory.length > 0 && <p className="text-[10px] text-fg/70 mt-0.5">{stockHistory.length} entries total{hUnit ? ` · qty in ${hUnit}` : ''}</p>}
               </div>
               <button onClick={() => setHistoryModalOpen(false)} className="text-fg/70 hover:text-fg font-bold text-xl">✕</button>
             </div>
@@ -74,13 +74,9 @@ const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
                       <td className="py-2 font-bold text-fg/80">{log.type}</td>
                       <td className={`py-2 text-right font-mono font-bold ${dispChange < 0 ? 'text-danger' : 'text-success'}`}>
                         {dispChange > 0 ? `+${dispChange}` : dispChange}
-                        {showPacksUnder && <span className="block text-[10px] font-normal text-fg/55">{log.qtyChange > 0 ? '+' : ''}{fmtPacks(log.qtyChange)}</span>}
                       </td>
                       <td className="py-2 text-right text-fg/80 font-mono text-xs">₱{dispCost.toFixed(2)}</td>
-                      <td className="py-2 text-right text-brand-text font-bold font-mono">
-                        {dispBalance}
-                        {showPacksUnder && <span className="block text-[10px] font-normal text-fg/55">{fmtPacks(log.balanceAfter)}</span>}
-                      </td>
+                      <td className="py-2 text-right text-brand-text font-bold font-mono">{dispBalance}</td>
                       <td className="py-2 pl-4 text-fg/80 text-xs">{log.remarks || log.reference}</td>
                     </tr>
                     );

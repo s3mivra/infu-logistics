@@ -45,6 +45,7 @@ import {
 import { LEDGER_REPORT_SPEC, ledgerReportTable } from '../../shared/ledgerReport';
 import * as ui from '../../shared/ui';
 import { monthStartStr, setClientBusinessTz, todayStr, yearStartStr } from '../../shared/businessDay.js';
+import { PACK_UNIT } from '../../shared/packUnit.js';
 // Tabs are lazy-loaded so only the active tab's code ships on first dashboard
 // paint; the rest load on demand when the operator opens them.
 const AnalyticsTab  = lazy(() => import('../analytics/AnalyticsTab'));
@@ -4313,7 +4314,15 @@ const updateStatus = async (orderId, newStatus) => {
         const pack = packInfo(existingItem);
         restockBase = qtyBought * (pack.packBase || 1);
       }
-      if (!(await ui.confirm(`Restock "${existingItem.itemName}"?\n\nQty: +${qtyBought} pcs\nCost per pack: ₱${costPerPack.toFixed(2)}\nTotal cost: ₱${totalCost.toFixed(2)}`))) return;
+      // The last thing read before stock changes, so it says what will actually
+      // be added. It used to read "+104 pcs" for 104 PACKS: a delivery of 104
+      // loose cups typed against a 50-cup sleeve went in as 5,200 cups, and
+      // this dialog confirmed it as though it were 104.
+      const perPack = parseFloat(invFormEff.unitPerPack) || 1;
+      const addedLine = perPack === 1
+        ? `+${qtyBought.toLocaleString()} ${invFormEff.unit}`
+        : `+${qtyBought.toLocaleString()} ${PACK_UNIT} x ${perPack.toLocaleString()} ${invFormEff.unit} = +${totalStockAdded.toLocaleString()} ${invFormEff.unit}`;
+      if (!(await ui.confirm(`Restock "${existingItem.itemName}"?\n\nAdding: ${addedLine}\nCost per pack: ₱${costPerPack.toFixed(2)}\nTotal cost: ₱${totalCost.toFixed(2)}`))) return;
       await apiFetch(`/api/inventory/restock/${existingItem._id}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
