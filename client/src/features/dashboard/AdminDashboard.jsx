@@ -301,6 +301,11 @@ export default function AdminDashboard() {
   const [expandedBatchRows, setExpandedBatchRows] = useState({}); // { [itemId]: bool }
 
   const [physicalCounts, setPhysicalCounts] = useState({});
+  // Which counts someone actually TYPED. Every other box follows the system
+  // figure live - see the prefill in InventoryTab. Kept here, beside the
+  // counts, because they must survive switching tabs mid-count: kept in the
+  // tab, leaving it and coming back would have wiped half a count.
+  const [countTouched, setCountTouched] = useState({});
   const [restockData, setRestockData] = useState({ addedStock: '', totalCost: '', creditAccount: '111000' });
   // --- ORDER SEARCH ---
   const [orderSearch, setOrderSearch] = useState('');
@@ -4256,6 +4261,7 @@ const updateStatus = async (orderId, newStatus) => {
       if (data.success) {
         ui.alert('End of Day counts successfully locked and recorded.');
         setPhysicalCounts({});
+        setCountTouched({});
         setVarianceReasons({});
         setVarianceNoteMode({});
         fetchERPData(); // Refresh the live data
@@ -4455,19 +4461,36 @@ const updateStatus = async (orderId, newStatus) => {
   const itemDisplay = (item) => {
     const { unit, mult } = effectiveDisplay(item);
     const pack = packInfo(item);
+    // What the item is COUNTED in - on the Hub, at the end-of-day count, for
+    // waste, transfers and thresholds.
+    //
+    // Logistics counts packages: a carton, a sack, a can is the thing on the
+    // shelf, and that is what "pcs" means there. A cafe counts in the real
+    // measure - beans in kg, milk in L, cups one by one - the same units its
+    // recipes and stock card use. Counting a cafe in packs showed a 1 kg bag
+    // of beans with 940 g left as "0.94 packs", beside a recipe that said 20 g
+    // and a stock card that said -20; the end-of-day count's own comment
+    // always said "FB in kg/L", but this helper handed it the pack.
+    //
+    // packCost / packLabel still describe the pack, because that is what is
+    // BOUGHT: prices stay "P1,200 / 1kg".
+    const buysInPacks = pack.label !== unit;
+    const inPacks = BUSINESS_TYPE === 'log';
+    const countBase = inPacks ? pack.packBase : mult;
     return {
       qty:  (item.stockQty || 0) / mult,
       unit,
       cost: (item.unitCost || 0) * mult,
       packCost: pack.cost,                                  // cost of one named pack (e.g. ₱200 for 250g)
       packLabel: pack.label,                                // pack size label from the name (e.g. "250g")
-      packBase: pack.packBase,                              // base units in one package (e.g. 250)
-      packQty: pack.packBase ? (item.stockQty || 0) / pack.packBase : 0, // stock as a count of packages
-      // True only when a REAL pack size is known. packInfo() falls back to the
-      // plain display unit when there isn't one, in which case packQty/packCost
-      // already equal qty/cost - so the pack-first columns stay correct, but the
-      // unit must still read "kg", not "pcs".
-      isPacked: pack.label !== unit,
+      packBase: countBase,                                  // base units in one COUNTED unit
+      packQty: countBase ? (item.stockQty || 0) / countBase : 0, // stock in counted units
+      // Counted in packs: logistics only, and only when a real pack size is
+      // known. Where it is false the unit reads kg / L / pcs.
+      isPacked: inPacks && buysInPacks,
+      // Bought in a named pack at all - for prices and the SET SIZE hint,
+      // which is about buying, not counting.
+      buysInPacks,
     };
   };
   // Analytics display: for logistics, show pack-count (pcs) instead of kg/L -
@@ -6238,6 +6261,18 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     if (!invId) return;
     const invItem = inventory.find(i => i._id === invId);
     if (!invItem) return;
+    // A cafe writes recipes in the real measure - 20 g, 150 ml, 1 pc - the
+    // same way the stock card reports what a sale took. Starting a new line at
+    // one whole PACK put a kilo of beans into a coffee until someone noticed.
+    if (BUSINESS_TYPE !== 'log') {
+      const material = {
+        invId: invItem._id, name: invItem.itemName,
+        qty: 1, cost: invItem.unitCost, unit: invItem.unit || 'pcs', packBase: 1,
+      };
+      if (sizeIndex === null) setFormData({ ...formData, baseRecipe: [...(formData.baseRecipe || []), material] });
+      else { const newSizes = [...formData.sizes]; newSizes[sizeIndex].recipe = [...(newSizes[sizeIndex].recipe || []), material]; setFormData({ ...formData, sizes: newSizes }); }
+      return;
+    }
     const pack = packInfo(invItem);
     const packBase = pack.packBase || 1;         // base units per display unit (e.g. 377 for a 377g can)
     // Logistics sells per piece - always label ingredients as "pcs" so qty=1 means 1 package/unit.
@@ -8628,6 +8663,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     priceHistory, priceHistoryOpen, setPriceHistoryOpen, priceHistoryProduct, priceHistoryLoading, fetchPriceHistory,
     tierPriceHistory, tierPriceHistoryOpen, setTierPriceHistoryOpen, tierPriceHistoryCtx, tierPriceHistoryLoading, fetchTierPriceHistory,
     physicalCounts, setPhysicalCounts, varianceReasons, setVarianceReasons,
+    countTouched, setCountTouched,
     varianceNoteMode, setVarianceNoteMode,
     eodStatus, eodLockedAt, dailyMovement,
     invBadgeCount, expandedBatchRows, setExpandedBatchRows,

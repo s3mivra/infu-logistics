@@ -18,7 +18,7 @@ const REASONS = [
 export default function SpoilageModal() {
   const {
     spoilageModal, setSpoilageModal, spoilageForm, setSpoilageForm,
-    spoilageLoading, setSpoilageLoading, itemDisplay, packInfo, apiFetch, fetchERPData,
+    spoilageLoading, setSpoilageLoading, itemDisplay, apiFetch, fetchERPData,
   } = useDashboard();
 
   if (!spoilageModal) return null;
@@ -29,11 +29,12 @@ export default function SpoilageModal() {
   const currentQty = d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 });
 
   const submit = async () => {
-    // The form collects packs (or display units for unpacked items); the API
-    // always takes base units.
-    const pack = packInfo(item);
+    // The form collects the counted unit the label beside it names - kg, L or
+    // pcs in a cafe, packages in logistics - and the API takes base units. It
+    // used the PACK size here whatever the label said, so half a kilo written
+    // off from a 500 g bag of chocolate went out as 250 g.
     const qtyEntered = parseFloat(spoilageForm.qty);
-    const qtyBase = qtyEntered * (pack.packBase || 1);
+    const qtyBase = qtyEntered * (d.packBase || 1);
     const { reason, note } = spoilageForm;
     const label = `${qtyEntered} ${unitLabel} of ${item.itemName}`;
 

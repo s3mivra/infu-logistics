@@ -39,7 +39,11 @@ export default function StockTransferPanel({
   // nothing changes. Guarded so an item with no descriptors can never produce
   // a 0 or NaN factor and silently transfer nothing.
   const disp = fromItem && itemDisplay ? itemDisplay(fromItem) : null;
-  const perPiece = Number(disp?.isPacked ? disp.packBase : 1) || 1;
+  // One counted unit, in base units - the same factor the Hub counts with.
+  // It used to be 1 for anything not counted in packs, which is right for
+  // pieces and wrong for weight and volume: an item kept in grams and shown
+  // in kg took "transfer 2" as two GRAMS.
+  const perPiece = Number(disp?.packBase) || 1;
   const pieceLabel = disp?.isPacked ? PACK_UNIT : (disp?.unit || fromItem?.unit || 'units');
   const qtyPieces = parseFloat(qty);
   const qtyInBase = Number.isFinite(qtyPieces) ? +(qtyPieces * perPiece).toFixed(6) : 0;
@@ -126,8 +130,8 @@ export default function StockTransferPanel({
   const showQty = (t, itemId) => {
     const it = inventory.find(i => String(i._id) === String(itemId ?? t.fromItemId ?? t.itemId));
     const d = it && itemDisplay ? itemDisplay(it) : null;
-    if (!d?.isPacked || !d.packBase) return `${t.qtyBase} ${t.unit || it?.unit || ''}`.trim();
-    return `${+(t.qtyBase / d.packBase).toFixed(2)} pcs`;
+    if (!d?.packBase) return `${t.qtyBase} ${t.unit || it?.unit || ''}`.trim();
+    return `${+(t.qtyBase / d.packBase).toFixed(3)} ${d.isPacked ? PACK_UNIT : d.unit}`;
   };
 
   return (
@@ -165,7 +169,9 @@ export default function StockTransferPanel({
                 // Show on-hand in the same unit the quantity box accepts, so
                 // "120 pcs available" and "transfer 5 pcs" agree.
                 const d = itemDisplay ? itemDisplay(i) : null;
-                const onHand = d?.isPacked ? `${+d.packQty.toFixed(2)} pcs` : `${i.stockQty} ${d?.unit || i.unit}`;
+                // Stock is stored in grams and millilitres; printing it raw
+                // beside a "kg" label read 2,000 g as "2000 kg".
+                const onHand = d ? `${+d.packQty.toFixed(3)} ${d.isPacked ? PACK_UNIT : d.unit}` : `${i.stockQty} ${i.unit}`;
                 return <option key={i._id} value={i._id}>{label(i)} ({onHand})</option>;
               })}
             </select>

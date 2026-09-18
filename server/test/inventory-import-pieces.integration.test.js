@@ -222,3 +222,34 @@ describe('the app\'s own export, imported back', () => {
     expect(back.unitCost).toBeCloseTo(3.2, 6);
   });
 });
+
+// The import is one transaction. A sale rung up at the same moment can make
+// MongoDB refuse it with a transient write conflict; the import used to answer
+// that with a 500 and drop the whole sheet. It retries now, from a clean slate.
+describe('an import that collides with something else', () => {
+  it('tries again, and lands once', async () => {
+    const StockCard = M('StockCard');
+    const realCreate = StockCard.create.bind(StockCard);
+    let refusals = 0;
+    StockCard.create = async (...args) => {
+      if (refusals === 0) {
+        refusals++;
+        const err = new Error('WriteConflict: another transaction touched this document');
+        err.errorLabels = ['TransientTransactionError'];
+        throw err;
+      }
+      return realCreate(...args);
+    };
+    try {
+      const res = await importRows([sheetRow('G60001', '12oz ICED CUPS 50pcs', 104, 3.2)]);
+      expect(refusals).toBe(1);                       // the conflict really happened
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    } finally {
+      StockCard.create = realCreate;
+    }
+    // The refused attempt rolled back, so there is one item, not two.
+    expect(await M('Inventory').countDocuments({ itemCode: 'G60001' })).toBe(1);
+    expect((await stored('G60001')).stockQty).toBe(104);
+  });
+});

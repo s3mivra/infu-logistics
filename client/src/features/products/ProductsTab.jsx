@@ -375,8 +375,15 @@ export default function ProductsTab({ ctx }) {
   // "0.02 pcs" and 20g of beans as "0.02 kg". So the pack size is only ever
   // borrowed when the line is actually labelled with that item's pack.
   const readyLine = (mat) => {
-    if (mat.packBase > 0) return mat;
     const invItem = inventory.find(inv => String(inv._id) === String(mat.invId));
+    // A cafe reads every stock line in the real measure: 20 g, 150 ml, 1 pc.
+    // A line added by hand used to be written in packs - "0.02" of a "1kg" -
+    // and is shown the same way as an imported one now. Only the display
+    // changes: qty is already in base units either way.
+    if (BUSINESS_TYPE !== 'log' && invItem && !mat.nonStock) {
+      return { ...mat, packBase: 1, unit: invItem.unit || mat.unit };
+    }
+    if (mat.packBase > 0) return mat;
     const pack = invItem && packInfo ? packInfo(invItem) : null;
     if (pack && String(mat.unit || '') === String(pack.label)) {
       return { ...mat, packBase: pack.packBase || 1 };

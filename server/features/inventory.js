@@ -1656,7 +1656,29 @@ app.delete('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res
 // - New items: created + booked as Inventory Adjustment Gain (4200)
 // Every row produces a StockCard entry + a balanced journal entry.
 // ============================================================
+// The whole import is one transaction, which is what keeps a half-read sheet
+// from ever landing. The cost of that is that anything else touching the same
+// stock at that moment - a sale being rung up while the count goes in - makes
+// MongoDB refuse the transaction with a transient write conflict. The import
+// answered that with a 500 and threw the lot away, where the sale and restock
+// paths simply try again. It tries again now too: the transaction rolled back
+// cleanly, so a retry starts from exactly where the first attempt did.
+const IMPORT_TXN_ATTEMPTS = 4;
+const IMPORT_RETRY = Symbol('import-retry');
+const isTransientTxn = (err) => {
+  const msg = String(err?.errorLabels || err?.message || '');
+  return (err?.errorLabels || []).includes('TransientTransactionError') || /WriteConflict|Write conflict/i.test(msg);
+};
+
 app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, res) => {
+  for (let attempt = 1; attempt <= IMPORT_TXN_ATTEMPTS; attempt++) {
+    if (await runInventoryImport(req, res, attempt) !== IMPORT_RETRY) return;
+    // A little jitter, so two imports that collided do not collide again.
+    await new Promise(r => setTimeout(r, 40 * attempt + Math.floor(Math.random() * 60)));
+  }
+});
+
+async function runInventoryImport(req, res, attempt) {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
@@ -2213,12 +2235,16 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
     emitToAll('menuUpdated');
     res.json({ success: true, summary });
   } catch (err) {
-    await session.abortTransaction();
+    try { await session.abortTransaction(); } catch { /* already aborted by the driver */ }
     session.endSession();
+    if (isTransientTxn(err) && attempt < IMPORT_TXN_ATTEMPTS && !res.headersSent) {
+      log.warn({ attempt }, 'inventory import hit a transient write conflict; retrying');
+      return IMPORT_RETRY;
+    }
     log.error({ err }, 'inventory import failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}
 
 // --- SPOILAGE / WASTE LOGGING ---
 app.post('/api/inventory/spoilage/:id', verifyToken, requireStaff, async (req, res) => {

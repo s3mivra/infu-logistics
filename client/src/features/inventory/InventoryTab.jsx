@@ -85,6 +85,7 @@ export default function InventoryTab({ ctx }) {
     setImportModal, setImportRows, setInvForm, setInvPage, setInvSubTab,
     setIsPosOpen, setIsStatusMenuOpen, setJeForm, setJournalEntries, setLedgerSubTab,
     setNewDiscount, setOrderFilter, setOrdersPage, setPaymentSelections, setPhysicalCounts,
+    countTouched, setCountTouched,
     setPnlRange, setPosActiveAddOns, setPosActiveSize, setPosCart, setPosCashTendered,
     setPosCategory, setPosCheckoutModal, setPosCustomerName, setPosCustomerPhone, setPosDeliveryAddress,
     setPosDeliveryFee, setPosDiscountType, setPosDiscountValue, setPosPage, setPosPayment,
@@ -194,22 +195,31 @@ export default function InventoryTab({ ctx }) {
   // Physical count: default each item's count input to the current SYSTEM ending value
   // (in display units), so EOD starts from "matches system" and the counter only edits
   // discrepancies. Full precision (toFixed 6) keeps the default at exactly 0 variance.
+  //
+  // The default FOLLOWS the system until someone types over it. It used to be
+  // filled once, the first time this tab opened, and never again - so a count
+  // box filled in the morning still held the morning figure at closing, and
+  // every sale since showed up as stock "found". Submitted untouched, that
+  // phantom stock went on the books. A box someone typed into is theirs and is
+  // never overwritten.
   React.useEffect(() => {
     if (!Array.isArray(inventory) || inventory.length === 0) return;
     setPhysicalCounts(prev => {
       let changed = false;
       const next = { ...prev };
       for (const item of inventory) {
-        if (next[item._id] === undefined) {
-          const mult = itemDisplay(item).packBase || 1;
-          next[item._id] = Number(((item.stockQty || 0) / (mult || 1)).toFixed(6));
+        if (countTouched?.[item._id]) continue;
+        const mult = itemDisplay(item).packBase || 1;
+        const system = Number(((item.stockQty || 0) / (mult || 1)).toFixed(6));
+        if (next[item._id] !== system) {
+          next[item._id] = system;
           changed = true;
         }
       }
       return changed ? next : prev;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inventory]);
+  }, [inventory, countTouched]);
 
   return (
         <div className="flex flex-col gap-6">
@@ -484,7 +494,7 @@ export default function InventoryTab({ ctx }) {
                           {item.itemName}
                           {isLow && <span className="ml-2 text-[9px] font-black bg-red-500 text-on-brand px-1.5 py-0.5 rounded uppercase animate-pulse">LOW</span>}
                           {isPhaseOut && <span title="Out of stock and costs more than its SRP - not worth restocking" className="ml-2 text-[9px] font-black bg-gray-500 text-on-brand px-1.5 py-0.5 rounded uppercase">PHASE OUT</span>}
-                          {!itemDisplay(item).isPacked && (
+                          {!itemDisplay(item).buysInPacks && (
                             <span title="No pack size in the name - add e.g. 250G / 1L / 500ML so cost shows per package" className="ml-2 text-[9px] font-black bg-amber-500/20 text-warning border border-amber-500/40 px-1.5 py-0.5 rounded uppercase">SET SIZE</span>
                           )}
                         </td>
@@ -597,7 +607,8 @@ export default function InventoryTab({ ctx }) {
                                       return (ad ? new Date(ad) : Infinity) - (bd ? new Date(bd) : Infinity);
                                     })
                                     .map((b, displayIdx) => {
-                                      const bPackBase = packInfo(item).packBase || 1;
+                                      // The same counted unit as the row above it.
+                                      const bPackBase = itemDisplay(item).packBase || 1;
                                       const dispQty = (b.qty || 0) / bPackBase;
                                       const bUnit = itemDisplay(item).isPacked ? PACK_UNIT : itemDisplay(item).unit;
                                       const exp = b.expiryDate ? new Date(b.expiryDate) : null;
@@ -679,7 +690,7 @@ export default function InventoryTab({ ctx }) {
                               </table>
                             </div>
                             <p className="text-[10px] text-white mt-2">
-                              Item unit cost <span className="text-white font-bold tabular-nums">{peso((item.unitCost || 0) * (packInfo(item).packBase || 1))}/{itemDisplay(item).isPacked ? PACK_UNIT : itemDisplay(item).unit}</span> is the weighted average across all batches (updated on each restock).
+                              Item unit cost <span className="text-white font-bold tabular-nums">{peso((item.unitCost || 0) * (itemDisplay(item).packBase || 1))}/{itemDisplay(item).isPacked ? PACK_UNIT : itemDisplay(item).unit}</span> is the weighted average across all batches (updated on each restock).
                             </p>
                           </td>
                         </tr>
@@ -914,7 +925,10 @@ export default function InventoryTab({ ctx }) {
                                       'border-white/10 text-fg focus:border-accent'}`
                                   }
                                   value={hasInput ? actualInputDisplay : ''}
-                                  onChange={(e) => setPhysicalCounts({...physicalCounts, [item._id]: e.target.value})}
+                                  onChange={(e) => {
+                                    setPhysicalCounts({...physicalCounts, [item._id]: e.target.value});
+                                    setCountTouched?.(t => ({ ...t, [item._id]: true }));
+                                  }}
                                 />
                                 <span className="text-[10px] text-white font-bold">{eff.unit}</span>
                               </div>

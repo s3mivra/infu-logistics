@@ -61,7 +61,8 @@ export default function ProductionTab({ ctx }) {
 
   const pieceInfo = (item) => {
     const d = item && itemDisplay ? itemDisplay(item) : null;
-    const perPiece = Number(d?.isPacked ? d.packBase : 1) || 1;
+    // The Hub's counted unit - see StockTransferPanel for why 1 was wrong.
+    const perPiece = Number(d?.packBase) || 1;
     const label = d?.isPacked ? PACK_UNIT : (d?.unit || item?.unit || 'units');
     const onHandPieces = item ? +(((item.stockQty || 0) / perPiece).toFixed(4)) : 0;
     return { perPiece, label, onHandPieces };
