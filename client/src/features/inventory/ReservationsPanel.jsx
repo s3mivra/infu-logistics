@@ -2,6 +2,7 @@ import React from 'react';
 import { Lock, Unlock, X, RefreshCw, Plus } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
+import { PACK_UNIT } from '../../shared/packUnit.js';
 // Stock held for a named client - usually because they have paid a deposit on
 // it. Held stock stays on the shelf and in the stock figure, but no other
 // client's order can take it; the holder's own order releases the hold as it
@@ -31,7 +32,7 @@ export default function ReservationsPanel({ apiFetch, inventory = [], clientAcco
     if (!item) return qty;
     const shown = itemDisplay?.(item);
     const scale = (item.stockQty || 0) > 0 && shown ? shown.qty / item.stockQty : 1;
-    const unit = shown?.isPacked ? 'pcs' : (shown?.unit || item.displayUnit || item.unit || '');
+    const unit = shown?.isPacked ? PACK_UNIT : (shown?.unit || item.displayUnit || item.unit || '');
     return `${(qty * scale).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${unit}`.trim();
   };
 

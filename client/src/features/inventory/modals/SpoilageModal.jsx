@@ -2,6 +2,7 @@
 import * as ui from '../../../shared/ui';
 
 
+import { PACK_UNIT } from '../../../shared/packUnit.js';
 // Reasons are a closed list on purpose: spoilage posts a journal entry, and a
 // free-text reason makes the waste report unaggregatable at month-end.
 const REASONS = [
@@ -24,7 +25,7 @@ export default function SpoilageModal() {
 
   const item = spoilageModal.item;
   const d = itemDisplay(item);
-  const unitLabel = d.isPacked ? 'pcs' : d.unit;
+  const unitLabel = d.isPacked ? PACK_UNIT : d.unit;
   const currentQty = d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 });
 
   const submit = async () => {

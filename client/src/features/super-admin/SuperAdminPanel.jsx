@@ -1905,8 +1905,8 @@ export default function SuperAdminPanel() {
       {/* PURGE DATA MODAL                                                     */}
       {/* =================================================================== */}
       {purgeModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !purgeModal.busy && setPurgeModal({ open: false, phrase: '', busy: false, error: '', result: null })}>
-          <div className="bg-sidebar-bg border border-red-500/40 rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex justify-center p-4 overflow-y-auto bg-black/60 backdrop-blur-sm" onClick={() => !purgeModal.busy && setPurgeModal({ open: false, phrase: '', busy: false, error: '', result: null })}>
+          <div className="my-auto bg-sidebar-bg border border-red-500/40 rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
               <div className="flex items-center gap-2">
                 <AlertTriangle size={18} className="text-danger" />
@@ -1981,8 +1981,8 @@ export default function SuperAdminPanel() {
       {/* REWIRE RECIPE LINKS MODAL                                            */}
       {/* =================================================================== */}
       {rewireModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !rewireModal.busy && setRewireModal({ open: false, busy: false, error: '', result: null })}>
-          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex justify-center p-4 overflow-y-auto bg-black/60 backdrop-blur-sm" onClick={() => !rewireModal.busy && setRewireModal({ open: false, busy: false, error: '', result: null })}>
+          <div className="my-auto bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
               <div className="flex items-center gap-2">
                 <RefreshCw size={18} className="text-brand-text" />
@@ -2037,8 +2037,8 @@ export default function SuperAdminPanel() {
       {/* CREATE / EDIT MODAL                                                  */}
       {/* =================================================================== */}
       {modal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md animate-fade-in">
+        <div className="fixed inset-0 z-50 flex justify-center p-4 overflow-y-auto bg-black/60 backdrop-blur-sm">
+          <div className="my-auto bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md animate-fade-in">
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
               <div>
                 <h2 className="font-black text-fg text-lg">
@@ -2227,7 +2227,7 @@ export default function SuperAdminPanel() {
                 )}
               </div>
 
-              <div className="flex gap-3 pt-2">
+              <div className="sticky bottom-0 -mx-6 -mb-6 px-6 py-4 flex gap-3 bg-sidebar-bg border-t border-white/5 rounded-b-2xl">
                 <button
                   type="button"
                   onClick={closeModal}
@@ -2253,8 +2253,8 @@ export default function SuperAdminPanel() {
       {/* CONFIRM DELETE MODAL                                                 */}
       {/* =================================================================== */}
       {confirmDelete.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-sidebar-bg border border-red-500/20 rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-fade-in">
+        <div className="fixed inset-0 z-50 flex justify-center p-4 overflow-y-auto bg-black/60 backdrop-blur-sm">
+          <div className="my-auto bg-sidebar-bg border border-red-500/20 rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-fade-in">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center flex-shrink-0">
                 <Trash2 size={17} className="text-danger" />
@@ -2363,8 +2363,8 @@ export default function SuperAdminPanel() {
       {/* PRICE TIER CREATE / EDIT MODAL                                       */}
       {/* =================================================================== */}
       {tierModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md animate-fade-in">
+        <div className="fixed inset-0 z-50 flex justify-center p-4 overflow-y-auto bg-black/60 backdrop-blur-sm">
+          <div className="my-auto bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md animate-fade-in">
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
               <div>
                 <h2 className="font-black text-fg text-lg">
@@ -2957,8 +2957,8 @@ export default function SuperAdminPanel() {
       {/* RESET CLIENT PASSWORD MODAL                                          */}
       {/* =================================================================== */}
       {resetPwModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-fade-in">
+        <div className="fixed inset-0 z-50 flex justify-center p-4 overflow-y-auto bg-black/60 backdrop-blur-sm">
+          <div className="my-auto bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-fade-in">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-xl bg-brand/10 flex items-center justify-center flex-shrink-0">
                 <KeyRound size={17} className="text-brand-text" />

@@ -13,6 +13,7 @@ import { resolveTierPercent } from '../lib/priceTiers.js';
 import { buildSalePriceMap, saleUnitPrice, activeSalesQuery } from '../lib/salePricing.js';
 import { saleRevenueLines, vatShare, vatFromInclusive, deliveryFeeVat, OUTPUT_VAT } from '../lib/vatPosting.js';
 import { loadVatConfig as loadVatConfigShared } from '../lib/vatSettings.js';
+import { isAnonymousCustomerName } from '../lib/customerName.js';
 
 export default function registerOrders(ctx) {
   const {
@@ -384,7 +385,9 @@ async function maybePromoteWalkInClient(order) {
   try {
     if (order.clientAccountId || order.placedByClient) return;
     const name = (order.customerName || '').trim();
-    if (!name || name.toLowerCase() === 'guest') return;
+    // A stand-in ("Guest", "Walk-in") is not a customer, so it is never counted
+    // towards promotion - see lib/customerName.js for what went wrong without it.
+    if (isAnonymousCustomerName(name)) return;
 
     const nameRegex = new RegExp(`^${escapeRegex(name)}$`, 'i');
 

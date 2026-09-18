@@ -434,7 +434,11 @@ export default function OrdersTab({ ctx }) {
                         ))}
                       </select>
                     )}
-                    <input type="text" placeholder="Customer / Driver Name *" value={posCustomerName} onChange={e => setPosCustomerName(e.target.value)}
+                    <input type="text"
+                      placeholder={BUSINESS_TYPE === 'fb' && posTable === 'Dine-In' && !posClientId
+                        ? 'Customer name (blank = Walk-in)'
+                        : 'Customer / Driver Name *'}
+                      value={posCustomerName} onChange={e => setPosCustomerName(e.target.value)}
                       className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60 text-sm transition" />
                     <IconSelect value={posTable} onChange={setPosTable} options={BUSINESS_TYPE === 'log' ? [
                       { value: 'Walk In', label: 'Walk In', Icon: Footprints },

@@ -2,6 +2,7 @@
 import { useDashboard } from '../../dashboard/DashboardContext';
 
 
+import { PACK_UNIT } from '../../../shared/packUnit.js';
 // Edit an inventory item's identity/costing fields. Quantity is deliberately
 // NOT editable here - stock only moves through Restock or Waste so every change
 // leaves a stock-card trail and a journal entry.
@@ -20,7 +21,7 @@ export default function EditInventoryModal() {
     packSize: editInvForm.packSize === '' ? null : parseFloat(editInvForm.packSize),
   }).label || 'pack';
   const costUnit = packLabel;
-  const thresholdUnit = d.isPacked ? 'pcs' : (editInvForm.displayUnit || editInvForm.unit || 'unit');
+  const thresholdUnit = d.isPacked ? PACK_UNIT : (editInvForm.displayUnit || editInvForm.unit || 'unit');
   const set = (patch) => setEditInvForm({ ...editInvForm, ...patch });
 
   return (
@@ -38,7 +39,7 @@ export default function EditInventoryModal() {
             <p className="text-fg/60 text-[10px] font-bold uppercase">Current Stock</p>
             <p className="text-2xl text-brand-text font-black tabular-nums">
               {d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })}{' '}
-              <span className="text-sm text-fg/60 font-bold">{d.isPacked ? 'pcs' : d.unit}</span>
+              <span className="text-sm text-fg/60 font-bold">{d.isPacked ? PACK_UNIT : d.unit}</span>
             </p>
             <p className="text-[10px] text-fg/60 mt-1 italic">To change quantity, use Restock or Waste - not this form.</p>
           </div>

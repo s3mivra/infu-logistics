@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
 import * as ui from '../../shared/ui';
 
+import { PACK_UNIT } from '../../shared/packUnit.js';
 // #8 - multi-location stock transfers. Request a move between two inventory items
 // (each tagged to a location), route it through approve → release, and see on-hand
 // value grouped by location. Quantity is entered in the source item's base unit.
@@ -39,7 +40,7 @@ export default function StockTransferPanel({
   // a 0 or NaN factor and silently transfer nothing.
   const disp = fromItem && itemDisplay ? itemDisplay(fromItem) : null;
   const perPiece = Number(disp?.isPacked ? disp.packBase : 1) || 1;
-  const pieceLabel = disp?.isPacked ? 'pcs' : (disp?.unit || fromItem?.unit || 'units');
+  const pieceLabel = disp?.isPacked ? PACK_UNIT : (disp?.unit || fromItem?.unit || 'units');
   const qtyPieces = parseFloat(qty);
   const qtyInBase = Number.isFinite(qtyPieces) ? +(qtyPieces * perPiece).toFixed(6) : 0;
   // What is actually on hand, in the same unit the user is typing in.

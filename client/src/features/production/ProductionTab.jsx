@@ -4,6 +4,7 @@ import * as ui from '../../shared/ui';
 import { reconcileUnitOptions as reconcileUnitsFor, plannedUnitChoice as plannedUnitFor, toBaseQty, inUnit, restateQty } from '../../shared/productionUnits';
 
 import { todayStr } from '../../shared/businessDay.js';
+import { PACK_UNIT } from '../../shared/packUnit.js';
 // Approval decision - Pending -> Approved/Rejected.
 const STATUS_CLS = {
   Pending:  'bg-yellow-500/15 text-warning',
@@ -61,7 +62,7 @@ export default function ProductionTab({ ctx }) {
   const pieceInfo = (item) => {
     const d = item && itemDisplay ? itemDisplay(item) : null;
     const perPiece = Number(d?.isPacked ? d.packBase : 1) || 1;
-    const label = d?.isPacked ? 'pcs' : (d?.unit || item?.unit || 'units');
+    const label = d?.isPacked ? PACK_UNIT : (d?.unit || item?.unit || 'units');
     const onHandPieces = item ? +(((item.stockQty || 0) / perPiece).toFixed(4)) : 0;
     return { perPiece, label, onHandPieces };
   };

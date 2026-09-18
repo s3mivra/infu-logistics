@@ -4,6 +4,7 @@
 import { captureError } from '../lib/errorLog.js';
 import { saleRevenueLines, vatFromInclusive } from '../lib/vatPosting.js';
 import { loadVatConfig } from '../lib/vatSettings.js';
+import { isAnonymousCustomerName } from '../lib/customerName.js';
 
 export default function registerAdminTools(ctx) {
   const {
@@ -474,7 +475,7 @@ app.post('/api/admin/seed-payment-subaccounts', verifyToken, requireSuperAdmin, 
 async function maybePromoteBackdateClient(customerName) {
   try {
     const name = (customerName || '').trim();
-    if (!name || name.toLowerCase() === 'guest' || name.toLowerCase().startsWith('walk-in')) return;
+    if (isAnonymousCustomerName(name)) return;
     const nameRegex = new RegExp(`^${escapeRegex(name)}$`, 'i');
 
     let account = await ClientAccount.findOne({ name: nameRegex, source: 'pos' });

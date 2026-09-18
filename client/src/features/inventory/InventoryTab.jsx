@@ -5,6 +5,7 @@ import StockTaxonomyPanel from './StockTaxonomyPanel';
 import StockTransferPanel from './StockTransferPanel';
 import ReservationsPanel from './ReservationsPanel';
 
+import { PACK_UNIT } from '../../shared/packUnit.js';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 // Zero-padded MM/DD/YYYY - `.toLocaleDateString()` on its own drops the
@@ -503,7 +504,7 @@ export default function InventoryTab({ ctx }) {
                           // of printing e.g. "11.867 pcs".
                           return d.isPacked ? Math.ceil(raw).toLocaleString() : raw.toLocaleString(undefined, { maximumFractionDigits: 3 });
                         })()}{item.thresholdIsAuto && <span title="Auto-suggested from sales velocity - set your own to override" className="ml-1 text-[8px] font-black text-accent/70 align-top">AUTO</span>}</>) : '-'}</td>
-                        <td className="py-3 text-on-brand pl-2 font-bold">{d.isPacked ? 'pcs' : d.unit}</td>
+                        <td className="py-3 text-on-brand pl-2 font-bold">{d.isPacked ? PACK_UNIT : d.unit}</td>
                         <td className="py-3 text-right text-on-brand font-bold font-mono text-xs tabular-nums"><>{peso(d.packCost)}<span className="text-white/60">/{d.packLabel}</span></></td>
                         <td className="py-3 text-right text-on-brand font-bold font-mono text-xs tabular-nums">{peso(item.stockQty * (item.unitCost || 0))}</td>
                         </>); })()}
@@ -598,7 +599,7 @@ export default function InventoryTab({ ctx }) {
                                     .map((b, displayIdx) => {
                                       const bPackBase = packInfo(item).packBase || 1;
                                       const dispQty = (b.qty || 0) / bPackBase;
-                                      const bUnit = itemDisplay(item).isPacked ? 'pcs' : itemDisplay(item).unit;
+                                      const bUnit = itemDisplay(item).isPacked ? PACK_UNIT : itemDisplay(item).unit;
                                       const exp = b.expiryDate ? new Date(b.expiryDate) : null;
                                       const prod = !exp && b.productionDate ? new Date(b.productionDate) : null;
                                       const today = new Date(); today.setHours(0,0,0,0);
@@ -678,7 +679,7 @@ export default function InventoryTab({ ctx }) {
                               </table>
                             </div>
                             <p className="text-[10px] text-white mt-2">
-                              Item unit cost <span className="text-white font-bold tabular-nums">{peso((item.unitCost || 0) * (packInfo(item).packBase || 1))}/{itemDisplay(item).isPacked ? 'pcs' : itemDisplay(item).unit}</span> is the weighted average across all batches (updated on each restock).
+                              Item unit cost <span className="text-white font-bold tabular-nums">{peso((item.unitCost || 0) * (packInfo(item).packBase || 1))}/{itemDisplay(item).isPacked ? PACK_UNIT : itemDisplay(item).unit}</span> is the weighted average across all batches (updated on each restock).
                             </p>
                           </td>
                         </tr>
@@ -809,7 +810,7 @@ export default function InventoryTab({ ctx }) {
                       {currentInventory.map(item => {
                         // LOG: count in whole packages (pcs); FB: count in kg/L/pcs.
                         const di = itemDisplay(item);
-                        const eff = { mult: di.packBase || 1, unit: di.isPacked ? 'pcs' : di.unit };
+                        const eff = { mult: di.packBase || 1, unit: di.isPacked ? PACK_UNIT : di.unit };
                         const actualInputDisplay = physicalCounts[item._id]; // entered in display units
                         const hasInput = actualInputDisplay !== undefined && actualInputDisplay !== '';
                         // Convert input → base for variance math; everything financial stays in base.
@@ -1043,7 +1044,7 @@ export default function InventoryTab({ ctx }) {
                         return (
                           <div key={i._id} className="flex justify-between text-xs">
                             <span className="text-danger font-bold">{i.itemName}</span>
-                            <span className="text-danger font-mono tabular-nums">{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? 'pcs' : d.unit} (min: {minDisp})</span>
+                            <span className="text-danger font-mono tabular-nums">{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? PACK_UNIT : d.unit} (min: {minDisp})</span>
                           </div>
                         );
                       })}
@@ -1065,7 +1066,7 @@ export default function InventoryTab({ ctx }) {
                         return (
                           <div key={`${i._id}-${i.expiryDate}-${wi}`} className="flex justify-between text-xs items-center">
                             <span className={`font-bold ${color}`}>{i.itemName}</span>
-                            <span className={`tabular-nums ${color}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? 'pcs' : d.unit} · <span className="font-black">{txt}</span></span>
+                            <span className={`tabular-nums ${color}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? PACK_UNIT : d.unit} · <span className="font-black">{txt}</span></span>
                           </div>
                         );
                       })}

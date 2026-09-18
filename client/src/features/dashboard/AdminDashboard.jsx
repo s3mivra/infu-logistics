@@ -2319,7 +2319,14 @@ export default function AdminDashboard() {
     // Synchronous double-tap guard - blocks a second submit before React re-renders.
     if (posSubmittingRef.current) return;
     if (posCart.length === 0) return ui.alert("Cart is empty!");
-    if (!posCustomerName) return ui.alert("Please enter Customer / Driver Name.");
+    // A dine-in customer at a cafe usually has no name to give, and stopping
+    // the sale to ask for one is friction nobody needs. It is filed as
+    // "Walk-in", which the server treats as a stand-in rather than a person,
+    // so it is never promoted into a client account however many there are.
+    // Everything else - delivery, pickup, a picked client - still needs a name.
+    const walkInDefault = BUSINESS_TYPE === 'fb' && posTable === 'Dine-In' && !posClientId;
+    const customerName = String(posCustomerName || '').trim() || (walkInDefault ? 'Walk-in' : '');
+    if (!customerName) return ui.alert("Please enter Customer / Driver Name.");
     const isDelivery = posTable === 'Manual Delivery';
     const isPickup = posTable === 'Pickup';
     if (isDelivery && !posDeliveryAddress) return ui.alert("Please enter delivery address.");
@@ -2336,7 +2343,7 @@ export default function AdminDashboard() {
     const payload = {
       items: posCart,
       table: posTable,
-      customerName: posCustomerName,
+      customerName,
       // Linking to a client account lets the server resolve per-client product
       // discount overrides for this order. Optional - falls back to the
       // product's default discountPercent when blank.
@@ -4895,6 +4902,12 @@ const updateStatus = async (orderId, newStatus) => {
       auth.setToken(d.token);
       auth.setUser(d.user);
       setActiveAdmin(d.user);
+      // Whether THIS person is clocked in. The till did not change hands but
+      // the person did, and clock status is theirs: without this the screen
+      // kept the previous person's status and put a clock-in gate in front of
+      // someone the server already had clocked in.
+      setClockStatusLoaded(false);
+      fetchClockStatus();
       setSwitchLocked(false);
       setSwitchOpen(false);
       ui.toast?.(`${d.user.name} is now at the register.`, { tone: 'success' });
@@ -6972,17 +6985,24 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     }
     return s;
   };
-  const CLOCK_STATE_KEY = 'semivra_clock_state';
+  // Clock status is one PERSON's, and on a shared tablet the person changes
+  // without anyone signing out. One cache for the whole device meant the
+  // offline fallback could show the last person's status to the next one, so
+  // it is kept per user. Read from auth rather than from React state, because
+  // right after a PIN switch the state has not caught up yet but auth has.
+  const clockStateKey = () => `semivra_clock_state:${auth.getUser()?._id || 'anon'}`;
   const fetchClockStatus = async () => {
     // OFFLINE: rebuild status from the last cached server snapshot + queued events.
     if (!navigator.onLine) {
+      let st = null;
       try {
-        const cached = JSON.parse(localStorage.getItem(CLOCK_STATE_KEY) || 'null')
+        const cached = JSON.parse(localStorage.getItem(clockStateKey()) || 'null')
           || { isClockedIn: false, entry: null, onBreak: false, breakUsedMinutes: 0, breakRemainingMinutes: 60 };
-        setClockStatus(applyQueuedClock(cached));
+        st = applyQueuedClock(cached);
+        setClockStatus(st);
       } catch { /* ignore */ }
       finally { setClockStatusLoaded(true); }
-      return;
+      return st;
     }
     try {
       const res = await apiFetch('/api/clock/status'); const d = await res.json();
@@ -6993,11 +7013,13 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           breakUsedMinutes: d.breakUsedMinutes || 0, breakRemainingMinutes: d.breakRemainingMinutes ?? 60,
         };
         setClockStatus(st);
-        try { localStorage.setItem(CLOCK_STATE_KEY, JSON.stringify(st)); } catch { /* ignore */ }
+        try { localStorage.setItem(clockStateKey(), JSON.stringify(st)); } catch { /* ignore */ }
+        return st;
       }
     }
     catch (err) { console.error('fetchClockStatus', err); }
     finally { setClockStatusLoaded(true); }
+    return null;
   };
   const fetchClockEntries = async (page = 1) => {
     try { const res = await apiFetch(`/api/clock/entries?page=${page}&limit=30`); const d = await res.json(); if (d.success) { setClockEntries(d.entries||[]); setClockEntriesTotal(d.total||0); setClockEntriesPage(page); } }
@@ -7010,7 +7032,26 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       ui.alert('Clocked in (offline - will sync when back online).');
       return;
     }
-    try { const res = await apiFetch('/api/clock/in', { method: 'POST', body: '{}' }); const d = await res.json(); if (d.success) { fetchClockStatus(); ui.alert('Clocked in.'); } else ui.alert(d.error||'Clock-in failed.'); }
+    try {
+      const res = await apiFetch('/api/clock/in', { method: 'POST', body: '{}' });
+      const d = await res.json();
+      if (d.success) { fetchClockStatus(); ui.alert('Clocked in.'); return; }
+      // The server is the record of who is clocked in. When it refuses, ask it
+      // what is actually true instead of repeating the refusal: an entry left
+      // open from an earlier shift, or a screen that had not caught up after a
+      // switch, left someone stuck behind a gate offering a button the server
+      // would never accept. If they are in, the gate lifts - and they are told
+      // since when, because an entry open since yesterday is worth a look.
+      const st = await fetchClockStatus();
+      if (st?.isClockedIn) {
+        const since = st.entry?.clockIn ? new Date(st.entry.clockIn) : null;
+        ui.alert(since
+          ? `You were already clocked in, since ${since.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}.`
+          : 'You were already clocked in.');
+      } else {
+        ui.alert(d.error || 'Clock-in failed.');
+      }
+    }
     catch { ui.alert('Network error.'); }
   };
   // Pressing the clock button while working opens the choice modal (break vs end shift).
