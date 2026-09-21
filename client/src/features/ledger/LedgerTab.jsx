@@ -9,6 +9,7 @@ import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocume
 import { LEDGER_TAB_GROUPS, REPORT_TAB_GROUPS } from '../dashboard/navRegistry';
 
 import { monthStartStr, todayStr } from '../../shared/businessDay.js';
+import SearchSelect from '../../shared/ui/SearchSelect';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 // ── LedgerTab - extracted from AdminDashboard.jsx ──
@@ -3460,17 +3461,14 @@ export default function LedgerTab({ ctx }) {
                     {advIssueModal.type === 'customer' && (clientAccounts || []).length > 0 && (
                       <>
                         <label htmlFor="adv-client" className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Client account</label>
-                        <select id="adv-client" value={advIssueModal.clientId || ''}
+                        <SearchSelect id="adv-client" value={advIssueModal.clientId || ''}
                           onChange={e => {
                             const c = clientAccounts.find(x => String(x._id) === e.target.value);
                             setAdvIssueModal(f => ({ ...f, clientId: e.target.value, payeeName: c ? (c.name || c.username) : f.payeeName }));
                           }}
-                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-1 outline-none focus:border-brand">
-                          <option value="">No account - type a name below</option>
-                          {clientAccounts.map(c => (
-                            <option key={c._id} value={c._id}>{c.name || c.username}{c.clientCode ? ` (${c.clientCode})` : ''}</option>
-                          ))}
-                        </select>
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-1 outline-none focus:border-brand"
+                          placeholder="No account - type a name below"
+                          options={clientAccounts.map(c => ({ value: c._id, label: c.name || c.username, hint: c.clientCode || '' }))} />
                         <p className="text-[10px] text-fg/65 mb-4">Linked deposits show on the client's row and in their portal, and can only be applied to their orders.</p>
                       </>
                     )}
@@ -4024,7 +4022,7 @@ export default function LedgerTab({ ctx }) {
                       </div>
                       <div>
                         <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Supplier</label>
-                        <select value={apPayForm.supplierId || ''}
+                        <SearchSelect value={apPayForm.supplierId || ''}
                           onChange={e => {
                             const id = e.target.value;
                             const owed = (apData?.bySupplier || []).find(s => s.supplierId === id);
@@ -4035,17 +4033,12 @@ export default function LedgerTab({ ctx }) {
                               amount: owed ? String(owed.balance) : p.amount,
                             }));
                           }}
-                          className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg font-bold outline-none focus:border-brand/60">
-                          <option value="">- Other / one-off payee -</option>
-                          {(suppliers || []).map(s => {
+                          className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg font-bold outline-none focus:border-brand/60"
+                          placeholder="Other / one-off payee - or type to find a supplier"
+                          options={(suppliers || []).map(s => {
                             const owed = (apData?.bySupplier || []).find(b => b.supplierId === String(s._id));
-                            return (
-                              <option key={s._id} value={s._id}>
-                                {s.name}{owed ? ` - ₱${owed.balance.toLocaleString('en-PH', { minimumFractionDigits: 2 })} owed` : ''}
-                              </option>
-                            );
-                          })}
-                        </select>
+                            return { value: s._id, label: s.name, hint: owed ? `₱${owed.balance.toLocaleString('en-PH', { minimumFractionDigits: 2 })} owed` : '' };
+                          })} />
                       </div>
                       {!apPayForm.supplierId && (
                         <div>
@@ -4492,10 +4485,10 @@ export default function LedgerTab({ ctx }) {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Supplier</label>
-                      <select value={billCreate.supplierId} onChange={e => setBillCreate(c => ({ ...c, supplierId: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg">
-                        <option value="">Select supplier…</option>
-                        {(suppliers||[]).map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
-                      </select>
+                      <SearchSelect value={billCreate.supplierId} onChange={e => setBillCreate(c => ({ ...c, supplierId: e.target.value }))}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand"
+                        placeholder="Type to find a supplier"
+                        options={(suppliers || []).map(s => ({ value: s._id, label: s.name }))} />
                     </div>
                     <div>
                       <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Expense account (debited on approval)</label>

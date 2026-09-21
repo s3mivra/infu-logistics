@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
+import { requirePermission as permit } from '../lib/authz.js';
 
 export default function registerQrSessions(ctx) {
   const {
@@ -275,6 +276,123 @@ app.post('/api/sessions/:id/close', async (req, res) => {
   } catch (err) {
     captureError(req, err);
     res.status(500).json({ success: false });
+  }
+});
+// ── JUST QR: showing the ordering code without signing in ──────────────────
+// The login screen has a "Just QR" button, so a counter tablet can put the
+// ordering code up without anyone signing in. A code is a live ordering
+// session - whoever scans it can send orders to the kitchen - so it cannot be
+// handed to anyone who can reach this server; the login page is on the open
+// internet. Instead a manager enables a DEVICE once: the tablet is given a
+// long random key, kept in its own storage, and only a device holding a live
+// key may make codes this way. The server keeps a hash of the key, never the
+// key, and a device can be switched off at any time.
+const QrDevice = mongoose.models.QrDevice || mongoose.model('QrDevice', new mongoose.Schema({
+  businessType: { type: String, index: true },
+  label: { type: String, default: '' },
+  keyHash: { type: String, unique: true },
+  createdBy: { type: String, default: '' },
+  lastUsedAt: { type: Date, default: null },
+  revoked: { type: Boolean, default: false },
+}, { timestamps: true }));
+
+const hashKey = (k) => crypto.createHash('sha256').update(String(k)).digest('hex');
+const canManageDevices = [verifyToken, requireStaff, permit('settings.manage')];
+// A code is replaced when one is scanned or runs out; nothing a person does
+// asks for one faster than this, so anything faster is not a person.
+const MIN_GAP_MS = 4000;
+const lastIssued = new Map();
+
+async function deviceFrom(req) {
+  const key = req.headers['x-qr-device'];
+  if (typeof key !== 'string' || key.length < 32 || key.length > 200) return null;
+  const device = await QrDevice.findOne({ keyHash: hashKey(key), businessType: BUSINESS_TYPE, revoked: false });
+  return device || null;
+}
+
+app.post('/api/qr-devices', ...canManageDevices, async (req, res) => {
+  try {
+    const label = String(req.body?.label || '').trim().slice(0, 60) || 'Counter tablet';
+    const key = crypto.randomBytes(32).toString('hex');
+    const device = await QrDevice.create({ businessType: BUSINESS_TYPE, label, keyHash: hashKey(key), createdBy: req.user?.name || '' });
+    await logAudit(req, { action: 'create', entity: 'QrDevice', entityId: device._id, after: { label } });
+    // The key is returned once and never again - the server only keeps its hash.
+    res.json({ success: true, key, device: { _id: device._id, label, createdAt: device.createdAt } });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.get('/api/qr-devices', ...canManageDevices, async (req, res) => {
+  try {
+    const devices = await QrDevice.find({ businessType: BUSINESS_TYPE, revoked: false }, { keyHash: 0 }).sort({ createdAt: -1 }).lean();
+    res.json({ success: true, devices });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.delete('/api/qr-devices/:id', ...canManageDevices, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+    const r = await QrDevice.updateOne({ _id: req.params.id, businessType: BUSINESS_TYPE }, { $set: { revoked: true } });
+    if (!r.matchedCount) return res.status(404).json({ success: false, error: 'Not found' });
+    await logAudit(req, { action: 'delete', entity: 'QrDevice', entityId: req.params.id });
+    res.json({ success: true });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// Is this device still allowed? The login screen asks, so a switched-off
+// tablet says so instead of failing at the moment someone wants the code.
+app.get('/api/qr-devices/me', async (req, res) => {
+  try {
+    const device = await deviceFrom(req);
+    res.json({ success: true, enabled: !!device, label: device?.label || null });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// A fresh ordering code for an enabled device - the same session the signed-in
+// "Show QR" makes, for this device's own counter table.
+app.post('/api/qr-devices/session', async (req, res) => {
+  try {
+    const device = await deviceFrom(req);
+    if (!device) return res.status(403).json({ success: false, error: 'This device is not set up to show the QR. A manager can turn it on in Settings.' });
+    const id = String(device._id);
+    const last = lastIssued.get(id) || 0;
+    if (Date.now() - last < MIN_GAP_MS) return res.status(429).json({ success: false, error: 'Too soon - wait a moment.' });
+    lastIssued.set(id, Date.now());
+
+    const table = `QR-${id.slice(-6).toUpperCase()}`;
+    await QRSession.updateMany({ table, isActive: true }, { isActive: false });
+    const sessionId = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await QRSession.create({ sessionId, table, expiresAt });
+    device.lastUsedAt = new Date();
+    await device.save();
+    res.json({ success: true, sessionId, table, expiresAt });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// Has the code on screen been scanned, or run out? The device is not signed
+// in, so it cannot hear the staff-only "code claimed" event; it asks instead,
+// every few seconds, about its own code only.
+app.get('/api/qr-devices/session/:sessionId', async (req, res) => {
+  try {
+    const device = await deviceFrom(req);
+    if (!device) return res.status(403).json({ success: false, error: 'This device is not set up to show the QR.' });
+    const table = `QR-${String(device._id).slice(-6).toUpperCase()}`;
+    const session = await QRSession.findOne({ sessionId: String(req.params.sessionId), table }).lean();
+    if (!session) return res.status(404).json({ success: false, error: 'Not found' });
+    const expired = !session.isActive || new Date(session.expiresAt) < new Date();
+    res.json({ success: true, claimed: !!session.claimedAt, expired });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 }

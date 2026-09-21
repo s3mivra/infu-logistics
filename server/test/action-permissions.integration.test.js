@@ -22,6 +22,12 @@ const as = (tok) => (m, p) => request(app)[m](p).set('Authorization', `Bearer ${
 beforeAll(async () => {
   ctx = await bootApp({ businessType: 'fb' });
   app = ctx.app;
+  // The one-time floor-action migration runs at startup and grants waste/count/
+  // comp to every stored list. Wait for it, so the narrowed user below is made
+  // after it - as it would be on a real install - and keeps its narrow list.
+  for (let i = 0; i < 100 && !(await M('Settings').findOne({ key: 'permsFloorActionsV1' }).lean()); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
   await makeUser({ name: 'ApStaff', role: 'staff' });
   await makeUser({ name: 'ApManager', role: 'manager' });
   // Can see stock and ring sales, and nothing else on the floor.

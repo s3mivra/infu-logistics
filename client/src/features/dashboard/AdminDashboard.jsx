@@ -1,6 +1,7 @@
 ﻿import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { socket, reconnectSocket } from '../../shared/staffSocket.js';
+import JustQr from '../qr/JustQr';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network, Factory, Landmark, Receipt } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
@@ -553,6 +554,8 @@ export default function AdminDashboard() {
 
   // --- MANUAL POS STATES ---
   const [isPosOpen, setIsPosOpen] = useState(false);
+  // "Just QR" from the login screen - the ordering code with nobody signed in.
+  const [justQrOpen, setJustQrOpen] = useState(false);
   const [posCart, setPosCart] = useState([]);
   const [posSubmitting, setPosSubmitting] = useState(false); // disables Place Order while in flight
   const posSubmittingRef = useRef(false);                    // synchronous double-tap guard
@@ -6286,9 +6289,10 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     };
     const res = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await res.json();
-    if (!data.success) { ui.alert(data.error || 'Failed to save product.'); return; }
+    if (!data.success) { ui.alert(data.error || 'Failed to save product.'); return false; }
     resetProductForm();
     fetchData();
+    return true;
   };
   const deleteProduct = async (id) => {
     if(await ui.confirm("Delete this product permanently?")) {
@@ -8192,7 +8196,14 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           <button type="submit" className="w-full bg-brand hover:bg-brand-dark text-on-brand font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest">
             Start Shift
           </button>
+          {/* The ordering code on its own - for a counter tablet facing the
+              customer, with nobody signed in. */}
+          <button type="button" onClick={() => setJustQrOpen(true)}
+            className="w-full mt-3 flex items-center justify-center gap-2 border border-white/15 hover:border-brand/60 text-fg/80 hover:text-fg font-bold py-3 rounded-xl transition text-sm uppercase tracking-widest">
+            <QrCode size={16} /> Just QR
+          </button>
         </form>
+        {justQrOpen && <JustQr apiUrl={API_URL} businessType={BUSINESS_TYPE} bizName={BIZ_NAME} onClose={() => setJustQrOpen(false)} />}
         </div>
       </div>
     );

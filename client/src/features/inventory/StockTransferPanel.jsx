@@ -2,6 +2,7 @@
 import * as ui from '../../shared/ui';
 
 import { PACK_UNIT } from '../../shared/packUnit.js';
+import SearchSelect from '../../shared/ui/SearchSelect';
 // #8 - multi-location stock transfers. Request a move between two inventory items
 // (each tagged to a location), route it through approve → release, and see on-hand
 // value grouped by location. Quantity is entered in the source item's base unit.
@@ -163,18 +164,17 @@ export default function StockTransferPanel({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
           <div>
             <label className="text-[10px] text-white uppercase font-bold block mb-1">From (source)</label>
-            <select value={fromItemId} onChange={e => setFromItemId(e.target.value)} className={input}>
-              <option value="">- Select item -</option>
-              {inventory.map(i => {
-                // Show on-hand in the same unit the quantity box accepts, so
-                // "120 pcs available" and "transfer 5 pcs" agree.
+            <SearchSelect value={fromItemId} onChange={e => setFromItemId(e.target.value)} className={input}
+              placeholder="Type to find the item"
+              options={inventory.map(i => {
+                // On-hand in the same unit the quantity box accepts, so
+                // "120 pcs available" and "transfer 5 pcs" agree. Stock is kept
+                // in grams and millilitres; printing it raw beside a "kg" label
+                // read 2,000 g as "2000 kg".
                 const d = itemDisplay ? itemDisplay(i) : null;
-                // Stock is stored in grams and millilitres; printing it raw
-                // beside a "kg" label read 2,000 g as "2000 kg".
                 const onHand = d ? `${+d.packQty.toFixed(3)} ${d.isPacked ? PACK_UNIT : d.unit}` : `${i.stockQty} ${i.unit}`;
-                return <option key={i._id} value={i._id}>{label(i)} ({onHand})</option>;
-              })}
-            </select>
+                return { value: i._id, label: label(i), hint: onHand };
+              })} />
             {fromBatches.length > 0 && (
               <div className="mt-1.5">
                 <label className="text-[10px] text-white uppercase font-bold block mb-1">Batch / Expiry</label>
@@ -194,17 +194,12 @@ export default function StockTransferPanel({
           </div>
           <div>
             <label className="text-[10px] text-white uppercase font-bold block mb-1">To (destination)</label>
-            <select value={toValue} onChange={e => setToValue(e.target.value)} className={input}>
-              <option value="">- Select item -</option>
-              <optgroup label="My Locations">
-                {inventory.filter(i => i._id !== fromItemId).map(i => <option key={i._id} value={i._id}>{label(i)}</option>)}
-              </optgroup>
-              {hubLinks.length > 0 && (
-                <optgroup label="Hub Partners">
-                  {hubLinks.map(l => <option key={l.partnerSlug} value={`hub:${l.partnerSlug}`}>{l.partnerName || l.partnerSlug} (connected business)</option>)}
-                </optgroup>
-              )}
-            </select>
+            <SearchSelect value={toValue} onChange={e => setToValue(e.target.value)} className={input}
+              placeholder="Type to find the destination"
+              options={[
+                ...inventory.filter(i => i._id !== fromItemId).map(i => ({ value: i._id, label: label(i), group: 'My Locations' })),
+                ...hubLinks.map(l => ({ value: `hub:${l.partnerSlug}`, label: `${l.partnerName || l.partnerSlug}`, hint: 'connected business', group: 'Hub Partners' })),
+              ]} />
             {isHubTarget && (
               <p className="text-[10px] text-brand-text mt-1">
                 Ships {fromItem ? fromItem.itemName : 'this item'} OUT of your inventory to {hubLinks.find(l => `hub:${l.partnerSlug}` === toValue)?.partnerName || 'this partner'} - they must accept it on their end before it's released from yours.

@@ -2,6 +2,7 @@
 import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus, LayoutGrid, BarChart3, ExternalLink, Boxes, Share2, Landmark, AlertTriangle } from 'lucide-react';
 
 import { todayStr } from '../../shared/businessDay.js';
+import SearchSelect from '../../shared/ui/SearchSelect';
 const statusColor = {
   // Awaiting our own approval before the partner is even told about it.
   Requested: 'bg-orange-500/15 text-warning',
@@ -1065,12 +1066,9 @@ export default function HubTab({ ctx }) {
                 ) : (
                   <>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                      <select value={sendItem} onChange={e => setSendItem(e.target.value)} className={input}>
-                        <option value="">- Select product -</option>
-                        {inventory.map(i => (
-                          <option key={i._id} value={i._id}>{i.itemName} · {i.stockQty} {i.unit}</option>
-                        ))}
-                      </select>
+                      <SearchSelect value={sendItem} onChange={e => setSendItem(e.target.value)} className={input}
+                        placeholder="Type to find a product"
+                        options={inventory.map(i => ({ value: i._id, label: i.itemName, hint: `${i.stockQty} ${i.unit}` }))} />
                       <input
                         type="number" min="0.001" step="any" value={sendQty}
                         onChange={e => setSendQty(e.target.value)}
@@ -1151,16 +1149,13 @@ export default function HubTab({ ctx }) {
                     fills the Item Name/Unit fields below, which stay editable
                     since you can't see the partner's stock and this is a
                     name+qty ask, not a link to a real inventory item. */}
-                <select value={askPick} onChange={e => {
+                <SearchSelect value={askPick} onChange={e => {
                   const id = e.target.value; setAskPick(id);
                   const item = inventory.find(i => i._id === id);
                   if (item) { setAskItemName(item.itemName); setAskUnit(item.unit || ''); }
-                }} className={`${input} mb-2`}>
-                  <option value="">- Or pick from your own products (optional) -</option>
-                  {inventory.map(i => (
-                    <option key={i._id} value={i._id}>{i.itemName} · {i.unit}</option>
-                  ))}
-                </select>
+                }} className={`${input} mb-2`}
+                  placeholder="Or pick from your own products (optional)"
+                  options={inventory.map(i => ({ value: i._id, label: i.itemName, hint: i.unit || '' }))} />
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
                   <input value={askItemName} onChange={e => { setAskItemName(e.target.value); setAskPick(''); }} className={input} placeholder="Item name" />
                   <input value={askUnit} onChange={e => setAskUnit(e.target.value)} className={input} placeholder="Unit (pcs, kg…)" />
@@ -1476,10 +1471,9 @@ export default function HubTab({ ctx }) {
             <div className="space-y-3">
               <div>
                 <label className="text-[10px] text-fg/70 uppercase font-bold block mb-1">Add to existing inventory item</label>
-                <select value={acceptItemId} onChange={e => { setAcceptItemId(e.target.value); if (e.target.value) setAcceptCreateNew(false); }} className={input} disabled={acceptCreateNew}>
-                  <option value="">- Choose item -</option>
-                  {inventory.map(i => <option key={i._id} value={i._id}>{i.itemName} · {i.stockQty} {i.unit}</option>)}
-                </select>
+                <SearchSelect value={acceptItemId} onChange={e => { setAcceptItemId(e.target.value); if (e.target.value) setAcceptCreateNew(false); }} className={input} disabled={acceptCreateNew}
+                  placeholder="Type to find the item"
+                  options={inventory.map(i => ({ value: i._id, label: i.itemName, hint: `${i.stockQty} ${i.unit}` }))} />
               </div>
               <div className="flex items-center gap-2 text-sm text-fg/65">
                 <div className="flex-1 h-px bg-white/10" />or<div className="flex-1 h-px bg-white/10" />

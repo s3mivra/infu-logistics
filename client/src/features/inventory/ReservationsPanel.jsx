@@ -3,6 +3,7 @@ import { Lock, Unlock, X, RefreshCw, Plus } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
 import { PACK_UNIT } from '../../shared/packUnit.js';
+import SearchSelect from '../../shared/ui/SearchSelect';
 // Stock held for a named client - usually because they have paid a deposit on
 // it. Held stock stays on the shelf and in the stock figure, but no other
 // client's order can take it; the holder's own order releases the hold as it
@@ -108,23 +109,17 @@ export default function ReservationsPanel({ apiFetch, inventory = [], clientAcco
         <div className="mt-4 bg-page-bg border border-white/10 rounded-xl p-4 grid gap-3 sm:grid-cols-2">
           <div>
             <label htmlFor="rsv-client" className="text-[10px] font-bold text-fg/70 uppercase tracking-wider block mb-1">Held for</label>
-            <select id="rsv-client" value={form.clientId} onChange={e => setForm(f => ({ ...f, clientId: e.target.value }))}
-              className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand">
-              <option value="">Pick a client…</option>
-              {clientAccounts.map(c => <option key={c._id} value={c._id}>{c.name || c.username}</option>)}
-            </select>
+            <SearchSelect id="rsv-client" value={form.clientId} onChange={e => setForm(f => ({ ...f, clientId: e.target.value }))}
+              className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand"
+              placeholder="Type to find a client"
+              options={clientAccounts.map(c => ({ value: c._id, label: c.name || c.username, hint: c.clientCode || '' }))} />
           </div>
           <div>
             <label htmlFor="rsv-item" className="text-[10px] font-bold text-fg/70 uppercase tracking-wider block mb-1">Item</label>
-            <select id="rsv-item" value={form.invId} onChange={e => setForm(f => ({ ...f, invId: e.target.value }))}
-              className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand">
-              <option value="">Pick an item…</option>
-              {inventory.map(i => (
-                <option key={i._id} value={i._id}>
-                  {i.itemName} · {Math.max(0, (i.stockQty || 0) - (i.reservedQty || 0))} free
-                </option>
-              ))}
-            </select>
+            <SearchSelect id="rsv-item" value={form.invId} onChange={e => setForm(f => ({ ...f, invId: e.target.value }))}
+              className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand"
+              placeholder="Type to find an item"
+              options={inventory.map(i => ({ value: i._id, label: i.itemName, hint: `${Math.max(0, (i.stockQty || 0) - (i.reservedQty || 0))} free` }))} />
           </div>
           <div>
             <label htmlFor="rsv-qty" className="text-[10px] font-bold text-fg/70 uppercase tracking-wider block mb-1">Quantity (base units)</label>

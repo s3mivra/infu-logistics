@@ -1,6 +1,8 @@
 ﻿import React, { useCallback, useEffect, useState } from 'react';
 import { SlidersHorizontal, AlertTriangle, QrCode, Clock, DollarSign, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type, X } from 'lucide-react';
 import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
+import * as ui from '../../shared/ui';
+import { readDeviceKey, writeDeviceKey } from '../qr/JustQr';
 
 // ── SettingsTab - system preferences & account controls ───────────────────────
 // Houses the toggles that used to live crammed in the sidebar's "Tools" dropdown
@@ -437,6 +439,11 @@ export default function SettingsTab({ ctx }) {
             </div>
           </Card>
         )}
+
+        {/* QR display - which devices may show the ordering code from the
+            login screen without anyone signing in. Cafe only: the logistics
+            code is the public client portal and needs no device. */}
+        {BUSINESS_TYPE !== 'log' && (isSuperAdmin || ctx.can?.('settings.manage')) && <QrDevicesCard apiFetch={apiFetch} />}
 
         {/* Branding - business logo, shown on sidebar, login, receipts, menu & portal. */}
         {isSuperAdmin && (
@@ -1275,5 +1282,91 @@ export default function SettingsTab({ ctx }) {
         </Card>
       </div>
     </div>
+  );
+}
+
+// Devices that may show the ordering QR from the login screen ("Just QR").
+function QrDevicesCard({ apiFetch }) {
+  const [devices, setDevices] = useState(null);
+  const [thisKey, setThisKey] = useState(readDeviceKey());
+  const [thisId, setThisId] = useState(() => { try { return localStorage.getItem('semivra_qr_device_id') || ''; } catch { return ''; } });
+  const [busy, setBusy] = useState(false);
+  const [label, setLabel] = useState('Counter tablet');
+
+  const load = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/qr-devices');
+      const d = await r.json();
+      setDevices(d.success ? d.devices : []);
+    } catch { setDevices([]); }
+  }, [apiFetch]);
+  useEffect(() => { load(); }, [load]);
+
+  const enableHere = async () => {
+    setBusy(true);
+    try {
+      const r = await apiFetch('/api/qr-devices', { method: 'POST', body: JSON.stringify({ label }) });
+      const d = await r.json();
+      if (!d.success) return ui.alert(d.error || 'Could not turn this device on.');
+      writeDeviceKey(d.key);
+      try { localStorage.setItem('semivra_qr_device_id', d.device._id); } catch { /* private mode */ }
+      setThisKey(d.key); setThisId(d.device._id);
+      ui.toast('This device can now show the QR from the login screen.', { tone: 'success' });
+      load();
+    } finally { setBusy(false); }
+  };
+
+  const revoke = async (id) => {
+    if (!(await ui.confirm('Switch this device off? It will stop showing the QR without a sign-in.'))) return;
+    const r = await apiFetch(`/api/qr-devices/${id}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (!d.success) return ui.alert(d.error || 'Could not switch it off.');
+    if (id === thisId) {
+      writeDeviceKey('');
+      try { localStorage.removeItem('semivra_qr_device_id'); } catch { /* private mode */ }
+      setThisKey(''); setThisId('');
+    }
+    load();
+  };
+
+  const hereOn = !!thisKey && (devices || []).some(d => d._id === thisId);
+  return (
+    <Card title="QR display">
+      <div className="px-4 py-4 space-y-4">
+        <p className="text-sm text-fg/75">
+          The login screen has a <b>Just QR</b> button that shows the ordering code without anyone signing in. Anyone who scans
+          that code can send orders to the kitchen, so it only works on devices you turn on here.
+        </p>
+        {hereOn ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-bold text-success">This device can show the QR.</span>
+            <button onClick={() => revoke(thisId)} className="text-xs font-bold uppercase tracking-wider px-3 py-2 rounded-lg border border-white/15 text-fg/80 hover:text-fg hover:bg-white/5 transition">Switch off here</button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <input value={label} onChange={e => setLabel(e.target.value)} aria-label="Name for this device" maxLength={60}
+              className="flex-1 min-w-[180px] bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
+            <button onClick={enableHere} disabled={busy}
+              className="bg-brand hover:bg-brand-dark text-on-brand text-xs font-black uppercase tracking-wider px-4 py-2.5 rounded-lg transition disabled:opacity-50">
+              Let this device show the QR
+            </button>
+          </div>
+        )}
+        {devices && devices.length > 0 && (
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-widest text-fg/70 mb-2">Devices turned on</p>
+            <ul className="divide-y divide-white/5 border border-white/10 rounded-lg">
+              {devices.map(d => (
+                <li key={d._id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                  <span className="text-fg">{d.label}{d._id === thisId ? <span className="text-fg/70"> (this device)</span> : null}</span>
+                  <span className="text-fg/70 text-xs ml-auto">{d.lastUsedAt ? `last used ${new Date(d.lastUsedAt).toLocaleString()}` : 'not used yet'}</span>
+                  <button onClick={() => revoke(d._id)} className="text-danger text-xs font-bold uppercase">Switch off</button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }

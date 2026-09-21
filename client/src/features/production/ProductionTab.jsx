@@ -5,6 +5,7 @@ import { reconcileUnitOptions as reconcileUnitsFor, plannedUnitChoice as planned
 
 import { todayStr } from '../../shared/businessDay.js';
 import { PACK_UNIT } from '../../shared/packUnit.js';
+import SearchSelect from '../../shared/ui/SearchSelect';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 // Approval decision - Pending -> Approved/Rejected.
@@ -516,14 +517,13 @@ export default function ProductionTab({ ctx }) {
           <div>
             <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-2">Materials consumed</p>
             <div className="flex flex-wrap gap-2 mb-2">
-              <select value={matPick} onChange={e => { setMatPick(e.target.value); setMatUnit(''); }}
-                className="flex-1 min-w-[200px] bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent">
-                <option value="">Choose an item…</option>
-                {inventory.map(i => {
+              <SearchSelect value={matPick} onChange={e => { setMatPick(e.target.value); setMatUnit(''); }}
+                className="flex-1 min-w-[200px] bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent"
+                placeholder="Type to find a material"
+                options={inventory.map(i => {
                   const [natural] = unitOptions(i);
-                  return <option key={i._id} value={i._id}>{i.itemName} ({onHandIn(i, natural.factor)} {natural.label} on hand)</option>;
-                })}
-              </select>
+                  return { value: i._id, label: i.itemName, hint: `${onHandIn(i, natural.factor)} ${natural.label} on hand` };
+                })} />
               <input type="number" min="0" step="any" placeholder="Qty" aria-label="Quantity"
                 value={matQty} onChange={e => setMatQty(e.target.value)}
                 className="w-24 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
@@ -591,14 +591,13 @@ export default function ProductionTab({ ctx }) {
             </div>
 
             {outputType === 'existing' ? (
-              <select value={outputInvId} onChange={e => { setOutputInvId(e.target.value); setOutputQtyUnit(''); }}
-                className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent mb-2">
-                <option value="">Choose the item to add to…</option>
-                {inventory.map(i => {
+              <SearchSelect value={outputInvId} onChange={e => { setOutputInvId(e.target.value); setOutputQtyUnit(''); }}
+                className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent mb-2"
+                placeholder="Type to find the item to add to"
+                options={inventory.map(i => {
                   const [natural] = unitOptions(i);
-                  return <option key={i._id} value={i._id}>{i.itemName} ({onHandIn(i, natural.factor)} {natural.label} on hand)</option>;
-                })}
-              </select>
+                  return { value: i._id, label: i.itemName, hint: `${onHandIn(i, natural.factor)} ${natural.label} on hand` };
+                })} />
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
                 <input type="text" placeholder="New product name" value={outputName} onChange={e => setOutputName(e.target.value)}

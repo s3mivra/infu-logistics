@@ -1,5 +1,9 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Flame, Calendar, ToggleLeft, ToggleRight, Upload } from 'lucide-react';
+import { Copy, Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Flame, Calendar, ToggleLeft, ToggleRight, Upload } from 'lucide-react';
+import SearchSelect from '../../shared/ui/SearchSelect';
+import * as ui from '../../shared/ui';
+import RecipeMatrix from './RecipeMatrix';
+import { columnsOf, readiness, marginOf, rowKeyOf } from '../../shared/recipeMatrix';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 // Category routing default per business type - log routes to Logistics, fb to Kitchen.
@@ -179,14 +183,9 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
                   <option value="threshold">Order Threshold Deal</option>
                 </select>
 
-                <select className={`w-full ${inputCls} text-xs`} value={ruleForm.productId} onChange={e => setRuleForm(r => ({ ...r, productId: e.target.value }))}>
-                  <option value="">
-                    {ruleForm.ruleType === 'threshold' ? '- Select discounted product -' : '- Select product -'}
-                  </option>
-                  {products.filter(p => !p.isArchived).map(p => (
-                    <option key={p._id} value={p._id}>{p.name}{p.basePrice ? ` (${fmt(p.basePrice)})` : ''}</option>
-                  ))}
-                </select>
+                <SearchSelect className={`w-full ${inputCls} text-xs`} value={ruleForm.productId} onChange={e => setRuleForm(r => ({ ...r, productId: e.target.value }))}
+                  placeholder={ruleForm.ruleType === 'threshold' ? 'Type to find the discounted product' : 'Type to find a product'}
+                  options={products.filter(p => !p.isArchived).map(p => ({ value: p._id, label: p.name, hint: p.basePrice ? fmt(p.basePrice) : '' }))} />
 
                 {ruleForm.ruleType === 'fixed_price' && (
                   <input type="number" min="0" step="0.01" className={`w-full ${inputCls} text-xs`} placeholder="Sale price ₱" value={ruleForm.salePrice} onChange={e => setRuleForm(r => ({ ...r, salePrice: e.target.value }))} />
@@ -225,60 +224,16 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
 // ── ProductsTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function ProductsTab({ ctx }) {
-  // "Not from inventory" ingredient - filtered water is the case this exists
-  // for. Measured and recorded so the drink is repeatable, but nothing to
-  // deduct: you never bought units of it, so nothing can run out.
-  // Keyed per picker ('base', or 'size-0', 'size-1'...) so the base recipe and
-  // every extra size keep their own draft. A single shared pair would have one
-  // half-typed ingredient following you between size tabs.
-  const [nonStockDraft, setNonStockDraft] = React.useState({});
-  const nsDraft = (key) => nonStockDraft[key] || { name: '', unit: 'ml' };
-  const setNsDraft = (key, patch) =>
-    setNonStockDraft(d => ({ ...d, [key]: { ...nsDraft(key), ...patch } }));
-  // A fixed list rather than free text: a typo here becomes a unit nobody can
-  // read back later, and unlike a stocked ingredient there is no inventory item
-  // to correct it against. Nothing is converted or deducted for a non-stock
-  // line, so the unit is purely how a person reads the quantity - which is why
-  // lb can sit alongside the metric units the rest of the app converts between.
-  const NON_STOCK_UNITS = ['ml', 'L', 'g', 'kg', 'lb', 'pcs'];
+  // Recipes are edited in RecipeMatrix now; its own pickers replaced the
+  // per-size ingredient search and the not-from-stock adder that lived here.
 
-  const renderNonStockAdder = (key, sizeIndex) => {
-    const d = nsDraft(key);
-    return (
-      <div className="mt-3 pt-3 border-t border-white/40">
-        <div className="text-[10px] text-on-brand uppercase font-black mb-2 tracking-widest">Not from inventory</div>
-        <div className="flex flex-wrap gap-2">
-          <input type="text" value={d.name} placeholder="e.g. Filtered Water"
-            onChange={e => setNsDraft(key, { name: e.target.value })}
-            className="flex-1 min-w-[130px] bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-gray-900 font-bold outline-none placeholder-gray-500" />
-          <select value={d.unit}
-            onChange={e => setNsDraft(key, { unit: e.target.value })}
-            className="w-20 bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-gray-900 font-bold outline-none">
-            {NON_STOCK_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-          </select>
-          <button type="button"
-            onClick={() => { addNonStockToRecipe?.(d.name, d.unit, sizeIndex); setNsDraft(key, { name: '' }); }}
-            className="bg-accent text-on-brand px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-accent/90 transition">
-            Add
-          </button>
-        </div>
-        <p className="text-[9px] text-on-brand mt-1.5 leading-snug">Recorded on the recipe, never deducted from stock and never costed - for things you do not buy by the unit, like filtered water.</p>
-      </div>
-    );
-  };
-
-  // Material pickers are a scrolling list of the WHOLE inventory, which is fine
-  // at a dozen items and unusable at two hundred - finding "Biscoff Cookies"
-  // meant scrolling a 28px-tall window. Keyed per picker so the base recipe and
-  // each size keep their own query; a shared one would filter every list at
-  // once while you typed into a single box.
-  const [matSearch, setMatSearch] = React.useState({});
-  const matchesMat = (inv, key) => {
-    const q = String(matSearch[key] || '').trim().toLowerCase();
-    if (!q) return true;
-    return String(inv.itemName || '').toLowerCase().includes(q);
-  };
-
+  // ── Product editor state ─────────────────────────────────────────────────
+  const [editorOpen, setEditorOpen] = React.useState(false);
+  const [draftRestored, setDraftRestored] = React.useState(false);
+  const DRAFT_KEY = 'semivra.productDraft';
+  const LAST_CAT_KEY = 'semivra.lastProductCategory';
+  const readLS = (store, k) => { try { return store.getItem(k); } catch { return null; } };
+  const writeLS = (store, k, v) => { try { v == null ? store.removeItem(k) : store.setItem(k, v); } catch { /* private mode */ } };
   // Destructure everything from ctx
   // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
@@ -425,6 +380,119 @@ export default function ProductsTab({ ctx }) {
   const setFilter = (key, value) => setProdFilters({ ...prodFilters, [key]: value });
   const selectCls = 'bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-brand';
 
+  // The object the Edit button builds from a saved product.
+  const productToForm = (p) => ({ 
+                          name: p.name || '', category: p.category || '', description: p.description || '',
+                          basePrice: Number(p.basePrice || p.price || 0), discountPercent: Number(p.discountPercent || 0),
+                          vatExempt: p.vatExempt === true, isBulk: p.isBulk === true,
+                          clientDiscounts: (p.clientDiscounts || []).map(d => ({ clientId: String(d.clientId), percent: Number(d.percent || 0) })),
+                          segmentDiscounts: (p.segmentDiscounts || []).map(d => ({ segment: String(d.segment || ''), percent: Number(d.percent || 0) })),
+                          bulkBreaks: (p.bulkBreaks || []).map(b => ({ minQty: Number(b.minQty || 0), percent: Number(b.percent || 0) })),
+                          clientBulkBreaks: (p.clientBulkBreaks || []).map(b => ({ clientId: String(b.clientId || ''), minQty: Number(b.minQty || 0), price: Number(b.price || 0) })),
+                          baseSize: p.baseSize || '',
+                          image: p.image || '',
+                          // packBase and the label only - see readyLine.
+                          // This used to also set `qty: pb`, which reset every
+                          // ingredient to one full pack every time the product
+                          // was opened, and since packBase was never persisted
+                          // that branch ran on EVERY edit. Enter 0.15 of a
+                          // carton, save, reopen, and it was silently back to
+                          // 1, taking the recipe cost with it. qty is already
+                          // in base units and is the user's own number: never
+                          // recompute it here.
+                          baseRecipe: (p.baseRecipe || []).map(readyLine),
+                          // Size recipes were never backfilled at all, so their
+                          // quantities rendered in raw base units (150 instead
+                          // of 0.15 of a carton). Same treatment, same rule.
+                          sizes: (p.sizes || []).map(sz => ({
+                            ...sz,
+                            recipe: (sz.recipe || []).map(readyLine),
+                          })),
+                          addOns: p.addOns || [],
+                          modifierGroups: (p.modifierGroups || []).map(mg => (mg && mg._id) ? mg._id : mg),
+                          imageUrl: (p.image || '').startsWith('http') ? p.image : '',
+  });
+  const openEdit = (p) => { setEditingProduct(p); setFormData(productToForm(p)); setDraftRestored(false); setEditorOpen(true); };
+  // A copy of a product, as a new one: everything but the name.
+  const openLike = (p) => {
+    setEditingProduct(null);
+    setFormData({ ...productToForm(p), name: '', image: '', imageUrl: '' });
+    setDraftRestored(false); setEditorOpen(true);
+  };
+  const openNew = () => {
+    resetProductForm();
+    let draft;
+    try { draft = JSON.parse(readLS(sessionStorage, DRAFT_KEY) || 'null'); } catch { draft = null; }
+    if (draft && (draft.name || (draft.baseRecipe || []).length)) { setFormData(draft); setDraftRestored(true); }
+    else { setFormData(f => ({ ...f, category: readLS(localStorage, LAST_CAT_KEY) || '' })); setDraftRestored(false); }
+    setEditorOpen(true);
+  };
+  const discardDraft = () => {
+    writeLS(sessionStorage, DRAFT_KEY, null);
+    resetProductForm();
+    setFormData(f => ({ ...f, category: readLS(localStorage, LAST_CAT_KEY) || '' }));
+    setDraftRestored(false);
+  };
+  const closeEditor = () => { resetProductForm(); setEditorOpen(false); setDraftRestored(false); };
+  // A new product in progress survives closing the sheet or switching tabs.
+  React.useEffect(() => {
+    if (!editorOpen || editingProduct) return;
+    writeLS(sessionStorage, DRAFT_KEY, JSON.stringify(formData));
+  }, [editorOpen, editingProduct, formData]); // eslint-disable-line react-hooks/exhaustive-deps
+  const saveFromEditor = async (e) => {
+    e.preventDefault();
+    const category = formData.category;
+    const ok = await handleSaveProduct(e);
+    if (ok === false) return;
+    writeLS(localStorage, LAST_CAT_KEY, category || null);
+    writeLS(sessionStorage, DRAFT_KEY, null);
+    setDraftRestored(false);
+    setEditorOpen(false);
+  };
+
+  // What the footer and the section list say about the product so far.
+  const editorCols = columnsOf(formData);
+  const editorIssues = readiness(formData, calcRecipeCost);
+  const specialPricingCount = (formData.clientDiscounts || []).length + (formData.segmentDiscounts || []).length
+    + (formData.bulkBreaks || []).length + (formData.clientBulkBreaks || []).length;
+  const ingredientCount = new Set(editorCols.flatMap(col => col.recipe.map(rowKeyOf))).size;
+  const editorSummary = [
+    `${editorCols.length} size${editorCols.length === 1 ? '' : 's'}`,
+    `${ingredientCount} ingredient${ingredientCount === 1 ? '' : 's'}`,
+    ...editorCols.map(col => {
+      const m = marginOf(col.price, calcRecipeCost(col.recipe));
+      return m === null ? null : `${col.name || 'base'} ${Math.round(m * 100)}%`;
+    }).filter(Boolean),
+  ].join(' · ');
+  const editorSections = [
+    { id: 'details', label: 'Details', done: !!(formData.name && formData.category) },
+    { id: 'recipe', label: 'Sizes & recipe', done: editorIssues.length === 0 },
+    { id: 'options', label: 'Options', done: false, note: `${(formData.addOns || []).length + (formData.modifierGroups || []).length || ''}` },
+    { id: 'pricing', label: 'Special pricing', done: false, note: specialPricingCount ? String(specialPricingCount) : '' },
+  ];
+
+  // Quick add: name, category, price - on sale at once, the rest later.
+  const [quick, setQuick] = React.useState({ name: '', category: '', price: '' });
+  const [quickBusy, setQuickBusy] = React.useState(false);
+  const quickAdd = async (e) => {
+    e.preventDefault();
+    const name = quick.name.trim();
+    const category = quick.category || readLS(localStorage, LAST_CAT_KEY) || '';
+    if (!name || !category) return ui.alert('Give it a name and a category.');
+    setQuickBusy(true);
+    try {
+      const res = await apiFetch('/api/products', { method: 'POST', body: JSON.stringify({
+        name, category, basePrice: parseFloat(quick.price) || 0, description: '', baseSize: '', sizes: [], baseRecipe: [], addOns: [], modifierGroups: [],
+      }) });
+      const d = await res.json();
+      if (!d.success) return ui.alert(d.error || 'Could not add it.');
+      writeLS(localStorage, LAST_CAT_KEY, category);
+      setQuick({ name: '', category, price: '' });
+      ui.toast(`${name} added. Open it to add sizes and a recipe.`, { tone: 'success' });
+      fetchData();
+    } finally { setQuickBusy(false); }
+  };
+
   return (
     <>
       <div className="flex flex-col gap-6">
@@ -443,8 +511,33 @@ export default function ProductsTab({ ctx }) {
                   {prodFiltersActive ? `${filteredProducts.length} of ${products.length}` : `${products.length} item${products.length === 1 ? '' : 's'}`}
                 </span>
                 <button onClick={exportMenuItemsPDF} className="text-[10px] bg-brand/10 hover:bg-brand/20 text-brand-text px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">Export PDF</button>
+                {can('products.manage') && (
+                  <button onClick={openNew} className="flex items-center gap-1.5 text-xs bg-brand hover:bg-brand-dark text-on-brand px-3 py-2 rounded-lg font-black uppercase tracking-wider transition">
+                    <Plus size={14} /> New product
+                  </button>
+                )}
               </div>
             </div>
+
+            {/* Quick add - for the items that are just a name and a price. */}
+            {can('products.manage') && (
+              <form onSubmit={quickAdd} className="flex flex-wrap items-center gap-2 mb-4 p-3 bg-page-bg border border-white/10 rounded-xl">
+                <span className="text-[11px] font-black uppercase tracking-widest text-fg/75 mr-1">Quick add</span>
+                <input value={quick.name} onChange={e => setQuick(q => ({ ...q, name: e.target.value }))} placeholder="Name, e.g. Bottled Water" aria-label="Quick add name"
+                  className="flex-1 min-w-[160px] bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
+                <select value={quick.category || readLS(localStorage, LAST_CAT_KEY) || ''} onChange={e => setQuick(q => ({ ...q, category: e.target.value }))} aria-label="Quick add category"
+                  className="bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand">
+                  <option value="">Category…</option>
+                  {categories.map(c2 => <option key={c2._id} value={c2.name}>{c2.name}</option>)}
+                </select>
+                <div className="relative w-28">
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg/70 text-sm">₱</span>
+                  <input type="number" min="0" step="0.01" value={quick.price} onChange={e => setQuick(q => ({ ...q, price: e.target.value }))} placeholder="Price" aria-label="Quick add price"
+                    className="w-full bg-surface border border-white/10 rounded-lg pl-6 pr-2 py-2 text-sm text-fg outline-none focus:border-brand tabular-nums" />
+                </div>
+                <button type="submit" disabled={quickBusy} className="bg-brand text-on-brand text-xs font-black uppercase tracking-wider px-4 py-2.5 rounded-lg disabled:opacity-50">Add</button>
+              </form>
+            )}
 
             {/* Menu backup: an exact copy of every product, size, recipe and
                 add-on in one file. Unlike the spreadsheet importer this is a
@@ -949,43 +1042,16 @@ export default function ProductsTab({ ctx }) {
                   {/* Edit button: Full width on mobile, auto width on desktop */}
                   <div className="w-full sm:w-auto mt-2 sm:mt-0 shrink-0">
                     <button 
-                      onClick={() => { 
-                        setEditingProduct(p); 
-                        setFormData({ 
-                          name: p.name || '', category: p.category || '', description: p.description || '',
-                          basePrice: Number(p.basePrice || p.price || 0), discountPercent: Number(p.discountPercent || 0),
-                          vatExempt: p.vatExempt === true, isBulk: p.isBulk === true,
-                          clientDiscounts: (p.clientDiscounts || []).map(d => ({ clientId: String(d.clientId), percent: Number(d.percent || 0) })),
-                          segmentDiscounts: (p.segmentDiscounts || []).map(d => ({ segment: String(d.segment || ''), percent: Number(d.percent || 0) })),
-                          bulkBreaks: (p.bulkBreaks || []).map(b => ({ minQty: Number(b.minQty || 0), percent: Number(b.percent || 0) })),
-                          clientBulkBreaks: (p.clientBulkBreaks || []).map(b => ({ clientId: String(b.clientId || ''), minQty: Number(b.minQty || 0), price: Number(b.price || 0) })),
-                          baseSize: p.baseSize || '',
-                          image: p.image || '',
-                          // packBase and the label only - see readyLine.
-                          // This used to also set `qty: pb`, which reset every
-                          // ingredient to one full pack every time the product
-                          // was opened, and since packBase was never persisted
-                          // that branch ran on EVERY edit. Enter 0.15 of a
-                          // carton, save, reopen, and it was silently back to
-                          // 1, taking the recipe cost with it. qty is already
-                          // in base units and is the user's own number: never
-                          // recompute it here.
-                          baseRecipe: (p.baseRecipe || []).map(readyLine),
-                          // Size recipes were never backfilled at all, so their
-                          // quantities rendered in raw base units (150 instead
-                          // of 0.15 of a carton). Same treatment, same rule.
-                          sizes: (p.sizes || []).map(sz => ({
-                            ...sz,
-                            recipe: (sz.recipe || []).map(readyLine),
-                          })),
-                          addOns: p.addOns || [],
-                          modifierGroups: (p.modifierGroups || []).map(mg => (mg && mg._id) ? mg._id : mg),
-                          imageUrl: (p.image || '').startsWith('http') ? p.image : ''
-                        }); 
-                      }} 
+                      onClick={() => openEdit(p)} 
                       className="w-full sm:w-auto px-4 py-3 sm:py-2 bg-white/10 text-fg rounded-lg text-sm font-bold hover:bg-brand hover:text-on-brand transition flex items-center justify-center gap-2"
                     >
                       <Edit size={14} /> Edit
+                    </button>
+                    {/* A new product that starts as this one: the sizes, recipe and
+                        options come across, and only the name is left to type. */}
+                    <button type="button" onClick={() => openLike(p)}
+                      className="w-full sm:w-auto mt-2 sm:mt-0 sm:ml-2 px-4 py-3 sm:py-2 bg-white/5 text-fg/80 rounded-lg text-sm font-bold hover:bg-white/10 hover:text-fg transition flex items-center justify-center gap-2">
+                      <Copy size={14} /> New like this
                     </button>
                   </div>
                 </div>
@@ -1135,11 +1201,10 @@ export default function ProductsTab({ ctx }) {
                       </div>
                     ))}
                     <div className="flex flex-wrap gap-2 pt-1">
-                      <select value={aoMat} onChange={e => setAoMat(e.target.value)}
-                        className="flex-1 min-w-[160px] bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-xs text-fg outline-none focus:border-brand">
-                        <option value="">From stock...</option>
-                        {inventory.map(inv => <option key={inv._id} value={inv._id}>{inv.itemName} ({inv.unit || 'pcs'})</option>)}
-                      </select>
+                      <SearchSelect value={aoMat} onChange={e => setAoMat(e.target.value)}
+                        className="flex-1 min-w-[160px] bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-xs text-fg outline-none focus:border-brand"
+                        placeholder="From stock - type to find"
+                        options={inventory.map(inv => ({ value: inv._id, label: inv.itemName, hint: inv.unit || 'pcs' }))} />
                       <input type="number" step="any" min="0" placeholder={(inventory.find(i => String(i._id) === String(aoMat))?.unit) || 'qty'}
                         value={aoQty} onChange={e => setAoQty(e.target.value)}
                         className="w-20 bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-xs text-fg outline-none focus:border-brand" />
@@ -1183,16 +1248,42 @@ export default function ProductsTab({ ctx }) {
             </div>
           </div>
 
-          {/* RIGHT COLUMN: Add Product Form */}
-          {/* FIX 3: Added min-h-[600px] on mobile so the form has room to breathe */}
-          {can('products.manage') && (
-          <div className="w-full lg:w-96 bg-surface border border-white/10 rounded-xl p-4 sm:p-6 flex flex-col min-h-[600px] lg:min-h-0 lg:h-full overflow-hidden shadow-md">
-            <h3 className="text-xl font-bold text-fg mb-4 border-b border-white/10 pb-2 shrink-0">
-              {editingProduct ? 'Edit Product' : 'Add Product'}
-            </h3>
-            
-            <div className="flex-1 overflow-x-hidden overflow-y-auto custom-scrollbar pr-2 pb-4">
-              <form onSubmit={handleSaveProduct} className="space-y-4">
+          {/* ════════════ PRODUCT EDITOR ════════════
+              A full-width sheet instead of the narrow column it replaced, with
+              the same fields in four sections. Sizes, prices and every size's
+              recipe are one grid (RecipeMatrix), so two sizes are always seen
+              side by side, with what each costs to make. */}
+          {editorOpen && can('products.manage') && (
+          <div className="fixed inset-0 z-50 bg-black/60 flex justify-center items-stretch sm:p-4" role="dialog" aria-modal="true" aria-label={editingProduct ? 'Edit product' : 'New product'}
+            onKeyDown={e => { if (e.key === 'Escape') closeEditor(); }}>
+            <form onSubmit={saveFromEditor} className="bg-page-bg sm:rounded-2xl border border-white/10 w-full max-w-6xl flex flex-col overflow-hidden shadow-2xl">
+              <header className="flex items-center gap-3 px-5 py-3 border-b border-white/10 bg-surface">
+                <h3 className="text-lg font-black text-fg flex-1 truncate">{editingProduct ? `Edit ${formData.name || 'product'}` : (formData.name ? `New: ${formData.name}` : 'New product')}</h3>
+                {draftRestored && !editingProduct && (
+                  <span className="hidden sm:flex items-center gap-2 text-xs text-fg/75">
+                    Restored your unsaved draft
+                    <button type="button" onClick={discardDraft} className="text-brand-text font-bold hover:underline">Start blank</button>
+                  </span>
+                )}
+                <button type="button" onClick={closeEditor} aria-label="Close" className="p-2 rounded-lg text-fg/75 hover:text-fg hover:bg-white/10"><X size={18} /></button>
+              </header>
+
+              <div className="flex-1 flex min-h-0">
+                <nav className="hidden md:flex flex-col w-52 shrink-0 border-r border-white/10 p-3 gap-1" aria-label="Sections">
+                  {editorSections.map(sec => (
+                    <button key={sec.id} type="button" onClick={() => document.getElementById(`pe-${sec.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                      className="flex items-center justify-between text-left px-3 py-2 rounded-lg text-sm font-bold text-fg/80 hover:text-fg hover:bg-white/5">
+                      <span>{sec.label}</span>
+                      {sec.done ? <Check size={14} className="text-success" /> : <span className="text-[10px] text-fg/65">{sec.note || ''}</span>}
+                    </button>
+                  ))}
+                </nav>
+
+                <div className="flex-1 overflow-y-auto p-5 space-y-10">
+                  <section id="pe-details" className="scroll-mt-4 space-y-4">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-fg/75">Details</h4>
+                    <div className="grid md:grid-cols-[260px_1fr] gap-6">
+                      <div className="space-y-4">
                 {/* Basic Info */}
                 <div>
                   <label className="block text-sm font-bold text-fg/65 mb-2">Product Image</label>
@@ -1220,6 +1311,19 @@ export default function ProductsTab({ ctx }) {
                     </div>
                   </div>
                 </div>
+                {/* --- IMAGE URL input --- */}
+                <div className="border-t border-white/10 pt-4 mt-2">
+                  <label className="text-xs font-bold text-fg/75 uppercase tracking-wider block mb-1.5">Image URL (alternative to upload)</label>
+                  <input type="url" placeholder="https://example.com/image.jpg"
+                    value={formData.imageUrl || ''}
+                    onChange={e => setFormData({...formData, imageUrl: e.target.value, image: e.target.value || formData.image})}
+                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/60 placeholder-fg/70"
+                  />
+                  <p className="text-[10px] text-fg/65 mt-1">Leave blank to use uploaded image. Paste URL to override.</p>
+                </div>
+
+                      </div>
+                      <div className="space-y-4">
                 <div><label className="block text-sm font-bold text-fg/65 mb-1">Name</label><input required type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand font-semibold placeholder-fg/70" /></div>
                 <div>
                   <label className="block text-sm font-bold text-fg/65 mb-1">Category</label>
@@ -1229,31 +1333,8 @@ export default function ProductsTab({ ctx }) {
                   </select>
                 </div>
                 <div><label className="block text-sm font-bold text-fg/65 mb-1">Description</label><textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand h-20 placeholder-fg/70 font-medium"></textarea></div>
-                
-                {/* Base Size & Materials */}
-                <div className="bg-surface-2 p-4 rounded-xl border border-white/10 mt-6">
-                  <label className="block text-sm font-black text-fg/80 mb-3 uppercase tracking-wider">Base Size / Standard Recipe</label>
-                  <div className="flex gap-2 mb-2">
-                    <input type="text" placeholder="Size name" value={formData.baseSize || ''} onChange={e => setFormData({...formData, baseSize: e.target.value})} className="w-1/2 bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand font-bold placeholder-fg/70" />
-                    <div className="w-1/2 relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/70 font-bold">₱</span>
-                      <input type="number" step="0.01" placeholder="Price" value={formData.basePrice} onChange={e => setFormData({...formData, basePrice: parseFloat(e.target.value) || 0})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pl-8 text-fg outline-none focus:border-brand font-bold" />
-                    </div>
-                  </div>
-                  {/* Per-product discount - applies only to this product's line, not the whole order. */}
-                  <div className="flex items-center gap-2 mb-1">
-                    <div className="relative w-1/2">
-                      <input type="number" min="0" max="100" step="0.01" placeholder="Discount" value={formData.discountPercent || ''} onChange={e => setFormData({...formData, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pr-7 text-fg outline-none focus:border-brand font-bold placeholder-fg/70" />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/70 font-bold">%</span>
-                    </div>
-                    {formData.discountPercent > 0 && (
-                      <span className="text-[11px] text-success font-bold">
-                        → ₱{((parseFloat(formData.basePrice) || 0) * (1 - formData.discountPercent / 100)).toFixed(2)} after discount
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-fg/65 mb-3">Discount applies to this product only, on every order line - not the whole order. Overrides below apply when a specific client buys this product.</p>
-
+                        <div className="grid sm:grid-cols-2 gap-4">
+                          <div>
                   {/* VAT classification. Products are VATable unless flagged here -
                       the exception list, not the opt-in list. Only meaningful once
                       the business is VAT-registered in Settings. */}
@@ -1272,6 +1353,8 @@ export default function ProductsTab({ ctx }) {
                     set to Non-VAT in Settings.
                   </p>
 
+                          </div>
+                          <div>
                   {/* Bulk-sale flag - groups the item under a "Bulk" filter in the POS & portal. */}
                   <label className="flex items-start gap-2.5 mb-1 cursor-pointer">
                     <input
@@ -1285,6 +1368,105 @@ export default function ProductsTab({ ctx }) {
                   <p className="text-[10px] text-fg/65 mb-3">
                     Shows this product under a dedicated <span className="font-bold">Bulk</span> tab in the register and client portal - for sack/wholesale quantities sold apart from the regular menu.
                   </p>
+
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section id="pe-recipe" className="scroll-mt-4 space-y-3">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-fg/75">Sizes, prices &amp; recipe</h4>
+                    <RecipeMatrix key={editingProduct?._id || 'new'} form={formData} setForm={setFormData} inventory={inventory}
+                      calcRecipeCost={calcRecipeCost} packInfo={packInfo} businessType={BUSINESS_TYPE} />
+                  </section>
+
+                  <section id="pe-options" className="scroll-mt-4">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-fg/75">Options</h4>
+                {/* --- OPTIONAL ADD-ONS CHECKBOXES --- */}
+                <div className="border-t border-white/10 pt-5 mt-4 mb-4">
+                  <label className="text-sm font-black text-fg/80 uppercase tracking-wider mb-3 block">Attach Add-Ons</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {globalAddOns.map(addon => {
+                      const isAttached = (formData.addOns || []).some(a => a.name === addon.name);
+                      return (
+                        <label key={addon._id} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer border-2 transition ${isAttached ? 'border-brand bg-brand/10 shadow-sm shadow-brand/10' : 'border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20'}`}>
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 accent-accent cursor-pointer"
+                            checked={isAttached}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setFormData({ ...formData, addOns: [...(formData.addOns || []), { name: addon.name, price: addon.price, recipe: [] }] });
+                              } else {
+                                setFormData({ ...formData, addOns: (formData.addOns || []).filter(a => a.name !== addon.name) });
+                              }
+                            }}
+                          />
+                          <div className="flex flex-col">
+                             <span className="text-sm font-bold text-fg leading-tight">{addon.name}</span>
+                             <span className="text-[10px] text-brand-text font-black uppercase tracking-widest">+₱{addon.price}</span>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* --- REQUIRED MODIFIER GROUPS - fb only --- */}
+                {BUSINESS_TYPE !== 'log' && modifierGroups.length > 0 && (
+                  <div className="border-t border-white/10 pt-5 mt-4 mb-4">
+                    <label className="text-sm font-black text-fg/80 uppercase tracking-wider mb-1 block">Required Modifier Groups</label>
+                    <p className="text-[10px] text-fg/65 mb-3">Checked groups will be required before adding to cart (e.g. "Choose your milk").</p>
+                    <div className="space-y-2">
+                      {modifierGroups.map(mg => {
+                        const current = (formData.modifierGroups || []).map(id => (id && id._id) ? id._id : id);
+                        const isAttached = current.includes(mg._id);
+                        return (
+                          <label key={mg._id} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer border-2 transition ${isAttached ? 'border-brand bg-brand/10' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}>
+                            <input type="checkbox" className="w-4 h-4 accent-accent cursor-pointer" checked={isAttached}
+                              onChange={e => {
+                                if (e.target.checked) setFormData({...formData, modifierGroups: [...current, mg._id]});
+                                else setFormData({...formData, modifierGroups: current.filter(id => id !== mg._id)});
+                              }}
+                            />
+                            <div>
+                              <p className="text-sm font-bold text-fg">{mg.name}</p>
+                              <p className="text-[10px] text-fg/70">{mg.isRequired ? `Required - pick ${mg.minSelect}${mg.maxSelect>mg.minSelect?`-${mg.maxSelect}`:``}` : 'Optional'} · {mg.options?.length||0} options</p>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                  </section>
+
+                  <section id="pe-pricing" className="scroll-mt-4">
+                    <details open={specialPricingCount > 0 || (formData.discountPercent || 0) > 0} className="group">
+                      <summary className="cursor-pointer list-none flex items-center gap-2 text-xs font-black uppercase tracking-widest text-fg/75">
+                        <ChevronRight size={14} className="transition group-open:rotate-90" /> Special pricing
+                        <span className="normal-case tracking-normal font-bold text-fg/70">
+                          {specialPricingCount > 0 || (formData.discountPercent || 0) > 0
+                            ? `${specialPricingCount + ((formData.discountPercent || 0) > 0 ? 1 : 0)} rule(s)`
+                            : '- none, most products need none'}
+                        </span>
+                      </summary>
+                      <div className="mt-4 space-y-4">
+                  {/* Per-product discount - applies only to this product's line, not the whole order. */}
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="relative w-1/2">
+                      <input type="number" min="0" max="100" step="0.01" placeholder="Discount" value={formData.discountPercent || ''} onChange={e => setFormData({...formData, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pr-7 text-fg outline-none focus:border-brand font-bold placeholder-fg/70" />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/70 font-bold">%</span>
+                    </div>
+                    {formData.discountPercent > 0 && (
+                      <span className="text-[11px] text-success font-bold">
+                        → ₱{((parseFloat(formData.basePrice) || 0) * (1 - formData.discountPercent / 100)).toFixed(2)} after discount
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-fg/65 mb-3">Discount applies to this product only, on every order line - not the whole order. The rules below apply when a specific client or quantity is involved.</p>
 
                   {/* Per-client overrides - a specific client's special rate on THIS product.
                       Client Accounts are a logistics-only concept, so this section only
@@ -1303,18 +1485,15 @@ export default function ProductsTab({ ctx }) {
                     )}
                     {(formData.clientDiscounts || []).map((cd, idx) => (
                       <div key={idx} className="flex items-center gap-2 mb-1.5">
-                        <select value={cd.clientId}
+                        <SearchSelect value={cd.clientId}
                           onChange={e => {
                             const list = [...(formData.clientDiscounts || [])];
                             list[idx] = { ...list[idx], clientId: e.target.value };
                             setFormData({ ...formData, clientDiscounts: list });
                           }}
-                          className="w-1/2 sm:w-3/5 shrink-0 shrink-0 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-fg text-xs outline-none focus:border-brand">
-                          <option value="">Select client…</option>
-                          {(clientAccounts || []).map(c => (
-                            <option key={c._id} value={c._id}>{c.name || c.username} ({c.clientCode})</option>
-                          ))}
-                        </select>
+                          className="w-1/2 sm:w-3/5 shrink-0 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-fg text-xs outline-none focus:border-brand"
+                          placeholder="Type to find a client"
+                          options={(clientAccounts || []).map(c => ({ value: c._id, label: c.name || c.username, hint: c.clientCode || '' }))} />
                         <div className="relative w-28">
                           <input type="number" min="0" max="100" step="0.01" value={cd.percent}
                             onChange={e => {
@@ -1357,18 +1536,15 @@ export default function ProductsTab({ ctx }) {
                     )}
                     {(formData.clientBulkBreaks || []).map((b, idx) => (
                       <div key={idx} className="flex items-center gap-2 mb-1.5 flex-wrap">
-                        <select value={b.clientId}
+                        <SearchSelect value={b.clientId}
                           onChange={e => {
                             const list = [...(formData.clientBulkBreaks || [])];
                             list[idx] = { ...list[idx], clientId: e.target.value };
                             setFormData({ ...formData, clientBulkBreaks: list });
                           }}
-                          className="w-full sm:w-2/5 shrink-0 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-fg text-xs outline-none focus:border-brand">
-                          <option value="">Select client…</option>
-                          {(clientAccounts || []).map(c => (
-                            <option key={c._id} value={c._id}>{c.name || c.username} ({c.clientCode})</option>
-                          ))}
-                        </select>
+                          className="w-full sm:w-2/5 shrink-0 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-fg text-xs outline-none focus:border-brand"
+                          placeholder="Type to find a client"
+                          options={(clientAccounts || []).map(c => ({ value: c._id, label: c.name || c.username, hint: c.clientCode || '' }))} />
                         <div className="flex items-center gap-1 shrink-0">
                           <span className="text-[10px] text-fg/70 font-bold shrink-0">Qty ≥</span>
                           <input type="number" min="1" step="1" value={b.minQty}
@@ -1499,246 +1675,31 @@ export default function ProductsTab({ ctx }) {
                     ))}
                   </div>
 
-                  {(() => {
-                    const baseCost = calcRecipeCost(formData.baseRecipe);
-                    const basePriceVal = parseFloat(formData.basePrice) || 0;
-                    const suggestedBasePrice = baseCost > 0 ? (baseCost / 0.7).toFixed(2) : '0.00';
-                    const baseMargin = basePriceVal > 0 ? (((basePriceVal - baseCost) / basePriceVal) * 100).toFixed(1) : '0.0';
-                    return baseCost > 0 ? (
-                      <div className="flex justify-between items-center text-[10px] px-1 mb-3">
-                        <span className={parseFloat(baseMargin) >= 30 ? "text-success font-black" : "text-warning font-black"}>Margin: {baseMargin}%</span>
-                        <button type="button" onClick={() => setFormData({...formData, basePrice: parseFloat(suggestedBasePrice)})} className="text-fg/65 hover:text-brand-text font-bold transition">Set 30% Margin (₱{suggestedBasePrice})</button>
                       </div>
-                    ) : <div className="mb-3"></div>;
-                  })()}
-                  
-                  <div className="bg-accent p-3 rounded-lg border border-white/10">
-                    <div className="flex justify-between items-center mb-3">
-                      <span className="text-xs text-on-brand font-black uppercase tracking-wider">Base Materials</span>
-                      <span className="text-xs text-on-brand font-black">Cost: ₱{calcRecipeCost(formData.baseRecipe).toFixed(2)}</span>
-                    </div>
-                    {(formData.baseRecipe || []).map((mat, i) => {
-                      const currentPb = mat.packBase > 0 ? mat.packBase : 1;
-                      const isLog = BUSINESS_TYPE === 'log';
-                      const dispQty = isLog ? Math.round(mat.qty / currentPb) : +(mat.qty / currentPb).toFixed(3);
-                      return (
-                      <div key={i} className="flex items-center gap-2 mb-2 text-sm">
-                        <span className="flex-1 text-on-brand font-semibold truncate">{mat.name}</span>
-                        <input type="number" step={isLog ? '1' : 'any'} min={isLog ? '1' : undefined} value={dispQty}
-                          onChange={e => updateMaterialQty((isLog ? (parseInt(e.target.value) || 0) : (parseFloat(e.target.value) || 0)) * currentPb, i, null)}
-                          className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
-                        <span className="text-on-brand w-8 text-xs font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : mat.unit}</span>
-                        <button type="button" onClick={() => removeMaterial(i, null)} className="text-danger ml-2"><X size={16} /></button>
-                      </div>
-                      );
-                    })}
-                    <div className="mt-4 pt-3 border-t border-white">
-                      <div className="text-[10px] text-on-brand uppercase font-black mb-2 tracking-widest flex items-center gap-1"><Plus size={12}/> Tap to Add Material</div>
-                      <input type="text" value={matSearch['base'] || ''}
-                        onChange={e => setMatSearch(m => ({ ...m, ['base']: e.target.value }))}
-                        placeholder="Search materials..."
-                        className="w-full mb-2 bg-white border border-white/10 rounded-lg px-3 py-1.5 text-xs text-gray-900 font-bold outline-none placeholder-gray-500" />
-                      <div className="max-h-32 overflow-y-auto bg-white border border-white/10 rounded-lg custom-scrollbar p-1">
-                        {inventory.length === 0 ? (
-                          <p className="p-2 text-xs text-gray-600 italic font-medium">No inventory available.</p>
-                        ) : inventory.filter(i => matchesMat(i, 'base')).length === 0 ? (
-                          <p className="p-2 text-xs text-gray-600 italic font-medium">Nothing matches that search.</p>
-                        ) : (
-                          inventory.filter(i => matchesMat(i, 'base')).map(inv => {
-                            // packInfo already works out BOTH the pack label
-                            // ("377g", "kg", "L") and the cost of one of those.
-                            // Pairing its cost with a different unit label is
-                            // what produced "P66.00/kg" for a P66 377g can.
-                            const pack = packInfo ? packInfo(inv) : { packBase: 1, label: inv.unit, cost: inv.unitCost || 0 };
-                            const dispUnit = BUSINESS_TYPE === 'log' ? 'pcs' : pack.label;
-                            const packCost = pack.cost || 0;
-                            return (
-                            <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, null)} className="w-full text-left px-3 py-2 text-xs text-gray-900 font-bold hover:bg-black/5 transition rounded flex justify-between items-center">
-                              <span className="truncate pr-2">{inv.itemName}</span>
-                              <span className="text-black shrink-0 font-mono">₱{packCost.toFixed(2)}/{dispUnit}</span>
-                            </button>
-                            );
-                          })
-                        )}
-                      </div>
-                    </div>
-                    {renderNonStockAdder('base', null)}
-                  </div>
+                    </details>
+                  </section>
                 </div>
+              </div>
 
-                {/* Extra Sizes */}
-                <div className="border-t border-white/10 pt-5 mt-4">
-                  <div className="flex justify-between items-center mb-4">
-                    <label className="text-sm font-black text-fg/80 uppercase tracking-wider">Extra Sizes (Small, Large)</label>
-                    <button type="button" onClick={addSize} className="text-xs bg-white/10 px-3 py-1.5 rounded-xl font-bold text-fg/70 border border-white/10 hover:bg-brand/20 hover:text-brand-text hover:border-brand/30 transition flex items-center gap-1"><Plus size={14}/> Add Size</button>
-                  </div>
-
-                  {(formData.sizes || []).map((size, idx) => (
-                    <div key={idx} className="bg-surface-2 p-4 rounded-xl border border-white/10 mb-4">
-                      <div className="flex gap-2 mb-2">
-                        <input type="text" placeholder="Size Name" value={size.name} onChange={e => updateSize(idx, 'name', e.target.value)} className="w-1/2 bg-white/5 border border-white/10 rounded-lg p-2 text-sm text-fg font-bold placeholder-fg/70" required />
-                        <input type="number" step="0.01" placeholder="Price" value={size.price} onChange={e => updateSize(idx, 'price', e.target.value)} className="w-1/3 bg-white/5 border border-white/10 rounded-lg p-2 text-sm text-fg font-bold placeholder-fg/70" required />
-                        <button type="button" onClick={() => removeSize(idx)} className="text-fg/65 hover:text-danger font-bold ml-auto px-2"><X size={20} /></button>
-                      </div>
-
-                      {/* Per-size margin. A size carries its own price AND its own
-                          recipe, so the base-size margin above says nothing about
-                          it - without this a size can be priced blind. */}
-                      {(() => {
-                        const szCost = calcRecipeCost(size.recipe);
-                        const szPrice = parseFloat(size.price) || 0;
-                        if (!(szCost > 0) || !(szPrice > 0)) return null;
-                        const m = ((szPrice - szCost) / szPrice) * 100;
-                        return (
-                          <div className="flex justify-between items-center text-[10px] px-1 mb-2">
-                            <span className={m >= 30 ? 'text-success font-black' : 'text-warning font-black'}>
-                              Margin: {m.toFixed(1)}%
-                            </span>
-                            <span className="text-fg/70 font-bold">
-                              Set 30% margin (₱{(szCost / 0.7).toFixed(2)})
-                            </span>
-                          </div>
-                        );
-                      })()}
-
-                      <div className="bg-accent p-3 rounded-lg border border-white/10 mt-3">
-                        <div className="flex justify-between items-center mb-3">
-                          <span className="text-xs text-on-brand font-black uppercase tracking-wider">{size.name || 'New Size'} Materials</span>
-                          <span className="text-xs text-on-brand font-black">Cost: ₱{calcRecipeCost(size.recipe).toFixed(2)}</span>
-                        </div>
-                        {(size.recipe || []).map((mat, i) => {
-                          const currentPb = mat.packBase > 0 ? mat.packBase : 1;
-                          const isLog = BUSINESS_TYPE === 'log';
-                          const dispQty = isLog ? Math.round(mat.qty / currentPb) : +(mat.qty / currentPb).toFixed(3);
-                          return (
-                          <div key={i} className="flex items-center gap-2 mb-2 text-sm">
-                            <span className="flex-1 text-on-brand font-semibold truncate">{mat.name}</span>
-                            <input type="number" step={isLog ? '1' : 'any'} min={isLog ? '1' : undefined} value={dispQty}
-                              onChange={e => updateMaterialQty((isLog ? (parseInt(e.target.value) || 0) : (parseFloat(e.target.value) || 0)) * currentPb, i, idx)}
-                              className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
-                            <span className="text-on-brand w-8 text-xs font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : mat.unit}</span>
-                            <button type="button" onClick={() => removeMaterial(i, idx)} className="text-danger ml-2"><X size={16} /></button>
-                          </div>
-                          );
-                        })}
-                        <div className="mt-4 pt-3 border-t border-white">
-                          <div className="text-[10px] text-on-brand uppercase font-black mb-2 tracking-widest flex items-center gap-1"><Plus size={12}/> Tap to Add Material</div>
-                          <input type="text" value={matSearch[`size-${idx}`] || ''}
-                            onChange={e => setMatSearch(m => ({ ...m, [`size-${idx}`]: e.target.value }))}
-                            placeholder="Search materials..."
-                            className="w-full mb-2 bg-white border border-white/10 rounded-lg px-3 py-1.5 text-xs text-gray-900 font-bold outline-none placeholder-gray-500" />
-                          <div className="max-h-28 overflow-y-auto bg-white border border-white/10 rounded-lg custom-scrollbar p-1">
-                            {inventory.filter(i => matchesMat(i, `size-${idx}`)).length === 0 ? (
-                              <p className="p-2 text-xs text-gray-600 italic font-medium">Nothing matches that search.</p>
-                            ) : inventory.filter(i => matchesMat(i, `size-${idx}`)).map(inv => {
-                              const pack = packInfo ? packInfo(inv) : { packBase: 1, label: inv.unit, cost: inv.unitCost || 0 };
-                              const dispUnit = BUSINESS_TYPE === 'log' ? 'pcs' : pack.label;
-                              const packCost = pack.cost || 0;
-                              return (
-                              <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, idx)} className="w-full text-left px-3 py-2 text-xs text-gray-900 font-bold hover:bg-black/5 transition rounded flex justify-between items-center">
-                                <span className="truncate pr-2">{inv.itemName}</span>
-                                <span className="text-black shrink-0 font-mono">₱{packCost.toFixed(2)}/{dispUnit}</span>
-                              </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                        {renderNonStockAdder(`size-${idx}`, idx)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* --- OPTIONAL ADD-ONS CHECKBOXES --- */}
-                <div className="border-t border-white/10 pt-5 mt-4 mb-4">
-                  <label className="text-sm font-black text-fg/80 uppercase tracking-wider mb-3 block">Attach Add-Ons</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {globalAddOns.map(addon => {
-                      const isAttached = (formData.addOns || []).some(a => a.name === addon.name);
-                      return (
-                        <label key={addon._id} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer border-2 transition ${isAttached ? 'border-brand bg-brand/10 shadow-sm shadow-brand/10' : 'border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20'}`}>
-                          <input
-                            type="checkbox"
-                            className="w-4 h-4 accent-accent cursor-pointer"
-                            checked={isAttached}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setFormData({ ...formData, addOns: [...(formData.addOns || []), { name: addon.name, price: addon.price, recipe: [] }] });
-                              } else {
-                                setFormData({ ...formData, addOns: (formData.addOns || []).filter(a => a.name !== addon.name) });
-                              }
-                            }}
-                          />
-                          <div className="flex flex-col">
-                             <span className="text-sm font-bold text-fg leading-tight">{addon.name}</span>
-                             <span className="text-[10px] text-brand-text font-black uppercase tracking-widest">+₱{addon.price}</span>
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* --- REQUIRED MODIFIER GROUPS - fb only --- */}
-                {BUSINESS_TYPE !== 'log' && modifierGroups.length > 0 && (
-                  <div className="border-t border-white/10 pt-5 mt-4 mb-4">
-                    <label className="text-sm font-black text-fg/80 uppercase tracking-wider mb-1 block">Required Modifier Groups</label>
-                    <p className="text-[10px] text-fg/65 mb-3">Checked groups will be required before adding to cart (e.g. "Choose your milk").</p>
-                    <div className="space-y-2">
-                      {modifierGroups.map(mg => {
-                        const current = (formData.modifierGroups || []).map(id => (id && id._id) ? id._id : id);
-                        const isAttached = current.includes(mg._id);
-                        return (
-                          <label key={mg._id} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer border-2 transition ${isAttached ? 'border-brand bg-brand/10' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}>
-                            <input type="checkbox" className="w-4 h-4 accent-accent cursor-pointer" checked={isAttached}
-                              onChange={e => {
-                                if (e.target.checked) setFormData({...formData, modifierGroups: [...current, mg._id]});
-                                else setFormData({...formData, modifierGroups: current.filter(id => id !== mg._id)});
-                              }}
-                            />
-                            <div>
-                              <p className="text-sm font-bold text-fg">{mg.name}</p>
-                              <p className="text-[10px] text-fg/70">{mg.isRequired ? `Required - pick ${mg.minSelect}${mg.maxSelect>mg.minSelect?`-${mg.maxSelect}`:``}` : 'Optional'} · {mg.options?.length||0} options</p>
-                            </div>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* --- IMAGE URL input --- */}
-                <div className="border-t border-white/10 pt-4 mt-2">
-                  <label className="text-xs font-bold text-fg/75 uppercase tracking-wider block mb-1.5">Image URL (alternative to upload)</label>
-                  <input type="url" placeholder="https://example.com/image.jpg"
-                    value={formData.imageUrl || ''}
-                    onChange={e => setFormData({...formData, imageUrl: e.target.value, image: e.target.value || formData.image})}
-                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/60 placeholder-fg/70"
-                  />
-                  <p className="text-[10px] text-fg/65 mt-1">Leave blank to use uploaded image. Paste URL to override.</p>
-                </div>
-
-                {/* Save Buttons */}
-                <div className="flex gap-3 mt-6 pt-4 border-t border-white/10">
-                  {editingProduct && (
-                    <button type="button" onClick={() => deleteProduct(editingProduct._id)} className="bg-red-500/10 text-danger font-bold py-3 px-4 rounded-xl hover:bg-red-500/20 transition flex items-center justify-center border border-red-500/20" title="Delete product" aria-label="Delete product">
-                      <Trash2 size={20} />
-                    </button>
+              <footer className="border-t border-white/10 bg-surface px-5 py-3 flex flex-wrap items-center gap-3">
+                <div className="flex-1 min-w-[220px] text-xs">
+                  <p className="text-fg/80 font-semibold">{editorSummary}</p>
+                  {editorIssues.length > 0 && (
+                    <p className="text-warning mt-0.5" title={editorIssues.join('\n')}>
+                      {editorIssues[0]}{editorIssues.length > 1 ? ` (+${editorIssues.length - 1} more)` : ''}
+                    </p>
                   )}
-                  <button type="submit" className="flex-1 bg-accent text-on-brand font-black py-4 rounded-xl hover:bg-opacity-90 shadow-lg shadow-accent/20 transition uppercase tracking-wider text-sm">
-                    {editingProduct ? 'Update Product' : 'Save Product'}
-                  </button>
                 </div>
-                {/* Cancel - leaves edit mode and clears the form back to "Add Product".
-                    Without it the only ways out of an edit were saving or deleting. */}
                 {editingProduct && (
-                  <button type="button" onClick={resetProductForm}
-                    className="w-full bg-white/5 text-fg/65 font-bold py-3 rounded-xl hover:bg-white/10 hover:text-fg transition uppercase tracking-wider text-xs flex items-center justify-center gap-2">
-                    <X size={14} /> Cancel edit
-                  </button>
+                  <button type="button" onClick={async () => { await deleteProduct(editingProduct._id); setEditorOpen(false); }} title="Delete product" aria-label="Delete product"
+                    className="bg-red-500/10 text-danger font-bold py-2.5 px-3 rounded-xl hover:bg-red-500/20 transition border border-red-500/20"><Trash2 size={18} /></button>
                 )}
-              </form>
-            </div>
+                <button type="button" onClick={closeEditor} className="px-4 py-2.5 rounded-xl text-sm font-bold text-fg/80 hover:text-fg hover:bg-white/5">Cancel</button>
+                <button type="submit" className="bg-brand hover:bg-brand-dark text-on-brand font-black py-2.5 px-6 rounded-xl uppercase tracking-wider text-sm shadow-lg">
+                  {editingProduct ? 'Save changes' : 'Save product'}
+                </button>
+              </footer>
+            </form>
           </div>
           )}
           </div>
@@ -1858,15 +1819,14 @@ export default function ProductsTab({ ctx }) {
                       <button onClick={() => setComboForm({...comboForm, items: comboForm.items.filter((_,j)=>j!==i)})} className="text-danger px-1 font-bold">✕</button>
                     </div>
                   ))}
-                  <select value="" onChange={e => {
+                  <SearchSelect value="" onChange={e => {
                       if (!e.target.value) return;
                       const p = products.find(pr => pr._id === e.target.value);
                       if (p) setComboForm({...comboForm, items:[...comboForm.items, { productId: p._id, name: p.name, sizeName: '', quantity: 1 }]});
                     }}
-                    className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg/70 text-xs outline-none focus:border-accent">
-                    <option value="">+ Add component product…</option>
-                    {products.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
-                  </select>
+                    className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-xs outline-none focus:border-accent"
+                    placeholder="+ Add component product - type to find"
+                    options={products.map(p => ({ value: p._id, label: p.name }))} />
                 </div>
                 <div className="flex gap-2 pt-1">
                   {editingCombo && (

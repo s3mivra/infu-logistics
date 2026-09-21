@@ -4,6 +4,7 @@ import * as ui from '../../shared/ui';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 
 import { monthStartStr, todayStr } from '../../shared/businessDay.js';
+import SearchSelect from '../../shared/ui/SearchSelect';
 // ── ProcurementTab - Purchase Order workflow ──────────────────────────────────
 // Two-stage tracking. LEFT tab ("Purchase Orders") drafts & tracks planned POs
 // through Ordered → Processing. RIGHT tab ("Receiving") reconciles a delivery by
@@ -1419,13 +1420,9 @@ export default function ProcurementTab({ ctx }) {
                   {/* Always visible: pick a saved supplier, add a new one on the fly, or
                       just type the name manually below. Not gated on suppliers existing
                       yet, so the picker is discoverable even before any supplier is saved. */}
-                  <select value={form.supplierId} onChange={e => { if (e.target.value === '__new__') openSupplierForm(null, true); else pickSupplier(e.target.value); }} className={`${inputCls} mb-1.5`}>
-                    <option value="">
-                      {suppliers.length > 0 ? '- Pick a saved supplier (or type below) -' : '- No saved suppliers yet (type below, or add one) -'}
-                    </option>
-                    {suppliers.filter(s => s.isActive !== false).map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
-                    <option value="__new__">+ Add new supplier…</option>
-                  </select>
+                  <SearchSelect value={form.supplierId} onChange={e => { if (e.target.value === '__new__') openSupplierForm(null, true); else pickSupplier(e.target.value); }} className={`${inputCls} mb-1.5`}
+                    placeholder={suppliers.length > 0 ? 'Type to find a saved supplier (or type below)' : 'No saved suppliers yet (type below, or add one)'}
+                    options={[...suppliers.filter(s => s.isActive !== false).map(s => ({ value: s._id, label: s.name, hint: s.contactPerson || '' })), { value: '__new__', label: '+ Add new supplier…' }]} />
                   <input value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value, supplierId: '' }))} placeholder="Or type supplier name manually" className={inputCls} />
                 </div>
                 <div>
@@ -1493,11 +1490,10 @@ export default function ProcurementTab({ ctx }) {
 
                       <div className="flex items-center gap-2">
                         {(l.purchaseType || 'inventory') === 'inventory' ? (
-                          <select value={l.invId || ''} onChange={e => pickInventory(idx, e.target.value)}
-                            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-brand/60">
-                            <option value="">Pick from inventory (or type below)</option>
-                            {inventory.map(i => <option key={i._id} value={i._id}>{i.itemName}{i.itemCode ? ` (${i.itemCode})` : ''}</option>)}
-                          </select>
+                          <SearchSelect value={l.invId || ''} onChange={e => pickInventory(idx, e.target.value)}
+                            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-brand/60"
+                            placeholder="Type to find an inventory item (or type below)"
+                            options={inventory.map(i => ({ value: i._id, label: i.itemName, hint: i.itemCode || '' }))} />
                         ) : <span className="flex-1" />}
                         {form.lines.length > 1 && (
                           <button onClick={() => removeLine(idx)} className="p-1.5 rounded-lg text-fg/65 hover:bg-red-500/15 hover:text-danger transition"><Trash2 size={15} /></button>

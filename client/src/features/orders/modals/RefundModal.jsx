@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useDashboard } from '../../dashboard/DashboardContext';
+import SearchSelect from '../../../shared/ui/SearchSelect';
 
 // Extracted from AdminDashboard. Reads shared dashboard state via
 // useDashboard() rather than props - see DashboardContext.
@@ -163,11 +164,10 @@ export default function RefundModal() {
                 <div className="space-y-1.5">
                   {replacements.map((r, i) => (
                     <div key={i} className="flex items-center gap-1.5">
-                      <select value={r.productId} onChange={e => setReplacements(rs => rs.map((x, xi) => xi === i ? { ...x, productId: e.target.value } : x))}
-                        className="flex-1 min-w-0 bg-page-bg border border-gray-700 rounded-lg px-2 py-1.5 text-fg text-xs outline-none focus:border-brand/60">
-                        <option value="">- Pick item -</option>
-                        {sellableProducts.map(p => <option key={p._id} value={p._id}>{p.name} (₱{Number(p.basePrice||0).toFixed(2)})</option>)}
-                      </select>
+                      <SearchSelect value={r.productId} onChange={e => setReplacements(rs => rs.map((x, xi) => xi === i ? { ...x, productId: e.target.value } : x))}
+                        className="flex-1 min-w-0 bg-page-bg border border-gray-700 rounded-lg px-2 py-1.5 text-fg text-xs outline-none focus:border-brand/60"
+                        placeholder="Type to find an item"
+                        options={sellableProducts.map(p => ({ value: p._id, label: p.name, hint: `₱${Number(p.basePrice || 0).toFixed(2)}` }))} />
                       <input type="number" min="1" step="1" value={r.qty}
                         onChange={e => setReplacements(rs => rs.map((x, xi) => xi === i ? { ...x, qty: e.target.value } : x))}
                         className="w-14 bg-surface border border-gray-700 rounded-lg px-2 py-1.5 text-fg text-sm text-right font-bold tabular-nums outline-none focus:border-brand/60 shrink-0" />
