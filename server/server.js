@@ -24,6 +24,8 @@ import { ACCOUNTS, EXPENSE_CATEGORIES, CODE_MAP } from './lib/chartOfAccounts.js
 import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf } from './lib/units.js';
 import { title, code, lower, freeText, zTitle, zText, zMoneyLoose } from './lib/normalize.js';
 import { addBatch, consumeBatches, consumeSpecificBatch, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
+import { stripQueryOperators, forwardAsyncErrors } from './lib/requestSafety.js';
+import { withFloorActions } from './lib/authz.js';
 import { requireStaff, evaluateClientAccess, requirePermission, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS, setCustomRolePermissions } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from './lib/vat.js';
@@ -109,6 +111,9 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const app = express();
+// Every route registered from here on sends a thrown error to the error
+// middleware rather than crashing the process - see lib/requestSafety.js.
+forwardAsyncErrors(app);
 const server = http.createServer(app);
 
 // Hardened edge posture:
@@ -188,6 +193,8 @@ app.use(pinoHttp({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(cookieParser());
+// No `$` query operators from request bodies or query strings - see lib/requestSafety.js.
+app.use(stripQueryOperators);
 
 // Collapses duplicate POSTs that are in flight at the same time, so a laggy
 // connection cannot turn one press of a Create button into several records.
@@ -393,16 +400,6 @@ const zLabel = zTitle(z, 120);
 const zMoney = z.number().finite().min(0);
 const zRole  = z.enum(['superadmin', 'Manager', 'Staff', 'Cashier']).or(z.string().trim().min(1).max(40));
 
-// Schemas for the previously raw `Model.create(req.body)` routes (mass-assignment fixes)
-const loginSchema    = z.object({ name: zName, password: z.string().min(1).max(200) });
-// password min 4 to match the client's staff-PIN policy (SuperAdminPanel validateForm).
-// permissions passes through so the create route can honour an explicit override.
-const userCreateSchema = z.object({ name: zName, password: z.string().min(4).max(200), role: zRole.optional(), permissions: z.array(z.string()).optional() });
-const addonSchema    = z.object({
-  name: zLabel, price: zMoneyLoose(z), category: zTitle(z, 60).optional(),
-  recipe: z.array(z.object({ invId: z.string(), name: z.string(), qty: z.number(), cost: z.number().optional(), unit: z.string().optional() })).optional(),
-});
-
 // Reusable recipe-line shape
 // `nonStock` marks an ingredient that is real in the recipe but is not stock -
 // filtered water being the case that forced it. It is measured and written down
@@ -422,6 +419,22 @@ const zRecipe = z.array(z.object({
   // full pack to compensate, silently discarding what the user had entered.
   packBase: z.number().optional(),
 })).optional();
+
+// Schemas for the previously raw `Model.create(req.body)` routes (mass-assignment fixes)
+const loginSchema    = z.object({ name: zName, password: z.string().min(1).max(200) });
+// password min 4 to match the client's staff-PIN policy (SuperAdminPanel validateForm).
+// permissions passes through so the create route can honour an explicit override.
+const userCreateSchema = z.object({ name: zName, password: z.string().min(4).max(200), role: zRole.optional(), permissions: z.array(z.string()).optional() });
+const addonSchema    = z.object({
+  name: zLabel, price: zMoneyLoose(z), category: zTitle(z, 60).optional(),
+  // The same shape every other recipe uses. Its own stricter copy required an
+  // invId on every line, so an add-on measured in something that is not stock
+  // - the water in an iced drink - was refused outright, and `packBase` was
+  // dropped from the lines that did save, which is what lets the editor show
+  // "1 carton" again instead of 1000 ml.
+  recipe: zRecipe,
+});
+
 
 // Mass-assignment fixes: each schema OMITS server-controlled fields
 // (codes, isArchived, timestamps) so a client can never set them via create().
@@ -909,11 +922,11 @@ const runStartupTasks = async () => {
     // staff, Admin is the full-ops role.
     try {
       const wantedRoles = [
-        { name: 'Logistics',    permissions: ['inventory.view', 'inventory.manage', 'procurement.view', 'orders.view', 'requisitions.view'] },
+        { name: 'Logistics',    permissions: ['inventory.view', 'inventory.manage', 'inventory.waste', 'inventory.count', 'procurement.view', 'orders.view', 'requisitions.view'] },
         { name: 'Office',       permissions: ['orders.view', 'orders.manage', 'procurement.view', 'procurement.manage', 'accounting.view', 'requisitions.view', 'reports.view', 'analytics.view'] },
-        { name: 'Admin',        permissions: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'inventory.view', 'inventory.manage', 'inventory.delete', 'products.view', 'products.manage', 'procurement.view', 'procurement.manage', 'procurement.delete', 'accounting.view', 'requisitions.view', 'requisitions.approve', 'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'] },
-        { name: 'Barista',      permissions: ['pos.use', 'orders.view', 'inventory.view', 'products.view'] },
-        { name: 'Head Barista', permissions: ['pos.use', 'orders.view', 'orders.manage', 'inventory.view', 'inventory.manage', 'products.view', 'requisitions.view'] },
+        { name: 'Admin',        permissions: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'inventory.view', 'inventory.manage', 'inventory.delete', 'inventory.waste', 'inventory.count', 'products.view', 'products.manage', 'procurement.view', 'procurement.manage', 'procurement.delete', 'accounting.view', 'requisitions.view', 'requisitions.approve', 'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'] },
+        { name: 'Barista',      permissions: ['pos.use', 'orders.view', 'orders.comp', 'inventory.view', 'inventory.waste', 'inventory.count', 'products.view'] },
+        { name: 'Head Barista', permissions: ['pos.use', 'orders.view', 'orders.manage', 'orders.comp', 'inventory.view', 'inventory.manage', 'inventory.waste', 'inventory.count', 'products.view', 'requisitions.view'] },
       ];
       for (const r of wantedRoles) {
         const exists = await Role.findOne({ name: { $regex: `^${escapeRegex(r.name)}$`, $options: 'i' } }).lean();
@@ -921,6 +934,26 @@ const runStartupTasks = async () => {
       }
     } catch (err) {
       log.error({ err }, 'Role seed error');
+    }
+
+    // Once: give every stored role and per-person list the floor permissions
+    // (waste, count, comp) its holders could already use - see authz.js.
+    try {
+      const done = await Settings.findOne({ key: 'permsFloorActionsV1' }).lean();
+      if (!done) {
+        for (const r of await Role.find().lean()) {
+          const next = withFloorActions(r.permissions || []);
+          if (next.length !== (r.permissions || []).length) await Role.updateOne({ _id: r._id }, { $set: { permissions: next } });
+        }
+        for (const u of await User.find({ 'permissions.0': { $exists: true } }, { permissions: 1 }).lean()) {
+          const next = withFloorActions(u.permissions);
+          if (next.length !== u.permissions.length) await User.updateOne({ _id: u._id }, { $set: { permissions: next } });
+        }
+        await Settings.findOneAndUpdate({ key: 'permsFloorActionsV1' }, { key: 'permsFloorActionsV1', value: true }, { upsert: true });
+        log.info('✅ Floor-action permissions added to existing roles and users');
+      }
+    } catch (err) {
+      log.error({ err }, 'Floor-action permission migration failed');
     }
 
     // Load custom-role → permissions into the authz resolver (function is hoisted).
@@ -1566,6 +1599,21 @@ const InventorySchema = new mongoose.Schema({
   // (the fixed kg/L↔g/ml conversion factor): this is the SKU's own package size,
   // parsed from the item name on import or entered manually. null = not tracked.
   packSize:        { type: Number, default: null },
+  // How this item is MADE, when it is made here rather than bought: Spanish
+  // milk from fresh milk and condensed milk, cold brew from beans and water.
+  // Quantities are in base units and make `recipeYield` base units of this
+  // item, so a batch of any size is the recipe scaled by batch / yield.
+  // Having one is what marks an item as a finished good. Saved from the
+  // Production tab the first time a batch is filed, so the next batch is a
+  // matter of picking the item and saying how much.
+  productionRecipe: [{
+    invId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
+    itemName: { type: String, default: '' },
+    qty: { type: Number, default: 0 },
+    unit: { type: String, default: '' },
+    nonStock: { type: Boolean, default: false },
+  }],
+  recipeYield: { type: Number, default: null },
   // Suggested Retail Price (per displayUnit) - optional reference for items intended for resale.
   srp:             { type: Number, default: 0 },
   // Expiry monitoring - multi-batch (FEFO)
@@ -3695,7 +3743,7 @@ const normalBalanceForCode = (code) => (/^[15679]/.test(String(code)) ? 'Debit' 
 //  • Combo: one line per component - the bundle price is allocated across components
 //    by their standalone selling price, and COGS comes from each component's recipe.
 // Keeps combo sales visible in product/category analytics.
-function reportLinesForItem(item, prods, prodMap, invMap) {
+function reportLinesForItem(item, prods, prodMap, invMap, addOnMap) {
   const recipeCost = (recipe) => (recipe || []).reduce((s, ing) => {
     const iv = invMap[ing.invId]; return s + (iv ? (ing.qty || 0) * (iv.unitCost || 0) : 0);
   }, 0);
@@ -3734,6 +3782,13 @@ function reportLinesForItem(item, prods, prodMap, invMap) {
   // An add-on's recipe is resolved exactly the way the stock deduction resolves
   // it (see features/orders.js): a product add-on first, else a modifier-group
   // option, which is stored as "Group name: Option name".
+  // Three tiers, the same three and in the same order: the product's own copy,
+  // a modifier option, then the add-on's own recipe from Menu Setup. That last
+  // one is where an Extra Shot's coffee is actually written down - the copy a
+  // product keeps is created empty - so without it the till deducted beans the
+  // report never charged for, and margin read high on the very items these
+  // reports exist to judge. `addOnMap` is name -> recipe, or absent, in which
+  // case this behaves as it did before.
   const addOnRecipe = (product, addOnName) => {
     const direct = product?.addOns?.find(a => a.name === addOnName)?.recipe;
     if (direct?.length) return direct;
@@ -3742,7 +3797,7 @@ function reportLinesForItem(item, prods, prodMap, invMap) {
       const grp = (product?.modifierGroups || []).find(g => g && g.name === grpName);
       return grp?.options?.find(o => o.name === optName)?.recipe || [];
     }
-    return [];
+    return addOnMap?.[addOnName] || [];
   };
   // Per unit, matching how add-on revenue is counted above.
   const addOnCost = (item.selectedAddOns || [])
@@ -3944,11 +3999,18 @@ const ProductionOrderSchema = new mongoose.Schema({
   batchNumber: { type: String, default: '' },
 
   materials: [{
-    invId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', required: true },
+    // Null for a line that is not stock - the water in a cold brew. It is part
+    // of how the batch is made, so it is recorded with it, but there is
+    // nothing to take it from and nothing it costs.
+    invId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
     itemName: { type: String, default: '' },
-    qty: { type: Number, default: 0 },                     // base units (g/ml/pcs)
+    qty: { type: Number, default: 0 },                     // base units (g/ml/pcs); as written for a non-stock line
     unit: { type: String, default: '' },
+    nonStock: { type: Boolean, default: false },
   }],
+  // For an order that creates a new item: save these materials as that
+  // item's recipe once it exists, which is not until the yield is confirmed.
+  saveRecipe: { type: Boolean, default: false },
 
   // 'existing' adds outputQty onto an already-tracked item (outputInvId set
   // at filing time); 'new' creates a brand-new Inventory item on approval -

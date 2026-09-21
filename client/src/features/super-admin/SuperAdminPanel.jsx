@@ -2,6 +2,7 @@
 import { useNavigate } from 'react-router-dom';
 import * as auth from '../auth/auth';
 import { todayStr } from '../../shared/businessDay.js';
+import { effectivePermissions, togglePermission, pageLocked } from '../../shared/permissions.js';
 import {
   Users, Shield, Menu, X, LogOut, Plus, Edit2, Trash2,
   Search, Eye, EyeOff, AlertCircle, Tag, Loader2, Lock,
@@ -16,23 +17,23 @@ const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase()
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
 
 const ROLE_META = {
-  superadmin: { label: 'Superadmin', bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30' },
+  superadmin: { label: 'Superadmin', bg: 'bg-emerald-500/20', text: 'text-success', border: 'border-emerald-500/30' },
   Admin:      { label: 'Admin',      bg: 'bg-blue-500/20',    text: 'text-info',    border: 'border-blue-500/30' },
   Staff:      { label: 'Staff',      bg: 'bg-gray-500/20',    text: 'text-fg/70',    border: 'border-gray-500/30' },
 };
 const getRoleMeta = (role) =>
-  ROLE_META[role] ?? { label: role, bg: 'bg-purple-500/20', text: 'text-purple-400', border: 'border-purple-500/30' };
+  ROLE_META[role] ?? { label: role, bg: 'bg-purple-500/20', text: 'text-special', border: 'border-purple-500/30' };
 
 // Built-in roles shown (read-only) in the Access Roles list. Mirrors the server's
 // ROLE_DEFAULT_PERMISSIONS (lib/authz.js) for admin & staff. Superadmin is
 // intentionally omitted - it bypasses the permission system and must not be
 // assignable or presented as an editable role.
 const BUILTIN_ROLES = [
-  { name: 'Admin', permissions: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete',
-    'inventory.view', 'inventory.manage', 'inventory.delete', 'products.view', 'products.manage',
+  { name: 'Admin', permissions: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp',
+    'inventory.view', 'inventory.manage', 'inventory.delete', 'inventory.waste', 'inventory.count', 'products.view', 'products.manage',
     'procurement.view', 'procurement.manage', 'procurement.delete',
     'accounting.view', 'reports.view', 'analytics.view', 'audit.view', 'settings.manage'] },
-  { name: 'Staff', permissions: ['pos.use', 'orders.view', 'inventory.view', 'products.view'] },
+  { name: 'Staff', permissions: ['pos.use', 'orders.view', 'orders.comp', 'inventory.view', 'inventory.waste', 'inventory.count', 'products.view'] },
 ];
 
 // ---------------------------------------------------------------------------
@@ -98,14 +99,14 @@ const UserCard = memo(({ user, isSelected, onSelect, onEdit, onDelete }) => {
           </button>
           <button
             onClick={() => onDelete(user)}
-            className="p-2 rounded-lg text-red-400/50 hover:text-danger hover:bg-red-500/10 transition"
+            className="p-2 rounded-lg text-danger hover:bg-red-500/10 transition"
             aria-label={`Delete ${user.name}`}
           >
             <Trash2 size={14} />
           </button>
         </div>
       ) : (
-        <Lock size={13} className="text-fg/60 flex-shrink-0" />
+        <Lock size={13} className="text-fg/65 flex-shrink-0" />
       )}
     </div>
   );
@@ -174,7 +175,7 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
         </button>
         <button
           onClick={onLogout}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-danger/80 hover:text-danger hover:bg-red-500/10 transition font-bold text-sm"
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-danger hover:bg-red-500/10 transition font-bold text-sm"
         >
           <LogOut size={16} />
           Lock Panel
@@ -453,12 +454,10 @@ export default function SuperAdminPanel() {
   }, [validateForm, modal.mode, modal.user]);
 
   // Toggle a single permission in the custom override set.
+  // Pages ride on their tab's permission - see shared/permissions.js.
   const togglePerm = useCallback((key) => {
-    setForm(prev => {
-      const has = prev.permissions.includes(key);
-      return { ...prev, permissions: has ? prev.permissions.filter(k => k !== key) : [...prev.permissions, key] };
-    });
-  }, []);
+    setForm(prev => ({ ...prev, permissions: togglePermission(prev.permissions, key, permCatalog) }));
+  }, [permCatalog]);
 
   // Permission catalogue grouped by domain, for the editor. [ [group, [perm,...]], ... ]
   const groupedPerms = useMemo(() => {
@@ -466,6 +465,28 @@ export default function SuperAdminPanel() {
     for (const p of permCatalog) { (by[p.group] = by[p.group] || []).push(p); }
     return Object.entries(by);
   }, [permCatalog]);
+  const permLabel = useMemo(() => Object.fromEntries(permCatalog.map(p => [p.key, p.label])), [permCatalog]);
+  // One checkbox, for either editor. A page shows what it actually grants -
+  // every page of an open tab with none named is ticked - and is greyed out
+  // while its tab is closed, or when it is the only page left open.
+  const renderPermBox = (p, list, onToggle) => {
+    const eff = effectivePermissions(list, permCatalog);
+    const locked = p.parent ? pageLocked(list, p.key, permCatalog) : false;
+    const why = p.parent && !list.includes(p.parent)
+      ? `Needs "${permLabel[p.parent] || p.parent}" first`
+      : locked ? 'The last open page of this tab - remove the tab permission to close it' : undefined;
+    return (
+      <label key={p.key} title={why}
+        className={`flex items-center gap-2 text-[13px] transition ${locked ? 'text-fg/80 cursor-not-allowed' : 'text-fg/80 cursor-pointer hover:text-fg'}`}>
+        <input type="checkbox" checked={eff.has(p.key)} disabled={locked} onChange={() => onToggle(p.key)} className="accent-brand shrink-0" />
+        <span className="leading-tight">{p.label}</span>
+      </label>
+    );
+  };
+  const groupHint = (perms) => {
+    const parent = perms.find(p => p.parent)?.parent;
+    return parent ? ` · needs ${permLabel[parent] || parent}` : '';
+  };
 
   const handleSubmitModal = async (e) => {
     e.preventDefault();
@@ -642,7 +663,7 @@ export default function SuperAdminPanel() {
   const editRole = (r) => setRoleForm({ id: r._id, name: r.name, permissions: Array.isArray(r.permissions) ? r.permissions : [] });
   const toggleRolePerm = (key) => setRoleForm(prev => ({
     ...prev,
-    permissions: prev.permissions.includes(key) ? prev.permissions.filter(k => k !== key) : [...prev.permissions, key],
+    permissions: togglePermission(prev.permissions, key, permCatalog),
   }));
 
   const handleSaveRole = async (e) => {
@@ -1105,7 +1126,7 @@ export default function SuperAdminPanel() {
   // =========================================================================
   if (authBootstrapping) {
     return (
-      <div className="min-h-screen bg-page-bg flex items-center justify-center text-fg/60 text-sm">
+      <div className="min-h-screen bg-page-bg flex items-center justify-center text-fg/65 text-sm">
         Restoring session…
       </div>
     );
@@ -1137,7 +1158,7 @@ export default function SuperAdminPanel() {
               aria-label="Admin Name"
               value={loginForm.name}
               onChange={e => setLoginForm(f => ({ ...f, name: e.target.value }))}
-              className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/30 px-4 py-3 rounded-xl outline-none transition text-sm font-medium"
+              className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm font-medium"
               required
               autoFocus
             />
@@ -1148,7 +1169,7 @@ export default function SuperAdminPanel() {
                 aria-label="Password"
                 value={loginForm.password}
                 onChange={e => setLoginForm(f => ({ ...f, password: e.target.value }))}
-                className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/30 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
+                className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
                 required
               />
               <button
@@ -1165,7 +1186,7 @@ export default function SuperAdminPanel() {
           <button
             type="submit"
             disabled={loginLoading}
-            className="w-full bg-brand hover:bg-brand-dark text-fg font-black py-3 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
+            className="w-full bg-brand hover:bg-brand-dark text-on-brand font-black py-3 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
           >
             {loginLoading ? <Loader2 size={15} className="animate-spin" /> : <Lock size={15} />}
             {loginLoading ? 'Authenticating…' : 'Authenticate'}
@@ -1174,7 +1195,7 @@ export default function SuperAdminPanel() {
           <button
             type="button"
             onClick={() => navigate('/admin')}
-            className="w-full text-fg/65 hover:text-fg/60 text-xs font-bold uppercase tracking-widest transition mt-4"
+            className="w-full text-fg/65 text-xs font-bold uppercase tracking-widest transition mt-4"
           >
             Return to POS
           </button>
@@ -1194,7 +1215,7 @@ export default function SuperAdminPanel() {
         ${toast.show ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'}`}>
         <div className={`flex items-center gap-3 px-5 py-3 rounded-xl shadow-2xl border text-sm font-bold
           ${toast.type === 'success'
-            ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400'
+            ? 'bg-emerald-500/20 border-emerald-500/30 text-success'
             : 'bg-red-500/20 border-red-500/30 text-danger'}`}>
           {toast.type === 'success' ? <UserCheck size={14} /> : <AlertCircle size={14} />}
           {toast.message}
@@ -1272,7 +1293,7 @@ export default function SuperAdminPanel() {
           {activeSection === 'clients' && (
             <button
               onClick={openClientCreate}
-              className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-fg font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex-shrink-0"
+              className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-on-brand font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex-shrink-0"
             >
               <Plus size={15} />
               New Client
@@ -1297,7 +1318,7 @@ export default function SuperAdminPanel() {
               </label>
               <button
                 onClick={openTierCreate}
-                className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-fg font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm"
+                className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-on-brand font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm"
               >
                 <Plus size={15} />
                 New Tier
@@ -1321,7 +1342,7 @@ export default function SuperAdminPanel() {
                   placeholder="Search name, code, or role…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/30
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70
                     pl-10 pr-4 py-2.5 rounded-xl outline-none transition text-sm"
                 />
               </div>
@@ -1405,7 +1426,7 @@ export default function SuperAdminPanel() {
                 exact price per product. Assign a client to a tier in <span className="text-fg/80 font-bold">Client Accounts</span>.
               </p>
               <p className="text-[11px] text-fg/70 leading-relaxed mt-2">
-                Need one product priced differently for a <em>Default %</em> tier? Add a <span className="text-fg/60 font-bold">Segment Override</span> on that product
+                Need one product priced differently for a <em>Default %</em> tier? Add a <span className="text-fg/65 font-bold">Segment Override</span> on that product
                 (Products tab). A per-client override beats everything.
               </p>
             </div>
@@ -1474,7 +1495,7 @@ export default function SuperAdminPanel() {
                     >Edit</button>
                     <button
                       onClick={() => handleTierDelete(tier)}
-                      className="text-[11px] font-bold text-red-400/70 hover:text-danger transition px-3 py-2 flex-shrink-0"
+                      className="text-[11px] font-bold text-danger transition px-3 py-2 flex-shrink-0"
                     >Remove</button>
                   </div>
                 );
@@ -1512,7 +1533,7 @@ export default function SuperAdminPanel() {
                             return (
                               <td key={t._id} className="px-4 py-2.5 text-right font-mono tabular-nums">
                                 {price === null ? (
-                                  <span className="text-fg/60">-</span>
+                                  <span className="text-fg/65">-</span>
                                 ) : (
                                   <span className={off > 0 ? 'text-brand-text font-bold' : 'text-fg/70'}>
                                     ₱{price.toFixed(2)}
@@ -1568,7 +1589,7 @@ export default function SuperAdminPanel() {
                     </span>
                     <button
                       onClick={() => toggleClientActive(client)}
-                      className={`flex-shrink-0 transition ${client.isActive ? 'text-emerald-400' : 'text-fg/60'}`}
+                      className={`flex-shrink-0 transition ${client.isActive ? 'text-success' : 'text-fg/65'}`}
                       title={client.isActive ? 'Active - click to deactivate' : 'Inactive - click to activate'}
                     >
                       {client.isActive ? <ToggleRight size={22} /> : <ToggleLeft size={22} />}
@@ -1578,7 +1599,7 @@ export default function SuperAdminPanel() {
                         <Edit2 size={14} />
                       </button>
                       {client.source === 'pos' ? (
-                        <button onClick={() => copyOnboardLink(client)} className="p-2 rounded-lg text-brand/70 hover:text-brand-text hover:bg-brand/10 transition" aria-label="Copy onboarding link" title="Copy a self-service onboarding link for this client to set up their own login">
+                        <button onClick={() => copyOnboardLink(client)} className="p-2 rounded-lg text-brand-text hover:bg-brand/10 transition" aria-label="Copy onboarding link" title="Copy a self-service onboarding link for this client to set up their own login">
                           <Copy size={14} />
                         </button>
                       ) : (
@@ -1586,7 +1607,7 @@ export default function SuperAdminPanel() {
                           <KeyRound size={14} />
                         </button>
                       )}
-                      <button onClick={() => handleClientDelete(client)} className="p-2 rounded-lg text-red-400/50 hover:text-danger hover:bg-red-500/10 transition" aria-label="Delete">
+                      <button onClick={() => handleClientDelete(client)} className="p-2 rounded-lg text-danger hover:bg-red-500/10 transition" aria-label="Delete">
                         <Trash2 size={14} />
                       </button>
                     </div>
@@ -1614,7 +1635,7 @@ export default function SuperAdminPanel() {
                 placeholder="Role name (e.g. Barista, Bookkeeper)"
                 value={roleForm.name}
                 onChange={e => setRoleForm(f => ({ ...f, name: e.target.value }))}
-                className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/30 px-4 py-2.5 rounded-xl outline-none transition text-sm mb-4"
+                className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-2.5 rounded-xl outline-none transition text-sm mb-4"
               />
 
               <p className="text-[10px] font-bold text-fg/80 uppercase tracking-widest mb-2">What this role can do</p>
@@ -1622,14 +1643,9 @@ export default function SuperAdminPanel() {
                 {groupedPerms.length === 0 && <p className="text-fg/65 text-xs">Loading permissions…</p>}
                 {groupedPerms.map(([group, perms]) => (
                   <div key={group}>
-                    <p className="text-[10px] font-black uppercase tracking-wider text-fg/80 mb-1">{group}</p>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-fg/80 mb-1">{group}<span className="normal-case font-bold tracking-normal">{groupHint(perms)}</span></p>
                     <div className="grid sm:grid-cols-2 gap-x-3 gap-y-1">
-                      {perms.map(p => (
-                        <label key={p.key} className="flex items-center gap-2 text-[13px] text-fg/70 cursor-pointer hover:text-fg transition">
-                          <input type="checkbox" checked={roleForm.permissions.includes(p.key)} onChange={() => toggleRolePerm(p.key)} className="accent-brand shrink-0" />
-                          <span className="leading-tight">{p.label}</span>
-                        </label>
-                      ))}
+                      {perms.map(p => renderPermBox(p, roleForm.permissions, toggleRolePerm))}
                     </div>
                   </div>
                 ))}
@@ -1671,7 +1687,7 @@ export default function SuperAdminPanel() {
                 <div className="flex flex-col items-center py-10 text-center">
                   <Tag size={32} className="text-fg/10 mb-3" />
                   <p className="text-fg/70 font-bold text-sm">No custom roles yet.</p>
-                  <p className="text-fg/60 text-xs mt-1">Create one above to extend beyond the built-in roles.</p>
+                  <p className="text-fg/65 text-xs mt-1">Create one above to extend beyond the built-in roles.</p>
                 </div>
               ) : roles.map(r => (
                 <div
@@ -1694,7 +1710,7 @@ export default function SuperAdminPanel() {
                       </button>
                       <button
                         onClick={() => handleDeleteRole(r._id, r.name)}
-                        className="p-1.5 rounded-lg text-red-400/40 hover:text-danger hover:bg-red-500/10 transition"
+                        className="p-1.5 rounded-lg text-danger hover:bg-red-500/10 transition"
                         aria-label={`Delete ${r.name} role`}
                       >
                         <Trash2 size={14} />
@@ -1705,7 +1721,7 @@ export default function SuperAdminPanel() {
                     <div className="flex flex-wrap gap-1.5 mt-2.5 pl-6">
                       {r.permissions.map(k => {
                         const meta = permCatalog.find(p => p.key === k);
-                        return <span key={k} className="text-[10px] font-bold bg-brand/10 border border-brand/25 text-brand/90 px-2 py-0.5 rounded-full">{meta ? meta.label : k}</span>;
+                        return <span key={k} className="text-[10px] font-bold bg-brand/10 border border-brand/25 text-brand-text px-2 py-0.5 rounded-full">{meta ? meta.label : k}</span>;
                       })}
                     </div>
                   )}
@@ -2076,7 +2092,7 @@ export default function SuperAdminPanel() {
                   onChange={e => handleFormChange('name', e.target.value)}
                   placeholder="e.g. Maria Santos"
                   autoFocus
-                  className={`w-full bg-white/5 border text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm
+                  className={`w-full bg-white/5 border text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm
                     ${formErrors.name ? 'border-red-500/60' : 'border-white/10 focus:border-brand'}`}
                 />
                 {formErrors.name && (
@@ -2097,7 +2113,7 @@ export default function SuperAdminPanel() {
                     value={form.password}
                     onChange={e => handleFormChange('password', e.target.value)}
                     placeholder={modal.mode === 'edit' ? '(unchanged)' : 'Min. 4 characters'}
-                    className={`w-full bg-white/5 border text-fg placeholder-white/20 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest
+                    className={`w-full bg-white/5 border text-fg placeholder-fg/70 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest
                       ${formErrors.password ? 'border-red-500/60' : 'border-white/10 focus:border-brand'}`}
                   />
                   <button
@@ -2143,7 +2159,7 @@ export default function SuperAdminPanel() {
                     value={form.commissionRate}
                     onChange={e => handleFormChange('commissionRate', e.target.value)}
                     placeholder="0"
-                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm"
                   />
                   <p className="text-[10px] text-fg/65 mt-1.5">Percent of this cashier's attributed sales, shown on the Commissions report.</p>
                 </div>
@@ -2161,7 +2177,7 @@ export default function SuperAdminPanel() {
                     value={form.pin || ''}
                     onChange={e => handleFormChange('pin', e.target.value.replace(/\D/g, ''))}
                     placeholder={form.hasPin ? 'Leave blank to keep the current PIN' : '4 to 6 digits'}
-                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tracking-[0.3em] font-black" />
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm tracking-[0.3em] font-black" />
                   <p className="text-[10px] text-fg/65 mt-1.5">
                     Lets this person take the register on a shared tablet without a password, so their sales and clock-ins carry their own name. Must be different from everyone else&apos;s.
                   </p>
@@ -2183,10 +2199,10 @@ export default function SuperAdminPanel() {
                       ['pagibigNumber', 'Pag-IBIG MID', '0000-0000-0000'],
                     ].map(([key, label, placeholder]) => (
                       <div key={key}>
-                        <label htmlFor={`staff-${key}`} className="text-[10px] font-bold text-fg/60 block mb-1">{label}</label>
+                        <label htmlFor={`staff-${key}`} className="text-[10px] font-bold text-fg/65 block mb-1">{label}</label>
                         <input id={`staff-${key}`} type="text" value={form[key] || ''}
                           onChange={e => handleFormChange(key, e.target.value)} placeholder={placeholder}
-                          className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-3 py-2.5 rounded-xl outline-none transition text-sm" />
+                          className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-3 py-2.5 rounded-xl outline-none transition text-sm" />
                       </div>
                     ))}
                   </div>
@@ -2212,14 +2228,9 @@ export default function SuperAdminPanel() {
                     {groupedPerms.length === 0 && <p className="text-fg/65 text-xs">Loading permissions…</p>}
                     {groupedPerms.map(([group, perms]) => (
                       <div key={group}>
-                        <p className="text-[10px] font-black uppercase tracking-wider text-fg/65 mb-1">{group}</p>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-fg/65 mb-1">{group}<span className="normal-case font-bold tracking-normal">{groupHint(perms)}</span></p>
                         <div className="grid sm:grid-cols-2 gap-x-3 gap-y-1">
-                          {perms.map(p => (
-                            <label key={p.key} className="flex items-center gap-2 text-[13px] text-fg/70 cursor-pointer hover:text-fg transition">
-                              <input type="checkbox" checked={form.permissions.includes(p.key)} onChange={() => togglePerm(p.key)} className="accent-brand shrink-0" />
-                              <span className="leading-tight">{p.label}</span>
-                            </label>
-                          ))}
+                          {perms.map(p => renderPermBox(p, form.permissions, togglePerm))}
                         </div>
                       </div>
                     ))}
@@ -2351,7 +2362,7 @@ export default function SuperAdminPanel() {
                 Cancel
               </button>
               <button onClick={submitTierPricingImport} disabled={tierImporting}
-                className="flex-1 py-3 bg-brand hover:bg-brand-dark text-fg font-bold rounded-xl transition text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+                className="flex-1 py-3 bg-brand hover:bg-brand-dark text-on-brand font-bold rounded-xl transition text-sm disabled:opacity-50 flex items-center justify-center gap-2">
                 <Check size={16} /> {tierImporting ? 'Importing…' : 'Import Prices'}
               </button>
             </div>
@@ -2387,7 +2398,7 @@ export default function SuperAdminPanel() {
                   value={tierForm.name}
                   onChange={e => setTierForm(f => ({ ...f, name: e.target.value }))}
                   placeholder="e.g. Dealer"
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm"
                 />
                 {tierModal.mode === 'edit' && (
                   <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
@@ -2427,7 +2438,7 @@ export default function SuperAdminPanel() {
                       value={tierForm.percent}
                       onChange={e => setTierForm(f => ({ ...f, percent: e.target.value }))}
                       placeholder="e.g. 15"
-                      className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 pr-9 rounded-xl outline-none transition text-sm tabular-nums"
+                      className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 pr-9 rounded-xl outline-none transition text-sm tabular-nums"
                     />
                     <span className="absolute right-4 top-1/2 -translate-y-1/2 text-fg/65 text-sm font-bold">%</span>
                   </div>
@@ -2453,7 +2464,7 @@ export default function SuperAdminPanel() {
                   value={tierForm.note}
                   onChange={e => setTierForm(f => ({ ...f, note: e.target.value }))}
                   placeholder="Optional"
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm"
                 />
               </div>
 
@@ -2479,11 +2490,11 @@ export default function SuperAdminPanel() {
               <div className="flex gap-2 pt-1">
                 <button
                   type="button" onClick={closeTierModal}
-                  className="flex-1 py-3 rounded-xl font-bold text-sm text-fg/60 hover:text-fg bg-white/5 hover:bg-white/10 transition"
+                  className="flex-1 py-3 rounded-xl font-bold text-sm text-fg/65 hover:text-fg bg-white/5 hover:bg-white/10 transition"
                 >Cancel</button>
                 <button
                   type="submit" disabled={tierFormLoading}
-                  className="flex-1 py-3 rounded-xl font-bold text-sm bg-brand hover:bg-brand-dark text-fg transition flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="flex-1 py-3 rounded-xl font-bold text-sm bg-brand hover:bg-brand-dark text-on-brand transition flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {tierFormLoading && <Loader2 size={14} className="animate-spin" />}
                   {tierFormLoading ? 'Saving…' : 'Save Tier'}
@@ -2538,14 +2549,14 @@ export default function SuperAdminPanel() {
                             value={val}
                             placeholder={Number(p.basePrice || 0).toFixed(2)}
                             onChange={e => setProductPriceRows(r => ({ ...r, [p._id]: e.target.value }))}
-                            className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/15 pl-6 pr-2 py-2 rounded-lg outline-none transition text-xs tabular-nums text-right"
+                            className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 pl-6 pr-2 py-2 rounded-lg outline-none transition text-xs tabular-nums text-right"
                           />
                         </div>
                         {val !== '' && (
                           <button
                             type="button"
                             onClick={() => setProductPriceRows(r => { const n = { ...r }; delete n[p._id]; return n; })}
-                            className="text-fg/60 hover:text-danger transition flex-shrink-0"
+                            className="text-fg/65 hover:text-danger transition flex-shrink-0"
                             aria-label={`Clear price for ${p.name}`}
                           ><X size={13} /></button>
                         )}
@@ -2559,11 +2570,11 @@ export default function SuperAdminPanel() {
             <div className="flex gap-2 px-6 py-4 border-t border-white/5 flex-shrink-0">
               <button
                 type="button" onClick={closeProductPricing}
-                className="flex-1 py-3 rounded-xl font-bold text-sm text-fg/60 hover:text-fg bg-white/5 hover:bg-white/10 transition"
+                className="flex-1 py-3 rounded-xl font-bold text-sm text-fg/65 hover:text-fg bg-white/5 hover:bg-white/10 transition"
               >Cancel</button>
               <button
                 type="button" onClick={handleProductPricingSubmit} disabled={productPriceSaving}
-                className="flex-1 py-3 rounded-xl font-bold text-sm bg-brand hover:bg-brand-dark text-fg transition flex items-center justify-center gap-2 disabled:opacity-50"
+                className="flex-1 py-3 rounded-xl font-bold text-sm bg-brand hover:bg-brand-dark text-on-brand transition flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {productPriceSaving && <Loader2 size={14} className="animate-spin" />}
                 {productPriceSaving ? 'Saving…' : 'Save Prices'}
@@ -2609,7 +2620,7 @@ export default function SuperAdminPanel() {
                   onChange={e => setClientForm(f => ({ ...f, name: e.target.value }))}
                   placeholder="e.g. Acme Corp"
                   autoFocus
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm"
                 />
               </div>
 
@@ -2621,7 +2632,7 @@ export default function SuperAdminPanel() {
                   onChange={e => setClientForm(f => ({ ...f, username: e.target.value }))}
                   placeholder="e.g. acme_corp"
                   autoComplete="off"
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm"
                 />
               </div>
 
@@ -2636,7 +2647,7 @@ export default function SuperAdminPanel() {
                     onChange={e => setClientForm(f => ({ ...f, password: e.target.value }))}
                     placeholder={clientModal.mode === 'edit' ? '(unchanged)' : 'Set a password'}
                     autoComplete="new-password"
-                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
                   />
                   <button
                     type="button"
@@ -2670,7 +2681,7 @@ export default function SuperAdminPanel() {
                   value={clientForm.creditLimit}
                   onChange={e => setClientForm(f => ({ ...f, creditLimit: e.target.value }))}
                   placeholder="Leave blank for no limit"
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
                 />
                 <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
                   Blank = no limit for this client. <span className="text-fg/75 font-bold">0 = cash only</span> (blocks all on-account orders).
@@ -2686,7 +2697,7 @@ export default function SuperAdminPanel() {
                   value={clientForm.creditTermsDays}
                   onChange={e => setClientForm(f => ({ ...f, creditTermsDays: e.target.value }))}
                   placeholder="e.g. 7, 15, 30"
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
                 />
                 <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
                   Days an on-account (utang) sale has before it turns <span className="text-fg/75 font-bold">overdue</span>. Blank = no terms. 0 = due on receipt.
@@ -2803,7 +2814,7 @@ export default function SuperAdminPanel() {
                         </div>
                       )}
                       {orphans.length > 0 && (
-                        <p className="text-[10px] text-yellow-400/70 mt-2 bg-yellow-500/8 border border-yellow-500/20 rounded-lg px-3 py-2">
+                        <p className="text-[10px] text-warning mt-2 bg-yellow-500/8 border border-yellow-500/20 rounded-lg px-3 py-2">
                           Unrecognised tag{orphans.length === 1 ? '' : 's'}: <span className="font-bold">{orphans.join(', ')}</span>. No tier matches, so no automatic rate applies. Click a tier above to replace, or create a matching tier.
                         </p>
                       )}
@@ -2868,15 +2879,15 @@ export default function SuperAdminPanel() {
               {clientModal.mode === 'edit' && (clientModal.client.creditBalance || 0) > 0 && (
                 <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3">
                   <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Credit Balance</p>
-                    <span className="text-sm font-black text-emerald-400 tabular-nums">₱{clientModal.client.creditBalance.toFixed(2)}</span>
+                    <p className="text-[10px] font-bold text-success uppercase tracking-widest">Credit Balance</p>
+                    <span className="text-sm font-black text-success tabular-nums">₱{clientModal.client.creditBalance.toFixed(2)}</span>
                   </div>
                   <p className="text-[11px] text-fg/70 mt-1">From past overpayments. Apply it to a future order's A/R settlement, or refund it out below.</p>
                   {!clientCreditRefundForm ? (
                     <button
                       type="button"
                       onClick={() => setClientCreditRefundForm({ amount: String(clientModal.client.creditBalance), sourceAccount: '111000', referenceNumber: '' })}
-                      className="mt-2 text-[11px] font-bold text-emerald-400 hover:text-emerald-300 underline"
+                      className="mt-2 text-[11px] font-bold text-success underline"
                     >
                       Refund
                     </button>
@@ -2912,7 +2923,7 @@ export default function SuperAdminPanel() {
                         <button
                           type="button" disabled={clientCreditBusy}
                           onClick={() => setClientCreditRefundForm(null)}
-                          className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-fg/60 text-xs font-bold transition"
+                          className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-fg/65 text-xs font-bold transition"
                         >
                           Cancel
                         </button>
@@ -2928,7 +2939,7 @@ export default function SuperAdminPanel() {
                   <button
                     type="button"
                     onClick={() => setClientForm(f => ({ ...f, isActive: !f.isActive }))}
-                    className={`transition ${clientForm.isActive ? 'text-emerald-400' : 'text-fg/60'}`}
+                    className={`transition ${clientForm.isActive ? 'text-success' : 'text-fg/65'}`}
                   >
                     {clientForm.isActive ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}
                   </button>
@@ -2942,7 +2953,7 @@ export default function SuperAdminPanel() {
                 <button
                   type="submit"
                   disabled={clientFormLoading}
-                  className="flex-1 bg-brand hover:bg-brand-dark text-fg font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="flex-1 bg-brand hover:bg-brand-dark text-on-brand font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {clientFormLoading && <Loader2 size={14} className="animate-spin" />}
                   {clientFormLoading ? 'Saving…' : clientModal.mode === 'create' ? 'Create Client' : 'Save Changes'}
@@ -2988,7 +2999,7 @@ export default function SuperAdminPanel() {
                 <p className="text-[10px] text-fg/65 mb-4 leading-relaxed">
                   This password cannot be shown again after you close this - reset again if it's lost.
                 </p>
-                <button onClick={closeResetPassword} className="w-full bg-brand hover:bg-brand-dark text-fg font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm">
+                <button onClick={closeResetPassword} className="w-full bg-brand hover:bg-brand-dark text-on-brand font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm">
                   Done
                 </button>
               </>
@@ -3011,7 +3022,7 @@ export default function SuperAdminPanel() {
                     value={resetPwModal.confirmPassword}
                     onChange={e => setResetPwModal(m => ({ ...m, confirmPassword: e.target.value }))}
                     placeholder="Re-enter your password"
-                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm"
                   />
                 </div>
                 <div className="flex gap-3 pt-1">
@@ -3021,7 +3032,7 @@ export default function SuperAdminPanel() {
                   <button
                     type="submit"
                     disabled={resetPwModal.loading}
-                    className="flex-1 bg-brand hover:bg-brand-dark text-fg font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                    className="flex-1 bg-brand hover:bg-brand-dark text-on-brand font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
                   >
                     {resetPwModal.loading && <Loader2 size={14} className="animate-spin" />}
                     {resetPwModal.loading ? 'Resetting…' : 'Reset Password'}

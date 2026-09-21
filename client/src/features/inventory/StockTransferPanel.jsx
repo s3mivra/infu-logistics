@@ -206,7 +206,7 @@ export default function StockTransferPanel({
               )}
             </select>
             {isHubTarget && (
-              <p className="text-[10px] text-accent/70 mt-1">
+              <p className="text-[10px] text-brand-text mt-1">
                 Ships {fromItem ? fromItem.itemName : 'this item'} OUT of your inventory to {hubLinks.find(l => `hub:${l.partnerSlug}` === toValue)?.partnerName || 'this partner'} - they must accept it on their end before it's released from yours.
               </p>
             )}

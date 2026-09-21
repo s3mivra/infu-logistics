@@ -62,7 +62,7 @@ export default function ClientOnboarding() {
     }
   };
 
-  const input = 'w-full bg-page-bg border border-white/10 rounded-xl px-4 py-3 text-fg font-bold outline-none focus:border-brand/60 transition placeholder-fg/25';
+  const input = 'w-full bg-page-bg border border-white/10 rounded-xl px-4 py-3 text-fg font-bold outline-none focus:border-brand/60 transition placeholder-fg/70';
   const label = 'text-xs text-fg/75 font-bold uppercase tracking-wider block mb-1.5';
 
   return (

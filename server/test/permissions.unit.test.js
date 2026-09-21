@@ -1,5 +1,6 @@
 // Unit tests for the pure RBAC permission helpers in lib/authz.js.
 import { describe, it, expect } from 'vitest';
+const domain = (list) => list.filter((k) => !k.startsWith('screen.'));
 import { resolvePermissions, hasPermission, setCustomRolePermissions, ROLE_DEFAULT_PERMISSIONS, PERMISSIONS, PERMISSION_KEYS } from '../lib/authz.js';
 
 describe('resolvePermissions', () => {
@@ -9,12 +10,12 @@ describe('resolvePermissions', () => {
   });
 
   it('falls back to role defaults when no explicit override', () => {
-    expect(resolvePermissions({ role: 'cashier' })).toEqual(ROLE_DEFAULT_PERMISSIONS.cashier);
+    expect(domain(resolvePermissions({ role: 'cashier' }))).toEqual(ROLE_DEFAULT_PERMISSIONS.cashier);
   });
 
   it('uses explicit override when present (intersected with the catalogue)', () => {
     const perms = resolvePermissions({ role: 'cashier', permissions: ['accounting.view', 'bogus.perm', 'reports.view'] });
-    expect(perms).toEqual(['accounting.view', 'reports.view']);
+    expect(domain(perms)).toEqual(['accounting.view', 'reports.view']);
   });
 
   it('returns nothing for an unknown role with no override', () => {
@@ -31,7 +32,7 @@ describe('resolvePermissions', () => {
     // procurement). The explicitly-granted set wins.
     setCustomRolePermissions([{ name: 'Admin', permissions: ['pos.use', 'orders.view'] }]);
     try {
-      expect(resolvePermissions({ role: 'Admin' })).toEqual(['pos.use', 'orders.view']);
+      expect(domain(resolvePermissions({ role: 'Admin' }))).toEqual(['pos.use', 'orders.view']);
       expect(resolvePermissions({ role: 'admin' })).not.toContain('inventory.view');
     } finally {
       setCustomRolePermissions([]); // reset shared module state for other tests
@@ -40,7 +41,7 @@ describe('resolvePermissions', () => {
 
   it('built-in roles still use defaults when no custom role shadows them', () => {
     setCustomRolePermissions([]);
-    expect(resolvePermissions({ role: 'admin' })).toEqual(ROLE_DEFAULT_PERMISSIONS.admin);
+    expect(domain(resolvePermissions({ role: 'admin' }))).toEqual(ROLE_DEFAULT_PERMISSIONS.admin);
   });
 });
 

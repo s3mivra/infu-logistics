@@ -41,7 +41,7 @@ const items = partialModal.items || [];
               const short = remaining - fq;
               if (remaining <= 0) return (
                 <div key={i} className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 opacity-50">
-                  <p className="text-sm font-bold text-fg truncate">{it.name} <span className="text-emerald-400 text-[10px]">· fully fulfilled</span></p>
+                  <p className="text-sm font-bold text-fg truncate">{it.name} <span className="text-success text-[10px]">· fully fulfilled</span></p>
                 </div>
               );
               return (

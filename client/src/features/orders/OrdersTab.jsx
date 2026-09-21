@@ -44,14 +44,14 @@ const SEND_TARGET = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
 // Soft, tinted status pills - the colour still says the state at a glance
 // without every card shouting in solid red or yellow.
 const ORDER_STATUS_TONE = {
-  Reserved:              'bg-purple-500/15 text-purple-300',
+  Reserved:              'bg-purple-500/15 text-special',
   Pending:               'bg-red-500/15 text-danger',
   Preparing:             'bg-yellow-500/15 text-warning',
-  Ready:                 'bg-blue-500/15 text-blue-300',
+  Ready:                 'bg-blue-500/15 text-info',
   'Partially Delivered': 'bg-orange-500/15 text-warning',
   'Partially Fulfilled': 'bg-orange-500/15 text-warning',
   Completed:             'bg-green-500/15 text-success',
-  Refunded:              'bg-purple-500/15 text-purple-300',
+  Refunded:              'bg-purple-500/15 text-special',
 };
 
 export default function OrdersTab({ ctx }) {
@@ -251,7 +251,7 @@ export default function OrdersTab({ ctx }) {
                         placeholder="Search menu items…"
                         value={posSearch}
                         onChange={e => { setPosSearch(e.target.value); setPosPage(1); }}
-                        className="w-full bg-page-bg border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-fg text-sm font-medium placeholder-white/25 outline-none focus:border-brand/60 transition"
+                        className="w-full bg-page-bg border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-fg text-sm font-medium placeholder-fg/70 outline-none focus:border-brand/60 transition"
                       />
                     </div>
                     <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
@@ -286,7 +286,7 @@ export default function OrdersTab({ ctx }) {
                         {/* Combo / Promo strip */}
                         {activeCombos.length > 0 && (posCategory === 'All' || posCategory === 'Combos') && (
                           <div className="px-3 pt-1 pb-2 shrink-0">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-brand/70 mb-1.5">Combos &amp; Promos</p>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-brand-text mb-1.5">Combos &amp; Promos</p>
                             <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
                               {activeCombos.map(c => (
                                 <button key={c._id} onClick={() => addComboToPosCart(c)}
@@ -301,7 +301,7 @@ export default function OrdersTab({ ctx }) {
                         )}
                         <div className="flex-1 overflow-y-auto px-3 pb-3 grid grid-cols-3 sm:grid-cols-3 xl:grid-cols-4 gap-3 content-start custom-scrollbar">
                           {posPaged.length === 0 && (
-                            <div className="col-span-full flex flex-col items-center justify-center py-16 text-fg/60">
+                            <div className="col-span-full flex flex-col items-center justify-center py-16 text-fg/65">
                               <ShoppingCart size={32} className="mb-3 opacity-30" />
                               <p className="font-bold text-sm uppercase tracking-widest">No items found</p>
                             </div>
@@ -439,7 +439,7 @@ export default function OrdersTab({ ctx }) {
                         ? 'Customer name (blank = Walk-in)'
                         : 'Customer / Driver Name *'}
                       value={posCustomerName} onChange={e => setPosCustomerName(e.target.value)}
-                      className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60 text-sm transition" />
+                      className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-fg/70 outline-none focus:border-brand/60 text-sm transition" />
                     <IconSelect value={posTable} onChange={setPosTable} options={BUSINESS_TYPE === 'log' ? [
                       { value: 'Walk In', label: 'Walk In', Icon: Footprints },
                       { value: 'Pickup', label: 'Pickup', Icon: Package },
@@ -458,14 +458,14 @@ export default function OrdersTab({ ctx }) {
                     {(posTable === 'Manual Delivery' || posTable === 'Pickup' || posTable === 'Lalamove') && (
                       <div className="space-y-2 border border-brand/20 rounded-xl p-2.5 bg-brand/5">
                         <input type="tel" placeholder="Phone Number *" value={posCustomerPhone} onChange={e => setPosCustomerPhone(e.target.value)}
-                          className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50" />
+                          className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs font-bold placeholder-fg/70 outline-none focus:border-brand/50" />
                         {(posTable === 'Manual Delivery' || posTable === 'Lalamove') && (
                           <input type="text" placeholder="Delivery Address *" value={posDeliveryAddress} onChange={e => setPosDeliveryAddress(e.target.value)}
-                            className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50" />
+                            className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs font-bold placeholder-fg/70 outline-none focus:border-brand/50" />
                         )}
                         <div className="flex gap-2">
                           <input type="number" min="0" step="0.01" placeholder="Fee (₱)" value={posDeliveryFee} onChange={e => setPosDeliveryFee(e.target.value)}
-                            className="w-1/2 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50" />
+                            className="w-1/2 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs font-bold placeholder-fg/70 outline-none focus:border-brand/50" />
                           <input type="time" value={posScheduledTime} onChange={e => setPosScheduledTime(e.target.value)}
                             className="w-1/2 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs font-bold outline-none focus:border-brand/50" />
                         </div>
@@ -478,8 +478,8 @@ export default function OrdersTab({ ctx }) {
                     const met = posSubtotal >= rule.thresholdAmount;
                     const remain = rule.thresholdAmount - posSubtotal;
                     return (
-                      <div key={i} className={`mx-3 mt-2 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 ${met ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30' : 'bg-white/5 text-fg/70 border border-white/8'}`}>
-                        <Flame size={12} className={met ? 'text-warning' : 'text-fg/60'} />
+                      <div key={i} className={`mx-3 mt-2 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 ${met ? 'bg-orange-500/20 text-caution border border-orange-500/30' : 'bg-white/5 text-fg/70 border border-white/8'}`}>
+                        <Flame size={12} className={met ? 'text-warning' : 'text-fg/65'} />
                         {met
                           ? <span>🎉 Deal unlocked! <span className="font-black">{rule.productName}</span> gets <span className="font-black">{rule.discountPercent}%</span> off</span>
                           : <span>Spend <span className="font-black">₱{remain.toFixed(2)}</span> more → <span className="font-black">{rule.productName}</span> gets {rule.discountPercent}% off</span>
@@ -491,10 +491,10 @@ export default function OrdersTab({ ctx }) {
                   {/* Cart items */}
                   <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar min-h-0">
                     {posCart.length === 0 ? (
-                      <div className="h-full flex flex-col items-center justify-center gap-2 text-fg/15">
+                      <div className="h-full flex flex-col items-center justify-center gap-2 text-fg/65">
                         <ShoppingCart size={36} className="opacity-40" />
                         <p className="font-black uppercase tracking-widest text-xs">Cart is Empty</p>
-                        <p className="text-[10px] text-fg/10">Tap a menu item to add</p>
+                        <p className="text-[10px] text-fg/65">Tap a menu item to add</p>
                       </div>
                     ) : posCart.map((item, idx) => {
                       const addOnTotal = item.selectedAddOns.reduce((s, a) => s + Number(a.price), 0);
@@ -520,7 +520,7 @@ export default function OrdersTab({ ctx }) {
                                   placeholder="0"
                                   value={item.discountPercent || ''}
                                   onChange={e => setPosCart(posCart.map((c, i) => i === idx ? {...c, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))} : c))}
-                                  className="w-14 bg-white/5 border border-white/10 rounded-lg pl-2 pr-5 py-1 text-fg text-xs font-bold outline-none focus:border-brand/60 placeholder-white/20 tabular-nums"
+                                  className="w-14 bg-white/5 border border-white/10 rounded-lg pl-2 pr-5 py-1 text-fg text-xs font-bold outline-none focus:border-brand/60 placeholder-fg/70 tabular-nums"
                                 />
                                 <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-fg/65 text-[10px] font-bold pointer-events-none">%</span>
                               </div>
@@ -530,7 +530,7 @@ export default function OrdersTab({ ctx }) {
                             {lineDisc > 0 && <p className="text-[10px] text-success font-bold tabular-nums">-₱{lineDisc.toFixed(2)}</p>}
                             <p className="font-black text-brand-text text-sm tabular-nums">₱{lineTotal.toFixed(2)}</p>
                             <button onClick={() => setPosCart(posCart.filter((_, i) => i !== idx))}
-                              className="w-8 h-8 flex items-center justify-center text-danger/80 hover:text-danger hover:bg-red-500/10 rounded-lg transition active:scale-90">
+                              className="w-8 h-8 flex items-center justify-center text-danger hover:bg-red-500/10 rounded-lg transition active:scale-90">
                               <Trash2 size={13}/>
                             </button>
                           </div>
@@ -565,7 +565,7 @@ export default function OrdersTab({ ctx }) {
                         <span className="text-3xl font-black text-fg">₱<span className="tabular-nums">{posGrandTotal.toFixed(2)}</span></span>
                       </div>
                     </div>
-                    <p className="text-center text-[9px] text-fg/15 font-black uppercase tracking-[0.2em] mb-2">NON-VAT TRANSACTION</p>
+                    <p className="text-center text-[9px] text-fg/65 font-black uppercase tracking-[0.2em] mb-2">NON-VAT TRANSACTION</p>
                     {/* Reserve-only: skip payment now. Order is held with status Reserved
                         and the cashier promotes it later (Pending → Preparing). */}
                     <label className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg bg-white/5 border border-white/10 cursor-pointer hover:bg-white/10 transition">
@@ -577,7 +577,7 @@ export default function OrdersTab({ ctx }) {
                     <div className="flex gap-2">
                       <button
                         onClick={parkCurrentOrder}
-                        className="px-4 py-4 bg-white/5 border border-white/10 text-fg/60 font-black rounded-xl uppercase tracking-wider text-xs hover:bg-white/10 hover:text-fg active:scale-98 transition flex items-center justify-center gap-1.5 min-h-[56px]"
+                        className="px-4 py-4 bg-white/5 border border-white/10 text-fg/65 font-black rounded-xl uppercase tracking-wider text-xs hover:bg-white/10 hover:text-fg active:scale-98 transition flex items-center justify-center gap-1.5 min-h-[56px]"
                         title="Hold this order as an open tab">
                         <Clock size={16}/> Park
                       </button>
@@ -690,7 +690,7 @@ export default function OrdersTab({ ctx }) {
                       placeholder="Search name or #order…"
                       value={orderSearch}
                       onChange={e => { setOrderSearch(e.target.value); setOrdersPage(1); }}
-                      className="w-full pl-8 pr-3 py-2 bg-page-bg border border-white/10 rounded-lg text-fg text-xs font-bold placeholder-white/25 outline-none focus:border-brand/50 transition"
+                      className="w-full pl-8 pr-3 py-2 bg-page-bg border border-white/10 rounded-lg text-fg text-xs font-bold placeholder-fg/70 outline-none focus:border-brand/50 transition"
                     />
                     {orderSearch && (
                       <button onClick={() => setOrderSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/65 hover:text-fg/70 transition">
@@ -771,7 +771,7 @@ export default function OrdersTab({ ctx }) {
                   const tables = Object.values(tableMap).sort((a,b) => a.table.localeCompare(b.table));
                   return (
                     <div className="mb-4 flex flex-wrap gap-2 items-center">
-                      <span className="text-[11px] text-fg/55 font-semibold shrink-0">{BUSINESS_TYPE === 'log' ? 'Active' : 'Active tables'}</span>
+                      <span className="text-[11px] text-fg/65 font-semibold shrink-0">{BUSINESS_TYPE === 'log' ? 'Active' : 'Active tables'}</span>
                       {tables.map(({ table, count, status }) => (
                         <button key={table}
                           onClick={() => { setOrderFilter('All'); setOrderSearch(table); }}
@@ -793,7 +793,7 @@ export default function OrdersTab({ ctx }) {
                   {displayOrders.length === 0 ? (
                     <div className="col-span-full flex flex-col items-center justify-center py-20 px-6 text-center">
                       <div className="w-16 h-16 rounded-2xl bg-surface-2 border border-white/5 flex items-center justify-center mb-5">
-                        <ShoppingCart size={28} className="text-brand-text/85" />
+                        <ShoppingCart size={28} className="text-brand-text" />
                       </div>
                       <p className="text-fg/80 font-black uppercase tracking-widest text-sm mb-1.5">
                         No orders in {departmentFilter === 'All' ? 'any' : departmentFilter} queue
@@ -841,7 +841,7 @@ export default function OrdersTab({ ctx }) {
                         <div className="px-4 pt-3.5 pb-3 flex flex-col gap-1.5">
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-fg font-black text-sm whitespace-nowrap tabular-nums">{order.orderNumber}</span>
-                            <div className="flex items-center gap-0.5 flex-shrink-0 text-fg/55">
+                            <div className="flex items-center gap-0.5 flex-shrink-0 text-fg/65">
                               {order.isParked && (
                                 <button onClick={() => resumeParked(order._id)} className="mr-1 px-2.5 py-1 bg-brand text-on-brand rounded-md text-[10px] font-black uppercase tracking-wider hover:bg-brand/90 transition flex items-center gap-1">
                                   <ShoppingCart size={11} /> Resume
@@ -886,7 +886,7 @@ export default function OrdersTab({ ctx }) {
                           {(order.customerName || order.table) && (
                             <p className="text-[13px] leading-snug min-w-0">
                               {order.customerName && <span className="text-fg font-semibold">{order.customerName}</span>}
-                              {order.customerName && order.table && <span className="text-fg/40"> · </span>}
+                              {order.customerName && order.table && <span className="text-fg/65"> · </span>}
                               {order.table && <span className="text-fg/65">{order.table}</span>}
                             </p>
                           )}
@@ -894,7 +894,7 @@ export default function OrdersTab({ ctx }) {
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${ORDER_STATUS_TONE[order.status] || 'bg-white/10 text-fg/70'}`}>{order.status}</span>
                             {order.revision > 0 && (
                               <span title={(order.amendments || []).map(a => `Rev ${a.revision} · ${a.by}: ${a.reason}`).join('\n')}
-                                className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-400">
+                                className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/15 text-info">
                                 Rev {order.revision}
                               </span>
                             )}
@@ -903,7 +903,7 @@ export default function OrdersTab({ ctx }) {
                                 <CheckCircle size={10}/> All done
                               </span>
                             )}
-                            <span className="text-fg/50 text-[10px] ml-auto tabular-nums">{new Date(order.createdAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                            <span className="text-fg/65 text-[10px] ml-auto tabular-nums">{new Date(order.createdAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
                           </div>
                           {order.orderNotes && (
                             <p className="text-[11px] text-fg/85 bg-yellow-500/10 border-l-2 border-yellow-500/60 rounded-r px-2 py-1 italic">
@@ -916,14 +916,14 @@ export default function OrdersTab({ ctx }) {
                         {['Manual Delivery','Pickup','Grab Delivery','Foodpanda','Lalamove'].includes(order.table)
                           && (order.customerPhone || order.deliveryAddress || order.deliveryFee > 0 || order.scheduledTime || order.dispatchStatus) && (
                           <dl className="mx-4 mb-3 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-[11px]">
-                            {order.customerPhone && <><dt className="text-fg/50">Phone</dt><dd className="text-fg/85 tabular-nums">{order.customerPhone}</dd></>}
-                            {order.deliveryAddress && <><dt className="text-fg/50">Address</dt><dd className="text-fg/85">{order.deliveryAddress}</dd></>}
-                            {order.deliveryFee > 0 && <><dt className="text-fg/50">Delivery fee</dt><dd className="text-fg/85 tabular-nums">₱{order.deliveryFee.toFixed(2)}</dd></>}
-                            {order.scheduledTime && <><dt className="text-fg/50">Scheduled</dt><dd className="text-fg/85">{order.scheduledTime}</dd></>}
+                            {order.customerPhone && <><dt className="text-fg/65">Phone</dt><dd className="text-fg/85 tabular-nums">{order.customerPhone}</dd></>}
+                            {order.deliveryAddress && <><dt className="text-fg/65">Address</dt><dd className="text-fg/85">{order.deliveryAddress}</dd></>}
+                            {order.deliveryFee > 0 && <><dt className="text-fg/65">Delivery fee</dt><dd className="text-fg/85 tabular-nums">₱{order.deliveryFee.toFixed(2)}</dd></>}
+                            {order.scheduledTime && <><dt className="text-fg/65">Scheduled</dt><dd className="text-fg/85">{order.scheduledTime}</dd></>}
                             {/* DISPATCH PIPELINE */}
                             {order.dispatchStatus && (
                               <div className="col-span-2 flex items-center gap-1.5 flex-wrap pt-1.5 mt-0.5 border-t border-white/5">
-                                <span className="text-fg/50">Dispatch</span>
+                                <span className="text-fg/65">Dispatch</span>
                                 {(['Preparing','Out for Delivery','Awaiting Pickup','Delivered','Picked Up']).map(s => {
                                   const isActive = order.dispatchStatus === s;
                                   return (
@@ -951,7 +951,7 @@ export default function OrdersTab({ ctx }) {
                                 if (departmentFilter !== 'All' && departmentFilter !== dept) return null;
                                 return (
                                   <div key={dept}>
-                                    <h4 className="text-[10px] uppercase text-fg/45 font-bold mb-1 tracking-wider">{dept}</h4>
+                                    <h4 className="text-[10px] uppercase text-fg/65 font-bold mb-1 tracking-wider">{dept}</h4>
                                     {deptItems.map(item => (
                                       <div key={item.originalIdx} className="py-1.5 border-b border-white/5 last:border-0">
                                         {/* Name always gets the FULL row width - a long product name
@@ -1033,9 +1033,9 @@ export default function OrdersTab({ ctx }) {
                                                             value={item.discountPercent || ''}
                                                             onChange={e => applyItemDiscount(order._id, item.originalIdx, e.target.value)}
                                                             title="Cashier discount override for this line"
-                                                            className="w-12 bg-white/5 border border-white/10 rounded pl-1.5 pr-4 py-0.5 text-fg text-[10px] font-bold outline-none focus:border-brand/60 placeholder:text-fg/30 tabular-nums"
+                                                            className="w-12 bg-white/5 border border-white/10 rounded pl-1.5 pr-4 py-0.5 text-fg text-[10px] font-bold outline-none focus:border-brand/60 placeholder:text-fg/65 tabular-nums"
                                                           />
-                                                          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-fg/50 text-[9px] font-bold pointer-events-none">%</span>
+                                                          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-fg/65 text-[9px] font-bold pointer-events-none">%</span>
                                                         </div>
                                                       )}
                                                     </div>
@@ -1096,26 +1096,26 @@ export default function OrdersTab({ ctx }) {
                                         <div className="text-fg/70 text-[9px] italic truncate">&ldquo;{order.complimentaryReasonNote}&rdquo;</div>
                                       )}
                                       <div className="text-fg/70 text-[9px]">
-                                        <span className="text-fg/60">For:</span> {compEmpName} &nbsp;·&nbsp; <span className="text-fg/60">By:</span> {order.complimentaryApprovedBy || activeAdmin?.name || '-'}
+                                        <span className="text-fg/65">For:</span> {compEmpName} &nbsp;·&nbsp; <span className="text-fg/65">By:</span> {order.complimentaryApprovedBy || activeAdmin?.name || '-'}
                                       </div>
                                       {order.complimentaryApprovedAt && (
-                                        <div className="text-fg/60 text-[9px]">{new Date(order.complimentaryApprovedAt).toLocaleString()}</div>
+                                        <div className="text-fg/65 text-[9px]">{new Date(order.complimentaryApprovedAt).toLocaleString()}</div>
                                       )}
                                     </div>
-                                    <button onClick={() => removeComplimentary(order._id)} className="flex-shrink-0 bg-red-500 hover:bg-red-600 text-white p-1 rounded font-black transition" title="Remove Complimentary">
+                                    {can('orders.comp') && <button onClick={() => removeComplimentary(order._id)} className="flex-shrink-0 bg-red-600 hover:bg-red-700 text-white p-1 rounded font-black transition" title="Remove Complimentary">
                                       <X size={11} />
-                                    </button>
+                                    </button>}
                                   </div>
                                 ) : (
                                   /* ── PENDING STATE: collapsed by default - just a toggle
                                       until someone actually needs to comp this order. ── */
-                                  <div className="flex flex-col gap-1.5">
+                                  !can('orders.comp') ? null : <div className="flex flex-col gap-1.5">
                                     <button
                                       onClick={() => setCompFormOpen(prev => ({ ...prev, [order._id]: !prev[order._id] }))}
                                       className="flex items-center gap-1.5 text-left hover:opacity-80 transition"
                                     >
                                       <Gift size={10} className="text-fg/70 flex-shrink-0" />
-                                      <span className="text-fg/60 text-[9px] font-bold uppercase tracking-wider">Mark Complimentary</span>
+                                      <span className="text-fg/65 text-[9px] font-bold uppercase tracking-wider">Mark Complimentary</span>
                                       {compFormOpen[order._id] ? <ChevronUp size={11} className="text-fg/70" /> : <ChevronDown size={11} className="text-fg/70" />}
                                     </button>
                                     {!compFormOpen[order._id] ? null : (
@@ -1151,7 +1151,7 @@ export default function OrdersTab({ ctx }) {
                                       </select>
                                       <button
                                         onClick={() => applyComplimentary(order._id)}
-                                        className="flex-shrink-0 bg-yellow-500 hover:bg-yellow-400 text-white px-2.5 py-1.5 rounded font-black text-[10px] uppercase tracking-wider transition flex items-center gap-1"
+                                        className="flex-shrink-0 bg-yellow-400 hover:bg-yellow-300 text-gray-900 px-2.5 py-1.5 rounded font-black text-[10px] uppercase tracking-wider transition flex items-center gap-1"
                                       >
                                         <Check size={11} /> Apply
                                       </button>
@@ -1167,14 +1167,14 @@ export default function OrdersTab({ ctx }) {
                               {order.status === 'Completed' && order.paymentMethod && (
                                 <div className="flex justify-between text-[11px] text-fg">
                                   <span>Payment</span>
-                                  <span className="font-mono text-brand/80 font-bold">{order.paymentMethod}</span>
+                                  <span className="font-mono text-brand-text font-bold">{order.paymentMethod}</span>
                                 </div>
                               )}
                               {/* Gross earns its own line only when something has
                                   come off. Printing it above an identical Total is
                                   two rows saying one thing. */}
                               {Math.abs(order.subtotal - displayTotal) > 0.005 && (
-                                <div className="flex justify-between text-[11px] text-fg/60">
+                                <div className="flex justify-between text-[11px] text-fg/65">
                                   <span>Gross</span><span className="font-mono">₱{order.subtotal.toFixed(2)}</span>
                                 </div>
                               )}
@@ -1212,7 +1212,7 @@ export default function OrdersTab({ ctx }) {
                                     {order.status === 'Pending' && (
                                       <button
                                         onClick={() => setDiscountsOpen(prev => ({ ...prev, [order._id]: !open }))}
-                                        className="w-full flex items-center justify-between text-[10px] uppercase tracking-wider text-fg/60 hover:text-fg transition py-0.5"
+                                        className="w-full flex items-center justify-between text-[10px] uppercase tracking-wider text-fg/65 hover:text-fg transition py-0.5"
                                       >
                                         <span className="flex items-center gap-1.5">
                                           <Tag size={10} />
@@ -1245,7 +1245,7 @@ export default function OrdersTab({ ctx }) {
                                                 <option value="">No promo</option>
                                                 {promoDiscounts.map(d => <option key={d._id} value={d.percentage}>{d.name} ({d.percentage}%)</option>)}
                                               </select>
-                                              <button onClick={() => applyDiscount(order._id)} className="bg-accent hover:bg-accent/80 text-on-brand hover:text-fg px-2 rounded font-black transition h-6 flex items-center border border-accent/20"><Check size={12} /></button>
+                                              <button onClick={() => applyDiscount(order._id)} className="bg-accent hover:bg-accent/80 text-on-brand px-2 rounded font-black transition h-6 flex items-center border border-accent/20"><Check size={12} /></button>
                                               {order.discountPercent > 0 && order.discountType !== 'SC/PWD' && (
                                                 <button onClick={() => applyDiscount(order._id, true)} className="bg-red-500 text-white px-2 rounded font-black h-6 border border-red-500 flex items-center"><X size={12} /></button>
                                               )}
@@ -1358,8 +1358,8 @@ export default function OrdersTab({ ctx }) {
                               {order.status === 'Reserved' && departmentFilter === 'All' && (
                                 <div className="flex flex-col w-full gap-2">
                                   <div className="flex items-center justify-center gap-2 bg-purple-500/10 border border-purple-500/30 rounded-lg py-2.5 px-3">
-                                    <Lock size={12} className="text-purple-300" />
-                                    <span className="text-purple-300 text-[10px] font-black uppercase tracking-widest">Reserved - Payment Locked</span>
+                                    <Lock size={12} className="text-special" />
+                                    <span className="text-special text-[10px] font-black uppercase tracking-widest">Reserved - Payment Locked</span>
                                   </div>
                                   <div className="flex gap-2">
                                     <button
@@ -1567,7 +1567,7 @@ export default function OrdersTab({ ctx }) {
                                           }
                                           setTimeout(() => updateStatus(order._id, 'Preparing'), 0);
                                         }}
-                                        className={`w-full py-3 rounded-lg font-black text-sm transition ${(isUnderpaid || missingRef) ? 'bg-white/10 text-fg/50 cursor-not-allowed' : 'bg-accent text-on-brand hover:bg-accentShadow'}`}
+                                        className={`w-full py-3 rounded-lg font-black text-sm transition ${(isUnderpaid || missingRef) ? 'bg-white/10 text-fg/65 cursor-not-allowed' : 'bg-accent text-on-brand hover:bg-accentShadow'}`}
                                       >
                                         {missingRef ? `${isCheck ? 'Check No.' : 'Ref No.'} Required` : `Pay & send to ${SEND_TARGET}`}
                                       </button>
@@ -1638,7 +1638,7 @@ export default function OrdersTab({ ctx }) {
                                       <CheckCircle size={13} /> Complete Order
                                     </button>
                                   ) : order.items.every(i => i.itemStatus === 'Finished' || i.itemStatus === 'Delivered') ? (
-                                    <div className="flex items-center justify-center gap-2 bg-blue-500/10 border border-blue-500/20 text-blue-300 rounded-lg text-[11px] font-bold py-2.5">
+                                    <div className="flex items-center justify-center gap-2 bg-blue-500/10 border border-blue-500/20 text-info rounded-lg text-[11px] font-bold py-2.5">
                                       <Truck size={11} /> Give items above to complete
                                     </div>
                                   ) : (
@@ -1693,10 +1693,10 @@ export default function OrdersTab({ ctx }) {
 
                               {order.status === 'Completed' && departmentFilter === 'All' && canVoidRefund && (
                                 <div className="flex gap-2">
-                                  <button onClick={() => handleVoidOrder(order._id)} className="flex-1 bg-red-500 border border-red-500 text-white py-2 rounded-lg hover:bg-red-500 hover:text-fg font-bold text-xs uppercase tracking-widest transition">
+                                  <button onClick={() => handleVoidOrder(order._id)} className="flex-1 bg-red-600 border border-red-600 text-white py-2 rounded-lg hover:bg-red-700 font-bold text-xs uppercase tracking-widest transition">
                                     Void
                                   </button>
-                                  <button onClick={() => { setRefundModal(order); }} className="flex-1 bg-orange-500 border border-orange-500 text-white py-2 rounded-lg hover:bg-orange-500 hover:text-fg font-bold text-xs uppercase tracking-widest transition">
+                                  <button onClick={() => { setRefundModal(order); }} className="flex-1 bg-orange-700 border border-orange-700 text-white py-2 rounded-lg hover:bg-orange-800 font-bold text-xs uppercase tracking-widest transition">
                                     Refund
                                   </button>
                                 </div>
@@ -1724,7 +1724,7 @@ export default function OrdersTab({ ctx }) {
                         <div key={i} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${changed ? 'border-sky-500/40 bg-sky-500/5' : 'border-white/10'}`}>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm text-fg font-bold truncate">{it.name}</p>
-                            <p className="text-[10px] text-fg/60">Ordered {it.quantity}{changed ? ` → ${amendModal.qty[i] || 0}` : ''}</p>
+                            <p className="text-[10px] text-fg/65">Ordered {it.quantity}{changed ? ` → ${amendModal.qty[i] || 0}` : ''}</p>
                           </div>
                           <label htmlFor={`amend-qty-${i}`} className="sr-only">New quantity for {it.name}</label>
                           <input id={`amend-qty-${i}`} type="number" min="0" step={BUSINESS_TYPE === 'log' ? '1' : 'any'} value={amendModal.qty[i]}
@@ -1743,7 +1743,7 @@ export default function OrdersTab({ ctx }) {
                         <input id={`amend-add-${k}`} type="number" min="1" step={BUSINESS_TYPE === 'log' ? '1' : 'any'} value={a.quantity}
                           onChange={e => setAmendModal(m => ({ ...m, adds: m.adds.map((x, j) => (j === k ? { ...x, quantity: e.target.value } : x)), error: '' }))}
                           className="w-20 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg text-right tabular-nums outline-none focus:border-brand" />
-                        <button onClick={() => setAmendModal(m => ({ ...m, adds: m.adds.filter((_, j) => j !== k) }))} className="p-1 text-fg/60 hover:text-danger" aria-label={`Remove ${a.name}`}>
+                        <button onClick={() => setAmendModal(m => ({ ...m, adds: m.adds.filter((_, j) => j !== k) }))} className="p-1 text-fg/65 hover:text-danger" aria-label={`Remove ${a.name}`}>
                           <X size={14} />
                         </button>
                       </div>
@@ -1753,7 +1753,7 @@ export default function OrdersTab({ ctx }) {
                   <div className="relative mb-4">
                     <label htmlFor="amend-search" className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Add a product</label>
                     <div className="relative">
-                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg/50 pointer-events-none" />
+                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg/65 pointer-events-none" />
                       <input id="amend-search" type="text" value={amendModal.search} autoComplete="off"
                         onChange={e => setAmendModal(m => ({ ...m, search: e.target.value }))}
                         placeholder="Search by name or code…"
@@ -1768,14 +1768,14 @@ export default function OrdersTab({ ctx }) {
                       return (
                         <div className="absolute z-10 left-0 right-0 mt-1 bg-sidebar-bg border border-white/10 rounded-lg shadow-xl overflow-hidden">
                           {hits.length === 0 ? (
-                            <p className="px-3 py-2.5 text-xs text-fg/60">No matching product. Items that need options picked must go on a new order.</p>
+                            <p className="px-3 py-2.5 text-xs text-fg/65">No matching product. Items that need options picked must go on a new order.</p>
                           ) : hits.map(p => {
                             const onOrder = amendModal.order.items.some(it => String(it.productId) === String(p._id));
                             return (
                               <button key={p._id}
                                 onClick={() => setAmendModal(m => ({ ...m, search: '', adds: [...m.adds, { productId: String(p._id), name: p.name, price: p.basePrice, quantity: '1' }] }))}
                                 className="w-full flex items-center justify-between gap-3 px-3 py-2 text-left hover:bg-white/5 transition">
-                                <span className="text-sm text-fg truncate">{p.name}{onOrder && <span className="text-[10px] text-fg/60"> · adds to the existing line</span>}</span>
+                                <span className="text-sm text-fg truncate">{p.name}{onOrder && <span className="text-[10px] text-fg/65"> · adds to the existing line</span>}</span>
                                 <span className="text-xs text-fg/70 tabular-nums shrink-0">₱{Number(p.basePrice).toFixed(2)}</span>
                               </button>
                             );

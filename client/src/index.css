@@ -55,6 +55,9 @@
   --success-text:  74 222 128;  /* green-400                                */
   --warning-text: 251 191 36;   /* amber-400                                */
   --info-text:     96 165 250;  /* blue-400                                 */
+  --caution-text: 251 146 60;   /* orange-400                               */
+  --special-text: 216 180 254;  /* purple-300                               */
+  --mint-text:     45 212 191;  /* teal-400                                 */
 }
 
 /* =====================================================================
@@ -73,6 +76,9 @@
   --success-text:  74 222 128;  /* green-400                                */
   --warning-text: 251 191 36;   /* amber-400                                */
   --info-text:     96 165 250;  /* blue-400                                 */
+  --caution-text: 251 146 60;   /* orange-400                               */
+  --special-text: 216 180 254;  /* purple-300                               */
+  --mint-text:     45 212 191;  /* teal-400                                 */
   --surface:      26 26 26;     /* #1a1a1a - identical to default          */
   --surface-2:    36 36 36;     /* #242424 - identical to default          */
   --bg:           13 13 13;
@@ -98,6 +104,9 @@
   --success-text:  74 222 128;  /* green-400                                */
   --warning-text: 251 191 36;   /* amber-400                                */
   --info-text:     96 165 250;  /* blue-400                                 */
+  --caution-text: 251 146 60;   /* orange-400                               */
+  --special-text: 216 180 254;  /* purple-300                               */
+  --mint-text:     45 212 191;  /* teal-400                                 */
   --surface:      26 26 26;     /* #1a1a1a - identical to default          */
   --surface-2:    36 36 36;     /* #242424 - identical to default          */
   --bg:           13 13 13;
@@ -124,15 +133,24 @@
   /* The one theme where white is right: this green is dark enough that white
      reads at 5.02:1 and near-black would only manage 3.88:1. */
   --on-brand:     255 255 255;
-  --brand-text:   21 128 61;    /* green-700 - 5.02:1 on this theme's white  */
+  --brand-text:   22 101 52;    /* green-800 - 6.29:1 on white, and still
+                                   4.5:1+ on the brand-tinted chips it sits on
+                                   (green-700 fell to 4.09:1 on a brand/15
+                                   wash: the logo badge, the NON-VAT chip)  */
 
   /* Darker shades, because these sit on white here: red-700 6.47:1,
      green-700 5.02:1, amber-700 5.02:1, blue-700 6.70:1. The -400 shades
      used on the dark themes would be 1.5-2.8:1 and effectively invisible. */
-  --danger-text:  185 28 28;    /* red-700                                  */
-  --success-text:  21 128 61;   /* green-700                                */
-  --warning-text: 180 83 9;     /* amber-700                                */
+  --danger-text:  153 27 27;    /* red-800 - red-700 reads 4.46:1 on the red
+                                   tint of a warning box (the refund dialog) */
+  --success-text:  22 101 52;   /* green-800 - green-700 reads 4.23:1 on the
+                                   green/20 chip it is printed on          */
+  --warning-text: 146 64 14;    /* amber-800 - amber-700 reads 4.31:1 on the
+                                   amber/20 chip it is printed on          */
   --info-text:     29 78 216;   /* blue-700                                 */
+  --caution-text: 154 52 18;    /* orange-800                               */
+  --special-text: 107 33 168;   /* purple-800                               */
+  --mint-text:     17 94 89;    /* teal-800                                 */
   --surface:      255 255 255;  /* cards                                    */
   --surface-2:    244 244 241;  /* nested panels                            */
   --bg:           250 250 247;
@@ -155,9 +173,17 @@
 [data-theme="light"] .border-white\/8  { border-color: rgb(0 0 0 / 0.08); }
 [data-theme="light"] .border-white\/10 { border-color: rgb(0 0 0 / 0.10); }
 [data-theme="light"] .divide-white\/5 > * + * { border-color: rgb(0 0 0 / 0.06); }
-[data-theme="light"] .placeholder-white\/20::placeholder,
-[data-theme="light"] .placeholder-white\/25::placeholder { color: rgb(0 0 0 / 0.35); }
+/* Placeholders use the fg token (placeholder-fg/55), so they turn dark on
+   this theme by themselves - no per-class patch, which was 2.6:1 anyway. */
 /* Modal scrims stay dark - a light scrim wouldn't separate the dialog. */
+
+/* A placeholder nobody styled used the browser's default grey, which is
+ * 2.4:1 on a white field - under the 4.5:1 a placeholder needs, being text.
+ * The token follows the theme, so this is dark on the light theme and light
+ * on the dark ones. Any field that sets its own placeholder colour still
+ * wins: a class outranks an element selector. */
+input::placeholder,
+textarea::placeholder { color: rgb(var(--fg) / 0.70); }
 
 /* ============================================================
  * BASE RESETS + GLOBAL UX RULES

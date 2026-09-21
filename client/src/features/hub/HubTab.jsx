@@ -98,7 +98,7 @@ function NetworkMap({ info, network, card }) {
             ))}
             {subs.map((s, i) => (
               <line key={`sl${s._id}`} x1={cx(selfX)} y1={Y.self + NH} x2={cx(sx[i])} y2={Y.sub}
-                stroke="currentColor" strokeWidth="1.5" className="text-purple-400" opacity="0.5" />
+                stroke="currentColor" strokeWidth="1.5" className="text-special" opacity="0.5" />
             ))}
 
             {mains.length > 0 && <RowLabel y={Y.main - 8}>Main Host</RowLabel>}
@@ -126,7 +126,7 @@ export default function HubTab({ ctx }) {
   // A transfer moves real stock, so anything that completes one has to pull it
   // again or the Inventory tab keeps showing pre-transfer quantities until the
   // user reloads the page.
-  const { apiFetch: authFetch, isSuperAdmin, inventory = [], peso, fetchERPData } = ctx;
+  const { apiFetch: authFetch, isSuperAdmin, inventory = [], peso, fetchERPData, can = () => true } = ctx;
 
   const [info, setInfo]           = useState(null);
 
@@ -169,6 +169,12 @@ export default function HubTab({ ctx }) {
   const [network, setNetwork]           = useState(null); // { own, partners }
   const [networkLoading, setNetworkLoading] = useState(false);
   const [networkView, setNetworkView]   = useState('inventory'); // 'inventory' | 'compare' | 'switch' | 'books'
+  // A view this person may not open is never the one showing.
+  useEffect(() => {
+    if (can(`screen.hub.${networkView}`)) return;
+    const first = ['inventory', 'compare', 'switch', 'books'].find(v => can(`screen.hub.${v}`));
+    if (first) setNetworkView(first);
+  }, [networkView, can]);
 
   // Consolidated Books: one P&L + Balance Sheet across every linked branch,
   // built from each branch's trial balance (see /api/hub/network-financials).
@@ -178,7 +184,7 @@ export default function HubTab({ ctx }) {
   const [fin, setFin] = useState(null);
   const [finLoading, setFinLoading] = useState(false);
   const [finStart, setFinStart] = useState(`${thisYear}-01-01`);
-  const [finEnd, setFinEnd] = useState(todayStr());
+  const [finEnd, setFinEnd] = useState(todayStr);
 
   // invite / redeem
   const [inviteCode, setInviteCode]   = useState('');
@@ -555,7 +561,7 @@ export default function HubTab({ ctx }) {
                         role==='hub' means we are the hub, so this partner is
                         our subhost; role==='client' means we are the client,
                         so this partner is our main host. Label accordingly. */}
-                    <span className={`text-[10px] font-black px-2 py-0.5 rounded ${p.role === 'hub' ? 'bg-purple-500/15 text-purple-400' : 'bg-blue-500/15 text-info'}`}>
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded ${p.role === 'hub' ? 'bg-purple-500/15 text-special' : 'bg-blue-500/15 text-info'}`}>
                       {p.role === 'hub' ? 'SUBHOST' : 'MAIN HOST'}
                     </span>
                     <span className={`text-[10px] px-2 py-0.5 rounded ${p.status === 'active' ? 'bg-green-500/15 text-success' : 'bg-red-500/15 text-danger'}`}>
@@ -600,11 +606,11 @@ export default function HubTab({ ctx }) {
           </button>
         </div>
         <p className="text-[11px] text-fg/70 mt-2">
-          <span className="font-mono text-fg/60">AC</span> business ·
-          <span className="font-mono text-fg/60"> A</span> location ·
-          <span className="font-mono text-fg/60"> 001</span> which inventory there.
-          A second counter at the same address is <span className="font-mono text-fg/60">AC-A002</span>;
-          a different address is <span className="font-mono text-fg/60">AC-B001</span>.
+          <span className="font-mono text-fg/65">AC</span> business ·
+          <span className="font-mono text-fg/65"> A</span> location ·
+          <span className="font-mono text-fg/65"> 001</span> which inventory there.
+          A second counter at the same address is <span className="font-mono text-fg/65">AC-A002</span>;
+          a different address is <span className="font-mono text-fg/65">AC-B001</span>.
         </p>
       </div>
 
@@ -632,7 +638,7 @@ export default function HubTab({ ctx }) {
                   ['compare', 'Compare Branches', BarChart3],
                   ['switch', 'Switch Branch', ExternalLink],
                   ['books', 'Consolidated Books', Landmark],
-                ].map(([id, label, Icon]) => (
+                ].filter(([id]) => can(`screen.hub.${id}`)).map(([id, label, Icon]) => (
                   <button key={id} onClick={() => setNetworkView(id)}
                     className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition ${networkView === id ? 'bg-accent text-on-brand' : 'text-fg/75 hover:text-fg'}`}>
                     <Icon size={13} /> {label}
@@ -716,7 +722,7 @@ export default function HubTab({ ctx }) {
                                 <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{b.month.orders}</td>
                               </>
                             ) : (
-                              <td colSpan={4} className="py-2 pl-3 text-right text-red-400/70 italic">{b.error || 'Unreachable'}</td>
+                              <td colSpan={4} className="py-2 pl-3 text-right text-danger italic">{b.error || 'Unreachable'}</td>
                             )}
                           </tr>
                         ))}
@@ -777,7 +783,7 @@ export default function HubTab({ ctx }) {
                           <AlertTriangle size={15} className="text-danger mt-0.5 shrink-0" />
                           <div className="text-xs">
                             <p className="text-danger font-black uppercase tracking-wider">Incomplete - not a final statement</p>
-                            <p className="text-fg/60 mt-1">
+                            <p className="text-fg/65 mt-1">
                               These branches could not be reached, and the totals below <span className="font-bold">exclude</span> them:
                             </p>
                             <ul className="mt-1 space-y-0.5">
@@ -794,7 +800,7 @@ export default function HubTab({ ctx }) {
                           <AlertTriangle size={15} className="text-warning mt-0.5 shrink-0" />
                           <div>
                             <p className="text-warning font-black uppercase tracking-wider">Unmapped accounts</p>
-                            <p className="text-fg/60 mt-1">
+                            <p className="text-fg/65 mt-1">
                               A branch posted to accounts this business does not have, so they are excluded from the totals:{' '}
                               <span className="text-fg/80">{fin.unknownAccounts.map(a => `${a.code} ${a.name}`).join(', ')}</span>
                             </p>
@@ -843,7 +849,7 @@ export default function HubTab({ ctx }) {
                                     <td className="py-2 pl-3">
                                       {b.branchCodeValid
                                         ? <span className="font-mono text-fg/75">{b.branchCode}</span>
-                                        : <span className="text-amber-400/80 text-[10px]">not set</span>}
+                                        : <span className="text-warning text-[10px]">not set</span>}
                                     </td>
                                     <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{peso(b.netIncome)}</td>
                                     <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{peso(b.totalAssets)}</td>
@@ -1102,7 +1108,7 @@ export default function HubTab({ ctx }) {
                           <td className="py-2 px-3 text-right tabular-nums text-fg">{line.qty} {line.unit}</td>
                           <td className="py-2 px-3 text-fg/75 italic">{line.note || '-'}</td>
                           <td className="py-2 px-3 text-right">
-                            <button onClick={() => removeFromCart(i)} className="text-danger/80 hover:text-danger text-[10px] font-bold uppercase">Remove</button>
+                            <button onClick={() => removeFromCart(i)} className="text-danger text-[10px] font-bold uppercase">Remove</button>
                           </td>
                         </tr>
                       ))}
@@ -1189,7 +1195,7 @@ export default function HubTab({ ctx }) {
                           <td className="py-2 px-3 text-right tabular-nums text-fg">{line.qty} {line.unit}</td>
                           <td className="py-2 px-3 text-fg/75 italic">{line.note || '-'}</td>
                           <td className="py-2 px-3 text-right">
-                            <button onClick={() => removeFromAskCart(i)} className="text-danger/80 hover:text-danger text-[10px] font-bold uppercase">Remove</button>
+                            <button onClick={() => removeFromAskCart(i)} className="text-danger text-[10px] font-bold uppercase">Remove</button>
                           </td>
                         </tr>
                       ))}
@@ -1263,7 +1269,7 @@ export default function HubTab({ ctx }) {
               </div>
               <ul className="mt-2 space-y-1">
                 {r.lines.map((l, i) => (
-                  <li key={i} className="text-xs text-fg/60 flex justify-between gap-3 border-t border-white/5 pt-1">
+                  <li key={i} className="text-xs text-fg/65 flex justify-between gap-3 border-t border-white/5 pt-1">
                     <span className="text-fg/80 font-bold truncate">{l.itemName}{l.note && <span className="text-fg/65 font-normal italic"> · {l.note}</span>}</span>
                     <span className="tabular-nums shrink-0">{l.qty} {l.unit}</span>
                   </li>
@@ -1280,7 +1286,7 @@ export default function HubTab({ ctx }) {
                   <ul className="mt-1 space-y-0.5">
                     {r.history.map((h, i) => (
                       <li key={i} className="text-[10px] text-fg/70">
-                        <span className="font-bold text-fg/60">{h.action}</span> by {h.by || h.slug} {h.note && `- "${h.note}"`}
+                        <span className="font-bold text-fg/65">{h.action}</span> by {h.by || h.slug} {h.note && `- "${h.note}"`}
                       </li>
                     ))}
                   </ul>
@@ -1312,7 +1318,7 @@ export default function HubTab({ ctx }) {
             )}
             {closed.length > 0 && (
               <details>
-                <summary className="text-[10px] font-black uppercase tracking-widest text-fg/70 cursor-pointer hover:text-fg/60">Closed ({closed.length})</summary>
+                <summary className="text-[10px] font-black uppercase tracking-widest text-fg/70 cursor-pointer hover:text-fg/65">Closed ({closed.length})</summary>
                 <div className="space-y-2 mt-2">
                   {closed.map(r => <RequestCard key={r._id} r={r} actionable={false} />)}
                 </div>
@@ -1359,7 +1365,7 @@ export default function HubTab({ ctx }) {
                 </div>
                 <ul className="mt-2 space-y-1">
                   {slip.lines.map(l => (
-                    <li key={l._id} className="text-xs text-fg/60 flex justify-between gap-3 border-t border-white/5 pt-1">
+                    <li key={l._id} className="text-xs text-fg/65 flex justify-between gap-3 border-t border-white/5 pt-1">
                       <span className="text-fg/80 font-bold truncate">{l.itemName}</span>
                       <span className="tabular-nums shrink-0">{l.qtyBase} {l.unit}</span>
                     </li>
@@ -1423,7 +1429,7 @@ export default function HubTab({ ctx }) {
                   <tr key={t._id} className="border-b border-white/5 hover:bg-white/2">
                     <td className="py-2 text-fg/75 text-xs font-mono">{t.reference}</td>
                     <td className="py-2">
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${t.direction === 'outbound' ? 'bg-blue-500/15 text-info' : 'bg-purple-500/15 text-purple-400'}`}>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${t.direction === 'outbound' ? 'bg-blue-500/15 text-info' : 'bg-purple-500/15 text-special'}`}>
                         {t.direction === 'outbound' ? '↑ OUT' : '↓ IN'}
                       </span>
                     </td>
@@ -1475,7 +1481,7 @@ export default function HubTab({ ctx }) {
                   {inventory.map(i => <option key={i._id} value={i._id}>{i.itemName} · {i.stockQty} {i.unit}</option>)}
                 </select>
               </div>
-              <div className="flex items-center gap-2 text-sm text-fg/60">
+              <div className="flex items-center gap-2 text-sm text-fg/65">
                 <div className="flex-1 h-px bg-white/10" />or<div className="flex-1 h-px bg-white/10" />
               </div>
               <label className="flex items-center gap-2 cursor-pointer text-sm text-fg">
@@ -1524,7 +1530,7 @@ export default function HubTab({ ctx }) {
                     className="w-24 bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-fg text-sm text-right outline-none focus:border-accent"
                   />
                   <span className="text-fg/70 text-xs w-10">{l.unit}</span>
-                  <button onClick={() => removeCounterLine(i)} className="text-danger/80 hover:text-danger text-[10px] font-bold uppercase px-1">✕</button>
+                  <button onClick={() => removeCounterLine(i)} className="text-danger text-[10px] font-bold uppercase px-1">✕</button>
                 </div>
               ))}
               {counterLines.length === 0 && <p className="text-fg/65 text-xs italic text-center py-3">Every line removed - add at least one back to counter.</p>}

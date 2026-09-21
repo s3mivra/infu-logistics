@@ -5,6 +5,8 @@ import { reconcileUnitOptions as reconcileUnitsFor, plannedUnitChoice as planned
 
 import { todayStr } from '../../shared/businessDay.js';
 import { PACK_UNIT } from '../../shared/packUnit.js';
+
+const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 // Approval decision - Pending -> Approved/Rejected.
 const STATUS_CLS = {
   Pending:  'bg-yellow-500/15 text-warning',
@@ -127,6 +129,28 @@ export default function ProductionTab({ ctx }) {
   const [recipeProductId, setRecipeProductId] = useState('');
   const [recipeBatchQty, setRecipeBatchQty] = useState('');
 
+  // An ingredient that is not stock - the water in a cold brew. Written down
+  // with the batch so the recipe is whole, never taken from anywhere.
+  const [nsName, setNsName] = useState('');
+  const [nsQty, setNsQty] = useState('');
+  const [nsUnit, setNsUnit] = useState('ml');
+
+  // Save this batch's materials as the output item's own recipe, so the next
+  // batch is "pick it, say how much". On by default for an item that has no
+  // recipe yet; off for one that has, so filing an odd batch does not quietly
+  // replace a good recipe.
+  const [saveRecipe, setSaveRecipe] = useState(true);
+
+  // Finished goods: inventory items that carry a recipe of their own.
+  const recipeItems = useMemo(
+    () => (inventory || [])
+      .filter(i => (i.productionRecipe || []).length > 0 && Number(i.recipeYield) > 0)
+      .sort((a, b) => String(a.itemName || '').localeCompare(String(b.itemName || ''))),
+    [inventory],
+  );
+  const pickedRecipeItem = recipeProductId.startsWith('inv:')
+    ? recipeItems.find(i => String(i._id) === recipeProductId.slice(4)) : null;
+
   // Only products whose recipe actually points at stock are offerable: a
   // recipe line with no invId names an ingredient the system cannot deduct,
   // so it could not drive a production order.
@@ -137,9 +161,51 @@ export default function ProductionTab({ ctx }) {
     [products],
   );
 
+  // Make more of a finished good from its own recipe: the batch, in that
+  // item's natural unit, over the yield the recipe was written for.
+  const applyItemRecipe = (item, batch) => {
+    const [outNatural] = unitOptions(item);
+    const batchBase = batch * outNatural.factor;
+    const scale = batchBase / Number(item.recipeYield);
+    const lines = [];
+    const missing = [];
+    const short = [];
+    for (const r of item.productionRecipe || []) {
+      const qty = +(Number(r.qty) * scale).toFixed(6);
+      if (!(qty > 0)) continue;
+      if (r.nonStock || !r.invId) {
+        lines.push({ nonStock: true, invId: null, name: r.itemName, pieceLabel: r.unit || '', pieces: +qty.toFixed(4), baseQty: qty });
+        continue;
+      }
+      const mat = inventory.find(i => String(i._id) === String(r.invId));
+      if (!mat) { missing.push(r.itemName || 'an unnamed ingredient'); continue; }
+      const [natural] = unitOptions(mat);
+      const shown = +(qty / natural.factor).toFixed(4);
+      const available = onHandIn(mat, natural.factor);
+      if (shown > available + 1e-6) short.push(`${mat.itemName} (need ${shown} ${natural.label}, have ${available})`);
+      lines.push({ invId: mat._id, name: mat.itemName, pieceLabel: natural.label, pieces: shown, baseQty: qty });
+    }
+    if (lines.length === 0) return ui.alert(`${item.itemName}'s recipe has nothing left that can be used.`);
+    setMaterials(lines);
+    setOutputType('existing');
+    setOutputInvId(item._id);
+    setOutputQtyUnit(outNatural.label);
+    setOutputQty(String(batch));
+    // Already its recipe; filing this batch should not rewrite it unless asked.
+    setSaveRecipe(false);
+    const notes = [];
+    if (missing.length) notes.push(`Skipped ${missing.length} ingredient(s) no longer in stock records: ${missing.join(', ')}.`);
+    if (short.length) notes.push(`Not enough on hand for: ${short.join('; ')}. You can still file this - stock is checked again at approval.`);
+    if (notes.length) ui.alert(notes.join(String.fromCharCode(10, 10)));
+  };
+
   const applyRecipe = () => {
-    const product = recipeProducts.find(p => p._id === recipeProductId);
     const batch = parseFloat(recipeBatchQty);
+    if (pickedRecipeItem) {
+      if (!batch || batch <= 0) return ui.alert('Enter how much you are making.');
+      return applyItemRecipe(pickedRecipeItem, batch);
+    }
+    const product = recipeProducts.find(p => p._id === recipeProductId);
     if (!product) return ui.alert('Choose what you are making.');
     if (!batch || batch <= 0) return ui.alert('Enter how many you are making.');
 
@@ -191,6 +257,12 @@ export default function ProductionTab({ ctx }) {
 
 
   const outputItem = outputType === 'existing' ? inventory.find(i => i._id === outputInvId) : null;
+  useEffect(() => {
+    if (outputType === 'new') { setSaveRecipe(true); return; }
+    const it = inventory.find(i => i._id === outputInvId);
+    setSaveRecipe(!it || !(it.productionRecipe || []).length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outputType, outputInvId]);
   const outputPieceInfo = pieceInfo(outputItem);
   // The same choice the materials get: a batch that yields 12 L of cold brew is
   // entered as 12 L, whatever pack size the item happens to carry.
@@ -216,6 +288,7 @@ export default function ProductionTab({ ctx }) {
     setOutputStockCategory(''); setOutputStockLocation(''); setOutputExpiryDate('');
     setProductionDate(todayStr()); setNotes('');
     setRecipeProductId(''); setRecipeBatchQty('');
+    setNsName(''); setNsQty(''); setNsUnit('ml'); setSaveRecipe(true);
   };
 
   const addMaterial = () => {
@@ -236,7 +309,17 @@ export default function ProductionTab({ ctx }) {
     }]);
     setMatPick(''); setMatQty(''); setMatUnit('');
   };
-  const removeMaterial = (invId) => setMaterials(m => m.filter(x => x.invId !== invId));
+  const lineKey = (m) => m.nonStock ? `ns:${m.name}` : String(m.invId);
+  const removeMaterial = (key) => setMaterials(m => m.filter(x => lineKey(x) !== key));
+  const addNonStock = () => {
+    const name = nsName.trim();
+    const qty = parseFloat(nsQty);
+    if (!name) return ui.alert('Name the ingredient, e.g. Filtered Water.');
+    if (!qty || qty <= 0) return ui.alert('Enter a positive quantity.');
+    if (materials.some(m => m.nonStock && m.name.toLowerCase() === name.toLowerCase())) return ui.alert(`${name} is already in this order.`);
+    setMaterials(m => [...m, { nonStock: true, invId: null, name, pieceLabel: nsUnit, pieces: qty, baseQty: qty }]);
+    setNsName(''); setNsQty('');
+  };
 
   const submitOrder = async () => {
     if (materials.length === 0) return ui.alert('Add at least one material.');
@@ -256,7 +339,10 @@ export default function ProductionTab({ ctx }) {
       const res = await apiFetch('/api/production-orders', {
         method: 'POST',
         body: JSON.stringify({
-          materials: materials.map(m => ({ invId: m.invId, qty: m.baseQty })),
+          materials: materials.map(m => (m.nonStock
+            ? { nonStock: true, name: m.name, qty: m.pieces, unit: m.pieceLabel }
+            : { invId: m.invId, qty: m.baseQty })),
+          saveRecipe,
           outputType,
           outputInvId: outputType === 'existing' ? outputInvId : undefined,
           outputName: outputType === 'new' ? outputName.trim() : undefined,
@@ -382,22 +468,40 @@ export default function ProductionTab({ ctx }) {
           {/* Build from a recipe - the fast path. The recipe is already on
               file (it is what the POS deducts on a sale); this fills the
               materials from it instead of re-typing them each batch. */}
-          {recipeProducts.length > 0 && (
+          {(recipeItems.length > 0 || recipeProducts.length > 0) && (
             <div className="bg-page-bg border border-white/10 rounded-lg p-3">
               <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-2">Build from a recipe</p>
               <div className="flex flex-wrap gap-2">
                 <select value={recipeProductId} onChange={e => setRecipeProductId(e.target.value)}
                   className="flex-1 min-w-[200px] bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent">
                   <option value="">What are you making?</option>
-                  {recipeProducts.map(p => (
-                    <option key={p._id} value={p._id}>
-                      {p.name} ({(p.baseRecipe || []).filter(r => r.invId).length} ingredients)
-                    </option>
-                  ))}
+                  {/* Finished goods first: stock made here, with its own recipe. */}
+                  {recipeItems.length > 0 && (
+                    <optgroup label="Made here (from inventory)">
+                      {recipeItems.map(i => {
+                        const [natural] = unitOptions(i);
+                        return (
+                          <option key={i._id} value={`inv:${i._id}`}>
+                            {i.itemName} - makes {+(Number(i.recipeYield) / natural.factor).toFixed(3)} {natural.label} per recipe
+                          </option>
+                        );
+                      })}
+                    </optgroup>
+                  )}
+                  {recipeProducts.length > 0 && (
+                    <optgroup label="Menu recipes">
+                      {recipeProducts.map(p => (
+                        <option key={p._id} value={p._id}>
+                          {p.name} ({(p.baseRecipe || []).filter(r => r.invId).length} ingredients)
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
-                <input type="number" min="0" step="0.01" placeholder="How many"
+                <input type="number" min="0" step="any"
+                  placeholder={pickedRecipeItem ? `How many ${unitOptions(pickedRecipeItem)[0].label}` : 'How many'}
                   value={recipeBatchQty} onChange={e => setRecipeBatchQty(e.target.value)}
-                  className="w-28 bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+                  className="w-32 bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
                 <button onClick={applyRecipe}
                   className="bg-accent text-on-brand px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-accent/90 transition">
                   Fill materials
@@ -438,15 +542,34 @@ export default function ProductionTab({ ctx }) {
               })()}
               <button onClick={addMaterial} className="bg-accent/15 text-brand-text px-3 py-2 rounded-lg font-bold text-xs uppercase hover:bg-accent/25 transition">Add</button>
             </div>
+            {/* Not from stock - filtered water, ice made on site. Recorded
+                with the batch and its recipe; never deducted, never costed. */}
+            {BUSINESS_TYPE !== 'log' && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                <input type="text" placeholder="Not from stock, e.g. Filtered Water" value={nsName} onChange={e => setNsName(e.target.value)}
+                  className="flex-1 min-w-[200px] bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+                <input type="number" min="0" step="any" placeholder="Qty" aria-label="Quantity not from stock"
+                  value={nsQty} onChange={e => setNsQty(e.target.value)}
+                  className="w-24 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+                <select value={nsUnit} onChange={e => setNsUnit(e.target.value)} aria-label="Unit, not from stock"
+                  className="w-24 bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-sm text-fg outline-none focus:border-accent">
+                  {['ml', 'L', 'g', 'kg', 'pcs'].map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+                <button onClick={addNonStock} className="bg-white/5 text-fg/80 px-3 py-2 rounded-lg font-bold text-xs uppercase hover:bg-white/10 transition">Add</button>
+              </div>
+            )}
             {/* Each line carries the unit it was entered in; the server is sent
                 base units either way, so a line reads the way the person making
                 the batch would say it out loud. */}
             {materials.length > 0 && (
               <ul className="space-y-1.5">
                 {materials.map(m => (
-                  <li key={m.invId} className="flex items-center justify-between bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm">
-                    <span className="text-fg/80">{m.name} <span className="text-fg/70 font-mono">× {m.pieces} {m.pieceLabel}</span></span>
-                    <button onClick={() => removeMaterial(m.invId)} className="text-red-400/70 hover:text-danger"><Trash2 size={13} /></button>
+                  <li key={lineKey(m)} className="flex items-center justify-between bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm">
+                    <span className="text-fg/80">
+                      {m.name} <span className="text-fg/70 font-mono">× {m.pieces} {m.pieceLabel}</span>
+                      {m.nonStock && <span className="ml-2 text-[9px] font-black uppercase tracking-wider text-fg/65">not stock</span>}
+                    </span>
+                    <button onClick={() => removeMaterial(lineKey(m))} className="text-danger"><Trash2 size={13} /></button>
                   </li>
                 ))}
               </ul>
@@ -519,7 +642,7 @@ export default function ProductionTab({ ctx }) {
                     {outputUnitOptions.map(o => <option key={o.label} value={o.label}>{o.label}</option>)}
                   </select>
                 ) : (
-                  <span className="w-24 flex items-center justify-center text-xs text-fg/60 border border-white/10 rounded-lg">{outputUnit || 'units'}</span>
+                  <span className="w-24 flex items-center justify-center text-xs text-fg/65 border border-white/10 rounded-lg">{outputUnit || 'units'}</span>
                 )}
               </div>
               <div>
@@ -534,6 +657,21 @@ export default function ProductionTab({ ctx }) {
               </div>
             </div>
           </div>
+
+          {/* Remember how this is made. The next batch is then "pick it from
+              the list above, say how much" instead of entering every
+              material again. */}
+          {(outputType === 'new' ? outputName.trim() : outputItem) && materials.length > 0 && (
+            <label className="flex items-start gap-2 text-xs text-fg/80 cursor-pointer">
+              <input type="checkbox" checked={saveRecipe} onChange={e => setSaveRecipe(e.target.checked)} className="mt-0.5" />
+              <span>
+                Remember these materials as how <b>{outputType === 'new' ? outputName.trim().toUpperCase() : outputItem.itemName}</b> is made
+                {outputItem && (outputItem.productionRecipe || []).length > 0
+                  ? <span className="text-warning"> - replaces the recipe it already has, once this batch is confirmed</span>
+                  : <span className="text-fg/65"> - next time, pick it under "Build from a recipe"</span>}
+              </span>
+            </label>
+          )}
 
           <textarea placeholder="Notes (optional)" value={notes} onChange={e => setNotes(e.target.value)} rows={2}
             className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent resize-none" />
@@ -586,9 +724,12 @@ export default function ProductionTab({ ctx }) {
                 </div>
               </div>
 
-              <div className="text-xs text-fg/60 space-y-0.5 mb-2">
-                {(o.materials || []).map(m => (
-                  <p key={m.invId}>{m.itemName} <span className="text-fg/65 font-mono">× {m.qty}{m.unit}</span></p>
+              <div className="text-xs text-fg/65 space-y-0.5 mb-2">
+                {(o.materials || []).map((m, i) => (
+                  <p key={m._id || `${m.invId || 'ns'}:${m.itemName}:${i}`}>
+                    {m.itemName} <span className="text-fg/65 font-mono">× {m.qty}{m.unit}</span>
+                    {m.nonStock && <span className="ml-1.5 text-[9px] font-black uppercase tracking-wider text-fg/65">not stock</span>}
+                  </p>
                 ))}
               </div>
 
@@ -637,7 +778,7 @@ export default function ProductionTab({ ctx }) {
                         <Check size={13} /> Approve
                       </button>
                       <button onClick={() => setRejecting(o)} disabled={busy}
-                        className="flex items-center gap-1.5 border border-red-500/30 text-red-300 hover:bg-red-500/10 font-bold text-xs px-3 py-1.5 rounded-lg transition">
+                        className="flex items-center gap-1.5 border border-red-500/30 text-danger hover:bg-red-500/10 font-bold text-xs px-3 py-1.5 rounded-lg transition">
                         <X size={13} /> Reject
                       </button>
                     </>
@@ -672,7 +813,7 @@ export default function ProductionTab({ ctx }) {
               placeholder="Reason for rejecting…"
               className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent resize-none mb-3" />
             <div className="flex gap-2">
-              <button onClick={() => setRejecting(null)} className="flex-1 border border-white/10 text-fg/60 hover:text-fg py-2 rounded-lg text-xs font-bold uppercase transition">Cancel</button>
+              <button onClick={() => setRejecting(null)} className="flex-1 border border-white/10 text-fg/65 hover:text-fg py-2 rounded-lg text-xs font-bold uppercase transition">Cancel</button>
               <button onClick={submitReject} disabled={busy} className="flex-1 bg-red-500 hover:bg-red-400 disabled:opacity-50 text-white py-2 rounded-lg text-xs font-bold uppercase transition">Reject</button>
             </div>
           </div>
@@ -710,7 +851,7 @@ export default function ProductionTab({ ctx }) {
               Falls short → marked <span className="text-warning font-bold">Partial</span>. This is what actually gets added to stock.
             </p>
             <div className="flex gap-2">
-              <button onClick={() => { setReconciling(null); setActualQty(''); }} className="flex-1 border border-white/10 text-fg/60 hover:text-fg py-2 rounded-lg text-xs font-bold uppercase transition">Cancel</button>
+              <button onClick={() => { setReconciling(null); setActualQty(''); }} className="flex-1 border border-white/10 text-fg/65 hover:text-fg py-2 rounded-lg text-xs font-bold uppercase transition">Cancel</button>
               <button onClick={submitReconcile} disabled={busy} className="flex-1 bg-accent hover:bg-accent/90 disabled:opacity-50 text-on-brand py-2 rounded-lg text-xs font-bold uppercase transition">Confirm</button>
             </div>
           </div>

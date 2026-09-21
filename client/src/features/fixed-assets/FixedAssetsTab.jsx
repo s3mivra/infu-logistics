@@ -308,10 +308,10 @@ function FragmentRow({ a, expanded, rows, busy, onToggle, onDepreciate, onDispos
             {a.assetCode}{a.serialNumber ? ` · ${a.serialNumber}` : ''}{a.location ? ` · ${a.location}` : ''}
           </p>
         </td>
-        <td className="px-3 py-2.5 text-fg/60">{a.className}</td>
-        <td className="px-3 py-2.5 text-fg/60">{shortDate(a.acquisitionDate)}</td>
+        <td className="px-3 py-2.5 text-fg/65">{a.className}</td>
+        <td className="px-3 py-2.5 text-fg/65">{shortDate(a.acquisitionDate)}</td>
         <td className="px-3 py-2.5 text-right tabular-nums text-fg">{peso(a.acquisitionCost)}</td>
-        <td className="px-3 py-2.5 text-right tabular-nums text-amber-400/80">{peso(a.accumulatedDepreciation)}</td>
+        <td className="px-3 py-2.5 text-right tabular-nums text-warning">{peso(a.accumulatedDepreciation)}</td>
         <td className="px-3 py-2.5 text-right tabular-nums font-bold text-fg">{peso(a.netBookValue)}</td>
         <td className="px-3 py-2.5 text-right tabular-nums">
           {a.due?.amount > 0
@@ -367,7 +367,7 @@ function FragmentRow({ a, expanded, rows, busy, onToggle, onDepreciate, onDispos
                       <tr key={r.period} className="border-t border-white/5">
                         <td className="px-3 py-1.5 text-fg/75">+{r.period}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-fg/80">{peso(r.charge)}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums text-amber-400/70">{peso(r.accumulated)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-warning">{peso(r.accumulated)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-fg">{peso(r.netBookValue)}</td>
                       </tr>
                     ))}

@@ -43,12 +43,12 @@ export default function ExpensesPage() {
         <div className="bg-surface border border-white/10 rounded-xl px-5 py-4">
           <p className="text-fg/80 text-[10px] font-bold uppercase tracking-widest">Spent This Month</p>
           <p className="text-3xl text-brand-text font-black tabular-nums mt-1">{peso(expenseList?.total)}</p>
-          <p className="text-fg/60 text-[10px] mt-1">{(expenseList?.expenses || []).length} recent entries shown</p>
+          <p className="text-fg/65 text-[10px] mt-1">{(expenseList?.expenses || []).length} recent entries shown</p>
         </div>
         <div className="sm:col-span-2 bg-surface border border-white/10 rounded-xl px-5 py-4">
           <p className="text-fg/80 text-[10px] font-bold uppercase tracking-widest mb-2">By Category</p>
           {(expenseList?.byCategory || []).length === 0 ? (
-            <p className="text-fg/60 text-sm font-bold">Nothing spent yet this month.</p>
+            <p className="text-fg/65 text-sm font-bold">Nothing spent yet this month.</p>
           ) : (
             <div className="flex flex-wrap gap-2">
               {expenseList.byCategory.map(c => (
@@ -73,7 +73,7 @@ export default function ExpensesPage() {
               it back - each valid row becomes the same balanced journal entry
               this form creates one at a time. See parseExpenseImportExcel in
               AdminDashboard.jsx for the full logic. */}
-          <button onClick={downloadExpenseImportTemplate} className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition">
+          <button onClick={downloadExpenseImportTemplate} className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition">
             <Download size={11} /> Template
           </button>
           <label className="flex items-center gap-1.5 bg-brand/15 hover:bg-brand/25 text-brand-text px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition cursor-pointer">
@@ -113,7 +113,7 @@ export default function ExpensesPage() {
           <div className="sm:col-span-2">
             <label className="text-[10px] text-fg/80 font-bold uppercase block mb-1">Description *</label>
             <input type="text" placeholder="e.g. June electricity bill" value={expenseForm.description} onChange={e => set({ description: e.target.value })}
-              className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+              className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-fg/70 outline-none focus:border-brand/60" />
           </div>
           {vatOn && (
             <div className="sm:col-span-2">
@@ -123,7 +123,7 @@ export default function ExpensesPage() {
                   className="mt-0.5 accent-brand" />
                 <span>
                   <span className="text-[11px] text-fg font-bold block">Supplier charged VAT (claim input VAT)</span>
-                  <span className="text-[10px] text-fg/60 leading-snug block">Splits the VAT out of this amount into Input VAT (Creditable). Tick only for a VAT-registered supplier with an official receipt.</span>
+                  <span className="text-[10px] text-fg/65 leading-snug block">Splits the VAT out of this amount into Input VAT (Creditable). Tick only for a VAT-registered supplier with an official receipt.</span>
                 </span>
               </label>
             </div>
@@ -131,7 +131,7 @@ export default function ExpensesPage() {
           <div>
             <label className="text-[10px] text-fg/80 font-bold uppercase block mb-1">Vendor (optional)</label>
             <input type="text" placeholder="Meralco" value={expenseForm.vendor} onChange={e => set({ vendor: e.target.value })}
-              className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+              className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-fg/70 outline-none focus:border-brand/60" />
           </div>
           <div>
             {/* The supplier's own document number. The importer already carried
@@ -140,7 +140,7 @@ export default function ExpensesPage() {
                 hand could never be traced back to the invoice it came from. */}
             <label className="text-[10px] text-fg/80 font-bold uppercase block mb-1">Invoice / OR no. (optional)</label>
             <input type="text" placeholder="e.g. SI-004821" value={expenseForm.refNo || ''} onChange={e => set({ refNo: e.target.value })}
-              className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+              className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-fg/70 outline-none focus:border-brand/60" />
           </div>
           <div>
             <label className="text-[10px] text-fg/80 font-bold uppercase block mb-1">Date</label>
@@ -152,14 +152,14 @@ export default function ExpensesPage() {
               <label className="text-[10px] text-fg/80 font-bold uppercase block mb-1">Withhold (%)</label>
               <input type="number" min="0" max="15" step="0.5" placeholder="0"
                 value={expenseForm.withholdingRate || ''} onChange={e => set({ withholdingRate: e.target.value })}
-                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-fg/70 outline-none focus:border-brand/60" />
               <p className="text-[9px] text-fg/70 mt-1 leading-snug">
                 Rent is usually 5%, professional fees 10%. Leave blank if you do not withhold on this one.
               </p>
             </div>
           )}
           <div className="sm:col-span-2 lg:col-span-3 flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
-            <p className="text-[10px] text-fg/60 italic flex-1">
+            <p className="text-[10px] text-fg/65 italic flex-1">
               A balanced journal entry is created automatically:{' '}
               {withheldAmt > 0 ? (
                 <span className="text-fg/80">
@@ -184,11 +184,11 @@ export default function ExpensesPage() {
           <Receipt size={14} className="text-fg/75" />
           <h3 className="text-sm font-black text-fg uppercase tracking-wider">Recent Expenses</h3>
           {(expenseList?.expenses || []).length > 0 && (
-            <button onClick={exportExpensesPDF} className="ml-auto flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition"><Download size={11}/> PDF</button>
+            <button onClick={exportExpensesPDF} className="ml-auto flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition"><Download size={11}/> PDF</button>
           )}
         </div>
         {(expenseList?.expenses || []).length === 0 ? (
-          <p className="text-fg/60 text-sm p-8 text-center font-bold">
+          <p className="text-fg/65 text-sm p-8 text-center font-bold">
             No expenses recorded this month yet.
           </p>
         ) : (
@@ -209,7 +209,7 @@ export default function ExpensesPage() {
                     <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap">
                       {new Date(e.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: '2-digit' })}
                     </td>
-                    <td className="px-5 py-2.5 font-mono text-fg/60 whitespace-nowrap">{e.reference}</td>
+                    <td className="px-5 py-2.5 font-mono text-fg/65 whitespace-nowrap">{e.reference}</td>
                     <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap">{e.categoryName}</td>
                     <td className="px-5 py-2.5 text-fg/70 truncate max-w-[260px]">{e.description}</td>
                     <td className="px-5 py-2.5 text-right text-fg font-mono tabular-nums font-bold">{peso(e.amount)}</td>
@@ -259,8 +259,8 @@ export default function ExpensesPage() {
                     <tr key={r.rowNum} className={`border-b border-white/5 ${r.status === 'error' ? 'bg-red-500/5' : r.status === 'warn' ? 'bg-yellow-500/5' : ''}`}>
                       <td className="px-3 py-2"><span className={`inline-block w-2 h-2 rounded-full ${STATUS_DOT[r.status]}`} /></td>
                       <td className="px-3 py-2 text-fg/70">{r.rowNum}</td>
-                      <td className="px-3 py-2 font-mono text-fg/60">{r.refNo || '-'}</td>
-                      <td className="px-3 py-2 text-fg/60 whitespace-nowrap">{r.date || '(today)'}</td>
+                      <td className="px-3 py-2 font-mono text-fg/65">{r.refNo || '-'}</td>
+                      <td className="px-3 py-2 text-fg/65 whitespace-nowrap">{r.date || '(today)'}</td>
                       <td className="px-3 py-2 text-fg/70">{r.categoryLabel || '-'}</td>
                       <td className="px-3 py-2 text-right font-mono tabular-nums text-fg font-bold">{r.amount != null ? peso(r.amount) : '-'}</td>
                       <td className="px-3 py-2 text-fg/70">{r.paymentMethod || '-'}</td>
@@ -280,7 +280,7 @@ export default function ExpensesPage() {
               <p className="text-[10px] text-fg/70 flex-1">
                 Rejected rows are skipped, not imported - fix them in the file and re-upload if needed. Rows with a warning still import (booked to Unassigned Receipts until the payment method is routed).
               </p>
-              <button onClick={() => setExpenseImportPreview(null)} className="border border-white/10 text-fg/60 hover:text-fg px-4 py-2.5 rounded-xl text-xs font-bold uppercase transition">Cancel</button>
+              <button onClick={() => setExpenseImportPreview(null)} className="border border-white/10 text-fg/65 hover:text-fg px-4 py-2.5 rounded-xl text-xs font-bold uppercase transition">Cancel</button>
               <button onClick={submitExpenseImport} disabled={expenseImporting || expenseImportPreview.readyCount + expenseImportPreview.warnCount === 0}
                 className="bg-brand hover:bg-brand/90 disabled:opacity-50 text-on-brand px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition">
                 {expenseImporting ? 'Importing…' : `Import ${expenseImportPreview.readyCount + expenseImportPreview.warnCount} Row(s)`}

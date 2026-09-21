@@ -25,7 +25,7 @@ export default function RevolvingFundNewModal() {
               <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Fund Name *</label>
               <input type="text" placeholder="e.g. test business Petty Cash" value={rfNewForm.name}
                 onChange={e => setRfNewForm({...rfNewForm, name: e.target.value})}
-                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 placeholder-white/20"/>
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 placeholder-fg/70"/>
             </div>
             <div>
               <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Initial Amount (₱) *</label>
@@ -48,11 +48,11 @@ export default function RevolvingFundNewModal() {
               <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Purpose / Notes</label>
               <textarea rows={2} placeholder="What is this fund used for?" value={rfNewForm.description}
                 onChange={e => setRfNewForm({...rfNewForm, description: e.target.value})}
-                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 resize-none placeholder-white/20"/>
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 resize-none placeholder-fg/70"/>
             </div>
           </div>
           <div className="px-5 py-4 border-t border-white/10 shrink-0 flex gap-3">
-            <button onClick={() => setRfNewModal(false)} className="flex-1 bg-white/5 text-fg/60 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
+            <button onClick={() => setRfNewModal(false)} className="flex-1 bg-white/5 text-fg/65 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
             <button onClick={submitRfNew} disabled={rfNewSubmitting}
               className="flex-1 bg-brand text-on-brand rounded-xl py-3 font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">
               {isSuperAdmin

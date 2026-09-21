@@ -8,6 +8,13 @@ import { splitUpdate } from '../lib/changeApproval.js';
 import { hasPermission } from '../lib/authz.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
 import { buildSalePriceMap, saleUnitPrice, activeSalesQuery } from '../lib/salePricing.js';
+// Action permissions. Each route below changes data, and was guarded only by
+// "is staff" - so a plain staff account could, through the API, do what the
+// permission catalogue reserves for a role that holds the matching
+// .manage key (see lib/authz.js PERMISSIONS). `permit` is the same
+// requirePermission the context hands out, imported under a short name so
+// it reads the same in every file.
+import { requirePermission as permit, requireAnyPermission as permitAny } from '../lib/authz.js';
 
 export default function registerProducts(ctx) {
   const {
@@ -213,7 +220,7 @@ function validDepartment(dept) {
   return dept;
 }
 
-app.post('/api/categories', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/categories', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
   try {
     const department = validDepartment(req.body.department);
     // Stamp businessType/tenant so the row survives the scoped GET filter above -
@@ -234,7 +241,7 @@ app.post('/api/categories', verifyToken, requireStaff, async (req, res) => {
 });
 
 // --- NEW: UPDATE CATEGORY ROUTE ---
-app.put('/api/categories/:id', verifyToken, requireStaff, async (req, res) => {
+app.put('/api/categories/:id', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
   try {
     const department = validDepartment(req.body.department);
     // Only overwrite department when one was supplied; otherwise leave the stored
@@ -253,7 +260,7 @@ app.put('/api/categories/:id', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
-app.delete('/api/categories/:id', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/categories/:id', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
   try {
     await Category.findByIdAndDelete(req.params.id);
     emitToAll('menuUpdated');
@@ -516,7 +523,7 @@ app.get('/api/products/by-barcode/:code', verifyToken, requireStaff, async (req,
   }
 });
 
-app.post('/api/products', verifyToken, requireStaff, validate(productSchema), async (req, res) => {
+app.post('/api/products', verifyToken, requireStaff, validate(productSchema), permit('products.manage'), async (req, res) => {
   try {
   // Generate base product code (e.g., DRS-A0001)
   const catPrefix = getCategoryPrefix(req.body.category);
@@ -1095,7 +1102,7 @@ app.post('/api/products/menu-sheet/parse', verifyToken, requireStaff, requirePer
   }
 });
 
-app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/products/import-menu', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
   try {
     const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
     if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to import.' });
@@ -1267,7 +1274,7 @@ app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res
   }
 });
 
-app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
+app.put('/api/products/:id', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
   try {
     const existing = await Product.findById(req.params.id).lean();
     if (!existing) return res.status(404).json({ success: false, error: 'Product not found.' });
@@ -1488,7 +1495,7 @@ app.patch('/api/products/:id/oos', verifyToken, requireSuperAdmin, async (req, r
 });
 
 // Change to PUT or handle inside DELETE for archiving
-app.delete('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/products/:id', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
   try {
     const product = await Product.findByIdAndUpdate(
       req.params.id, 

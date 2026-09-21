@@ -157,7 +157,7 @@ export default function NotificationBell({ align = 'right', full = false }) {
             {count === 0 ? (
               <div className="px-4 py-10 text-center">
                 <p className="text-fg/70 text-sm font-bold">Nothing needs attention</p>
-                <p className="text-fg/60 text-xs mt-1">Stock, expiry, A/R and POs all look fine.</p>
+                <p className="text-fg/65 text-xs mt-1">Stock, expiry, A/R and POs all look fine.</p>
               </div>
             ) : (
               data.items.map((item) => {
@@ -175,7 +175,7 @@ export default function NotificationBell({ align = 'right', full = false }) {
                         <span className="block text-fg/70 text-xs mt-0.5 break-words">{item.detail}</span>
                       )}
                     </span>
-                    <span className="text-fg/60 group-hover:text-fg/75 text-xs font-black shrink-0 mt-0.5">›</span>
+                    <span className="text-fg/65 group-hover:text-fg/75 text-xs font-black shrink-0 mt-0.5">›</span>
                   </button>
                 );
               })

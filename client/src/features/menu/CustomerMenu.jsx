@@ -72,7 +72,7 @@ const MenuItemCard = memo(({ product, onAdd }) => {
         <span className="absolute top-2 left-2 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-lg bg-orange-500 text-white">SALE</span>
       )}
       {outOfStock ? (
-        <span className="absolute top-2 left-2 text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg bg-red-900/80 text-red-300 border border-red-700/40">
+        <span className="absolute top-2 left-2 text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg bg-red-900/80 text-danger border border-red-700/40">
           Not available
         </span>
       ) : (
@@ -624,7 +624,7 @@ export default function CustomerMenu() {
           <Coffee size={28} className="text-brand-text" />
         </div>
         <div className="w-10 h-10 border-2 border-brand border-t-transparent rounded-full animate-spin mb-6" />
-        <p className="text-brand-text/85 text-xs font-bold tracking-widest uppercase animate-pulse">Securing Session…</p>
+        <p className="text-brand-text text-xs font-bold tracking-widest uppercase animate-pulse">Securing Session…</p>
       </div>
     );
   }
@@ -653,7 +653,7 @@ export default function CustomerMenu() {
           <h2 className="text-3xl font-black text-fg mb-3 uppercase tracking-widest">Thank You!</h2>
           <p className="text-fg/75 font-medium mb-8">We hope you enjoy your order. Come back soon!</p>
           <div className="border-t border-white/5 pt-6">
-            <p className="text-fg/60 text-xs uppercase font-bold tracking-widest">You may now close this page.</p>
+            <p className="text-fg/65 text-xs uppercase font-bold tracking-widest">You may now close this page.</p>
           </div>
         </div>
       </div>
@@ -707,7 +707,7 @@ export default function CustomerMenu() {
                       const done = item.itemStatus === 'Delivered';
                       return (
                         <div key={i} className={`flex items-center gap-2 text-xs font-semibold transition-all ${done ? 'text-fg/65 line-through' : 'text-fg/70'}`}>
-                          <span className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 text-[9px] font-black ${done ? 'bg-green-500/20 text-success' : 'bg-white/10 text-fg/60'}`}>
+                          <span className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 text-[9px] font-black ${done ? 'bg-green-500/20 text-success' : 'bg-white/10 text-fg/65'}`}>
                             {done ? '✓' : '·'}
                           </span>
                           {item.quantity}x {item.name}
@@ -725,7 +725,7 @@ export default function CustomerMenu() {
               <>
                 <div className="text-7xl mb-6 animate-bounce">✨</div>
                 <h1 className="text-3xl font-black text-fg mb-3 uppercase tracking-widest">Order Ready!</h1>
-                <p className="text-emerald-300 font-bold mb-8">Please collect your items at the counter.</p>
+                <p className="text-success font-bold mb-8">Please collect your items at the counter.</p>
                 <button onClick={handleReceived} className="w-full bg-white text-emerald-900 font-black py-4 rounded-2xl hover:bg-emerald-50 transition shadow-xl active:scale-95 uppercase tracking-widest">
                   I Got My Order ✓
                 </button>
@@ -764,7 +764,7 @@ export default function CustomerMenu() {
           >
             Start Order
           </button>
-          <p className="text-fg/60 text-xs mt-5 font-medium">Scan QR at your table to order</p>
+          <p className="text-fg/65 text-xs mt-5 font-medium">Scan QR at your table to order</p>
         </div>
       </div>
     );
@@ -788,7 +788,7 @@ export default function CustomerMenu() {
             aria-label="Your name"
             value={customerName}
             onChange={e => setCustomerName(e.target.value)}
-            className="w-full bg-white/5 border-2 border-white/10 focus:border-brand text-fg text-center py-5 rounded-2xl outline-none mb-5 font-bold text-xl transition placeholder-white/20"
+            className="w-full bg-white/5 border-2 border-white/10 focus:border-brand text-fg text-center py-5 rounded-2xl outline-none mb-5 font-bold text-xl transition placeholder-fg/70"
             autoFocus
             onKeyDown={e => e.key === 'Enter' && customerName.trim().length > 0 && setFlowState('menu')}
           />
@@ -796,7 +796,7 @@ export default function CustomerMenu() {
             onClick={() => setFlowState('menu')}
             disabled={customerName.trim().length === 0}
             className={`w-full font-black py-5 rounded-2xl text-lg transition shadow-2xl uppercase tracking-widest
-              ${customerName.trim().length === 0 ? 'bg-white/5 text-fg/60 cursor-not-allowed' : 'bg-brand text-on-brand hover:bg-brand-dark shadow-brand/30 active:scale-95'}`}
+              ${customerName.trim().length === 0 ? 'bg-white/5 text-fg/65 cursor-not-allowed' : 'bg-brand text-on-brand hover:bg-brand-dark shadow-brand/30 active:scale-95'}`}
           >
             Browse Menu →
           </button>
@@ -854,7 +854,7 @@ export default function CustomerMenu() {
               value={menuSearch}
               onChange={e => setMenuSearch(e.target.value)}
               placeholder="Search products by name or code…"
-              className="w-full bg-white/5 border border-white/10 focus:border-brand rounded-xl pl-9 pr-9 py-2.5 text-sm text-fg placeholder-fg/30 outline-none transition"
+              className="w-full bg-white/5 border border-white/10 focus:border-brand rounded-xl pl-9 pr-9 py-2.5 text-sm text-fg placeholder-fg/70 outline-none transition"
             />
             {menuSearch && (
               <button onClick={() => setMenuSearch('')} aria-label="Clear search"
@@ -911,7 +911,7 @@ export default function CustomerMenu() {
               return (
                 <div key={category} className="mb-10">
                   {activeCategory === 'All' && (
-                    <h2 className="text-base font-black text-fg/60 mb-4 uppercase tracking-widest px-0.5">{category}</h2>
+                    <h2 className="text-base font-black text-fg/65 mb-4 uppercase tracking-widest px-0.5">{category}</h2>
                   )}
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                     {catProducts.map(p => (
@@ -974,17 +974,17 @@ export default function CustomerMenu() {
                       {item.selectedAddOns && item.selectedAddOns.length > 0 && (
                         <div className="space-y-0.5 mb-2">
                           {item.selectedAddOns.map((a,i) => (
-                            <p key={i} className="text-brand/70 text-xs">+ {a.name} <span className="text-fg/65">(+₱{a.price.toFixed(2)})</span></p>
+                            <p key={i} className="text-brand-text text-xs">+ {a.name} <span className="text-fg/65">(+₱{a.price.toFixed(2)})</span></p>
                           ))}
                         </div>
                       )}
                       <div className="flex items-center justify-between mt-2">
                         <div className="flex items-center gap-0.5 bg-black/30 rounded-xl p-1">
-                          <button onClick={() => updateQuantity(item.cartItemId, -1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-fg/60 hover:text-danger hover:bg-white/10 transition">
+                          <button onClick={() => updateQuantity(item.cartItemId, -1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-fg/65 hover:text-danger hover:bg-white/10 transition">
                             <Minus size={13} />
                           </button>
                           <span className="text-fg font-bold w-6 text-center text-sm">{item.quantity}</span>
-                          <button onClick={() => updateQuantity(item.cartItemId, 1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-fg/60 hover:text-brand-text hover:bg-white/10 transition">
+                          <button onClick={() => updateQuantity(item.cartItemId, 1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-fg/65 hover:text-brand-text hover:bg-white/10 transition">
                             <Plus size={13} />
                           </button>
                         </div>
@@ -998,7 +998,7 @@ export default function CustomerMenu() {
             {/* Footer */}
             <div className="px-5 py-4 border-t border-white/5 space-y-3">
               <div className="flex justify-between items-center">
-                <span className="text-fg/60 font-bold text-sm">Total</span>
+                <span className="text-fg/65 font-bold text-sm">Total</span>
                 <span className="text-fg font-black text-2xl">₱{total.toFixed(2)}</span>
               </div>
               {/* Special instructions */}
@@ -1010,17 +1010,17 @@ export default function CustomerMenu() {
                   value={orderNotes}
                   onChange={e => setOrderNotes(e.target.value)}
                   placeholder="e.g. No sugar, extra ice, allergy note…"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/50 resize-none placeholder-white/20 transition"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/50 resize-none placeholder-fg/70 transition"
                   aria-label="Special instructions for your order"
                 />
                 {orderNotes.length > 0 && (
-                  <p className="text-[10px] text-fg/60 text-right mt-0.5">{orderNotes.length}/300</p>
+                  <p className="text-[10px] text-fg/65 text-right mt-0.5">{orderNotes.length}/300</p>
                 )}
               </div>
               <button
                 onClick={async () => { await confirmOrder(); setCartOpen(false); }}
                 disabled={isSubmitting}
-                className="w-full bg-brand hover:bg-brand-dark text-fg font-black py-4 rounded-2xl text-lg transition shadow-2xl shadow-brand/30 uppercase tracking-widest active:scale-95 disabled:opacity-60"
+                className="w-full bg-brand hover:bg-brand-dark text-on-brand font-black py-4 rounded-2xl text-lg transition shadow-2xl shadow-brand/30 uppercase tracking-widest active:scale-95 disabled:opacity-60"
               >
                 {isSubmitting ? 'Sending…' : `Send to ${SEND_TARGET}`}
               </button>
@@ -1141,7 +1141,7 @@ export default function CustomerMenu() {
 
               {selectedProduct.addOns && selectedProduct.addOns.length > 0 && (
                 <div className="border-t border-white/5 pt-4">
-                  <p className="text-fg/60 text-xs font-black uppercase tracking-widest mb-3">Optional Add-Ons</p>
+                  <p className="text-fg/65 text-xs font-black uppercase tracking-widest mb-3">Optional Add-Ons</p>
                   <div className="space-y-2">
                     {selectedProduct.addOns.map((addOn, idx) => (
                       <label key={`addon-${idx}`} className={`flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition ${selectedAddOns.some(a => a.name === addOn.name) ? 'border-brand bg-brand/10' : 'border-white/10 hover:border-white/20 bg-white/5'}`}>
@@ -1158,7 +1158,7 @@ export default function CustomerMenu() {
             </div>
             {/* Modal footer - always visible, never scrolled away */}
             <div className="flex gap-3 p-5 border-t border-white/5 flex-shrink-0">
-              <button onClick={() => setSelectedProduct(null)} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold py-3.5 rounded-2xl transition text-sm">
+              <button onClick={() => setSelectedProduct(null)} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg font-bold py-3.5 rounded-2xl transition text-sm">
                 Cancel
               </button>
               <button
@@ -1172,7 +1172,7 @@ export default function CustomerMenu() {
                   if (unmet.length > 0) { ui.alert(`Please choose: ${unmet.map(mg=>mg.name).join(', ')}`); return; }
                   addToCart(selectedProduct, selectedSize, selectedAddOns);
                 }}
-                className="flex-2 flex-1 bg-brand hover:bg-brand-dark text-fg font-black py-3.5 rounded-2xl transition shadow-lg shadow-brand/20 text-sm">
+                className="flex-2 flex-1 bg-brand hover:bg-brand-dark text-on-brand font-black py-3.5 rounded-2xl transition shadow-lg shadow-brand/20 text-sm">
                 Add to Cart
               </button>
             </div>

@@ -78,8 +78,8 @@ export default function ReservationsPanel({ apiFetch, inventory = [], clientAcco
   const tone = {
     Open: 'bg-amber-500/15 text-warning',
     Released: 'bg-green-500/15 text-success',
-    Cancelled: 'bg-white/10 text-fg/60',
-    Expired: 'bg-white/10 text-fg/60',
+    Cancelled: 'bg-white/10 text-fg/65',
+    Expired: 'bg-white/10 text-fg/65',
   };
 
   return (
@@ -87,12 +87,12 @@ export default function ReservationsPanel({ apiFetch, inventory = [], clientAcco
       <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
         <div>
           <h3 className="text-fg font-black text-lg flex items-center gap-2"><Lock size={16} className="text-brand-text" /> Reserved Stock</h3>
-          <p className="text-fg/60 text-xs mt-0.5 max-w-prose">
+          <p className="text-fg/65 text-xs mt-0.5 max-w-prose">
             Stock held for one client. It stays on the shelf, but nobody else&apos;s order can take it. Their own order releases the hold as it completes, and an uncollected hold expires on its own after {defaultDays} days.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={load} className="p-2 rounded-lg text-fg/60 hover:text-fg hover:bg-white/5 transition" aria-label="Refresh reservations">
+          <button onClick={load} className="p-2 rounded-lg text-fg/65 hover:text-fg hover:bg-white/5 transition" aria-label="Refresh reservations">
             <RefreshCw size={14} />
           </button>
           {mayManage && (
@@ -137,7 +137,7 @@ export default function ReservationsPanel({ apiFetch, inventory = [], clientAcco
             <input id="rsv-until" type="date" value={form.expiresAt}
               onChange={e => setForm(f => ({ ...f, expiresAt: e.target.value }))}
               className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
-            <p className="text-[10px] text-fg/55 mt-1">Leave blank for {defaultDays} days.</p>
+            <p className="text-[10px] text-fg/65 mt-1">Leave blank for {defaultDays} days.</p>
           </div>
           <div className="sm:col-span-2">
             <label htmlFor="rsv-note" className="text-[10px] font-bold text-fg/70 uppercase tracking-wider block mb-1">Note</label>
@@ -158,13 +158,13 @@ export default function ReservationsPanel({ apiFetch, inventory = [], clientAcco
 
       <div className="mt-4 overflow-x-auto">
         {rows === null ? (
-          <p className="text-fg/60 text-sm">Loading…</p>
+          <p className="text-fg/65 text-sm">Loading…</p>
         ) : rows.length === 0 ? (
-          <p className="text-fg/60 text-sm">No stock is being held. Hold stock when a client commits to goods before collecting them.</p>
+          <p className="text-fg/65 text-sm">No stock is being held. Hold stock when a client commits to goods before collecting them.</p>
         ) : (
           <table className="w-full text-sm min-w-[640px]">
             <thead>
-              <tr className="text-[10px] uppercase tracking-wider text-fg/50 border-b border-white/10">
+              <tr className="text-[10px] uppercase tracking-wider text-fg/65 border-b border-white/10">
                 <th className="text-left font-bold py-2">Ref</th>
                 <th className="text-left font-bold py-2">Held for</th>
                 <th className="text-left font-bold py-2">Items</th>
@@ -178,32 +178,32 @@ export default function ReservationsPanel({ apiFetch, inventory = [], clientAcco
                 <tr key={r._id} className="border-b border-white/5">
                   <td className="py-2.5 pr-3">
                     <span className="text-fg font-bold tabular-nums">{r.reservationNumber}</span>
-                    {r.orderNumber && <span className="block text-[10px] text-fg/55">for {r.orderNumber}</span>}
+                    {r.orderNumber && <span className="block text-[10px] text-fg/65">for {r.orderNumber}</span>}
                   </td>
                   <td className="py-2.5 pr-3 text-fg/85">{r.clientName}</td>
                   <td className="py-2.5 pr-3 text-fg/75">
                     {(r.items || []).map((i, k) => (
                       <span key={k} className="block text-[12px]">{i.itemName} · {qtyLabel(i.invId, i.qty)}</span>
                     ))}
-                    {r.note && <span className="block text-[10px] text-fg/50 italic mt-0.5">{r.note}</span>}
+                    {r.note && <span className="block text-[10px] text-fg/65 italic mt-0.5">{r.note}</span>}
                   </td>
                   <td className="py-2.5 pr-3 text-fg/70 text-[12px] whitespace-nowrap">
                     {r.expiresAt ? new Date(r.expiresAt).toLocaleDateString() : '-'}
                   </td>
                   <td className="py-2.5 pr-3">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${tone[r.status] || 'bg-white/10 text-fg/60'}`}>{r.status}</span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${tone[r.status] || 'bg-white/10 text-fg/65'}`}>{r.status}</span>
                   </td>
                   <td className="py-2.5 text-right whitespace-nowrap">
                     {r.status === 'Open' && mayManage && (
                       <span className="inline-flex gap-1">
                         <button onClick={() => close(r, 'release')} disabled={busy}
                           title="Release the hold - the stock goes back on sale"
-                          className="p-1.5 rounded-md text-fg/60 hover:text-success hover:bg-green-500/10 transition">
+                          className="p-1.5 rounded-md text-fg/65 hover:text-success hover:bg-green-500/10 transition">
                           <Unlock size={14} />
                         </button>
                         <button onClick={() => setCancelling({ row: r, reason: '' })} disabled={busy}
                           title="Cancel the hold (a reason is required)"
-                          className="p-1.5 rounded-md text-fg/60 hover:text-danger hover:bg-red-500/10 transition">
+                          className="p-1.5 rounded-md text-fg/65 hover:text-danger hover:bg-red-500/10 transition">
                           <X size={14} />
                         </button>
                       </span>

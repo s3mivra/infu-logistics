@@ -81,7 +81,7 @@ export default function CommandPalette({ open, onClose }) {
             onChange={e => setQ(e.target.value)}
             onKeyDown={onKey}
             placeholder="Go to…"
-            className="flex-1 bg-transparent text-fg placeholder-white/25 outline-none text-sm font-bold"
+            className="flex-1 bg-transparent text-fg placeholder-fg/70 outline-none text-sm font-bold"
           />
           <button onClick={onClose} className="text-[10px] font-black uppercase tracking-wider text-fg/65 hover:text-fg transition px-2 py-1 rounded border border-white/10">
             Esc
@@ -105,7 +105,7 @@ export default function CommandPalette({ open, onClose }) {
                 <span className={`block text-sm font-bold ${i === sel ? 'text-brand-text' : 'text-fg'}`}>{c.label}</span>
                 {c.hint && <span className="block text-fg/70 text-xs mt-0.5">{c.hint}</span>}
               </span>
-              {i === sel && <CornerDownLeft size={13} className="text-brand-text/85 shrink-0" />}
+              {i === sel && <CornerDownLeft size={13} className="text-brand-text shrink-0" />}
             </button>
           ))}
         </div>

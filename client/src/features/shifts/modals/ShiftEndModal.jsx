@@ -36,14 +36,14 @@ export default function ShiftEndModal() {
               </div>
 
               {shiftReconcile.result.variance < 0 && (
-                <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-3 text-xs text-red-300 font-medium">
+                <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-3 text-xs text-danger font-medium">
                   Short by ₱{Math.abs(shiftReconcile.result.variance).toFixed(2)} - report to manager before leaving.
                 </div>
               )}
 
               {/* ── BANK DEPOSIT ── */}
               {shiftReconcile.result.isReconciled ? (
-                <div className="bg-green-900/20 border border-green-500/30 rounded-xl px-4 py-3 text-xs text-green-300 font-bold text-center flex items-center justify-center gap-2">
+                <div className="bg-green-900/20 border border-green-500/30 rounded-xl px-4 py-3 text-xs text-success font-bold text-center flex items-center justify-center gap-2">
                   <CheckCircle size={14} /> Drawer Reconciled - cash matches starting fund.
                 </div>
               ) : (
@@ -87,7 +87,7 @@ export default function ShiftEndModal() {
 
               <button
                 onClick={performLogout}
-                className="w-full bg-accent text-fg font-black py-4 rounded-xl uppercase tracking-widest hover:bg-brand-dark transition"
+                className="w-full bg-accent text-on-brand font-black py-4 rounded-xl uppercase tracking-widest hover:bg-brand-dark transition"
               >
                 Confirm & Log Out
               </button>
@@ -140,7 +140,7 @@ export default function ShiftEndModal() {
                 <button
                   onClick={handleEndShift}
                   disabled={shiftEndLoading}
-                  className="flex-1 py-3 bg-accent text-fg font-black rounded-xl hover:bg-brand-dark transition text-sm uppercase tracking-wider disabled:opacity-60"
+                  className="flex-1 py-3 bg-accent text-on-brand font-black rounded-xl hover:bg-brand-dark transition text-sm uppercase tracking-wider disabled:opacity-60"
                 >
                   {shiftEndLoading ? 'Processing...' : 'Submit Count'}
                 </button>

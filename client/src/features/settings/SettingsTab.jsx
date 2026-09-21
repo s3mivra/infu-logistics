@@ -86,7 +86,7 @@ function TextSetting({ label, hint, value, onSave, placeholder, multiline, maxLe
       const next = e.target.value.trim();
       if (next !== String(value ?? '')) onSave(next);
     },
-    className: 'w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-3 py-2.5 rounded-xl outline-none transition text-sm',
+    className: 'w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-3 py-2.5 rounded-xl outline-none transition text-sm',
   };
   return (
     <div>
@@ -301,7 +301,7 @@ export default function SettingsTab({ ctx }) {
         </div>
         <div>
           <h1 className="text-xl font-black text-fg leading-none">Settings</h1>
-          <p className="text-fg/60 text-xs font-bold mt-1">System preferences &amp; account</p>
+          <p className="text-fg/65 text-xs font-bold mt-1">System preferences &amp; account</p>
         </div>
       </div>
 
@@ -313,7 +313,7 @@ export default function SettingsTab({ ctx }) {
           readiness.urgent ? 'bg-amber-500/10 border-amber-500/30' : 'bg-white/5 border-white/10'
         }`}>
           <div className="flex items-start gap-3">
-            <AlertTriangle size={18} className={readiness.urgent ? 'text-warning shrink-0 mt-0.5' : 'text-fg/60 shrink-0 mt-0.5'} />
+            <AlertTriangle size={18} className={readiness.urgent ? 'text-warning shrink-0 mt-0.5' : 'text-fg/65 shrink-0 mt-0.5'} />
             <div className="flex-1 min-w-0">
               <p className="font-black text-fg text-sm">
                 {readiness.urgent
@@ -327,12 +327,12 @@ export default function SettingsTab({ ctx }) {
                     {i.severity === 'locks' && (
                       <span className="ml-1.5 text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-warning px-1.5 py-0.5 rounded">locks after the first receipt</span>
                     )}
-                    <span className="block text-fg/60">{i.note}</span>
+                    <span className="block text-fg/65">{i.note}</span>
                   </li>
                 ))}
               </ul>
               {readiness.serialLocked && (
-                <p className="text-[10px] text-fg/55 mt-2">
+                <p className="text-[10px] text-fg/65 mt-2">
                   The receipt series has already issued {readiness.receiptsIssued} receipt{readiness.receiptsIssued === 1 ? '' : 's'}, so its starting number is now fixed.
                 </p>
               )}
@@ -372,7 +372,7 @@ export default function SettingsTab({ ctx }) {
                 >
                   {TIME_ZONES.map(tz => <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>)}
                 </select>
-                <p className="text-[10px] text-fg/55 mt-1.5">
+                <p className="text-[10px] text-fg/65 mt-1.5">
                   Changing this takes effect at once. Do it between trading days - mid-day it moves where the current day&apos;s sales are counted.
                 </p>
               </div>
@@ -431,7 +431,7 @@ export default function SettingsTab({ ctx }) {
           </Card>
         ) : (
           <Card title="System">
-            <div className="flex items-center gap-3 px-4 py-5 text-fg/60">
+            <div className="flex items-center gap-3 px-4 py-5 text-fg/65">
               <Lock size={15} />
               <span className="text-sm font-bold">System toggles are superadmin-only.</span>
             </div>
@@ -458,7 +458,7 @@ export default function SettingsTab({ ctx }) {
                     >
                       {currentLogo
                         ? <img src={currentLogo} alt="Logo" className="max-w-full max-h-full object-contain" />
-                        : <ImageIcon size={22} className={systemSettings.logoColor ? 'text-white/60' : 'text-fg/60'} />}
+                        : <ImageIcon size={22} className={systemSettings.logoColor ? 'text-white/60' : 'text-fg/65'} />}
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-on-brand hover:bg-brand/90 transition min-h-[40px]">
@@ -531,7 +531,7 @@ export default function SettingsTab({ ctx }) {
                     <div className="w-20 h-20 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
                       {currentQr
                         ? <img src={currentQr} alt="Payment QR" className="max-w-full max-h-full object-contain" />
-                        : <QrCode size={22} className="text-fg/60" />}
+                        : <QrCode size={22} className="text-fg/65" />}
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-on-brand hover:bg-brand/90 transition min-h-[40px]">
@@ -564,7 +564,7 @@ export default function SettingsTab({ ctx }) {
                   <div className="flex items-center justify-between gap-4">
                     <div className="min-w-0">
                       <p className="font-bold text-fg text-sm">VAT-registered</p>
-                      <p className="text-fg/60 text-xs mt-0.5 leading-snug">
+                      <p className="text-fg/65 text-xs mt-0.5 leading-snug">
                         {vatOn
                           ? 'Receipts break out output VAT. The 3% percentage-tax report is switched off - a VAT-registered business does not owe it.'
                           : 'Non-VAT. Sales are reported under the 3% percentage tax.'}
@@ -592,9 +592,9 @@ export default function SettingsTab({ ctx }) {
                             saveSetting?.('vatRate', n);
                           }}
                           placeholder="12"
-                          className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
+                          className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
                         />
-                        <p className="text-[10px] text-fg/60 mt-1.5">
+                        <p className="text-[10px] text-fg/65 mt-1.5">
                           Standard Philippine VAT is 12%.
                         </p>
                       </div>
@@ -611,7 +611,7 @@ export default function SettingsTab({ ctx }) {
                             className="mt-0.5 accent-brand" />
                           <span>
                             <span className="text-[11px] font-bold text-fg block">Delivery fees carry VAT</span>
-                            <span className="text-[10px] text-fg/60 leading-snug block">On by most businesses: the delivery service is part of gross receipts. Leave off only if you bill a courier&apos;s fee as a pass-through. Ask your accountant.</span>
+                            <span className="text-[10px] text-fg/65 leading-snug block">On by most businesses: the delivery service is part of gross receipts. Leave off only if you bill a courier&apos;s fee as a pass-through. Ask your accountant.</span>
                           </span>
                         </label>
                       </div>
@@ -626,9 +626,9 @@ export default function SettingsTab({ ctx }) {
                           defaultValue={systemSettings.businessTin || ''}
                           onBlur={e => saveSetting?.('businessTin', e.target.value.trim())}
                           placeholder="000-000-000-00000"
-                          className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition font-bold"
+                          className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition font-bold"
                         />
-                        <p className="text-[10px] text-fg/60 mt-1.5">
+                        <p className="text-[10px] text-fg/65 mt-1.5">
                           Printed on every invoice and receipt. A VAT invoice without the seller&apos;s TIN does not let a VAT-registered buyer claim the VAT.
                         </p>
                       </div>
@@ -647,13 +647,13 @@ export default function SettingsTab({ ctx }) {
                               className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
                                 vatInclusive === opt.v
                                   ? 'bg-brand text-on-brand border-brand'
-                                  : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'
+                                  : 'bg-white/5 text-fg/65 border-white/10 hover:text-fg hover:bg-white/10'
                               }`}>
                               {opt.label}
                             </button>
                           ))}
                         </div>
-                        <p className="text-[10px] text-fg/60 mt-1.5 leading-relaxed">
+                        <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
                           {vatInclusive
                             ? 'Listed prices already contain VAT. A ₱112 item stays ₱112 - the receipt just breaks out the ₱12 VAT inside it. Standard for Philippine retail.'
                             : 'Listed prices are net; VAT is added on top. A ₱100 item rings up at ₱112. Common in B2B quoting.'}
@@ -679,13 +679,13 @@ export default function SettingsTab({ ctx }) {
                                 className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
                                   scPwdOrder === opt.v
                                     ? 'bg-brand text-on-brand border-brand'
-                                    : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'
+                                    : 'bg-white/5 text-fg/65 border-white/10 hover:text-fg hover:bg-white/10'
                                 }`}>
                                 {opt.label}
                               </button>
                             ))}
                           </div>
-                          <p className="text-[10px] text-fg/60 mt-1.5 leading-relaxed">
+                          <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
                             {scPwdOrder === 'vat-first'
                               ? 'Strip the VAT, then apply the discount to the VAT-less amount. This is the BIR treatment.'
                               : 'Apply the discount to the VAT-inclusive price, then strip the VAT from what remains.'}
@@ -705,7 +705,7 @@ export default function SettingsTab({ ctx }) {
                   <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div className="sm:col-span-2">
                       <p className="text-[11px] font-bold text-fg">Receipt registration (BIR)</p>
-                      <p className="text-[10px] text-fg/60 leading-snug">Printed at the foot of every receipt and invoice. Copy these from your Authority to Print or Permit to Use.</p>
+                      <p className="text-[10px] text-fg/65 leading-snug">Printed at the foot of every receipt and invoice. Copy these from your Authority to Print or Permit to Use.</p>
                     </div>
                     <div>
                       <label htmlFor="bir-permit" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">ATP / Permit no.</label>
@@ -724,11 +724,11 @@ export default function SettingsTab({ ctx }) {
                       <input id="or-start" type="number" min="0" defaultValue={systemSettings.orStartNumber ?? 0}
                         onBlur={e => saveSetting?.('orStartNumber', Number(e.target.value) || 0)}
                         className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm" />
-                      <p className="text-[10px] text-fg/55 mt-1">Set once, before the first sale: the number your registered series is already up to. The prefix it prints under lives in Document numbering below.</p>
+                      <p className="text-[10px] text-fg/65 mt-1">Set once, before the first sale: the number your registered series is already up to. The prefix it prints under lives in Document numbering below.</p>
                     </div>
                   </div>
 
-                  <p className="text-[10px] text-fg/60 mt-3 leading-relaxed">
+                  <p className="text-[10px] text-fg/65 mt-3 leading-relaxed">
                     Changing this affects <span className="text-fg/80 font-bold">new orders only</span>.
                     Receipts already issued keep the rate they were rung up under.
                   </p>
@@ -747,7 +747,7 @@ export default function SettingsTab({ ctx }) {
         {isSuperAdmin && (
           <Card title="Document numbering">
             <div className="px-4 py-4">
-              <p className="text-[11px] text-fg/60 leading-snug mb-3">
+              <p className="text-[11px] text-fg/65 leading-snug mb-3">
                 What each document is called. Renaming one changes what future documents are called
                 and it never renumbers anything already issued, nor restarts a sequence.
               </p>
@@ -756,7 +756,7 @@ export default function SettingsTab({ ctx }) {
                   <div key={series.key}>
                     <label htmlFor={`series-${series.code}`} className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">
                       {series.label}
-                      {series.registered && <span className="ml-1.5 text-[9px] text-amber-300/80 normal-case tracking-normal">registered series</span>}
+                      {series.registered && <span className="ml-1.5 text-[9px] text-warning normal-case tracking-normal">registered series</span>}
                     </label>
                     <div className="flex items-center gap-2">
                       <input
@@ -773,9 +773,9 @@ export default function SettingsTab({ ctx }) {
                         onBlur={e => saveSeriesPrefix(series, e.target.value)}
                         className="w-28 bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2 rounded-xl outline-none transition text-sm font-bold uppercase disabled:opacity-50"
                       />
-                      <span className="text-[11px] text-fg/55 font-mono truncate" title={series.sample}>{series.sample}</span>
+                      <span className="text-[11px] text-fg/65 font-mono truncate" title={series.sample}>{series.sample}</span>
                     </div>
-                    <p className="text-[10px] text-fg/55 mt-1 leading-snug">{series.note}</p>
+                    <p className="text-[10px] text-fg/65 mt-1 leading-snug">{series.note}</p>
                   </div>
                 ))}
               </div>
@@ -791,7 +791,7 @@ export default function SettingsTab({ ctx }) {
           <Card title="Accounting modules">
             {modulesError && (
               <div className="px-4 py-4 flex items-center gap-3">
-                <p className="text-xs text-amber-400/90 flex-1">
+                <p className="text-xs text-warning flex-1">
                   {modulesError} The switches cannot be shown until this loads.
                 </p>
                 <button onClick={loadModules}
@@ -812,7 +812,7 @@ export default function SettingsTab({ ctx }) {
                     <div className="flex items-center justify-between gap-4">
                       <div className="min-w-0">
                         <p className="font-bold text-fg text-sm">{mod.label}</p>
-                        <p className="text-fg/60 text-xs mt-0.5 leading-snug">{mod.blurb}</p>
+                        <p className="text-fg/65 text-xs mt-0.5 leading-snug">{mod.blurb}</p>
                       </div>
                       <Toggle on={mod.enabled} disabled={moduleBusy === mod.key}
                         onChange={() => toggleModule(mod)} />
@@ -838,7 +838,7 @@ export default function SettingsTab({ ctx }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-fg text-sm">How limits apply</p>
-                  <p className="text-fg/60 text-xs mt-0.5 leading-snug">
+                  <p className="text-fg/65 text-xs mt-0.5 leading-snug">
                     {CREDIT_MODES.find(m => m.value === creditMode)?.desc}
                   </p>
                   <div className="grid grid-cols-2 gap-2 mt-3">
@@ -848,7 +848,7 @@ export default function SettingsTab({ ctx }) {
                         className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
                           creditMode === m.value
                             ? 'bg-brand text-on-brand border-brand'
-                            : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'
+                            : 'bg-white/5 text-fg/65 border-white/10 hover:text-fg hover:bg-white/10'
                         }`}>
                         {m.label}
                       </button>
@@ -865,15 +865,15 @@ export default function SettingsTab({ ctx }) {
                         defaultValue={globalLimit}
                         onBlur={e => saveSetting?.('globalCreditLimit', e.target.value === '' ? null : Number(String(e.target.value).replace(/[,\s₱]/g, '')))}
                         placeholder="e.g. 50000"
-                        className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
+                        className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
                       />
-                      <p className="text-[10px] text-fg/60 mt-1.5">
+                      <p className="text-[10px] text-fg/65 mt-1.5">
                         Applies to every client{creditMode === 'both' ? ' that has no limit of its own' : ''}.
                         Blank = no shared limit.
                       </p>
                     </div>
                   )}
-                  <p className="text-[10px] text-fg/60 mt-3 leading-relaxed">
+                  <p className="text-[10px] text-fg/65 mt-3 leading-relaxed">
                     Only <span className="text-fg/80 font-bold">on-account</span> (non-cash) orders use credit.
                     Cash sales settle immediately and are never blocked.
                   </p>
@@ -1000,7 +1000,7 @@ export default function SettingsTab({ ctx }) {
                     <p className="text-fg/70 text-xs mt-0.5 leading-snug">What prints when an order is paid, and on what paper. The A4 document always prints an original and a duplicate.</p>
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-fg/60 mb-1.5">Receipt format</p>
+                    <p className="text-xs font-bold text-fg/65 mb-1.5">Receipt format</p>
                     <div className="grid grid-cols-3 gap-2">
                       {[
                         { v: 'billing', label: 'Billing / A4' },
@@ -1020,7 +1020,7 @@ export default function SettingsTab({ ctx }) {
                     </div>
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-fg/60 mb-1.5">Print size (A4 document)</p>
+                    <p className="text-xs font-bold text-fg/65 mb-1.5">Print size (A4 document)</p>
                     <div className="grid grid-cols-4 gap-2">
                       {['A4', 'Letter', 'Legal', 'A5'].map(sz => {
                         const active = (systemSettings.portalPrintSize || 'A4') === sz;
@@ -1036,7 +1036,7 @@ export default function SettingsTab({ ctx }) {
                     </div>
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-fg/60 mb-1.5">Thermal paper width</p>
+                    <p className="text-xs font-bold text-fg/65 mb-1.5">Thermal paper width</p>
                     <p className="text-fg/70 text-[11px] mb-1.5 leading-snug">The order slip auto-adjusts and stays centered for whichever roll is loaded.</p>
                     <div className="grid grid-cols-2 gap-2">
                       {[{ v: '58', label: '58mm' }, { v: '80', label: '80mm' }].map(opt => {
@@ -1063,7 +1063,7 @@ export default function SettingsTab({ ctx }) {
                   <Toggle on={systemSettings.fbDuplicateReceipt === true} onChange={() => saveSetting?.('fbDuplicateReceipt', !(systemSettings.fbDuplicateReceipt === true))} />
                 </SettingRow>
                 <div className="px-4 py-4 border-t border-white/5">
-                  <p className="text-xs font-bold text-fg/60 mb-1.5">Thermal paper width</p>
+                  <p className="text-xs font-bold text-fg/65 mb-1.5">Thermal paper width</p>
                   <p className="text-fg/70 text-[11px] mb-1.5 leading-snug">The receipt auto-adjusts and stays centered for whichever roll is loaded.</p>
                   <div className="grid grid-cols-2 gap-2 max-w-xs">
                     {[{ v: '58', label: '58mm' }, { v: '80', label: '80mm' }].map(opt => {
@@ -1103,7 +1103,7 @@ export default function SettingsTab({ ctx }) {
                           >
                             <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${usePrintLogo ? 'left-5' : 'left-0.5'}`} />
                           </button>
-                          <span className="text-xs text-fg/60 font-bold">
+                          <span className="text-xs text-fg/65 font-bold">
                             {usePrintLogo ? 'Using uploaded print logo' : 'Using business logo for print'}
                           </span>
                         </div>
@@ -1112,7 +1112,7 @@ export default function SettingsTab({ ctx }) {
                             <div className="w-20 h-20 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
                               {currentPrintLogo
                                 ? <img src={currentPrintLogo} alt="Print logo" className="max-w-full max-h-full object-contain" />
-                                : <Printer size={22} className="text-fg/60" />}
+                                : <Printer size={22} className="text-fg/65" />}
                             </div>
                             <div className="flex flex-col gap-2">
                               <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-on-brand hover:bg-brand/90 transition min-h-[40px]">
@@ -1215,7 +1215,7 @@ export default function SettingsTab({ ctx }) {
                     </button>
                   ))}
                 </div>
-                <p className="text-[10px] text-fg/60 mt-2 leading-relaxed">
+                <p className="text-[10px] text-fg/65 mt-2 leading-relaxed">
                   Your choice is saved, but most screens are still English-only -
                   translations are being added screen by screen.
                 </p>

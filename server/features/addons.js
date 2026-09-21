@@ -178,7 +178,17 @@ export default function registerAddons(ctx) {
 
 app.get('/api/addons', async (req, res) => {
   try {
-    const addons = await AddOn.find();
+    // Public, because the customer menu lists extras before anyone signs in.
+    // An add-on's recipe is not public, though: what goes into it and what
+    // each part costs. It was never filled in, so there was nothing to leak;
+    // now that it can be, only staff see it - the same line /api/products
+    // draws for a drink's recipe.
+    let isStaff = false;
+    try {
+      const raw = req.headers.authorization?.replace(/^Bearer /, '') || '';
+      if (raw) { const dec = jwt.verify(raw, process.env.JWT_SECRET); isStaff = !!dec?.role && dec.role !== 'client'; }
+    } catch { /* anonymous or expired: treated as the public */ }
+    const addons = await AddOn.find({}, isStaff ? undefined : { recipe: 0 }).lean();
     res.json({ success: true, addons });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));

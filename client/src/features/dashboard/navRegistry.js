@@ -195,6 +195,8 @@ export const paletteDestinations = (access) => {
   const addSubPages = (groups, tabId, parentLabel) => {
     for (const [groupLabel, pages] of groups) {
       for (const [sub, label] of pages) {
+        // A page this person may not open is not offered either.
+        if (!access.isSuperAdmin && access.can && !access.can(`screen.${tabId}.${sub}`)) continue;
         out.push({
           key: `${tabId}:${sub}`,
           id: tabId,

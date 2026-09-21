@@ -375,7 +375,7 @@ app.get('/api/reports/inventory-turnover', verifyToken, ...canViewReports, async
 // ============================================================
 // MONTHLY P&L - per-account amounts bucketed by month (parent/child + ratios computed client-side)
 // ============================================================
-app.get('/api/reports/pnl-monthly', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/pnl-monthly', verifyToken, ...canViewReports, requirePermission('screen.reports.pnlmonthly'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const startDate = start ? dayStart(start) : new Date(new Date().getFullYear(), 0, 1);
@@ -496,7 +496,7 @@ app.get('/api/reports/balance-sheet', verifyToken, ...canViewReports, async (req
 // ============================================================
 // MONTHLY BALANCE SHEET - cumulative balance as-of each month-end across a range
 // ============================================================
-app.get('/api/reports/balance-sheet-monthly', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/balance-sheet-monthly', verifyToken, ...canViewReports, requirePermission('screen.reports.bsmonthly'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const startDate = start ? dayStart(start) : new Date(new Date().getFullYear(), 0, 1);
@@ -900,7 +900,7 @@ app.get('/api/analytics/by-location', verifyToken, ...canViewAnalytics, async (r
 });
 
 // ── REPORT: MENU ENGINEERING (Stars / Plowhorses / Puzzles / Dogs) ───────────
-app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, requirePermission('screen.reports.menueng'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
@@ -910,7 +910,7 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (
       if (start) match.createdAt.$gte = dayStart(start);
       if (end) { match.createdAt.$lte = dayEnd(end); }
     }
-    const [ordersData, prods, invItems] = await Promise.all([
+    const [ordersData, prods, invItems, globalAddOns] = await Promise.all([
       Order.find(match, { items: 1 }).lean(),
       Product.find(bizScope, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1, addOns: 1, modifierGroups: 1 })
         // addOns / modifierGroups carry their own recipes: an Extra Shot costs
@@ -919,14 +919,17 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (
         // reports are used to judge.
         .populate('modifierGroups').lean(),
       Inventory.find(bizScope, { _id: 1, itemCode: 1, itemName: 1, unitCost: 1, unitMultiplier: 1 }).lean(),
+      // An add-on's own recipe, for the ones a product does not carry a copy of.
+      AddOn.find({}, { name: 1, recipe: 1 }).lean(),
     ]);
+    const addOnMap = Object.fromEntries(globalAddOns.map(a => [a.name, a.recipe || []]));
     const prodMap = Object.fromEntries(prods.map(p => [p._id.toString(), p]));
     const invMap = {};
     invItems.forEach(i => { invMap[i._id.toString()] = i; if (i.itemCode) invMap[i.itemCode] = i; if (i.itemName) invMap[i.itemName] = i; });
     const stat = {};
     for (const o of ordersData) {
       for (const it of (o.items || [])) {
-        for (const line of reportLinesForItem(it, prods, prodMap, invMap)) {
+        for (const line of reportLinesForItem(it, prods, prodMap, invMap, addOnMap)) {
           const key = line.name;
           if (!stat[key]) stat[key] = { name: key, qty: 0, revenue: 0, cogs: 0 };
           stat[key].qty += line.qty;
@@ -951,7 +954,7 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (
 });
 
 // ── REPORT: CASHIER VARIANCE TREND ───────────────────────────────────────────
-app.get('/api/reports/cashier-variance', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/cashier-variance', verifyToken, ...canViewReports, requirePermission('screen.reports.variance'), async (req, res) => {
   try {
     const owner = await ownerIdentity();
     const agg = await Shift.aggregate([
@@ -1053,7 +1056,7 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
 });
 
 // ── GROSS PROFIT BY CATEGORY ─────────────────────────────────────────────────
-app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, requirePermission('screen.reports.profitcat'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
@@ -1063,7 +1066,7 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async
       if (start) match.createdAt.$gte = dayStart(start);
       if (end) { match.createdAt.$lte = dayEnd(end); }
     }
-    const [ordersData, prods, invItems] = await Promise.all([
+    const [ordersData, prods, invItems, globalAddOns] = await Promise.all([
       Order.find(match, { items: 1 }).lean(),
       Product.find(bizScope, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1, addOns: 1, modifierGroups: 1 })
         // addOns / modifierGroups carry their own recipes: an Extra Shot costs
@@ -1072,14 +1075,17 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async
         // reports are used to judge.
         .populate('modifierGroups').lean(),
       Inventory.find(bizScope, { _id: 1, itemCode: 1, itemName: 1, unitCost: 1, unitMultiplier: 1 }).lean(),
+      // An add-on's own recipe, for the ones a product does not carry a copy of.
+      AddOn.find({}, { name: 1, recipe: 1 }).lean(),
     ]);
+    const addOnMap = Object.fromEntries(globalAddOns.map(a => [a.name, a.recipe || []]));
     const prodMap  = Object.fromEntries(prods.map(p => [p._id.toString(), p]));
     const invMap   = {};
     invItems.forEach(i => { invMap[i._id.toString()] = i; if (i.itemCode) invMap[i.itemCode] = i; if (i.itemName) invMap[i.itemName] = i; });
     const stats    = {};
     for (const order of ordersData) {
       for (const item of (order.items || [])) {
-        for (const line of reportLinesForItem(item, prods, prodMap, invMap)) {
+        for (const line of reportLinesForItem(item, prods, prodMap, invMap, addOnMap)) {
           const cat = line.category || 'Uncategorized';
           if (!stats[cat]) stats[cat] = { category: cat, revenue: 0, estimatedCOGS: 0, items: 0 };
           stats[cat].revenue += line.revenue;
@@ -1104,7 +1110,7 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async
 // came in to take a commission from. Every user with any sales in range is
 // listed, including a 0%-rate one, so an admin can see who still needs a rate
 // set rather than have them silently vanish from the report.
-app.get('/api/reports/commissions', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/commissions', verifyToken, ...canViewReports, requirePermission('screen.reports.commissions'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
@@ -1142,7 +1148,7 @@ app.get('/api/reports/commissions', verifyToken, ...canViewReports, async (req, 
 });
 
 // ── SALES BY PAYMENT METHOD ───────────────────────────────────────────────────
-app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, requirePermission('screen.reports.payments'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
@@ -1230,7 +1236,7 @@ app.get('/api/reports/sales-trend', verifyToken, ...canViewReports, async (req, 
   }
 });
 
-app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePermission('screen.reports.salessummary'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
@@ -1289,7 +1295,7 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req
 // One row per order LINE (not per order) - the item-level detail Summary Sales
 // deliberately leaves out. Same Completed/non-comp filter and date range as
 // sales-summary, so the two reports reconcile against each other.
-app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, requirePermission('screen.reports.salesline'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
@@ -1361,7 +1367,7 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (
 // excluded). 410000 is booked gross-of-discount, so an explicit "less: sales
 // discounts" line is returned and the figure reconciles to cash received.
 // Aggregate-based - no in-memory full scan. No schema/journal changes (report only).
-app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, requirePermission('screen.reports.percentagetax'), async (req, res) => {
   try {
     const { start, end } = req.query;
     if (!start || !end) {
@@ -1431,7 +1437,7 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (re
 // zeroes it might mistake for a filing obligation - the mirror of what the
 // percentage-tax report does for a VAT-registered one.
 // ============================================================
-app.get('/api/reports/vat', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/vat', verifyToken, ...canViewReports, requirePermission('screen.reports.vatreturn'), async (req, res) => {
   try {
     const { start, end } = req.query;
     if (!start || !end) {
@@ -1650,7 +1656,7 @@ app.get('/api/reports/books-health', verifyToken, ...canViewReports, async (req,
 // collections deposited AFTER that date, so re-running last month's report
 // still reproduces last month's numbers instead of silently restating them.
 // ============================================================
-app.get('/api/reports/ar-aging', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/ar-aging', verifyToken, ...canViewReports, requirePermission('screen.reports.arreport'), async (req, res) => {
   try {
     const asOf = req.query.asOf ? dayEnd(req.query.asOf) : new Date();
     if (Number.isNaN(asOf.getTime())) return res.status(400).json({ success: false, error: 'Invalid asOf date.' });
@@ -1746,7 +1752,7 @@ app.get('/api/reports/ar-aging', verifyToken, ...canViewReports, async (req, res
 // Undeposited collections (collected in range, deposited after it, or not yet)
 // are called out separately - that gap is exactly where cash goes missing.
 // ============================================================
-app.get('/api/reports/collections', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/collections', verifyToken, ...canViewReports, requirePermission('screen.reports.collections'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const basis = req.query.basis === 'deposit' ? 'deposit' : 'collection';
@@ -1854,7 +1860,7 @@ app.get('/api/reports/collections', verifyToken, ...canViewReports, async (req, 
 // change made directly and one that went through the approval queue both
 // appear, distinguishable by `viaApproval`.
 // ============================================================
-app.get('/api/reports/price-changes', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/price-changes', verifyToken, ...canViewReports, requirePermission('screen.reports.pricelog'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const filter = {
@@ -1972,7 +1978,7 @@ app.get('/api/reports/price-changes', verifyToken, ...canViewReports, async (req
 // and bills paid after it are counted as still open, so last month's report
 // still reproduces last month's numbers.
 // ============================================================
-app.get('/api/reports/ap-aging', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/ap-aging', verifyToken, ...canViewReports, requirePermission('screen.reports.apreport'), async (req, res) => {
   try {
     const asOf = req.query.asOf ? dayEnd(req.query.asOf) : new Date();
     if (Number.isNaN(asOf.getTime())) return res.status(400).json({ success: false, error: 'Invalid asOf date.' });
@@ -2080,7 +2086,7 @@ app.get('/api/reports/ap-aging', verifyToken, ...canViewReports, async (req, res
 // so a direct supplier payment that never had a bill raised against it still
 // appears - otherwise the report would quietly understate what left the bank.
 // ============================================================
-app.get('/api/reports/supplier-payments', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/supplier-payments', verifyToken, ...canViewReports, requirePermission('screen.reports.supplierpay'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const from = start ? dayStart(start) : dayStart(new Date(Date.now() - 30 * 86400000));

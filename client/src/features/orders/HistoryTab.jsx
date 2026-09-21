@@ -161,11 +161,11 @@ export default function HistoryTab({ ctx }) {
               <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <div>
                   <h3 className="text-lg font-black text-fg">Bank Deposits</h3>
-                  <p className="text-fg/60 text-xs">Cash-to-bank deposits (posted when a shift is closed &amp; reconciled).</p>
+                  <p className="text-fg/65 text-xs">Cash-to-bank deposits (posted when a shift is closed &amp; reconciled).</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={exportBankDepositsPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition">Export PDF</button>
-                  <button onClick={loadDeposits} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
+                  <button onClick={exportBankDepositsPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition">Export PDF</button>
+                  <button onClick={loadDeposits} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
                 </div>
               </div>
               {deposits === null ? (
@@ -286,7 +286,7 @@ export default function HistoryTab({ ctx }) {
                 </button>
               </div>
               {clockEntries.length === 0 ? (
-                <p className="text-fg/60 text-sm p-6 text-center font-bold">Click Load to view staff clock-in/out records.</p>
+                <p className="text-fg/65 text-sm p-6 text-center font-bold">Click Load to view staff clock-in/out records.</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[480px]">
@@ -307,10 +307,10 @@ export default function HistoryTab({ ctx }) {
                           <td className="px-5 py-2.5 text-fg font-bold">{e.staffName}</td>
                           <td className="px-5 py-2.5 text-fg/75 capitalize">{e.staffRole || '-'}</td>
                           <td className="px-5 py-2.5 text-fg/70">{e.clockIn ? new Date(e.clockIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}) : '-'}</td>
-                          <td className={`px-5 py-2.5 ${e.clockOut ? 'text-fg/70' : 'text-yellow-400/70 italic'}`}>
+                          <td className={`px-5 py-2.5 ${e.clockOut ? 'text-fg/70' : 'text-warning italic'}`}>
                             {e.clockOut ? new Date(e.clockOut).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}) : 'Still in'}
                           </td>
-                          <td className="px-5 py-2.5 text-right font-bold text-brand/80 tabular-nums">
+                          <td className="px-5 py-2.5 text-right font-bold text-brand-text tabular-nums">
                             {e.durationMinutes != null ? `${Math.floor(e.durationMinutes/60)}h ${e.durationMinutes%60}m` : '-'}
                           </td>
                         </tr>
@@ -406,14 +406,14 @@ export default function HistoryTab({ ctx }) {
                 <p className="text-4xl font-black text-white">P{shiftRevenue.toFixed(2)}</p>
                 <p className="text-white text-[10px] font-semibold mt-1">Gross P{shiftGross.toFixed(2)} &minus; Discounts P{shiftDisc.toFixed(2)}</p>
                 {shiftCompAmount > 0 && (
-                  <p className="text-gray-300 text-[10px] font-bold mt-0.5">+P{shiftCompAmount.toFixed(2)} complimentary (not collected)</p>
+                  <p className="text-fg/75 text-[10px] font-bold mt-0.5">+P{shiftCompAmount.toFixed(2)} complimentary (not collected)</p>
                 )}
               </div>
               <div className="flex justify-between border-t border-white/10 pt-4">
                 <div>
                   <p className="text-white text-[10px] font-bold uppercase tracking-wider">Completed Orders</p>
                   <p className="text-lg font-bold text-white">{todayShiftOrders.length}</p>
-                  {shiftComp.length > 0 && <p className="text-[9px] text-gray-300 font-bold">{shiftComp.length} complimentary</p>}
+                  {shiftComp.length > 0 && <p className="text-[9px] text-fg/75 font-bold">{shiftComp.length} complimentary</p>}
                 </div>
                 <div className="text-right">
                   <p className="text-white text-[10px] font-bold uppercase tracking-wider">Avg Ticket</p>
@@ -442,7 +442,7 @@ export default function HistoryTab({ ctx }) {
                   value={archiveSearch}
                   onChange={e => { setArchiveSearch(e.target.value); }}
                   onKeyDown={e => { if (e.key === 'Enter') fetchOrders(); }}
-                  className="w-full pl-8 pr-3 py-2 bg-page-bg border border-white/10 rounded-xl text-fg text-xs font-bold placeholder-white/20 outline-none focus:border-brand/50"
+                  className="w-full pl-8 pr-3 py-2 bg-page-bg border border-white/10 rounded-xl text-fg text-xs font-bold placeholder-fg/70 outline-none focus:border-brand/50"
                 />
               </div>
               <input type="date" value={archiveDateRange.start}
@@ -463,7 +463,7 @@ export default function HistoryTab({ ctx }) {
                   Clear
                 </button>
               )}
-              {archiveTotal > 0 && <span className="text-[10px] text-fg/60 font-bold self-center">{archiveTotal} results</span>}
+              {archiveTotal > 0 && <span className="text-[10px] text-fg/65 font-bold self-center">{archiveTotal} results</span>}
             </div>
 
             <div className="max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
@@ -490,11 +490,11 @@ export default function HistoryTab({ ctx }) {
 
                         <div className="border-t border-white/10 pt-3 mt-1">
                           <div className="flex justify-between items-center">
-                            <button onClick={() => toggleOrderList(date)} className="flex items-center gap-2 text-xs font-bold text-fg hover:text-fg transition">
+                            <button onClick={() => toggleOrderList(date)} className="flex items-center gap-2 text-xs font-bold text-fg transition">
                               <span>{expandedOrderLists[date] ? 'Hide Orders' : 'View All Orders'}</span>
                               {expandedOrderLists[date] ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                             </button>
-                            <button onClick={() => exportDayToPDF(date, data.orders)} className="text-[10px] bg-surface-2 border border-white/10 text-fg/60 px-2 py-1 rounded hover:bg-white/10 hover:text-fg transition font-bold uppercase tracking-wider">
+                            <button onClick={() => exportDayToPDF(date, data.orders)} className="text-[10px] bg-surface-2 border border-white/10 text-fg/65 px-2 py-1 rounded hover:bg-white/10 hover:text-fg transition font-bold uppercase tracking-wider">
                               Export Day
                             </button>
                           </div>

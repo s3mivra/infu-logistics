@@ -221,11 +221,11 @@ export default function AnalyticsTab({ ctx }) {
                     { label: 'All-Time Orders',         value: allTime.orders, notMoney: true, bold: true },
                   ].map((row, i) => row.section ? (
                     <tr key={i} className="bg-white/[0.03]">
-                      <td colSpan={2} className="px-5 py-2 text-[10px] font-black uppercase tracking-wider text-brand/80">{row.section}</td>
+                      <td colSpan={2} className="px-5 py-2 text-[10px] font-black uppercase tracking-wider text-brand-text">{row.section}</td>
                     </tr>
                   ) : (
                     <tr key={i} className="border-b border-white/5 last:border-0">
-                      <td className={`px-5 py-2.5 ${row.bold ? 'font-black text-fg' : 'text-fg/60'}`}>{row.label}</td>
+                      <td className={`px-5 py-2.5 ${row.bold ? 'font-black text-fg' : 'text-fg/65'}`}>{row.label}</td>
                       <td className={`px-5 py-2.5 text-right font-mono tabular-nums ${row.bold ? 'font-black text-fg' : row.neg ? 'text-danger' : 'text-fg/90'}`}>
                         {row.notMoney ? (row.value ?? 0).toLocaleString() : `${row.neg ? '-' : ''}₱${Math.abs(row.value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                       </td>
@@ -255,10 +255,10 @@ export default function AnalyticsTab({ ctx }) {
               <h3 className="text-fg text-xs font-bold uppercase tracking-wider mb-4">Top 5 Best Sellers</h3>
               <div className="space-y-3 relative z-10">
                 {tp.length === 0 ? (
-                  <p className="text-fg/60 text-sm italic">No sales data yet.</p>
+                  <p className="text-fg/65 text-sm italic">No sales data yet.</p>
                 ) : tp.map((p, i) => (
                   <div key={i} className="flex justify-between items-center text-sm">
-                    <span className="font-bold text-fg/60 truncate pr-4">#{i+1} {p.name}</span>
+                    <span className="font-bold text-fg/65 truncate pr-4">#{i+1} {p.name}</span>
                     <span className="text-brand-text font-black bg-accent/10 px-2 py-0.5 rounded">{p.qty}x</span>
                   </div>
                 ))}
@@ -314,7 +314,7 @@ export default function AnalyticsTab({ ctx }) {
                       </button>
                     ))}
                   </div>
-                  <span className="text-xs font-bold text-fg/60">
+                  <span className="text-xs font-bold text-fg/65">
                     ₱{salesTrendData.currentTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     <span className={`ml-2 ${salesTrendData.changePct >= 0 ? 'text-success' : 'text-danger'}`}>
                       {salesTrendData.changePct >= 0 ? '▲' : '▼'} {Math.abs(salesTrendData.changePct)}% vs prior {salesTrendPeriod}
@@ -338,7 +338,7 @@ export default function AnalyticsTab({ ctx }) {
                               style={{ height: `${Math.max(2, pct)}%` }} />
                             {/* tooltip */}
                             <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block whitespace-nowrap bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-[10px] z-10">
-                              <span className="text-fg/60">{day.date}</span> <span className="text-fg font-bold">₱{Number(day.revenue).toLocaleString()}</span>
+                              <span className="text-fg/65">{day.date}</span> <span className="text-fg font-bold">₱{Number(day.revenue).toLocaleString()}</span>
                             </div>
                           </div>
                         );
@@ -361,7 +361,7 @@ export default function AnalyticsTab({ ctx }) {
                 </h3>
                 <div className="space-y-4">
                   {mus.length === 0 ? (
-                    <p className="text-fg/60 text-xs">No sales data yet - complete orders to populate.</p>
+                    <p className="text-fg/65 text-xs">No sales data yet - complete orders to populate.</p>
                   ) : musPage.pageItems.map((item, idx) => { const d = analyticsDisplay(item); return (
                     <div key={idx} className="flex flex-col border-b border-accent/10 pb-3 last:border-0 last:pb-0">
                       <div className="flex justify-between items-center mb-2">
@@ -446,10 +446,10 @@ export default function AnalyticsTab({ ctx }) {
                       <div key={item._id} className="flex justify-between items-center text-sm">
                         <div className="flex flex-col min-w-0 pr-2">
                           <span className="text-fg/80 truncate font-semibold">{item.itemName}</span>
-                          <span className="text-fg/60 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit} on hand</span>
+                          <span className="text-fg/65 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit} on hand</span>
                         </div>
                         <div className="flex flex-col items-end gap-0.5">
-                          <span className="text-yellow-500/80 font-bold text-xs whitespace-nowrap">{isFinite(item.daysOfSupply) ? `~${Math.floor(item.daysOfSupply)}d supply` : '∞'}</span>
+                          <span className="text-warning font-bold text-xs whitespace-nowrap">{isFinite(item.daysOfSupply) ? `~${Math.floor(item.daysOfSupply)}d supply` : '∞'}</span>
                           {item.tiedUpCapital > 0 && <span className="text-warning text-[10px] font-mono">₱{Number(item.tiedUpCapital).toFixed(0)} tied</span>}
                         </div>
                       </div>
@@ -468,7 +468,7 @@ export default function AnalyticsTab({ ctx }) {
                       <div key={item._id} className="flex justify-between items-center text-sm">
                         <div className="flex flex-col min-w-0 pr-2">
                           <span className="text-fg/80 truncate font-semibold">{item.itemName}</span>
-                          <span className="text-fg/60 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit} · no sales 30d</span>
+                          <span className="text-fg/65 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit} · no sales 30d</span>
                         </div>
                         {item.tiedUpCapital > 0 && <span className="text-danger text-[11px] font-mono font-bold whitespace-nowrap">₱{Number(item.tiedUpCapital).toFixed(0)} tied</span>}
                       </div>

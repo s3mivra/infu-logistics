@@ -27,11 +27,11 @@ function RuleRow({ rule, products, onRemove }) {
     <div className="flex items-start gap-2 bg-surface border border-white/8 rounded-lg px-3 py-2 text-xs">
       <div className="flex-1 min-w-0">
         <span className="font-bold text-brand-text">{RULE_TYPE_LABELS[rule.ruleType]}</span>
-        {rule.ruleType === 'fixed_price' && prod && <span className="text-fg/60 ml-2">{prod.name} → {fmt(rule.salePrice)}</span>}
-        {rule.ruleType === 'percent_off' && prod && <span className="text-fg/60 ml-2">{prod.name} → {rule.discountPercent}% off</span>}
-        {rule.ruleType === 'threshold' && <span className="text-fg/60 ml-2">Order ≥ {fmt(rule.thresholdAmount)} → {prod?.name || 'product'} gets {rule.discountPercent}% off</span>}
+        {rule.ruleType === 'fixed_price' && prod && <span className="text-fg/65 ml-2">{prod.name} → {fmt(rule.salePrice)}</span>}
+        {rule.ruleType === 'percent_off' && prod && <span className="text-fg/65 ml-2">{prod.name} → {rule.discountPercent}% off</span>}
+        {rule.ruleType === 'threshold' && <span className="text-fg/65 ml-2">Order ≥ {fmt(rule.thresholdAmount)} → {prod?.name || 'product'} gets {rule.discountPercent}% off</span>}
       </div>
-      {onRemove && <button onClick={onRemove} className="text-danger hover:text-red-300 shrink-0"><X size={12} /></button>}
+      {onRemove && <button onClick={onRemove} className="text-danger shrink-0"><X size={12} /></button>}
     </div>
   );
 }
@@ -96,7 +96,7 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
     setExpanded(sale._id);
   };
 
-  const inputCls = 'bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand placeholder-white/20';
+  const inputCls = 'bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand placeholder-fg/70';
 
   return (
     <div className="bg-surface border border-white/10 shadow-md rounded-xl p-4 sm:p-6">
@@ -201,7 +201,7 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
                   </div>
                 )}
 
-                <button onClick={addRule} className="w-full py-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5">
+                <button onClick={addRule} className="w-full py-1.5 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5">
                   <Plus size={12} /> Add Rule
                 </button>
               </div>
@@ -211,7 +211,7 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
               {editing && (
                 <button onClick={resetForm} className="px-3 py-2 bg-white/5 text-fg/75 rounded-lg text-xs font-bold hover:bg-white/10 transition">Cancel</button>
               )}
-              <button onClick={saveSale} disabled={saving || !form.name.trim() || !form.startsAt || !form.endsAt} className="flex-1 py-2 bg-orange-500 text-white rounded-lg text-xs font-black uppercase tracking-wider hover:bg-orange-400 transition disabled:opacity-40">
+              <button onClick={saveSale} disabled={saving || !form.name.trim() || !form.startsAt || !form.endsAt} className="flex-1 py-2 bg-orange-700 text-white rounded-lg text-xs font-black uppercase tracking-wider hover:bg-orange-800 transition disabled:opacity-40">
                 {saving ? 'Saving…' : editing ? 'Update Sale' : 'Create Sale'}
               </button>
             </div>
@@ -246,14 +246,14 @@ export default function ProductsTab({ ctx }) {
     const d = nsDraft(key);
     return (
       <div className="mt-3 pt-3 border-t border-white/40">
-        <div className="text-[10px] text-white uppercase font-black mb-2 tracking-widest">Not from inventory</div>
+        <div className="text-[10px] text-on-brand uppercase font-black mb-2 tracking-widest">Not from inventory</div>
         <div className="flex flex-wrap gap-2">
           <input type="text" value={d.name} placeholder="e.g. Filtered Water"
             onChange={e => setNsDraft(key, { name: e.target.value })}
-            className="flex-1 min-w-[130px] bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-brand-text font-bold outline-none" />
+            className="flex-1 min-w-[130px] bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-gray-900 font-bold outline-none placeholder-gray-500" />
           <select value={d.unit}
             onChange={e => setNsDraft(key, { unit: e.target.value })}
-            className="w-20 bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-brand-text font-bold outline-none">
+            className="w-20 bg-white border border-white/10 rounded-lg px-2 py-1.5 text-xs text-gray-900 font-bold outline-none">
             {NON_STOCK_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
           </select>
           <button type="button"
@@ -262,7 +262,7 @@ export default function ProductsTab({ ctx }) {
             Add
           </button>
         </div>
-        <p className="text-[9px] text-white/80 mt-1.5 leading-snug">Recorded on the recipe, never deducted from stock and never costed - for things you do not buy by the unit, like filtered water.</p>
+        <p className="text-[9px] text-on-brand mt-1.5 leading-snug">Recorded on the recipe, never deducted from stock and never costed - for things you do not buy by the unit, like filtered water.</p>
       </div>
     );
   };
@@ -312,7 +312,7 @@ export default function ProductsTab({ ctx }) {
     handleSaveCategory, handleSaveProduct, handleVoidOrder, historyItemName, historyModalOpen,
     historyPage, historySubTab, importModal, importRows, importSubmitting,
     invBadgeCount, invForm, invItemsPerPage, invPage, invSubTab,
-    inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, itemDisplay,
+    inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, can, itemDisplay,
     itemsPerPage, jeForm, journalEntries, ledgerSubTab, navMode,
     newDiscount, openEditInventory, openProductModal, orderFilter, orders,
     ordersItemsPerPage, ordersPage, parseImportFile, paymentSelections, peso,
@@ -395,6 +395,33 @@ export default function ProductsTab({ ctx }) {
     return { ...mat, packBase: 1, unit: (invItem && invItem.unit) || mat.unit };
   };
 
+  // Adding a line to an add-on's optional recipe.
+  const [aoMat, setAoMat] = useState('');
+  const [aoQty, setAoQty] = useState('');
+  const [aoNsName, setAoNsName] = useState('');
+  const [aoNsQty, setAoNsQty] = useState('');
+  const [aoNsUnit, setAoNsUnit] = useState('ml');
+  const aoRecipe = addOnForm.recipe || [];
+  const setAoRecipe = (recipe) => setAddOnForm({ ...addOnForm, recipe });
+  // Written in the unit stock is kept in - 18 g, 30 ml, 1 pc - the same way a
+  // drink's recipe is, so an extra shot reads as coffee, not a fraction of a bag.
+  const addAoStock = () => {
+    const item = inventory.find(i => String(i._id) === String(aoMat));
+    const qty = parseFloat(aoQty);
+    if (!item || !(qty > 0)) return;
+    if (aoRecipe.some(r => String(r.invId) === String(item._id))) return;
+    setAoRecipe([...aoRecipe, { invId: String(item._id), name: item.itemName, qty, cost: item.unitCost || 0, unit: item.unit || 'pcs', packBase: 1 }]);
+    setAoMat(''); setAoQty('');
+  };
+  const addAoNonStock = () => {
+    const name = aoNsName.trim();
+    const qty = parseFloat(aoNsQty);
+    if (!name || !(qty > 0)) return;
+    setAoRecipe([...aoRecipe, { name, qty, cost: 0, unit: aoNsUnit, packBase: 1, nonStock: true }]);
+    setAoNsName(''); setAoNsQty('');
+  };
+  const emptyAddOn = { name: '', price: '', category: 'Extras', recipe: [] };
+
   const setFilter = (key, value) => setProdFilters({ ...prodFilters, [key]: value });
   const selectCls = 'bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-brand';
 
@@ -426,7 +453,7 @@ export default function ProductsTab({ ctx }) {
                 ingredient NAME, since inventory ids change on a rebuild. */}
             <div className="flex flex-wrap items-center gap-2 mb-5 p-3 bg-page-bg border border-white/10 rounded-xl">
               <div className="mr-auto min-w-0">
-                <p className="text-[11px] font-black uppercase tracking-widest text-fg/60">Menu Backup</p>
+                <p className="text-[11px] font-black uppercase tracking-widest text-fg/65">Menu Backup</p>
                 <p className="text-[10px] text-fg/70 mt-0.5">Download the whole menu, restore it after a rebuild.</p>
               </div>
               <button onClick={() => downloadMenuBackup(false)} disabled={menuBackupBusy}
@@ -445,7 +472,7 @@ export default function ProductsTab({ ctx }) {
                 barista sheets a human typed. Always review-then-commit. */}
             <div className="flex flex-wrap items-center gap-2 mb-5 p-3 bg-page-bg border border-white/10 rounded-xl">
               <div className="mr-auto min-w-0">
-                <p className="text-[11px] font-black uppercase tracking-widest text-fg/60">Recipe Workbook</p>
+                <p className="text-[11px] font-black uppercase tracking-widest text-fg/65">Recipe Workbook</p>
                 <p className="text-[10px] text-fg/70 mt-0.5">Read drinks and bulk recipes from the barista sheets.</p>
               </div>
               <label className={`flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition ${rsBusy ? 'opacity-40 pointer-events-none' : 'cursor-pointer'}`}>
@@ -460,7 +487,7 @@ export default function ProductsTab({ ctx }) {
             {BUSINESS_TYPE === 'fb' && (
               <div className="flex flex-wrap items-center gap-2 mb-5 p-3 bg-page-bg border border-white/10 rounded-xl">
                 <div className="mr-auto min-w-0">
-                  <p className="text-[11px] font-black uppercase tracking-widest text-fg/60">Menu Sheet</p>
+                  <p className="text-[11px] font-black uppercase tracking-widest text-fg/65">Menu Sheet</p>
                   <p className="text-[10px] text-fg/70 mt-0.5">One row per size, ingredients by stock code, e.g. <span className="font-mono">G10002/Water</span> with <span className="font-mono">20g/35ml</span>.</p>
                 </div>
                 <label className={`flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition ${msBusy ? 'opacity-40 pointer-events-none' : 'cursor-pointer'}`}>
@@ -483,10 +510,10 @@ export default function ProductsTab({ ctx }) {
                       ['Sizes', msPreview.counts.sizes, 'text-fg'],
                       ['Linked to stock', msPreview.counts.stockLines, 'text-success'],
                       ['Non-stock lines', msPreview.counts.nonStockLines, 'text-fg/70'],
-                      ['Need a look', msPreview.counts.needingReview, msPreview.counts.needingReview ? 'text-warning' : 'text-fg/60'],
+                      ['Need a look', msPreview.counts.needingReview, msPreview.counts.needingReview ? 'text-warning' : 'text-fg/65'],
                     ].map(([label, value, cls]) => (
                       <div key={label} className="bg-page-bg border border-white/10 rounded-xl p-2.5">
-                        <p className="text-[9px] font-black uppercase tracking-widest text-fg/60">{label}</p>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-fg/65">{label}</p>
                         <p className={`text-base font-black tabular-nums ${cls}`}>{value}</p>
                       </div>
                     ))}
@@ -504,22 +531,22 @@ export default function ProductsTab({ ctx }) {
                           </li>
                         ))}
                       </ul>
-                      <p className="text-[10px] text-fg/60 mt-2">These lines are left out of the recipe rather than guessed at. Fix the sheet and read it again, or import now and add them by hand.</p>
+                      <p className="text-[10px] text-fg/65 mt-2">These lines are left out of the recipe rather than guessed at. Fix the sheet and read it again, or import now and add them by hand.</p>
                     </div>
                   )}
 
                   {msPreview.nonStockNames.length > 0 && (
                     <div className="mb-4">
-                      <p className="text-[11px] font-black uppercase tracking-wider text-fg/60 mb-1.5">Recorded as non-stock</p>
+                      <p className="text-[11px] font-black uppercase tracking-wider text-fg/65 mb-1.5">Recorded as non-stock</p>
                       <p className="text-[11px] text-fg/75 leading-snug">{msPreview.nonStockNames.join(' &middot; ')}</p>
-                      <p className="text-[10px] text-fg/60 mt-1">Measured in the recipe but never deducted and never costed. Anything here that looks like a stock code is an item that does not exist yet.</p>
+                      <p className="text-[10px] text-fg/65 mt-1">Measured in the recipe but never deducted and never costed. Anything here that looks like a stock code is an item that does not exist yet.</p>
                     </div>
                   )}
 
                   <div className="border border-white/10 rounded-xl overflow-hidden mb-4">
                     <table className="w-full text-xs">
                       <thead>
-                        <tr className="bg-page-bg text-[9px] uppercase tracking-widest text-fg/60">
+                        <tr className="bg-page-bg text-[9px] uppercase tracking-widest text-fg/65">
                           <th className="text-left py-2 px-3">Product</th>
                           <th className="text-left py-2">Category</th>
                           <th className="text-left py-2">Sizes</th>
@@ -647,7 +674,7 @@ export default function ProductsTab({ ctx }) {
                     </>
                   )}
 
-                  <label className="flex items-center gap-2 text-[11px] text-fg/60 mb-4 cursor-pointer">
+                  <label className="flex items-center gap-2 text-[11px] text-fg/65 mb-4 cursor-pointer">
                     <input type="checkbox" checked={rsCreateMissing} onChange={e => setRsCreateMissing(e.target.checked)} />
                     Create the {rsPreview.counts.materialsMissing} missing stock item(s), at zero qty and zero cost
                   </label>
@@ -710,7 +737,7 @@ export default function ProductsTab({ ctx }) {
                       <button key={v} onClick={() => setMenuRestoreModal(m => ({ ...m, onConflict: v, preview: null }))}
                         className={`w-full text-left px-3 py-2.5 rounded-lg border transition ${
                           menuRestoreModal.onConflict === v ? 'bg-brand/15 border-brand/50' : 'bg-white/5 border-white/10 hover:border-white/20'}`}>
-                        <span className={`block text-xs font-bold ${menuRestoreModal.onConflict === v ? 'text-fg' : 'text-fg/60'}`}>{label}</span>
+                        <span className={`block text-xs font-bold ${menuRestoreModal.onConflict === v ? 'text-fg' : 'text-fg/65'}`}>{label}</span>
                         <span className="block text-[10px] text-fg/70 mt-0.5">{help}</span>
                       </button>
                     ))}
@@ -739,7 +766,7 @@ export default function ProductsTab({ ctx }) {
                               {mb.name > 0 && <span className="text-fg/75">name only <span className="text-warning font-bold tabular-nums">{mb.name}</span></span>}
                             </div>
                             {mb.name > 0 && (
-                              <p className="text-[10px] text-amber-400/80 mt-1">
+                              <p className="text-[10px] text-warning mt-1">
                                 Matched by name because the stock code did not line up - worth checking those are the right items.
                               </p>
                             )}
@@ -755,7 +782,7 @@ export default function ProductsTab({ ctx }) {
                             Those recipe lines will be left out, so affected products under-report cost until the
                             ingredient exists:
                           </p>
-                          <p className="text-[10px] text-fg/60 mt-1">{menuRestoreModal.preview.unmatchedIngredients.join(', ')}</p>
+                          <p className="text-[10px] text-fg/65 mt-1">{menuRestoreModal.preview.unmatchedIngredients.join(', ')}</p>
                         </div>
                       )}
                     </div>
@@ -792,7 +819,7 @@ export default function ProductsTab({ ctx }) {
                   value={prodSearch}
                   onChange={e => setProdSearch(e.target.value)}
                   placeholder="Search by name, category, code or description…"
-                  className="w-full bg-white/5 border border-white/10 rounded-lg pl-9 pr-9 py-2.5 text-sm text-fg outline-none focus:border-brand font-semibold placeholder-white/25"
+                  className="w-full bg-white/5 border border-white/10 rounded-lg pl-9 pr-9 py-2.5 text-sm text-fg outline-none focus:border-brand font-semibold placeholder-fg/70"
                 />
                 {prodSearch && (
                   <button type="button" onClick={() => setProdSearch('')} aria-label="Clear search"
@@ -855,11 +882,11 @@ export default function ProductsTab({ ctx }) {
               {currentProducts.length === 0 && (
                 <div className="py-12 px-6 text-center border border-dashed border-white/10 rounded-xl">
                   {prodFiltersActive ? (<>
-                    <Search size={26} className="mx-auto mb-3 text-brand/50" />
+                    <Search size={26} className="mx-auto mb-3 text-brand-text" />
                     <p className="text-fg/70 font-black uppercase tracking-widest text-xs mb-1">No matching items</p>
                     <p className="text-fg/70 text-xs">No product matches your search and filters. Try clearing them.</p>
                   </>) : (<>
-                    <Coffee size={26} className="mx-auto mb-3 text-brand/50" />
+                    <Coffee size={26} className="mx-auto mb-3 text-brand-text" />
                     <p className="text-fg/70 font-black uppercase tracking-widest text-xs mb-1">No menu items yet</p>
                     <p className="text-fg/70 text-xs">Add your first product with the form on the right; it goes live on the menu instantly.</p>
                   </>)}
@@ -880,7 +907,7 @@ export default function ProductsTab({ ctx }) {
                         {/* No fixed/auto width and no truncate - a longer name just
                             wraps onto its own line within the flex-wrap row instead
                             of overflowing past the card or getting clipped. */}
-                        <h4 className="font-bold text-fg break-words min-w-0">{p.name} <span className="text-xs text-brand/70 ml-1 whitespace-nowrap">({p.category})</span></h4>
+                        <h4 className="font-bold text-fg break-words min-w-0">{p.name} <span className="text-xs text-brand-text ml-1 whitespace-nowrap">({p.category})</span></h4>
                         {(() => {
                           const est = getEstimatedStock(p.baseRecipe);
                           if (est === null) return null;
@@ -903,19 +930,19 @@ export default function ProductsTab({ ctx }) {
                         )}
                       </div>
                       {p.stockAvailable === false && p.stockReason && (
-                        <p className="text-[11px] text-red-400/90 mt-1">{p.stockReason}</p>
+                        <p className="text-[11px] text-danger mt-1">{p.stockReason}</p>
                       )}
                       {/* A priced size with no materials sells for money while
                           deducting nothing - not fatal, but it should not go
                           unnoticed. */}
                       {p.sizesWithoutRecipe?.length > 0 && (
-                        <p className="text-[11px] text-amber-400/90 mt-1">
+                        <p className="text-[11px] text-warning mt-1">
                           No materials set for {p.sizesWithoutRecipe.length === 1 ? 'size' : 'sizes'}{' '}
                           {p.sizesWithoutRecipe.map(n => `"${n}"`).join(', ')} - selling {p.sizesWithoutRecipe.length === 1 ? 'it' : 'them'} deducts no stock.
                         </p>
                       )}
                       {p.description && <p className="text-xs text-fg/70 mt-1 line-clamp-2">{p.description}</p>}
-                      <p className="text-sm text-fg/70 font-bold mt-1">P{Number(p.basePrice || p.price || 0).toFixed(2)} {p.baseSize && <span className="text-xs text-fg/65 font-normal">({p.baseSize})</span>} {p.sizes?.length > 0 && <span className="text-brand/70 text-xs ml-1">(+ {p.sizes.length} sizes)</span>}</p>
+                      <p className="text-sm text-fg/70 font-bold mt-1">P{Number(p.basePrice || p.price || 0).toFixed(2)} {p.baseSize && <span className="text-xs text-fg/65 font-normal">({p.baseSize})</span>} {p.sizes?.length > 0 && <span className="text-brand-text text-xs ml-1">(+ {p.sizes.length} sizes)</span>}</p>
                     </div>
                   </div>
 
@@ -992,13 +1019,14 @@ export default function ProductsTab({ ctx }) {
             {/* 2. Manage Categories */}
             <div className="mt-8 border-t border-white/10 pt-6">
               <h3 className="text-xl font-bold mb-4 text-fg border-b border-white/10 pb-2">Manage Categories & Routing</h3>
+              {can('products.manage') && (
               <form onSubmit={handleSaveCategory} className="flex flex-wrap gap-3 mb-6">
                 <input
                   type="text"
                   value={catForm.name}
                   onChange={e => setCatForm({...catForm, name: e.target.value})}
                   placeholder="Category Name"
-                  className="flex-1 bg-white/5 border border-white/10 rounded-lg p-3 text-fg outline-none focus:border-brand font-semibold placeholder-white/20"
+                  className="flex-1 bg-white/5 border border-white/10 rounded-lg p-3 text-fg outline-none focus:border-brand font-semibold placeholder-fg/70"
                   required
                 />
                 <select
@@ -1027,6 +1055,7 @@ export default function ProductsTab({ ctx }) {
                   </button>
                 )}
               </form>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {categories.map(c => (
@@ -1037,7 +1066,7 @@ export default function ProductsTab({ ctx }) {
                     </div>
                     <div className="flex gap-2">
                       <button onClick={() => { setEditingCategory(c); setCatForm({ name: c.name, department: c.department || DEFAULT_DEPARTMENT }); }} className="text-fg/70 hover:text-brand-text p-1.5 rounded"><Edit size={16} /></button>
-                      <button onClick={() => deleteCategory(c._id)} className="text-danger hover:text-red-300 p-1.5 rounded"><Trash2 size={16} /></button>
+                      {can('products.manage') && <button onClick={() => deleteCategory(c._id)} className="text-danger p-1.5 rounded"><Trash2 size={16} /></button>}
                     </div>
                   </div>
                 ))}
@@ -1047,13 +1076,14 @@ export default function ProductsTab({ ctx }) {
             {/* 3. MANAGE GLOBAL ADD-ONS - attaching an add-on to a product needs one to exist first */}
             <div className="mt-8 border-t border-white/10 pt-6">
               <h3 className="text-xl font-bold mb-4 text-fg border-b border-white/10 pb-2">Manage Add-Ons</h3>
+              {isSuperAdmin && (
               <form onSubmit={handleSaveAddOn} className="flex flex-wrap gap-3 mb-6">
                 <input
                   type="text"
                   placeholder={BUSINESS_TYPE === 'log' ? 'Name (e.g. Custom Grind)' : 'Name (e.g. Popping Boba)'}
                   value={addOnForm.name}
                   onChange={e => setAddOnForm({...addOnForm, name: e.target.value})}
-                  className="flex-1 bg-white/5 border border-white/10 rounded-lg p-3 text-fg outline-none focus:border-brand font-semibold placeholder-white/20"
+                  className="flex-1 bg-white/5 border border-white/10 rounded-lg p-3 text-fg outline-none focus:border-brand font-semibold placeholder-fg/70"
                   required
                 />
                 <input
@@ -1061,7 +1091,7 @@ export default function ProductsTab({ ctx }) {
                   placeholder="Price"
                   value={addOnForm.price}
                   onChange={e => setAddOnForm({...addOnForm, price: e.target.value})}
-                  className="w-24 bg-white/5 border border-white/10 rounded-lg p-3 text-fg outline-none focus:border-brand font-bold placeholder-white/20"
+                  className="w-24 bg-white/5 border border-white/10 rounded-lg p-3 text-fg outline-none focus:border-brand font-bold placeholder-fg/70"
                   required
                 />
                 <select
@@ -1081,22 +1111,71 @@ export default function ProductsTab({ ctx }) {
                 </select>
                 <button type="submit" className="bg-brand text-on-brand font-bold px-6 py-2 rounded-lg hover:bg-brand-dark transition shadow-md">{addOnForm._id ? 'Save' : 'Add'}</button>
                 {addOnForm._id && (
-                  <button type="button" onClick={() => setAddOnForm({ name: '', price: '', category: 'Extras' })}
-                    className="bg-white/5 text-fg/60 font-bold px-4 py-2 rounded-lg hover:bg-white/10 transition">Cancel</button>
+                  <button type="button" onClick={() => setAddOnForm(emptyAddOn)}
+                    className="bg-white/5 text-fg/65 font-bold px-4 py-2 rounded-lg hover:bg-white/10 transition">Cancel</button>
                 )}
+
+                {/* Optional: what this extra takes from stock when it is sold.
+                    Without one, the add-on only changes the price. */}
+                <details className="w-full bg-white/5 border border-white/10 rounded-lg p-3" open={aoRecipe.length > 0}>
+                  <summary className="text-xs font-bold text-fg/80 cursor-pointer select-none">
+                    Recipe (optional){aoRecipe.length > 0 ? ` - ${aoRecipe.length} item${aoRecipe.length === 1 ? '' : 's'}` : ' - takes nothing from stock'}
+                  </summary>
+                  <div className="mt-3 space-y-2">
+                    {aoRecipe.map((r, i) => (
+                      <div key={`${r.invId || r.name}-${i}`} className="flex items-center gap-2 text-sm">
+                        <span className="flex-1 text-fg font-semibold truncate">
+                          {r.name}{r.nonStock && <span className="ml-2 text-[9px] font-black uppercase tracking-wider text-fg/65">not stock</span>}
+                        </span>
+                        <input type="number" step="any" min="0" value={r.qty}
+                          onChange={e => setAoRecipe(aoRecipe.map((x, j) => j === i ? { ...x, qty: parseFloat(e.target.value) || 0 } : x))}
+                          className="w-20 bg-page-bg border border-white/10 rounded p-1.5 text-center text-fg font-bold" />
+                        <span className="w-8 text-xs text-fg/70 font-bold">{r.unit}</span>
+                        <button type="button" onClick={() => setAoRecipe(aoRecipe.filter((_, j) => j !== i))} className="text-danger"><X size={15} /></button>
+                      </div>
+                    ))}
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <select value={aoMat} onChange={e => setAoMat(e.target.value)}
+                        className="flex-1 min-w-[160px] bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-xs text-fg outline-none focus:border-brand">
+                        <option value="">From stock...</option>
+                        {inventory.map(inv => <option key={inv._id} value={inv._id}>{inv.itemName} ({inv.unit || 'pcs'})</option>)}
+                      </select>
+                      <input type="number" step="any" min="0" placeholder={(inventory.find(i => String(i._id) === String(aoMat))?.unit) || 'qty'}
+                        value={aoQty} onChange={e => setAoQty(e.target.value)}
+                        className="w-20 bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-xs text-fg outline-none focus:border-brand" />
+                      <button type="button" onClick={addAoStock} className="bg-brand/15 text-brand-text px-3 py-2 rounded-lg text-xs font-bold hover:bg-brand/25 transition">Add</button>
+                    </div>
+                    {BUSINESS_TYPE !== 'log' && (
+                      <div className="flex flex-wrap gap-2">
+                        <input type="text" placeholder="Not from stock, e.g. Hot Water" value={aoNsName} onChange={e => setAoNsName(e.target.value)}
+                          className="flex-1 min-w-[160px] bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-xs text-fg outline-none focus:border-brand" />
+                        <input type="number" step="any" min="0" placeholder="qty" value={aoNsQty} onChange={e => setAoNsQty(e.target.value)}
+                          className="w-20 bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-xs text-fg outline-none focus:border-brand" />
+                        <select value={aoNsUnit} onChange={e => setAoNsUnit(e.target.value)}
+                          className="w-16 bg-page-bg border border-white/10 rounded-lg px-1 py-2 text-xs text-fg outline-none focus:border-brand">
+                          {['ml', 'g', 'pcs'].map(u => <option key={u} value={u}>{u}</option>)}
+                        </select>
+                        <button type="button" onClick={addAoNonStock} className="bg-white/10 text-fg/80 px-3 py-2 rounded-lg text-xs font-bold hover:bg-white/15 transition">Add</button>
+                      </div>
+                    )}
+                  </div>
+                </details>
               </form>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {globalAddOns.map(a => (
                   <div key={a._id} className={`flex justify-between items-center p-3 border rounded-xl bg-surface-2 ${addOnForm._id === a._id ? 'border-brand/60' : 'border-white/10'}`}>
                     <div>
                       <span className="font-bold text-sm text-fg block">{a.name}</span>
-                      <span className="text-[10px] uppercase font-bold text-brand/70 tracking-wider">{a.category} • +P{a.price}</span>
+                      <span className="text-[10px] uppercase font-bold text-brand-text tracking-wider">
+                        {a.category} • +P{a.price}{(a.recipe || []).length > 0 ? ` • recipe: ${a.recipe.length}` : ''}
+                      </span>
                     </div>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => setAddOnForm({ _id: a._id, name: a.name, price: a.price, category: a.category || 'Extras' })}
+                      <button onClick={() => setAddOnForm({ _id: a._id, name: a.name, price: a.price, category: a.category || 'Extras', recipe: a.recipe || [] })}
                         className="text-fg/70 hover:text-fg bg-white/5 hover:bg-white/10 p-1.5 rounded"><Edit size={16} /></button>
-                      <button onClick={() => deleteAddOn(a._id)} className="text-danger hover:text-red-300 bg-red-500/10 p-1.5 rounded"><Trash2 size={16} /></button>
+                      <button onClick={() => deleteAddOn(a._id)} className="text-danger bg-red-500/10 p-1.5 rounded"><Trash2 size={16} /></button>
                     </div>
                   </div>
                 ))}
@@ -1106,6 +1185,7 @@ export default function ProductsTab({ ctx }) {
 
           {/* RIGHT COLUMN: Add Product Form */}
           {/* FIX 3: Added min-h-[600px] on mobile so the form has room to breathe */}
+          {can('products.manage') && (
           <div className="w-full lg:w-96 bg-surface border border-white/10 rounded-xl p-4 sm:p-6 flex flex-col min-h-[600px] lg:min-h-0 lg:h-full overflow-hidden shadow-md">
             <h3 className="text-xl font-bold text-fg mb-4 border-b border-white/10 pb-2 shrink-0">
               {editingProduct ? 'Edit Product' : 'Add Product'}
@@ -1115,7 +1195,7 @@ export default function ProductsTab({ ctx }) {
               <form onSubmit={handleSaveProduct} className="space-y-4">
                 {/* Basic Info */}
                 <div>
-                  <label className="block text-sm font-bold text-fg/60 mb-2">Product Image</label>
+                  <label className="block text-sm font-bold text-fg/65 mb-2">Product Image</label>
                   <div className="flex items-center gap-4">
                     {formData.image ? (
                       <img src={formData.image} alt="Preview" className="w-16 h-16 object-cover rounded-lg border border-white/10 shadow-sm" />
@@ -1140,21 +1220,21 @@ export default function ProductsTab({ ctx }) {
                     </div>
                   </div>
                 </div>
-                <div><label className="block text-sm font-bold text-fg/60 mb-1">Name</label><input required type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand font-semibold placeholder-white/20" /></div>
+                <div><label className="block text-sm font-bold text-fg/65 mb-1">Name</label><input required type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand font-semibold placeholder-fg/70" /></div>
                 <div>
-                  <label className="block text-sm font-bold text-fg/60 mb-1">Category</label>
+                  <label className="block text-sm font-bold text-fg/65 mb-1">Category</label>
                   <select required value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand font-semibold">
                     <option value="" disabled>Select Category...</option>
                     {categories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
                   </select>
                 </div>
-                <div><label className="block text-sm font-bold text-fg/60 mb-1">Description</label><textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand h-20 placeholder-white/20 font-medium"></textarea></div>
+                <div><label className="block text-sm font-bold text-fg/65 mb-1">Description</label><textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand h-20 placeholder-fg/70 font-medium"></textarea></div>
                 
                 {/* Base Size & Materials */}
                 <div className="bg-surface-2 p-4 rounded-xl border border-white/10 mt-6">
                   <label className="block text-sm font-black text-fg/80 mb-3 uppercase tracking-wider">Base Size / Standard Recipe</label>
                   <div className="flex gap-2 mb-2">
-                    <input type="text" placeholder="Size name" value={formData.baseSize || ''} onChange={e => setFormData({...formData, baseSize: e.target.value})} className="w-1/2 bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand font-bold placeholder-white/20" />
+                    <input type="text" placeholder="Size name" value={formData.baseSize || ''} onChange={e => setFormData({...formData, baseSize: e.target.value})} className="w-1/2 bg-white/5 border border-white/10 rounded-lg p-2.5 text-fg outline-none focus:border-brand font-bold placeholder-fg/70" />
                     <div className="w-1/2 relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/70 font-bold">₱</span>
                       <input type="number" step="0.01" placeholder="Price" value={formData.basePrice} onChange={e => setFormData({...formData, basePrice: parseFloat(e.target.value) || 0})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pl-8 text-fg outline-none focus:border-brand font-bold" />
@@ -1163,16 +1243,16 @@ export default function ProductsTab({ ctx }) {
                   {/* Per-product discount - applies only to this product's line, not the whole order. */}
                   <div className="flex items-center gap-2 mb-1">
                     <div className="relative w-1/2">
-                      <input type="number" min="0" max="100" step="0.01" placeholder="Discount" value={formData.discountPercent || ''} onChange={e => setFormData({...formData, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pr-7 text-fg outline-none focus:border-brand font-bold placeholder-white/20" />
+                      <input type="number" min="0" max="100" step="0.01" placeholder="Discount" value={formData.discountPercent || ''} onChange={e => setFormData({...formData, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pr-7 text-fg outline-none focus:border-brand font-bold placeholder-fg/70" />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/70 font-bold">%</span>
                     </div>
                     {formData.discountPercent > 0 && (
-                      <span className="text-[11px] text-emerald-400 font-bold">
+                      <span className="text-[11px] text-success font-bold">
                         → ₱{((parseFloat(formData.basePrice) || 0) * (1 - formData.discountPercent / 100)).toFixed(2)} after discount
                       </span>
                     )}
                   </div>
-                  <p className="text-[10px] text-fg/60 mb-3">Discount applies to this product only, on every order line - not the whole order. Overrides below apply when a specific client buys this product.</p>
+                  <p className="text-[10px] text-fg/65 mb-3">Discount applies to this product only, on every order line - not the whole order. Overrides below apply when a specific client buys this product.</p>
 
                   {/* VAT classification. Products are VATable unless flagged here -
                       the exception list, not the opt-in list. Only meaningful once
@@ -1186,7 +1266,7 @@ export default function ProductsTab({ ctx }) {
                     />
                     <span className="text-xs font-bold text-fg">VAT-exempt item</span>
                   </label>
-                  <p className="text-[10px] text-fg/60 mb-3">
+                  <p className="text-[10px] text-fg/65 mb-3">
                     Leave unticked for normal goods. Tick only for items exempt by law - raw
                     agricultural produce, prescription medicines. Ignored while the business is
                     set to Non-VAT in Settings.
@@ -1202,7 +1282,7 @@ export default function ProductsTab({ ctx }) {
                     />
                     <span className="text-xs font-bold text-fg">Bulk / wholesale item</span>
                   </label>
-                  <p className="text-[10px] text-fg/60 mb-3">
+                  <p className="text-[10px] text-fg/65 mb-3">
                     Shows this product under a dedicated <span className="font-bold">Bulk</span> tab in the register and client portal - for sack/wholesale quantities sold apart from the regular menu.
                   </p>
 
@@ -1247,7 +1327,7 @@ export default function ProductsTab({ ctx }) {
                         </div>
                         <button type="button"
                           onClick={() => setFormData({ ...formData, clientDiscounts: (formData.clientDiscounts || []).filter((_, i) => i !== idx) })}
-                          className="text-red-400/70 hover:text-danger text-sm">✕</button>
+                          className="text-danger text-sm">✕</button>
                       </div>
                     ))}
                   </div>
@@ -1311,7 +1391,7 @@ export default function ProductsTab({ ctx }) {
                         </div>
                         <button type="button"
                           onClick={() => setFormData({ ...formData, clientBulkBreaks: (formData.clientBulkBreaks || []).filter((_, i) => i !== idx) })}
-                          className="text-red-400/70 hover:text-danger text-sm">✕</button>
+                          className="text-danger text-sm">✕</button>
                       </div>
                     ))}
                   </div>
@@ -1371,7 +1451,7 @@ export default function ProductsTab({ ctx }) {
                         </div>
                         <button type="button"
                           onClick={() => setFormData({ ...formData, segmentDiscounts: (formData.segmentDiscounts || []).filter((_, i) => i !== idx) })}
-                          className="text-red-400/70 hover:text-danger text-sm">✕</button>
+                          className="text-danger text-sm">✕</button>
                       </div>
                     ))}
                   </div>
@@ -1414,7 +1494,7 @@ export default function ProductsTab({ ctx }) {
                         </div>
                         <button type="button"
                           onClick={() => setFormData({ ...formData, bulkBreaks: (formData.bulkBreaks || []).filter((_, i) => i !== idx) })}
-                          className="text-red-400/70 hover:text-danger text-sm">✕</button>
+                          className="text-danger text-sm">✕</button>
                       </div>
                     ))}
                   </div>
@@ -1427,15 +1507,15 @@ export default function ProductsTab({ ctx }) {
                     return baseCost > 0 ? (
                       <div className="flex justify-between items-center text-[10px] px-1 mb-3">
                         <span className={parseFloat(baseMargin) >= 30 ? "text-success font-black" : "text-warning font-black"}>Margin: {baseMargin}%</span>
-                        <button type="button" onClick={() => setFormData({...formData, basePrice: parseFloat(suggestedBasePrice)})} className="text-fg/60 hover:text-brand-text font-bold transition">Set 30% Margin (₱{suggestedBasePrice})</button>
+                        <button type="button" onClick={() => setFormData({...formData, basePrice: parseFloat(suggestedBasePrice)})} className="text-fg/65 hover:text-brand-text font-bold transition">Set 30% Margin (₱{suggestedBasePrice})</button>
                       </div>
                     ) : <div className="mb-3"></div>;
                   })()}
                   
                   <div className="bg-accent p-3 rounded-lg border border-white/10">
                     <div className="flex justify-between items-center mb-3">
-                      <span className="text-xs text-white font-black uppercase tracking-wider">Base Materials</span>
-                      <span className="text-xs text-white font-black">Cost: ₱{calcRecipeCost(formData.baseRecipe).toFixed(2)}</span>
+                      <span className="text-xs text-on-brand font-black uppercase tracking-wider">Base Materials</span>
+                      <span className="text-xs text-on-brand font-black">Cost: ₱{calcRecipeCost(formData.baseRecipe).toFixed(2)}</span>
                     </div>
                     {(formData.baseRecipe || []).map((mat, i) => {
                       const currentPb = mat.packBase > 0 ? mat.packBase : 1;
@@ -1443,26 +1523,26 @@ export default function ProductsTab({ ctx }) {
                       const dispQty = isLog ? Math.round(mat.qty / currentPb) : +(mat.qty / currentPb).toFixed(3);
                       return (
                       <div key={i} className="flex items-center gap-2 mb-2 text-sm">
-                        <span className="flex-1 text-white font-semibold truncate">{mat.name}</span>
+                        <span className="flex-1 text-on-brand font-semibold truncate">{mat.name}</span>
                         <input type="number" step={isLog ? '1' : 'any'} min={isLog ? '1' : undefined} value={dispQty}
                           onChange={e => updateMaterialQty((isLog ? (parseInt(e.target.value) || 0) : (parseFloat(e.target.value) || 0)) * currentPb, i, null)}
                           className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
-                        <span className="text-white w-8 text-xs font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : mat.unit}</span>
-                        <button type="button" onClick={() => removeMaterial(i, null)} className="text-danger hover:text-red-300 ml-2"><X size={16} /></button>
+                        <span className="text-on-brand w-8 text-xs font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : mat.unit}</span>
+                        <button type="button" onClick={() => removeMaterial(i, null)} className="text-danger ml-2"><X size={16} /></button>
                       </div>
                       );
                     })}
                     <div className="mt-4 pt-3 border-t border-white">
-                      <div className="text-[10px] text-white uppercase font-black mb-2 tracking-widest flex items-center gap-1"><Plus size={12}/> Tap to Add Material</div>
+                      <div className="text-[10px] text-on-brand uppercase font-black mb-2 tracking-widest flex items-center gap-1"><Plus size={12}/> Tap to Add Material</div>
                       <input type="text" value={matSearch['base'] || ''}
                         onChange={e => setMatSearch(m => ({ ...m, ['base']: e.target.value }))}
                         placeholder="Search materials..."
-                        className="w-full mb-2 bg-white border border-white/10 rounded-lg px-3 py-1.5 text-xs text-brand-text font-bold outline-none placeholder-black/40" />
+                        className="w-full mb-2 bg-white border border-white/10 rounded-lg px-3 py-1.5 text-xs text-gray-900 font-bold outline-none placeholder-gray-500" />
                       <div className="max-h-32 overflow-y-auto bg-white border border-white/10 rounded-lg custom-scrollbar p-1">
                         {inventory.length === 0 ? (
-                          <p className="p-2 text-xs text-brand-text italic font-medium">No inventory available.</p>
+                          <p className="p-2 text-xs text-gray-600 italic font-medium">No inventory available.</p>
                         ) : inventory.filter(i => matchesMat(i, 'base')).length === 0 ? (
-                          <p className="p-2 text-xs text-brand-text italic font-medium">Nothing matches that search.</p>
+                          <p className="p-2 text-xs text-gray-600 italic font-medium">Nothing matches that search.</p>
                         ) : (
                           inventory.filter(i => matchesMat(i, 'base')).map(inv => {
                             // packInfo already works out BOTH the pack label
@@ -1473,7 +1553,7 @@ export default function ProductsTab({ ctx }) {
                             const dispUnit = BUSINESS_TYPE === 'log' ? 'pcs' : pack.label;
                             const packCost = pack.cost || 0;
                             return (
-                            <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, null)} className="w-full text-left px-3 py-2 text-xs text-brand-text font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
+                            <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, null)} className="w-full text-left px-3 py-2 text-xs text-gray-900 font-bold hover:bg-black/5 transition rounded flex justify-between items-center">
                               <span className="truncate pr-2">{inv.itemName}</span>
                               <span className="text-black shrink-0 font-mono">₱{packCost.toFixed(2)}/{dispUnit}</span>
                             </button>
@@ -1496,8 +1576,8 @@ export default function ProductsTab({ ctx }) {
                   {(formData.sizes || []).map((size, idx) => (
                     <div key={idx} className="bg-surface-2 p-4 rounded-xl border border-white/10 mb-4">
                       <div className="flex gap-2 mb-2">
-                        <input type="text" placeholder="Size Name" value={size.name} onChange={e => updateSize(idx, 'name', e.target.value)} className="w-1/2 bg-white/5 border border-white/10 rounded-lg p-2 text-sm text-fg font-bold placeholder-white/20" required />
-                        <input type="number" step="0.01" placeholder="Price" value={size.price} onChange={e => updateSize(idx, 'price', e.target.value)} className="w-1/3 bg-white/5 border border-white/10 rounded-lg p-2 text-sm text-fg font-bold placeholder-white/20" required />
+                        <input type="text" placeholder="Size Name" value={size.name} onChange={e => updateSize(idx, 'name', e.target.value)} className="w-1/2 bg-white/5 border border-white/10 rounded-lg p-2 text-sm text-fg font-bold placeholder-fg/70" required />
+                        <input type="number" step="0.01" placeholder="Price" value={size.price} onChange={e => updateSize(idx, 'price', e.target.value)} className="w-1/3 bg-white/5 border border-white/10 rounded-lg p-2 text-sm text-fg font-bold placeholder-fg/70" required />
                         <button type="button" onClick={() => removeSize(idx)} className="text-fg/65 hover:text-danger font-bold ml-auto px-2"><X size={20} /></button>
                       </div>
 
@@ -1523,8 +1603,8 @@ export default function ProductsTab({ ctx }) {
 
                       <div className="bg-accent p-3 rounded-lg border border-white/10 mt-3">
                         <div className="flex justify-between items-center mb-3">
-                          <span className="text-xs text-white font-black uppercase tracking-wider">{size.name || 'New Size'} Materials</span>
-                          <span className="text-xs text-white font-black">Cost: ₱{calcRecipeCost(size.recipe).toFixed(2)}</span>
+                          <span className="text-xs text-on-brand font-black uppercase tracking-wider">{size.name || 'New Size'} Materials</span>
+                          <span className="text-xs text-on-brand font-black">Cost: ₱{calcRecipeCost(size.recipe).toFixed(2)}</span>
                         </div>
                         {(size.recipe || []).map((mat, i) => {
                           const currentPb = mat.packBase > 0 ? mat.packBase : 1;
@@ -1532,30 +1612,30 @@ export default function ProductsTab({ ctx }) {
                           const dispQty = isLog ? Math.round(mat.qty / currentPb) : +(mat.qty / currentPb).toFixed(3);
                           return (
                           <div key={i} className="flex items-center gap-2 mb-2 text-sm">
-                            <span className="flex-1 text-white font-semibold truncate">{mat.name}</span>
+                            <span className="flex-1 text-on-brand font-semibold truncate">{mat.name}</span>
                             <input type="number" step={isLog ? '1' : 'any'} min={isLog ? '1' : undefined} value={dispQty}
                               onChange={e => updateMaterialQty((isLog ? (parseInt(e.target.value) || 0) : (parseFloat(e.target.value) || 0)) * currentPb, i, idx)}
                               className="w-16 bg-white border border-white/10 rounded p-1.5 text-center text-black font-bold" />
-                            <span className="text-white w-8 text-xs font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : mat.unit}</span>
-                            <button type="button" onClick={() => removeMaterial(i, idx)} className="text-danger hover:text-red-300 ml-2"><X size={16} /></button>
+                            <span className="text-on-brand w-8 text-xs font-bold">{BUSINESS_TYPE === 'log' ? 'pcs' : mat.unit}</span>
+                            <button type="button" onClick={() => removeMaterial(i, idx)} className="text-danger ml-2"><X size={16} /></button>
                           </div>
                           );
                         })}
                         <div className="mt-4 pt-3 border-t border-white">
-                          <div className="text-[10px] text-white uppercase font-black mb-2 tracking-widest flex items-center gap-1"><Plus size={12}/> Tap to Add Material</div>
+                          <div className="text-[10px] text-on-brand uppercase font-black mb-2 tracking-widest flex items-center gap-1"><Plus size={12}/> Tap to Add Material</div>
                           <input type="text" value={matSearch[`size-${idx}`] || ''}
                             onChange={e => setMatSearch(m => ({ ...m, [`size-${idx}`]: e.target.value }))}
                             placeholder="Search materials..."
-                            className="w-full mb-2 bg-white border border-white/10 rounded-lg px-3 py-1.5 text-xs text-brand-text font-bold outline-none placeholder-black/40" />
+                            className="w-full mb-2 bg-white border border-white/10 rounded-lg px-3 py-1.5 text-xs text-gray-900 font-bold outline-none placeholder-gray-500" />
                           <div className="max-h-28 overflow-y-auto bg-white border border-white/10 rounded-lg custom-scrollbar p-1">
                             {inventory.filter(i => matchesMat(i, `size-${idx}`)).length === 0 ? (
-                              <p className="p-2 text-xs text-brand-text italic font-medium">Nothing matches that search.</p>
+                              <p className="p-2 text-xs text-gray-600 italic font-medium">Nothing matches that search.</p>
                             ) : inventory.filter(i => matchesMat(i, `size-${idx}`)).map(inv => {
                               const pack = packInfo ? packInfo(inv) : { packBase: 1, label: inv.unit, cost: inv.unitCost || 0 };
                               const dispUnit = BUSINESS_TYPE === 'log' ? 'pcs' : pack.label;
                               const packCost = pack.cost || 0;
                               return (
-                              <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, idx)} className="w-full text-left px-3 py-2 text-xs text-brand-text font-bold hover:bg-white/10 transition rounded flex justify-between items-center">
+                              <button type="button" key={inv._id} onClick={() => addMaterialToRecipe(inv._id, idx)} className="w-full text-left px-3 py-2 text-xs text-gray-900 font-bold hover:bg-black/5 transition rounded flex justify-between items-center">
                                 <span className="truncate pr-2">{inv.itemName}</span>
                                 <span className="text-black shrink-0 font-mono">₱{packCost.toFixed(2)}/{dispUnit}</span>
                               </button>
@@ -1633,9 +1713,9 @@ export default function ProductsTab({ ctx }) {
                   <input type="url" placeholder="https://example.com/image.jpg"
                     value={formData.imageUrl || ''}
                     onChange={e => setFormData({...formData, imageUrl: e.target.value, image: e.target.value || formData.image})}
-                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/60 placeholder-white/20"
+                    className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/60 placeholder-fg/70"
                   />
-                  <p className="text-[10px] text-fg/60 mt-1">Leave blank to use uploaded image. Paste URL to override.</p>
+                  <p className="text-[10px] text-fg/65 mt-1">Leave blank to use uploaded image. Paste URL to override.</p>
                 </div>
 
                 {/* Save Buttons */}
@@ -1653,13 +1733,14 @@ export default function ProductsTab({ ctx }) {
                     Without it the only ways out of an edit were saving or deleting. */}
                 {editingProduct && (
                   <button type="button" onClick={resetProductForm}
-                    className="w-full bg-white/5 text-fg/60 font-bold py-3 rounded-xl hover:bg-white/10 hover:text-fg transition uppercase tracking-wider text-xs flex items-center justify-center gap-2">
+                    className="w-full bg-white/5 text-fg/65 font-bold py-3 rounded-xl hover:bg-white/10 hover:text-fg transition uppercase tracking-wider text-xs flex items-center justify-center gap-2">
                     <X size={14} /> Cancel edit
                   </button>
                 )}
               </form>
             </div>
           </div>
+          )}
           </div>
 
           {/* ════════════ MODIFIER GROUPS MANAGEMENT - fb only ════════════ */}
@@ -1678,7 +1759,7 @@ export default function ProductsTab({ ctx }) {
                       <p className="text-[11px] text-fg/70 mt-0.5">Pick {g.minSelect}{g.maxSelect > g.minSelect ? `-${g.maxSelect}` : ''} · {(g.options||[]).map(o => o.name + (o.price ? ` (+₱${o.price})` : '')).join(', ')}</p>
                     </div>
                     <div className="flex gap-1 shrink-0 ml-2">
-                      <button onClick={() => editModifierGroup(g)} className="text-blue-300 hover:text-fg hover:bg-blue-600 text-xs font-bold px-2 py-1 bg-blue-900/30 rounded transition">Edit</button>
+                      <button onClick={() => editModifierGroup(g)} className="text-info hover:text-fg hover:bg-blue-600 text-xs font-bold px-2 py-1 bg-blue-900/30 rounded transition">Edit</button>
                       <button onClick={() => deleteModifierGroup(g._id)} className="text-danger hover:text-fg hover:bg-red-600 text-xs font-bold px-2 py-1 bg-red-900/30 rounded transition">Del</button>
                     </div>
                   </div>
@@ -1689,15 +1770,15 @@ export default function ProductsTab({ ctx }) {
                 <p className="text-sm font-black text-fg uppercase tracking-wider">{editingModifier ? 'Edit Group' : 'New Group'}</p>
                 <input type="text" placeholder="Group name (e.g. Choose your milk)" value={modForm.name}
                   onChange={e => setModForm({ ...modForm, name: e.target.value })}
-                  className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-accent placeholder-white/20" />
+                  className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-accent placeholder-fg/70" />
                 <div className="flex items-center gap-3 flex-wrap">
-                  <label className="flex items-center gap-2 text-xs text-fg/60 font-bold">
+                  <label className="flex items-center gap-2 text-xs text-fg/65 font-bold">
                     <input type="checkbox" className="accent-accent" checked={modForm.isRequired} onChange={e => setModForm({ ...modForm, isRequired: e.target.checked })} /> Required
                   </label>
-                  <label className="flex items-center gap-1 text-xs text-fg/60 font-bold">Min
+                  <label className="flex items-center gap-1 text-xs text-fg/65 font-bold">Min
                     <input type="number" min="0" value={modForm.minSelect} onChange={e => setModForm({ ...modForm, minSelect: e.target.value })} className="w-12 bg-surface border border-white/10 rounded px-2 py-1 text-fg text-center" />
                   </label>
-                  <label className="flex items-center gap-1 text-xs text-fg/60 font-bold">Max
+                  <label className="flex items-center gap-1 text-xs text-fg/65 font-bold">Max
                     <input type="number" min="1" value={modForm.maxSelect} onChange={e => setModForm({ ...modForm, maxSelect: e.target.value })} className="w-12 bg-surface border border-white/10 rounded px-2 py-1 text-fg text-center" />
                   </label>
                 </div>
@@ -1711,7 +1792,7 @@ export default function ProductsTab({ ctx }) {
                       <input type="number" placeholder="₱0" value={o.price}
                         onChange={e => { const opts=[...modForm.options]; opts[i]={...opts[i],price:e.target.value}; setModForm({...modForm,options:opts}); }}
                         className="w-16 bg-surface border border-white/10 rounded px-2 py-1.5 text-fg text-xs text-right outline-none focus:border-accent" />
-                      <button onClick={() => setModForm({...modForm, options: modForm.options.filter((_,j)=>j!==i)})} className="text-danger hover:text-red-300 px-1 font-bold">✕</button>
+                      <button onClick={() => setModForm({...modForm, options: modForm.options.filter((_,j)=>j!==i)})} className="text-danger px-1 font-bold">✕</button>
                     </div>
                   ))}
                   <button onClick={() => setModForm({...modForm, options:[...modForm.options,{name:'',price:'',recipe:[]}]})}
@@ -1722,7 +1803,7 @@ export default function ProductsTab({ ctx }) {
                     <button onClick={() => { setEditingModifier(null); setModForm({ name:'', isRequired:true, minSelect:1, maxSelect:1, options:[] }); }}
                       className="px-3 py-2 bg-white/5 text-fg/75 rounded-lg text-xs font-bold hover:bg-white/10 transition">Cancel</button>
                   )}
-                  <button onClick={saveModifierGroup} className="flex-1 py-2 bg-accent text-fg rounded-lg text-xs font-black uppercase tracking-wider hover:bg-opacity-90 transition">
+                  <button onClick={saveModifierGroup} className="flex-1 py-2 bg-accent text-on-brand rounded-lg text-xs font-black uppercase tracking-wider hover:bg-opacity-90 transition">
                     {editingModifier ? 'Update Group' : 'Create Group'}
                   </button>
                 </div>
@@ -1746,8 +1827,8 @@ export default function ProductsTab({ ctx }) {
                       <p className="text-[11px] text-fg/70 mt-0.5">{(c.items||[]).map(i => `${i.quantity>1?i.quantity+'× ':''}${i.name}${i.sizeName?` (${i.sizeName})`:''}`).join(' + ')}</p>
                     </div>
                     <div className="flex gap-1 shrink-0 ml-2">
-                      <button onClick={() => editCombo(c)} className="text-white hover:text-fg hover:bg-blue-600 text-xs font-bold px-2 py-1 bg-blue-500 rounded transition">Edit</button>
-                      <button onClick={() => deleteCombo(c._id)} className="text-white hover:text-fg hover:bg-red-600 text-xs font-bold px-2 py-1 bg-red-500 rounded transition">Del</button>
+                      <button onClick={() => editCombo(c)} className="text-white hover:bg-blue-800 text-xs font-bold px-2 py-1 bg-blue-700 rounded transition">Edit</button>
+                      <button onClick={() => deleteCombo(c._id)} className="text-white hover:bg-red-700 text-xs font-bold px-2 py-1 bg-red-600 rounded transition">Del</button>
                     </div>
                   </div>
                 ))}
@@ -1757,14 +1838,14 @@ export default function ProductsTab({ ctx }) {
                 <p className="text-sm font-black text-fg uppercase tracking-wider">{editingCombo ? 'Edit Combo' : 'New Combo'}</p>
                 <input type="text" placeholder="Combo name" value={comboForm.name}
                   onChange={e => setComboForm({ ...comboForm, name: e.target.value })}
-                  className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-accent placeholder-white/20" />
+                  className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-accent placeholder-fg/70" />
                 <div className="flex gap-2">
                   <input type="number" placeholder="Price ₱" value={comboForm.price}
                     onChange={e => setComboForm({ ...comboForm, price: e.target.value })}
                     className="w-28 bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-sm font-black outline-none focus:border-accent" />
                   <input type="text" placeholder="Description (optional)" value={comboForm.description}
                     onChange={e => setComboForm({ ...comboForm, description: e.target.value })}
-                    className="flex-1 min-w-0 bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-accent placeholder-white/20" />
+                    className="flex-1 min-w-0 bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-accent placeholder-fg/70" />
                 </div>
                 <div className="space-y-1.5">
                   <p className="text-[10px] text-fg/70 font-bold uppercase">Components</p>
@@ -1774,7 +1855,7 @@ export default function ProductsTab({ ctx }) {
                       <input type="number" min="1" value={it.quantity}
                         onChange={e => { const items=[...comboForm.items]; items[i]={...items[i],quantity:e.target.value}; setComboForm({...comboForm,items}); }}
                         className="w-14 bg-surface border border-white/10 rounded px-2 py-1.5 text-fg text-xs text-center outline-none" />
-                      <button onClick={() => setComboForm({...comboForm, items: comboForm.items.filter((_,j)=>j!==i)})} className="text-danger hover:text-red-300 px-1 font-bold">✕</button>
+                      <button onClick={() => setComboForm({...comboForm, items: comboForm.items.filter((_,j)=>j!==i)})} className="text-danger px-1 font-bold">✕</button>
                     </div>
                   ))}
                   <select value="" onChange={e => {

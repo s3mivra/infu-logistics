@@ -2,23 +2,12 @@
 import { Users, Search, ChevronDown, ChevronRight, RefreshCw, AlertCircle, Upload, FileText, Download } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
-import { io } from 'socket.io-client';
+import { socket } from '../../shared/staffSocket.js';
 import { useDashboard } from '../dashboard/DashboardContext';
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
-// transports: WebSocket first, then long-polling as a fallback. It used to be
-// websocket-only with upgrade:false, which meant that if anything between the
-// browser and the server declined to forward the upgrade - a proxy, a CDN, a
-// captive network - realtime did not degrade, it simply died, silently: no new
-// orders appearing, no stock updates, and nothing on screen saying so. Polling
-// is heavier, so it is the fallback rather than the default.
-const socket = io(API_URL, { transports: ['websocket', 'polling'] });
-// See AdminDashboard.jsx for why: an open socket blocks bfcache, so
-// disconnect before the page would be frozen and reconnect if restored from it.
-if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => { try { socket.disconnect(); } catch { /* already gone */ } });
-  window.addEventListener('pageshow', (e) => { if (e.persisted) { try { socket.connect(); } catch { /* ignore */ } } });
-}
+// Order changes arrive on the dashboard's signed-in connection. This tab used
+// to open its own, without a token, which the server places in no room - so
+// the balances below never updated live. See shared/staffSocket.js.
 
 // Clients - who we sell to, what they owe, and how close they are to their limit.
 //
@@ -245,7 +234,7 @@ export default function ClientsTab() {
           <input
             value={q} onChange={e => setQ(e.target.value)}
             placeholder="Search clients…"
-            className="bg-surface border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-fg text-sm placeholder-white/25 outline-none focus:border-brand/60 transition w-full sm:w-64"
+            className="bg-surface border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60 transition w-full sm:w-64"
           />
         </div>
         <button onClick={() => downloadDataset?.('clients')}
@@ -308,9 +297,9 @@ export default function ClientsTab() {
                   className={`border-b border-white/5 cursor-pointer hover:bg-white/5 transition ${c.overLimit ? 'bg-red-500/5' : ''}`}>
                   <td className="py-3 px-4 font-bold text-fg">
                     <span className="inline-flex items-center gap-2">
-                      {expanded === c._id ? <ChevronDown size={13} className="text-fg/60" /> : <ChevronRight size={13} className="text-fg/65" />}
+                      {expanded === c._id ? <ChevronDown size={13} className="text-fg/65" /> : <ChevronRight size={13} className="text-fg/65" />}
                       {c.name}
-                      {!c.isActive && <span className="text-[8px] font-black bg-white/10 text-fg/60 px-1.5 py-0.5 rounded uppercase">Inactive</span>}
+                      {!c.isActive && <span className="text-[8px] font-black bg-white/10 text-fg/65 px-1.5 py-0.5 rounded uppercase">Inactive</span>}
                       {c.overLimit && <span className="text-[8px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">Over</span>}
                       {c.source === 'pos' && <span className="text-[8px] font-black bg-white/10 text-fg/70 px-1.5 py-0.5 rounded uppercase" title="Auto-promoted repeat walk-in">Walk-in</span>}
                     </span>
@@ -322,7 +311,7 @@ export default function ClientsTab() {
                   </td>
                   {data.showMoney && <>
                     <td className="py-3 text-right tabular-nums font-black text-fg/100">{c.aged?.total ? peso(c.aged.total) : '-'}</td>
-                    <td className="py-3 text-right tabular-nums text-brand/80">{c.exposure ? peso(c.exposure) : '-'}</td>
+                    <td className="py-3 text-right tabular-nums text-brand-text">{c.exposure ? peso(c.exposure) : '-'}</td>
                     <td className="py-3 text-right tabular-nums text-success">{c.deposits ? peso(c.deposits) : '-'}</td>
                     <td className="py-3 px-4 text-right tabular-nums text-xs">
                       {c.creditLimit === null || c.creditLimit === undefined
@@ -342,12 +331,12 @@ export default function ClientsTab() {
                           {[['Current', c.aged.current], ['31-60', c.aged.d31_60], ['61-90', c.aged.d61_90], ['91+', c.aged.d90_plus]].map(([lbl, amt]) => (
                             <span key={lbl} className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs">
                               <span className="text-fg/70 font-bold">{lbl}</span>
-                              <span className={`font-black tabular-nums ml-2 ${amt > 0 ? 'text-fg' : 'text-fg/60'}`}>{peso(amt)}</span>
+                              <span className={`font-black tabular-nums ml-2 ${amt > 0 ? 'text-fg' : 'text-fg/65'}`}>{peso(amt)}</span>
                             </span>
                           ))}
                           {typeof c.lifetimeValue === 'number' && (
                             <span className="bg-brand/10 border border-brand/25 rounded-lg px-3 py-1.5 text-xs">
-                              <span className="text-brand/80 font-bold">Lifetime</span>
+                              <span className="text-brand-text font-bold">Lifetime</span>
                               <span className="text-brand-text font-black tabular-nums ml-2">{peso(c.lifetimeValue)}</span>
                             </span>
                           )}
@@ -378,7 +367,7 @@ export default function ClientsTab() {
                           <tbody>
                             {orders[c._id].map(o => (
                               <tr key={o._id} className="border-b border-white/5">
-                                <td className="py-1.5 font-mono text-fg/60">{o.billingNumber || o.orderNumber}</td>
+                                <td className="py-1.5 font-mono text-fg/65">{o.billingNumber || o.orderNumber}</td>
                                 <td className="py-1.5 text-fg/80">{new Date(o.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: '2-digit' })}</td>
                                 <td className="py-1.5 text-fg/80">{o.status}</td>
                                 <td className="py-1.5 text-fg/80">
@@ -393,7 +382,7 @@ export default function ClientsTab() {
                                   {/* Otherwise this row and the statement disagree, and
                                       nobody can tell which one to believe. */}
                                   {o.refundedAmount > 0 && (
-                                    <span className="block text-[9px] font-bold text-fg/55">less {peso(o.refundedAmount)} refunded</span>
+                                    <span className="block text-[9px] font-bold text-fg/65">less {peso(o.refundedAmount)} refunded</span>
                                   )}
                                 </td>
                               </tr>
@@ -416,13 +405,13 @@ export default function ClientsTab() {
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
               <div className="min-w-0">
                 <h2 className="font-black text-fg text-lg truncate">Statement of account</h2>
-                <p className="text-fg/60 text-xs font-bold truncate">{soaFor.name}{soaFor.clientCode ? ` · ${soaFor.clientCode}` : ''}</p>
+                <p className="text-fg/65 text-xs font-bold truncate">{soaFor.name}{soaFor.clientCode ? ` · ${soaFor.clientCode}` : ''}</p>
               </div>
               <div className="flex items-center gap-2">
                 <input type="date" value={soaRange.start}
                   onChange={e => { const r = { ...soaRange, start: e.target.value }; setSoaRange(r); loadStatement(soaFor, r); }}
                   className="bg-white/5 border border-white/10 focus:border-brand rounded-lg px-2 py-1.5 text-xs text-fg outline-none" />
-                <span className="text-fg/50 text-xs">to</span>
+                <span className="text-fg/65 text-xs">to</span>
                 <input type="date" value={soaRange.end}
                   onChange={e => { const r = { ...soaRange, end: e.target.value }; setSoaRange(r); loadStatement(soaFor, r); }}
                   className="bg-white/5 border border-white/10 focus:border-brand rounded-lg px-2 py-1.5 text-xs text-fg outline-none" />
@@ -456,10 +445,10 @@ export default function ClientsTab() {
                       {soa.rows.map((r, i) => (
                         <tr key={`${r.reference}-${i}`} className="border-b border-white/5">
                           <td className="py-1.5 text-fg/80 whitespace-nowrap">{fmtDay(r.at)}</td>
-                          <td className="py-1.5 font-mono text-fg/60">{r.reference}</td>
+                          <td className="py-1.5 font-mono text-fg/65">{r.reference}</td>
                           <td className="py-1.5 text-fg/80">{r.description}</td>
                           <td className="py-1.5 text-right tabular-nums text-fg/80">{r.charge ? peso(r.charge) : ''}</td>
-                          <td className="py-1.5 text-right tabular-nums text-emerald-300/80">{r.payment ? peso(r.payment) : ''}</td>
+                          <td className="py-1.5 text-right tabular-nums text-success">{r.payment ? peso(r.payment) : ''}</td>
                           <td className="py-1.5 text-right tabular-nums font-bold text-fg">{peso(r.balance)}</td>
                         </tr>
                       ))}
@@ -470,7 +459,7 @@ export default function ClientsTab() {
                     {[['Current', soa.aged.current], ['31-60', soa.aged.d31_60], ['61-90', soa.aged.d61_90], ['91+', soa.aged.d90_plus]].map(([lbl, amt]) => (
                       <span key={lbl} className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs">
                         <span className="text-fg/70 font-bold">{lbl}</span>
-                        <span className={`font-black tabular-nums ml-2 ${amt > 0 ? 'text-fg' : 'text-fg/60'}`}>{peso(amt)}</span>
+                        <span className={`font-black tabular-nums ml-2 ${amt > 0 ? 'text-fg' : 'text-fg/65'}`}>{peso(amt)}</span>
                       </span>
                     ))}
                   </div>
@@ -480,9 +469,9 @@ export default function ClientsTab() {
 
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-white/10">
               <div className="text-sm">
-                <span className="text-fg/60 font-bold text-xs uppercase tracking-wider mr-2">Amount due</span>
+                <span className="text-fg/65 font-bold text-xs uppercase tracking-wider mr-2">Amount due</span>
                 <span className="font-black text-fg tabular-nums">{peso(soa?.netDue || 0)}</span>
-                {soa?.deposits > 0 && <span className="text-fg/55 text-xs font-bold ml-2">after {peso(soa.deposits)} on deposit</span>}
+                {soa?.deposits > 0 && <span className="text-fg/65 text-xs font-bold ml-2">after {peso(soa.deposits)} on deposit</span>}
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => setSoaFor(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/70 hover:text-fg transition">Close</button>

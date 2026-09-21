@@ -28,7 +28,7 @@ export default function ChangePasswordModal() {
               <input type="password" value={changePwForm[field]}
                 onChange={e => setChangePwForm(p => ({ ...p, [field]: e.target.value }))}
                 placeholder={hint}
-                className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-fg outline-none focus:border-brand/60 placeholder-white/20 text-sm"
+                className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-fg outline-none focus:border-brand/60 placeholder-fg/70 text-sm"
               />
             </div>
           ))}

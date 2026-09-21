@@ -79,6 +79,12 @@ export default function registerProduction(ctx) {
   // against each item's own unitMultiplier, matching every other qty input
   // in the app (transfers, restocks) so "20" always means what the operator
   // saw on screen, not a raw g/ml number.
+  // An order's materials, as the recipe they amount to. Kept as the order
+  // wrote them - base units for stock, as written for a line that is not.
+  const recipeFrom = (materials) => (materials || []).map(m => ({
+    invId: m.invId || null, itemName: m.itemName, qty: m.qty, unit: m.unit, nonStock: !!m.nonStock,
+  }));
+
   app.post('/api/production-orders', verifyToken, requireStaff, async (req, res) => {
     try {
       const { materials, outputType, outputInvId, outputName, outputQty, outputUnit, outputEnteredUnit, outputPackSize,
@@ -87,8 +93,10 @@ export default function registerProduction(ctx) {
       if (!Array.isArray(materials) || materials.length === 0) {
         return res.status(400).json({ success: false, error: 'At least one material is required.' });
       }
-      const invIds = materials.map(m => m?.invId).filter(id => mongoose.Types.ObjectId.isValid(id || ''));
-      if (invIds.length !== materials.length) return res.status(400).json({ success: false, error: 'Every material needs a valid inventory item.' });
+      // A line marked non-stock needs no inventory item; every other one does.
+      const stockLines = materials.filter(m => m?.nonStock !== true);
+      const invIds = stockLines.map(m => m?.invId).filter(id => mongoose.Types.ObjectId.isValid(id || ''));
+      if (invIds.length !== stockLines.length) return res.status(400).json({ success: false, error: 'Every material needs a valid inventory item.' });
       const invDocs = await Inventory.find({ _id: { $in: invIds } }).lean();
       const invById = new Map(invDocs.map(d => [String(d._id), d]));
 
@@ -105,6 +113,14 @@ export default function registerProduction(ctx) {
       // client-side in AdminDashboard's packInfo()).
       const cleanMaterials = [];
       for (const m of materials) {
+        if (m?.nonStock === true) {
+          const name = String(m.name || m.itemName || '').trim().slice(0, 80);
+          const qty = Number(m.qty);
+          if (!name) return res.status(400).json({ success: false, error: 'Name the ingredient that is not from stock.' });
+          if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ success: false, error: `Enter a positive quantity for ${name}.` });
+          cleanMaterials.push({ invId: null, itemName: name, qty, unit: String(m.unit || '').trim().slice(0, 12) || 'ml', nonStock: true });
+          continue;
+        }
         const item = invById.get(String(m.invId));
         if (!item) return res.status(400).json({ success: false, error: 'One of the materials no longer exists.' });
         const baseQty = Number(m.qty);
@@ -140,10 +156,20 @@ export default function registerProduction(ctx) {
       const outQty = Number(outputQty);
       if (!Number.isFinite(outQty) || outQty <= 0) return res.status(400).json({ success: false, error: 'Output quantity must be a positive number.' });
 
+      // Remember how it was made. On an existing item the recipe is saved now,
+      // at the batch size just filed as its yield; a new item does not exist
+      // until the yield is confirmed, so the order carries the request there.
+      const saveRecipe = req.body?.saveRecipe === true;
+      if (saveRecipe && outputType === 'existing'
+          && cleanMaterials.some(m => m.invId && String(m.invId) === String(cleanOutputInvId))) {
+        return res.status(400).json({ success: false, error: `${cleanOutputName} cannot be one of its own materials.` });
+      }
+
       const order = await ProductionOrder.create({
         businessType: BUSINESS_TYPE, ...tenantScope(req),
         status: 'Pending',
         materials: cleanMaterials,
+        saveRecipe,
         outputType,
         outputInvId: cleanOutputInvId,
         outputName: cleanOutputName,
@@ -192,6 +218,8 @@ export default function registerProduction(ctx) {
         let totalMaterialsCost = 0;
 
         for (const m of order.materials) {
+          // Not stock: recorded with the batch, never taken from anywhere.
+          if (m.nonStock || !m.invId) continue;
           const item = await Inventory.findById(m.invId).session(session ?? null);
           if (!item) throw Object.assign(new Error(`Material "${m.itemName}" no longer exists.`), { httpStatus: 400 });
           if (item.stockQty < m.qty) throw Object.assign(new Error(`Not enough "${item.itemName}" on hand - have ${item.stockQty}${item.unit}, need ${m.qty}${item.unit}.`), { httpStatus: 400 });
@@ -279,6 +307,10 @@ export default function registerProduction(ctx) {
             unitCost: outputUnitCost,
           }];
           outputItem.expiryDate = soonestExpiry(outputItem.expiryBatches);
+          if (order.saveRecipe) {
+            outputItem.productionRecipe = recipeFrom(order.materials);
+            outputItem.recipeYield = actualQty;
+          }
           await outputItem.save({ session });
         } else {
           const itemCode = await generateNextSequence(Inventory, 'RML', 'itemCode');
@@ -289,6 +321,7 @@ export default function registerProduction(ctx) {
             unitCost: outputUnitCost,
             displayUnit: order.outputUnit, unitMultiplier: 1,
             packSize: order.outputPackSize || null,
+            ...(order.saveRecipe ? { productionRecipe: recipeFrom(order.materials), recipeYield: actualQty } : {}),
             stockCategory: order.outputStockCategory || '',
             stockLocation: order.outputStockLocation || '',
             expiryDate: order.outputExpiryDate || null,
@@ -351,6 +384,22 @@ export default function registerProduction(ctx) {
     } catch (err) {
       if (err?.httpStatus) return res.status(err.httpStatus).json({ success: false, error: err.message });
       log.error?.({ err }, 'POST /api/production-orders/:id/reconcile failed');
+      (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+    }
+  });
+
+  // ── FORGET A RECIPE ──────────────────────────────────────────────────────
+  // Forget how an item is made - it is bought in now, or the recipe was wrong
+  // and the next batch will set a new one.
+  app.delete('/api/inventory/:id/production-recipe', verifyToken, ...canApproveProd, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const r = await Inventory.updateOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) },
+        { $set: { productionRecipe: [], recipeYield: null } });
+      if (!r.matchedCount) return res.status(404).json({ success: false, error: 'Not found' });
+      emitToMgr('erpUpdated');
+      res.json({ success: true });
+    } catch (err) {
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
   });

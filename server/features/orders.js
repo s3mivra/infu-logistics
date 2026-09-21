@@ -14,6 +14,13 @@ import { buildSalePriceMap, saleUnitPrice, activeSalesQuery } from '../lib/saleP
 import { saleRevenueLines, vatShare, vatFromInclusive, deliveryFeeVat, OUTPUT_VAT } from '../lib/vatPosting.js';
 import { loadVatConfig as loadVatConfigShared } from '../lib/vatSettings.js';
 import { isAnonymousCustomerName } from '../lib/customerName.js';
+// Action permissions. Each route below changes data, and was guarded only by
+// "is staff" - so a plain staff account could, through the API, do what the
+// permission catalogue reserves for a role that holds the matching
+// .manage key (see lib/authz.js PERMISSIONS). `permit` is the same
+// requirePermission the context hands out, imported under a short name so
+// it reads the same in every file.
+import { requirePermission as permit, requireAnyPermission as permitAny } from '../lib/authz.js';
 
 export default function registerOrders(ctx) {
   const {
@@ -346,6 +353,29 @@ async function applyStatsDelta(order, sign, session) {
 // directly and silently doing nothing. Every one of those sites now resolves
 // through here first instead of trusting ing.invId - falls back to a live
 // name match, returns null (same as "unresolvable" today) if neither hits.
+// Which recipe an add-on takes, for a sale AND for every path that puts a
+// sale back - void, refund, partial refund. They used to resolve it five times
+// over, each on its own, which is how a reversal can return less than the sale
+// took. One rule now:
+//   1. the product's own recipe for that add-on, when it carries one - an
+//      extra shot can be a different amount on a different drink;
+//   2. a modifier option ("Milk: Oat") from the product's modifier groups;
+//   3. the add-on's own recipe, set once in Menu Setup's Add-Ons. The copy a
+//      product keeps when an add-on is attached is created empty, so without
+//      this an extra shot never took any coffee.
+async function resolveAddOnRecipe(product, addOnName, session) {
+  const name = String(addOnName || '');
+  const own = product?.addOns?.find(a => a.name === name)?.recipe;
+  if (own?.length) return own;
+  if (name.includes(': ')) {
+    const [grpName, optName] = name.split(': ');
+    const grp = (product?.modifierGroups || []).find(g => g && g.name === grpName);
+    return grp?.options?.find(o => o.name === optName)?.recipe || [];
+  }
+  const addOn = await AddOn.findOne({ name }, { recipe: 1 }).session(session ?? null).lean();
+  return addOn?.recipe || [];
+}
+
 async function resolveIngInvId(ing, session) {
   // A non-stock ingredient never resolves to inventory, whatever it is called.
   // Without this the name fallback below would silently start deducting the day
@@ -477,7 +507,7 @@ app.get('/api/orders/archives', verifyToken, requireSuperAdmin, async (req, res)
 // ── PARKED ORDERS / OPEN TABS ────────────────────────────────────────────────
 // IMPORTANT: these literal paths MUST be registered before '/api/orders/:id',
 // otherwise Express matches ':id' first and treats "parked"/"park" as an order id.
-app.post('/api/orders/park', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/orders/park', verifyToken, requireStaff, permit('pos.use'), async (req, res) => {
   try {
     const { items, customerName, table, orderNotes, guestCount } = req.body;
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ success: false, error: 'Cannot park an empty cart.' });
@@ -500,7 +530,7 @@ app.get('/api/orders/parked', verifyToken, requireStaff, async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.delete('/api/orders/parked/:id', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/orders/parked/:id', verifyToken, requireStaff, permit('pos.use'), async (req, res) => {
   try {
     const order = await Order.findOne({ _id: req.params.id, isParked: true });
     if (!order) return res.status(404).json({ success: false, error: 'Parked order not found.' });
@@ -516,10 +546,24 @@ app.get('/api/orders/:id', async (req, res) => {
     // Access control: staff/admin and authenticated clients get the full document.
     // Anonymous callers (QR status polling) get a PII-SAFE projection so order ids
     // can't be enumerated to harvest customer phone / delivery address.
+    // "Privileged" used to mean any valid token with a role - and a client
+    // portal token has one ("client"). So one signed-in customer could read
+    // any other customer's whole order, phone and delivery address included,
+    // by its id. Staff see every order in full; a client sees their OWN in
+    // full and anyone else's the way an anonymous visitor would.
     let isPrivileged = false;
     try {
       const raw = req.headers.authorization?.replace(/^Bearer /, '') || '';
-      if (raw) { const d = jwt.verify(raw, process.env.JWT_SECRET); if (d?.role) isPrivileged = true; }
+      if (raw) {
+        const d = jwt.verify(raw, process.env.JWT_SECRET);
+        const isClient = d?.aud === 'client' || String(d?.role || '').toLowerCase() === 'client';
+        if (isClient) {
+          const clientId = String(d.clientId || d._id || '');
+          isPrivileged = !!clientId && !!(await Order.exists({ _id: req.params.id, clientId }));
+        } else if (d?.role) {
+          isPrivileged = true;
+        }
+      }
     } catch { /* invalid/expired token → treat as anonymous */ }
     const safeProjection = {
       orderNumber: 1, status: 1, dispatchStatus: 1, isParked: 1, table: 1,
@@ -1163,7 +1207,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
 });
 
 // --- COMPLIMENTARY: APPLY ---
-app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, res) => {
+app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, permit('orders.comp'), async (req, res) => {
   try {
     const { reasonType, reasonNote, approvedBy, forEmployee } = req.body;
     if (!reasonType) return res.status(400).json({ success: false, error: 'reasonType is required' });
@@ -1201,7 +1245,7 @@ app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, 
 });
 
 // --- COMPLIMENTARY: REMOVE ---
-app.delete('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/orders/:id/complimentary', verifyToken, requireStaff, permit('orders.comp'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found' });
@@ -1453,7 +1497,7 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
   }
 });
 
-app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
+app.put('/api/orders/:id', verifyToken, requireStaff, permitAny('pos.use', 'orders.manage'), async (req, res) => {
   await runWithStatsRetry(completeOrderOnce, req, res);
 });
 
@@ -1812,12 +1856,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         for (const selectedAddOn of (item.selectedAddOns || [])) {
           // Resolve the recipe from either a product add-on OR a modifier-group option.
           // Modifier selections are stored as "Group name: Option name".
-          let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
-          if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
-            const [grpName, optName] = selectedAddOn.name.split(': ');
-            const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
-            resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
-          }
+          const resolvedRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
           if (resolvedRecipe && resolvedRecipe.length) {
             for (const ing of resolvedRecipe) {
               const invId = await resolveIngInvId(ing, session);
@@ -2230,12 +2269,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
 
       for (const selectedAddOn of (item.selectedAddOns || [])) {
         // Resolve recipe from product add-on OR modifier-group option (symmetric with sale deduction)
-        let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
-        if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
-          const [grpName, optName] = selectedAddOn.name.split(': ');
-          const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
-          resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
-        }
+        const resolvedRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
         if (!resolvedRecipe?.length) continue;
         for (const ing of resolvedRecipe) {
           const invId = await resolveIngInvId(ing, session);
@@ -2325,7 +2359,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
   return false;
 };
 
-app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/orders/archive', verifyToken, requireStaff, permit('orders.manage'), async (req, res) => {
   try {
     // 1. Force any hanging order to Cancelled - includes Ready (made but never
     //    handed over) and Parked (held unpaid tabs). Parked orders also lose the
@@ -2697,7 +2731,7 @@ app.get('/api/orders/:id/ar-payments', verifyToken, requireStaff, requirePermiss
 
 // --- PARTIAL DELIVERY ROUTE ---
 // Sets status to 'Partially Delivered' without triggering ERP (inventory deduction deferred to Completed)
-app.post('/api/orders/:id/partial-delivery', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/orders/:id/partial-delivery', verifyToken, requireStaff, permit('orders.manage'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
@@ -2722,7 +2756,7 @@ app.post('/api/orders/:id/partial-delivery', verifyToken, requireStaff, async (r
 //   • 'full'    - collect the whole remaining goods value now; the not-yet-fulfilled
 //                 portion is held as Customer Deposits and recognized as revenue on
 //                 later rounds (no new charge then).
-app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, permit('orders.manage'), async (req, res) => {
   await runWithStatsRetry(partialFulfillOnce, req, res);
 });
 
@@ -2949,7 +2983,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
 // the dropped units carry NO ledger entries because they were never fulfilled.
 // The one money movement is refunding any prepaid-but-undelivered deposit
 // (only possible when an earlier batch was paid in 'full' mode).
-app.post('/api/orders/:id/drop-remaining', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/orders/:id/drop-remaining', verifyToken, requireStaff, permit('orders.manage'), async (req, res) => {
   await runWithStatsRetry(dropRemainingOnce, req, res);
 });
 
@@ -3097,12 +3131,7 @@ const refundOnce = async (req, res, mayRetry) => {
         // Collect every ingredient line: base recipe + add-on / modifier-option recipes.
         const recipes = [{ recipe: recipeToUse, label: item.name }];
         for (const selectedAddOn of (item.selectedAddOns || [])) {
-          let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
-          if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
-            const [grpName, optName] = selectedAddOn.name.split(': ');
-            const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
-            resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
-          }
+          const resolvedRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
           if (resolvedRecipe?.length) recipes.push({ recipe: resolvedRecipe, label: `Add-on (${selectedAddOn.name})` });
         }
 
@@ -3305,12 +3334,7 @@ const partialRefundOnce = async (req, res, mayRetry) => {
       // Base recipe + every selected add-on/modifier-option recipe.
       const recipes = [{ recipe: recipeToUse, label: item.name }];
       for (const selectedAddOn of (item.selectedAddOns || [])) {
-        let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
-        if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
-          const [grpName, optName] = selectedAddOn.name.split(': ');
-          const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
-          resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
-        }
+        const resolvedRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
         if (resolvedRecipe?.length) recipes.push({ recipe: resolvedRecipe, label: `Add-on (${selectedAddOn.name})` });
       }
       for (const { recipe, label } of recipes) {
@@ -3523,12 +3547,7 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
       }
       const recipes = [{ recipe: recipeToUse, label: item.name }];
       for (const selectedAddOn of (item.selectedAddOns || [])) {
-        let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
-        if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
-          const [grpName, optName] = selectedAddOn.name.split(': ');
-          const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
-          resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
-        }
+        const resolvedRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
         if (resolvedRecipe?.length) recipes.push({ recipe: resolvedRecipe, label: `Add-on (${selectedAddOn.name})` });
       }
       for (const { recipe, label } of recipes) {
@@ -3637,7 +3656,7 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
 });
 
 // --- DISPATCH STATUS UPDATE ---
-app.patch('/api/orders/:id/dispatch', verifyToken, requireStaff, async (req, res) => {
+app.patch('/api/orders/:id/dispatch', verifyToken, requireStaff, permit('orders.manage'), async (req, res) => {
   try {
     const { dispatchStatus } = req.body;
     const order = await Order.findByIdAndUpdate(req.params.id, { dispatchStatus }, { returnDocument: 'after' });

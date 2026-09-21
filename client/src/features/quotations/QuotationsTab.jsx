@@ -277,7 +277,7 @@ function QuoteSheet({ id, apiFetch, onBack }) {
       )}
 
       {q.status === 'Accepted' && !q.orderNumber && (
-        <p className="flex items-start gap-2 text-[11px] text-amber-400/90 bg-amber-400/5 border border-amber-400/20 rounded-xl px-4 py-3">
+        <p className="flex items-start gap-2 text-[11px] text-warning bg-amber-400/5 border border-amber-400/20 rounded-xl px-4 py-3">
           <AlertCircle size={13} className="shrink-0 mt-0.5" />
           <span>Accepted, but no order has been placed against it yet. Ring it up at the quoted prices.</span>
         </p>

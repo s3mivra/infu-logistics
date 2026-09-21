@@ -55,22 +55,22 @@ describe('public + health', () => {
 
 describe('catalog CRUD: categories, products, addons, modifier-groups, combos, discounts', () => {
   it('POST/PUT/DELETE category', async () => {
-    const c = await req('post', '/api/categories', T.staff).send({ name: 'Pastry', department: 'Kitchen' });
+    const c = await req('post', '/api/categories', T.manager).send({ name: 'Pastry', department: 'Kitchen' });
     expect(c.status).toBe(200);
     const cid = c.body.category?._id || c.body._id || c.body.category?.id;
-    ran(await req('put', `/api/categories/${cid}`, T.staff).send({ name: 'Pastries' }));
-    ran(await req('delete', `/api/categories/${cid}`, T.staff));
+    ran(await req('put', `/api/categories/${cid}`, T.manager).send({ name: 'Pastries' }));
+    ran(await req('delete', `/api/categories/${cid}`, T.manager));
   });
 
   it('POST/PUT/PATCH/DELETE product', async () => {
-    const p = await req('post', '/api/products', T.staff).send({ name: 'Espresso', category: 'Bev', basePrice: 90 });
+    const p = await req('post', '/api/products', T.manager).send({ name: 'Espresso', category: 'Bev', basePrice: 90 });
     expect(p.status).toBe(200);
     const pid = p.body.product?._id || p.body._id;
     ids.tmpProduct = pid;
-    ran(await req('put', `/api/products/${pid}`, T.staff).send({ name: 'Espresso', basePrice: 95, category: 'Bev' }));
+    ran(await req('put', `/api/products/${pid}`, T.manager).send({ name: 'Espresso', basePrice: 95, category: 'Bev' }));
     ran(await req('patch', `/api/products/${pid}/availability`, T.super).send({ isAvailable: false }));
     ran(await req('patch', `/api/products/${pid}/oos`, T.super).send({ isOutOfStock: true }));
-    ran(await req('delete', `/api/products/${pid}`, T.staff));
+    ran(await req('delete', `/api/products/${pid}`, T.manager));
   });
 
   it('POST/DELETE addon', async () => {
@@ -98,10 +98,10 @@ describe('catalog CRUD: categories, products, addons, modifier-groups, combos, d
 
   it('GET/POST/DELETE discount', async () => {
     ran(await req('get', '/api/discounts', T.staff));
-    const d = await req('post', '/api/discounts', T.staff).send({ name: 'Promo10', percentage: 10 });
+    const d = await req('post', '/api/discounts', T.manager).send({ name: 'Promo10', percentage: 10 });
     expect(d.status).toBe(200);
     const did = d.body.discount?._id || d.body._id;
-    ran(await req('delete', `/api/discounts/${did}`, T.staff));
+    ran(await req('delete', `/api/discounts/${did}`, T.manager));
   });
 
   it('GET/POST/DELETE role', async () => {
@@ -121,11 +121,11 @@ describe('inventory: list, create, restock, batches, expiry, revalue, edit, hist
     ran(await req('get', `/api/inventory/history/${ids.invId}`, T.staff));
   });
   it('POST create inventory item', async () => {
-    const r = await req('post', '/api/inventory', T.staff).send({ itemName: 'Sugar', stockQty: 1000, unit: 'g', unitCost: 0.2, displayUnit: 'kg', unitMultiplier: 1000, creditAccount: '111000' });
+    const r = await req('post', '/api/inventory', T.manager).send({ itemName: 'Sugar', stockQty: 1000, unit: 'g', unitCost: 0.2, displayUnit: 'kg', unitMultiplier: 1000, creditAccount: '111000' });
     expect(r.status).toBe(200);
     ids.sugarId = r.body.item?._id || r.body._id;
   });
-  it('POST restock', async () => ran(await req('post', `/api/inventory/restock/${ids.invId}`, T.staff).send({ addedStock: 1000, totalCost: 70, expiryDate: '2027-03-01', creditAccount: '111000' })));
+  it('POST restock', async () => ran(await req('post', `/api/inventory/restock/${ids.invId}`, T.manager).send({ addedStock: 1000, totalCost: 70, expiryDate: '2027-03-01', creditAccount: '111000' })));
   it('POST add batch + PATCH batch date + DELETE batch', async () => {
     const b = await req('post', `/api/inventory/${ids.invId}/batches`, T.super).send({ qty: 500, expiryDate: '2027-01-01', unitCost: 0.07 });
     ran(b);
@@ -136,7 +136,7 @@ describe('inventory: list, create, restock, batches, expiry, revalue, edit, hist
     expect(new Date(patched.body.item.expiryBatches[0].expiryDate).toISOString().slice(0, 10)).toBe('2027-03-15');
     ran(await req('delete', `/api/inventory/${ids.invId}/batches/0`, T.super));
   });
-  it('PATCH expiry', async () => ran(await req('patch', `/api/inventory/${ids.invId}/expiry`, T.staff).send({ expiryDate: '2027-06-01' })));
+  it('PATCH expiry', async () => ran(await req('patch', `/api/inventory/${ids.invId}/expiry`, T.manager).send({ expiryDate: '2027-06-01' })));
   it('POST revalue', async () => ran(await req('post', '/api/inventory/revalue', T.super).send({})));
   it('PUT edit inventory', async () => ran(await req('put', `/api/inventory/${ids.sugarId}`, T.super).send({ itemName: 'Sugar', lowStockThreshold: 100 })));
   it('POST import', async () => ran(await req('post', '/api/inventory/import', T.super).send({ items: [{ itemName: 'Cocoa', qty: 2, unit: 'kg', unitCost: 300 }] })));

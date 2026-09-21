@@ -917,7 +917,7 @@ export default function ClientOrderPage() {
     return (
       <div className="min-h-screen bg-page-bg flex flex-col items-center justify-center p-4 sm:p-6 text-center">
         <div className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center mb-4">
-          <CheckCircle size={32} className="text-emerald-400" />
+          <CheckCircle size={32} className="text-success" />
         </div>
         <h2 className="text-2xl font-black text-fg mb-1">Sent to Logistics!</h2>
         <p className="text-fg/75 text-sm mb-3">Your order has been received.</p>
@@ -931,7 +931,7 @@ export default function ClientOrderPage() {
         </div>
 
         {/* First queue state: ask for payment proof */}
-        <div className="bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-2xl px-4 py-3 w-full max-w-sm mb-5 text-left">
+        <div className="bg-amber-500/10 border border-amber-500/30 text-warning rounded-2xl px-4 py-3 w-full max-w-sm mb-5 text-left">
           <p className="text-xs font-black uppercase tracking-wider mb-1">Next step - Payment proof</p>
           <p className="text-[12px] leading-snug opacity-90">
             {paymentInstructions || 'Please send your payment proof so we can start preparing your order.'}
@@ -1078,7 +1078,7 @@ export default function ClientOrderPage() {
                             <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${done ? 'bg-neutral-900' : 'bg-neutral-300'}`} />
                             <span className={`h-0.5 flex-1 ${i === SLIP_STEPS.length - 1 ? 'bg-transparent' : track(i < stepIdx)}`} />
                           </div>
-                          <p className={`text-[8.5px] leading-tight mt-1.5 px-0.5 text-center ${done ? 'text-neutral-900 font-bold' : 'text-neutral-400'}`}>{s}</p>
+                          <p className={`text-[8.5px] leading-tight mt-1.5 px-0.5 text-center ${done ? 'text-neutral-900 font-bold' : 'text-neutral-600'}`}>{s}</p>
                         </li>
                       );
                     })}
@@ -1141,7 +1141,7 @@ export default function ClientOrderPage() {
                         {slipOrder.status === 'Partially Fulfilled' && (item.fulfilledQty || 0) > 0 && (item.fulfilledQty || 0) < (item.quantity || 0) && (
                           <span className="text-[10px] font-black block mt-0.5">
                             <span className="text-emerald-600">Fulfilled: {item.fulfilledQty}</span>
-                            <span className="text-neutral-400"> | </span>
+                            <span className="text-neutral-600"> | </span>
                             <span className="text-amber-600">Remaining: {Math.max(0, (item.quantity || 0) - (item.fulfilledQty || 0))}</span>
                           </span>
                         )}
@@ -1149,7 +1149,7 @@ export default function ClientOrderPage() {
                           <span className="text-[10px] font-black block mt-0.5 text-emerald-600">✓ Fulfilled: {item.quantity}</span>
                         )}
                       </span>
-                      <span className="text-right tabular-nums text-accent/80">{sizeLabel || '-'}</span>
+                      <span className="text-right tabular-nums text-brand-text">{sizeLabel || '-'}</span>
                       <span className="text-right tabular-nums">{peso(unit)}</span>
                       <span className="text-right tabular-nums font-semibold">{item.quantity}</span>
                       <span className="text-right tabular-nums font-semibold">{peso(unit * Number(item.quantity || 0))}</span>
@@ -1171,7 +1171,7 @@ export default function ClientOrderPage() {
 
               {(slipOrder.amendments || []).length > 0 && (
                 <div className="px-5 pb-3">
-                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-neutral-400 mb-1">Changes to this order</p>
+                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-neutral-600 mb-1">Changes to this order</p>
                   {slipOrder.amendments.map(a => (
                     <p key={a.revision} className="text-[11px] text-neutral-600 leading-snug">
                       {new Date(a.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {(a.changes || []).map(c => c.to === 0 ? `${c.name} removed` : `${c.name} ${c.from} → ${c.to}`).join(', ')} · {a.reason}
@@ -1182,7 +1182,7 @@ export default function ClientOrderPage() {
               {/* Notes & terms */}
               {slipOrder.orderNotes && (
                 <div className="px-5 pb-3">
-                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-neutral-400 mb-1">Notes</p>
+                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-neutral-600 mb-1">Notes</p>
                   <p className="text-[11.5px] text-neutral-600 leading-snug whitespace-pre-line">{slipOrder.orderNotes}</p>
                 </div>
               )}
@@ -1204,7 +1204,7 @@ export default function ClientOrderPage() {
               )}
               {slipOrder.status === 'Pending' && (
                 <button onClick={() => cancelOrder(slipOrder._id)}
-                  className="w-full border border-red-500/30 text-red-300 hover:bg-red-500/10 transition rounded-xl px-3 py-2.5 text-[11px] font-black uppercase tracking-wider">
+                  className="w-full border border-red-500/30 text-danger hover:bg-red-500/10 transition rounded-xl px-3 py-2.5 text-[11px] font-black uppercase tracking-wider">
                   Cancel order
                 </button>
               )}
@@ -1289,7 +1289,7 @@ export default function ClientOrderPage() {
           )}
           <button
             onClick={() => { setQueueOpen(true); fetchMyOrders(); }}
-            className="relative p-2 rounded-xl text-fg/60 hover:text-fg hover:bg-white/10 transition"
+            className="relative p-2 rounded-xl text-fg/65 hover:text-fg hover:bg-white/10 transition"
             aria-label="My orders"
             title="My orders"
           >
@@ -1302,7 +1302,7 @@ export default function ClientOrderPage() {
           </button>
           <button
             onClick={() => setSettingsOpen(true)}
-            className="p-2 rounded-xl text-fg/60 hover:text-fg hover:bg-white/10 transition"
+            className="p-2 rounded-xl text-fg/65 hover:text-fg hover:bg-white/10 transition"
             aria-label="My settings"
             title="My settings"
           >
@@ -1387,7 +1387,7 @@ export default function ClientOrderPage() {
             <div className="mt-auto p-3 border-t border-white/5">
               <button
                 onClick={() => { setMenuOpen(false); handleLogout(); }}
-                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-red-300 hover:bg-red-500/10 transition"
+                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-danger hover:bg-red-500/10 transition"
               >
                 <LogOut size={16} /> Sign out
               </button>
@@ -1510,7 +1510,7 @@ export default function ClientOrderPage() {
                     <div className="p-4 cursor-pointer" onClick={() => setSlipOrder(o)}>
                       {v.msg && <p className="text-fg/75 text-[11px] leading-snug mb-2.5">{v.msg}</p>}
                       {o.revision > 0 && (
-                        <p className="text-sky-400 text-[11px] leading-snug mb-2.5 font-bold">Updated by our team{o.amendments?.length ? `: ${o.amendments[o.amendments.length - 1].reason}` : ''}</p>
+                        <p className="text-info text-[11px] leading-snug mb-2.5 font-bold">Updated by our team{o.amendments?.length ? `: ${o.amendments[o.amendments.length - 1].reason}` : ''}</p>
                       )}
 
                       {/* Item summary */}
@@ -1550,7 +1550,7 @@ export default function ClientOrderPage() {
                         {v.needsProof && <SupportLink className="" />}
                         {v.canConfirm && (
                           o.clientReceived ? (
-                            <p className="text-[11px] font-black inline-flex items-center gap-1.5 text-emerald-400"><CheckCircle size={13} /> Received - thank you!</p>
+                            <p className="text-[11px] font-black inline-flex items-center gap-1.5 text-success"><CheckCircle size={13} /> Received - thank you!</p>
                           ) : (
                             <button onClick={e => { e.stopPropagation(); confirmReceived(o._id); }}
                               className="bg-emerald-500 hover:bg-emerald-400 transition rounded-full px-4 py-1.5 text-[11px] font-black text-fg uppercase tracking-wider">
@@ -1560,12 +1560,12 @@ export default function ClientOrderPage() {
                         )}
                         {o.status === 'Pending' && (
                           <button onClick={e => { e.stopPropagation(); cancelOrder(o._id); }}
-                            className="border border-red-500/30 text-red-300 hover:bg-red-500/10 transition rounded-full px-4 py-1.5 text-[11px] font-black uppercase tracking-wider">
+                            className="border border-red-500/30 text-danger hover:bg-red-500/10 transition rounded-full px-4 py-1.5 text-[11px] font-black uppercase tracking-wider">
                             Cancel order
                           </button>
                         )}
                         <button onClick={() => setSlipOrder(o)}
-                          className="border border-white/10 text-fg/60 hover:text-fg hover:border-white/20 transition rounded-full px-4 py-1.5 text-[11px] font-black uppercase tracking-wider">
+                          className="border border-white/10 text-fg/65 hover:text-fg hover:border-white/20 transition rounded-full px-4 py-1.5 text-[11px] font-black uppercase tracking-wider">
                           View slip
                         </button>
                       </div>
@@ -1651,8 +1651,8 @@ export default function ClientOrderPage() {
             <div className="flex-1 overflow-y-auto p-5 space-y-6">
               {settingsMsg && (
                 <p className={`text-xs font-bold rounded-xl px-3 py-2.5 ${settingsMsg.tone === 'ok'
-                  ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300'
-                  : 'bg-red-500/10 border border-red-500/30 text-red-300'}`}>
+                  ? 'bg-emerald-500/10 border border-emerald-500/30 text-success'
+                  : 'bg-red-500/10 border border-red-500/30 text-danger'}`}>
                   {settingsMsg.text}
                 </p>
               )}
@@ -1747,7 +1747,7 @@ export default function ClientOrderPage() {
                         className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition text-left ${
                           theme === t.value
                             ? 'bg-brand text-on-brand border-brand'
-                            : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'}`}>
+                            : 'bg-white/5 text-fg/65 border-white/10 hover:text-fg hover:bg-white/10'}`}>
                         {t.label}
                       </button>
                     ))}
@@ -1781,10 +1781,10 @@ export default function ClientOrderPage() {
       )}
       {portal.portalAnnouncement && announcementOpen && (
         <div className="px-3 sm:px-4 pt-3">
-          <div className="flex items-start gap-2.5 bg-amber-500/10 border border-amber-500/30 text-amber-200 rounded-2xl px-4 py-3">
+          <div className="flex items-start gap-2.5 bg-amber-500/10 border border-amber-500/30 text-warning rounded-2xl px-4 py-3">
             <Megaphone size={15} className="shrink-0 mt-0.5" />
             <p className="text-xs leading-snug flex-1">{portal.portalAnnouncement}</p>
-            <button onClick={() => setAnnouncementOpen(false)} className="shrink-0 text-amber-200/60 hover:text-amber-100 transition" aria-label="Dismiss announcement">
+            <button onClick={() => setAnnouncementOpen(false)} className="shrink-0 text-warning hover:text-amber-100 transition" aria-label="Dismiss announcement">
               <X size={14} />
             </button>
           </div>
@@ -1804,7 +1804,7 @@ export default function ClientOrderPage() {
               value={productSearch}
               onChange={e => setProductSearch(e.target.value)}
               placeholder="Search products by name or code…"
-              className="w-full bg-white/5 border border-white/10 focus:border-brand rounded-xl pl-9 pr-9 py-2.5 text-sm text-fg placeholder-fg/30 outline-none transition"
+              className="w-full bg-white/5 border border-white/10 focus:border-brand rounded-xl pl-9 pr-9 py-2.5 text-sm text-fg placeholder-fg/70 outline-none transition"
             />
             {productSearch && (
               <button onClick={() => setProductSearch('')} aria-label="Clear search"
@@ -1955,7 +1955,7 @@ export default function ClientOrderPage() {
                         className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
                           paymentMethod === m.name
                             ? 'bg-brand text-on-brand border-brand'
-                            : 'bg-white/5 text-fg/60 border-white/10 hover:border-white/30 hover:text-fg'
+                            : 'bg-white/5 text-fg/65 border-white/10 hover:border-white/30 hover:text-fg'
                         }`}
                       >
                         {METHOD_LABELS[m.name] || m.name}
@@ -1997,7 +1997,7 @@ export default function ClientOrderPage() {
                     placeholder={isCheckPayment ? 'e.g. 0012345' : 'e.g. 0012 3456 7890'}
                     inputMode="text"
                     autoComplete="off"
-                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-3 py-2.5 rounded-xl outline-none transition text-sm font-bold tabular-nums"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-3 py-2.5 rounded-xl outline-none transition text-sm font-bold tabular-nums"
                   />
                   {isCheckPayment && (
                     <div>
@@ -2035,7 +2035,7 @@ export default function ClientOrderPage() {
                   onChange={e => setOrderNotes(e.target.value)}
                   placeholder="Special instructions, delivery notes…"
                   rows={2}
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-3 py-2 rounded-xl outline-none transition text-sm resize-none"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-3 py-2 rounded-xl outline-none transition text-sm resize-none"
                 />
               </div>
             )}
@@ -2049,7 +2049,7 @@ export default function ClientOrderPage() {
                 <span className="text-fg font-black text-lg tabular-nums">{peso(cartTotal)}</span>
               </div>
             )}
-            <div className="bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-xl px-3 py-2.5 text-[11px] leading-snug">
+            <div className="bg-amber-500/10 border border-amber-500/30 text-warning rounded-xl px-3 py-2.5 text-[11px] leading-snug">
               <p className="font-black uppercase tracking-wider mb-0.5">Pricing &amp; Payment</p>
               <p className="opacity-90">
                 {paymentInstructions

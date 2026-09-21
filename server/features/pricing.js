@@ -2,6 +2,13 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
+// Action permissions. Each route below changes data, and was guarded only by
+// "is staff" - so a plain staff account could, through the API, do what the
+// permission catalogue reserves for a role that holds the matching
+// .manage key (see lib/authz.js PERMISSIONS). `permit` is the same
+// requirePermission the context hands out, imported under a short name so
+// it reads the same in every file.
+import { requirePermission as permit, requireAnyPermission as permitAny } from '../lib/authz.js';
 
 export default function registerPricing(ctx) {
   const {
@@ -186,7 +193,7 @@ app.get('/api/discounts', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
-app.post('/api/discounts', verifyToken, requireStaff, validate(discountSchema), async (req, res) => {
+app.post('/api/discounts', verifyToken, requireStaff, validate(discountSchema), permit('products.manage'), async (req, res) => {
   try {
     const newDiscount = await Discount.create(req.body);
     res.json({ success: true, discount: newDiscount });
@@ -195,7 +202,7 @@ app.post('/api/discounts', verifyToken, requireStaff, validate(discountSchema), 
   }
 });
 
-app.delete('/api/discounts/:id', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/discounts/:id', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
   try {
     await Discount.findByIdAndDelete(req.params.id);
     res.json({ success: true });

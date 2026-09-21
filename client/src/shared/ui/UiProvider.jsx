@@ -131,7 +131,7 @@ function ConfirmDialog({ req, onResolve }) {
         <div className="flex gap-3 px-6 pb-6 pt-2">
           <button
             onClick={() => onResolve(false)}
-            className="flex-1 py-3.5 bg-surface-2 border border-white/10 text-fg/60 font-bold rounded-xl hover:text-fg transition text-sm uppercase tracking-wider min-h-[48px]"
+            className="flex-1 py-3.5 bg-surface-2 border border-white/10 text-fg/65 font-bold rounded-xl hover:text-fg transition text-sm uppercase tracking-wider min-h-[48px]"
           >
             {req.cancelLabel || 'Cancel'}
           </button>

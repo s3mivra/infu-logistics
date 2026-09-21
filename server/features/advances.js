@@ -57,7 +57,7 @@ export default function registerAdvances(ctx) {
   };
 
   // ── LIST ─────────────────────────────────────────────────────────────────────
-  app.get('/api/advances', verifyToken, ...canViewAcct, async (req, res) => {
+  app.get('/api/advances', verifyToken, ...canViewAcct, requirePermission('screen.reports.advances'), async (req, res) => {
     try {
       const q = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
       if (ADVANCE_TYPES.includes(req.query.type)) q.type = req.query.type;

@@ -7,6 +7,13 @@ import { businessDateStr } from '../lib/businessTime.js';
 import { dayEnd } from '../lib/reportRange.js';
 import { mergeTrialBalances, buildPnl, buildBalanceSheet, unknownCodes } from '../lib/consolidate.js';
 import { rollUpByLocation, parseBranchCode } from '../lib/branchCode.js';
+// Action permissions. Each route below changes data, and was guarded only by
+// "is staff" - so a plain staff account could, through the API, do what the
+// permission catalogue reserves for a role that holds the matching
+// .manage key (see lib/authz.js PERMISSIONS). `permit` is the same
+// requirePermission the context hands out, imported under a short name so
+// it reads the same in every file.
+import { requirePermission as permit, requireAnyPermission as permitAny } from '../lib/authz.js';
 
 const TENANT = (() => {
   const m = (process.env.MONGO_URI || '').match(/\/semivra_([^?/]+)/);
@@ -216,7 +223,12 @@ export default function registerHub(ctx) {
   // Internal: hub confirms handshake (called by client during redeem)
   app.post('/api/hub/internal/handshake', async (req, res) => {
     const { code, clientSlug, clientUrl, linkToken } = req.body || {};
-    if (!code || !clientSlug || !linkToken) return res.status(400).json({ error: 'Missing fields.' });
+    // Strings only. This route is open by design - the invite code is the
+    // secret - so an object here is somebody probing the query, not a client.
+    const str = (v) => typeof v === 'string' && v.length > 0 && v.length <= 200;
+    if (!str(code) || !str(clientSlug) || !str(linkToken) || (clientUrl != null && typeof clientUrl !== 'string')) {
+      return res.status(400).json({ error: 'Missing fields.' });
+    }
 
     const invite = await HubInvite.findOneAndUpdate(
       { businessType: BUSINESS_TYPE, code, usedAt: null, expiresAt: { $gt: new Date() } },
@@ -261,7 +273,7 @@ export default function registerHub(ctx) {
   // business boundary on one person's say-so.
   //
   // Body: { partnerSlug, items: [{itemId, qty, batchIdx?, note?}] }
-  app.post('/api/hub/transfers/send', verifyToken, requireAuth, async (req, res) => {
+  app.post('/api/hub/transfers/send', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {
     const { partnerSlug, items } = req.body || {};
     if (!partnerSlug || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'partnerSlug and items[] are required.' });
@@ -459,7 +471,7 @@ export default function registerHub(ctx) {
   });
 
   // Accept inbound transfer - receive stock + post ledger JE
-  app.post('/api/hub/transfers/:id/accept', verifyToken, requireAuth, async (req, res) => {
+  app.post('/api/hub/transfers/:id/accept', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {
     const transfer = await CrossTransfer.findOne({
       _id: req.params.id, businessType: BUSINESS_TYPE, direction: 'inbound', status: 'Pending',
     });
@@ -596,7 +608,7 @@ export default function registerHub(ctx) {
   });
 
   // Reject inbound transfer
-  app.post('/api/hub/transfers/:id/reject', verifyToken, requireAuth, async (req, res) => {
+  app.post('/api/hub/transfers/:id/reject', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {
     const transfer = await CrossTransfer.findOne({
       _id: req.params.id, businessType: BUSINESS_TYPE, direction: 'inbound', status: 'Pending',
     });
@@ -615,7 +627,7 @@ export default function registerHub(ctx) {
 
   // Cancel outbound transfer - either withdrawing a slip that was never
   // approved, or pulling back an approved one before the partner accepts.
-  app.post('/api/hub/transfers/:id/cancel', verifyToken, requireAuth, async (req, res) => {
+  app.post('/api/hub/transfers/:id/cancel', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {
     const transfer = await CrossTransfer.findOne({
       _id: req.params.id, businessType: BUSINESS_TYPE, direction: 'outbound',
       status: { $in: ['Requested', 'Pending'] },
@@ -694,7 +706,7 @@ export default function registerHub(ctx) {
   // Body: { partnerSlug, weAreAskingThemToSend: bool, items: [{itemId?, itemName, unit, qty, note}] }
   // weAreAskingThemToSend true  -> fromSlug = partner, toSlug = us (we're asking to RECEIVE)
   // weAreAskingThemToSend false -> fromSlug = us, toSlug = partner (we're asking THEM to let us send / offering)
-  app.post('/api/hub/transfer-requests', verifyToken, requireAuth, async (req, res) => {
+  app.post('/api/hub/transfer-requests', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {
     const { partnerSlug, weAreAskingThemToSend = true, items } = req.body || {};
     if (!partnerSlug || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'partnerSlug and items[] are required.' });
@@ -771,7 +783,7 @@ export default function registerHub(ctx) {
   }
 
   // ── DECLINE (either party, any non-terminal state) ───────────────────────
-  app.post('/api/hub/transfer-requests/:id/decline', verifyToken, requireAuth, async (req, res) => {
+  app.post('/api/hub/transfer-requests/:id/decline', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {
     const doc = await loadMine(req, res);
     if (!doc) return;
     if (!guardActor(req, res, doc)) return;
@@ -793,7 +805,7 @@ export default function registerHub(ctx) {
   // Only reducing/dropping is meaningful here - this is "what we can actually
   // give", not a chance to ask for something different. Not enforced strictly
   // server-side (staff judgment), but the UI only offers adjust-down/remove.
-  app.post('/api/hub/transfer-requests/:id/counter', verifyToken, requireAuth, async (req, res) => {
+  app.post('/api/hub/transfer-requests/:id/counter', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {
     const doc = await loadMine(req, res);
     if (!doc) return;
     if (doc.status !== 'Pending') return res.status(409).json({ error: `Can only counter a Pending request (currently ${doc.status}).` });
@@ -822,7 +834,7 @@ export default function registerHub(ctx) {
   // Does NOT create the shipment yet - the fulfilling side gets one more look
   // (AwaitingFinal) before real stock actually commits. Accepting a counter
   // is "yes, those numbers work for me", not "ship it now".
-  app.post('/api/hub/transfer-requests/:id/accept-counter', verifyToken, requireAuth, async (req, res) => {
+  app.post('/api/hub/transfer-requests/:id/accept-counter', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {
     const doc = await loadMine(req, res);
     if (!doc) return;
     if (doc.status !== 'CounterPending') return res.status(409).json({ error: `No counter-offer to accept (currently ${doc.status}).` });
@@ -841,7 +853,7 @@ export default function registerHub(ctx) {
   // ── APPROVE the ORIGINAL ask as-is (no negotiation needed) ────────────────
   // Skips straight to Approved/shipment creation - nothing was countered, so
   // there is nothing left for a second round to confirm.
-  app.post('/api/hub/transfer-requests/:id/approve-as-is', verifyToken, requireAuth, async (req, res) => {
+  app.post('/api/hub/transfer-requests/:id/approve-as-is', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {
     const doc = await loadMine(req, res);
     if (!doc) return;
     if (doc.status !== 'Pending') return res.status(409).json({ error: `Only a Pending request can be approved as-is (currently ${doc.status}).` });
@@ -850,7 +862,7 @@ export default function registerHub(ctx) {
   });
 
   // ── FINAL APPROVAL after a negotiated counter (fulfilling side only) ─────
-  app.post('/api/hub/transfer-requests/:id/finalize', verifyToken, requireAuth, async (req, res) => {
+  app.post('/api/hub/transfer-requests/:id/finalize', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {
     const doc = await loadMine(req, res);
     if (!doc) return;
     if (doc.status !== 'AwaitingFinal') return res.status(409).json({ error: `Nothing awaiting final approval (currently ${doc.status}).` });
@@ -928,7 +940,7 @@ export default function registerHub(ctx) {
   }
 
   // ── CANCEL (filer withdraws before any response) ─────────────────────────
-  app.post('/api/hub/transfer-requests/:id/cancel', verifyToken, requireAuth, async (req, res) => {
+  app.post('/api/hub/transfer-requests/:id/cancel', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {
     const doc = await loadMine(req, res);
     if (!doc) return;
     if (doc.filedBySlug !== TENANT) return res.status(403).json({ error: 'Only the business that filed this can withdraw it.' });

@@ -71,14 +71,14 @@ export default function ArHistoryModal() {
                         {/* Money that sat with the collector before banking -
                             the gap where cash goes missing. */}
                         {p.depositDate && p.collectionDate && new Date(p.depositDate) > new Date(p.collectionDate) && (
-                          <span className="block text-[9px] text-yellow-500/70">
+                          <span className="block text-[9px] text-warning">
                             +{Math.round((new Date(p.depositDate) - new Date(p.collectionDate)) / 86400000)}d float
                           </span>
                         )}
                       </td>
                       <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand-text px-2 py-1 rounded">{p.paymentMethod || '-'}</span></td>
                       <td className="py-2.5 text-fg/75 text-xs">
-                        {p.referenceNumber || <span className="text-fg/60">-</span>}
+                        {p.referenceNumber || <span className="text-fg/65">-</span>}
                         {p.note && <span className="block text-[9px] text-fg/65 italic">{p.note}</span>}
                       </td>
                       <td className="py-2.5 text-right tabular-nums font-bold text-success">{peso(p.amount)}</td>

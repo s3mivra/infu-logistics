@@ -11,7 +11,8 @@ const auth = (method, path, token) => request(app)[method](path).set('Authorizat
 beforeAll(async () => {
   ctx = await bootApp({ businessType: 'log' });
   app = ctx.app;
-  await makeUser({ name: 'bcStaff', role: 'staff' });
+  // Creating a product is a products.manage action - a manager, not staff.
+  await makeUser({ name: 'bcStaff', role: 'manager' });
   staffTok = await loginStaff(app, 'bcStaff');
   await mongoose.model('Category').create({ name: 'BC-Cat', department: 'Kitchen' });
 }, 120000);

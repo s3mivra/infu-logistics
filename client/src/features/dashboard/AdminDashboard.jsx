@@ -1,6 +1,6 @@
 ﻿import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { io } from 'socket.io-client';
+import { socket, reconnectSocket } from '../../shared/staffSocket.js';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network, Factory, Landmark, Receipt } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
@@ -46,6 +46,7 @@ import { LEDGER_REPORT_SPEC, ledgerReportTable } from '../../shared/ledgerReport
 import * as ui from '../../shared/ui';
 import { monthStartStr, setClientBusinessTz, todayStr, yearStartStr } from '../../shared/businessDay.js';
 import { PACK_UNIT } from '../../shared/packUnit.js';
+import { setUpdateGuard } from '../../shared/autoUpdate.js';
 // Tabs are lazy-loaded so only the active tab's code ships on first dashboard
 // paint; the rest load on demand when the operator opens them.
 const AnalyticsTab  = lazy(() => import('../analytics/AnalyticsTab'));
@@ -114,46 +115,7 @@ const COMP_REASON_LABELS = {
 // verify the user's role and auto-place them in the right room (server-decided,
 // not client-declared - see io.use in server.js). The token is re-read on every
 // (re)connect, so a fresh token after a refresh is picked up automatically.
-// transports: WebSocket first, then long-polling as a fallback. It used to be
-// websocket-only with upgrade:false, which meant that if anything between the
-// browser and the server declined to forward the upgrade - a proxy, a CDN, a
-// captive network - realtime did not degrade, it simply died, silently: no new
-// orders appearing, no stock updates, and nothing on screen saying so. Polling
-// is heavier, so it is the fallback rather than the default.
-const socket = io(API_URL, {
-  transports: ['websocket', 'polling'],
-  auth: (cb) => {
-    try { cb({ token: auth.getToken?.() || '' }); }
-    catch { cb({ token: '' }); }
-  },
-});
-// A live WebSocket blocks the page from qualifying for the browser's
-// back-forward cache - Chrome can't freeze it with an open socket, so
-// navigating away and back (or opening/closing this tab's history entry)
-// just kills the connection mid-air, logging "Page entered Back-Forward
-// Cache" to the console instead of a clean close. Disconnect proactively
-// right before the page would be frozen, and reconnect if it's restored
-// from bfcache (pageshow fires with persisted:true) - same recovery the
-// existing 'connect' handler below already does after any other drop.
-// Connection failures were completely invisible: there is no connect_error
-// handler anywhere in the app, so a socket that could never establish just left
-// the dashboard quietly not-live - orders arriving with nobody told. Logged with
-// the transport that failed, because "websocket failed, polling worked" is the
-// signature of a proxy that will not forward an upgrade, and that is worth
-// knowing rather than guessing at.
-socket.on('connect_error', (err) => {
-  console.warn('[socket] connect failed:', err?.message || err, '| transport:', socket.io?.engine?.transport?.name || 'unknown');
-});
-
-if (typeof window !== 'undefined') {
-  // Only disconnect a socket that actually got up. Calling disconnect() while
-  // the handshake is still in flight is what logs "WebSocket is closed before
-  // the connection is established" - harmless, but indistinguishable in the
-  // console from a genuine failure, which made a real problem impossible to
-  // spot among the noise.
-  window.addEventListener('pagehide', () => { try { if (socket.connected) socket.disconnect(); } catch { /* already gone */ } });
-  window.addEventListener('pageshow', (e) => { if (e.persisted) { try { socket.connect(); } catch { /* ignore */ } } });
-}
+// The live connection is shared with every staff screen - see shared/staffSocket.js.
 
 // New order arrives at kitchen - single sharp ding
 const playKitchenDing = () => {
@@ -356,11 +318,11 @@ export default function AdminDashboard() {
   // collectors brought in) or 'deposit' (what reached the bank, which is the
   // figure that ties to a bank statement).
   const [collectionReport, setCollectionReport] = useState(null);
-  const [collRange, setCollRange] = useState({
+  const [collRange, setCollRange] = useState(() => ({
     start: monthStartStr(),
     end: todayStr(),
     basis: 'collection',
-  });
+  }));
   // --- CHECK REGISTER ---
   // Checks taken in against A/R, tracked On Hand -> Deposited -> Cleared, or
   // Bounced (which reverses the collection and reopens the invoice).
@@ -368,10 +330,10 @@ export default function AdminDashboard() {
   const [changeRequests, setChangeRequests] = useState([]);
   const [canApprovePricing, setCanApprovePricing] = useState(false);
   const [priceChangeLog, setPriceChangeLog] = useState(null);
-  const [priceLogRange, setPriceLogRange] = useState({
+  const [priceLogRange, setPriceLogRange] = useState(() => ({
     start: monthStartStr(),
     end: todayStr(),
-  });
+  }));
   // Requests against the product whose history is open - shown alongside the
   // applied changes so "why is this still ₱250" is answered on the same screen.
   const [pricePending, setPricePending] = useState([]);
@@ -384,10 +346,10 @@ export default function AdminDashboard() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   });
   const [supplierPayments, setSupplierPayments] = useState(null);
-  const [supPayRange, setSupPayRange] = useState({
+  const [supPayRange, setSupPayRange] = useState(() => ({
     start: monthStartStr(),
     end: todayStr(),
-  });
+  }));
   const [checkRegister, setCheckRegister] = useState(null);
   const [checkFilter, setCheckFilter] = useState('');
   const [bounceTarget, setBounceTarget] = useState(null);   // the check row being bounced
@@ -395,23 +357,23 @@ export default function AdminDashboard() {
   const [bounceSubmitting, setBounceSubmitting] = useState(false);
   // --- SALES BY PAYMENT ---
   const [salesByPayment, setSalesByPayment] = useState(null);
-  const [sbpRange, setSbpRange] = useState({
+  const [sbpRange, setSbpRange] = useState(() => ({
     start: monthStartStr(),
     end: todayStr()
-  });
+  }));
   // --- SUMMARY SALES (by channel: cash / e-wallet / bank / delivery) ---
   const [salesSummary, setSalesSummary] = useState(null);
-  const [sssRange, setSssRange] = useState({
+  const [sssRange, setSssRange] = useState(() => ({
     start: monthStartStr(),
     end: todayStr()
-  });
+  }));
   const [sssGroup, setSssGroup] = useState('order'); // 'order' | 'day'
   // --- SALES LINE ITEMS (one row per order item - item code + item detail) ---
   const [salesLineItems, setSalesLineItems] = useState(null);
-  const [sliRange, setSliRange] = useState({
+  const [sliRange, setSliRange] = useState(() => ({
     start: monthStartStr(),
     end: todayStr()
-  });
+  }));
   // --- REFUND ---
   const [refundModal, setRefundModal] = useState(null);
   const [refundForm, setRefundForm] = useState({ reason: '', refundAmount: '', inventoryAction: 'Restock' });
@@ -584,13 +546,22 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState([]); // Stores the employee list
 
   const [globalAddOns, setGlobalAddOns] = useState([]);
-  const [addOnForm, setAddOnForm] = useState({ name: '', price: '', category: 'Extras' });
+  // `recipe` is optional: what an extra takes from stock when it is sold -
+  // an extra shot takes coffee, boba takes boba. Left empty, the add-on only
+  // changes the price, as before.
+  const [addOnForm, setAddOnForm] = useState({ name: '', price: '', category: 'Extras', recipe: [] });
 
   // --- MANUAL POS STATES ---
   const [isPosOpen, setIsPosOpen] = useState(false);
   const [posCart, setPosCart] = useState([]);
   const [posSubmitting, setPosSubmitting] = useState(false); // disables Place Order while in flight
   const posSubmittingRef = useRef(false);                    // synchronous double-tap guard
+  // What a reload would lose, for the updater that moves an installed till to
+  // a new version: a cart with something in it, or the register open. Read
+  // when the updater decides, so it always sees the current state.
+  const unsavedWorkRef = useRef(false);
+  unsavedWorkRef.current = posCart.length > 0 || isPosOpen || posSubmittingRef.current;
+  useEffect(() => { setUpdateGuard(() => unsavedWorkRef.current); return () => setUpdateGuard(null); }, []);
   const [posCategory, setPosCategory] = useState('All');
   const [posPage, setPosPage] = useState(1);
   const [posSearch, setPosSearch] = useState('');
@@ -642,24 +613,24 @@ export default function AdminDashboard() {
   // --- LEDGER SUB-TABS + FINANCE DATA ---
   const [ledgerSubTab, setLedgerSubTab] = useState('journal'); // 'journal' | 'pnl' | 'balance' | 'ar' | 'expenses'
   const [pnlData, setPnlData] = useState(null);
-  const [pnlRange, setPnlRange] = useState({
+  const [pnlRange, setPnlRange] = useState(() => ({
     start: monthStartStr(),
     end: todayStr()
-  });
+  }));
   // Monthly P&L (per-month columns + ratios; period & matrix views)
   const [pnlMonthly, setPnlMonthly] = useState(null);
-  const [pnlmRange, setPnlmRange] = useState({
+  const [pnlmRange, setPnlmRange] = useState(() => ({
     start: yearStartStr(),
     end: todayStr()
-  });
+  }));
   const [pnlmView, setPnlmView] = useState('period'); // 'period' | 'matrix'
   const [bsData, setBsData] = useState(null);
   // Monthly Balance Sheet (per-month-end columns + ratios; period & matrix views)
   const [bsMonthly, setBsMonthly] = useState(null);
-  const [bsmRange, setBsmRange] = useState({
+  const [bsmRange, setBsmRange] = useState(() => ({
     start: yearStartStr(),
     end: todayStr()
-  });
+  }));
   const [bsmView, setBsmView] = useState('period');
   const [arOutstanding, setArOutstanding] = useState({ orders: [], totalOutstanding: 0 });
   // Per-client A/R ageing + each client's credit limit and headroom.
@@ -668,7 +639,7 @@ export default function AdminDashboard() {
   // Recent expenses + per-category totals backing the Expenses page.
   const [expenseList, setExpenseList] = useState({ expenses: [], byCategory: [], total: 0 });
   const [expenseCategories, setExpenseCategories] = useState([]);
-  const [expenseForm, setExpenseForm] = useState({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', claimInputVat: false, date: todayStr() });
+  const [expenseForm, setExpenseForm] = useState(() => ({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', claimInputVat: false, date: todayStr() }));
   const [expenseSubmitting, setExpenseSubmitting] = useState(false);
   const [settleModal, setSettleModal] = useState(null); // { order }
   // `collectionDate` is when the money left the client's hands; `depositDate`
@@ -1380,9 +1351,11 @@ export default function AdminDashboard() {
   const handleSaveAddOn = async (e) => {
     e.preventDefault();
     const { _id, ...body } = addOnForm;
+    // Only lines that take something; a line left at zero is not a recipe.
+    body.recipe = (body.recipe || []).filter(r => Number(r.qty) > 0);
     const url = _id ? `/api/addons/${_id}` : '/api/addons';
     await apiFetch(url, { method: _id ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    setAddOnForm({ name: '', price: '', category: 'Extras' });
+    setAddOnForm({ name: '', price: '', category: 'Extras', recipe: [] });
     fetchData();
   };
   
@@ -1391,13 +1364,26 @@ export default function AdminDashboard() {
     fetchData();
   };
 
-  const fetchERPData = async (journalSearchTerm) => {
+  // Stock alone - what the Inventory, Menu Setup, Pricing and Production
+  // tabs show. Refreshing those on every visit through fetchERPData would drag
+  // 500 journal entries along each time.
+  const fetchInventory = async () => {
     try {
       const invRes = await apiFetch(`/api/inventory`);
       if (invRes.ok) setInventory((await invRes.json()).items || []);
+    } catch (err) { console.error('Failed to fetch inventory', err); }
+  };
+
+  const fetchERPData = async (journalSearchTerm) => {
+    try {
+      // Stock, journal and balances do not depend on one another, so they are
+      // fetched together. One after another, the screen waited for three round
+      // trips in a row every time any of the 20-odd callers asked.
+      const stock = fetchInventory();
 
       const isSuperAdmin = activeAdmin?.role === 'superadmin';
-      if (isSuperAdmin) {
+      if (!isSuperAdmin) { await stock; return; }
+      {
         // limit=500 (server max) - the default 50 sorts by transaction date, so
         // an old-dated entry (e.g. a backdated sale) can fall off the page once
         // there are 500+ more-recent entries. When the caller passes a search
@@ -1407,11 +1393,15 @@ export default function AdminDashboard() {
         // that were already fetched.
         const q = (journalSearchTerm || '').trim();
         const jeUrl = q ? `/api/journal?limit=500&search=${encodeURIComponent(q)}` : `/api/journal?limit=500`;
-        const jeRes = await apiFetch(jeUrl);
-        if (jeRes.ok) setJournalEntries((await jeRes.json()).entries || []);
-
-        const balRes = await apiFetch(`/api/finance/balances`);
-        if (balRes.ok) setCashOnHand((await balRes.json()).cashOnHand || 0);
+        const journal = (async () => {
+          const jeRes = await apiFetch(jeUrl);
+          if (jeRes.ok) setJournalEntries((await jeRes.json()).entries || []);
+        })();
+        const balances = (async () => {
+          const balRes = await apiFetch(`/api/finance/balances`);
+          if (balRes.ok) setCashOnHand((await balRes.json()).cashOnHand || 0);
+        })();
+        await Promise.all([stock, journal, balances]);
       }
     } catch (err) { console.error('Failed to fetch ERP data', err); }
   };
@@ -1609,7 +1599,7 @@ export default function AdminDashboard() {
     }
   };
   
-  const [jeForm, setJeForm] = useState({
+  const [jeForm, setJeForm] = useState(() => ({
     // An adjusting entry belongs to the period it corrects, not to the day it
     // was typed. The API has always accepted a date - and locks closed months
     // against it - but the form never offered a box, so every manual entry was
@@ -1620,7 +1610,7 @@ export default function AdminDashboard() {
       { accountCode: '', accountName: '', debit: '', credit: '' },
       { accountCode: '', accountName: '', debit: '', credit: '' }
     ]
-  });
+  }));
 
   const standardAccounts = [
     { accountCode: '111000', accountName: 'Cash on Hand', type: 'Asset' },
@@ -1926,16 +1916,25 @@ export default function AdminDashboard() {
   // the same list is what the server validates against - and a locally-built
   // one offered the 140000 parent, which the server rightly refuses.
   const [fixedAssetAccounts, setFixedAssetAccounts] = useState([]);
+  // Once signed in, and again whenever a different person takes the till. It
+  // used to run the moment the dashboard mounted - behind the login screen,
+  // with no session - so it drew a 401 and never ran again, and the equipment
+  // account picker on purchase orders stayed empty for the whole session.
+  // Who is signed in matters too: the list is only there for a role that can
+  // see the accounts, so a barista handing over to the owner has to refetch.
   useEffect(() => {
+    if (!isAuthenticated) { setFixedAssetAccounts([]); return; }
+    let cancelled = false;
     (async () => {
       try {
         const r = await apiFetch('/api/fixed-assets/classes');
-        if (!r.ok) return;   // the module may be off, or the role may not see it
+        if (!r.ok) { if (!cancelled) setFixedAssetAccounts([]); return; }   // module off, or the role cannot see it
         const d = await r.json();
-        if (d.success) setFixedAssetAccounts((d.classes || []).map(c => ({ code: c.code, name: c.name })));
+        if (!cancelled && d.success) setFixedAssetAccounts((d.classes || []).map(c => ({ code: c.code, name: c.name })));
       } catch { /* the picker simply stays empty */ }
     })();
-  }, [apiFetch]);
+    return () => { cancelled = true; };
+  }, [apiFetch, isAuthenticated, activeAdmin?._id]);
 
   // ── Client accounts list (for per-product per-client discount picker) ──
   const [clientAccounts, setClientAccounts] = useState([]);
@@ -2052,7 +2051,7 @@ export default function AdminDashboard() {
     } catch { ui.alert('Failed to update tier rate. Check your connection.'); }
   };
 
-  useEffect(() => { if (isAuthenticated) { fetchDiscounts(); fetchCoa(); fetchClientAccounts(); fetchPriceTiers(); fetchPricingTable(); fetchClosedPeriods(); fetchPaymentMap(); } }, [isAuthenticated]);
+  useEffect(() => { if (isAuthenticated) { fetchDiscounts(); fetchCoa(); if (activeAdmin?.role === 'superadmin') fetchClientAccounts(); fetchPriceTiers(); fetchPricingTable(); fetchClosedPeriods(); fetchPaymentMap(); } }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Partial fulfillment (logistics) ────────────────────────────────────────
   const [partialModal, setPartialModal] = useState(null);  // the order being split
@@ -2163,9 +2162,52 @@ export default function AdminDashboard() {
     };
   }, [invSubTab]);
 
+  // Inventory's page, like the Ledger's, is one this person may open.
+  useEffect(() => {
+    if (activeTab !== 'inventory' || !isAuthenticated) return;
+    if (can(`screen.inventory.${invSubTab}`) && (invSubTab !== 'eod' || can('inventory.count'))) return;
+    const first = ['live', 'transfers', 'reserved', 'places', 'eod'].find(p => can(`screen.inventory.${p}`) && (p !== 'eod' || can('inventory.count')));
+    if (first) setInvSubTab(first);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, invSubTab, isAuthenticated, activeAdmin?._id]);
+
+  // Opening a tab brings its figures up to date. The shared lists - orders,
+  // the menu, stock - were loaded once at sign-in and then kept current only
+  // by live updates, so a dropped connection left a tab showing whatever it
+  // had last heard until a full reload. Each tab asks only for what it shows:
+  // opening Inventory does not pull the ledger along with it. Tabs that load
+  // their own data when they open already do this and are not listed.
+  // Skipped for the tab signed into, which the sign-in load already covered.
+  const lastRefreshedTab = useRef(null);
+  useEffect(() => {
+    if (!isAuthenticated) { lastRefreshedTab.current = null; return; }
+    if (lastRefreshedTab.current === null) { lastRefreshedTab.current = activeTab; return; }
+    if (lastRefreshedTab.current === activeTab) return;
+    lastRefreshedTab.current = activeTab;
+    const refresh = {
+      orders:     () => { fetchOrders(); fetchData(); fetchParked(); },
+      history:    () => { fetchOrders(); },
+      analytics:  () => { fetchOrders(); fetchData(); },
+      audit:      () => { fetchOrders(); },
+      inventory:  () => { fetchInventory(); fetchStockTaxonomy(); },
+      products:   () => { fetchData(); fetchInventory(); },
+      pricing:    () => { fetchData(); fetchInventory(); },
+      production: () => { fetchInventory(); fetchData(); },
+      ledger:     () => { fetchERPData(); },
+      reports:    () => { fetchERPData(); },
+      settings:   () => { fetchSettings(); },
+    }[activeTab];
+    refresh?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isAuthenticated]);
+
   // Effect 2: Order list + menu listeners - named callbacks so cleanup doesn't nuke Effect 1's handlers
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated) {
+      // Signed out: nothing should be arriving for a session that has ended.
+      try { if (socket.connected) socket.disconnect(); } catch { /* already down */ }
+      return;
+    }
     fetchOrders();
     fetchData();
     fetchERPData();
@@ -2176,7 +2218,7 @@ export default function AdminDashboard() {
     // Force a reconnect so the handshake picks up the fresh token from auth.getToken().
     // Room placement is server-decided based on the verified JWT - no more
     // client-declared role (which an attacker could spoof to elevate to manager).
-    try { socket.disconnect(); socket.connect(); } catch { /* ignore */ }
+    reconnectSocket();
     // Back-compat: the server now ignores this payload but we keep emitting it
     // so older server builds during deploy don't drop the event.
     socket.emit('joinRoom', activeAdmin?.role || 'staff');
@@ -3382,6 +3424,10 @@ const updateStatus = async (orderId, newStatus) => {
     } catch (err) { console.error('fetchExpenses', err); }
   }, [apiFetch]);
   const fetchSuppliers = async () => {
+    // Suppliers are a procurement record. A role that cannot see procurement
+    // was still asked for them every time the Inventory tab opened, drawing a
+    // 403 each time - asked for nothing it could use.
+    if (activeAdmin?.role !== 'superadmin' && !auth.can('procurement.view')) { setSuppliers([]); return; }
     try {
       const res = await apiFetch('/api/suppliers');
       const d = await res.json();
@@ -4945,6 +4991,7 @@ const updateStatus = async (orderId, newStatus) => {
       // someone the server already had clocked in.
       setClockStatusLoaded(false);
       fetchClockStatus();
+      reconnectSocket();
       setSwitchLocked(false);
       setSwitchOpen(false);
       ui.toast?.(`${d.user.name} is now at the register.`, { tone: 'success' });
@@ -8058,7 +8105,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   if (authBootstrapping) {
     return (
       <div className="min-h-screen bg-page-bg flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4 text-fg/60">
+        <div className="flex flex-col items-center gap-4 text-fg/65">
           <RefreshCw size={32} className="animate-spin text-brand-text" />
           <span className="text-sm">Restoring session…</span>
         </div>
@@ -8076,7 +8123,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             </div>
             <p className="text-5xl font-black text-brand-text tracking-tight leading-none mb-3">{BIZ_NAME}</p>
             <p className="text-fg/65 font-bold uppercase tracking-[0.3em] text-sm">SEMIVRA LIBELLUS</p>
-            <p className="text-fg/15 text-xs mt-12 font-medium">Restaurant POS &amp; Management System</p>
+            <p className="text-fg/65 text-xs mt-12 font-medium">Restaurant POS &amp; Management System</p>
           </div>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center p-6 lg:p-12">
@@ -8104,7 +8151,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             placeholder="Staff Name"
             value={loginForm.name}
             onChange={e => setLoginForm({...loginForm, name: e.target.value})}
-            className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-fg placeholder-white/20 text-center py-3 rounded-xl outline-none mb-3 font-bold transition"
+            className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-fg placeholder-fg/70 text-center py-3 rounded-xl outline-none mb-3 font-bold transition"
             required
             autoFocus
           />
@@ -8114,7 +8161,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             placeholder="Password"
             value={loginForm.password}
             onChange={e => setLoginForm({...loginForm, password: e.target.value})}
-            className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-fg placeholder-white/20 text-center py-3 rounded-xl outline-none mb-3 font-bold tracking-widest transition"
+            className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-fg placeholder-fg/70 text-center py-3 rounded-xl outline-none mb-3 font-bold tracking-widest transition"
             required
           />
           {/* The till is already open, so this login joins it. Saying so beats
@@ -8142,7 +8189,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           <p className="text-fg/65 text-xs mb-5 text-center font-medium">
             {requireCashShift ? 'Required for staff · Optional for Superadmin' : 'Cash shift tracking is turned off for this shop'}
           </p>
-          <button type="submit" className="w-full bg-brand hover:bg-brand-dark text-fg font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest">
+          <button type="submit" className="w-full bg-brand hover:bg-brand-dark text-on-brand font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest">
             Start Shift
           </button>
         </form>
@@ -8303,7 +8350,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           className="bg-brand text-on-brand px-10 py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-brand/90 active:scale-98 transition shadow-lg shadow-brand/20 min-h-[56px] flex items-center gap-2">
           <Clock size={18} /> Clock In
         </button>
-        <button onClick={performLogout} className="mt-5 text-fg/70 hover:text-fg/70 text-xs font-bold uppercase tracking-wider transition">
+        <button onClick={performLogout} className="mt-5 text-fg/70 text-xs font-bold uppercase tracking-wider transition">
           Log out
         </button>
       </div>
@@ -8375,7 +8422,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
                 >
                   {hidden ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
                   {group.label}
-                  {hidden && <span className="ml-auto text-[9px] text-fg/60 font-black normal-case tracking-normal">{group.items.length}</span>}
+                  {hidden && <span className="ml-auto text-[9px] text-fg/65 font-black normal-case tracking-normal">{group.items.length}</span>}
                 </button>
                 {!hidden && group.items.map(item => {
                   const Icon = item.icon;
@@ -8427,7 +8474,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       {/* Bottom */}
       <div className="p-3 border-t border-white/5 space-y-0.5">
         <div className="flex items-center justify-between px-4 py-2">
-          <span className="text-[10px] text-fg/60 font-bold uppercase tracking-wider">Auto-Close</span>
+          <span className="text-[10px] text-fg/65 font-bold uppercase tracking-wider">Auto-Close</span>
           <MidnightCountdown />
         </div>
         {/* Clock In/Out/Break - always visible for staff (frequent, critical
@@ -8492,14 +8539,14 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
               {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
               {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
             </button>
-            <button onClick={e => { e.preventDefault(); (BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR()); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text/85 hover:text-brand-text hover:bg-brand/10 transition font-bold text-sm">
+            <button onClick={e => { e.preventDefault(); (BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR()); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text hover:bg-brand/10 transition font-bold text-sm">
               <QrCode size={15} />
               {BUSINESS_TYPE === 'log' ? 'Portal' : 'Show QR'}
             </button>
             {/* Logistics: a guest walk-in QR (below Portal) - a customer with no
                 account scans it to order on the spot, same guest menu flow as fb. */}
             {BUSINESS_TYPE === 'log' && (
-              <button onClick={e => { e.preventDefault(); handleShowQR(); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text/85 hover:text-brand-text hover:bg-brand/10 transition font-bold text-sm">
+              <button onClick={e => { e.preventDefault(); handleShowQR(); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text hover:bg-brand/10 transition font-bold text-sm">
                 <QrCode size={15} />
                 Guest QR
               </button>
@@ -8507,14 +8554,14 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             {/* Install as app (only when the browser offers it) */}
             {installable && (
               <button onClick={() => { install(); closeFn?.(); }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text hover:text-brand-text hover:bg-brand/10 transition font-bold text-sm">
+                className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text hover:bg-brand/10 transition font-bold text-sm">
                 <Download size={15} />
                 Install App
               </button>
             )}
           </div>
         )}
-        <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-danger hover:text-danger hover:bg-red-500/10 transition font-bold text-sm">
+        <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-danger hover:bg-red-500/10 transition font-bold text-sm">
           <LogOut size={15} />
           {isSuperAdmin ? 'Log Out' : 'End Shift'}
         </button>
@@ -8524,7 +8571,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
               <span className="text-brand-text font-black text-xs">{activeAdmin?.name?.charAt(0)?.toUpperCase()}</span>
             </div>
             <div className="min-w-0">
-              <p className="text-fg/60 text-xs font-bold truncate">{activeAdmin?.name}</p>
+              <p className="text-fg/65 text-xs font-bold truncate">{activeAdmin?.name}</p>
               <p className="text-fg/65 text-[10px] uppercase tracking-widest">{activeAdmin?.role}</p>
             </div>
           </div>
@@ -8826,7 +8873,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
                 <h2 className="font-black text-fg text-lg leading-none">
                   {switchLocked ? 'Register locked' : 'Switch user'}
                 </h2>
-                <p className="text-fg/60 text-xs font-bold mt-1">
+                <p className="text-fg/65 text-xs font-bold mt-1">
                   {switchName
                     ? `${switchName}, enter your PIN`
                     : switchLocked
@@ -8837,7 +8884,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
               {/* No way out while locked: a dismissable lock is not a lock. The
                   escape hatch is signing out and using a password, below. */}
               {!switchLocked && (
-                <button onClick={() => setSwitchOpen(false)} className="text-fg/60 hover:text-fg transition"><X size={18} /></button>
+                <button onClick={() => setSwitchOpen(false)} className="text-fg/65 hover:text-fg transition"><X size={18} /></button>
               )}
             </div>
 
@@ -8881,7 +8928,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
                 </button>
               ))}
               <button disabled={switchBusy} onClick={() => { setSwitchPin(''); setSwitchError(''); }}
-                className="py-4 rounded-xl bg-white/5 hover:bg-white/10 text-fg/60 font-bold text-xs uppercase tracking-wider transition disabled:opacity-40">
+                className="py-4 rounded-xl bg-white/5 hover:bg-white/10 text-fg/65 font-bold text-xs uppercase tracking-wider transition disabled:opacity-40">
                 Clear
               </button>
               <button disabled={switchBusy}
@@ -8890,7 +8937,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
                 0
               </button>
               <button disabled={switchBusy} onClick={() => setSwitchPin(switchPin.slice(0, -1))}
-                className="py-4 rounded-xl bg-white/5 hover:bg-white/10 text-fg/60 font-bold text-xs uppercase tracking-wider transition disabled:opacity-40">
+                className="py-4 rounded-xl bg-white/5 hover:bg-white/10 text-fg/65 font-bold text-xs uppercase tracking-wider transition disabled:opacity-40">
                 Back
               </button>
             </div>
@@ -8901,7 +8948,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
               {switchBusy ? 'Checking...' : 'Take the register'}
             </button>
 
-            <p className="text-[10px] text-fg/50 text-center mt-3 leading-snug">
+            <p className="text-[10px] text-fg/65 text-center mt-3 leading-snug">
               Your PIN says who is ringing. What you can do still comes from your role.
               No PIN yet? Ask the owner to set one, or sign out and use your password.
             </p>
@@ -8938,10 +8985,10 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       {mgrAlerts.length > 0 && (
         <div className="fixed bottom-4 right-4 z-[99999] flex flex-col gap-2 max-w-sm">
           {mgrAlerts.map(a => (
-            <div key={a.id} className="flex items-start gap-2 bg-amber-500/15 border border-amber-500/40 text-amber-200 px-4 py-3 rounded-2xl shadow-lg animate-fade-in">
+            <div key={a.id} className="flex items-start gap-2 bg-amber-500/15 border border-amber-500/40 text-warning px-4 py-3 rounded-2xl shadow-lg animate-fade-in">
               <AlertTriangle size={16} className="shrink-0 mt-0.5" />
               <p className="text-xs font-bold leading-snug flex-1">{a.message}</p>
-              <button onClick={() => dismissMgrAlert(a.id)} className="text-amber-200/60 hover:text-amber-100 shrink-0"><X size={15} /></button>
+              <button onClick={() => dismissMgrAlert(a.id)} className="text-warning hover:text-amber-100 shrink-0"><X size={15} /></button>
             </div>
           ))}
         </div>
@@ -9018,7 +9065,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
       {/* ── OFFLINE / SYNC BANNER ─────────────────────────────────────────── */}
       {(!isOnline || queuedCount > 0) && (
-        <div className={`mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border ${isOnline ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-red-500/10 border-red-500/30 text-danger'}`}>
+        <div className={`mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border ${isOnline ? 'bg-amber-500/10 border-amber-500/30 text-warning' : 'bg-red-500/10 border-red-500/30 text-danger'}`}>
           {isOnline ? <CloudOff size={18} className="shrink-0" /> : <WifiOff size={18} className="shrink-0" />}
           <div className="flex-1 min-w-0">
             <p className="font-black text-sm leading-tight">
@@ -9034,7 +9081,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           </div>
           {isOnline && queuedCount > 0 && (
             <button onClick={() => syncQueue(sendQueuedOrder).then(({ sent }) => { if (sent > 0) fetchOrders(); })}
-              className="shrink-0 flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition">
+              className="shrink-0 flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-warning px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition">
               <RefreshCw size={12} /> Sync now
             </button>
           )}
@@ -9079,13 +9126,13 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
             <button
               onClick={(e) => { e.preventDefault(); setQrReplacedBecause(''); handleShowQR(); }}
-              className="mt-4 w-full bg-surface border border-accent text-brand-text font-bold py-3 rounded-md hover:bg-accent hover:text-fg transition uppercase tracking-widest text-sm shrink-0"
+              className="mt-4 w-full bg-surface border border-accent text-brand-text font-bold py-3 rounded-md hover:bg-accent hover:text-on-brand transition uppercase tracking-widest text-sm shrink-0"
             >
               Generate Next QR
             </button>
             <button
               onClick={() => { setShowQR(false); setQrReplacedBecause(''); }}
-              className="mt-3 w-full bg-page-bg border border-gray-600 text-brand-text font-bold py-3 rounded-md hover:bg-accent hover:text-fg transition text-sm shrink-0"
+              className="mt-3 w-full bg-page-bg border border-gray-600 text-brand-text font-bold py-3 rounded-md hover:bg-accent hover:text-on-brand transition text-sm shrink-0"
             >
               Close
             </button>

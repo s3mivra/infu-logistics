@@ -30,7 +30,7 @@ export default function CashDrawerModal() {
             <p className="text-[11px] text-fg/70 mt-0.5">One till, shared by everyone on shift.</p>
           </div>
           <button onClick={() => setCashDrawerModal(false)}
-            className="text-fg/60 hover:text-fg text-xs font-black uppercase tracking-widest">Close</button>
+            className="text-fg/65 hover:text-fg text-xs font-black uppercase tracking-widest">Close</button>
         </div>
 
         {!s ? (
@@ -79,7 +79,7 @@ export default function CashDrawerModal() {
                   being able to read the figure you are meant to reach before
                   counting is what turns a variance into a formality. */}
               {s.expectedCash === undefined ? (
-                <p className="text-[10px] text-fg/60 pt-1 leading-snug">The expected total is hidden until the drawer is counted.</p>
+                <p className="text-[10px] text-fg/65 pt-1 leading-snug">The expected total is hidden until the drawer is counted.</p>
               ) : (
                 <div className="flex justify-between text-xs pt-1 border-t border-white/10 mt-1">
                   <span className="text-fg/70 font-bold">Expected now</span>
@@ -148,9 +148,9 @@ export default function CashDrawerModal() {
                   <div key={i} className="flex items-center justify-between bg-page-bg border border-white/10 rounded-lg px-3 py-1.5 text-xs">
                     <span className="text-fg/80 truncate pr-2">
                       <span className={m.type === 'in' ? 'text-success font-black' : 'text-warning font-black'}>{m.type === 'in' ? '+' : '-'}{money(m.amount)}</span>
-                      <span className="text-fg/60"> · {m.reason}</span>
+                      <span className="text-fg/65"> · {m.reason}</span>
                     </span>
-                    <span className="text-fg/60 shrink-0">{m.by}</span>
+                    <span className="text-fg/65 shrink-0">{m.by}</span>
                   </div>
                 ))}
               </div>
@@ -175,7 +175,7 @@ export default function CashDrawerModal() {
               className="w-full border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 font-black py-3 rounded-xl uppercase tracking-widest text-xs transition">
               Close drawer for the day
             </button>
-            <p className="text-[10px] text-fg/60 text-center leading-snug -mt-1">
+            <p className="text-[10px] text-fg/65 text-center leading-snug -mt-1">
               Logging out does not close the drawer. Hand over at a changeover; close only when the till is done for the day.
             </p>
           </>

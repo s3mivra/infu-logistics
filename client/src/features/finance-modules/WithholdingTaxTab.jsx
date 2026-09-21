@@ -68,7 +68,7 @@ export default function WithholdingTaxTab() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         {[
           ['Withheld', peso(t.withheld), 'text-fg'],
-          ['Remitted', peso(t.remitted), 'text-fg/60'],
+          ['Remitted', peso(t.remitted), 'text-fg/65'],
           ['Still owed to the BIR', peso(t.outstanding), t.outstanding > 0 ? 'text-warning' : 'text-success'],
         ].map(([label, val, cls]) => (
           <div key={label} className="bg-sidebar-bg border border-white/10 rounded-xl p-3">
@@ -79,7 +79,7 @@ export default function WithholdingTaxTab() {
       </div>
 
       {t.outstanding > 0 && (
-        <p className="flex items-start gap-2 text-[11px] text-amber-400/90 bg-amber-400/5 border border-amber-400/20 rounded-xl px-4 py-3">
+        <p className="flex items-start gap-2 text-[11px] text-warning bg-amber-400/5 border border-amber-400/20 rounded-xl px-4 py-3">
           <AlertCircle size={13} className="shrink-0 mt-0.5" />
           <span>
             {peso(t.outstanding)} is being held on the BIR's behalf. Record the remittance as a journal
@@ -129,7 +129,7 @@ export default function WithholdingTaxTab() {
                     <tbody>
                       {p.entries.map((e, i) => (
                         <tr key={i} className="border-t border-white/5">
-                          <td className="px-4 py-2 text-fg/60">{shortDate(e.date)}</td>
+                          <td className="px-4 py-2 text-fg/65">{shortDate(e.date)}</td>
                           <td className="px-4 py-2 text-fg/80">{e.reference}</td>
                           <td className="px-4 py-2 text-fg/75 truncate max-w-[22rem]">{e.description}</td>
                           <td className="px-4 py-2 text-right tabular-nums text-fg">{peso(e.amount)}</td>

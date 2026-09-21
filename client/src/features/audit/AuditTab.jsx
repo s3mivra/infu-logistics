@@ -125,7 +125,7 @@ export default function AuditTab({ ctx }) {
                 <h2 className="text-xl font-black text-fg tracking-tight flex items-center gap-2">
                   <ShieldCheck size={20} className="text-brand-text" /> Audit Report
                 </h2>
-                <p className="text-fg/60 text-xs font-medium mt-0.5">Exception log - cancelled orders, complimentaries, and discounts</p>
+                <p className="text-fg/65 text-xs font-medium mt-0.5">Exception log - cancelled orders, complimentaries, and discounts</p>
               </div>
               <div className="flex gap-1.5 flex-wrap">
                 {[['today','Today'],['7d','7 Days'],['30d','30 Days'],['all','All Time']].map(([val, lbl]) => (
@@ -143,17 +143,17 @@ export default function AuditTab({ ctx }) {
               <div className="bg-surface border border-white/10 rounded-xl p-4">
                 <p className="text-[10px] text-fg/80 font-bold uppercase tracking-wider mb-1">Cancelled / Voided</p>
                 <p className="text-2xl font-black text-danger">{cancelled.length}</p>
-                <p className="text-[10px] text-danger/80 font-bold mt-0.5">₱{totalCancelledValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} lost</p>
+                <p className="text-[10px] text-danger font-bold mt-0.5">₱{totalCancelledValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} lost</p>
               </div>
               <div className="bg-surface border border-white/10 rounded-xl p-4">
                 <p className="text-[10px] text-fg/80 font-bold uppercase tracking-wider mb-1">Complimentary</p>
                 <p className="text-2xl font-black text-warning">{comps.length}</p>
-                <p className="text-[10px] text-warning/80 font-bold mt-0.5">₱{totalCompValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} waived</p>
+                <p className="text-[10px] text-warning font-bold mt-0.5">₱{totalCompValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} waived</p>
               </div>
               <div className="bg-surface border border-white/10 rounded-xl p-4">
                 <p className="text-[10px] text-fg/80 font-bold uppercase tracking-wider mb-1">Discounts Given</p>
                 <p className="text-2xl font-black text-brand-text">{discounted.length}</p>
-                <p className="text-[10px] text-brand-text/80 font-bold mt-0.5">₱{totalDiscountValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} off</p>
+                <p className="text-[10px] text-brand-text font-bold mt-0.5">₱{totalDiscountValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} off</p>
               </div>
               <div className="bg-surface border border-white/10 rounded-xl p-4">
                 <p className="text-[10px] text-fg/80 font-bold uppercase tracking-wider mb-1">Active Staff</p>
@@ -170,13 +170,13 @@ export default function AuditTab({ ctx }) {
                 <span className="ml-auto text-[10px] bg-red-500/15 text-danger px-2 py-0.5 rounded-full font-bold">{cancelled.length}</span>
               </div>
               {cancelled.length === 0 ? (
-                <p className="text-fg/60 text-sm p-6 text-center font-bold">No cancelled or voided orders in this period.</p>
+                <p className="text-fg/65 text-sm p-6 text-center font-bold">No cancelled or voided orders in this period.</p>
               ) : (
                 <>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left min-w-[540px]">
                       <thead>
-                        <tr className="text-fg/60 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                        <tr className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                           <th className="px-5 py-2.5">Date / Time</th>
                           <th className="px-5 py-2.5">Customer</th>
                           <th className="px-5 py-2.5">Voided / Cancelled By</th>
@@ -194,9 +194,9 @@ export default function AuditTab({ ctx }) {
                             : (o.cancelledBy || o.cashier || '-');
                           return (
                           <tr key={o._id} className="border-b border-white/5 last:border-0 hover:bg-white/3 transition">
-                            <td className="px-5 py-2.5 text-xs text-fg/60 font-mono">{fmtDate(o.createdAt)}</td>
-                            <td className="px-5 py-2.5 text-xs text-fg/60 font-bold">{o.customerName || '-'}</td>
-                            <td className="px-5 py-2.5 text-xs text-fg/60 font-bold">{actor}</td>
+                            <td className="px-5 py-2.5 text-xs text-fg/65 font-mono">{fmtDate(o.createdAt)}</td>
+                            <td className="px-5 py-2.5 text-xs text-fg/65 font-bold">{o.customerName || '-'}</td>
+                            <td className="px-5 py-2.5 text-xs text-fg/65 font-bold">{actor}</td>
                             <td className="px-5 py-2.5 text-xs text-right font-mono text-danger">₱{(o.subtotal || 0).toFixed(2)}</td>
                             <td className="px-5 py-2.5">
                               <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${o.status === 'Voided' ? 'bg-red-500/20 text-danger' : 'bg-gray-500/20 text-fg/70'}`}>{o.status}</span>
@@ -222,7 +222,7 @@ export default function AuditTab({ ctx }) {
                 <span className="ml-auto text-[10px] bg-yellow-500/15 text-warning px-2 py-0.5 rounded-full font-bold">{comps.length}</span>
               </div>
               {comps.length === 0 ? (
-                <p className="text-fg/60 text-sm p-6 text-center font-bold">No complimentary orders in this period.</p>
+                <p className="text-fg/65 text-sm p-6 text-center font-bold">No complimentary orders in this period.</p>
               ) : (
                 <>
                   <div className="overflow-x-auto">
@@ -239,10 +239,10 @@ export default function AuditTab({ ctx }) {
                       <tbody>
                         {pagedComps.map(o => (
                           <tr key={o._id} className="border-b border-white/5 last:border-0 hover:bg-white/3 transition">
-                            <td className="px-5 py-2.5 text-xs text-fg/60 font-mono">{fmtDate(o.createdAt)}</td>
-                            <td className="px-5 py-2.5 text-xs text-fg/60 font-bold">{o.customerName || '-'}</td>
-                            <td className="px-5 py-2.5 text-xs text-yellow-400/80">{COMP_REASON_LABELS[o.reasonType] || o.reasonType || o.reasonNote || '-'}</td>
-                            <td className="px-5 py-2.5 text-xs text-fg/60">{o.cashier || '-'}</td>
+                            <td className="px-5 py-2.5 text-xs text-fg/65 font-mono">{fmtDate(o.createdAt)}</td>
+                            <td className="px-5 py-2.5 text-xs text-fg/65 font-bold">{o.customerName || '-'}</td>
+                            <td className="px-5 py-2.5 text-xs text-warning">{COMP_REASON_LABELS[o.reasonType] || o.reasonType || o.reasonNote || '-'}</td>
+                            <td className="px-5 py-2.5 text-xs text-fg/65">{o.cashier || '-'}</td>
                             <td className="px-5 py-2.5 text-xs text-right font-mono text-warning">₱{(o.subtotal || 0).toFixed(2)}</td>
                           </tr>
                         ))}
@@ -264,13 +264,13 @@ export default function AuditTab({ ctx }) {
                 <span className="ml-auto text-[10px] bg-brand/15 text-brand-text px-2 py-0.5 rounded-full font-bold">{discounted.length}</span>
               </div>
               {discounted.length === 0 ? (
-                <p className="text-fg/60 text-sm p-6 text-center font-bold">No discounted orders in this period.</p>
+                <p className="text-fg/65 text-sm p-6 text-center font-bold">No discounted orders in this period.</p>
               ) : (
                 <>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left min-w-[560px]">
                       <thead>
-                        <tr className="text-fg/60 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                        <tr className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                           <th className="px-5 py-2.5">Date / Time</th>
                           <th className="px-5 py-2.5">Customer</th>
                           <th className="px-5 py-2.5">Type</th>
@@ -283,15 +283,15 @@ export default function AuditTab({ ctx }) {
                       <tbody>
                         {pagedDiscounted.map(o => (
                           <tr key={o._id} className="border-b border-white/5 last:border-0 hover:bg-white/3 transition">
-                            <td className="px-5 py-2.5 text-xs text-fg/60 font-mono">{fmtDate(o.createdAt)}</td>
-                            <td className="px-5 py-2.5 text-xs text-fg/60 font-bold">{o.customerName || '-'}</td>
-                            <td className="px-5 py-2.5 text-xs text-brand/80 font-bold">{o.discountType || 'Promo'}</td>
+                            <td className="px-5 py-2.5 text-xs text-fg/65 font-mono">{fmtDate(o.createdAt)}</td>
+                            <td className="px-5 py-2.5 text-xs text-fg/65 font-bold">{o.customerName || '-'}</td>
+                            <td className="px-5 py-2.5 text-xs text-brand-text font-bold">{o.discountType || 'Promo'}</td>
                             {/* An SC/PWD discount is granted against a named card - this is the
                                 column an examiner reads. */}
-                            <td className="px-5 py-2.5 text-xs text-fg/60">
-                              {o.scPwdName ? <>{o.scPwdName}<span className="block text-[10px] font-mono text-fg/45">{o.scPwdIdNumber}</span></> : '-'}
+                            <td className="px-5 py-2.5 text-xs text-fg/65">
+                              {o.scPwdName ? <>{o.scPwdName}<span className="block text-[10px] font-mono text-fg/65">{o.scPwdIdNumber}</span></> : '-'}
                             </td>
-                            <td className="px-5 py-2.5 text-xs text-fg/60">{o.discountBy || o.cashier || '-'}</td>
+                            <td className="px-5 py-2.5 text-xs text-fg/65">{o.discountBy || o.cashier || '-'}</td>
                             <td className="px-5 py-2.5 text-xs text-right font-mono text-brand-text">-₱{(o.discount || 0).toFixed(2)}</td>
                             <td className="px-5 py-2.5 text-xs text-right font-mono text-fg/70">₱{(o.total || 0).toFixed(2)}</td>
                           </tr>
@@ -314,13 +314,13 @@ export default function AuditTab({ ctx }) {
                 <span className="ml-auto text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{staffList.length}</span>
               </div>
               {staffList.length === 0 ? (
-                <p className="text-fg/60 text-sm p-6 text-center font-bold">No staff activity in this period.</p>
+                <p className="text-fg/65 text-sm p-6 text-center font-bold">No staff activity in this period.</p>
               ) : (
                 <>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left min-w-[440px]">
                       <thead>
-                        <tr className="text-fg/60 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                        <tr className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                           <th className="px-5 py-2.5">Staff Name</th>
                           <th className="px-5 py-2.5 text-right">Orders</th>
                           <th className="px-5 py-2.5 text-right">Cancelled</th>
@@ -337,13 +337,13 @@ export default function AuditTab({ ctx }) {
                           const myNet = myCompleted.reduce((s, o) => s + (o.total || 0), 0);
                           return (
                             <tr key={name} className="border-b border-white/5 last:border-0 hover:bg-white/3 transition">
-                              <td className="px-5 py-2.5 text-xs text-fg/60 font-black">{name}</td>
-                              <td className="px-5 py-2.5 text-xs text-right text-fg/60 font-mono">{myOrders.length}</td>
+                              <td className="px-5 py-2.5 text-xs text-fg/65 font-black">{name}</td>
+                              <td className="px-5 py-2.5 text-xs text-right text-fg/65 font-mono">{myOrders.length}</td>
                               <td className="px-5 py-2.5 text-xs text-right font-mono">
-                                <span className={myCancelled.length > 0 ? 'text-danger' : 'text-fg/60'}>{myCancelled.length}</span>
+                                <span className={myCancelled.length > 0 ? 'text-danger' : 'text-fg/65'}>{myCancelled.length}</span>
                               </td>
                               <td className="px-5 py-2.5 text-xs text-right font-mono">
-                                <span className={myComps.length > 0 ? 'text-warning' : 'text-fg/60'}>{myComps.length}</span>
+                                <span className={myComps.length > 0 ? 'text-warning' : 'text-fg/65'}>{myComps.length}</span>
                               </td>
                               <td className="px-5 py-2.5 text-xs text-right font-mono text-brand-text font-bold">₱{myNet.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             </tr>
@@ -366,9 +366,9 @@ export default function AuditTab({ ctx }) {
                 <h3 className="text-sm font-black text-fg uppercase tracking-wider">System Activity Log</h3>
                 <span className="text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{auditLogsTotal} total</span>
                 <input type="text" value={auditLogFilters.actor} onChange={e => setAuditLogFilters(f => ({ ...f, actor: e.target.value }))}
-                  placeholder="Filter by user" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/25 focus:outline-none focus:border-brand/60 w-32" />
+                  placeholder="Filter by user" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60 w-32" />
                 <input type="text" value={auditLogFilters.action} onChange={e => setAuditLogFilters(f => ({ ...f, action: e.target.value }))}
-                  placeholder="Filter by action" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/25 focus:outline-none focus:border-brand/60 w-36" />
+                  placeholder="Filter by action" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60 w-36" />
                 <input type="date" value={auditLogFilters.start} onChange={e => setAuditLogFilters(f => ({ ...f, start: e.target.value }))}
                   className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg focus:outline-none focus:border-brand/60" />
                 <input type="date" value={auditLogFilters.end} onChange={e => setAuditLogFilters(f => ({ ...f, end: e.target.value }))}
@@ -395,13 +395,13 @@ export default function AuditTab({ ctx }) {
                 </button>
               </div>
               {auditLogs.length === 0 ? (
-                <p className="text-fg/60 text-sm p-6 text-center font-bold">Click Load to fetch system activity - price changes, 86 toggles, password changes, AP payments.</p>
+                <p className="text-fg/65 text-sm p-6 text-center font-bold">Click Load to fetch system activity - price changes, 86 toggles, password changes, AP payments.</p>
               ) : (
                 <>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left min-w-[520px]">
                       <thead>
-                        <tr className="text-fg/60 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+                        <tr className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
                           <th className="px-5 py-2.5">Time</th>
                           <th className="px-5 py-2.5">Action</th>
                           <th className="px-5 py-2.5">Reference</th>
@@ -418,8 +418,8 @@ export default function AuditTab({ ctx }) {
                             PRODUCT_ARCHIVED: 'text-danger',
                             PASSWORD_CHANGED: 'text-info',
                             AP_PAYMENT: 'text-brand-text',
-                            ORDER_COMPLETED: 'text-green-400/70',
-                            ORDER_VOIDED: 'text-red-400/70',
+                            ORDER_COMPLETED: 'text-success',
+                            ORDER_VOIDED: 'text-danger',
                             ORDER_CANCELLED: 'text-fg/70',
                           };
                           const actionColor = actionColors[log.action] || 'text-fg/75';
@@ -436,7 +436,7 @@ export default function AuditTab({ ctx }) {
                                 {new Date(log.timestamp).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} {new Date(log.timestamp).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
                               </td>
                               <td className={`px-5 py-2.5 font-black uppercase tracking-wider text-[10px] ${actionColor}`}>{log.action.replace(/_/g,' ')}</td>
-                              <td className="px-5 py-2.5 font-mono text-fg/60">{log.targetReference}</td>
+                              <td className="px-5 py-2.5 font-mono text-fg/65">{log.targetReference}</td>
                               <td className="px-5 py-2.5 text-fg/70 font-bold">{log.userId || '-'}</td>
                               <td className="px-5 py-2.5 text-fg/70 truncate max-w-[180px]">{detail}</td>
                             </tr>

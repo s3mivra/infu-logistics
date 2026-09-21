@@ -152,3 +152,19 @@ describe('a renamed or deleted custom account updates the list too', () => {
     expect(res.body.methods.some(m => m.name === 'Never Used Bank')).toBe(false);
   });
 });
+
+// Two people adding a sub-account under the same parent at the same moment
+// both read the same next free code. The code is unique, so the second insert
+// used to fail with a server error instead of taking the next code along.
+describe('two sub-accounts added at the same moment', () => {
+  it('both succeed, with different codes', async () => {
+    const [a, b, c] = await Promise.all([
+      auth('post', '/api/accounts', superTok).send({ parentCode: '113000', name: 'Race Wallet A' }),
+      auth('post', '/api/accounts', superTok).send({ parentCode: '113000', name: 'Race Wallet B' }),
+      auth('post', '/api/accounts', superTok).send({ parentCode: '113000', name: 'Race Wallet C' }),
+    ]);
+    expect([a.status, b.status, c.status]).toEqual([200, 200, 200]);
+    const codes = [a, b, c].map(r => r.body.account.code);
+    expect(new Set(codes).size).toBe(3);
+  });
+});

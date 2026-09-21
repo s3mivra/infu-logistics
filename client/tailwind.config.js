@@ -33,6 +33,14 @@ export default {
         danger:       'rgb(var(--danger-text)  / <alpha-value>)',
         success:      'rgb(var(--success-text) / <alpha-value>)',
         warning:      'rgb(var(--warning-text) / <alpha-value>)',
+        // Three more hues the app uses to tell things apart - orange for "soon"
+        // (61-90 days, expiring this week), purple for held/special states
+        // (reserved, refunded, a supplier), teal for customers. As fixed
+        // shades they were chosen for a dark panel and all but vanished on the
+        // light theme; as tokens each theme picks a shade that reads.
+        caution:      'rgb(var(--caution-text) / <alpha-value>)',
+        special:      'rgb(var(--special-text) / <alpha-value>)',
+        mint:         'rgb(var(--mint-text)    / <alpha-value>)',
       },
       fontFamily: {
         sans: ['Inter', 'sans-serif'],

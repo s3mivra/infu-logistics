@@ -105,8 +105,8 @@ export default function BankReconciliationTab() {
               {list.map(r => (
                 <tr key={r._id} className="border-b border-white/5 hover:bg-white/[0.02]">
                   <td className="px-3 py-2.5 font-bold text-fg">{r.reference}</td>
-                  <td className="px-3 py-2.5 text-fg/60">{r.accountName}</td>
-                  <td className="px-3 py-2.5 text-fg/60">{shortDate(r.statementDate)}</td>
+                  <td className="px-3 py-2.5 text-fg/65">{r.accountName}</td>
+                  <td className="px-3 py-2.5 text-fg/65">{shortDate(r.statementDate)}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-fg">{peso(r.statementBalance)}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-fg/70">{peso(r.ledgerBalance)}</td>
                   <td className="px-3 py-2.5">
@@ -326,7 +326,7 @@ function Worksheet({ id, onBack, apiFetch }) {
         </div>
 
         {!live.reconciles && !closed && (
-          <p className="flex items-start gap-2 text-[11px] text-amber-400/90 mt-3 max-w-2xl">
+          <p className="flex items-start gap-2 text-[11px] text-warning mt-3 max-w-2xl">
             <AlertCircle size={13} className="shrink-0 mt-0.5" />
             <span>
               Still out by {peso(Math.abs(live.difference))}. Tick the items the statement shows. If something
@@ -375,11 +375,11 @@ function Worksheet({ id, onBack, apiFetch }) {
                           return next;
                         })} />
                     </td>
-                    <td className="px-3 py-2 text-fg/60">{shortDate(l.date)}</td>
+                    <td className="px-3 py-2 text-fg/65">{shortDate(l.date)}</td>
                     <td className="px-3 py-2 text-fg/80">{l.reference}</td>
                     <td className="px-3 py-2 text-fg/75 truncate max-w-[18rem]">{l.description}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-green-400/80">{l.debit ? peso(l.debit) : ''}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-red-400/70">{l.credit ? peso(l.credit) : ''}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-success">{l.debit ? peso(l.debit) : ''}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-danger">{l.credit ? peso(l.credit) : ''}</td>
                   </tr>
                 );
               })}
@@ -394,7 +394,7 @@ function Worksheet({ id, onBack, apiFetch }) {
 function Row({ label, value, hint, bold, tone }) {
   return (
     <div className="flex items-baseline justify-between gap-4">
-      <span className={`${bold ? 'font-bold text-fg' : 'text-fg/60'}`}>
+      <span className={`${bold ? 'font-bold text-fg' : 'text-fg/65'}`}>
         {label}
         {hint && <span className="block text-[10px] text-fg/65">{hint}</span>}
       </span>

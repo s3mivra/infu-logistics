@@ -29,7 +29,7 @@ afterAll(async () => { await ctx.stop(); });
 const M = (n) => mongoose.model(n);
 
 beforeEach(async () => {
-  for (const n of ['Product', 'Inventory', 'Order', 'ModifierGroup']) await M(n).deleteMany({});
+  for (const n of ['Product', 'Inventory', 'Order', 'ModifierGroup', 'AddOn']) await M(n).deleteMany({});
 });
 
 // Beans at P1/g keeps the arithmetic obvious: 18g = P18.
@@ -147,5 +147,54 @@ describe('add-on cost reaches the profit report', () => {
     const line = lineFor((await auth('get', `/api/reports/profit-by-category?${range()}`)).body);
     expect(line.revenue).toBeCloseTo(95, 2);
     expect(line.cogs).toBeCloseTo(12, 2);   // base only
+  });
+});
+
+// The third way an add-on resolves, and the one Menu Setup actually fills in:
+// the add-on's OWN recipe. The copy a product keeps when an add-on is attached
+// is created empty, so this is where an extra shot's coffee is written down.
+// The till deducts it; the report has to charge for it, or margin reads high
+// on precisely the drinks these reports are used to judge.
+describe('an extra whose recipe lives on the add-on itself', () => {
+  it('is costed even though the product carries an empty copy', async () => {
+    const beans = await seedBeans();
+    await M('AddOn').create({
+      name: 'Extra Shot', price: 30, category: 'Extras',
+      recipe: [{ invId: String(beans._id), name: 'Coffee Beans', qty: 18, cost: 1, unit: 'g' }],
+    });
+    await M('Product').create({
+      productCode: 'BEV-0004', name: 'Flat White', category: 'Coffee', basePrice: 110,
+      baseRecipe: [{ invId: String(beans._id), name: 'Coffee Beans', qty: 18, cost: 1, unit: 'g' }],
+      addOns: [{ name: 'Extra Shot', price: 30, recipe: [] }],   // as Menu Setup attaches it
+    });
+    await completedOrder([{
+      name: 'Flat White', quantity: 1, price: 110,
+      selectedAddOns: [{ name: 'Extra Shot', price: 30 }],
+    }], 140);
+
+    const line = lineFor((await auth('get', `/api/reports/profit-by-category?${range()}`)).body);
+    expect(line.revenue).toBeCloseTo(140, 2);
+    expect(line.cogs).toBeCloseTo(36, 2);      // 18g base + 18g from the add-on's own recipe
+  });
+
+  it('still prefers the product\'s own amount when it has one', async () => {
+    const beans = await seedBeans();
+    await M('AddOn').create({
+      name: 'Extra Shot', price: 30,
+      recipe: [{ invId: String(beans._id), name: 'Coffee Beans', qty: 18, cost: 1, unit: 'g' }],
+    });
+    await M('Product').create({
+      productCode: 'BEV-0005', name: 'Doppio', category: 'Coffee', basePrice: 100,
+      baseRecipe: [{ invId: String(beans._id), name: 'Coffee Beans', qty: 18, cost: 1, unit: 'g' }],
+      addOns: [{ name: 'Extra Shot', price: 30,
+        recipe: [{ invId: String(beans._id), name: 'Coffee Beans', qty: 25, cost: 1, unit: 'g' }] }],
+    });
+    await completedOrder([{
+      name: 'Doppio', quantity: 1, price: 100,
+      selectedAddOns: [{ name: 'Extra Shot', price: 30 }],
+    }], 130);
+
+    const line = lineFor((await auth('get', `/api/reports/profit-by-category?${range()}`)).body);
+    expect(line.cogs).toBeCloseTo(43, 2);      // 18g + the product's own 25g, not the add-on's 18g
   });
 });

@@ -26,7 +26,7 @@ export default function registerCheckVouchers(ctx) {
   const canPostAcct = [requireStaff, requirePermission('accounting.manage')];
 
   // ── LIST ─────────────────────────────────────────────────────────────────────
-  app.get('/api/check-vouchers', verifyToken, ...canViewAcct, async (req, res) => {
+  app.get('/api/check-vouchers', verifyToken, ...canViewAcct, requirePermission('screen.reports.checkvouchers'), async (req, res) => {
     try {
       const q = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
       if (req.query.payeeType && ['supplier', 'client', 'other'].includes(req.query.payeeType)) q.payeeType = req.query.payeeType;

@@ -8,6 +8,13 @@ import { loadVatConfig } from '../lib/vatSettings.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
 import { isModuleEnabled } from '../lib/optionalModules.js';
+// Action permissions. Each route below changes data, and was guarded only by
+// "is staff" - so a plain staff account could, through the API, do what the
+// permission catalogue reserves for a role that holds the matching
+// .manage key (see lib/authz.js PERMISSIONS). `permit` is the same
+// requirePermission the context hands out, imported under a short name so
+// it reads the same in every file.
+import { requirePermission as permit, requireAnyPermission as permitAny } from '../lib/authz.js';
 
 export default function registerFinance(ctx) {
   const {
@@ -362,7 +369,7 @@ app.get('/api/finance/balances', verifyToken, ...canViewAcct, async (req, res) =
 // ── TRIAL BALANCE ─────────────────────────────────────────────────────────────
 // Every account with its net debit/credit balance; total debits must equal total
 // credits when the books are balanced. Optional ?start&end date range.
-app.get('/api/reports/trial-balance', verifyToken, ...canViewAcct, async (req, res) => {
+app.get('/api/reports/trial-balance', verifyToken, ...canViewAcct, requirePermission('screen.ledger.trial'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const match = {};
@@ -1087,7 +1094,7 @@ app.get('/api/journal/export', verifyToken, ...canViewAcct, async (req, res) => 
 });
 
 // --- BANK DEPOSIT ROUTES ---
-app.post('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/bank-deposits', verifyToken, requireStaff, permitAny('pos.use', 'accounting.manage'), async (req, res) => {
   try {
     const { shiftId, amount, reference, sourceAccount: rawSrc, destAccount: rawDest } = req.body;
     const depositAmount = parseFloat(amount);
@@ -1209,17 +1216,33 @@ app.post('/api/accounts', verifyToken, ...canPostAcct, async (req, res) => {
       ...Object.keys(ACCOUNTS),
       ...(await Account.find({ code: { $regex: `^${base}` } }, { code: 1 }).lean()).map(a => a.code),
     ]);
-    let code = null;
-    for (let i = 1; i <= 999; i++) {
-      const cand = base + String(i).padStart(3, '0');
-      if (!taken.has(cand)) { code = cand; break; }
-    }
-    if (!code) return res.status(400).json({ success: false, error: 'No free code under this parent.' });
+    const nextFree = () => {
+      for (let i = 1; i <= 999; i++) {
+        const cand = base + String(i).padStart(3, '0');
+        if (!taken.has(cand)) return cand;
+      }
+      return null;
+    };
 
-    const account = await Account.create({
-      code, name: name.trim(), type: parent.type, parent: parentCode,
-      custom: true, normalBalance: normalBalanceForCode(code),
-    });
+    // Two people adding a sub-account under the same parent at the same moment
+    // both read the same free code, and the code is unique, so the second one
+    // used to fail with a server error. Losing that race now just means taking
+    // the next code along.
+    let account = null;
+    for (let attempt = 0; attempt < 5 && !account; attempt++) {
+      const code = nextFree();
+      if (!code) return res.status(400).json({ success: false, error: 'No free code under this parent.' });
+      try {
+        account = await Account.create({
+          code, name: name.trim(), type: parent.type, parent: parentCode,
+          custom: true, normalBalance: normalBalanceForCode(code),
+        });
+      } catch (e) {
+        if (e?.code !== 11000) throw e;
+        taken.add(code);
+      }
+    }
+    if (!account) return res.status(409).json({ success: false, error: 'Could not reserve an account code - try again.' });
     await refreshCustomMeta();
     // Event-driven invalidation: every connected POS/portal/QR-menu client
     // holds its OWN payment-method list in local state (no polling). This is

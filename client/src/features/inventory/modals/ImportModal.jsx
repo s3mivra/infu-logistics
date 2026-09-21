@@ -38,10 +38,10 @@ export default function ImportModal() {
                 {batchCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-purple-500 text-white px-2.5 py-1.5 rounded">NEW BATCH · {batchCount}</span>}
                 <span className="text-[10px] font-black uppercase tracking-widest bg-green-500 text-white px-2.5 py-1.5 rounded">↑ INCREASE · {upCount}</span>
                 <span className="text-[10px] font-black uppercase tracking-widest bg-red-500 text-white px-2.5 py-1.5 rounded">↓ DECREASE · {downCount}</span>
-                <span className="text-[10px] font-black uppercase tracking-widest bg-white/5 text-fg/60 px-2.5 py-1.5 rounded">UNCHANGED · {sameCount}</span>
-                {errCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-red-500/40 text-red-200 px-2.5 py-1.5 rounded">ERRORS · {errCount}</span>}
+                <span className="text-[10px] font-black uppercase tracking-widest bg-white/5 text-fg/65 px-2.5 py-1.5 rounded">UNCHANGED · {sameCount}</span>
+                {errCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-red-500/40 text-danger px-2.5 py-1.5 rounded">ERRORS · {errCount}</span>}
                 {dateFixedCount > 0 && <span title="These date cells were formatted day-first (d/m/yyyy) in the source file instead of MM/DD/YYYY - the date has been auto-corrected for this import. Fix the cell's format in the source file so it stops happening." className="text-[10px] font-black uppercase tracking-widest bg-amber-500 text-black px-2.5 py-1.5 rounded">✓ DATE AUTO-FIXED · {dateFixedCount}</span>}
-                {dateUnfixedCount > 0 && <span title="These date cells were formatted day-first (d/m/yyyy) but couldn't be safely auto-corrected (the day value is over 12, so it can't also be a valid month). Verify these dates manually." className="text-[10px] font-black uppercase tracking-widest bg-red-500/40 text-red-200 px-2.5 py-1.5 rounded">⚠ CHECK DATE · {dateUnfixedCount}</span>}
+                {dateUnfixedCount > 0 && <span title="These date cells were formatted day-first (d/m/yyyy) but couldn't be safely auto-corrected (the day value is over 12, so it can't also be a valid month). Verify these dates manually." className="text-[10px] font-black uppercase tracking-widest bg-red-500/40 text-danger px-2.5 py-1.5 rounded">⚠ CHECK DATE · {dateUnfixedCount}</span>}
               </div>
             );
           })()}
@@ -111,8 +111,8 @@ export default function ImportModal() {
                         {r._dateFormatWarn && !r._dateFormatWarn.corrected && (
                           <span title={`This cell's Excel format is day-first (d/m/yyyy) and displayed as "${r._dateFormatWarn.display}" - it couldn't be safely auto-corrected (its day is over 12, so it can't also be read as a month). Verify this date manually and fix the cell's format in the source file.`} className="ml-1.5 text-[9px] font-black bg-red-500 text-white border border-red-600/40 px-1.5 py-0.5 rounded uppercase align-middle">⚠ Check date</span>
                         )}
-                        {isBatch && r.expiryDate && <span className="ml-1.5 text-purple-300/60 text-[10px]">exp {r.expiryDate}</span>}
-                        {isBatch && !r.expiryDate && r.productionDate && <span className="ml-1.5 text-purple-300/60 text-[10px]">prod {r.productionDate}</span>}
+                        {isBatch && r.expiryDate && <span className="ml-1.5 text-special text-[10px]">exp {r.expiryDate}</span>}
+                        {isBatch && !r.expiryDate && r.productionDate && <span className="ml-1.5 text-special text-[10px]">prod {r.productionDate}</span>}
                       </td>
                       <td className="px-2 py-2.5">
                         {isErr && <span className="text-[10px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">{r._error}</span>}
@@ -120,9 +120,9 @@ export default function ImportModal() {
                         {!isErr && isBatch && <span className="text-[10px] font-black bg-purple-500 text-white px-1.5 py-0.5 rounded uppercase">NEW BATCH</span>}
                         {!isErr && !isNew && !isBatch && diff > 0 && <span className="text-[10px] font-black bg-green-500 text-white px-1.5 py-0.5 rounded uppercase">↑ INC</span>}
                         {!isErr && !isNew && !isBatch && diff < 0 && <span className="text-[10px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">↓ DEC</span>}
-                        {!isErr && !isNew && !isBatch && diff === 0 && <span className="text-[10px] font-black bg-white/10 text-fg/60 px-1.5 py-0.5 rounded uppercase">SAME</span>}
+                        {!isErr && !isNew && !isBatch && diff === 0 && <span className="text-[10px] font-black bg-white/10 text-fg/65 px-1.5 py-0.5 rounded uppercase">SAME</span>}
                       </td>
-                      <td className="px-2 py-2.5 text-right text-fg/60 tabular-nums">{isNew || isErr ? '-' : fmtQty(r._oldDisplay.qty)}</td>
+                      <td className="px-2 py-2.5 text-right text-fg/65 tabular-nums">{isNew || isErr ? '-' : fmtQty(r._oldDisplay.qty)}</td>
                       <td className="px-2 py-2.5 text-right text-fg font-bold tabular-nums">{isErr ? '-' : fmtQty(Number(r.qty))}</td>
                       <td className={`px-2 py-2.5 text-right tabular-nums font-bold ${diff > 0 ? 'text-success' : diff < 0 ? 'text-danger' : 'text-fg/70'}`}>
                         {isErr || isNew ? '-' : (diff > 0 ? '+' : '') + (isPacked ? (diff / packSize).toLocaleString(undefined, { maximumFractionDigits: 2 }) : diff.toLocaleString(undefined, { maximumFractionDigits: 3 }))}
@@ -132,7 +132,7 @@ export default function ImportModal() {
                     </tr>
                     {showTotal && (
                       <tr className="border-b border-white/10 bg-brand/10">
-                        <td colSpan={3} className="px-4 py-2 text-fg/60 font-black text-[10px] uppercase tracking-widest text-right">Total after import</td>
+                        <td colSpan={3} className="px-4 py-2 text-fg/65 font-black text-[10px] uppercase tracking-widest text-right">Total after import</td>
                         <td className="px-2 py-2 text-right text-brand-text font-black tabular-nums">{fmtQty(finalTotalDisplay)}</td>
                         <td colSpan={3}></td>
                       </tr>
@@ -163,7 +163,7 @@ export default function ImportModal() {
           )}
 
           <div className="px-5 py-4 border-t border-white/10 flex items-center gap-3 shrink-0">
-            <button onClick={() => setImportModal(false)} disabled={importSubmitting} className="flex-1 sm:flex-initial px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-xs uppercase tracking-wider transition min-h-[44px] disabled:opacity-40 disabled:pointer-events-none">
+            <button onClick={() => setImportModal(false)} disabled={importSubmitting} className="flex-1 sm:flex-initial px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg font-bold text-xs uppercase tracking-wider transition min-h-[44px] disabled:opacity-40 disabled:pointer-events-none">
               Cancel
             </button>
             <button onClick={async () => {
@@ -213,7 +213,7 @@ export default function ImportModal() {
                 columnStyles: { 0: { cellWidth: 22 }, 2: { halign: 'center' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
               });
               doc.save(`import-preview-${todayStr()}.pdf`);
-            }} className="px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-xs uppercase tracking-wider transition min-h-[44px]">
+            }} className="px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg font-bold text-xs uppercase tracking-wider transition min-h-[44px]">
               Export PDF
             </button>
             <button onClick={submitImport} disabled={importSubmitting || importRows.every(r => r._error)}

@@ -158,7 +158,7 @@ export default function RefundModal() {
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-[10px] text-fg/70 font-bold uppercase">Replacement Item(s) *</label>
                   <button type="button" onClick={() => setReplacements(r => [...r, { productId: '', qty: '1' }])}
-                    className="text-[10px] font-bold text-brand-text hover:text-brand/80">+ Add another</button>
+                    className="text-[10px] font-bold text-brand-text">+ Add another</button>
                 </div>
                 <div className="space-y-1.5">
                   {replacements.map((r, i) => (
@@ -196,7 +196,7 @@ export default function RefundModal() {
             <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Reason *</label>
             <textarea rows={2} value={refundForm.reason} onChange={e => setRefundForm(p=>({...p,reason:e.target.value}))}
               placeholder="e.g. Wrong order, product defect, customer complaint"
-              className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/60 resize-none placeholder-white/20" />
+              className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/60 resize-none placeholder-fg/70" />
           </div>
 
           {mode === 'full' && (() => {

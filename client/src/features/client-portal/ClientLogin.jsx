@@ -74,7 +74,7 @@ export default function ClientLogin() {
             aria-label="Username"
             value={form.username}
             onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-            className="w-full bg-white border border-white/10 focus:border-brand text-black placeholder-black/30 px-4 py-3 rounded-xl outline-none transition text-sm font-medium"
+            className="w-full bg-white border border-white/10 focus:border-brand text-black placeholder-gray-500 px-4 py-3 rounded-xl outline-none transition text-sm font-medium"
             required
             autoFocus
             autoComplete="username"
@@ -86,7 +86,7 @@ export default function ClientLogin() {
               aria-label="Password"
               value={form.password}
               onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-              className="w-full bg-white border border-white/10 focus:border-brand text-black placeholder-black/30 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
+              className="w-full bg-white border border-white/10 focus:border-brand text-black placeholder-gray-500 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
               required
               autoComplete="current-password"
             />

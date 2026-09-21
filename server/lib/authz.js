@@ -23,9 +23,14 @@ export const PERMISSIONS = [
   { key: 'orders.view',        group: 'Sales',       label: 'View orders' },
   { key: 'orders.manage',      group: 'Sales',       label: 'Manage orders (edit/status)' },
   { key: 'orders.delete',      group: 'Sales',       label: 'Void / delete orders' },
+  { key: 'orders.comp',        group: 'Sales',       label: 'Make an order complimentary (with an approver named)' },
   { key: 'inventory.view',     group: 'Inventory',   label: 'View inventory' },
   { key: 'inventory.manage',   group: 'Inventory',   label: 'Manage inventory (count/restock)' },
   { key: 'inventory.delete',   group: 'Inventory',   label: 'Delete inventory items' },
+  // Floor actions, split out of "any staff" so a role can be narrowed: every
+  // built-in role that did these before still does by default.
+  { key: 'inventory.waste',    group: 'Inventory',   label: 'Log waste / spoilage' },
+  { key: 'inventory.count',    group: 'Inventory',   label: 'Do the end-of-day stock count' },
   { key: 'products.view',      group: 'Menu',        label: 'View menu / products' },
   { key: 'products.manage',    group: 'Menu',        label: 'Manage menu / products' },
   { key: 'procurement.view',   group: 'Procurement', label: 'View purchase orders' },
@@ -59,7 +64,75 @@ export const PERMISSIONS = [
   { key: 'users.manage',       group: 'Admin',       label: 'Manage staff & permissions' },
   { key: 'settings.manage',    group: 'Admin',       label: 'Change system settings' },
 ];
+
+// ── SCREENS: one permission per page inside a tab ────────────────────────────
+// A domain permission opens a whole tab - accounting.view is every page of the
+// Ledger, from the journal to the trial balance to backdating a sale. That is
+// too coarse to say "this bookkeeper sees Expenses and Bills, not the P&L", so
+// each page inside a tab has a key of its own: `screen.<tab>.<page>`.
+//
+// A screen key never works on its own. It only narrows the tab its parent
+// permission already opens - without the parent it is dropped - so granting
+// one can never widen what someone can reach. And a person or role that has
+// not been given any page of a tab gets every page of it (see withScreens), so
+// every account that existed before this list keeps exactly what it had.
+//
+// The ids MUST match the client's page ids (navRegistry.js, the Inventory /
+// Hub / Procurement sub-navs); test/permissions-screens.unit.test.js reads the
+// client source and fails when the two drift apart.
+export const SCREENS = [
+  { tab: 'inventory', label: 'Inventory', parent: 'inventory.view', pages: [
+    ['live', 'Live stock'], ['transfers', 'Transfers'], ['reserved', 'Reserved stock'],
+    ['places', 'Categories & locations'], ['eod', 'End-of-day count'],
+  ] },
+  { tab: 'hub', label: 'Hub', parent: 'inventory.view', pages: [
+    ['inventory', 'Network inventory'], ['compare', 'Compare branches'],
+    ['switch', 'Switch branch'], ['books', 'Network books'],
+  ] },
+  { tab: 'procurement', label: 'Procurement', parent: 'procurement.view', pages: [
+    ['orders', 'Purchase orders'], ['receiving', 'Receiving'], ['suppliers', 'Suppliers'],
+  ] },
+  { tab: 'ledger', label: 'Ledger', parent: 'accounting.view', pages: [
+    ['journal', 'General Ledger'], ['trial', 'Trial Balance'], ['pnl', 'P&L'], ['balance', 'Balance Sheet'],
+    ['araap', 'AR & AP'], ['bills', 'Bills (AP)'],
+    ['revolving', 'Revolving Funds'], ['expenses', 'Expenses'],
+    ['accperiods', 'Accounts & Periods'], ['backdate', 'Backdate Sale'], ['approvals', 'Approvals'],
+    ['tenancy', 'Tenancy Health'], ['bookshealth', 'Books Health'], ['exportall', 'Export All'],
+  ] },
+  { tab: 'reports', label: 'Reports', parent: 'reports.view', pages: [
+    ['salessummary', 'Sales Summary'], ['salesline', 'Sales Line Items'], ['payments', 'By Payment'],
+    ['profitcat', 'By Category'], ['menueng', 'Menu Engineering'],
+    ['arreport', 'A/R Report'], ['collections', 'Collections'],
+    ['apreport', 'A/P Report'], ['supplierpay', 'Supplier Payments'], ['checkvouchers', 'Check Vouchers'], ['advances', 'Advances'],
+    ['pnlmonthly', 'Monthly P&L'], ['bsmonthly', 'Monthly Balance Sheet'], ['percentagetax', 'Percentage Tax'], ['vatreturn', 'VAT Return'],
+    ['pricelog', 'Price Changes'], ['variance', 'Cashier Variance'], ['commissions', 'Commissions'],
+  ] },
+];
+export const screenKey = (tab, page) => `screen.${tab}.${page}`;
+const SCREEN_FAMILIES = SCREENS.map((f) => ({
+  tab: f.tab, parent: f.parent, keys: f.pages.map(([page]) => screenKey(f.tab, page)),
+}));
+for (const f of SCREENS) {
+  for (const [page, label] of f.pages) {
+    PERMISSIONS.push({ key: screenKey(f.tab, page), group: `Pages · ${f.label}`, label, parent: f.parent });
+  }
+}
 export const PERMISSION_KEYS = new Set(PERMISSIONS.map((p) => p.key));
+
+// Apply the two screen rules to a resolved permission list:
+//   - a page whose tab is not open is removed (no parent, no page);
+//   - a tab that is open but has no page chosen gets all of its pages.
+// The second rule is what keeps every role, custom role and per-person
+// override written before pages existed working exactly as before - none of
+// them name a page, so each of their tabs opens in full.
+export function withScreens(list) {
+  const set = new Set(list);
+  for (const fam of SCREEN_FAMILIES) {
+    if (!set.has(fam.parent)) { for (const k of fam.keys) set.delete(k); continue; }
+    if (!fam.keys.some((k) => set.has(k))) for (const k of fam.keys) set.add(k);
+  }
+  return [...set];
+}
 
 // Default permissions per role, applied when a user has NO explicit override.
 // Superadmin bypasses this (full access). Posture is DEFAULT-DENY for the most
@@ -70,14 +143,14 @@ export const PERMISSION_KEYS = new Set(PERMISSIONS.map((p) => p.key));
 export const ROLE_DEFAULT_PERMISSIONS = {
   // Shop administrator: runs operations & config and can VIEW the books, but
   // cannot post journal entries (that's finance/superadmin) or manage staff.
-  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete',
-            'inventory.view', 'inventory.manage', 'inventory.delete', 'production.view', 'production.approve',
+  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp',
+            'inventory.view', 'inventory.manage', 'inventory.delete', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage', 'procurement.delete',
             'accounting.view', 'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'],
   // Operations lead: full ops (incl. building rosters), no books/settings/staff.
-  manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete',
-            'inventory.view', 'inventory.manage', 'production.view', 'production.approve',
+  manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp',
+            'inventory.view', 'inventory.manage', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage',
             'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage'],
@@ -85,9 +158,20 @@ export const ROLE_DEFAULT_PERMISSIONS = {
   finance: ['orders.view', 'inventory.view', 'procurement.view', 'production.view',
             'accounting.view', 'accounting.manage', 'pricing.approve',
             'reports.view', 'analytics.view', 'audit.view'],
-  cashier: ['pos.use', 'orders.view', 'orders.manage', 'inventory.view', 'products.view', 'procurement.view'],
-  staff:   ['pos.use', 'orders.view', 'inventory.view', 'products.view'],
+  cashier: ['pos.use', 'orders.view', 'orders.manage', 'orders.comp', 'inventory.view', 'inventory.waste', 'inventory.count', 'products.view', 'procurement.view'],
+  staff:   ['pos.use', 'orders.view', 'orders.comp', 'inventory.view', 'inventory.waste', 'inventory.count', 'products.view'],
 };
+
+// Lists saved before the floor permissions existed could already do these
+// (the routes only asked "is staff"). Applied once to every stored role and
+// per-person list by the startup migration, so nobody loses a floor action on
+// upgrade; after that an admin can take each one away.
+export function withFloorActions(list = []) {
+  const set = new Set(list);
+  if (set.has('inventory.view')) { set.add('inventory.waste'); set.add('inventory.count'); }
+  if (set.has('pos.use')) set.add('orders.comp');
+  return [...set];
+}
 
 // Permissions for CUSTOM roles (created in the UI role-maker), keyed by the
 // normalized role name. Populated from the DB at boot and refreshed on every
@@ -119,9 +203,9 @@ export function resolvePermissions(user) {
   const role = norm(user && user.role);
   if (role === 'superadmin') return PERMISSIONS.map((p) => p.key);
   const explicit = Array.isArray(user && user.permissions) ? user.permissions.filter((k) => PERMISSION_KEYS.has(k)) : [];
-  if (explicit.length) return explicit;
-  if (_customRolePerms.has(role)) return _customRolePerms.get(role);
-  return ROLE_DEFAULT_PERMISSIONS[role] || [];
+  if (explicit.length) return withScreens(explicit);
+  if (_customRolePerms.has(role)) return withScreens(_customRolePerms.get(role));
+  return withScreens(ROLE_DEFAULT_PERMISSIONS[role] || []);
 }
 
 // Does this (decoded token OR user doc) hold a given permission?
@@ -130,7 +214,10 @@ export function resolvePermissions(user) {
 export function hasPermission(user, perm) {
   if (!user) return false;
   if (norm(user.role) === 'superadmin') return true;
-  const perms = Array.isArray(user.perms) ? user.perms : resolvePermissions(user);
+  // A token minted before pages existed names none of them; the same rule
+  // resolvePermissions applies opens its tabs in full rather than shutting
+  // every page for the rest of that token's life.
+  const perms = Array.isArray(user.perms) ? withScreens(user.perms) : resolvePermissions(user);
   return perms.includes(perm);
 }
 
@@ -177,6 +264,15 @@ export function evaluateClientAccess(user) {
 export function requireStaff(req, res, next) {
   if (evaluateStaffAccess(req.user).ok) return next();
   return res.status(403).json({ success: false, error: 'Forbidden: staff access required.' });
+}
+
+// Middleware factory: pass when the user holds ANY of these permissions. For
+// an endpoint that more than one page reads from.
+export function requireAnyPermission(...perms) {
+  return (req, res, next) => {
+    if (perms.some((p) => hasPermission(req.user, p))) return next();
+    return res.status(403).json({ success: false, error: `Forbidden: needs one of ${perms.map((p) => `"${p}"`).join(', ')}.` });
+  };
 }
 
 // Middleware factory: require a specific granular permission. Mount AFTER

@@ -8,6 +8,13 @@ import { loadVatConfig } from '../lib/vatSettings.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
+// Action permissions. Each route below changes data, and was guarded only by
+// "is staff" - so a plain staff account could, through the API, do what the
+// permission catalogue reserves for a role that holds the matching
+// .manage key (see lib/authz.js PERMISSIONS). `permit` is the same
+// requirePermission the context hands out, imported under a short name so
+// it reads the same in every file.
+import { requirePermission as permit, requireAnyPermission as permitAny } from '../lib/authz.js';
 
 export default function registerInventory(ctx) {
   const {
@@ -221,7 +228,7 @@ app.get('/api/inventory/eod-data', verifyToken, requireStaff, async (req, res) =
 });
 
 // --- 2. SUBMIT & LOCK EOD ---
-app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory/count', verifyToken, requireStaff, permit('inventory.count'), async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -307,7 +314,7 @@ app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => 
 });
 
 // --- UNLOCK / REOPEN EOD (ADMIN ONLY) ---
-app.post('/api/inventory/eod/reopen', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory/eod/reopen', verifyToken, requireStaff, permit('inventory.manage'), async (req, res) => {
   try {
     const todayStr = businessDateStr();
     
@@ -922,7 +929,7 @@ app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
-app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory', verifyToken, requireStaff, permit('inventory.manage'), async (req, res) => {
   try {
     // Canonicalize first so the stored name is stable ("test milk" → "TEST MILK")
     // and the existing case-insensitive dup check compares like with like. Stock
@@ -1115,7 +1122,7 @@ app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, r
 // transaction. Two simultaneous restocks of the same SKU now serialise on the
 // inventory document instead of racing the WAC math. Retries on transient
 // transient errors (WriteConflict / TransientTransactionError).
-app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory/restock/:id', verifyToken, requireStaff, permit('inventory.manage'), async (req, res) => {
   const {
     addedStock, totalCost, expiryDate, productionDate,
     creditAccount: rawCreditCode,
@@ -1419,6 +1426,43 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
       else update.expiryDate = new Date(update.expiryDate);
     }
 
+    // The BASE unit is what every quantity of this item is counted in: its
+    // stock, and every recipe line that takes from it. Picking a display unit
+    // of another kind in the edit dialog (kg -> L, kg -> pcs) also changes the
+    // base, and nothing converted anything: 1000 g of stock became 1000 pieces,
+    // and a latte's "18 g" of beans became 18 ml. A base change is allowed as a
+    // correction only while nothing is written in the old one.
+    if ('unit' in update) {
+      const before = await Inventory.findById(req.params.id, { unit: 1, itemName: 1, productionRecipe: 1 }).lean();
+      if (!before) return res.status(404).json({ success: false, error: 'Item not found.' });
+      const next = String(update.unit || '').trim();
+      if (!next) return res.status(400).json({ success: false, error: 'Unit required.' });
+      if (next !== before.unit) {
+        const id = String(req.params.id);
+        const scope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+        const [prods, extras, groups, makes] = await Promise.all([
+          Product.find({ ...scope, $or: [{ 'baseRecipe.invId': id }, { 'sizes.recipe.invId': id }, { 'addOns.recipe.invId': id }] }, { name: 1 }).limit(6).lean(),
+          AddOn.find({ 'recipe.invId': id }, { name: 1 }).limit(6).lean(),
+          ModifierGroup.find({ 'options.recipe.invId': id }, { name: 1 }).limit(6).lean(),
+          Inventory.find({ ...scope, 'productionRecipe.invId': req.params.id }, { itemName: 1 }).limit(6).lean(),
+        ]);
+        const usedIn = [
+          ...prods.map(p => p.name), ...extras.map(a => `add-on ${a.name}`),
+          ...groups.map(g => `option group ${g.name}`), ...makes.map(i => `how ${i.itemName} is made`),
+        ];
+        if ((before.productionRecipe || []).length) usedIn.push(`its own production recipe`);
+        if (usedIn.length) {
+          return res.status(409).json({
+            success: false,
+            error: `${before.itemName} is counted in ${before.unit}, and recipes are written in ${before.unit}: ${usedIn.slice(0, 6).join(', ')}${usedIn.length > 6 ? '…' : ''}. `
+              + `Changing it to ${next} would make every one of them take the wrong amount. Pick a display unit of the same kind (for ${before.unit}: `
+              + `${before.unit === 'g' ? 'g or kg' : before.unit === 'ml' ? 'ml or L' : before.unit}), or take the item out of those recipes first.`,
+            usedIn,
+          });
+        }
+      }
+    }
+
     const updatedItem = await Inventory.findByIdAndUpdate(req.params.id, update, { returnDocument: 'after' });
     if (!updatedItem) return res.status(404).json({ success: false, error: 'Item not found.' });
 
@@ -1617,7 +1661,7 @@ app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmi
 });
 
 // --- PATCH expiry only (after a partial spoilage clears the expired batch) ---
-app.patch('/api/inventory/:id/expiry', verifyToken, requireStaff, async (req, res) => {
+app.patch('/api/inventory/:id/expiry', verifyToken, requireStaff, permit('inventory.manage'), async (req, res) => {
   try {
     const { expiryDate, expiryWarnDays } = req.body;
     const update = {};
@@ -2247,7 +2291,7 @@ async function runInventoryImport(req, res, attempt) {
 }
 
 // --- SPOILAGE / WASTE LOGGING ---
-app.post('/api/inventory/spoilage/:id', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory/spoilage/:id', verifyToken, requireStaff, permit('inventory.waste'), async (req, res) => {
   // Money/stock event - the stock write, the stock-card row, and the balanced
   // journal entry commit together. withOptionalTransaction keeps that guarantee
   // on a replica set and still runs (non-atomically, with a warning) on a

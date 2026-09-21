@@ -367,8 +367,8 @@ export default function PricingTab({ ctx }) {
                               autoFocus
                               onKeyDown={(e) => { if (e.key === 'Enter') handleInlinePriceUpdate(row.productId, row.sizeIndex); }}
                             />
-                            <button onClick={() => handleInlinePriceUpdate(row.productId, row.sizeIndex)} className="text-success hover:text-green-300 flex items-center"><Check size={14} /></button>
-                            <button onClick={() => setEditPriceId(null)} className="text-danger hover:text-danger">✕</button>
+                            <button onClick={() => handleInlinePriceUpdate(row.productId, row.sizeIndex)} className="text-success flex items-center"><Check size={14} /></button>
+                            <button onClick={() => setEditPriceId(null)} className="text-danger">✕</button>
                           </div>
                         ) : (
                           <div className="inline-flex items-center gap-1.5">
@@ -404,8 +404,8 @@ export default function PricingTab({ ctx }) {
                               autoFocus
                               onKeyDown={(e) => { if (e.key === 'Enter') handleInlineCostUpdate(row.productId, row.sizeIndex); if (e.key === 'Escape') setEditCostId(null); }}
                             />
-                            <button onClick={() => handleInlineCostUpdate(row.productId, row.sizeIndex)} className="text-success hover:text-green-300"><Check size={12} /></button>
-                            <button onClick={() => setEditCostId(null)} className="text-danger hover:text-danger text-[10px]">✕</button>
+                            <button onClick={() => handleInlineCostUpdate(row.productId, row.sizeIndex)} className="text-success"><Check size={12} /></button>
+                            <button onClick={() => setEditCostId(null)} className="text-danger text-[10px]">✕</button>
                           </div>
                         ) : (
                           <div
@@ -420,7 +420,7 @@ export default function PricingTab({ ctx }) {
                             ) : (
                               <span className="text-fg/70 text-[10px]">set cost</span>
                             )}
-                            {!row.hasOverride && <span className="text-[10px] text-gray-700 group-hover:text-warning">✎</span>}
+                            {!row.hasOverride && <span className="text-[10px] text-fg/65 group-hover:text-warning">✎</span>}
                           </div>
                         )}
                       </td>
@@ -432,7 +432,7 @@ export default function PricingTab({ ctx }) {
                             {margin.toFixed(1)}%
                           </span>
                         ) : (
-                          <span className="text-gray-700 text-[10px]">-</span>
+                          <span className="text-fg/65 text-[10px]">-</span>
                         )}
                       </td>
 
@@ -761,8 +761,8 @@ export default function PricingTab({ ctx }) {
             </div>
             <p className="text-[11px] text-fg/70 mb-4 leading-relaxed">
               What each customer class pays, right next to the regular price. Click any cell to edit it.
-              <span className="text-fg/60 font-bold"> Default %</span> tiers edit as a <span className="text-fg/60 font-bold">percent</span> - one shared rate, so
-              it moves every product in that column together. <span className="text-fg/60 font-bold">Price List</span> tiers edit as a <span className="text-fg/60 font-bold">₱ price</span>,
+              <span className="text-fg/65 font-bold"> Default %</span> tiers edit as a <span className="text-fg/65 font-bold">percent</span> - one shared rate, so
+              it moves every product in that column together. <span className="text-fg/65 font-bold">Price List</span> tiers edit as a <span className="text-fg/65 font-bold">₱ price</span>,
               independently per product.
             </p>
 
@@ -844,8 +844,8 @@ export default function PricingTab({ ctx }) {
                                     <span className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/65 text-xs">%</span>
                                   </div>
                                 )}
-                                <button onClick={save} title="Save price" className="text-success hover:text-green-300"><Check size={14} /></button>
-                                <button onClick={() => setEditTierCell(null)} title="Cancel" className="text-danger hover:text-danger">✕</button>
+                                <button onClick={save} title="Save price" className="text-success"><Check size={14} /></button>
+                                <button onClick={() => setEditTierCell(null)} title="Cancel" className="text-danger">✕</button>
                                 <button
                                   onClick={() => fetchTierPriceHistory(t._id, isPerProduct ? p._id : null, t.name, isPerProduct ? p.name : null, isPerProduct ? price : t.percent)}
                                   title="Price history" className="text-fg/65 hover:text-brand-text"
@@ -859,10 +859,10 @@ export default function PricingTab({ ctx }) {
                                   <p className="text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1.5">Quantity Breaks</p>
                                   {breaks.map(b => (
                                     <div key={b.minQty} className="flex items-center justify-between text-[11px] mb-1">
-                                      <span className="text-fg/60 font-normal">{b.minQty}+ units</span>
+                                      <span className="text-fg/65 font-normal">{b.minQty}+ units</span>
                                       <span className="flex items-center gap-1.5">
                                         <span className="font-bold text-fg tabular-nums">₱{Number(b.price).toFixed(2)}</span>
-                                        <button onClick={() => removeTierBulkBreak(t._id, p._id, b.minQty)} title="Remove this break" className="text-danger/80 hover:text-danger">✕</button>
+                                        <button onClick={() => removeTierBulkBreak(t._id, p._id, b.minQty)} title="Remove this break" className="text-danger">✕</button>
                                       </span>
                                     </div>
                                   ))}
@@ -900,7 +900,7 @@ export default function PricingTab({ ctx }) {
                               title={isPerProduct ? 'Set this product\'s price for this tier' : `Shared rate - editing this changes ${t.name}'s % for every product`}
                             >
                               {price === null ? (
-                                <span className="text-fg/60 text-xs">not set</span>
+                                <span className="text-fg/65 text-xs">not set</span>
                               ) : (
                                 <span className={off > 0 ? (isPerProduct ? 'text-brand-text font-bold' : 'text-fg/70 font-bold') : 'text-fg/70'}>
                                   ₱{price.toFixed(2)}
@@ -915,7 +915,7 @@ export default function PricingTab({ ctx }) {
                               <div className="mt-0.5 text-right">
                                 {breaks.map(b => (
                                   <p key={b.minQty} className="text-[9px] text-fg/70 tabular-nums leading-tight">
-                                    {b.minQty}+ <span className="text-fg/60 font-bold">₱{Number(b.price).toFixed(2)}</span>
+                                    {b.minQty}+ <span className="text-fg/65 font-bold">₱{Number(b.price).toFixed(2)}</span>
                                   </p>
                                 ))}
                               </div>

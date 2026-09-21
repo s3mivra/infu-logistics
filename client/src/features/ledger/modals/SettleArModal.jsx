@@ -90,7 +90,7 @@ export default function SettleArModal() {
                   <p className="text-[10px] text-fg/65">Enter less than the full amount to record a partial collection.</p>
                 )}
                 <button type="button" onClick={() => setSettleForm({ ...settleForm, amount: outstanding.toFixed(2) })}
-                  className="shrink-0 text-[10px] font-black uppercase tracking-wider bg-white/5 hover:bg-white/10 text-fg/60 px-2 py-1 rounded-lg transition">
+                  className="shrink-0 text-[10px] font-black uppercase tracking-wider bg-white/5 hover:bg-white/10 text-fg/65 px-2 py-1 rounded-lg transition">
                   Full
                 </button>
               </div>
@@ -147,18 +147,18 @@ export default function SettleArModal() {
                 <div>
                   <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Check Number *</label>
                   <input type="text" placeholder="e.g. 0012345" value={settleForm.checkNumber || ''} onChange={e => setSettleForm({...settleForm, checkNumber: e.target.value})}
-                    className={`w-full bg-page-bg border rounded-xl px-3 py-2.5 text-fg font-bold tabular-nums placeholder-white/25 outline-none focus:border-brand/60 ${missingCheckNo ? 'border-red-500/60' : 'border-white/10'}`} />
+                    className={`w-full bg-page-bg border rounded-xl px-3 py-2.5 text-fg font-bold tabular-nums placeholder-fg/70 outline-none focus:border-brand/60 ${missingCheckNo ? 'border-red-500/60' : 'border-white/10'}`} />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Bank</label>
                     <input type="text" placeholder="BPI, BDO..." value={settleForm.checkBank || ''} onChange={e => setSettleForm({...settleForm, checkBank: e.target.value})}
-                      className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+                      className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-fg/70 outline-none focus:border-brand/60" />
                   </div>
                   <div>
                     <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Drawer</label>
                     <input type="text" placeholder="Whose account" value={settleForm.checkDrawer || ''} onChange={e => setSettleForm({...settleForm, checkDrawer: e.target.value})}
-                      className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+                      className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-fg/70 outline-none focus:border-brand/60" />
                   </div>
                 </div>
                 <p className="text-[9px] text-fg/70">
@@ -169,21 +169,21 @@ export default function SettleArModal() {
             <div>
               <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Collected By (optional)</label>
               <input type="text" placeholder="Rider / collector name..." value={settleForm.collectedBy || ''} onChange={e => setSettleForm({...settleForm, collectedBy: e.target.value})}
-                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-fg/70 outline-none focus:border-brand/60" />
               <p className="text-[9px] text-fg/65 mt-1">Who physically took the money in - the collection report groups by this.</p>
             </div>
             {!isCheck && (
               <div>
                 <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Reference No. *</label>
                 <input type="text" placeholder="Bank txn ID, GCash ref, transaction no..." value={settleForm.referenceNumber || ''} onChange={e => setSettleForm({...settleForm, referenceNumber: e.target.value})}
-                  className={`w-full bg-page-bg border rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60 ${missingReference ? 'border-red-500/60' : 'border-white/10'}`} />
+                  className={`w-full bg-page-bg border rounded-xl px-3 py-2.5 text-fg font-bold placeholder-fg/70 outline-none focus:border-brand/60 ${missingReference ? 'border-red-500/60' : 'border-white/10'}`} />
                 <p className="text-[9px] text-fg/65 mt-1">Required - this is what ties the collection back to a real bank/wallet transaction for reconciliation.</p>
               </div>
             )}
             <div>
               <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Note (optional)</label>
               <input type="text" placeholder="Grab payout batch #..." value={settleForm.note} onChange={e => setSettleForm({...settleForm, note: e.target.value})}
-                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-brand/60" />
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-fg/70 outline-none focus:border-brand/60" />
             </div>
           </div>
           <div className="px-5 pb-5 pt-3 border-t border-white/10">

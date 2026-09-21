@@ -158,10 +158,10 @@ export default function PayrollTab() {
                 return (
                   <tr key={r._id} className="border-b border-white/5 hover:bg-white/[0.02]">
                     <td className="px-3 py-2.5 font-bold text-fg">{r.reference}</td>
-                    <td className="px-3 py-2.5 text-fg/60">{shortDate(r.periodStart)} - {shortDate(r.periodEnd)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-fg/60">{r.lines?.length || 0}</td>
+                    <td className="px-3 py-2.5 text-fg/65">{shortDate(r.periodStart)} - {shortDate(r.periodEnd)}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-fg/65">{r.lines?.length || 0}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-fg">{peso(r.totals?.gross)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-amber-400/80">{peso(deductions)}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-warning">{peso(deductions)}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums font-bold text-fg">{peso(r.totals?.net)}</td>
                     <td className="px-3 py-2.5">
                       <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded ${STATUS_TONE[r.status]}`}>
@@ -327,7 +327,7 @@ function DraftModal({ apiFetch, onClose, onDone }) {
             className="flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">
             <Plus size={11} /> Add employee
           </button>
-          <p className="text-xs text-fg/60">
+          <p className="text-xs text-fg/65">
             Gross <span className="font-black text-fg tabular-nums">{peso(totals.gross)}</span>
             <span className="mx-2 text-fg/65">·</span>
             Take-home <span className="font-black text-fg tabular-nums">{peso(totals.net)}</span>
@@ -442,7 +442,7 @@ function RemittanceModal({ apiFetch, onClose }) {
           ))}
           <div className="flex items-center gap-2 ml-auto">
             <input type="date" value={range.start} onChange={e => setRange(r => ({ ...r, start: e.target.value }))} className={numCls + ' w-36 text-left'} />
-            <span className="text-fg/50 text-xs">to</span>
+            <span className="text-fg/65 text-xs">to</span>
             <input type="date" value={range.end} onChange={e => setRange(r => ({ ...r, end: e.target.value }))} className={numCls + ' w-36 text-left'} />
           </div>
         </div>
@@ -543,7 +543,7 @@ function RunDetail({ run, apiFetch, systemSettings = {}, onBack }) {
                     {/* The numbers each deduction is remitted under, as they
                         stood when this run was made. */}
                     {(l.sssNumber || l.philhealthNumber || l.pagibigNumber || l.tin) && (
-                      <span className="block text-[9px] text-fg/55 leading-snug">
+                      <span className="block text-[9px] text-fg/65 leading-snug">
                         {[l.sssNumber && `SSS ${l.sssNumber}`, l.philhealthNumber && `PH ${l.philhealthNumber}`,
                           l.pagibigNumber && `HDMF ${l.pagibigNumber}`, l.tin && `TIN ${l.tin}`]
                           .filter(Boolean).join(' · ')}
@@ -559,7 +559,7 @@ function RunDetail({ run, apiFetch, systemSettings = {}, onBack }) {
                   <td className="px-3 py-2.5 text-right tabular-nums font-black text-fg">{peso(l.netPay)}</td>
                   <td className="px-3 py-2.5 text-right">
                     <button onClick={() => printPayslip(fresh, l, systemSettings)} title="Print this payslip"
-                      className="p-1.5 rounded-lg text-fg/60 hover:bg-white/10 hover:text-fg transition"><Printer size={13} /></button>
+                      className="p-1.5 rounded-lg text-fg/65 hover:bg-white/10 hover:text-fg transition"><Printer size={13} /></button>
                   </td>
                 </tr>
               ))}
@@ -568,11 +568,11 @@ function RunDetail({ run, apiFetch, systemSettings = {}, onBack }) {
               <tr className="border-t border-white/10 text-fg font-black">
                 <td className="px-3 py-2.5">Total</td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{peso(fresh.totals?.gross)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-fg/60">{peso(fresh.totals?.sss)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-fg/60">{peso(fresh.totals?.philhealth)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-fg/60">{peso(fresh.totals?.pagibig)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-fg/60">{peso(fresh.totals?.withholdingTax)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-fg/60">{peso(fresh.totals?.otherDeductions)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums text-fg/65">{peso(fresh.totals?.sss)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums text-fg/65">{peso(fresh.totals?.philhealth)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums text-fg/65">{peso(fresh.totals?.pagibig)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums text-fg/65">{peso(fresh.totals?.withholdingTax)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums text-fg/65">{peso(fresh.totals?.otherDeductions)}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{peso(fresh.totals?.net)}</td>
                 <td />
               </tr>

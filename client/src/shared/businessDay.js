@@ -25,6 +25,23 @@ export function clientBusinessTz() {
   return businessTz;
 }
 
+// One formatter per zone, kept. Building an Intl.DateTimeFormat is the
+// expensive part - about 45 times the cost of using one - and the dashboard
+// asks for today's date some forty times on every redraw. Building a fresh one
+// each time added a few milliseconds to every keystroke at the till on a
+// desktop, and several times that on a tablet.
+let cachedFormatter = null;
+let cachedFor = null;
+function formatterFor(tz) {
+  if (cachedFormatter && cachedFor === tz) return cachedFormatter;
+  cachedFormatter = new Intl.DateTimeFormat('en-CA', {
+    ...(tz ? { timeZone: tz } : {}),
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  cachedFor = tz;
+  return cachedFormatter;
+}
+
 // 'YYYY-MM-DD' for an instant, in the business's zone. en-CA formats exactly
 // that way, and formatToParts is used rather than the formatted string so a
 // locale that would reorder the parts cannot produce a date the server refuses.
@@ -32,10 +49,8 @@ export function dateStr(date = new Date()) {
   const d = date instanceof Date ? date : new Date(date);
   if (Number.isNaN(d.getTime())) return '';
   try {
-    const parts = new Intl.DateTimeFormat('en-CA', {
-      ...(businessTz ? { timeZone: businessTz } : {}),
-      year: 'numeric', month: '2-digit', day: '2-digit',
-    }).formatToParts(d).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+    const parts = formatterFor(businessTz)
+      .formatToParts(d).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
     if (parts.year && parts.month && parts.day) return `${parts.year}-${parts.month}-${parts.day}`;
   } catch { /* an unknown zone falls through to the device's own clock */ }
   const pad = (n) => String(n).padStart(2, '0');

@@ -31,7 +31,7 @@ export default function RevolvingFundDisburseModal() {
               <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">What was it spent on? *</label>
               <input type="text" placeholder="e.g. Printer ink, cleaning supplies…" value={rfDisbForm.description}
                 onChange={e => setRfDisbForm({...rfDisbForm, description: e.target.value})}
-                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-danger/60 placeholder-white/20"/>
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-danger/60 placeholder-fg/70"/>
             </div>
             <div>
               <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Expense Category</label>
@@ -47,14 +47,14 @@ export default function RevolvingFundDisburseModal() {
                 <option value="760000">Other Operating Expense</option>
               </select>
             </div>
-            <div className="bg-danger/10 border border-danger/20 rounded-xl p-3 text-xs text-danger/80">
+            <div className="bg-danger/10 border border-danger/20 rounded-xl p-3 text-xs text-danger">
               This files a Requisition Slip - nothing moves yet. Once someone approves it
               (Ledger → Approvals), it deducts from the fund and posts:<br/>
               <span className="font-bold">DR Expense / CR Petty Cash / Revolving Fund</span>
             </div>
           </div>
           <div className="px-5 py-4 border-t border-white/10 shrink-0 flex gap-3">
-            <button onClick={() => setRfDisbModal(false)} className="flex-1 bg-white/5 text-fg/60 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
+            <button onClick={() => setRfDisbModal(false)} className="flex-1 bg-white/5 text-fg/65 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
             <button onClick={submitRfDisb} disabled={rfDisbSubmitting}
               className="flex-1 bg-danger text-fg rounded-xl py-3 font-bold text-sm hover:bg-danger/90 transition disabled:opacity-50">
               {rfDisbSubmitting ? 'Filing…' : 'File Requisition Slip'}

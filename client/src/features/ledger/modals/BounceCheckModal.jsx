@@ -63,7 +63,7 @@ export default function BounceCheckModal() {
             <div>
               <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Describe</label>
               <input type="text" autoFocus value={bounceForm.otherReason || ''} onChange={e => setBounceForm({ ...bounceForm, otherReason: e.target.value })}
-                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-red-500/60"
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-fg/70 outline-none focus:border-red-500/60"
                 placeholder="What did the bank say?" />
             </div>
           )}
