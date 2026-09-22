@@ -394,7 +394,11 @@ app.post('/api/qr-devices/session', async (req, res) => {
     lastIssued.set(id, Date.now());
 
     const table = `QR-${id.slice(-6).toUpperCase()}`;
-    await QRSession.updateMany({ table, isActive: true }, { isActive: false });
+    // Retire only the code nobody has scanned. A new code is made the moment
+    // one is scanned, and every code from this tablet shares its table - so
+    // retiring them all ended the session the person who just scanned was
+    // ordering on, and their order came back "QR session expired".
+    await QRSession.updateMany({ table, isActive: true, claimedAt: null }, { isActive: false });
     const sessionId = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
     await QRSession.create({ sessionId, table, expiresAt });

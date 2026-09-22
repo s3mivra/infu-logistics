@@ -71,6 +71,38 @@ describe('showing the code', () => {
   });
 });
 
+describe('a scanned code, after the tablet has moved on to the next one', () => {
+  it('still takes the order of whoever scanned it; only the unscanned code is retired', async () => {
+    const { body: dev } = await as(bossTok)('post', '/api/qr-devices').send({ label: 'Door' });
+    const latte = await mongoose.model('Product').create({ name: 'QR Latte', category: 'Coffee', basePrice: 130 });
+
+    // The customer scans the code on screen...
+    const first = (await device(dev.key)('post', '/api/qr-devices/session')).body;
+    expect((await request(app).post(`/api/sessions/${first.sessionId}/claim`)).body.success).toBe(true);
+
+    // ...the tablet sees it was scanned and shows a new one for the next
+    // person (after the minimum gap between codes)...
+    await new Promise((r) => setTimeout(r, 4100));
+    const second = (await device(dev.key)('post', '/api/qr-devices/session')).body;
+    expect(second.sessionId).not.toBe(first.sessionId);
+    expect(second.table).toBe(first.table);
+
+    // ...and the first customer sends their order on the code they scanned.
+    const order = await request(app).post('/api/orders').send({
+      table: first.table, sessionId: first.sessionId, customerName: 'Scanner',
+      items: [{ productId: String(latte._id), name: 'QR Latte', price: 130, quantity: 1 }],
+    });
+    expect(order.body.error).toBeUndefined();
+    expect(order.body.success).toBe(true);
+
+    // The next code, never scanned, is the one a later refresh retires.
+    await new Promise((r) => setTimeout(r, 4100));
+    await device(dev.key)('post', '/api/qr-devices/session');
+    const status = await device(dev.key)('get', `/api/qr-devices/session/${second.sessionId}`);
+    expect(status.body.expired).toBe(true);
+  }, 20000);
+});
+
 describe('turning a device on from the Just QR screen', () => {
   it('works with a manager name and password, and leaves nobody signed in', async () => {
     const res = await request(app).post('/api/qr-devices/enable-here')

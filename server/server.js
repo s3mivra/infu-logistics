@@ -67,6 +67,7 @@ import registerChangeRequests from './features/change-requests.js';
 import registerNotifications from './features/notifications.js';
 import registerClients from './features/clients.js';
 import registerHub from './features/hub.js';
+import registerInventorySheet from './features/inventory-sheet.js';
 
 const log = pino({
   level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
@@ -4378,6 +4379,7 @@ registerChangeRequests(ctx);
 registerNotifications(ctx);
 registerClients(ctx);
 registerHub(ctx);
+registerInventorySheet(ctx);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Not found.' });

@@ -4,6 +4,7 @@ import * as ui from '../../shared/ui';
 import StockTaxonomyPanel from './StockTaxonomyPanel';
 import StockTransferPanel from './StockTransferPanel';
 import ReservationsPanel from './ReservationsPanel';
+import GoogleSheetModal, { SheetChangedBanner, useInventorySheet, usePull } from './GoogleSheetLink';
 
 import { PACK_UNIT } from '../../shared/packUnit.js';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
@@ -221,6 +222,11 @@ export default function InventoryTab({ ctx }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inventory, countTouched]);
 
+  // Linked Google Sheet - superadmin only, like the stock import it feeds.
+  const [sheet, setSheet, reloadSheet] = useInventorySheet(apiFetch, !!isSuperAdmin);
+  const [pullSheet, pullingSheet] = usePull(apiFetch, parseImportFile, reloadSheet);
+  const [sheetOpen, setSheetOpen] = useState(false);
+
   return (
         <div className="flex flex-col gap-6">
 
@@ -309,6 +315,12 @@ export default function InventoryTab({ ctx }) {
                         onChange={e => { parseImportFile(e.target.files?.[0]); e.target.value = ''; setOpenActionMenu(null); }}
                         className="hidden" />
                     </label>
+                    {isSuperAdmin && (
+                      <button onClick={() => { setSheetOpen(true); setOpenActionMenu(null); }}
+                        className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition">
+                        Google Sheet{sheet?.url ? (sheet.changedAt ? ' · changed' : ' · linked') : '…'}
+                      </button>
+                    )}
                     <button onClick={() => { downloadImportTemplate(); setOpenActionMenu(null); }}
                       className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition">
                       Import template
@@ -333,6 +345,12 @@ export default function InventoryTab({ ctx }) {
                 )}
               </div>
             </div>
+
+            {isSuperAdmin && <SheetChangedBanner sheet={sheet} onPull={pullSheet} busy={pullingSheet} />}
+            {sheetOpen && (
+              <GoogleSheetModal apiFetch={apiFetch} sheet={sheet} setSheet={setSheet}
+                onPull={() => { setSheetOpen(false); pullSheet(); }} pulling={pullingSheet} onClose={() => setSheetOpen(false)} />
+            )}
 
             {invSubTab === 'places' && (
               <StockTaxonomyPanel

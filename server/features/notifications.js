@@ -19,6 +19,7 @@ export default function registerNotifications(ctx) {
     tenantScope,
     Inventory,
     Order,
+    Settings,
     PurchaseOrder,
     verifyToken,
     requireStaff,
@@ -179,6 +180,29 @@ export default function registerNotifications(ctx) {
           detail: po.supplier || '',
           tab: 'procurement', focusId: String(po._id),
         });
+      }
+
+      // ── Linked stock sheet ─────────────────────────────────────────────────
+      // Only the superadmin can import stock, so only they are told the sheet
+      // changed (see features/inventory-sheet.js - the check never applies it).
+      if (req.user?.role === 'superadmin') {
+        const sheet = (await Settings.findOne({ key: 'inventorySheet' }).lean())?.value;
+        if (sheet?.url && sheet.changedAt) {
+          items.push({
+            id: 'sheet:changed', kind: 'sheet_changed', severity: WARN,
+            title: 'Your stock sheet changed',
+            detail: 'Changed since your last pull. Open Inventory and pull it to review before anything is applied.',
+            tab: 'inventory',
+          });
+        }
+        if (sheet?.url && sheet.lastCheckError) {
+          items.push({
+            id: 'sheet:error', kind: 'sheet_error', severity: WARN,
+            title: "Couldn't read your stock sheet",
+            detail: sheet.lastCheckError,
+            tab: 'inventory',
+          });
+        }
       }
 
       const rank = { [CRIT]: 0, [WARN]: 1, info: 2 };

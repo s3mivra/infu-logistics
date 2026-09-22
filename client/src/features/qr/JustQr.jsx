@@ -20,7 +20,7 @@ const POLL_MS = 3000;
 
 export default function JustQr({ apiUrl, businessType, bizName, onClose }) {
   const isLog = businessType === 'log';
-  const [code, setCode] = useState(null);            // { url, expiresAt }
+  const [code, setCode] = useState(null);            // { url, sessionId, expiresAt }
   const [state, setState] = useState(isLog ? 'ready' : 'loading'); // loading | ready | notEnabled | error
   const [note, setNote] = useState('');
   const sessionRef = useRef(null);
@@ -39,7 +39,7 @@ export default function JustQr({ apiUrl, businessType, bizName, onClose }) {
       if (res.status === 403) { writeDeviceKey(''); setState('notEnabled'); setNote('This device was switched off in Settings.'); return; }
       if (!d.success) { setState('error'); setNote(d.error || 'Could not make a code.'); return; }
       sessionRef.current = d.sessionId;
-      setCode({ url: `${window.location.origin}/menu/${d.table}?session=${d.sessionId}`, expiresAt: new Date(d.expiresAt).getTime() });
+      setCode({ url: `${window.location.origin}/menu/${d.table}?session=${d.sessionId}`, sessionId: d.sessionId, expiresAt: new Date(d.expiresAt).getTime() });
       setState('ready');
       setNote(why);
     } catch {
@@ -140,7 +140,15 @@ export default function JustQr({ apiUrl, businessType, bizName, onClose }) {
       {state === 'error' && <p className="text-danger">{note}</p>}
 
       {state === 'ready' && note && <p className="text-fg/75 text-sm mt-5">{note}</p>}
-      {state === 'ready' && url && <p className="text-fg/65 text-xs mt-4 break-all max-w-md">{url.split('?')[0]}</p>}
+      {/* The address alone never changes - every code from this tablet opens the
+          same counter table - so the session's short code is shown with it:
+          that is the part that changes with each new QR. */}
+      {state === 'ready' && url && (
+        <p className="text-fg/65 text-xs mt-4 break-all max-w-md">
+          {url.split('?')[0]}
+          {!isLog && code?.sessionId && <> · code <span className="font-mono font-bold text-fg/80">{code.sessionId.slice(0, 6).toUpperCase()}</span></>}
+        </p>
+      )}
     </div>
   );
 }
